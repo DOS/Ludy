@@ -1,0 +1,1257 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Deterministic Vietnamese (with or without diacritics) and English Quick Add parser for personal to-dos (#3556).
+// Zero AI calls, zero async I/O, synchronous pure TypeScript using @crove/l10n-vn Gregorian & time-zone helpers.
+
+import { daysInCalendarMonth, parseIsoCalendarDate } from './labor-contracts.ts';
+import { assertValidTimeZone, formatZonedIsoOffset, wallClockAt, zonedInstant } from './time-zone.ts';
+
+export type TodoQuickAddTokenKind = 'date' | 'time' | 'recurrence' | 'priority' | 'tag' | 'list';
+
+export interface TodoQuickAddToken {
+  kind: TodoQuickAddTokenKind;
+  raw: string;
+  start: number;
+  end: number;
+}
+
+export type TodoQuickAddRecurrence =
+  | {
+      freq: 'daily';
+      interval: number;
+    }
+  | {
+      freq: 'weekly';
+      interval: number;
+      /** 0 = Sunday .. 6 = Saturday. */
+      byWeekday?: number | undefined;
+    }
+  | {
+      freq: 'monthly';
+      interval: number;
+      /** 1..31 or -1 for the last day of the month. */
+      byMonthDay?: number | undefined;
+    };
+
+export interface TodoQuickAddOptions {
+  now: Date;
+  timeZone: string;
+  defaultRemindBeforeMinutes?: number | undefined;
+  dismissedTokens?: readonly Pick<TodoQuickAddToken, 'kind' | 'raw' | 'start' | 'end'>[] | undefined;
+}
+
+export interface TodoQuickAddResult {
+  title: string;
+  dueOn: string | null;
+  dueTime: string | null;
+  dueAt: string | null;
+  remindAt: string | null;
+  timeZone: string;
+  recurrence: TodoQuickAddRecurrence | null;
+  priority: 1 | 2 | 3 | 4 | null;
+  tags: string[];
+  listName: string | null;
+  tokens: TodoQuickAddToken[];
+}
+
+interface Span {
+  start: number;
+  end: number;
+}
+
+interface WordToken {
+  raw: string;
+  nfcLower: string;
+  isAscii: boolean;
+  folded: string;
+  start: number;
+  end: number;
+}
+
+type DayPeriod = 'morning' | 'noon' | 'afternoon' | 'evening';
+
+interface ParsedTimeInfo {
+  hour: number;
+  minute: number;
+  explicitClock: boolean;
+  period?: DayPeriod | undefined;
+}
+
+const DEFAULT_REMIND_BEFORE_MINUTES = 30;
+const MAX_TAGS = 20;
+const MAX_TAG_LENGTH = 40;
+const MAX_INTERVAL = 365;
+const MINUTE_MS = 60_000;
+
+const PERIOD_DEFAULT_HOUR: Record<DayPeriod, number> = {
+  morning: 9,
+  noon: 12,
+  afternoon: 14,
+  evening: 19,
+};
+
+const ORDINAL_GUARD_WORDS = ['lần', 'bước', 'câu', 'người', 'phần', 'hạng', 'mục', 'loại', 'đợt', 'vòng', 'kỳ', 'tập'] as const;
+const MAI_BEFORE_GUARDS = ['khuyến', 'khuyên', 'hoa', 'mỉa', 'anh', 'chị', 'em', 'bạn', 'cô', 'chú', 'bác', 'ông', 'bà'] as const;
+const MAI_AFTER_GUARDS = ['mối', 'sau', 'một', 'phục'] as const;
+
+const URL_RE = /(?:https?:\/\/|ftp:\/\/|mailto:|www\.)[^\s<>"{}|\\^`]+/gi;
+const PRIORITY_RE = /(?:^|(?<=[\s([,]))!p([1-4])(?=$|[\s.,;:!?)\]])/gi;
+const TAG_RE = /(?:^|(?<=[\s([,]))#(?=[0-9_-]*\p{L})([\p{L}\p{N}\p{M}][\p{L}\p{N}\p{M}_-]{0,39})(?=$|[\s.,;:!?)\]])/gu;
+const LIST_QUOTED_RE = /(?:^|(?<=[\s([,]))\/"([^"\n]{1,60})"(?=$|[\s.,;:!?)\]])/gu;
+const LIST_UNQUOTED_RE = /(?:^|(?<=[\s([,]))\/(?=[0-9_-]*\p{L})([\p{L}\p{N}\p{M}_.-]{1,40})(?=$|[\s.,;:!?)\]])/gu;
+const WORD_RE = /[\p{L}\p{N}\p{M}]+/gu;
+
+const ISO_DATE_TOKEN_RE = /(?:^|(?<=[\s([,]))(\d{4})-(\d{1,2})-(\d{1,2})(?=$|[\s.,;:!?)\]])/gu;
+const DMY_DATE_TOKEN_RE = /(?<![\d/.-])(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?(?![\d/.-])/gu;
+
+const CLOCK_COLON_RE = /(?<![\d:.])(\d{1,2}):([0-5]\d)(?:\s*(am|pm))?(?![\d:.]|[\p{L}])/giu;
+const CLOCK_AMPM_RE = /(?<![\d:.])(\d{1,2})(?::([0-5]\d))?\s*(am|pm)(?![\p{L}\p{N}])/giu;
+const CLOCK_VN_RE = /(?<![\d:.])(\d{1,2})\s*(?:(giờ|gio)|([hg]))(?:\s*(?:([0-5]?\d)(?:\s*(?:phút|phut|p))?|(rưỡi|ruoi)))?(?![\p{L}\p{N}])/giu;
+
+function foldVn(text: string): string {
+  return text.normalize('NFD').replace(/\p{M}+/gu, '').replace(/[đĐ]/g, 'd').toLowerCase();
+}
+
+function vnMatch(word: WordToken, targetNfc: string): boolean {
+  const expected = targetNfc.normalize('NFC').toLowerCase();
+  if (word.nfcLower === expected) return true;
+  if (word.isAscii && foldVn(expected) === word.nfcLower) return true;
+  return false;
+}
+
+function vnMatchAny(word: WordToken, targets: readonly string[]): boolean {
+  return targets.some((t) => vnMatch(word, t));
+}
+
+function overlaps(a: Span, b: Span): boolean {
+  return a.start < b.end && b.start < a.end;
+}
+
+function hasOverlap(spans: readonly Span[], candidate: Span): boolean {
+  return spans.some((s) => overlaps(s, candidate));
+}
+
+function formatIsoDate(year: number, month: number, day: number): string {
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function addLocalDays(date: string, days: number): string {
+  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+function weekdayOfDate(date: string): number {
+  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+function nextOccurrenceOfWeekday(today: string, targetWeekday: number, includeToday: boolean): string {
+  const current = weekdayOfDate(today);
+  let diff = (targetWeekday - current + 7) % 7;
+  if (diff === 0 && !includeToday) diff = 7;
+  return addLocalDays(today, diff);
+}
+
+function nextWeekOccurrenceOfWeekday(today: string, targetWeekday: number): string {
+  const current = weekdayOfDate(today);
+  const isoToday = current === 0 ? 7 : current;
+  const isoTarget = targetWeekday === 0 ? 7 : targetWeekday;
+  const mondayOfThisWeek = addLocalDays(today, -(isoToday - 1));
+  const mondayOfNextWeek = addLocalDays(mondayOfThisWeek, 7);
+  return addLocalDays(mondayOfNextWeek, isoTarget - 1);
+}
+
+function nextMonthDayDate(today: string, dayOfMonth: number): string {
+  const parsed = parseIsoCalendarDate(today);
+  if (!parsed) return today;
+  const { year, month } = parsed;
+  const resolve = (y: number, m: number) =>
+    formatIsoDate(y, m, dayOfMonth === -1 ? daysInCalendarMonth(y, m) : Math.min(dayOfMonth, daysInCalendarMonth(y, m)));
+  const thisMonth = resolve(year, month);
+  if (thisMonth >= today) return thisMonth;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+  return resolve(nextYear, nextMonth);
+}
+
+function findProtectedUrlSpans(input: string): Span[] {
+  const spans: Span[] = [];
+  for (const m of input.matchAll(URL_RE)) {
+    const start = m.index;
+    let raw = m[0];
+    while (raw.length > 0 && /[.,;:!?)\]]/.test(raw[raw.length - 1] ?? '')) {
+      const last = raw[raw.length - 1];
+      if (last === ')' && raw.includes('(')) break;
+      if (last === ']' && raw.includes('[')) break;
+      raw = raw.slice(0, -1);
+    }
+    if (raw.length > 0) spans.push({ start, end: start + raw.length });
+  }
+  return spans;
+}
+
+function tokenizeWords(input: string): WordToken[] {
+  const words: WordToken[] = [];
+  for (const m of input.matchAll(WORD_RE)) {
+    const raw = m[0];
+    const nfcLower = raw.normalize('NFC').toLowerCase();
+    words.push({
+      raw,
+      nfcLower,
+      isAscii: /^[a-z0-9]+$/.test(nfcLower),
+      folded: foldVn(nfcLower),
+      start: m.index,
+      end: m.index + raw.length,
+    });
+  }
+  return words;
+}
+
+function spacesOnlyBetween(input: string, aEnd: number, bStart: number): boolean {
+  if (bStart < aEnd) return false;
+  return /^[ \t]+$/.test(input.slice(aEnd, bStart));
+}
+
+function matchDayPeriod(word: WordToken, allowEnglishShort = true): DayPeriod | null {
+  if (vnMatch(word, 'sáng') || (allowEnglishShort && word.nfcLower === 'morning')) return 'morning';
+  if (vnMatch(word, 'trưa') || (allowEnglishShort && word.nfcLower === 'noon')) return 'noon';
+  if (vnMatch(word, 'chiều') || (allowEnglishShort && word.nfcLower === 'afternoon')) return 'afternoon';
+  if (vnMatchAny(word, ['tối', 'đêm']) || (allowEnglishShort && (word.nfcLower === 'evening' || word.nfcLower === 'night'))) return 'evening';
+  return null;
+}
+
+function matchWeekday(
+  input: string,
+  words: readonly WordToken[],
+  index: number,
+  allowShortEnglish: boolean,
+): { weekday: number; consumed: number } | null {
+  const w0 = words[index];
+  if (!w0) return null;
+  const w1 = words[index + 1];
+
+  // Vietnamese "thứ hai" .. "thứ bảy", "thứ 2" .. "thứ 7"
+  if (vnMatch(w0, 'thứ') && w1 && spacesOnlyBetween(input, w0.end, w1.start)) {
+    const prev = words[index - 1];
+    if (prev && spacesOnlyBetween(input, prev.end, w0.start) && vnMatchAny(prev, ORDINAL_GUARD_WORDS)) {
+      return null;
+    }
+    if (vnMatch(w1, 'hai') || w1.nfcLower === '2') return { weekday: 1, consumed: 2 };
+    if (vnMatch(w1, 'ba') || w1.nfcLower === '3') return { weekday: 2, consumed: 2 };
+    if (vnMatch(w1, 'tư') || w1.nfcLower === '4') return { weekday: 3, consumed: 2 };
+    if (vnMatch(w1, 'năm') || w1.nfcLower === '5') return { weekday: 4, consumed: 2 };
+    if (vnMatch(w1, 'sáu') || w1.nfcLower === '6') return { weekday: 5, consumed: 2 };
+    if (vnMatchAny(w1, ['bảy', 'bẩy']) || w1.nfcLower === '7') return { weekday: 6, consumed: 2 };
+  }
+
+  // Vietnamese "chủ nhật"
+  if (vnMatch(w0, 'chủ') && w1 && spacesOnlyBetween(input, w0.end, w1.start) && vnMatch(w1, 'nhật')) {
+    return { weekday: 0, consumed: 2 };
+  }
+
+  // Shorthand t2..t7, cn (safe only when not surrounded by non-space word punctuation like slashes)
+  const beforeChar = w0.start > 0 ? input[w0.start - 1] : '';
+  const afterChar = w0.end < input.length ? input[w0.end] : '';
+  if (beforeChar !== '/' && afterChar !== '/') {
+    if (w0.nfcLower === 'cn') return { weekday: 0, consumed: 1 };
+    const tMatch = /^t([2-7])$/.exec(w0.nfcLower);
+    if (tMatch) {
+      const n = Number(tMatch[1]);
+      return { weekday: n - 1, consumed: 1 };
+    }
+  }
+
+  // Full English weekdays
+  const fullEn: Record<string, number> = {
+    sunday: 0,
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+  };
+  if (Object.hasOwn(fullEn, w0.nfcLower)) {
+    return { weekday: fullEn[w0.nfcLower] as number, consumed: 1 };
+  }
+
+  // Always-safe English abbreviations (do not collide with Vietnamese words)
+  const safeShortEn: Record<string, number> = {
+    tue: 2,
+    tues: 2,
+    wed: 3,
+    thurs: 4,
+    fri: 5,
+  };
+  if (Object.hasOwn(safeShortEn, w0.nfcLower)) {
+    return { weekday: safeShortEn[w0.nfcLower] as number, consumed: 1 };
+  }
+
+  // Context-dependent English abbreviations ("mon", "thu", "sat", "sun")
+  if (allowShortEnglish) {
+    const shortEn: Record<string, number> = { sun: 0, mon: 1, thu: 4, sat: 6 };
+    if (Object.hasOwn(shortEn, w0.nfcLower)) {
+      return { weekday: shortEn[w0.nfcLower] as number, consumed: 1 };
+    }
+  }
+
+  return null;
+}
+
+function adjustHourForPeriod(hour: number, period: DayPeriod | undefined): number {
+  if (!period) return hour;
+  if ((period === 'afternoon' || period === 'evening') && hour >= 1 && hour <= 11) return hour + 12;
+  if (period === 'noon' && hour >= 1 && hour <= 3) return hour + 12;
+  if (period === 'morning' && hour === 12) return 0;
+  return hour;
+}
+
+function formatHHmm(hour: number, minute: number): string {
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function resolveExplicitMonthDay(today: string, day: number, month: number, explicitYear?: number): string | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  if (explicitYear !== undefined) {
+    if (explicitYear < 1970 || explicitYear > 2100) return null;
+    const candidate = formatIsoDate(explicitYear, month, day);
+    return parseIsoCalendarDate(candidate) ? candidate : null;
+  }
+  const todayParts = parseIsoCalendarDate(today);
+  if (!todayParts) return null;
+  // Impossible in every year (e.g. Feb 30, Apr 31)
+  if (day > daysInCalendarMonth(2024, month)) return null;
+  for (let offset = 0; offset <= 4; offset++) {
+    const year = todayParts.year + offset;
+    if (day <= daysInCalendarMonth(year, month)) {
+      const candidate = formatIsoDate(year, month, day);
+      if (candidate >= today) return candidate;
+    }
+  }
+  return null;
+}
+
+function expandConnectorBefore(
+  input: string,
+  words: readonly WordToken[],
+  tokenStart: number,
+  connectors: readonly (readonly string[])[],
+  blockedSpans: readonly Span[],
+): number {
+  for (const seq of connectors) {
+    const n = seq.length;
+    for (let i = words.length - 1; i >= 0; i--) {
+      const last = words[i];
+      if (!last || last.end > tokenStart) continue;
+      if (!spacesOnlyBetween(input, last.end, tokenStart)) break;
+      const firstIdx = i - (n - 1);
+      if (firstIdx < 0) break;
+      let ok = true;
+      for (let k = 0; k < n; k++) {
+        const w = words[firstIdx + k];
+        const expected = seq[k] as string;
+        if (!w || !vnMatch(w, expected)) {
+          ok = false;
+          break;
+        }
+        if (k > 0) {
+          const prev = words[firstIdx + k - 1] as WordToken;
+          if (!spacesOnlyBetween(input, prev.end, w.start)) {
+            ok = false;
+            break;
+          }
+        }
+      }
+      if (ok) {
+        const start = (words[firstIdx] as WordToken).start;
+        if (!hasOverlap(blockedSpans, { start, end: tokenStart })) return start;
+      }
+      break;
+    }
+  }
+  return tokenStart;
+}
+
+function findAdjacentWordAfter(
+  input: string,
+  words: readonly WordToken[],
+  tokenEnd: number,
+  blockedSpans: readonly Span[],
+): WordToken | null {
+  for (const w of words) {
+    if (w.start < tokenEnd) continue;
+    if (!spacesOnlyBetween(input, tokenEnd, w.start)) return null;
+    if (hasOverlap(blockedSpans, w)) return null;
+    return w;
+  }
+  return null;
+}
+
+function findAdjacentWordBefore(
+  input: string,
+  words: readonly WordToken[],
+  tokenStart: number,
+  blockedSpans: readonly Span[],
+): WordToken | null {
+  for (let i = words.length - 1; i >= 0; i--) {
+    const w = words[i];
+    if (!w || w.end > tokenStart) continue;
+    if (!spacesOnlyBetween(input, w.end, tokenStart)) return null;
+    if (hasOverlap(blockedSpans, w)) return null;
+    return w;
+  }
+  return null;
+}
+
+/**
+ * Reconstructs a clean title from `input` by removing the specified character `spans` while
+ * preserving surrounding non-token punctuation and collapsing excess whitespace.
+ */
+export function buildTitleWithoutSpans(input: string, spans: readonly Span[]): string {
+  if (spans.length === 0) return input.replace(/\s+/g, ' ').trim();
+  const sorted = [...spans].sort((a, b) => a.start - b.start);
+
+  // Expand spans over empty parentheses/brackets created solely by stripping an inner token.
+  const expanded = sorted.map((s) => {
+    let start = s.start;
+    let end = s.end;
+    const before = input.slice(0, start);
+    const after = input.slice(end);
+    const openParen = /\([ \t]*$/.exec(before);
+    const closeParen = /^[ \t]*\)/.exec(after);
+    if (openParen && closeParen) {
+      start -= openParen[0].length;
+      end += closeParen[0].length;
+    }
+    return { start, end };
+  });
+
+  // Merge any overlapping expanded spans
+  const merged: Span[] = [];
+  for (const s of expanded) {
+    const prev = merged[merged.length - 1];
+    if (prev && s.start <= prev.end) prev.end = Math.max(prev.end, s.end);
+    else merged.push({ ...s });
+  }
+
+  let out = '';
+  let cursor = 0;
+  for (const s of merged) {
+    let chunk = input.slice(cursor, s.start);
+    const after = input.slice(s.end);
+    // If a trailing comma/semicolon sat immediately before a stripped token that precedes another separator or EOF, drop it.
+    if (/^[ \t]*(?:[,.;:!?]|$)/.test(after)) {
+      chunk = chunk.replace(/[ \t]*[,;][ \t]*$/, '');
+    }
+    if (out.length > 0 && chunk.length > 0 && !/\s$/.test(out) && !/^[\s.,;:!?)\]]/.test(chunk)) {
+      out += ' ';
+    }
+    out += chunk;
+    cursor = s.end;
+  }
+  const tail = input.slice(cursor);
+  if (out.length > 0 && tail.length > 0 && !/\s$/.test(out) && !/^[\s.,;:!?)\]]/.test(tail)) {
+    out += ' ';
+  }
+  out += tail;
+
+  // Strip leading orphaned commas/semicolons left behind when a leading token was removed.
+  if (merged[0]?.start === 0 || /^[ \t]+$/.test(input.slice(0, merged[0]?.start ?? 0))) {
+    out = out.replace(/^[ \t]*[,;][ \t]*/, '');
+  }
+  out = out.replace(/[ \t]+([,.;:!?])(?=$|[\s.,;:!?)\]])/g, '$1');
+  out = out.replace(/[ \t]{2,}/g, ' ').trim();
+  return out;
+}
+
+/**
+ * Deterministically parses natural-language Vietnamese (with or without diacritics) and English
+ * quick-add input into structured due dates, times, recurrences, priorities, tags, and lists.
+ */
+export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): TodoQuickAddResult {
+  assertValidTimeZone(opts.timeZone);
+  const remindBeforeMinutes = Math.max(0, opts.defaultRemindBeforeMinutes ?? DEFAULT_REMIND_BEFORE_MINUTES);
+  const nowMs = opts.now.getTime();
+  const today = formatIsoDate(
+    wallClockAt(opts.timeZone, nowMs).year,
+    wallClockAt(opts.timeZone, nowMs).month,
+    wallClockAt(opts.timeZone, nowMs).day,
+  );
+
+  const dismissedSpans: Span[] = (opts.dismissedTokens ?? []).map((t) => ({ start: t.start, end: t.end }));
+  const protectedSpans = findProtectedUrlSpans(input);
+  const blockedBase: Span[] = [...protectedSpans, ...dismissedSpans];
+  const occupied: Span[] = [...blockedBase];
+  const tokens: TodoQuickAddToken[] = [];
+
+  const isAvailable = (span: Span) => !hasOverlap(occupied, span);
+  const claimToken = (kind: TodoQuickAddTokenKind, start: number, end: number) => {
+    occupied.push({ start, end });
+    tokens.push({ kind, raw: input.slice(start, end), start, end });
+  };
+
+  // 1. Priority (!p1.. !p4)
+  let priority: 1 | 2 | 3 | 4 | null = null;
+  for (const m of input.matchAll(PRIORITY_RE)) {
+    const start = m.index;
+    const end = start + m[0].length;
+    if (!isAvailable({ start, end })) continue;
+    priority = Number(m[1]) as 1 | 2 | 3 | 4;
+    claimToken('priority', start, end);
+  }
+
+  // 2. Tags (#tag)
+  const tags: string[] = [];
+  const seenTags = new Set<string>();
+  for (const m of input.matchAll(TAG_RE)) {
+    const start = m.index;
+    const end = start + m[0].length;
+    if (!isAvailable({ start, end })) continue;
+    const tag = (m[1] ?? '').normalize('NFC').toLowerCase().slice(0, MAX_TAG_LENGTH);
+    if (tag && !seenTags.has(tag) && tags.length < MAX_TAGS) {
+      seenTags.add(tag);
+      tags.push(tag);
+    }
+    claimToken('tag', start, end);
+  }
+
+  // 3. List (/ListName or /"List Name")
+  let listName: string | null = null;
+  const listMatches: Array<{ start: number; end: number; name: string }> = [];
+  for (const m of input.matchAll(LIST_QUOTED_RE)) {
+    const name = (m[1] ?? '').trim();
+    if (name) listMatches.push({ start: m.index, end: m.index + m[0].length, name });
+  }
+  for (const m of input.matchAll(LIST_UNQUOTED_RE)) {
+    const name = (m[1] ?? '').trim();
+    if (name) listMatches.push({ start: m.index, end: m.index + m[0].length, name });
+  }
+  listMatches.sort((a, b) => a.start - b.start);
+  for (const lm of listMatches) {
+    if (!isAvailable(lm)) continue;
+    listName = lm.name;
+    claimToken('list', lm.start, lm.end);
+  }
+
+  const words = tokenizeWords(input);
+
+  // 4. Recurrence phrases (evaluated before dates/weekdays so "hàng tuần thứ hai" and "ngày 20 hàng tháng" stay unified)
+  let recurrence: TodoQuickAddRecurrence | null = null;
+  let recurrenceDerivedDueOn: string | null = null;
+
+  for (let i = 0; i < words.length; i++) {
+    const w0 = words[i];
+    if (!w0 || !isAvailable(w0)) continue;
+
+    // Helper to check a contiguous sequence of words at i
+    const spanOf = (endIdx: number): Span => ({ start: w0.start, end: (words[endIdx] as WordToken).end });
+    const contiguous = (fromIdx: number, toIdx: number): boolean => {
+      for (let k = fromIdx; k < toIdx; k++) {
+        const a = words[k];
+        const b = words[k + 1];
+        if (!a || !b || !spacesOnlyBetween(input, a.end, b.start)) return false;
+      }
+      return true;
+    };
+
+    const w1 = words[i + 1];
+    const w2 = words[i + 2];
+    const w3 = words[i + 3];
+    const w4 = words[i + 4];
+
+    // 4a. "cuối tháng" / "ngày cuối tháng" / "cuối mỗi tháng" / "cuối tháng hàng tháng" / "last day of [every|the] month"
+    if (
+      w1 &&
+      w2 &&
+      w3 &&
+      contiguous(i, i + 3) &&
+      ((vnMatch(w0, 'cuối') && vnMatch(w1, 'tháng') && vnMatchAny(w2, ['hàng', 'hằng', 'mỗi']) && vnMatch(w3, 'tháng')) ||
+        (w0.nfcLower === 'last' && w1.nfcLower === 'day' && w2.nfcLower === 'of' && w3.nfcLower === 'month'))
+    ) {
+      const span = spanOf(i + 3);
+      if (isAvailable(span)) {
+        recurrence = { freq: 'monthly', interval: 1, byMonthDay: -1 };
+        recurrenceDerivedDueOn = nextMonthDayDate(today, -1);
+        claimToken('recurrence', span.start, span.end);
+        i += 3;
+        continue;
+      }
+    }
+    if (
+      w1 &&
+      w2 &&
+      w3 &&
+      w4 &&
+      contiguous(i, i + 4) &&
+      w0.nfcLower === 'last' &&
+      w1.nfcLower === 'day' &&
+      w2.nfcLower === 'of' &&
+      (w3.nfcLower === 'every' || w3.nfcLower === 'the') &&
+      w4.nfcLower === 'month'
+    ) {
+      const span = spanOf(i + 4);
+      if (isAvailable(span)) {
+        recurrence = { freq: 'monthly', interval: 1, byMonthDay: -1 };
+        recurrenceDerivedDueOn = nextMonthDayDate(today, -1);
+        claimToken('recurrence', span.start, span.end);
+        i += 4;
+        continue;
+      }
+    }
+    if (
+      w1 &&
+      w2 &&
+      contiguous(i, i + 2) &&
+      ((vnMatch(w0, 'ngày') && vnMatch(w1, 'cuối') && vnMatch(w2, 'tháng')) ||
+        (vnMatch(w0, 'cuối') && vnMatchAny(w1, ['mỗi', 'hàng', 'hằng']) && vnMatch(w2, 'tháng')) ||
+        (w0.nfcLower === 'end' && w1.nfcLower === 'of' && w2.nfcLower === 'month'))
+    ) {
+      const span = spanOf(i + 2);
+      if (isAvailable(span)) {
+        const start = expandConnectorBefore(input, words, span.start, [['vào']], occupied);
+        recurrence = { freq: 'monthly', interval: 1, byMonthDay: -1 };
+        recurrenceDerivedDueOn = nextMonthDayDate(today, -1);
+        claimToken('recurrence', start, span.end);
+        i += 2;
+        continue;
+      }
+    }
+    if (w1 && contiguous(i, i + 1) && vnMatch(w0, 'cuối') && vnMatch(w1, 'tháng')) {
+      const span = spanOf(i + 1);
+      if (isAvailable(span)) {
+        const start = expandConnectorBefore(input, words, span.start, [['vào']], occupied);
+        recurrence = { freq: 'monthly', interval: 1, byMonthDay: -1 };
+        recurrenceDerivedDueOn = nextMonthDayDate(today, -1);
+        claimToken('recurrence', start, span.end);
+        i += 1;
+        continue;
+      }
+    }
+
+    // 4b. "ngày <d> hàng tháng" / "day <d> every month" / "every month on day <d>"
+    if (
+      w1 &&
+      w2 &&
+      w3 &&
+      contiguous(i, i + 3) &&
+      ((vnMatch(w0, 'ngày') && /^\d{1,2}$/.test(w1.nfcLower) && vnMatchAny(w2, ['hàng', 'hằng', 'mỗi']) && vnMatch(w3, 'tháng')) ||
+        (w0.nfcLower === 'day' && /^\d{1,2}$/.test(w1.nfcLower) && w2.nfcLower === 'every' && w3.nfcLower === 'month'))
+    ) {
+      const d = Number(w1.nfcLower);
+      if (d >= 1 && d <= 31) {
+        const span = spanOf(i + 3);
+        if (isAvailable(span)) {
+          const start = expandConnectorBefore(input, words, span.start, [['vào']], occupied);
+          recurrence = { freq: 'monthly', interval: 1, byMonthDay: d };
+          recurrenceDerivedDueOn = nextMonthDayDate(today, d);
+          claimToken('recurrence', start, span.end);
+          i += 3;
+          continue;
+        }
+      }
+    }
+    if (
+      w1 &&
+      w2 &&
+      w3 &&
+      contiguous(i, i + 3) &&
+      vnMatchAny(w0, ['hàng', 'hằng', 'mỗi']) &&
+      vnMatch(w1, 'tháng') &&
+      vnMatch(w2, 'ngày') &&
+      /^\d{1,2}$/.test(w3.nfcLower)
+    ) {
+      const d = Number(w3.nfcLower);
+      if (d >= 1 && d <= 31) {
+        const span = spanOf(i + 3);
+        if (isAvailable(span)) {
+          recurrence = { freq: 'monthly', interval: 1, byMonthDay: d };
+          recurrenceDerivedDueOn = nextMonthDayDate(today, d);
+          claimToken('recurrence', span.start, span.end);
+          i += 3;
+          continue;
+        }
+      }
+    }
+
+    // 4c. "hàng tuần <weekday>" / "mỗi tuần <weekday>" / "every week [on] <weekday>" / "every <weekday>" / "<weekday> hàng tuần"
+    if (vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) && w1 && contiguous(i, i + 1) && vnMatch(w1, 'tuần')) {
+      const wd = w2 && contiguous(i + 1, i + 2) ? matchWeekday(input, words, i + 2, true) : null;
+      const endIdx = wd ? i + 1 + wd.consumed : i + 1;
+      const span = spanOf(endIdx);
+      if (isAvailable(span)) {
+        recurrence = wd ? { freq: 'weekly', interval: 1, byWeekday: wd.weekday } : { freq: 'weekly', interval: 1 };
+        recurrenceDerivedDueOn = wd ? nextOccurrenceOfWeekday(today, wd.weekday, true) : today;
+        claimToken('recurrence', span.start, span.end);
+        i = endIdx;
+        continue;
+      }
+    }
+    if (w0.nfcLower === 'every' && w1 && contiguous(i, i + 1) && w1.nfcLower === 'week') {
+      let afterWeekIdx = i + 2;
+      if (words[afterWeekIdx]?.nfcLower === 'on' && contiguous(i + 1, afterWeekIdx)) afterWeekIdx += 1;
+      const wd = afterWeekIdx < words.length && contiguous(i + 1, afterWeekIdx) ? matchWeekday(input, words, afterWeekIdx, true) : null;
+      const endIdx = wd ? afterWeekIdx + wd.consumed - 1 : i + 1;
+      const span = spanOf(endIdx);
+      if (isAvailable(span)) {
+        recurrence = wd ? { freq: 'weekly', interval: 1, byWeekday: wd.weekday } : { freq: 'weekly', interval: 1 };
+        recurrenceDerivedDueOn = wd ? nextOccurrenceOfWeekday(today, wd.weekday, true) : today;
+        claimToken('recurrence', span.start, span.end);
+        i = endIdx;
+        continue;
+      }
+    }
+    if (vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) || w0.nfcLower === 'every') {
+      const wd = w1 && contiguous(i, i + 1) ? matchWeekday(input, words, i + 1, true) : null;
+      if (wd) {
+        const span = spanOf(i + wd.consumed);
+        if (isAvailable(span)) {
+          recurrence = { freq: 'weekly', interval: 1, byWeekday: wd.weekday };
+          recurrenceDerivedDueOn = nextOccurrenceOfWeekday(today, wd.weekday, true);
+          claimToken('recurrence', span.start, span.end);
+          i += wd.consumed;
+          continue;
+        }
+      }
+    }
+
+    // "<weekday> hàng tuần" / "<weekday> every week"
+    const leadingWd = matchWeekday(input, words, i, false);
+    if (leadingWd) {
+      const afterIdx = i + leadingWd.consumed;
+      const a0 = words[afterIdx];
+      const a1 = words[afterIdx + 1];
+      if (
+        a0 &&
+        a1 &&
+        contiguous(i, afterIdx + 1) &&
+        ((vnMatchAny(a0, ['mỗi', 'hàng', 'hằng']) && vnMatch(a1, 'tuần')) || (a0.nfcLower === 'every' && a1.nfcLower === 'week'))
+      ) {
+        const span = spanOf(afterIdx + 1);
+        if (isAvailable(span)) {
+          recurrence = { freq: 'weekly', interval: 1, byWeekday: leadingWd.weekday };
+          recurrenceDerivedDueOn = nextOccurrenceOfWeekday(today, leadingWd.weekday, true);
+          claimToken('recurrence', span.start, span.end);
+          i = afterIdx + 1;
+          continue;
+        }
+      }
+    }
+
+    // 4d. Intervals: "mỗi <N> ngày|tuần|tháng" / "every <N> days|weeks|months"
+    if ((vnMatch(w0, 'mỗi') || w0.nfcLower === 'every') && w1 && w2 && contiguous(i, i + 2) && /^\d{1,3}$/.test(w1.nfcLower)) {
+      const interval = Number(w1.nfcLower);
+      if (interval >= 1 && interval <= MAX_INTERVAL) {
+        const freq: 'daily' | 'weekly' | 'monthly' | null =
+          vnMatch(w2, 'ngày') || w2.nfcLower === 'day' || w2.nfcLower === 'days'
+            ? 'daily'
+            : vnMatch(w2, 'tuần') || w2.nfcLower === 'week' || w2.nfcLower === 'weeks'
+              ? 'weekly'
+              : vnMatch(w2, 'tháng') || w2.nfcLower === 'month' || w2.nfcLower === 'months'
+                ? 'monthly'
+                : null;
+        if (freq) {
+          const span = spanOf(i + 2);
+          if (isAvailable(span)) {
+            recurrence = { freq, interval };
+            recurrenceDerivedDueOn = today;
+            claimToken('recurrence', span.start, span.end);
+            i += 2;
+            continue;
+          }
+        }
+      }
+    }
+
+    // 4e. Simple daily / monthly / weekly
+    if (w1 && contiguous(i, i + 1) && ((vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) && vnMatch(w1, 'ngày')) || (w0.nfcLower === 'every' && w1.nfcLower === 'day'))) {
+      const span = spanOf(i + 1);
+      if (isAvailable(span)) {
+        recurrence = { freq: 'daily', interval: 1 };
+        recurrenceDerivedDueOn = today;
+        claimToken('recurrence', span.start, span.end);
+        i += 1;
+        continue;
+      }
+    }
+    if (w1 && contiguous(i, i + 1) && ((vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) && vnMatch(w1, 'tháng')) || (w0.nfcLower === 'every' && w1.nfcLower === 'month'))) {
+      const span = spanOf(i + 1);
+      if (isAvailable(span)) {
+        recurrence = { freq: 'monthly', interval: 1 };
+        recurrenceDerivedDueOn = today;
+        claimToken('recurrence', span.start, span.end);
+        i += 1;
+        continue;
+      }
+    }
+    if (w0.nfcLower === 'daily' || w0.nfcLower === 'everyday' || w0.nfcLower === 'weekly' || w0.nfcLower === 'monthly') {
+      if (isAvailable(w0)) {
+        if (w0.nfcLower === 'weekly' && w1?.nfcLower === 'on' && w2 && contiguous(i, i + 2)) {
+          const wd = matchWeekday(input, words, i + 2, true);
+          if (wd) {
+            const endIdx = i + 1 + wd.consumed;
+            const span = spanOf(endIdx);
+            if (isAvailable(span)) {
+              recurrence = { freq: 'weekly', interval: 1, byWeekday: wd.weekday };
+              recurrenceDerivedDueOn = nextOccurrenceOfWeekday(today, wd.weekday, true);
+              claimToken('recurrence', span.start, span.end);
+              i = endIdx;
+              continue;
+            }
+          }
+        }
+        // Only treat bare "daily"/"weekly"/"monthly" as recurrence when not used as a pre-nominal adjective ("Weekly review").
+        const tail = input.slice(w0.end).trimStart();
+        const atClauseEdge =
+          /^(?:$|[,.;:)!#/\n]|(?:at|lúc|luc)\s+\d|\d{1,2}(?::\d{2}\b|\s*(?:am|pm|h|g|giờ|gio)\b))/i.test(tail) ||
+          (w1 !== undefined && !isAvailable(w1));
+        if (atClauseEdge || w0.nfcLower === 'everyday') {
+          const freq = w0.nfcLower === 'weekly' ? 'weekly' : w0.nfcLower === 'monthly' ? 'monthly' : 'daily';
+          recurrence = { freq, interval: 1 };
+          recurrenceDerivedDueOn = today;
+          claimToken('recurrence', w0.start, w0.end);
+        }
+      }
+    }
+  }
+
+  // 5. Explicit numeric dates (yyyy-mm-dd, dd/mm/yyyy, dd/mm)
+  let explicitDueOn: string | null = null;
+  let explicitTodaySpecified = false;
+  const dateSpans: Span[] = [];
+
+  for (const m of input.matchAll(ISO_DATE_TOKEN_RE)) {
+    const start = m.index;
+    const end = start + m[0].length;
+    if (!isAvailable({ start, end })) continue;
+    const candidate = formatIsoDate(Number(m[1]), Number(m[2]), Number(m[3]));
+    if (!parseIsoCalendarDate(candidate)) continue;
+    const fullStart = expandConnectorBefore(input, words, start, [['vào', 'ngày'], ['ngày'], ['on']], occupied);
+    explicitDueOn = candidate;
+    explicitTodaySpecified = candidate === today;
+    claimToken('date', fullStart, end);
+    dateSpans.push({ start: fullStart, end });
+  }
+
+  for (const m of input.matchAll(DMY_DATE_TOKEN_RE)) {
+    const start = m.index;
+    const end = start + m[0].length;
+    if (!isAvailable({ start, end })) continue;
+    const day = Number(m[1]);
+    const month = Number(m[2]);
+    const year = m[3] ? Number(m[3]) : undefined;
+    const resolved = resolveExplicitMonthDay(today, day, month, year);
+    if (!resolved) continue;
+    const fullStart = expandConnectorBefore(input, words, start, [['vào', 'ngày'], ['ngày'], ['on']], occupied);
+    explicitDueOn = resolved;
+    explicitTodaySpecified = resolved === today;
+    claimToken('date', fullStart, end);
+    dateSpans.push({ start: fullStart, end });
+  }
+
+  // 6. Explicit clock times (14:30, 9h30, 9h, 9am, 2:30pm)
+  let parsedTime: ParsedTimeInfo | null = null;
+  const timeSpans: Span[] = [];
+  const timeCandidates: Array<{ start: number; end: number; hour: number; minute: number; hasAmPm: boolean }> = [];
+
+  for (const m of input.matchAll(CLOCK_COLON_RE)) {
+    const hour = Number(m[1]);
+    const minute = Number(m[2]);
+    const ampm = m[3]?.toLowerCase();
+    if (ampm) {
+      if (hour < 1 || hour > 12) continue;
+      const converted = ampm === 'am' ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
+      timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour: converted, minute, hasAmPm: true });
+    } else if (hour >= 0 && hour <= 23) {
+      timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour, minute, hasAmPm: false });
+    }
+  }
+  for (const m of input.matchAll(CLOCK_AMPM_RE)) {
+    const hour = Number(m[1]);
+    const minute = m[2] ? Number(m[2]) : 0;
+    const ampm = (m[3] ?? '').toLowerCase();
+    if (hour < 1 || hour > 12) continue;
+    const converted = ampm === 'am' ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
+    timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour: converted, minute, hasAmPm: true });
+  }
+  for (const m of input.matchAll(CLOCK_VN_RE)) {
+    const hour = Number(m[1]);
+    if (hour < 0 || hour > 23) continue;
+    const isGio = m[2] !== undefined;
+    const minuteDigits = m[4];
+    const half = m[5] !== undefined;
+    // If abbreviated "9h" (not "9 giờ"), require no whitespace before digits ("9h30") unless explicitly followed by p/phút.
+    if (!isGio && minuteDigits !== undefined && /\s/.test(m[0].slice(String(m[1]).length))) {
+      const afterHour = m[0].slice(m[0].search(/[hg]/i) + 1);
+      if (/^\s+\d/.test(afterHour) && !/(?:p|phút|phut)$/i.test(afterHour.trim())) continue;
+    }
+    const minute = half ? 30 : minuteDigits ? Number(minuteDigits) : 0;
+    if (minute < 0 || minute > 59) continue;
+    timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour, minute, hasAmPm: false });
+  }
+
+  timeCandidates.sort((a, b) => a.start - b.start || b.end - a.end);
+  for (const tc of timeCandidates) {
+    if (!isAvailable(tc)) continue;
+    let start = tc.start;
+    let end = tc.end;
+    let period: DayPeriod | undefined;
+    if (!tc.hasAmPm) {
+      const afterWord = findAdjacentWordAfter(input, words, end, occupied);
+      const afterPeriod = afterWord ? matchDayPeriod(afterWord, false) : null;
+      if (afterWord && afterPeriod) {
+        period = afterPeriod;
+        end = afterWord.end;
+      } else {
+        const beforeWord = findAdjacentWordBefore(input, words, start, occupied);
+        const beforePeriod = beforeWord ? matchDayPeriod(beforeWord, false) : null;
+        if (beforeWord && beforePeriod) {
+          period = beforePeriod;
+          start = beforeWord.start;
+        }
+      }
+    }
+    start = expandConnectorBefore(input, words, start, [['vào', 'lúc'], ['lúc'], ['at']], occupied);
+    const adjustedHour = tc.hasAmPm ? tc.hour : adjustHourForPeriod(tc.hour, period);
+    parsedTime = { hour: adjustedHour, minute: tc.minute, explicitClock: true, period };
+    claimToken('time', start, end);
+    timeSpans.push({ start, end });
+  }
+
+  // 7. Relative dates & weekdays (with optional adjacent day period)
+  let contextPeriod: DayPeriod | undefined;
+  const timeTokenDismissed = (opts.dismissedTokens ?? []).some((t) => t.kind === 'time');
+
+  for (let i = 0; i < words.length; i++) {
+    const w0 = words[i];
+    if (!w0 || !isAvailable(w0)) continue;
+
+    const contiguous = (fromIdx: number, toIdx: number): boolean => {
+      for (let k = fromIdx; k < toIdx; k++) {
+        const a = words[k];
+        const b = words[k + 1];
+        if (!a || !b || !spacesOnlyBetween(input, a.end, b.start)) return false;
+      }
+      return true;
+    };
+
+    const w1 = words[i + 1];
+    const w2 = words[i + 2];
+
+    const recordDateRange = (startIdx: number, endIdx: number, dateValue: string, isToday: boolean) => {
+      let start = (words[startIdx] as WordToken).start;
+      const end = (words[endIdx] as WordToken).end;
+      if (!isAvailable({ start, end })) return false;
+
+      // Check for an immediately preceding period word (e.g. "sáng mai", "chiều thứ sáu", "tối nay")
+      const prev = words[startIdx - 1];
+      if (prev && spacesOnlyBetween(input, prev.end, start) && isAvailable(prev)) {
+        const p = matchDayPeriod(prev, false);
+        if (p) {
+          contextPeriod = p;
+          if (parsedTime !== null || timeTokenDismissed) {
+            // Clock time already exists (e.g. "sáng mai 9h") or user dismissed time: merge "sáng" into the date token.
+            start = prev.start;
+          } else {
+            // Emit separate time token so user can independently dismiss period vs date.
+            const pStart = expandConnectorBefore(input, words, prev.start, [['vào', 'buổi'], ['buổi'], ['vào'], ['lúc']], occupied);
+            parsedTime = { hour: PERIOD_DEFAULT_HOUR[p], minute: 0, explicitClock: false, period: p };
+            claimToken('time', pStart, prev.end);
+            timeSpans.push({ start: pStart, end: prev.end });
+          }
+        }
+      }
+
+      start = expandConnectorBefore(input, words, start, [['vào', 'ngày'], ['vào'], ['on']], occupied);
+      explicitDueOn = dateValue;
+      explicitTodaySpecified = isToday;
+      claimToken('date', start, end);
+      dateSpans.push({ start, end });
+      return true;
+    };
+
+    // 7a. "day after tomorrow"
+    if (w1 && w2 && contiguous(i, i + 2) && w0.nfcLower === 'day' && w1.nfcLower === 'after' && w2.nfcLower === 'tomorrow') {
+      if (recordDateRange(i, i + 2, addLocalDays(today, 2), false)) {
+        i += 2;
+        continue;
+      }
+    }
+
+    // 7b. "this morning/afternoon/evening" / "tomorrow morning/afternoon/evening/night"
+    if (w1 && contiguous(i, i + 1) && (w0.nfcLower === 'this' || w0.nfcLower === 'tomorrow')) {
+      const enPeriod = matchDayPeriod(w1, true);
+      if (enPeriod) {
+        const span = { start: w0.start, end: w1.end };
+        if (isAvailable(span)) {
+          const isTmr = w0.nfcLower === 'tomorrow';
+          explicitDueOn = isTmr ? addLocalDays(today, 1) : today;
+          explicitTodaySpecified = !isTmr;
+          contextPeriod = enPeriod;
+          if (!parsedTime && !timeTokenDismissed) {
+            parsedTime = { hour: PERIOD_DEFAULT_HOUR[enPeriod], minute: 0, explicitClock: false, period: enPeriod };
+          }
+          claimToken('date', span.start, span.end);
+          dateSpans.push(span);
+          i += 1;
+          continue;
+        }
+      }
+    }
+
+    // 7c. "tonight"
+    if (w0.nfcLower === 'tonight' && isAvailable(w0)) {
+      explicitDueOn = today;
+      explicitTodaySpecified = true;
+      contextPeriod = 'evening';
+      if (!parsedTime && !timeTokenDismissed) {
+        parsedTime = { hour: PERIOD_DEFAULT_HOUR.evening, minute: 0, explicitClock: false, period: 'evening' };
+      }
+      claimToken('date', w0.start, w0.end);
+      dateSpans.push(w0);
+      continue;
+    }
+
+    // 7d. "hôm nay" / "bữa nay" / "today"
+    if (
+      (w1 && contiguous(i, i + 1) && vnMatchAny(w0, ['hôm', 'bữa']) && vnMatch(w1, 'nay') && recordDateRange(i, i + 1, today, true))
+    ) {
+      i += 1;
+      continue;
+    }
+    if (w0.nfcLower === 'today' && recordDateRange(i, i, today, true)) {
+      continue;
+    }
+
+    // 7e. "sáng nay" / "trưa nay" / "chiều nay" / "tối nay" / "đêm nay"
+    const pToday = matchDayPeriod(w0, false);
+    if (pToday && w1 && contiguous(i, i + 1) && vnMatch(w1, 'nay')) {
+      const span = { start: w0.start, end: w1.end };
+      if (isAvailable(span)) {
+        explicitDueOn = today;
+        explicitTodaySpecified = true;
+        contextPeriod = pToday;
+        if (parsedTime || timeTokenDismissed) {
+          claimToken('date', w0.start, w1.end);
+          dateSpans.push(span);
+        } else {
+          parsedTime = { hour: PERIOD_DEFAULT_HOUR[pToday], minute: 0, explicitClock: false, period: pToday };
+          claimToken('time', w0.start, w0.end);
+          claimToken('date', w1.start, w1.end);
+          dateSpans.push({ start: w1.start, end: w1.end });
+        }
+        i += 1;
+        continue;
+      }
+    }
+
+    // 7f. "ngày mai" / "tomorrow" / "tmr" / "tmrw" / "ngày kia" / "ngày mốt"
+    if (w1 && contiguous(i, i + 1) && vnMatch(w0, 'ngày') && vnMatch(w1, 'mai') && recordDateRange(i, i + 1, addLocalDays(today, 1), false)) {
+      i += 1;
+      continue;
+    }
+    if (
+      (w0.nfcLower === 'tomorrow' || w0.nfcLower === 'tmr' || w0.nfcLower === 'tmrw') &&
+      recordDateRange(i, i, addLocalDays(today, 1), false)
+    ) {
+      continue;
+    }
+    if (w1 && contiguous(i, i + 1) && vnMatch(w0, 'ngày') && vnMatchAny(w1, ['kia', 'mốt']) && recordDateRange(i, i + 1, addLocalDays(today, 2), false)) {
+      i += 1;
+      continue;
+    }
+
+    // 7g. Standalone "mai" (only exact ASCII/no-wrong-tone 'mai', guarded against names & idioms) and exact diacritic "mốt"
+    if (w0.nfcLower === 'mai') {
+      const prev = words[i - 1];
+      const next = words[i + 1];
+      const blockedBefore = prev && spacesOnlyBetween(input, prev.end, w0.start) && vnMatchAny(prev, MAI_BEFORE_GUARDS);
+      const blockedAfter = next && spacesOnlyBetween(input, w0.end, next.start) && vnMatchAny(next, MAI_AFTER_GUARDS);
+      if (!blockedBefore && !blockedAfter && recordDateRange(i, i, addLocalDays(today, 1), false)) {
+        continue;
+      }
+    }
+    if (w0.nfcLower === 'mốt' && recordDateRange(i, i, addLocalDays(today, 2), false)) {
+      continue;
+    }
+
+    // 7h. "<N> ngày nữa" / "in <N> days"
+    if (
+      w1 &&
+      w2 &&
+      contiguous(i, i + 2) &&
+      ((/^\d{1,3}$/.test(w0.nfcLower) && vnMatch(w1, 'ngày') && vnMatchAny(w2, ['nữa', 'tới'])) ||
+        (w0.nfcLower === 'in' && /^\d{1,3}$/.test(w1.nfcLower) && (w2.nfcLower === 'day' || w2.nfcLower === 'days')))
+    ) {
+      const days = Number(w0.nfcLower === 'in' ? w1.nfcLower : w0.nfcLower);
+      if (days >= 0 && days <= MAX_INTERVAL && recordDateRange(i, i + 2, addLocalDays(today, days), days === 0)) {
+        i += 2;
+        continue;
+      }
+    }
+
+    // 7i. "next <weekday>" / "this <weekday>"
+    if ((w0.nfcLower === 'next' || w0.nfcLower === 'this') && w1 && contiguous(i, i + 1)) {
+      const wd = matchWeekday(input, words, i + 1, true);
+      if (wd) {
+        const endIdx = i + wd.consumed;
+        const resolved = w0.nfcLower === 'next' ? nextWeekOccurrenceOfWeekday(today, wd.weekday) : nextOccurrenceOfWeekday(today, wd.weekday, true);
+        if (recordDateRange(i, endIdx, resolved, resolved === today)) {
+          i = endIdx;
+          continue;
+        }
+      }
+    }
+
+    // 7j. "tuần sau <weekday>" / "tuần tới <weekday>" / "next week <weekday>" / bare "tuần sau" / "next week"
+    if (
+      w1 &&
+      contiguous(i, i + 1) &&
+      ((vnMatch(w0, 'tuần') && vnMatchAny(w1, ['sau', 'tới'])) || (w0.nfcLower === 'next' && w1.nfcLower === 'week'))
+    ) {
+      const wd = w2 && contiguous(i + 1, i + 2) ? matchWeekday(input, words, i + 2, true) : null;
+      const endIdx = wd ? i + 1 + wd.consumed : i + 1;
+      const resolved = wd ? nextWeekOccurrenceOfWeekday(today, wd.weekday) : nextWeekOccurrenceOfWeekday(today, 1);
+      if (recordDateRange(i, endIdx, resolved, false)) {
+        i = endIdx;
+        continue;
+      }
+    }
+
+    // 7k. "<weekday> tuần sau|tới|này|next week" or bare "<weekday>"
+    const prevWord = words[i - 1];
+    const hasOnConnector = Boolean(prevWord && spacesOnlyBetween(input, prevWord.end, w0.start) && prevWord.nfcLower === 'on');
+    const hasAdjacentTime =
+      hasOnConnector ||
+      timeSpans.some((s) => spacesOnlyBetween(input, s.end, w0.start) || spacesOnlyBetween(input, w0.end, s.start));
+    const wd = matchWeekday(input, words, i, hasAdjacentTime);
+    if (wd) {
+      const endWdIdx = i + wd.consumed - 1;
+      const a0 = words[endWdIdx + 1];
+      const a1 = words[endWdIdx + 2];
+      if (
+        a0 &&
+        a1 &&
+        contiguous(endWdIdx, endWdIdx + 2) &&
+        ((vnMatch(a0, 'tuần') && vnMatchAny(a1, ['sau', 'tới'])) || (a0.nfcLower === 'next' && a1.nfcLower === 'week'))
+      ) {
+        const resolved = nextWeekOccurrenceOfWeekday(today, wd.weekday);
+        if (recordDateRange(i, endWdIdx + 2, resolved, false)) {
+          i = endWdIdx + 2;
+          continue;
+        }
+      }
+      if (a0 && a1 && contiguous(endWdIdx, endWdIdx + 2) && vnMatch(a0, 'tuần') && vnMatch(a1, 'này')) {
+        const resolved = nextOccurrenceOfWeekday(today, wd.weekday, true);
+        if (recordDateRange(i, endWdIdx + 2, resolved, resolved === today)) {
+          i = endWdIdx + 2;
+          continue;
+        }
+      }
+      const resolved = nextOccurrenceOfWeekday(today, wd.weekday, false);
+      if (recordDateRange(i, endWdIdx, resolved, false)) {
+        i = endWdIdx;
+        continue;
+      }
+    }
+  }
+
+  // 8. Period adjacent to an already-matched explicit date or weekday recurrence (e.g. "sáng 25/11" or "25/11 chiều"), or preceded by buổi/vào
+  const recurrenceAnchorSpans = recurrenceDerivedDueOn !== null ? tokens.filter((t) => t.kind === 'recurrence') : [];
+  for (const ds of [...dateSpans, ...recurrenceAnchorSpans]) {
+    const beforeW = findAdjacentWordBefore(input, words, ds.start, occupied);
+    const beforePeriod = beforeW ? matchDayPeriod(beforeW, false) : null;
+    if (beforeW && beforePeriod) {
+      contextPeriod = beforePeriod;
+      if (!parsedTime && !timeTokenDismissed) {
+        const pStart = expandConnectorBefore(input, words, beforeW.start, [['vào', 'buổi'], ['buổi'], ['vào'], ['lúc']], occupied);
+        parsedTime = { hour: PERIOD_DEFAULT_HOUR[beforePeriod], minute: 0, explicitClock: false, period: beforePeriod };
+        claimToken('time', pStart, beforeW.end);
+        timeSpans.push({ start: pStart, end: beforeW.end });
+      } else if (dateSpans.includes(ds)) {
+        const dateTok = tokens.find((t) => t.kind === 'date' && t.start === ds.start && t.end === ds.end);
+        if (dateTok) {
+          const pStart = expandConnectorBefore(input, words, beforeW.start, [['vào', 'buổi'], ['buổi'], ['vào']], occupied);
+          dateTok.start = pStart;
+          dateTok.raw = input.slice(pStart, dateTok.end);
+          occupied.push({ start: pStart, end: beforeW.end });
+        }
+      }
+      continue;
+    }
+    const afterW = findAdjacentWordAfter(input, words, ds.end, occupied);
+    const afterPeriod = afterW ? matchDayPeriod(afterW, true) : null;
+    if (afterW && afterPeriod) {
+      contextPeriod = afterPeriod;
+      if (!parsedTime && !timeTokenDismissed) {
+        parsedTime = { hour: PERIOD_DEFAULT_HOUR[afterPeriod], minute: 0, explicitClock: false, period: afterPeriod };
+        claimToken('time', afterW.start, afterW.end);
+        timeSpans.push({ start: afterW.start, end: afterW.end });
+      }
+    }
+  }
+
+  // Standalone "buổi sáng/trưa/chiều/tối" or "vào sáng/trưa/chiều/tối"
+  if (!parsedTime && !timeTokenDismissed) {
+    for (let i = 0; i < words.length - 1; i++) {
+      const w0 = words[i];
+      const w1 = words[i + 1];
+      if (!w0 || !w1 || !spacesOnlyBetween(input, w0.end, w1.start)) continue;
+      if (!vnMatchAny(w0, ['buổi', 'vào'])) continue;
+      const p = matchDayPeriod(w1, false);
+      if (!p) continue;
+      const span = { start: w0.start, end: w1.end };
+      if (!isAvailable(span)) continue;
+      contextPeriod = p;
+      parsedTime = { hour: PERIOD_DEFAULT_HOUR[p], minute: 0, explicitClock: false, period: p };
+      claimToken('time', span.start, span.end);
+      break;
+    }
+  }
+
+  // Reconcile contextual period with explicit clock time when separated by a date (e.g. "chiều thứ sáu 3h")
+  if (parsedTime && parsedTime.explicitClock && !parsedTime.period && contextPeriod) {
+    parsedTime = {
+      ...parsedTime,
+      hour: adjustHourForPeriod(parsedTime.hour, contextPeriod),
+      period: contextPeriod,
+    };
+  }
+
+  // 9. Resolve final dueOn, dueTime, dueAt, remindAt
+  let dueOn: string | null = explicitDueOn ?? recurrenceDerivedDueOn;
+  const dueTime: string | null = parsedTime ? formatHHmm(parsedTime.hour, parsedTime.minute) : null;
+
+  if (parsedTime && dueOn === null) {
+    // Time-only input without a date word: today unless that wall time has already passed today.
+    const candidateMs = zonedInstant(opts.timeZone, today, parsedTime.hour * 60 + parsedTime.minute);
+    dueOn = candidateMs <= nowMs ? addLocalDays(today, 1) : today;
+  } else if (parsedTime && !explicitTodaySpecified && explicitDueOn === null && recurrence?.freq === 'weekly' && recurrence.byWeekday !== undefined && dueOn === today) {
+    // Weekly recurrence matching today's weekday whose clock time already passed today advances 7 days.
+    const candidateMs = zonedInstant(opts.timeZone, today, parsedTime.hour * 60 + parsedTime.minute);
+    if (candidateMs <= nowMs) dueOn = addLocalDays(today, 7);
+  }
+
+  let dueAt: string | null = null;
+  let remindAt: string | null = null;
+  if (dueOn !== null && parsedTime !== null) {
+    const dueMs = zonedInstant(opts.timeZone, dueOn, parsedTime.hour * 60 + parsedTime.minute);
+    dueAt = formatZonedIsoOffset(opts.timeZone, dueMs);
+    remindAt = formatZonedIsoOffset(opts.timeZone, dueMs - remindBeforeMinutes * MINUTE_MS);
+  }
+
+  tokens.sort((a, b) => a.start - b.start);
+  const title = buildTitleWithoutSpans(input, tokens);
+
+  return {
+    title,
+    dueOn,
+    dueTime,
+    dueAt,
+    remindAt,
+    timeZone: opts.timeZone,
+    recurrence,
+    priority,
+    tags,
+    listName,
+    tokens,
+  };
+}

@@ -1,0 +1,344 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Unit tests for deterministic Vietnamese/English Quick Add parser (#3556).
+import { describe, expect, it } from 'vitest';
+import { buildTitleWithoutSpans, parseTodoQuickAdd } from '../src/index.ts';
+
+const VN_TZ = 'Asia/Ho_Chi_Minh';
+// Tuesday 2026-11-17 08:00:00 +07:00
+const TUE_MORNING = new Date('2026-11-17T08:00:00+07:00');
+// Tuesday 2026-11-17 16:00:00 +07:00
+const TUE_AFTERNOON = new Date('2026-11-17T16:00:00+07:00');
+
+describe('parseTodoQuickAdd (#3556)', () => {
+  it('parses Vietnamese dates with and without diacritics', () => {
+    const todayRes = parseTodoQuickAdd('Gửi báo cáo hôm nay', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(todayRes.title).toBe('Gửi báo cáo');
+    expect(todayRes.dueOn).toBe('2026-11-17');
+    expect(todayRes.dueTime).toBeNull();
+    expect(todayRes.dueAt).toBeNull();
+    expect(todayRes.remindAt).toBeNull();
+
+    const noDiacriticToday = parseTodoQuickAdd('Gui bao cao hom nay', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(noDiacriticToday.title).toBe('Gui bao cao');
+    expect(noDiacriticToday.dueOn).toBe('2026-11-17');
+
+    const tmrRes = parseTodoQuickAdd('Gọi khách ngày mai', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(tmrRes.title).toBe('Gọi khách');
+    expect(tmrRes.dueOn).toBe('2026-11-18');
+
+    const bareMai = parseTodoQuickAdd('Nộp hồ sơ mai', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(bareMai.title).toBe('Nộp hồ sơ');
+    expect(bareMai.dueOn).toBe('2026-11-18');
+
+    const dayAfter1 = parseTodoQuickAdd('Kiểm kho ngày kia', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(dayAfter1.title).toBe('Kiểm kho');
+    expect(dayAfter1.dueOn).toBe('2026-11-19');
+
+    const dayAfter2 = parseTodoQuickAdd('Kiểm kho mốt', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(dayAfter2.title).toBe('Kiểm kho');
+    expect(dayAfter2.dueOn).toBe('2026-11-19');
+
+    const dayAfterNoMark = parseTodoQuickAdd('Kiem kho ngay mot', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(dayAfterNoMark.title).toBe('Kiem kho');
+    expect(dayAfterNoMark.dueOn).toBe('2026-11-19');
+  });
+
+  it('parses Vietnamese and English weekdays, shorthands, and next-week modifiers', () => {
+    // Today is Tuesday 2026-11-17
+    expect(parseTodoQuickAdd('Họp thứ sáu', { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBe('2026-11-20');
+    expect(parseTodoQuickAdd('Hop thu sau', { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBe('2026-11-20');
+    expect(parseTodoQuickAdd('Họp t6', { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBe('2026-11-20');
+    expect(parseTodoQuickAdd('Họp thứ hai', { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBe('2026-11-23');
+    expect(parseTodoQuickAdd('Họp chủ nhật', { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBe('2026-11-22');
+    expect(parseTodoQuickAdd('Hop chu nhat', { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBe('2026-11-22');
+    expect(parseTodoQuickAdd('Họp cn', { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBe('2026-11-22');
+    expect(parseTodoQuickAdd('Họp thứ bảy', { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBe('2026-11-21');
+    expect(parseTodoQuickAdd('Họp thứ bẩy', { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBe('2026-11-21');
+
+    // Next week expressions
+    const nextFri = parseTodoQuickAdd('Họp thứ sáu tuần sau', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(nextFri.title).toBe('Họp');
+    expect(nextFri.dueOn).toBe('2026-11-27');
+
+    const nextMon = parseTodoQuickAdd('Sync next monday', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(nextMon.title).toBe('Sync');
+    expect(nextMon.dueOn).toBe('2026-11-23');
+
+    const nextFriEn = parseTodoQuickAdd('Sync next friday', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(nextFriEn.dueOn).toBe('2026-11-27');
+
+    const tuanSauThuHai = parseTodoQuickAdd('tuần sau thứ hai gửi hóa đơn', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(tuanSauThuHai.title).toBe('gửi hóa đơn');
+    expect(tuanSauThuHai.dueOn).toBe('2026-11-23');
+  });
+
+  it('parses times of day, clock formats, and timezone-accurate dueAt/remindAt offsets', () => {
+    const sangMai = parseTodoQuickAdd('Gọi anh Nam sáng mai 9h', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(sangMai.title).toBe('Gọi anh Nam');
+    expect(sangMai.dueOn).toBe('2026-11-18');
+    expect(sangMai.dueTime).toBe('09:00');
+    expect(sangMai.dueAt).toBe('2026-11-18T09:00:00+07:00');
+    expect(sangMai.remindAt).toBe('2026-11-18T08:30:00+07:00');
+
+    const chieuThuSau = parseTodoQuickAdd('Họp chiều thứ sáu', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(chieuThuSau.title).toBe('Họp');
+    expect(chieuThuSau.dueOn).toBe('2026-11-20');
+    expect(chieuThuSau.dueTime).toBe('14:00');
+    expect(chieuThuSau.dueAt).toBe('2026-11-20T14:00:00+07:00');
+    expect(chieuThuSau.remindAt).toBe('2026-11-20T13:30:00+07:00');
+
+    const chieu3h = parseTodoQuickAdd('Gặp khách 3h chiều mai', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(chieu3h.title).toBe('Gặp khách');
+    expect(chieu3h.dueOn).toBe('2026-11-18');
+    expect(chieu3h.dueTime).toBe('15:00');
+
+    const toiNay8h = parseTodoQuickAdd('Thanh toán tối nay 8h', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(toiNay8h.title).toBe('Thanh toán');
+    expect(toiNay8h.dueOn).toBe('2026-11-17');
+    expect(toiNay8h.dueTime).toBe('20:00');
+
+    const enAmPm = parseTodoQuickAdd('Call supplier tomorrow 2:30pm', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(enAmPm.title).toBe('Call supplier');
+    expect(enAmPm.dueOn).toBe('2026-11-18');
+    expect(enAmPm.dueTime).toBe('14:30');
+    expect(enAmPm.dueAt).toBe('2026-11-18T14:30:00+07:00');
+
+    const customRemind = parseTodoQuickAdd('Họp 9h30 ngày mai', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+      defaultRemindBeforeMinutes: 15,
+    });
+    expect(customRemind.dueTime).toBe('09:30');
+    expect(customRemind.remindAt).toBe('2026-11-18T09:15:00+07:00');
+  });
+
+  it('handles explicit dates, year boundaries, date rollovers, and DST transitions', () => {
+    // 25/11 is later in 2026; 10/01 already passed in 2026 so rolls to 2027
+    const dmy = parseTodoQuickAdd('Nộp tờ khai 25/11 14:30', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(dmy.title).toBe('Nộp tờ khai');
+    expect(dmy.dueOn).toBe('2026-11-25');
+    expect(dmy.dueTime).toBe('14:30');
+
+    const janRollover = parseTodoQuickAdd('Kê khai đầu năm 10/01', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(janRollover.dueOn).toBe('2027-01-10');
+
+    const fullDmy = parseTodoQuickAdd('Quyết toán 31/03/2027', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(fullDmy.dueOn).toBe('2027-03-31');
+
+    const isoDate = parseTodoQuickAdd('Submit report 2027-01-05 9am', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(isoDate.title).toBe('Submit report');
+    expect(isoDate.dueOn).toBe('2027-01-05');
+    expect(isoDate.dueTime).toBe('09:00');
+
+    // Leap day rolls forward to 2028-02-29; invalid dates are ignored
+    expect(parseTodoQuickAdd('Check 29/02', { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBe('2028-02-29');
+    const invalidDate = parseTodoQuickAdd('Check 31/02 and 29/02/2026', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(invalidDate.dueOn).toBeNull();
+    expect(invalidDate.tokens).toEqual([]);
+
+    // Midnight & year boundary across timezones: 2026-12-31T20:00:00Z is 2027-01-01 03:00 in VN, 2026-12-31 15:00 in NY
+    const nyeUtc = new Date('2026-12-31T20:00:00Z');
+    expect(parseTodoQuickAdd('Họp hôm nay', { now: nyeUtc, timeZone: 'Asia/Ho_Chi_Minh' }).dueOn).toBe('2027-01-01');
+    expect(parseTodoQuickAdd('Meeting today', { now: nyeUtc, timeZone: 'America/New_York' }).dueOn).toBe('2026-12-31');
+    expect(parseTodoQuickAdd('Meeting tomorrow', { now: nyeUtc, timeZone: 'America/New_York' }).dueOn).toBe('2027-01-01');
+
+    // Time-only rollover when 9h has already passed at 16:00
+    const timeRollover = parseTodoQuickAdd('Gọi khách 9h', { now: TUE_AFTERNOON, timeZone: VN_TZ });
+    expect(timeRollover.dueOn).toBe('2026-11-18');
+    expect(timeRollover.dueTime).toBe('09:00');
+
+    // Explicit "hôm nay 9h" keeps today even at 16:00
+    const explicitToday = parseTodoQuickAdd('Gọi khách hôm nay 9h', { now: TUE_AFTERNOON, timeZone: VN_TZ });
+    expect(explicitToday.dueOn).toBe('2026-11-17');
+
+    // DST fall-back day in America/New_York (2026-11-01)
+    const dstFallBack = parseTodoQuickAdd('Pay rent today 9am', {
+      now: new Date('2026-11-01T01:30:00-04:00'),
+      timeZone: 'America/New_York',
+    });
+    expect(dstFallBack.dueOn).toBe('2026-11-01');
+    expect(dstFallBack.dueAt).toBe('2026-11-01T09:00:00-05:00');
+    expect(dstFallBack.remindAt).toBe('2026-11-01T08:30:00-05:00');
+  });
+
+  it('parses recurrence hints in Vietnamese and English', () => {
+    const dailyVn = parseTodoQuickAdd('Kiểm tra tồn kho mỗi ngày 8h', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(dailyVn.title).toBe('Kiểm tra tồn kho');
+    expect(dailyVn.recurrence).toEqual({ freq: 'daily', interval: 1 });
+    expect(dailyVn.dueTime).toBe('08:00');
+    expect(dailyVn.dueOn).toBe('2026-11-17');
+
+    expect(parseTodoQuickAdd('Check inbox hang ngay', { now: TUE_MORNING, timeZone: VN_TZ }).recurrence).toEqual({
+      freq: 'daily',
+      interval: 1,
+    });
+    expect(parseTodoQuickAdd('Standup every day 9am', { now: TUE_MORNING, timeZone: VN_TZ }).recurrence).toEqual({
+      freq: 'daily',
+      interval: 1,
+    });
+
+    const weeklyVn = parseTodoQuickAdd('Họp giao ban hàng tuần thứ hai', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(weeklyVn.title).toBe('Họp giao ban');
+    expect(weeklyVn.recurrence).toEqual({ freq: 'weekly', interval: 1, byWeekday: 1 });
+    expect(weeklyVn.dueOn).toBe('2026-11-23');
+
+    const weeklyEn = parseTodoQuickAdd('Weekly review every friday', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(weeklyEn.title).toBe('Weekly review');
+    expect(weeklyEn.recurrence).toEqual({ freq: 'weekly', interval: 1, byWeekday: 5 });
+    expect(weeklyEn.dueOn).toBe('2026-11-20');
+
+    const monthlyDay = parseTodoQuickAdd('Nộp thuế ngày 20 hàng tháng', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(monthlyDay.title).toBe('Nộp thuế');
+    expect(monthlyDay.recurrence).toEqual({ freq: 'monthly', interval: 1, byMonthDay: 20 });
+    expect(monthlyDay.dueOn).toBe('2026-11-20');
+
+    const eom = parseTodoQuickAdd('Chốt sổ cuối tháng !p1', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(eom.title).toBe('Chốt sổ');
+    expect(eom.recurrence).toEqual({ freq: 'monthly', interval: 1, byMonthDay: -1 });
+    expect(eom.dueOn).toBe('2026-11-30');
+    expect(eom.priority).toBe(1);
+
+    const eomEn = parseTodoQuickAdd('Close books last day of month', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(eomEn.title).toBe('Close books');
+    expect(eomEn.recurrence).toEqual({ freq: 'monthly', interval: 1, byMonthDay: -1 });
+
+    const standupDaily = parseTodoQuickAdd('Standup daily 9am', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(standupDaily.title).toBe('Standup');
+    expect(standupDaily.recurrence).toEqual({ freq: 'daily', interval: 1 });
+    expect(standupDaily.dueTime).toBe('09:00');
+
+    const monthlyClose = parseTodoQuickAdd('Monthly close', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(monthlyClose.title).toBe('Monthly close');
+    expect(monthlyClose.recurrence).toBeNull();
+  });
+
+  it('parses priorities, #tags, and /List without colliding with dd/mm or URLs', () => {
+    const complex = parseTodoQuickAdd(
+      'Kiểm tra https://ludy.vn/2026/11/25#sec-1 25/11 14:30 !P2 #ke-toan #Q4 /"Việc riêng"',
+      { now: TUE_MORNING, timeZone: VN_TZ },
+    );
+    expect(complex.title).toBe('Kiểm tra https://ludy.vn/2026/11/25#sec-1');
+    expect(complex.dueOn).toBe('2026-11-25');
+    expect(complex.dueTime).toBe('14:30');
+    expect(complex.priority).toBe(2);
+    expect(complex.tags).toEqual(['ke-toan', 'q4']);
+    expect(complex.listName).toBe('Việc riêng');
+
+    const dmyVsList = parseTodoQuickAdd('Nộp hồ sơ 25/11 /CongViec', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(dmyVsList.title).toBe('Nộp hồ sơ');
+    expect(dmyVsList.dueOn).toBe('2026-11-25');
+    expect(dmyVsList.listName).toBe('CongViec');
+
+    // Pure numeric #3556 and Unix-style /etc/hosts stay in title
+    const nonTags = parseTodoQuickAdd('Xem issue #3556 tại /etc/hosts hoặc a / b #urgent', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+    });
+    expect(nonTags.title).toBe('Xem issue #3556 tại /etc/hosts hoặc a / b');
+    expect(nonTags.tags).toEqual(['urgent']);
+    expect(nonTags.listName).toBeNull();
+  });
+
+  it('avoids Vietnamese vocabulary false positives', () => {
+    const cases = [
+      'Nộp tờ khai thuế',
+      'Kiểm tra hóa đơn nhà cung cấp',
+      'Gọi khách xin sao kê',
+      'Gửi báo cáo cho tôi ngay',
+      'Làm một lần thứ hai xem sao',
+      'Chương trình khuyen mai thu tiền',
+      'Thiết kế sáng tạo và tối ưu trang chủ',
+      'Mua đồ ăn sáng và cơm trưa',
+      'Kiểm tra chiều dài và chiều rộng',
+      'Gặp chị Mai xem hợp đồng',
+    ];
+    for (const input of cases) {
+      const parsed = parseTodoQuickAdd(input, { now: TUE_MORNING, timeZone: VN_TZ });
+      expect(parsed.tokens, input).toEqual([]);
+      expect(parsed.title, input).toBe(input);
+      expect(parsed.dueOn, input).toBeNull();
+      expect(parsed.dueTime, input).toBeNull();
+    }
+  });
+
+  it('restores exact original token text when any chip is dismissed', () => {
+    const input = 'Gọi khách, Ngày Mai! 9h30 !P1 #Sales /"Việc riêng"';
+    const first = parseTodoQuickAdd(input, { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(first.title).toBe('Gọi khách!');
+    expect(first.tokens.map((t) => [t.kind, t.raw])).toEqual([
+      ['date', 'Ngày Mai'],
+      ['time', '9h30'],
+      ['priority', '!P1'],
+      ['tag', '#Sales'],
+      ['list', '/"Việc riêng"'],
+    ]);
+
+    // Verify exact span integrity
+    for (const tok of first.tokens) {
+      expect(input.slice(tok.start, tok.end)).toBe(tok.raw);
+    }
+
+    // Dismissing the date token restores exact original casing "Ngày Mai" into the title
+    const withoutDate = parseTodoQuickAdd(input, {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+      dismissedTokens: [first.tokens[0]!],
+    });
+    expect(withoutDate.title).toContain('Ngày Mai');
+    expect(withoutDate.dueTime).toBe('09:30');
+    expect(withoutDate.tokens.some((t) => t.kind === 'date')).toBe(false);
+
+    // Dismissing all tokens restores the exact original input string
+    const withoutAll = parseTodoQuickAdd(input, {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+      dismissedTokens: first.tokens,
+    });
+    expect(withoutAll.title).toBe(input);
+    expect(withoutAll.tokens).toEqual([]);
+    expect(withoutAll.dueOn).toBeNull();
+    expect(withoutAll.dueTime).toBeNull();
+    expect(withoutAll.priority).toBeNull();
+    expect(withoutAll.tags).toEqual([]);
+    expect(withoutAll.listName).toBeNull();
+
+    // Dismissing time in "sáng mai 9h" does not leave phantom 09:00 from "sáng"
+    const sangMaiClock = parseTodoQuickAdd('Họp sáng mai 9h', { now: TUE_MORNING, timeZone: VN_TZ });
+    const timeTok = sangMaiClock.tokens.find((t) => t.kind === 'time')!;
+    const afterDismissTime = parseTodoQuickAdd('Họp sáng mai 9h', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+      dismissedTokens: [timeTok],
+    });
+    expect(afterDismissTime.dueOn).toBe('2026-11-18');
+    expect(afterDismissTime.dueTime).toBeNull();
+    expect(afterDismissTime.title).toBe('Họp 9h');
+
+    // Non-date tokens stay intact when only date/time spans are stripped for pre-V2-1/V2-3 persistence
+    const dateTimeSpans = first.tokens.filter((t) => t.kind === 'date' || t.kind === 'time');
+    expect(buildTitleWithoutSpans(input, dateTimeSpans)).toBe('Gọi khách! !P1 #Sales /"Việc riêng"');
+  });
+
+  it('runs synchronously in well under 5ms per parse', () => {
+    const start = performance.now();
+    for (let i = 0; i < 100; i++) {
+      parseTodoQuickAdd('Nộp báo cáo thuế ngày 20 hàng tháng 9h30 !p1 #thue /KeToan https://ludy.vn/#ok', {
+        now: TUE_MORNING,
+        timeZone: VN_TZ,
+      });
+    }
+    const avgMs = (performance.now() - start) / 100;
+    expect(avgMs).toBeLessThan(5);
+  });
+
+  it('handles NFD decomposed Vietnamese text and preserves exact input spans', () => {
+    const nfd = 'Gọi khách ngày mai 9h #thuế'.normalize('NFD');
+    const res = parseTodoQuickAdd(nfd, { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(res.dueOn).toBe('2026-11-18');
+    expect(res.dueTime).toBe('09:00');
+    expect(res.tags).toEqual(['thuế']);
+    for (const tok of res.tokens) {
+      expect(nfd.slice(tok.start, tok.end)).toBe(tok.raw);
+    }
+  });
+});

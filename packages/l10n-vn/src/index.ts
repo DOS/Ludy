@@ -13,3 +13,4 @@ export * from './line-totals.ts';
 export * from './banks.ts';
 export * from './labor-contracts.ts';
 export * from './recruiting.ts';
+export * from './todo-quick-add.ts';

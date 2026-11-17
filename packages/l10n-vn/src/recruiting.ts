@@ -4,6 +4,7 @@
 // never JS floating-point numbers. Calendar dates validate against Gregorian bounds via `isValidCalendarDate`.
 import { isValidCalendarDate } from './labor-contracts.ts';
 import { money, toMoney, type DecimalValue } from './money.ts';
+import { assertValidTimeZone, nextUtcDate, zoneOffsetMs, zonedDateString } from './time-zone.ts';
 
 // ---------------------------------------------------------------------------------------------------------------------
 // 1. Recruiting pipeline stages & transition checks
@@ -508,71 +509,6 @@ function intersectEpochRanges(left: readonly EpochRange[], right: readonly Epoch
     else j += 1;
   }
   return out;
-}
-
-const tzFormatters = new Map<string, Intl.DateTimeFormat>();
-function getTzFormatter(timeZone: string): Intl.DateTimeFormat {
-  let formatter = tzFormatters.get(timeZone);
-  if (!formatter) {
-    formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    });
-    tzFormatters.set(timeZone, formatter);
-  }
-  return formatter;
-}
-
-function assertValidTimeZone(timeZone: string): void {
-  if (timeZone.length === 0 || timeZone.length > 64) {
-    throw new RangeError(`Invalid timeZone: ${timeZone}`);
-  }
-  try {
-    getTzFormatter(timeZone);
-  } catch {
-    throw new RangeError(`Invalid timeZone: ${timeZone}`);
-  }
-}
-
-function wallClockAt(timeZone: string, atMs: number): {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-  second: number;
-} {
-  const parts = Object.fromEntries(getTzFormatter(timeZone).formatToParts(new Date(atMs)).map((p) => [p.type, p.value]));
-  return {
-    year: Number(parts.year),
-    month: Number(parts.month),
-    day: Number(parts.day),
-    hour: Number(parts.hour),
-    minute: Number(parts.minute),
-    second: Number(parts.second),
-  };
-}
-
-function zoneOffsetMs(timeZone: string, atMs: number): number {
-  const w = wallClockAt(timeZone, atMs);
-  const asUtc = Date.UTC(w.year, w.month - 1, w.day, w.hour, w.minute, w.second);
-  return asUtc - Math.floor(atMs / 1000) * 1000;
-}
-
-function zonedDateString(timeZone: string, atMs: number): string {
-  const w = wallClockAt(timeZone, atMs);
-  return `${String(w.year).padStart(4, '0')}-${String(w.month).padStart(2, '0')}-${String(w.day).padStart(2, '0')}`;
-}
-
-function nextUtcDate(date: string): string {
-  const [y, m, d] = date.split('-').map(Number) as [number, number, number];
-  return new Date(Date.UTC(y, m - 1, d) + DAY_MS).toISOString().slice(0, 10);
 }
 
 function findOffsetSubRange(

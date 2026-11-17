@@ -6,7 +6,7 @@
 // team task, after the member confirms the text the team will read.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import type { MyWorkTask, NoteLinkTargetInput, Todo, TodoListView, TodoSourceNote, TodoStep, TodoSummary } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
@@ -28,6 +28,7 @@ import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { refreshProjectQueries } from '../components/project-task-dialog.tsx';
 import { TaskChecklistBadge } from '../components/task-checklist.tsx';
+import { TodoQuickAddBar } from '../components/todo-quick-add.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isModuleOff } from '../lib/errors.ts';
@@ -507,38 +508,6 @@ function EditorFor({ id, onClose }: { id: string; onClose: () => void }) {
   return <TodoEditor key={`${todo.data.id}:${todo.data.revision}`} todo={todo.data} onClose={onClose} />;
 }
 
-function QuickAdd({ inputRef }: { inputRef: RefObject<HTMLInputElement | null> }) {
-  const t = useTranslations('myWork');
-  const [title, setTitle] = useState('');
-  const create = useMutation({
-    mutationFn: (value: string) => client.notes.todos.create({ title: value, timeZone: browserTimeZone() }),
-    // Only what was sent is cleared: a title typed meanwhile stays.
-    onSuccess: (_, sent) => {
-      setTitle((current) => (current.trim() === sent ? '' : current));
-      refresh();
-    },
-  });
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const value = title.trim();
-    if (value && !create.isPending) create.mutate(value);
-  };
-  return (
-    <form onSubmit={submit} className="mb-4">
-      <Input
-        ref={inputRef}
-        aria-label={t('quickAdd')}
-        placeholder={t('quickAdd')}
-        maxLength={300}
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        onKeyDown={(e) => e.key === 'Escape' && e.currentTarget.blur()}
-      />
-      {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
-    </form>
-  );
-}
-
 export function MyWorkPage() {
   const { slug } = useParams({ strict: false }) as { slug: string };
   const t = useTranslations('myWork');
@@ -708,7 +677,9 @@ export function MyWorkPage() {
     <div className="space-y-4">
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
       <NotesSubnav slug={slug} active="my-work" />
-      <QuickAdd inputRef={quickAdd} />
+      <div className="mb-4">
+        <TodoQuickAddBar inputRef={quickAdd} />
+      </div>
       {view === 'open' && work.data?.noSeatHint && (
         <Alert className="border-border bg-muted/35" data-testid="my-work-no-seat-hint">
           <AlertDescription className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground">
