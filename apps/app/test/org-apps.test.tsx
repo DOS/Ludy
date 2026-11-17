@@ -79,9 +79,12 @@ describe('Settings Apps', () => {
   });
 
   it('speaks Vietnamese with the app names', () => {
-    const html = render(true, [app('finance'), app('meetings', { enabled: false })], 'vi');
+    const html = render(true, [app('finance'), app('meetings', { enabled: false }), app('sign')], 'vi');
     expect(html).toContain(viMessages.orgApps.names.finance);
     expect(html).toContain(viMessages.orgApps.names.meetings);
+    expect(html).toContain('eSign');
+    expect(en.orgApps.names.sign).toBe('eSign');
+    expect(viMessages.orgApps.names.sign).toBe('eSign');
     expect(html).toContain(viMessages.orgApps.status.off);
     expect(html).toContain('Ứng dụng');
   });

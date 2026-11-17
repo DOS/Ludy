@@ -7,6 +7,7 @@ export * from './features.ts';
 export * from './meeting-summary.ts';
 export * from './meeting-translation.ts';
 export * from './meeting-ask.ts';
+export * from './meetings-brief.ts';
 export * from './tasks-from-note.ts';
 export * from './tasks-from-source.ts';
 export * from './note-ai.ts';

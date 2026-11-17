@@ -17,7 +17,7 @@ test('the toggle switches the language at the same path and a cookie keeps it ac
   expect(await lang(page)).toBe('en');
   expect((await context.cookies()).find((cookie) => cookie.name === 'ludy-lang')?.value).toBe('en');
 
-  for (const path of ['/', '/engage', '/cong-tac']) {
+  for (const path of ['/', '/engage', '/esign', '/cong-tac']) {
     await page.goto(path);
     expect(new URL(page.url()).pathname, path).toBe(path);
     expect(await lang(page), path).toBe('en');
@@ -44,7 +44,7 @@ test('the retired /crm and /notes redirect for good to /engage and /cong-tac, in
 });
 
 test('old /en links redirect to the public address and show English', async ({ browser }) => {
-  for (const [from, to] of [['/en', '/'], ['/en/accounting', '/ke-toan'], ['/en/crm', '/engage'], ['/en/teamwork', '/cong-tac'], ['/en/notes', '/cong-tac']] as const) {
+  for (const [from, to] of [['/en', '/'], ['/en/accounting', '/ke-toan'], ['/en/crm', '/engage'], ['/en/esign', '/esign'], ['/en/teamwork', '/cong-tac'], ['/en/notes', '/cong-tac']] as const) {
     const context = await browser.newContext({ locale: 'vi-VN' });
     const page = await context.newPage();
     await page.goto(from);
@@ -79,7 +79,7 @@ test('the sitemap lists one address per page and the pages declare no /en altern
   const sitemap = await (await request.get('/sitemap.xml')).text();
   expect(sitemap).not.toMatch(/\/en(\/|<)/);
   expect(sitemap).not.toContain('xhtml:link');
-  for (const path of ['/', '/cong-tac', '/ke-toan', '/engage']) {
+  for (const path of ['/', '/cong-tac', '/ke-toan', '/engage', '/esign']) {
     await page.goto(path);
     expect(await page.locator('link[rel="alternate"][hreflang]').count(), path).toBe(0);
     expect(await page.locator('link[rel="canonical"]').getAttribute('href'), path).toMatch(new RegExp(`https://ludy\\.vn${path === '/' ? '/?' : path}$`));

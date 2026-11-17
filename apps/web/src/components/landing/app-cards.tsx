@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { ArrowRight, BriefcaseBusiness, Calculator, Megaphone, Sparkles, UsersRound, type LucideIcon } from 'lucide-react';
+import { ArrowRight, BriefcaseBusiness, Calculator, FilePenLine, Megaphone, Sparkles, UsersRound, type LucideIcon } from 'lucide-react';
 import type { Dictionary } from '../../content/vi';
 import { appPagePath, type AppPageKey } from '../../content/site';
 import { Section, SectionHead } from './ui';
 
-const ICONS: Record<string, LucideIcon> = { teamwork: UsersRound, finance: Calculator, engage: Megaphone, hr: BriefcaseBusiness, ai: Sparkles };
+const ICONS: Record<string, LucideIcon> = { teamwork: UsersRound, finance: Calculator, engage: Megaphone, hr: BriefcaseBusiness, sign: FilePenLine, ai: Sparkles };
 
 // One card per app of the regrouped shell (owner decisions 2026-11-12 and 2026-11-14, #3225, #3235): an icon, what it
 // does today, which AI coworker works in it (none on Ludy AI, which holds the team's settings), and a link to its page

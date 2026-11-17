@@ -157,14 +157,14 @@ export function hasBareLink(text: string): boolean {
 
 // A figure as written: its digits with leading zeros dropped and how many separators it has. "1.250.000" and "1,250,000" are the same figure written for two locales (the same digits, the same
 // number of separators); "1,5" and "15" are not (a decimal comma against none), so a figure cannot change its size between a line and a sentence.
-interface Figure {
+export interface Figure {
   digits: string;
   separators: number;
 }
-function figuresIn(text: string): Figure[] {
+export function figuresIn(text: string): Figure[] {
   return numbersIn(text).map((n) => ({ digits: n.replace(/[.,]/g, '').replace(/^0+(?=\d)/, ''), separators: [...n].filter((c) => c === '.' || c === ',').length }));
 }
-const sameFigure = (a: Figure, b: Figure): boolean => a.digits === b.digits && a.separators === b.separators;
+export const sameFigure = (a: Figure, b: Figure): boolean => a.digits === b.digits && a.separators === b.separators;
 
 /**
  * What code says about one sentence the model wrote. Returns the sentence with its valid citations, or null when it is dropped: no text, a text over its length, no citation that names a
