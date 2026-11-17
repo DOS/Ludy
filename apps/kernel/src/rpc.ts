@@ -977,6 +977,9 @@ export function createRpcHandler(
         edit: os.hr.departments.edit.handler(hrCommand('hr.department.edit')),
         archive: os.hr.departments.archive.handler(hrCommand('hr.department.archive')),
       },
+      employee: {
+        contractPdf: os.hr.employee.contractPdf.handler(hrQuery('hr.employee.contract_pdf')),
+      },
       payroll: {
         employees: {
           list: os.hr.payroll.employees.list.handler(hrQuery('hr.payroll.employee.list')),
@@ -1102,6 +1105,7 @@ export function createRpcHandler(
         complete: os.notes.todos.complete.handler(notesCommand('notes.todo.complete')),
         reopen: os.notes.todos.reopen.handler(notesCommand('notes.todo.reopen')),
         reorder: os.notes.todos.reorder.handler(notesCommand('notes.todo.reorder')),
+        reschedule: os.notes.todos.reschedule.handler(notesCommand('notes.todo.reschedule')),
         delete: os.notes.todos.delete.handler(notesCommand('notes.todo.delete')),
         restore: os.notes.todos.restore.handler(notesCommand('notes.todo.restore')),
         linkAdd: os.notes.todos.linkAdd.handler(notesCommand('notes.todo.link_add')),

@@ -146,6 +146,8 @@ describe('Notes N8 contracts (#1677)', () => {
       taskId: null,
       sourceNoteId: NOTE_ID,
       sourceNote: { id: NOTE_ID, title: 'Ghi chu hop', available: true },
+      recurrence: null,
+      seriesId: null,
       tainted: true,
       revision: 1,
       createdAt: '2026-11-16T00:00:00.000Z',

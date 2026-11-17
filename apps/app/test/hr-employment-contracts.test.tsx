@@ -31,6 +31,7 @@ vi.mock('../src/lib/api.ts', async () => {
     orpc: node([]),
     client: {
       hr: {
+        employee: { contractPdf: vi.fn() },
         payroll: {
           employees: { add: vi.fn(), edit: vi.fn(), end: vi.fn(), finalization: vi.fn(), erase: vi.fn() },
           employments: { add: vi.fn() },
@@ -51,7 +52,9 @@ const {
   TermsFields,
   blankTerms,
   buildEmploymentPayload,
+  decodeBase64Bytes,
   previewContractCheck,
+  triggerContractPdfDownload,
 } = await import('../src/routes/hr-employees.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
@@ -265,5 +268,69 @@ describe('HR labor contract & probation UI (#3384)', () => {
     expect(detailHtml).toContain('12 mo');
     expect(detailHtml).toContain('#2');
     expect(detailHtml).toContain('College+');
+    expect(detailHtml).toContain('data-testid="hr-terms-contract-pdf"');
+    expect(detailHtml).toContain('Download contract PDF');
+
+    const detailViHtml = wrap(<Detail employeeId={EMP_ID} owner onClose={() => {}} />, 'vi');
+    expect(detailViHtml).toContain('data-testid="hr-terms-contract-pdf"');
+    expect(detailViHtml).toContain('Tải hợp đồng PDF');
+
+    cache.current.setQueryData(['hr', 'payroll', 'employees', 'get', { employeeId: EMP_ID }], {
+      ...detail,
+      erased: true,
+    });
+    const erasedHtml = wrap(<Detail employeeId={EMP_ID} owner onClose={() => {}} />, 'vi');
+    expect(erasedHtml).not.toContain('data-testid="hr-terms-contract-pdf"');
+  });
+
+  it('decodes base64 PDF payloads and triggers an application/pdf browser download (#3548)', () => {
+    const samplePdf = Buffer.from('%PDF-1.7\ntest\n%%EOF\n', 'latin1');
+    const decoded = decodeBase64Bytes(samplePdf.toString('base64'));
+    expect(Buffer.from(decoded).equals(samplePdf)).toBe(true);
+
+    let capturedBlob: Blob | null = null;
+    let clickedDownload = '';
+    let appendedRemoved = false;
+    const origCreateObjectURL = URL.createObjectURL;
+    const origRevokeObjectURL = URL.revokeObjectURL;
+    const origDocument = globalThis.document;
+    URL.createObjectURL = (obj: Blob | MediaSource) => {
+      capturedBlob = obj as Blob;
+      return 'blob:http://localhost/contract-pdf';
+    };
+    URL.revokeObjectURL = () => {};
+    globalThis.document = {
+      createElement: () => {
+        const anchor = {
+          href: '',
+          download: '',
+          click() {
+            clickedDownload = anchor.download;
+          },
+          remove() {
+            appendedRemoved = true;
+          },
+        };
+        return anchor;
+      },
+      body: { append: () => {} },
+    } as unknown as Document;
+
+    try {
+      triggerContractPdfDownload({
+        filename: 'hop-dong-lao-dong-an-2026-01-01.pdf',
+        contentType: 'application/pdf',
+        pdfBase64: samplePdf.toString('base64'),
+      });
+      expect(capturedBlob).not.toBeNull();
+      expect((capturedBlob as unknown as Blob).type).toBe('application/pdf');
+      expect((capturedBlob as unknown as Blob).size).toBe(samplePdf.byteLength);
+      expect(clickedDownload).toBe('hop-dong-lao-dong-an-2026-01-01.pdf');
+      expect(appendedRemoved).toBe(true);
+    } finally {
+      URL.createObjectURL = origCreateObjectURL;
+      URL.revokeObjectURL = origRevokeObjectURL;
+      globalThis.document = origDocument;
+    }
   });
 });

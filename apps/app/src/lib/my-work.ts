@@ -2,7 +2,20 @@
 // the open tasks of the positions they hold, grouped by the due day (the kernel works the group out), the to-dos in the
 // member's own order. The pure parts of the screen live here: the groups, the keyboard shortcuts, where a move puts a
 // to-do and the text a hand-over proposes.
-import { DEFAULT_TIME_ZONE, TODO_DUE_GROUPS, isTimeZone, type MyWorkTask, type TodoDueGroup, type TodoStep, type TodoSummary } from '@crove/kernel-contract';
+import {
+  DEFAULT_TIME_ZONE,
+  TODO_DUE_GROUPS,
+  TODO_RESCHEDULE_BATCH_MAX,
+  addTodoLocalDays,
+  isTimeZone,
+  zonedDate,
+  type MyWorkTask,
+  type TodoDueGroup,
+  type TodoRecurrence,
+  type TodoStep,
+  type TodoSummary,
+} from '@crove/kernel-contract';
+import { FORMAT_LOCALE, type Locale } from '../i18n/locale.ts';
 
 export interface TodoGroup {
   id: TodoDueGroup;
@@ -118,4 +131,136 @@ export function stepSelection(order: readonly string[], current: string | null, 
   const at = current === null ? -1 : order.indexOf(current);
   if (at < 0) return step === 1 ? (order[0] as string) : (order[order.length - 1] as string);
   return order[Math.min(order.length - 1, Math.max(0, at + step))] as string;
+}
+
+export type UpcomingHorizon = 7 | 30;
+
+export interface UpcomingDayBucket {
+  date: string;
+  todos: TodoSummary[];
+  tasks: MyWorkTask[];
+}
+
+export interface UpcomingAgenda {
+  overdueTodos: TodoSummary[];
+  overdueTasks: MyWorkTask[];
+  days: UpcomingDayBucket[];
+}
+
+/** Sequential `YYYY-MM-DD` dates from `today` covering `horizon` days (`today .. today + horizon - 1`). */
+export function upcomingDates(today: string, horizon: UpcomingHorizon): string[] {
+  const days: string[] = [];
+  for (let offset = 0; offset < horizon; offset++) {
+    days.push(addTodoLocalDays(today, offset));
+  }
+  return days;
+}
+
+/** Local `YYYY-MM-DD` day of a team task's `due` timestamp in `viewerTimeZone`, or null when undated/invalid. */
+export function localDueDayOfTask(task: MyWorkTask, viewerTimeZone: string): string | null {
+  if (!task.due) return null;
+  const ms = Date.parse(task.due);
+  if (!Number.isFinite(ms)) return null;
+  const tz = isTimeZone(viewerTimeZone) ? viewerTimeZone : DEFAULT_TIME_ZONE;
+  return zonedDate(tz, ms);
+}
+
+/**
+ * Builds the `Sắp tới` (Upcoming) agenda (#3557): overdue personal to-dos and team tasks in the top overdue bucket,
+ * followed by one bucket per local day across `horizon` days (7 or 30) starting at `today`.
+ */
+export function groupUpcomingAgenda(
+  todos: readonly TodoSummary[],
+  tasks: readonly MyWorkTask[],
+  today: string,
+  horizon: UpcomingHorizon,
+  viewerTimeZone: string,
+): UpcomingAgenda {
+  const dayList = upcomingDates(today, horizon);
+  const endDay = dayList[dayList.length - 1] ?? today;
+  const buckets = new Map<string, UpcomingDayBucket>(dayList.map((date) => [date, { date, todos: [], tasks: [] }]));
+  const overdueTodos: TodoSummary[] = [];
+  const overdueTasks: MyWorkTask[] = [];
+
+  for (const todo of todos) {
+    if (todo.group === 'overdue') {
+      overdueTodos.push(todo);
+      continue;
+    }
+    const targetDay = todo.dueOn !== null && todo.dueOn < today && todo.group === 'today' ? today : todo.dueOn;
+    if (targetDay !== null && targetDay >= today && targetDay <= endDay) {
+      buckets.get(targetDay)?.todos.push(todo);
+    }
+  }
+
+  for (const task of tasks) {
+    const day = localDueDayOfTask(task, viewerTimeZone);
+    if (task.group === 'overdue') {
+      overdueTasks.push(task);
+      continue;
+    }
+    const targetDay = day !== null && day < today && task.group === 'today' ? today : day;
+    if (targetDay !== null && targetDay >= today && targetDay <= endDay) {
+      buckets.get(targetDay)?.tasks.push(task);
+    }
+  }
+
+  return {
+    overdueTodos,
+    overdueTasks,
+    days: dayList.map((date) => buckets.get(date)!),
+  };
+}
+
+function utcMiddayOfDay(day: string): Date {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(Date.UTC(y ?? 1970, (m ?? 1) - 1, d ?? 1, 12, 0, 0));
+}
+
+/** Short weekday label for a `YYYY-MM-DD` date without shifting across local time zones. */
+export function formatDayBucketWeekday(day: string, locale: Locale): string {
+  return new Intl.DateTimeFormat(FORMAT_LOCALE[locale], { weekday: 'short', timeZone: 'UTC' }).format(utcMiddayOfDay(day));
+}
+
+/** Short `DD/MM` date label matching `formatDate`'s day-first order (`dd/mm`) without shifting across time zones. */
+export function formatDayBucketShort(day: string, _locale: Locale): string {
+  const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(day);
+  if (!m) return day;
+  return `${m[2]}/${m[1]}`;
+}
+
+/** Splits `ids` into batches capped at `max` (`TODO_RESCHEDULE_BATCH_MAX`) for bulk reschedule calls. */
+export function chunkTodoIds(ids: readonly string[], max = TODO_RESCHEDULE_BATCH_MAX): string[][] {
+  const out: string[][] = [];
+  const step = Math.max(1, max);
+  for (let i = 0; i < ids.length; i += step) {
+    out.push(ids.slice(i, i + step));
+  }
+  return out;
+}
+
+export type TodoRecurrencePreset = 'none' | 'daily' | 'weekly' | 'monthly' | 'monthEnd' | 'custom';
+
+/** Maps a stored recurrence rule to the UI selector preset. */
+export function todoRecurrencePreset(recurrence: TodoRecurrence | null | undefined): TodoRecurrencePreset {
+  if (!recurrence) return 'none';
+  if (recurrence.interval === 1) {
+    if (recurrence.freq === 'daily') return 'daily';
+    if (recurrence.freq === 'weekly' && recurrence.byWeekday === undefined) return 'weekly';
+    if (recurrence.freq === 'monthly' && recurrence.byMonthDay === -1) return 'monthEnd';
+    if (recurrence.freq === 'monthly' && recurrence.byMonthDay === undefined) return 'monthly';
+  }
+  return 'custom';
+}
+
+/** Canonical equality for two recurrence rules, ignoring unspecified optional keys. */
+export function todoRecurrenceEqual(a: TodoRecurrence | null | undefined, b: TodoRecurrence | null | undefined): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return (
+    a.freq === b.freq
+    && a.interval === b.interval
+    && (a.byWeekday ?? null) === (b.byWeekday ?? null)
+    && (a.byMonthDay ?? null) === (b.byMonthDay ?? null)
+  );
 }

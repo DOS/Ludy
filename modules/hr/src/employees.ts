@@ -21,6 +21,7 @@ import {
   zHrDependentAdd,
   zHrDependentEnd,
   zHrEmployeeAdd,
+  zHrEmployeeContractPdfAsk,
   zHrEmployeeEdit,
   zHrEmployeeEnd,
   zHrEmployeeList,
@@ -33,6 +34,7 @@ import {
   type HrContractForm,
   type HrDependentView,
   type HrEmployee,
+  type HrEmployeeContractPdf,
   type HrEmployeeErased,
   type HrEmployeeSeveranceResult,
   type HrEmployeeSummary,
@@ -44,6 +46,14 @@ import {
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { calculateSeveranceAllowance, checkLaborContractTerms, countCompletedCalendarMonths, deriveFixedTermEndDateIso, evaluateContractAlerts, isBankCode, money, sum, toMoney } from '@crove/l10n-vn';
+import {
+  contractFilename,
+  contractTitle,
+  defaultContractNumber,
+  defaultEmployeeCode,
+  isFlatTaxContract,
+  renderLaborContractPdf,
+} from './contract-pdf.ts';
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso, monthEnd, previousMonth, termsInForceForMonth } from './payroll-dates.ts';
 
@@ -1077,5 +1087,121 @@ export const employeeSeverance = defineQuery({
   },
 });
 
+export const employeeContractPdf = defineQuery({
+  name: 'hr.employee.contract_pdf',
+  input: zHrEmployeeContractPdfAsk,
+  access: MANAGERS,
+  sensitive: true,
+  target: targetOf,
+  handler: async (ctx, input): Promise<HrEmployeeContractPdf> => {
+    const e = await ctx.trx
+      .selectFrom('crove_hr.payroll_employee as e')
+      .leftJoin('crove_hr.department as d', (join) => join.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
+      .select([
+        'e.id',
+        'e.legal_entity_id',
+        'e.display_name',
+        'e.department_id',
+        'd.name as department_name',
+        'e.job_title',
+        'e.address',
+        'e.birth_date',
+        'e.erased_at',
+      ])
+      .where('e.org_id', '=', ctx.orgId)
+      .where('e.id', '=', input.employeeId)
+      .executeTakeFirst();
+    if (!e) throw notFound();
+    if (e.erased_at !== null) throw erasedError();
+
+    const termRow = await ctx.trx
+      .selectFrom('crove_hr.payroll_employment')
+      .select(TERMS_SELECT_COLUMNS)
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', e.id)
+      .where('id', '=', input.termsId)
+      .executeTakeFirst();
+    if (!termRow) throw notFound();
+
+    const [entity, tenant, hiredCandidate] = await Promise.all([
+      ctx.trx
+        .selectFrom('crove_kernel.legal_entity')
+        .select(['name', 'tax_code'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', e.legal_entity_id)
+        .executeTakeFirst(),
+      ctx.trx
+        .selectFrom('crove_kernel.tenant')
+        .select(['name', 'tax_code', 'address'])
+        .where('org_id', '=', ctx.orgId)
+        .executeTakeFirst(),
+      ctx.trx
+        .selectFrom('crove_hr.candidate')
+        .select(['email'])
+        .where('org_id', '=', ctx.orgId)
+        .where('legal_entity_id', '=', e.legal_entity_id)
+        .where('hired_employee_id', '=', e.id)
+        .where('erased_at', 'is', null)
+        .orderBy('updated_at', 'desc')
+        .orderBy('id', 'desc')
+        .limit(1)
+        .executeTakeFirst(),
+    ]);
+
+    const term = termsView(termRow as TermsRow);
+    const contractNumber = defaultContractNumber(term.effectiveFrom, term.id);
+    const employerName = entity?.name ?? tenant?.name ?? '';
+    const employerTaxCode = entity?.tax_code ?? tenant?.tax_code ?? null;
+    const employerAddress = tenant?.address ?? null;
+
+    const pdfBytes = renderLaborContractPdf({
+      employer: {
+        name: employerName,
+        taxCode: employerTaxCode,
+        address: employerAddress,
+      },
+      employee: {
+        id: e.id,
+        code: defaultEmployeeCode(e.id),
+        displayName: e.display_name,
+        birthDate: e.birth_date === null ? null : iso(e.birth_date),
+        address: e.address,
+        jobTitle: e.job_title,
+        departmentName: e.department_name ?? null,
+        workplace: employerAddress,
+      },
+      terms: {
+        id: term.id,
+        contractNumber,
+        contractType: term.contractType,
+        contractForm: term.contractForm,
+        termMonths: term.termMonths,
+        effectiveFrom: term.effectiveFrom,
+        contractEndOn: term.contractEndOn,
+        fixedTermSequence: term.fixedTermSequence,
+        probationRoleTier: term.probationRoleTier,
+        probationEndOn: term.probationEndOn,
+        probationWage: term.probationWage,
+        baseWage: term.baseWage,
+        region: term.region,
+        payFunction: term.payFunction,
+        employeeInsurable: term.contractType !== 'none',
+        taxResident: true,
+        flatTax: isFlatTaxContract(term),
+      },
+    });
+
+    return {
+      filename: contractFilename(e.display_name, term.effectiveFrom),
+      contentType: 'application/pdf',
+      pdfBase64: Buffer.from(pdfBytes).toString('base64'),
+      title: contractTitle(e.display_name, term.effectiveFrom),
+      contractNumber,
+      employeeName: e.display_name,
+      employeeEmail: hiredCandidate?.email ?? null,
+    };
+  },
+});
+
 export const hrEmployeeCommands = [employeeAdd, employeeEdit, employeeFinalizationSet, employmentAdd, employeeEnd, dependentAdd, dependentEnd, employeeErase];
-export const hrEmployeeQueries = [employeeList, employeeGet, employeeSeverance];
+export const hrEmployeeQueries = [employeeList, employeeGet, employeeSeverance, employeeContractPdf];
