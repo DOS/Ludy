@@ -6,8 +6,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useTranslations } from 'use-intl';
 import { vietnamToday, type QuoteDocument } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { ErrorText, Logo, Spinner } from '../components/ui.tsx';
+import { Button, buttonVariants } from '@crove/ui/components/button';
+import { ErrorText, isEmailAddress, Logo, ScreenTitle, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiUrl } from '../lib/api-base.ts';
 import { errorMessage } from '../lib/api.ts';
@@ -51,6 +51,28 @@ function useLogoUrl(token: string | null, wanted: boolean): string | null {
 // A line's quantity without trailing zeros of the six decimals the column keeps.
 const plain = (value: string | null): string => (value === null ? '' : value.includes('.') ? value.replace(/0+$/, '').replace(/\.$/, '') : value);
 
+// The seller's phone as a link that dials (#3644). Only a text that is wholly a phone number (digits, a leading plus, spaces, dots, dashes, brackets) becomes one; "028 3829 1234 ext 12"
+// stays text, because stripping the words would dial another number.
+const dialOf = (phone: string): string | null => {
+  const text = phone.trim();
+  if (!/^\+?[\d\s.()-]+$/.test(text)) return null;
+  const digits = text.replace(/[^\d+]/g, '');
+  return /^\+?\d{6,15}$/.test(digits) ? digits : null;
+};
+// A Vietnamese mobile number, the kind a Zalo account is opened with: "0912345678" or "+84912345678" as "0912345678".
+const zaloOf = (phone: string): string | null => {
+  const digits = dialOf(phone)?.replace(/^\+84/, '0') ?? null;
+  return digits !== null && /^0[35789]\d{8}$/.test(digits) ? digits : null;
+};
+// An address safe to put after "mailto:" as it is: no character with a meaning of its own in a URL (a "?bcc=" would add a header).
+const mailOf = (email: string): string | null => {
+  const text = email.trim();
+  return isEmailAddress(text) && /^[A-Za-z0-9._+-]+@[A-Za-z0-9.-]+$/.test(text) ? text : null;
+};
+// The server sends the percent as numeric text ("0", "0.00", "5.50"): none when it is zero in any spelling.
+const hasPercent = (value: string): boolean => !/^0*(\.0*)?$/.test(value);
+const contactLink = 'text-foreground underline underline-offset-4 print:no-underline';
+
 export function QuoteDocumentPage() {
   const t = useTranslations('quoteDocument');
   const f = useFormat();
@@ -62,31 +84,67 @@ export function QuoteDocumentPage() {
   const logoUrl = useLogoUrl(token, doc?.hasLogo === true);
   const loading = token !== null && page.isLoading;
   const money = (value: string) => f.money(value, 'VND');
+  // Discount and tax columns only when some line has one (#3644); the text lines span what is left.
+  const items = (doc?.lines ?? []).filter((l) => l.kind === 'item');
+  const hasDiscount = items.some((l) => hasPercent(l.discountPercent));
+  const hasVat = items.some((l) => l.vatRate !== null);
+  // "2 gói × 1.500.000": the quantity with its unit, times the unit price, whichever of them the line has.
+  const sum = (l: QuoteDocument['lines'][number]): string =>
+    [[plain(l.quantity), l.unit ?? ''].filter(Boolean).join(' '), l.unitPrice === null ? '' : f.decimal(plain(l.unitPrice), 8)].filter(Boolean).join(' × ');
+  const columns = 6 + (hasDiscount ? 1 : 0) + (hasVat ? 1 : 0);
   return (
     <main className="mx-auto max-w-3xl space-y-6 px-4 py-6 print:max-w-none print:p-0" data-testid="quote-document">
-      <div className="flex items-center justify-between gap-2 print:hidden">
-        <Logo />
-        {doc && (
+      {/* The tab says which quote this is (#3644); the seller's letterhead comes first on the page, the app's mark is a small footer. */}
+      <ScreenTitle name={doc ? t('title', { number: doc.number }) : t('heading')} />
+      {doc && (
+        <div className="flex justify-end print:hidden">
           <Button variant="outline" size="sm" onClick={() => window.print()}>
             {t('print')}
           </Button>
-        )}
-      </div>
+        </div>
+      )}
       {loading && <Spinner />}
-      {token === null || (!loading && !doc && !page.error) ? <p className="rounded-md border border-border p-6 text-sm text-muted-foreground">{t('invalid')}</p> : null}
+      {token === null || (!loading && !doc && !page.error) ? (
+        // A link that does not open says what to do next: the customer cannot fix it, the sender can.
+        <div className="space-y-1 rounded-md border border-border p-6 text-sm text-muted-foreground" data-testid="quote-invalid">
+          <p>{t('invalid')}</p>
+          <p className="text-foreground">{t('invalidNext')}</p>
+        </div>
+      ) : null}
       {page.error && <ErrorText>{errorMessage(page.error)}</ErrorText>}
       {doc && (
         <article className="space-y-6 text-sm" aria-label={t('title', { number: doc.number })}>
           <header className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-0.5">
+            <div className="min-w-0 space-y-0.5 break-words">
               {logoUrl && <img src={logoUrl} alt="" className="mb-2 max-h-16 w-auto max-w-48 object-contain" data-testid="quote-logo" />}
               <h1 className="text-lg font-semibold text-foreground">{doc.seller.name}</h1>
               {doc.seller.taxCode && <p className="text-muted-foreground">{t('taxCode', { code: doc.seller.taxCode })}</p>}
               {doc.seller.address && <p className="text-muted-foreground">{doc.seller.address}</p>}
-              {doc.seller.phone && <p className="text-muted-foreground">{t('phone', { phone: doc.seller.phone })}</p>}
-              {doc.seller.email && <p className="text-muted-foreground">{doc.seller.email}</p>}
+              {doc.seller.phone && (
+                <p className="text-muted-foreground">
+                  {t('phoneLabel')}{' '}
+                  {dialOf(doc.seller.phone) ? (
+                    <a href={`tel:${dialOf(doc.seller.phone)}`} className={contactLink}>
+                      {doc.seller.phone}
+                    </a>
+                  ) : (
+                    doc.seller.phone
+                  )}
+                </p>
+              )}
+              {doc.seller.email && (
+                <p className="break-all text-muted-foreground">
+                  {mailOf(doc.seller.email) ? (
+                    <a href={`mailto:${mailOf(doc.seller.email)}`} className={contactLink}>
+                      {doc.seller.email}
+                    </a>
+                  ) : (
+                    doc.seller.email
+                  )}
+                </p>
+              )}
             </div>
-            <div className="space-y-0.5 text-right">
+            <div className="space-y-0.5 sm:text-right print:text-right">
               <h2 className="text-xl font-semibold uppercase tracking-wide text-foreground">{t('heading')}</h2>
               <p className="tabular-nums text-muted-foreground">{t('number', { number: doc.revision > 1 ? `${doc.number}-R${doc.revision}` : doc.number })}</p>
               <p className="text-muted-foreground">{t('sentOn', { date: f.date(vietnamToday(new Date(doc.sentAt))) })}</p>
@@ -98,14 +156,16 @@ export function QuoteDocumentPage() {
             </div>
           </header>
 
-          <section className="space-y-0.5 rounded-md border border-border p-4 print:break-inside-avoid">
+          <section className="space-y-0.5 break-words rounded-md border border-border p-4 print:break-inside-avoid">
             <h3 className="text-xs font-medium uppercase text-muted-foreground">{t('buyer')}</h3>
             <p className="font-medium text-foreground">{doc.buyer.name}</p>
             {doc.buyer.taxCode && <p className="text-muted-foreground">{t('taxCode', { code: doc.buyer.taxCode })}</p>}
             {doc.buyer.address && <p className="text-muted-foreground">{doc.buyer.address}</p>}
           </section>
 
-          <div className="overflow-x-auto">
+          {/* Eight columns do not fit a phone, where most customers open the link from Zalo (#3644): from `sm` up and in print the table stays, below it each line is a card
+              (name, quantity times price, amount at the right). The table comes first in the page, the cards after it. A discount or tax column shows only when a line has one. */}
+          <div className="hidden overflow-x-auto sm:block print:block">
             <table className="w-full border-collapse text-left" aria-label={t('lines')}>
               <thead>
                 <tr className="border-b-2 border-border text-xs uppercase text-muted-foreground">
@@ -114,8 +174,8 @@ export function QuoteDocumentPage() {
                   <th className="py-2 pr-2 text-right font-medium">{t('columns.quantity')}</th>
                   <th className="py-2 pr-2 font-medium">{t('columns.unit')}</th>
                   <th className="py-2 pr-2 text-right font-medium">{t('columns.unitPrice')}</th>
-                  <th className="py-2 pr-2 text-right font-medium">{t('columns.discount')}</th>
-                  <th className="py-2 pr-2 text-right font-medium">{t('columns.vat')}</th>
+                  {hasDiscount && <th className="py-2 pr-2 text-right font-medium">{t('columns.discount')}</th>}
+                  {hasVat && <th className="py-2 pr-2 text-right font-medium">{t('columns.vat')}</th>}
                   <th className="py-2 text-right font-medium">{t('columns.amount')}</th>
                 </tr>
               </thead>
@@ -124,7 +184,7 @@ export function QuoteDocumentPage() {
                   l.kind === 'text' ? (
                     <tr key={l.lineNo} className="border-b border-border">
                       <td className="py-2 pr-2 align-top tabular-nums">{l.lineNo}</td>
-                      <td colSpan={7} className="py-2 italic text-muted-foreground break-words whitespace-pre-line">
+                      <td colSpan={columns - 1} className="py-2 italic text-muted-foreground break-words whitespace-pre-line">
                         {l.description}
                       </td>
                     </tr>
@@ -135,8 +195,8 @@ export function QuoteDocumentPage() {
                       <td className="py-2 pr-2 text-right align-top tabular-nums">{plain(l.quantity)}</td>
                       <td className="py-2 pr-2 align-top">{l.unit ?? ''}</td>
                       <td className="py-2 pr-2 text-right align-top tabular-nums">{l.unitPrice === null ? '' : f.decimal(plain(l.unitPrice), 8)}</td>
-                      <td className="py-2 pr-2 text-right align-top tabular-nums">{l.discountPercent !== '0' ? `${plain(l.discountPercent)}%` : ''}</td>
-                      <td className="py-2 pr-2 text-right align-top tabular-nums">{l.vatRate ?? ''}</td>
+                      {hasDiscount && <td className="py-2 pr-2 text-right align-top tabular-nums">{hasPercent(l.discountPercent) ? `${plain(l.discountPercent)}%` : ''}</td>}
+                      {hasVat && <td className="py-2 pr-2 text-right align-top tabular-nums">{l.vatRate ?? ''}</td>}
                       <td className="py-2 text-right align-top tabular-nums">{money(l.amount)}</td>
                     </tr>
                   ),
@@ -144,8 +204,32 @@ export function QuoteDocumentPage() {
               </tbody>
             </table>
           </div>
+          <ol role="list" className="divide-y divide-border border-y border-border sm:hidden print:hidden" aria-label={t('lines')} data-testid="quote-line-cards">
+            {doc.lines.map((l) =>
+              l.kind === 'text' ? (
+                <li key={l.lineNo} className="py-3 italic text-muted-foreground break-words whitespace-pre-line">
+                  {l.description}
+                </li>
+              ) : (
+                <li key={l.lineNo} className="space-y-0.5 py-3" data-testid="quote-line-card">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="min-w-0 break-words font-medium text-foreground">
+                      <span className="tabular-nums text-muted-foreground">{l.lineNo}.</span> {l.description}
+                    </p>
+                    <p className="shrink-0 font-medium tabular-nums text-foreground" data-testid="quote-line-amount">{money(l.amount)}</p>
+                  </div>
+                  {sum(l) !== '' && <p className="tabular-nums text-muted-foreground">{sum(l)}</p>}
+                  {(hasPercent(l.discountPercent) || l.vatRate) && (
+                    <p className="text-xs tabular-nums text-muted-foreground">
+                      {[hasPercent(l.discountPercent) ? `${t('columns.discount')} ${plain(l.discountPercent)}%` : '', l.vatRate ? `${t('columns.vat')} ${l.vatRate}` : ''].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                </li>
+              ),
+            )}
+          </ol>
 
-          <dl className="ml-auto grid max-w-xs grid-cols-2 gap-x-4 gap-y-1 tabular-nums print:break-inside-avoid" data-testid="quote-document-totals">
+          <dl className="ml-auto grid w-full max-w-xs grid-cols-2 gap-x-4 gap-y-1 tabular-nums print:break-inside-avoid" data-testid="quote-document-totals">
             <dt className="text-muted-foreground">{t('subtotal')}</dt>
             <dd className="text-right">{money(doc.subtotal)}</dd>
             <dt className="text-muted-foreground">{t('vatAmount')}</dt>
@@ -153,6 +237,36 @@ export function QuoteDocumentPage() {
             <dt className="font-semibold text-foreground">{t('total')}</dt>
             <dd className="text-right font-semibold text-foreground">{money(doc.total)}</dd>
           </dl>
+
+          {/* How the customer answers (#3644): there is no accept button here, the seller records the yes, so the seller's phone, Zalo and email are the way to reply. */}
+          {doc.status === 'sent' && (dialOf(doc.seller.phone ?? '') || mailOf(doc.seller.email ?? '')) && (
+            <section className="space-y-2 rounded-md border border-border p-4 print:hidden" aria-labelledby="quote-answer-title" data-testid="quote-answer">
+              <h3 id="quote-answer-title" className="text-sm font-medium text-foreground">
+                {t('answer.title')}
+              </h3>
+              <p className="text-muted-foreground">{t(doc.expired ? 'answer.expiredHint' : 'answer.hint', { seller: doc.seller.name })}</p>
+              <div className="flex flex-wrap gap-2">
+                {dialOf(doc.seller.phone ?? '') && (
+                  <a href={`tel:${dialOf(doc.seller.phone ?? '')}`} className={buttonVariants({ size: 'sm', variant: 'outline' })}>
+                    {t('answer.call', { phone: doc.seller.phone ?? '' })}
+                  </a>
+                )}
+                {zaloOf(doc.seller.phone ?? '') && (
+                  <a href={`https://zalo.me/${zaloOf(doc.seller.phone ?? '')}`} target="_blank" rel="noopener noreferrer" className={buttonVariants({ size: 'sm', variant: 'outline' })}>
+                    {t('answer.zalo')}
+                  </a>
+                )}
+                {mailOf(doc.seller.email ?? '') && (
+                  <a
+                    href={`mailto:${mailOf(doc.seller.email ?? '')}?subject=${encodeURIComponent(t('title', { number: doc.number }))}`}
+                    className={buttonVariants({ size: 'sm', variant: 'outline' })}
+                  >
+                    {t('answer.email')}
+                  </a>
+                )}
+              </div>
+            </section>
+          )}
 
           {doc.notes && (
             <section className="space-y-1 print:break-inside-avoid">
@@ -174,6 +288,9 @@ export function QuoteDocumentPage() {
           )}
         </article>
       )}
+      <footer className="flex justify-center pt-2 text-xs text-subtle-foreground print:hidden">
+        <Logo />
+      </footer>
     </main>
   );
 }
