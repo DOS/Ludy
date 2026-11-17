@@ -122,9 +122,10 @@ suite('the S2a-HKD revenue book of a household business (#2517 slice 2a)', () =>
               [o.orgId, party, `S${randomUUID().slice(0, 8)}`, date, total, entity],
             )
           ).rows[0]?.id as string;
+          // A sale line names its credit account alone (purchase_line_one_account).
           let no = 1;
           for (const l of over.sale) {
-            await a.query("INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account, credit_account) VALUES ($1, $2, $3, $4, $5, '111', '511')", [o.orgId, document, no, `Dòng ${no}`, l.amount]);
+            await a.query("INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, amount, credit_account) VALUES ($1, $2, $3, $4, $5, '511')", [o.orgId, document, no, `Dòng ${no}`, l.amount]);
             if (l.item) {
               await a.query(
                 "INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, $3, $4, -1, 'document_line', $5, $6, 1)",
