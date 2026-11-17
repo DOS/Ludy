@@ -17,7 +17,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, FieldError, fieldControl, fieldHintId, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { applyPrevious } from '../lib/invoice-copy.ts';
@@ -43,17 +43,22 @@ interface FormState {
   // The buyer is the coworker's proposal, from a customer's record, until a person edits it.
   buyerAi: boolean;
   date: string;
+  // The day of the sale when it is not the invoice's day ('' is the same day), and the reason for an invoice later than the sale's next working day (#3535).
+  saleDate: string;
+  lateReason: string;
   seriesId: string;
   buyer: { kind: BuyerKind; partyId: string | null; taxCode: string; name: string; address: string; email: string };
   lines: LineState[];
 }
 
 const blankLine = (): LineState => ({ description: '', unit: '', quantity: '1', unitPrice: '', vatRate: '10%', ai: null });
-const blankForm = (seriesId: string): FormState => ({ draftId: null, buyerAi: false, date: vietnamToday(), seriesId, buyer: { kind: 'business', partyId: null, taxCode: '', name: '', address: '', email: '' }, lines: [blankLine()] });
+const blankForm = (seriesId: string): FormState => ({ draftId: null, buyerAi: false, date: vietnamToday(), saleDate: '', lateReason: '', seriesId, buyer: { kind: 'business', partyId: null, taxCode: '', name: '', address: '', email: '' }, lines: [blankLine()] });
 const fromDraft = (d: EInvoiceDraft): FormState => ({
   draftId: d.id,
   buyerAi: false,
   date: d.date,
+  saleDate: d.saleDate ?? '',
+  lateReason: d.lateReason ?? '',
   seriesId: d.seriesId ?? '',
   buyer: { kind: d.buyer.kind as BuyerKind, partyId: d.buyer.partyId, taxCode: d.buyer.taxCode ?? '', name: d.buyer.name ?? '', address: d.buyer.address ?? '', email: d.buyer.email ?? '' },
   lines: d.lines.map((l) => ({ description: l.description, unit: l.unit ?? '', quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate, ai: null })),
@@ -62,6 +67,8 @@ const orNull = (value: string): string | null => (value.trim() === '' ? null : v
 // The form as the server takes it. A quantity or price that is not yet a number goes as typed, and the server's check says so on the field.
 const toInput = (s: FormState): EInvoiceDraftForm => ({
   date: s.date,
+  saleDate: s.saleDate === '' ? null : s.saleDate,
+  lateReason: orNull(s.lateReason),
   seriesId: s.seriesId === '' ? null : s.seriesId,
   // A sale to a consumer carries no buyer details: what the form held before the kind was chosen is not sent.
   buyer:
@@ -268,6 +275,19 @@ function CoworkerBox({ date, room, legalEntityId, invoiceSource, text, onText, o
   );
 }
 
+// The warning of a sale invoiced after its next working day and the reason it asks for (#3535): the invoice is late, the fine is heavy, and the sale is declared in the period of its sale date.
+export function LateSaleNotice({ id, reason, error, onChange }: { id: string; reason: string; error: string | null; onChange: (reason: string) => void }) {
+  const t = useTranslations('salesInvoices');
+  return (
+    <div className="mt-3 space-y-1" role="alert" data-testid="invoice-late-sale">
+      <p className="text-sm font-medium text-foreground">{t('lateWarning')}</p>
+      <Label htmlFor={`${id}-late-reason`}>{t('lateReason')}</Label>
+      <Textarea {...fieldControl(`${id}-late-reason`, { error: error !== null })} rows={2} maxLength={500} value={reason} placeholder={t('lateReasonPlaceholder')} onChange={(e) => onChange(e.target.value)} data-testid="invoice-late-reason" />
+      <FieldError id={`${id}-late-reason`}>{error}</FieldError>
+    </div>
+  );
+}
+
 function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormState; series: Array<{ id: string; templateNo: string; symbol: string; description: string }>; legalEntityId: string | undefined; onClose: () => void }) {
   const t = useTranslations('salesInvoices');
   const f = useFormat();
@@ -288,8 +308,11 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
   });
   const issues = check.data?.issues ?? [];
   // What cannot be stored yet (a date, a quantity or a price that is not a value): the rest is saved with its issues shown.
-  const unsaveable = issues.some((i) => (['DATE_REQUIRED', 'DATE_INVALID', 'LINE_QUANTITY_INVALID', 'LINE_PRICE_INVALID'] as const).some((c) => c === i.code)) || check.data === undefined;
+  const unsaveable = issues.some((i) => (['DATE_REQUIRED', 'DATE_INVALID', 'SALE_DATE_INVALID', 'SALE_DATE_AFTER_INVOICE', 'LINE_QUANTITY_INVALID', 'LINE_PRICE_INVALID'] as const).some((c) => c === i.code)) || check.data === undefined;
   const bad = (field: string) => issues.some((i) => i.field === field);
+  // The error of each of the two late-sale fields sits under it and is linked to it, and a field shows only its own (#3535).
+  const saleDateIssue = issues.find((i) => i.field === 'saleDate');
+  const lateReasonIssue = issues.find((i) => i.field === 'lateReason');
   const setBuyer = (patch: Partial<FormState['buyer']>) => setForm((s) => ({ ...s, buyerAi: false, buyer: { ...s.buyer, ...patch } }));
   // An edit makes the line the person's own: it loses the coworker's mark.
   const setLine = (index: number, patch: Partial<LineState>) => setForm((s) => ({ ...s, lines: s.lines.map((l, i) => (i === index ? { ...l, ai: null, ...patch } : l)) }));
@@ -298,10 +321,18 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
   return (
     <Card className="mb-6 block p-4" aria-label={t('formTitle')} data-testid="invoice-form">
       <h2 className="text-base font-medium text-foreground">{form.draftId ? t('editTitle') : t('newTitle')}</h2>
-      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="space-y-1">
           <Label htmlFor={`${id}-date`}>{t('date')}</Label>
           <DateInput id={`${id}-date`} value={form.date} max={vietnamToday()} aria-invalid={bad('date')} onChange={(date) => setForm((s) => ({ ...s, date }))} />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-sale-date`}>{t('saleDate')}</Label>
+          <DateInput {...fieldControl(`${id}-sale-date`, { hint: true, error: saleDateIssue !== undefined })} value={form.saleDate} max={form.date} onChange={(saleDate) => setForm((s) => ({ ...s, saleDate }))} />
+          <p id={fieldHintId(`${id}-sale-date`)} className="text-xs text-subtle-foreground">
+            {t('saleDateHint')}
+          </p>
+          <FieldError id={`${id}-sale-date`}>{saleDateIssue ? t(`issues.${saleDateIssue.code satisfies DraftIssueCode}`, { line: '' }) : null}</FieldError>
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-series`}>{t('series')}</Label>
@@ -325,6 +356,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
           </NativeSelect>
         </div>
       </div>
+      {check.data?.lateSale && <LateSaleNotice id={id} reason={form.lateReason} error={lateReasonIssue ? t(`issues.${lateReasonIssue.code satisfies DraftIssueCode}`, { line: '' }) : null} onChange={(lateReason) => setForm((s) => ({ ...s, lateReason }))} />}
       <PreviousInvoice
         date={form.date}
         legalEntityId={legalEntityId}

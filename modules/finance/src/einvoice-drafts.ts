@@ -20,7 +20,7 @@ import { zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceSeriesSync, zId,
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { money, parseTaxCode } from '@crove/l10n-vn';
-import { checkDraft, computeDraft, type ComputedDraft, type DraftInput } from './domain/einvoice-draft.ts';
+import { checkDraft, computeDraft, isLateSale, type ComputedDraft, type DraftInput } from './domain/einvoice-draft.ts';
 import { einvoiceDraftSuggestSource, einvoicePreviousInvoice } from './einvoice-suggest.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
@@ -126,6 +126,8 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
     }));
   const input: DraftInput = {
     date: row.invoice_date,
+    saleDate: row.sale_date,
+    lateReason: row.late_reason,
     currency: row.currency,
     seriesId: row.series_id,
     buyer: { kind: row.buyer_kind, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email },
@@ -138,6 +140,9 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
     state: row.state,
     seriesId: row.series_id,
     date: row.invoice_date,
+    saleDate: row.sale_date,
+    lateReason: row.late_reason,
+    lateSale: isLateSale(row.sale_date, row.invoice_date),
     currency: row.currency,
     buyer: { kind: row.buyer_kind, partyId: row.buyer_party_id, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email },
     lines,
@@ -210,11 +215,12 @@ export const einvoiceDraftCheck = defineQuery({
       vatAmount: computed.vatAmount,
       total: computed.total,
       issues: checkDraft(draft, computed, today),
+      lateSale: isLateSale(draft.saleDate, draft.date),
     };
   },
 });
 
-export function toDraftInput(input: Pick<z.infer<typeof zEInvoiceDraftSave>, 'date' | 'seriesId' | 'buyer' | 'lines'>): DraftInput {
+export function toDraftInput(input: Pick<z.infer<typeof zEInvoiceDraftSave>, 'date' | 'seriesId' | 'buyer' | 'lines'> & Partial<Pick<z.infer<typeof zEInvoiceDraftSave>, 'saleDate' | 'lateReason'>>): DraftInput {
   const blank = (value: string | null): string | null => (value && value.trim() !== '' ? value.trim() : null);
   // A tax code that reads as one is kept in its written form (spaces and dots out, a branch code with its dash); one that does not is kept as typed, for the checks to report.
   const taxCode = (value: string | null): string | null => {
@@ -223,8 +229,12 @@ export function toDraftInput(input: Pick<z.infer<typeof zEInvoiceDraftSave>, 'da
   };
   // A sale to a consumer carries no buyer details, whatever the form still held from before the kind was chosen.
   const consumer = input.buyer.kind === 'consumer';
+  // A sale date equal to the invoice's day is no sale date of its own; the reason belongs only to a late sale.
+  const saleDate = input.saleDate && input.saleDate !== input.date ? input.saleDate : null;
   return {
     date: input.date,
+    saleDate,
+    lateReason: isLateSale(saleDate, input.date) ? blank(input.lateReason ?? null) : null,
     currency: 'VND',
     seriesId: input.seriesId,
     buyer: consumer
@@ -292,6 +302,8 @@ export const einvoiceDraftSave = defineCommand({
     const values = {
       series_id: draft.seriesId,
       invoice_date: draft.date,
+      sale_date: draft.saleDate,
+      late_reason: draft.lateReason,
       currency: draft.currency,
       buyer_kind: draft.buyer.kind,
       buyer_party_id: draft.buyer.kind === 'consumer' ? null : input.buyer.partyId,
@@ -363,7 +375,8 @@ export const einvoiceDraftSave = defineCommand({
       throw error;
     }
     // Facts without a name, an address, an email or a tax code: the ids and the counts.
-    ctx.audit({ draftId, legalEntityId: entity, lines: computed.lines.length, total: computed.total, created: input.draftId === null });
+    // A late sale is in the facts with its date, and the reason is the person's own words under the later approval (finance.einvoice.issue).
+    ctx.audit({ draftId, legalEntityId: entity, lines: computed.lines.length, total: computed.total, created: input.draftId === null, ...(draft.saleDate ? { saleDate: draft.saleDate, lateSale: isLateSale(draft.saleDate, draft.date) } : {}) });
     return loadDraft(ctx, draftId, today);
   },
 });

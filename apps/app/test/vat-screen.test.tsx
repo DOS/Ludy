@@ -8,7 +8,7 @@ import { catalog } from '../src/i18n/runtime.ts';
 
 vi.mock('../src/lib/api.ts', () => ({ orpc: {}, client: {}, queryClient: {}, apiFetch: () => undefined, getCurrentOrg: () => null, errorMessage: String }));
 
-const { InvoiceTable } = await import('../src/routes/vat.tsx');
+const { InvoiceTable, LateSales, SupplementaryItems } = await import('../src/routes/vat.tsx');
 
 const invoice = {
   id: '0192f0aa-1111-7222-8333-944445555666',
@@ -38,5 +38,53 @@ describe('VAT invoice table', () => {
       expect(cells[i]?.includes('text-right'), `cell ${i}`).toBe(money);
       if (money) expect(cells[i]).toContain('tabular-nums');
     }
+  });
+});
+
+// #3535: a sale invoiced after its period is declared in the period of the sale; when that period is locked or filed it is a supplementary item.
+const lateInvoice = {
+  ...invoice,
+  id: '0192f0aa-1111-7222-8333-944445555777',
+  issueDate: '2026-11-03',
+  postingDate: '2026-11-03',
+  saleDate: '2026-10-28',
+  number: '124',
+  subtotal: '12500000',
+  vatAmount: '1250000',
+  total: '13750000',
+  warnings: ['late_sale' as const],
+};
+const render = (node: React.ReactNode, locale: 'vi' | 'en' = 'vi') =>
+  renderToStaticMarkup(
+    <IntlProvider locale={locale} messages={catalog(locale)}>
+      {node}
+    </IntlProvider>,
+  );
+
+describe('late sales on the VAT screen', () => {
+  it('shows the sale date under the issue date and the late-sale note on the invoice', () => {
+    const html = render(<InvoiceTable invoices={[lateInvoice]} partyLabel="Người mua" />);
+    expect(html).toContain('bán ngày');
+    expect(html).toContain('28/10/2026');
+    expect(html).toContain('Hóa đơn lập sau kỳ của ngày bán');
+  });
+
+  it('lists the supplementary items of a declared period with the VAT to declare, and nothing when there are none', () => {
+    const data = { supplementary: { documents: [lateInvoice], totals: { byRate: [], taxable: '12500000', vat: '1250000', documents: 1 } } };
+    const html = render(<SupplementaryItems data={data} />);
+    expect(html).toContain('data-testid="vat-supplementary"');
+    expect(html).toContain('Cần kê khai bổ sung (1)');
+    expect(html).toContain('123');
+    expect(render(<SupplementaryItems data={{ supplementary: { documents: [], totals: { byRate: [], taxable: '0', vat: '0', documents: 0 } } }} />)).toBe('');
+  });
+
+  it('names each late invoice of this period with its original period and whether it needs a supplementary return', () => {
+    const sale = { documentId: lateInvoice.id, series: 'C26TAA', number: '124', partyName: 'Công ty An Phát', issueDate: '2026-11-03', saleDate: '2026-10-28', originalPeriod: '2026-10', total: '13750000', vatAmount: '1250000', supplementary: true };
+    const html = render(<LateSales data={{ lateSales: [sale, { ...sale, documentId: 'x', number: '125', supplementary: false }] }} />);
+    expect(html).toContain('2026-10');
+    expect(html).toContain('Cần kê khai bổ sung');
+    expect(html).toContain('Đã tính vào kỳ đó');
+    expect(render(<LateSales data={{ lateSales: [] }} />)).toBe('');
+    expect(render(<LateSales data={{ lateSales: [sale] }} />, 'en')).toContain('Supplementary return needed');
   });
 });
