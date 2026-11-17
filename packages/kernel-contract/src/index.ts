@@ -13,6 +13,7 @@ export * from './personal-data.ts';
 export * from './portal-list.ts';
 export * from './portal-sync.ts';
 export * from './vat-deadline.ts';
+export * from './vat-late.ts';
 export * from './tax-calendar.ts';
 export * from './vietnam-time.ts';
 export * from './bank-statement.ts';

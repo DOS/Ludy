@@ -43,6 +43,8 @@ export const AI_FEATURES = {
   'meetings.followup_words': 'meetings',
   // The finance coworker's sentence on the Kế toán overview (#2631): written from the aggregated figures only, and dropped when it states a number they do not hold.
   'finance.overview_explain': 'finance',
+  // The finance coworker's sentence naming the late sales invoices of a VAT working and their original periods (#3540): written from invoice numbers and periods only, dropped when it names one that is not in the lists.
+  'finance.vat_late_explain': 'finance',
   // The finance coworker on stock (#2514): which item of the org a line of an invoice or an order is most likely about (it only suggests; a person confirms), and the wording of a reorder
   // message to a supplier from the item names and quantities it was given (a figure, link or address it was not given refuses the text).
   'finance.stock_match': 'finance',

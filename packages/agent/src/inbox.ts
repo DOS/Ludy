@@ -32,6 +32,7 @@ import {
 } from './recruiting-coworker.ts';
 import { checkMarketplaceLineSentence, marketplaceLineInstructions, marketplaceLinePrompt, type MarketplaceLineFacts, type MarketplaceLineResult } from './marketplace-line.ts';
 import { checkPayrollMatchSentence, payrollMatchInstructions, payrollMatchPrompt, type PayrollMatchFacts, type PayrollMatchResult } from './payroll-match.ts';
+import { checkVatLateSentence, vatLateInstructions, vatLatePrompt, vatLateQuiet, type VatLateFacts, type VatLateSentenceResult } from './vat-late.ts';
 import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
 import { checkCrmFollowupWords, crmFollowupInstructions, crmFollowupPrompt, type CrmFollowupWordsRequest, type CrmFollowupWordsResult } from './crm-followup.ts';
 import { checkMeetingBrief, meetingBriefInstructions, meetingBriefPrompt, type MeetingBriefFacts, type MeetingBriefResult } from './meeting-brief.ts';
@@ -135,6 +136,10 @@ export type ReminderGenerator = (args: { system: string; prompt: string }) => Pr
 const zOverviewOut = z.object({
   sentence: z.string().describe('One or two plain sentences on what changed most, citing only the figures given, each number written exactly as given'),
 });
+const zVatLateOut = z.object({
+  sentence: z.string().describe('One to three plain sentences naming each late sales invoice and the period of its sale, each written exactly as given, with no other number'),
+});
+export type VatLateGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zVatLateOut> | null; usage?: AiUsage }>;
 const zPayrollMatchOut = z.object({
   sentence: z.string().describe('One plain sentence on why the bank line may be this payroll payment, citing only the facts given, each number and date written exactly as given'),
 });
@@ -243,6 +248,7 @@ export class InboxReader {
   private readonly generateCrmFollowup: CrmFollowupGenerator;
   private readonly generateMeetingBrief: MeetingBriefGenerator;
   private readonly generateOverview: OverviewGenerator;
+  private readonly generateVatLate: VatLateGenerator;
   private readonly generatePayrollMatch: PayrollMatchGenerator;
   private readonly generateMarketplaceLine: MarketplaceLineGenerator;
   private readonly generateStockMatch: StockMatchGenerator;
@@ -255,7 +261,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; payrollMatch?: PayrollMatchGenerator; marketplaceLine?: MarketplaceLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; marketplaceLine?: MarketplaceLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
@@ -321,6 +327,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.overview_explain', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zOverviewOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateVatLate =
+      generators.vatLate ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.vat_late_explain', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zVatLateOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -493,6 +507,16 @@ export class InboxReader {
     const { output, usage } = await this.generateOverview({ system: overviewInstructions(facts.language), prompt: overviewPrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkOverviewSentence(facts, output);
+  }
+
+  /** The finance coworker's sentence naming each late sales invoice of a VAT working and its original period (#3540), from the working's own lists, or why there is none: with nothing to name
+   * (or too many) the model is not asked, and its text is refused when it names an invoice or period not in the lists, leaves one out, states another figure, holds a link or claims a declaration
+   * (vat-late.ts). onUsage gets the tokens the call used, for the org's AI cost limit. */
+  async vatLateSentence(facts: VatLateFacts, onUsage?: (usage: AiUsage) => void): Promise<VatLateSentenceResult> {
+    if (vatLateQuiet(facts)) return { kind: 'none', code: 'QUIET' };
+    const { output, usage } = await this.generateVatLate({ system: vatLateInstructions(facts.language), prompt: vatLatePrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkVatLateSentence(facts, output);
   }
 
   /** The finance coworker's one line on the Sàn screen (#2516 slice E), from four numbers code read from the books and nothing else, or why there is none: the text is refused when it states a

@@ -201,6 +201,7 @@ import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInv
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
+import { zVatLateExplainAsk, zVatLateExplanation } from './vat-late.ts';
 import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zFilterAstShape, zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared, zSavedViewSortShape } from './saved-view.ts';
@@ -2478,6 +2479,9 @@ export const contract = {
   // when the voucher is not a báo Nợ of the org.
   vat: {
     period: oc.input(z.object({ period: zVatPeriod, legalEntityId: zId.optional() })).output(zVatReport),
+    // explain (#3540; finance roles, read-only): the coworker's sentence naming each late sales invoice and its original period, from the working's own lists. AI off, spent or refused: `ai` says so
+    // and the screen shows the template sentence built from the same lists. Nothing is declared or posted.
+    explain: oc.input(zVatLateExplainAsk).output(zVatLateExplanation),
     // salesNumberGaps (every role; #2140): the numbers missing in the org's own sales e-invoice series, per template,
     // series and year. With period, the runs that may fall in it (VAT working); with fromYear, the series of that year on
     // (Overview); alone, every year. Read-only.
