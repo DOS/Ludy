@@ -7,7 +7,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { HOUSEHOLD_TRADES, vietnamToday, type HouseholdProfileSet } from '@crove/kernel-contract';
+import { HOUSEHOLD_EXPENSE_GROUPS, HOUSEHOLD_TRADES, vietnamToday, type HouseholdProfileSet } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -292,6 +292,190 @@ function S2aBook({ entityId }: { entityId: string }) {
     </Card>
   );
 }
+
+// S2c-HKD (#2517 slice 2b), the revenue and expense detail of a household that pays PIT on income. Read from the ledger (revenue is account 511's movement; each expense line is a journal line on an expense account with
+// its document, account and group) and downloaded as Excel. The group comes from the dated account-to-group rows; an account with no row shows as "chưa xếp nhóm" and holds the income back, never a guessed group. While a row behind
+// the figures is unconfirmed (#2520) the expense and income figures carry "Số liệu tạm, kế toán chưa xác nhận tỷ lệ" and so does the Excel file; the label goes when the rows are confirmed, with no code change. The PIT is not
+// computed. Ludy files nothing.
+function S2cBook({ entityId }: { entityId: string }) {
+  const t = useTranslations('household');
+  const f = useFormat();
+  const today = vietnamToday();
+  const [kind, setKind] = useState<Kind>('month');
+  const [month, setMonth] = useState(today.slice(0, 7));
+  const [year, setYear] = useState(today.slice(0, 4));
+  const [quarter, setQuarter] = useState(String(Math.floor((Number(today.slice(5, 7)) - 1) / 3) + 1));
+  const period = periodOf(kind, month, quarter, year);
+  const valid = /^20\d{2}(-(0[1-9]|1[0-2]|Q[1-4]))?$/.test(period);
+  const book = useQuery({ ...orpc.household.s2c.queryOptions({ input: { legalEntityId: entityId, period } }), enabled: valid, retry: false });
+  const download = useMutation({
+    mutationFn: async () => {
+      const response = await apiFetch(`/api/export/household-s2c.xlsx?legalEntityId=${encodeURIComponent(entityId)}&period=${encodeURIComponent(period)}`);
+      const url = URL.createObjectURL(await response.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = t('s2cFile', { period, org: getCurrentOrg() ?? 'org' });
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+  });
+  const data = book.data;
+  const groupName = (group: string | null) => (group === null ? t('unmappedGroupName') : t(`groupNames.${group as keyof typeof EXPENSE_GROUP_KEYS}`));
+  const provisional = data?.commentary ? (
+    <span className="block text-xs text-muted-foreground" data-testid="household-s2c-provisional">
+      {t('cnkdProvisional')}
+    </span>
+  ) : null;
+  const provisionalForReader = data?.commentary ? <span className="sr-only">{t('cnkdProvisional')}</span> : null;
+  return (
+    <Card className="mb-6 block p-4" data-testid="household-s2c">
+      <h2 className="text-sm font-semibold text-foreground">{t('s2cTitle')}</h2>
+      <p className="mb-3 text-sm text-muted-foreground">{t('s2cHint')}</p>
+      <div className="mb-3 flex flex-wrap items-end gap-3">
+        <div className="space-y-1">
+          <Label htmlFor="s2c-kind">{t('periodKind')}</Label>
+          <NativeSelect id="s2c-kind" value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
+            <NativeSelectOption value="month">{t('kinds.month')}</NativeSelectOption>
+            <NativeSelectOption value="quarter">{t('kinds.quarter')}</NativeSelectOption>
+            <NativeSelectOption value="year">{t('kinds.year')}</NativeSelectOption>
+          </NativeSelect>
+        </div>
+        {kind === 'month' && (
+          <div className="space-y-1">
+            <Label htmlFor="s2c-month">{t('kinds.month')}</Label>
+            <DateInput id="s2c-month" kind="month" className="w-44" value={month} onChange={setMonth} />
+          </div>
+        )}
+        {kind !== 'month' && (
+          <div className="space-y-1">
+            <Label htmlFor="s2c-year">{t('kinds.year')}</Label>
+            <Input id="s2c-year" className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => setYear(e.target.value)} />
+          </div>
+        )}
+        {kind === 'quarter' && (
+          <div className="space-y-1">
+            <Label htmlFor="s2c-quarter">{t('kinds.quarter')}</Label>
+            <NativeSelect id="s2c-quarter" value={quarter} onChange={(e) => setQuarter(e.target.value)}>
+              {['1', '2', '3', '4'].map((q) => (
+                <NativeSelectOption key={q} value={q}>{`Q${q}`}</NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+        )}
+        <Button variant="outline" loading={download.isPending} disabled={!data} onClick={() => download.mutate()} data-testid="household-s2c-download">
+          {t('download')}
+        </Button>
+      </div>
+      {book.isLoading && valid && <CardSkeleton />}
+      {book.error && <ErrorText>{errorMessage(book.error)}</ErrorText>}
+      {download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
+      {data && (
+        <>
+          <Alert className="mb-3" data-testid="household-s2c-notice">
+            <AlertDescription>{t('s2cNotice')}</AlertDescription>
+          </Alert>
+          {data.commentary && (
+            <Alert className="mb-3" data-testid="household-s2c-draft">
+              <AlertDescription>
+                {t('s2cDraft')}
+                <ul className="mt-1 list-disc pl-5">
+                  {data.unconfirmed.map((u) => (
+                    <li key={`${u.kind}-${u.key}`}>{u.kind === 'form' ? t('cnkdUnconfirmedForm', { key: u.key, date: f.date(u.effectiveFrom) }) : t('s2cUnconfirmedGroup', { key: u.key, date: f.date(u.effectiveFrom) })}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+          <h3 className="mb-1 text-sm font-semibold text-foreground">{t('s2cRevenueTitle')}</h3>
+          <DataTable numeric={[3]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('columns.amount')]}>
+            {data.revenueRows.map((r) => (
+              <TableRow key={r.entryId}>
+                <TableCell className="px-4 py-3 text-muted-foreground">{f.date(r.date)}</TableCell>
+                <TableCell className="px-4 py-3 font-mono text-xs">{r.reference ?? ''}</TableCell>
+                <TableCell className="px-4 py-3 text-foreground">
+                  {r.description}
+                  {r.reversal && (
+                    <Badge variant="secondary" className="ml-2">
+                      {t('reversal')}
+                    </Badge>
+                  )}
+                </TableCell>
+                <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(r.amount)}</TableCell>
+              </TableRow>
+            ))}
+            <TableRow>
+              <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={3}>
+                {t('total')}
+              </TableCell>
+              <TableCell className="px-4 py-3 text-right font-medium tabular-nums" data-testid="household-s2c-revenue-total">
+                {f.money(data.revenue)}
+              </TableCell>
+            </TableRow>
+          </DataTable>
+          {data.revenueRows.length === 0 && <p className="mt-2 text-sm text-muted-foreground">{t('noRows')}</p>}
+          <h3 className="mb-1 mt-4 text-sm font-semibold text-foreground">{t('s2cExpenseTitle')}</h3>
+          <DataTable numeric={[5]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('s2cColumns.account'), t('s2cColumns.group'), t('columns.amount')]}>
+            {data.expenseRows.map((r) => (
+              <TableRow key={`${r.entryId}-${r.lineNo}`}>
+                <TableCell className="px-4 py-3 text-muted-foreground">{f.date(r.date)}</TableCell>
+                <TableCell className="px-4 py-3 font-mono text-xs">{r.reference ?? ''}</TableCell>
+                <TableCell className="px-4 py-3 text-foreground">
+                  {r.description}
+                  {r.reversal && (
+                    <Badge variant="secondary" className="ml-2">
+                      {t('reversal')}
+                    </Badge>
+                  )}
+                </TableCell>
+                <TableCell className="px-4 py-3 font-mono text-xs">{r.accountCode}</TableCell>
+                <TableCell className="px-4 py-3 text-xs text-muted-foreground" data-testid={`household-s2c-group-${r.group ?? 'unmapped'}`}>
+                  {groupName(r.group)}
+                </TableCell>
+                <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(r.amount)}</TableCell>
+              </TableRow>
+            ))}
+          </DataTable>
+          {data.expenseRows.length === 0 && <p className="mt-2 text-sm text-muted-foreground">{t('s2cNoExpenses')}</p>}
+          <h3 className="mb-1 mt-4 text-sm font-semibold text-foreground">{t('s2cGroupsTitle')}</h3>
+          <DataTable numeric={[1]} head={[t('s2cColumns.group'), t('columns.amount')]}>
+            {data.groups.map((g) => (
+              <TableRow key={g.group}>
+                <TableCell className="px-4 py-3 text-foreground">
+                  {groupName(g.group)}
+                  {provisional}
+                </TableCell>
+                <TableCell className="px-4 py-3 text-right tabular-nums" data-testid={`household-s2c-group-total-${g.group}`}>
+                  {f.money(g.amount)}
+                  {provisionalForReader}
+                </TableCell>
+              </TableRow>
+            ))}
+          </DataTable>
+          {data.unmappedGross !== '0' && (
+            <Alert className="mt-3" data-testid="household-s2c-unmapped">
+              <AlertDescription>{t('s2cUnmapped', { amount: f.money(data.unmappedGross) })}</AlertDescription>
+            </Alert>
+          )}
+          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm" data-testid="household-s2c-totals">
+            <dt className="text-subtle-foreground">{t('s2cExpenseTotal')}</dt>
+            <dd className="text-right font-medium tabular-nums" data-testid="household-s2c-expense-total">
+              {f.money(data.expenseTotal)}
+              {provisional}
+            </dd>
+            <dt className="font-medium text-foreground">{t('s2cIncome')}</dt>
+            <dd className="text-right font-medium tabular-nums" data-testid="household-s2c-income">
+              {data.income === null ? '' : f.money(data.income)}
+              {provisional}
+            </dd>
+          </dl>
+        </>
+      )}
+    </Card>
+  );
+}
+
+// The keys of the expense groups' names, typed from the contract's list.
+const EXPENSE_GROUP_KEYS = Object.fromEntries(HOUSEHOLD_EXPENSE_GROUPS.map((g) => [g, true])) as Record<(typeof HOUSEHOLD_EXPENSE_GROUPS)[number], true>;
 
 const MONEY_INPUT = /^\d{1,16}(\.\d{1,4})?$/;
 
@@ -608,7 +792,7 @@ function ProfileCard({ entityId, canEdit }: { entityId: string; canEdit: boolean
             {view.data.books.map((b) => (
               <li key={b.book}>
                 {b.name}
-                {b.book !== 'S1a' && b.book !== 'S2a' && <span className="text-subtle-foreground"> {t('comingSoon')}</span>}
+                {b.book !== 'S1a' && b.book !== 'S2a' && b.book !== 'S2c' && <span className="text-subtle-foreground"> {t('comingSoon')}</span>}
               </li>
             ))}
           </ul>
@@ -635,6 +819,7 @@ export function HouseholdPage() {
   const view = useQuery({ ...orpc.household.profile.queryOptions({ input: { legalEntityId: entity?.id ?? '' } }), enabled: entity !== null });
   const hasS1a = view.data?.books.some((b) => b.book === 'S1a') ?? false;
   const hasS2a = view.data?.books.some((b) => b.book === 'S2a') ?? false;
+  const hasS2c = view.data?.books.some((b) => b.book === 'S2c') ?? false;
   // The quarterly worksheet is for the percentage method alone today (the income method and group 1 have no quarterly worksheet here).
   const cnkdTrades = view.data?.profile?.pitMethod === 'percentage' ? view.data.profile.trades : null;
   return (
@@ -663,6 +848,7 @@ export function HouseholdPage() {
           <ProfileCard key={entity.id} entityId={entity.id} canEdit={canEdit} />
           {hasS1a && <S1aBook key={entity.id} entityId={entity.id} />}
           {hasS2a && <S2aBook key={entity.id} entityId={entity.id} />}
+          {hasS2c && <S2cBook key={entity.id} entityId={entity.id} />}
           {cnkdTrades && <CnkdReturn key={entity.id} entityId={entity.id} trades={cnkdTrades} />}
         </>
       )}

@@ -267,6 +267,13 @@ function ledgerView(data: LedgerData, accountCode: string): AccountLedgerView {
   };
 }
 
+// Every account's lines of one legal entity for a period, from the same single statement as the other reports, for a book that groups them itself (the household's S2c expense detail, #2517):
+// the book and the ledger read one snapshot and cannot disagree.
+export async function periodLinesOf(ctx: QueryContext, period: string, legalEntityId: string): Promise<{ period: LedgerPeriod; lines: PeriodLine[] }> {
+  const data = await loadLedgerData(ctx, period, legalEntityId);
+  return { period: data.period, lines: data.lines };
+}
+
 // The general ledger of one account (and its sub-accounts) of one legal entity for a period, for a book that is a view of it (the household's sales book, #2517): the same read as
 // finance.ledger.account, so the book and the ledger cannot disagree.
 export async function accountLedgerOf(ctx: QueryContext, period: string, legalEntityId: string, accountCode: string): Promise<AccountLedgerView> {
