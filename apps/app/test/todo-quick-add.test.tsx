@@ -277,5 +277,18 @@ describe('TodoQuickAddBar & ShellNav SSR rendering (#3556)', () => {
     expect(tmrMorningHtml).toContain('data-testid="quick-add-chip-date"');
     expect(tmrMorningHtml).toContain('data-testid="quick-add-chip-time"');
     expect(tmrMorningHtml).toContain('09:00');
+
+    const rolledTimeOnlyHtml = renderInApp(
+      'vi',
+      <TodoQuickAddBar
+        initialValue="Gọi khách 9h"
+        nowOverride={new Date('2026-11-17T10:00:00+07:00')}
+        timeZoneOverride={TZ}
+      />,
+    );
+    expect(rolledTimeOnlyHtml).not.toContain('data-testid="quick-add-chip-date"');
+    expect(rolledTimeOnlyHtml).toContain('data-testid="quick-add-chip-time"');
+    expect(rolledTimeOnlyHtml).toContain('Ngày mai');
+    expect(rolledTimeOnlyHtml).toContain('09:00');
   });
 });

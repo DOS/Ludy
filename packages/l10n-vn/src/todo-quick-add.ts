@@ -442,7 +442,7 @@ function adjustHourForPeriod(hour: number, period: DayPeriod | undefined): numbe
   if (!period) return hour;
   if ((period === 'afternoon' || period === 'evening') && hour >= 1 && hour <= 11) return hour + 12;
   if (period === 'noon' && hour >= 1 && hour <= 3) return hour + 12;
-  if (period === 'morning' && hour === 12) return 0;
+  if ((period === 'morning' || period === 'evening') && hour === 12) return 0;
   return hour;
 }
 
@@ -634,15 +634,20 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   const tokens: TodoQuickAddToken[] = [];
 
   const isAvailable = (span: Span) => !hasOverlap(occupied, span);
-  const isWordSpanAvailable = (span: Span): boolean => {
-    if (!isAvailable(span)) return false;
+  const hasCleanLeftBoundary = (span: Span): boolean => {
     const left = span.start > 0 ? input[span.start - 1] : '';
-    const right = span.end < input.length ? input[span.end] : '';
-    if (left === '_' || right === '_') return false;
+    if (left === '_') return false;
     if (left === '-' && span.start >= 2 && /[\p{L}\p{N}\p{M}]/u.test(input[span.start - 2] ?? '')) return false;
+    return true;
+  };
+  const hasCleanRightBoundary = (span: Span): boolean => {
+    const right = span.end < input.length ? input[span.end] : '';
+    if (right === '_') return false;
     if (right === '-' && span.end + 1 < input.length && /[\p{L}\p{N}\p{M}]/u.test(input[span.end + 1] ?? '')) return false;
     return true;
   };
+  const isWordSpanAvailable = (span: Span): boolean =>
+    isAvailable(span) && hasCleanLeftBoundary(span) && hasCleanRightBoundary(span);
   const claimToken = (kind: TodoQuickAddTokenKind, start: number, end: number) => {
     occupied.push({ start, end });
     tokens.push({ kind, raw: input.slice(start, end), start, end });
@@ -1182,6 +1187,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       const startHourWord = findAdjacentWordBefore(input, words, conn.start, occupied);
       if (
         startHourWord &&
+        isWordSpanAvailable(startHourWord) &&
         /^\d{1,2}$/.test(startHourWord.nfcLower) &&
         Number(startHourWord.nfcLower) <= 23 &&
         (startHourWord.start === 0 || (input[startHourWord.start - 1] !== '/' && input[startHourWord.start - 1] !== ':'))
@@ -1196,18 +1202,27 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   for (let idx = 0; idx < dedupedTimeCandidates.length; idx++) {
     const tc = dedupedTimeCandidates[idx];
     if (!tc || !isAvailable(tc)) continue;
+
+    if (hasHalfUnitRangeBefore(tc.start)) {
+      if (hasCleanRightBoundary(tc)) hasExplicitClockRange = true;
+      continue;
+    }
+    if (!hasCleanLeftBoundary(tc)) continue;
+
     let start = tc.start;
     let end = tc.end;
     let period: DayPeriod | undefined;
     if (!tc.hasAmPm) {
       const afterWord = findAdjacentWordAfter(input, words, end, occupied);
-      const afterPeriod = afterWord ? matchDayPeriod(afterWord, false, wordBefore(words, afterWord)) : null;
+      const afterPeriod =
+        afterWord && isWordSpanAvailable(afterWord) ? matchDayPeriod(afterWord, false, wordBefore(words, afterWord)) : null;
       if (afterWord && afterPeriod) {
         period = afterPeriod;
         end = afterWord.end;
       } else {
         const beforeWord = findAdjacentWordBefore(input, words, start, occupied);
-        const beforePeriod = beforeWord ? matchDayPeriod(beforeWord, false, wordBefore(words, beforeWord)) : null;
+        const beforePeriod =
+          beforeWord && isWordSpanAvailable(beforeWord) ? matchDayPeriod(beforeWord, false, wordBefore(words, beforeWord)) : null;
         if (beforeWord && beforePeriod) {
           period = beforePeriod;
           start = beforeWord.start;
@@ -1218,15 +1233,10 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     // Require "g" (easily confused with grams "20 g bột" or 5G) to have minutes/rưỡi, a day period, or lúc/vào.
     if (tc.usesShortG && !tc.hasMinutesOrHalf && !period) {
       const beforeClock = findAdjacentWordBefore(input, words, start, occupied);
-      if (!beforeClock || !vnMatchAny(beforeClock, ['lúc', 'vào'])) continue;
+      if (!beforeClock || !isWordSpanAvailable(beforeClock) || !vnMatchAny(beforeClock, ['lúc', 'vào'])) continue;
     }
 
     if (isDurationClock(tc, period)) continue;
-
-    if (hasHalfUnitRangeBefore(tc.start)) {
-      hasExplicitClockRange = true;
-      continue;
-    }
 
     // Skip time ranges ("từ 9h đến 10h", "9h - 11h", "9:00am - 11:00am") intact rather than stripping only one side.
     let rangeEndIdx = idx;
@@ -1238,10 +1248,13 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       cursorEnd = nextTc.end;
     }
     if (rangeEndIdx > idx) {
-      hasExplicitClockRange = true;
+      const lastTc = dedupedTimeCandidates[rangeEndIdx];
+      if (lastTc && hasCleanRightBoundary(lastTc)) hasExplicitClockRange = true;
       idx = rangeEndIdx;
       continue;
     }
+
+    if (!hasCleanRightBoundary(tc)) continue;
 
     const startBeforeAt = start;
     start = expandConnectorBefore(input, words, start, [['vào', 'lúc'], ['lúc'], ['at']], occupied);

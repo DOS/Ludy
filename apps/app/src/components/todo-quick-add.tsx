@@ -150,7 +150,7 @@ export function TodoQuickAddBar({
   });
 
   const handleChange = (next: string) => {
-    if (value === '' && next !== '' && !nowOverride) setAnchorNow(new Date());
+    if (next !== value && !nowOverride) setAnchorNow(new Date());
     setDismissed((prev) => shiftDismissedTokens(value, next, prev));
     valueRef.current = next;
     setValue(next);
@@ -159,6 +159,7 @@ export function TodoQuickAddBar({
   };
 
   const handleDismiss = (token: TodoQuickAddToken) => {
+    if (!nowOverride) setAnchorNow(new Date());
     setDismissed((prev) => [...prev, token]);
     setValue((current) => {
       if (current.slice(token.start, token.end) === token.raw) return current;
@@ -183,17 +184,26 @@ export function TodoQuickAddBar({
   const todayDay = useMemo(() => localIsoDay(currentNow, timeZone), [currentNow, timeZone]);
   const tomorrowDay = useMemo(() => addIsoDay(todayDay, 1), [todayDay]);
 
+  const hasSeparateDateChip = useMemo(
+    () => parsed.tokens.some((tok) => tok.kind === 'date'),
+    [parsed.tokens],
+  );
+
   const hasSeparateTimeChip = useMemo(
     () => parsed.tokens.some((tok) => tok.kind === 'time'),
     [parsed.tokens],
   );
 
+  const formatDueDateLabel = (dueOn: string): string => {
+    const formatted = f.date(dueOn);
+    if (dueOn === todayDay) return t('quickAddDateToday', { date: formatted });
+    if (dueOn === tomorrowDay) return t('quickAddDateTomorrow', { date: formatted });
+    return formatted;
+  };
+
   const dateChipText = (dueOn: string | null): string => {
     if (dueOn === null) return '';
-    const formatted = f.date(dueOn);
-    let label = formatted;
-    if (dueOn === todayDay) label = t('quickAddDateToday', { date: formatted });
-    else if (dueOn === tomorrowDay) label = t('quickAddDateTomorrow', { date: formatted });
+    const label = formatDueDateLabel(dueOn);
     if (parsed.dueTime !== null && !hasSeparateTimeChip) {
       return `${label} · ${parsed.dueTime}`;
     }
@@ -216,8 +226,12 @@ export function TodoQuickAddBar({
       }
       case 'time': {
         if (parsed.dueTime === null) return null;
+        const label =
+          !hasSeparateDateChip && parsed.dueOn !== null
+            ? `${formatDueDateLabel(parsed.dueOn)} · ${parsed.dueTime}`
+            : parsed.dueTime;
         return {
-          label: parsed.dueTime,
+          label,
           variant: 'brand',
           icon: <ClockIcon className="size-3 shrink-0" />,
         };

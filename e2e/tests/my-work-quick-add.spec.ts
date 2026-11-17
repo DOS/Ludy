@@ -56,6 +56,7 @@ test('natural-language Quick Add parses chips, restores dismissed tokens, and Al
     await page.getByTestId('quick-add-dismiss-date').click();
     await expect(page.getByTestId('quick-add-chip-date')).toHaveCount(0);
     await expect(page.getByTestId('quick-add-chip-time')).toBeVisible();
+    await expect(page.getByTestId('quick-add-chip-time')).toContainText('09:00');
     await expect(quickInput).toHaveValue('Đọc lại kế hoạch ngày mai 9h');
     await expect(page.getByTestId('quick-add-preview')).toContainText('Đọc lại kế hoạch ngày mai');
 

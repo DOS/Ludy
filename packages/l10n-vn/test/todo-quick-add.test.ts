@@ -720,5 +720,51 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-17',
       dueTime: '09:00',
     });
+
+    // Identifier boundaries around clocks ("9h_backup", "AB-9h", "TASK-14:30", "9h-backup") stay untouched
+    expect(parseTodoQuickAdd('Kiểm tra mã 9h_backup', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Kiểm tra mã 9h_backup',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Kiểm tra mã AB-9h', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Kiểm tra mã AB-9h',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Xem TASK-14:30 và 9h-backup', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Xem TASK-14:30 và 9h-backup',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp 9h-11h sáng ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp 9h-11h',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp 9h-11h sáng', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp 9h-11h sáng',
+      dueOn: null,
+      dueTime: null,
+    });
+
+    // 12h đêm / 12h tối mean midnight (00:00), whereas 12h trưa stays 12:00
+    expect(parseTodoQuickAdd('Gọi khách ngày mai 12h đêm', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2026-11-18',
+      dueTime: '00:00',
+      dueAt: '2026-11-18T00:00:00+07:00',
+    });
+    expect(parseTodoQuickAdd('Chốt sổ ngày mai 12h trưa', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Chốt sổ',
+      dueOn: '2026-11-18',
+      dueTime: '12:00',
+      dueAt: '2026-11-18T12:00:00+07:00',
+    });
+    expect(parseTodoQuickAdd('Báo cáo 12h tối ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Báo cáo',
+      dueOn: '2026-11-18',
+      dueTime: '00:00',
+    });
   });
 });
