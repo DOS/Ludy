@@ -9904,7 +9904,7 @@ export const en = {
       mine: 'Assigned to me',
     },
     publishNow: 'Approve and schedule',
-    publishNowHint: 'Saves the post, approves it as you and schedules it: at the planned time, or in the queue of each channel. A channel that needs another reviewer waits for them.',
+    publishNowHint: 'Saves the post, approves it as you and schedules it as chosen under When should it go out. A channel that needs another reviewer waits for them.',
     publishNowChanged: 'The review checklist or the approval rules just changed, so the post was sent for review instead of going out now. Approve it in the review panel.',
     tabs: { upcoming: 'Schedule', calendar: 'Calendar', board: 'Board', review: 'To review', attention: 'Needs attention', drafts: 'Drafts', done: 'Published', archived: 'Archived', metrics: 'Metrics', library: 'Image library' },
     filters: {
@@ -10573,7 +10573,8 @@ export const en = {
     whenTimeLabel: 'Date and time to post',
     whenPast: 'That time has passed. Pick a time ahead.',
     whenDraftHint: 'The post has no time yet. You or the reviewer pick one when approving and scheduling.',
-    whenNoSlotsHint: 'This channel has no posting slots yet, so the post goes out at the time you pick. To post in slots, set them on the Channels page.',
+    whenQueueHint: 'Each channel posts in its own next free slot.',
+    whenNoSlotsHint: 'A channel has no posting slots yet, so the post goes out at the time you pick. To post in slots, set them on the Channels page.',
     publishAt: 'Approve and post at {time} on {date}',
     publishInQueue: 'Approve and post in the next free slot',
     whyPickChannel: 'Pick a channel first.',

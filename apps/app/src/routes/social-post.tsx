@@ -2575,14 +2575,14 @@ const mediaItems = (media: readonly { fileId: string; altText: string | null; mi
 
 // Approves every channel of a post just submitted, as its owner or admin sees it, then schedules the ones that need no
 // other reviewer: at the planned time, or in each channel's queue (#638).
-async function approveAndSchedule(postId: string, plannedAt: string | null): Promise<void> {
+async function approveAndSchedule(postId: string, at: string | null): Promise<void> {
   const post = await client.social.posts.get({ postId });
   const review = post.variants.filter((v) => v.status === 'in_review');
   if (review.length === 0) return;
   const decided = await client.social.variants.decide({ postId, decision: 'approved', variants: review.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
   const ready = decided.variants.filter((id) => !decided.waiting.includes(id));
   if (ready.length === 0) return;
-  const at = plannedAt && Date.parse(plannedAt) > Date.now() ? plannedAt : null;
+  // A time is sent as it is, and the server refuses one that has passed meanwhile: it never falls back to the queue.
   await client.social.variants.schedule({ postId, variantIds: ready, ...(at ? { at } : { queue: true as const }) });
 }
 
@@ -2714,8 +2714,9 @@ export function SocialComposePage() {
         title: orNull(base.title),
         linkUrl: orNull(base.linkUrl),
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        // The time chosen (a draft with no time, or the queue, keeps none); one that went by while the page was open is dropped.
-        ...(when === 'time' && (timeSet || mode === 'publish') && futureInstant(plannedAt, Date.now()) ? { scheduledAt: plannedAt as string } : {}),
+        // The time the card shows, for a post sent to review or published; a draft keeps only a time the person set. The queue
+        // and "choose later" keep none; a time that went by while the page was open is dropped.
+        ...(when === 'time' && (timeSet || asked !== 'draft') && futureInstant(plannedAt, Date.now()) ? { scheduledAt: plannedAt as string } : {}),
         ...(aiUsed ? { aiAssisted: true as const } : {}),
         ...(ideaId ? { ideaId } : {}),
         media: mediaInput(base.media),

@@ -61,10 +61,10 @@ export function WhenCard({
       {mode === 'time' && (
         <div className="space-y-1">
           <DateTimeInput aria-label={t('whenTimeLabel')} value={value} min={min} disabled={disabled ?? false} onChange={onValue} />
-          {timeInPast && <p className="text-xs text-destructive">{t('whenPast')}</p>}
+          {timeInPast && <p role="alert" className="text-xs text-destructive">{t('whenPast')}</p>}
         </div>
       )}
-      {mode === 'queue' && <p className="text-xs text-subtle-foreground">{t('nextSlotHint')}</p>}
+      {mode === 'queue' && <p className="text-xs text-subtle-foreground">{t('whenQueueHint')}</p>}
       {mode === 'draft' && <p className="text-xs text-subtle-foreground">{t('whenDraftHint')}</p>}
       {noSlots && mode === 'time' && <p className="text-xs text-subtle-foreground">{t('whenNoSlotsHint')}</p>}
     </Card>

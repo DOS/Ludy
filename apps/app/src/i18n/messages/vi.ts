@@ -9902,7 +9902,7 @@ export const vi = {
       mine: 'Việc của tôi',
     },
     publishNow: 'Duyệt và lên lịch',
-    publishNowHint: 'Lưu bài, tự duyệt và lên lịch: vào giờ đã hẹn, hoặc theo hàng đợi của từng kênh. Kênh cần người khác duyệt sẽ chờ người đó.',
+    publishNowHint: 'Lưu bài, tự duyệt và lên lịch theo lựa chọn ở mục Khi nào đăng. Kênh cần người khác duyệt sẽ chờ người đó.',
     publishNowChanged: 'Danh sách kiểm tra hoặc quy định duyệt vừa thay đổi, nên bài đã được gửi duyệt thay vì đăng ngay. Hãy duyệt trong bảng duyệt.',
     tabs: { upcoming: 'Lịch đăng', calendar: 'Xem lịch', board: 'Bảng', review: 'Cần duyệt', attention: 'Cần xử lý', drafts: 'Nháp', done: 'Đã đăng', archived: 'Đã lưu trữ', metrics: 'Số liệu', library: 'Thư viện ảnh' },
     filters: {
@@ -10571,7 +10571,8 @@ export const vi = {
     whenTimeLabel: 'Ngày và giờ đăng',
     whenPast: 'Giờ này đã qua. Hãy chọn một giờ ở phía trước.',
     whenDraftHint: 'Bài chưa có giờ đăng. Bạn hoặc người duyệt chọn giờ khi duyệt và lên lịch.',
-    whenNoSlotsHint: 'Kênh này chưa có khung giờ đăng cố định, nên bài sẽ đăng đúng giờ bạn chọn. Muốn đăng theo khung giờ, hãy đặt khung giờ ở trang Kênh.',
+    whenQueueHint: 'Mỗi kênh đăng ở khung giờ trống kế tiếp của riêng kênh đó.',
+    whenNoSlotsHint: 'Có kênh chưa có khung giờ đăng cố định, nên bài sẽ đăng đúng giờ bạn chọn. Muốn đăng theo khung giờ, hãy đặt khung giờ ở trang Kênh.',
     publishAt: 'Duyệt và đăng lúc {time} ngày {date}',
     publishInQueue: 'Duyệt và đăng vào khung giờ kế tiếp',
     whyPickChannel: 'Chọn kênh đăng trước.',

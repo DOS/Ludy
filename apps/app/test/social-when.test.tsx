@@ -76,10 +76,11 @@ describe('the "when" card', () => {
     expect(render(card({ queueAvailable: true, mode: 'time' }))).toContain('aria-label="Ngày và giờ đăng"');
     const queue = render(card({ queueAvailable: true, mode: 'queue' }));
     expect(queue).not.toContain('aria-label="Ngày và giờ đăng"');
-    expect(text(queue)).toContain('Mỗi kênh lấy khung giờ trống kế tiếp');
+    expect(text(queue)).toContain('Mỗi kênh đăng ở khung giờ trống kế tiếp');
     const draft = render(card({ queueAvailable: true, mode: 'draft' }));
     expect(draft).not.toContain('aria-label="Ngày và giờ đăng"');
     expect(text(draft)).toContain('Bài chưa có giờ đăng');
+    
   });
 
   it('tells a time that has passed, in both languages', () => {
@@ -93,7 +94,7 @@ describe('the "when" card', () => {
     expect(en.social.publishAt).toBe('Approve and post at {time} on {date}');
     expect(vi.social.publishInQueue).toContain('khung giờ kế tiếp');
     for (const copy of [vi.social, en.social]) {
-      for (const key of ['whenTitle', 'whenLater', 'whenTimeLabel', 'whenPast', 'whenDraftHint', 'whenNoSlotsHint', 'whyPickChannel', 'whyBlocking', 'whyPickTime'] as const) {
+      for (const key of ['whenTitle', 'whenLater', 'whenTimeLabel', 'whenPast', 'whenDraftHint', 'whenQueueHint', 'whenNoSlotsHint', 'whyPickChannel', 'whyBlocking', 'whyPickTime'] as const) {
         expect(copy[key], key).not.toMatch(/queue|hàng đợi|[A-Z]{3,}_[A-Z_]+/);
       }
     }
