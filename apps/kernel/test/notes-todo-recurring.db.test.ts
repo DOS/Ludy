@@ -29,6 +29,12 @@ const SECRET_TITLE = 'Nộp tờ khai thuế quý 4 bí mật';
 const SECRET_DETAILS = 'Số tài khoản nội bộ tuyệt mật 999888';
 const SECRET_STEP_1 = 'Chốt số hóa đơn đầu vào';
 const SECRET_STEP_2 = 'Ký tờ khai điện tử';
+// Keep future-reminder tests safely ahead of wall-clock time so CI never breaks as dates advance.
+const FUTURE_YEAR = new Date().getUTCFullYear() + 1;
+const FUTURE_NOV_END = `${FUTURE_YEAR}-11-30`;
+const FUTURE_DEC_END = `${FUTURE_YEAR}-12-31`;
+const FUTURE_RESCHEDULE_DAY = `${FUTURE_YEAR}-12-10`;
+const FUTURE_RESCHEDULE_NEXT = `${FUTURE_YEAR}-12-11`;
 
 suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
   const dbName = `crove_test_notes_todo_rec_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -139,7 +145,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
         { text: SECRET_STEP_1, done: true },
         { text: SECRET_STEP_2, done: false },
       ],
-      dueOn: '2026-11-30',
+      dueOn: FUTURE_NOV_END,
       dueTime: '09:30',
       timeZone: 'Asia/Ho_Chi_Minh',
       reminder: 'auto',
@@ -168,16 +174,16 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     ]);
     expect(completedRow.seriesId).toBe(created.todoId);
 
-    // Next occurrence shares seriesId & recurrence, resets checklist, shifts dueOn to 2026-12-31, keeps 09:30, shifts auto reminder, clears reminded_at.
+    // Next occurrence shares seriesId & recurrence, resets checklist, shifts dueOn to FUTURE_DEC_END, keeps 09:30, shifts auto reminder, clears reminded_at.
     const spawned = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: nextId });
     expect(spawned.status).toBe('open');
     expect(spawned.title).toBe(SECRET_TITLE);
     expect(spawned.details).toBe(SECRET_DETAILS);
     expect(spawned.seriesId).toBe(created.todoId);
     expect(spawned.recurrence).toEqual({ freq: 'monthly', interval: 1, byMonthDay: -1 });
-    expect(spawned.dueOn).toBe('2026-12-31');
+    expect(spawned.dueOn).toBe(FUTURE_DEC_END);
     expect(spawned.dueTime).toBe('09:30');
-    expect(spawned.remindAt).toBe('2026-12-31T02:00:00.000Z'); // 09:00 Asia/Ho_Chi_Minh = 02:00Z
+    expect(spawned.remindAt).toBe(`${FUTURE_DEC_END}T02:00:00.000Z`); // 09:00 Asia/Ho_Chi_Minh = 02:00Z
     expect(spawned.checklist).toEqual([
       { text: SECRET_STEP_1, done: false },
       { text: SECRET_STEP_2, done: false },
@@ -192,7 +198,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     const secondComplete = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: created.todoId });
     expect(secondComplete.nextTodoId ?? null).toBeNull();
 
-    // Reopening the completed row and completing again must NOT create a duplicate open row for the same (series_id, 2026-12-31).
+    // Reopening the completed row and completing again must NOT create a duplicate open row for the same (series_id, FUTURE_DEC_END).
     await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: created.todoId });
     const recompleted = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: created.todoId });
     expect(recompleted.nextTodoId ?? null).toBeNull();
@@ -261,7 +267,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
 
     // Owner, admin and other member cannot reschedule mine's private to-dos.
     for (const stranger of [o.owner, o.admin, o.other]) {
-      await expect(o.exec(stranger, 'notes.todo.reschedule', { todoIds: [a.todoId, b.todoId], dueOn: '2026-12-01' })).rejects.toMatchObject({
+      await expect(o.exec(stranger, 'notes.todo.reschedule', { todoIds: [a.todoId, b.todoId], dueOn: FUTURE_RESCHEDULE_DAY })).rejects.toMatchObject({
         code: 'TODO_NOT_FOUND',
         status: 404,
       });
@@ -270,20 +276,20 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     // Mark a's reminded_at so reschedule must clear it.
     await admin((c) => c.query(`UPDATE crove_notes.todo SET reminded_at = now() WHERE org_id = $1 AND id = $2`, [o.orgId, a.todoId]));
 
-    // Reschedule both in batch to 2026-12-10; a retains 15:00 + 14:30 reminder, b stays reminder: null, order is preserved.
+    // Reschedule both in batch to a future day; a retains 15:00 + 14:30 reminder, b stays reminder: null, order is preserved.
     const resched = await o.exec<TodoRescheduled>(o.mine, 'notes.todo.reschedule', {
       todoIds: [a.todoId, b.todoId],
-      dueOn: '2026-12-10',
+      dueOn: FUTURE_RESCHEDULE_DAY,
     });
     expect(resched).toEqual({ updated: 2, todoIds: [a.todoId, b.todoId] });
 
     const aAfter = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: a.todoId });
     const bAfter = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: b.todoId });
-    expect(aAfter.dueOn).toBe('2026-12-10');
+    expect(aAfter.dueOn).toBe(FUTURE_RESCHEDULE_DAY);
     expect(aAfter.dueTime).toBe('15:00');
-    expect(aAfter.remindAt).toBe('2026-12-10T07:30:00.000Z'); // 14:30 Asia/Ho_Chi_Minh = 07:30Z
+    expect(aAfter.remindAt).toBe(`${FUTURE_RESCHEDULE_DAY}T07:30:00.000Z`); // 14:30 Asia/Ho_Chi_Minh = 07:30Z
     expect(aAfter.revision).toBe(aWithRec.revision + 1);
-    expect(bAfter.dueOn).toBe('2026-12-10');
+    expect(bAfter.dueOn).toBe(FUTURE_RESCHEDULE_DAY);
     expect(bAfter.remindAt).toBeNull();
 
     const rawA = await admin((c) =>
@@ -293,11 +299,11 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
 
     // Reschedule rejects if a to-do is trashed (409 TODO_IN_TRASH), done (409), or missing (404).
     await o.exec<TodoWritten>(o.mine, 'notes.todo.delete', { todoId: b.todoId });
-    await expect(o.exec(o.mine, 'notes.todo.reschedule', { todoIds: [b.todoId], dueOn: '2026-12-11' })).rejects.toMatchObject({
+    await expect(o.exec(o.mine, 'notes.todo.reschedule', { todoIds: [b.todoId], dueOn: FUTURE_RESCHEDULE_NEXT })).rejects.toMatchObject({
       code: 'TODO_IN_TRASH',
       status: 409,
     });
-    await expect(o.exec(o.mine, 'notes.todo.reschedule', { todoIds: [randomUUID()], dueOn: '2026-12-11' })).rejects.toMatchObject({
+    await expect(o.exec(o.mine, 'notes.todo.reschedule', { todoIds: [randomUUID()], dueOn: FUTURE_RESCHEDULE_NEXT })).rejects.toMatchObject({
       code: 'TODO_NOT_FOUND',
       status: 404,
     });
@@ -310,7 +316,7 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
       );
       const okRows = rows.rows.filter((r) => r.outcome === 'ok');
       expect(okRows).toHaveLength(1);
-      expect(okRows[0]?.detail).toEqual({ count: 2, dueOn: '2026-12-10', todoIds: [a.todoId, b.todoId] });
+      expect(okRows[0]?.detail).toEqual({ count: 2, dueOn: FUTURE_RESCHEDULE_DAY, todoIds: [a.todoId, b.todoId] });
       expect(JSON.stringify(rows.rows)).not.toContain('Overdue Alpha');
       expect(JSON.stringify(rows.rows)).not.toContain('Overdue Beta');
     });
