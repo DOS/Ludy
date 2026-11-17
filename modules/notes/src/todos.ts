@@ -455,6 +455,19 @@ export const todoComplete = defineCommand({
       .returning(['id', 'revision'])
       .executeTakeFirstOrThrow();
 
+    if (stopSeries && rule !== null && seriesId !== null) {
+      // If the user reopened an older occurrence and selected stopSeries, clear recurrence on any active sibling too.
+      await ctx.trx
+        .updateTable('crove_notes.todo')
+        .set({ recurrence: null, revision: sql<number>`revision + 1`, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('series_id', '=', seriesId)
+        .where('id', '<>', row.id)
+        .where('status', '=', 'open')
+        .where('deleted_at', 'is', null)
+        .execute();
+    }
+
     let nextTodoId: string | null = null;
     let nextDueOn: string | null = null;
     if (rule !== null && !stopSeries && seriesId !== null) {
@@ -479,7 +492,7 @@ export const todoComplete = defineCommand({
       if (!hasNewerSibling) {
         const occupied = new Set(siblings.map((r) => r.due_on).filter((d): d is string => d !== null));
         // Lock in original month day before skipping occupied historical dates so short months never shift the target day.
-        const anchorDay = before.due_on !== null ? Number(before.due_on.split('-')[2]) : 0;
+        const anchorDay = Number(anchorDate.split('-')[2]);
         let candidate = nextTodoOccurrenceDate(rule, anchorDate);
         const firstDay = Number(candidate.split('-')[2]);
         const stepRule =

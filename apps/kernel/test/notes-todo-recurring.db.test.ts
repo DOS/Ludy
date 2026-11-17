@@ -509,5 +509,20 @@ suite('personal to-do recurrence and reschedule on PostgreSQL (#3557)', () => {
     expect(expRow).toBeDefined();
     expect(expRow?.recurrence).toEqual({ freq: 'weekly', interval: 1 });
     expect(expRow?.seriesId).toBe(stopRoot.todoId);
+
+    // Stopping a series from a reopened older occurrence stops active open siblings too.
+    const olderStop = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Stop from reopened ancestor',
+      dueOn: '2027-07-01',
+      timeZone: 'Asia/Ho_Chi_Minh',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    const spawnedActive = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: olderStop.todoId });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.reopen', { todoId: olderStop.todoId });
+    await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: olderStop.todoId, stopSeries: true });
+    const siblingAfterStop = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: spawnedActive.nextTodoId as string });
+    expect(siblingAfterStop.recurrence).toBeNull();
+    const afterSiblingDone = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: siblingAfterStop.id });
+    expect(afterSiblingDone.nextTodoId ?? null).toBeNull();
   });
 });
