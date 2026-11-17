@@ -327,7 +327,9 @@ export async function uploadAgreement(file: File): Promise<string> {
   const form = new FormData();
   form.append('purpose', 'agreement');
   form.append('file', file);
-  const response = await retryWhileBusy(() => apiFetch('/api/files', { method: 'POST', body: form }));
+  // The organization that starts the correction, kept for every try: a switch of organization while the upload waits on a busy retry must never store the agreement in another one.
+  const org = currentOrg;
+  const response = await retryWhileBusy(() => apiFetch('/api/files', { method: 'POST', body: form, orgSlug: org }));
   const { files } = (await response.json()) as { files: Uploaded[] };
   const first = files[0];
   if (!first) throw new ClientError('inbox.storageUploadFailed', (t) => t('inbox.storageUploadFailed', { name: file.name }));

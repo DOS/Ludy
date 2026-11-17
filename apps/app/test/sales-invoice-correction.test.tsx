@@ -114,6 +114,31 @@ describe('the panel that starts a correction', () => {
   });
 });
 
+describe('the panel when the reason codes cannot be loaded', () => {
+  it('says what happened and offers a retry, apart from the notice of an empty list', () => {
+    setActiveLocale('vi');
+    const key = ['einvoice', 'drafts', 'correctionOptions', {}];
+    // A query in error is tried again on mount by default, which would hide the error from a render; the screen is looked at as it is once the try has failed.
+    cache.current.setDefaultOptions({ queries: { retryOnMount: false } });
+    cache.current.removeQueries({ queryKey: key });
+    const query = cache.current.getQueryCache().build(cache.current, { queryKey: key });
+    query.setState({ ...query.state, status: 'error', fetchStatus: 'idle', error: new Error('boom'), data: undefined, errorUpdateCount: 1 } as never);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={cache.current}>
+        <I18nProvider>
+          <CorrectionAction draft={summary()} onStarted={() => undefined} openWith="adjustment" />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+    cache.current.removeQueries({ queryKey: key });
+    cache.current.setDefaultOptions({});
+    expect(html).toContain('data-testid="invoice-correction-options-error"');
+    expect(html).toContain('data-testid="invoice-correction-options-retry"');
+    expect(html).toContain('Chưa tải được danh sách mã lý do');
+    expect(html).not.toContain('invoice-correction-no-reasons');
+  });
+});
+
 describe('the form of a correcting invoice', () => {
   const correction = (kind: EInvoiceCorrection['kind']): EInvoiceCorrection => ({ kind, originalDraftId: ORIGINAL, reasonCode: '1', agreementFileId: null });
 

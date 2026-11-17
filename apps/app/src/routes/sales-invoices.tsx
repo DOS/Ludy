@@ -23,7 +23,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { applyPrevious } from '../lib/invoice-copy.ts';
 import { appendSource, bookingDay, bookingSourceText, dealSourceText } from '../lib/invoice-crm-source.ts';
-import { client, errorMessage, isStepUpRequired, orpc, queryClient, uploadAgreement } from '../lib/api.ts';
+import { ClientError, client, errorMessage, getCurrentOrg, isStepUpRequired, orpc, queryClient, uploadAgreement } from '../lib/api.ts';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
@@ -570,12 +570,17 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
   const reasons = options.data?.reasonCodes ?? [];
   const start = useMutation({
     mutationFn: async (method: EInvoiceCorrectionKind) => {
+      // The invoice belongs to the organization on screen when the person pressed the button: if it changed while the agreement was uploading, nothing is started (the file is the first
+      // organization's, the draft would be made in the second).
+      const org = getCurrentOrg();
       const agreementFileId = file ? await uploadAgreement(file) : null;
+      if (getCurrentOrg() !== org) throw new ClientError('salesInvoices.correction.orgChanged', (tr) => tr('salesInvoices.correction.orgChanged'));
       return client.einvoice.drafts.startCorrection({ originalDraftId: draft.id, kind: method, reasonCode: reason, agreementFileId });
     },
     onSuccess: async (made) => {
       await refresh();
       setKind(null);
+      setFile(null);
       onStarted(made.id);
     },
   });
@@ -597,7 +602,15 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
         <Card className="block p-3" data-testid="invoice-correction-panel">
           <p className="text-sm font-medium">{kind === 'adjustment' ? t('correction.panelAdjust', { number }) : t('correction.panelReplace', { number })}</p>
           {draft.correctedBy && <p className="mt-1 text-xs text-subtle-foreground">{t('correction.methodKept', { method: draft.correctedBy === 'adjustment' ? t('correction.methodAdjustment') : t('correction.methodReplacement') })}</p>}
-          {options.data && reasons.length === 0 ? (
+          {options.error ? (
+            <div className="mt-2" data-testid="invoice-correction-options-error">
+              <ErrorText>{errorMessage(options.error)}</ErrorText>
+              <p className="text-xs text-subtle-foreground">{t('correction.optionsRetryHint')}</p>
+              <Button className="mt-1" size="sm" variant="outline" loading={options.isFetching} onClick={() => void options.refetch()} data-testid="invoice-correction-options-retry">
+                {t('correction.optionsRetry')}
+              </Button>
+            </div>
+          ) : options.data && reasons.length === 0 ? (
             <p className="mt-2 text-xs text-warning" data-testid="invoice-correction-no-reasons">{t('correction.reasonEmpty')}</p>
           ) : (
             <div className="mt-2">
@@ -628,7 +641,15 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
             <Button size="sm" loading={start.isPending} disabled={reason === '' || (business && file === null)} onClick={() => start.mutate(kind)} data-testid="invoice-correction-start">
               {t('correction.start')}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setKind(null)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                // Closing forgets the agreement picked: a reopened panel shows an empty picker, so nothing hidden is uploaded.
+                setKind(null);
+                setFile(null);
+              }}
+            >
               {t('correction.cancel')}
             </Button>
           </div>
