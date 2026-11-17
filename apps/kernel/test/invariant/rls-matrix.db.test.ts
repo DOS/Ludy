@@ -111,8 +111,13 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
+  'crove_notes.attachment',
   'crove_notes.link',
   'crove_notes.note',
+  'crove_notes.note_template',
+  'crove_notes.note_version',
+  'crove_notes.notebook',
+  'crove_notes.todo_list',
   'crove_sign.ca_connection',
   'crove_sign.ca_signing_request',
 ]);
@@ -200,13 +205,18 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
   ['crove_meetings.translation', () => 'false'], // A machine translation, read by the member who asked for it, a user (meetings integrations E1, #3184).
   // Catalog 'read': the notes its member could read, own private and shared (the factory's private notes are the first owner's, not the member's, so only the shared ones).
+  ['crove_notes.attachment', () => 'false'], // Not in member_vy_table; reads through parent note with ctx_agent_id() IS NULL.
   [
     'crove_notes.link',
     (m) =>
       `EXISTS (SELECT 1 FROM crove_notes.note n WHERE n.org_id OPERATOR(pg_catalog.=) t.org_id AND n.id OPERATOR(pg_catalog.=) t.note_id AND (n.visibility OPERATOR(pg_catalog.=) 'org'::text OR n.author_user_id OPERATOR(pg_catalog.=) '${m}'::uuid))`,
   ],
   ['crove_notes.note', (m) => `(t.visibility OPERATOR(pg_catalog.=) 'org'::text OR t.author_user_id OPERATOR(pg_catalog.=) '${m}'::uuid)`],
+  ['crove_notes.note_template', () => 'false'], // Not in member_vy_table; keyed to ctx_user_id() per ADR-0037.
+  ['crove_notes.note_version', () => 'false'], // Not in member_vy_table; reads through parent note with ctx_agent_id() IS NULL.
+  ['crove_notes.notebook', () => 'false'], // Not in member_vy_table; keyed to ctx_user_id() per ADR-0037.
   ['crove_notes.todo', () => 'false'], // A to-do is its owner's alone.
+  ['crove_notes.todo_list', () => 'false'], // A personal to-do list is its owner's alone (ADR-0037).
   ['crove_social.notification', () => 'false'], // Per member.
   ['crove_social.notification_mail_off', () => 'false'], // Per member.
   ['crove_social.notification_mute', () => 'false'], // Per member.
@@ -294,6 +304,11 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.transcript_segment', 'false'],
   // A machine translation of a summary (meetings integrations E1, #3184): the asker's alone; worker system context reads and writes nothing.
   ['crove_meetings.translation', 'false'],
+  // An attachment reads through its parent note: the system context sees shared notes' attachments only (ADR-0037).
+  [
+    'crove_notes.attachment',
+    "EXISTS (SELECT 1 FROM crove_notes.note n WHERE n.org_id OPERATOR(pg_catalog.=) t.org_id AND n.id OPERATOR(pg_catalog.=) t.note_id AND n.visibility OPERATOR(pg_catalog.=) 'org'::text)",
+  ],
   // A link reads through its parent: the system context sees the links of shared notes (the factory's parent).
   [
     'crove_notes.link',
@@ -301,8 +316,19 @@ const AUTHOR_ONLY = new Map<string, string>([
   ],
   // The system context reads shared notes (the factory's rows), for the export.
   ['crove_notes.note', "t.visibility OPERATOR(pg_catalog.=) 'org'::text"],
+  // The system context reads shared note templates (visibility = 'org'), never private ones (ADR-0037).
+  ['crove_notes.note_template', "t.visibility OPERATOR(pg_catalog.=) 'org'::text"],
+  // A note version reads through its parent note: the system context sees shared notes' snapshots only (ADR-0037).
+  [
+    'crove_notes.note_version',
+    "EXISTS (SELECT 1 FROM crove_notes.note n WHERE n.org_id OPERATOR(pg_catalog.=) t.org_id AND n.id OPERATOR(pg_catalog.=) t.note_id AND n.visibility OPERATOR(pg_catalog.=) 'org'::text)",
+  ],
+  // The system context reads shared notebooks (visibility = 'org'), never private ones (ADR-0037).
+  ['crove_notes.notebook', "t.visibility OPERATOR(pg_catalog.=) 'org'::text"],
   // A to-do is its owner's alone, the system context's included.
   ['crove_notes.todo', 'false'],
+  // A personal to-do list is its owner's alone, the system context's included (ADR-0037).
+  ['crove_notes.todo_list', 'false'],
 ]);
 // Tables whose nullable legal_entity_id scopes a row to an entity, NULL being an org-level row every member reads
 // (#1716). The value makes a row of org A's default entity: the table's trigger gives it the entity of the record it
@@ -631,6 +657,46 @@ const notesLinkRow = (o: { id: string; owner: string; party: string }, noteId: s
   target_id: o.party,
   party_id: o.party,
   created_by: o.owner,
+});
+const notesAttachmentRow = (o: { id: string; owner: string }, noteId: string) => {
+  const id = randomUUID();
+  return {
+    org_id: o.id,
+    id,
+    note_id: noteId,
+    author_user_id: o.owner,
+    filename: 'rls-matrix.pdf',
+    content_type: 'application/pdf',
+    size_bytes: 128,
+    sha256: hex64(),
+    storage_key: `notes/${o.id}/${id}`,
+  };
+};
+const notesNotebookRow = (o: { id: string; owner: string }, visibility: 'org' | 'private') => ({
+  org_id: o.id,
+  id: randomUUID(),
+  author_user_id: o.owner,
+  visibility,
+  name: `RLS matrix notebook ${tag()}`,
+  sort_key: 'a0',
+});
+const notesTemplateRow = (o: { id: string; owner: string }, visibility: 'org' | 'private') => ({
+  org_id: o.id,
+  id: randomUUID(),
+  author_user_id: o.owner,
+  visibility,
+  name: `RLS matrix template ${tag()}`,
+  title: 'RLS matrix template note',
+  body: '',
+});
+const notesVersionRow = (o: { id: string; owner: string }, noteId: string) => ({
+  org_id: o.id,
+  id: randomUUID(),
+  note_id: noteId,
+  author_user_id: o.owner,
+  revision: 1,
+  title: 'RLS matrix note',
+  body: '',
 });
 // Projects on kernel tasks (ADR-0048, docs/plan/projects.md section 4.1, #2586): an active project owned by the org's owner.
 const projectsProjectRow = (o: { id: string; owner: string }) => ({
@@ -2824,6 +2890,20 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // as. Each also seeds a private row beside the one it probes, so the system context's read count (AUTHOR_ONLY) fails
   // if the system reads a private row. A link to a shared note (its setup: a link to a private note), so the system
   // keeps a link to read; it links notes only, since `todo` arrives after `link` (N4 after N2).
+  'crove_notes.attachment': {
+    make: (o) => {
+      const shared = notesNoteRow(o, 'org');
+      const hidden = notesNoteRow(o, 'private');
+      return {
+        setup: [
+          { table: 'crove_notes.note', values: shared },
+          { table: 'crove_notes.note', values: hidden },
+          { table: 'crove_notes.attachment', values: notesAttachmentRow(o, hidden.id) },
+        ],
+        row: notesAttachmentRow(o, shared.id),
+      };
+    },
+  },
   'crove_notes.link': {
     make: (o) => {
       const shared = notesNoteRow(o, 'org');
@@ -2840,9 +2920,31 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // A shared note, so the system context keeps a row to read, beside a private one (its setup).
   'crove_notes.note': { make: (o) => ({ setup: [{ table: 'crove_notes.note', values: notesNoteRow(o, 'private') }], row: notesNoteRow(o, 'org') }) },
+  // A shared note template, so the system context keeps a row to read, beside a private one (its setup).
+  'crove_notes.note_template': { make: (o) => ({ setup: [{ table: 'crove_notes.note_template', values: notesTemplateRow(o, 'private') }], row: notesTemplateRow(o, 'org') }) },
+  'crove_notes.note_version': {
+    make: (o) => {
+      const shared = notesNoteRow(o, 'org');
+      const hidden = notesNoteRow(o, 'private');
+      return {
+        setup: [
+          { table: 'crove_notes.note', values: shared },
+          { table: 'crove_notes.note', values: hidden },
+          { table: 'crove_notes.note_version', values: notesVersionRow(o, hidden.id) },
+        ],
+        row: notesVersionRow(o, shared.id),
+      };
+    },
+  },
+  // A shared notebook, so the system context keeps a row to read, beside a private one (its setup).
+  'crove_notes.notebook': { make: (o) => ({ setup: [{ table: 'crove_notes.notebook', values: notesNotebookRow(o, 'private') }], row: notesNotebookRow(o, 'org') }) },
   // Private by nature: the system context reads none.
   'crove_notes.todo': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), owner_user_id: o.owner, title: 'RLS matrix to-do', time_zone: 'Asia/Ho_Chi_Minh', sort_key: 'a0' } }),
+  },
+  // Private by nature: the system context reads none.
+  'crove_notes.todo_list': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), owner_user_id: o.owner, name: `RLS matrix list ${tag()}`, sort_key: 'a0' } }),
   },
   // Projects and task board (ADR-0048, docs/plan/projects.md section 4.1 and 6, #2586): org-visible under apply_tenant_rls.
   'crove_projects.project': {

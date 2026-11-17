@@ -3,9 +3,11 @@
 import { createHash } from 'node:crypto';
 import { EInvoiceProviderError, type EInvoiceOutcome, type EInvoiceProvider, type EInvoiceRequest, type EInvoiceTemplate } from './port.ts';
 import { fromMinor, toMinor } from './decimal.ts';
+import { ADJUST_REPLACE_REASON_CODES, isReasonCode, type ReasonCode } from './reason-codes.ts';
 
 export * from './port.ts';
 export * from './misa.ts';
+export * from './reason-codes.ts';
 
 // ---------------------------------------------------------------------------
 // The offline sandbox provider (ADR-0044 point 8)
@@ -62,7 +64,7 @@ const xmlText = (value: string | null): string =>
 function sandboxXml(request: EInvoiceRequest, number: string, signedAt: string, taxAuthorityCode: string): string {
   const original = request.original;
   const related = original
-    ? `<TTHDLQuan><TCHDon>${original.kind === 'replacement' ? '1' : '2'}</TCHDon><KHMSHDCLQuan>${xmlText(original.templateNo)}</KHMSHDCLQuan><KHHDCLQuan>${xmlText(original.symbol)}</KHHDCLQuan><SHDCLQuan>${xmlText(original.number)}</SHDCLQuan><NLHDCLQuan>${xmlText(original.date)}</NLHDCLQuan></TTHDLQuan>`
+    ? `<TTHDLQuan><TCHDon>${original.kind === 'replacement' ? '1' : '2'}</TCHDon><KHMSHDCLQuan>${xmlText(original.templateNo)}</KHMSHDCLQuan><KHHDCLQuan>${xmlText(original.symbol)}</KHHDCLQuan><SHDCLQuan>${xmlText(original.number)}</SHDCLQuan><NLHDCLQuan>${xmlText(original.date)}</NLHDCLQuan><LDDCTThe>${xmlText(original.reasonCode)}</LDDCTThe></TTHDLQuan>`
     : '';
   const lines = request.lines
     .map(
@@ -92,6 +94,8 @@ function sandboxXml(request: EInvoiceRequest, number: string, signedAt: string, 
 }
 
 export interface SandboxOptions {
+  // The codes an adjustment or a replacement may carry; the default is the data file's list (reason-codes.ts). A test passes its own.
+  reasonCodes?: readonly ReasonCode[];
   // The wait of the `slow` behavior; the default is a timer, a test passes an instant one.
   wait?: (ms: number) => Promise<void>;
   now?: () => Date;
@@ -100,6 +104,7 @@ export interface SandboxOptions {
 export function createSandboxEInvoiceProvider(options: SandboxOptions = {}): { provider: EInvoiceProvider; control: SandboxControl } {
   const wait = options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = options.now ?? (() => new Date());
+  const reasonCodes = options.reasonCodes ?? ADJUST_REPLACE_REASON_CODES.codes;
   const queue: SandboxBehavior[] = [];
   const calls: string[] = [];
   const byKey = new Map<string, Stored>();
@@ -128,6 +133,8 @@ export function createSandboxEInvoiceProvider(options: SandboxOptions = {}): { p
 
   async function submit(secret: string, step: 'issue' | 'adjust' | 'replace', request: EInvoiceRequest): Promise<EInvoiceOutcome> {
     checkSecret(secret);
+    // An adjustment or a replacement without a reason code of the list, or with an unknown one, is refused before anything is recorded (as the MISA adapter refuses it before any call).
+    if (step !== 'issue' && !isReasonCode(request.original?.reasonCode, reasonCodes)) return { state: 'rejected', ref: null, code: 'invalid_data' };
     calls.push(`${step}:${request.key}`);
     // The same key is the same invoice: the provider dedupes on it, as the real ones that have such a field do. A repeat takes no scripted behavior.
     const existing = byKey.get(request.key);

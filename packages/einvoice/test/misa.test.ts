@@ -3,15 +3,20 @@
 // SignType 2, the key as RefID, exact numbers), how each answer and error code ends a step, that a lost answer is asked about before anything is sent again, that the USB-token
 // path is never called, the document's limits as data, and that the adapter is off until its gates are written.
 import { describe, expect, it } from 'vitest';
-import { EInvoiceProviderError, MISA_GATES, MISA_GATES_DONE, MISA_HOSTS, createMisaEInvoiceProvider, isEInvoiceProvider, misaBlockers } from '../src/index.ts';
+import { ADJUST_REPLACE_REASON_CODES, EInvoiceProviderError, MISA_GATES, MISA_GATES_DONE, MISA_HOSTS, createMisaEInvoiceProvider, isEInvoiceProvider, misaBlockers } from '../src/index.ts';
 import type { MisaRequest } from '../src/index.ts';
 import { DRAFT_ID, REF, SECRET, answers, invoiceXml, lost, replay, request, type Step } from './misa-recorded.ts';
 
 const fixedNow = () => new Date('2026-11-03T03:00:00Z');
 const T = '/invoice/token';
+// A stand-in list for the tests: the real list is data (reason-codes.ts) and is empty until it is read from MISA's guide; these two codes are made up for the tests and mean nothing.
+const TEST_CODES = [
+  { code: 'TEST-1', label: 'Mã thử nghiệm 1' },
+  { code: 'TEST-2', label: 'Mã thử nghiệm 2' },
+] as const;
 const make = (script: Record<string, Step[]>) => {
   const r = replay({ [T]: [answers.token()], ...script });
-  return { ...r, provider: createMisaEInvoiceProvider({ transport: r.transport, now: fixedNow }) };
+  return { ...r, provider: createMisaEInvoiceProvider({ transport: r.transport, now: fixedNow, reasonCodes: TEST_CODES }) };
 };
 const bodyOf = (call: { body: string | null } | undefined): Record<string, unknown> => JSON.parse(call?.body ?? 'null') as Record<string, unknown>;
 const publishing = (calls: readonly MisaRequest[]) => calls.filter((c) => c.url.endsWith('/invoice/publishing'));
@@ -264,7 +269,7 @@ describe('MISA adapter: issue', () => {
 type EInvoiceLineLike = ReturnType<typeof request>['lines'][number];
 
 describe('MISA adapter: adjustment and replacement', () => {
-  const original = { templateNo: '1', symbol: 'C26TYY', number: '00000001', date: '2026-11-03' };
+  const original = { templateNo: '1', symbol: 'C26TYY', number: '00000001', date: '2026-11-03', reasonCode: 'TEST-1' };
 
   it('names the original, as the document\'s ReferenceType and Org fields', async () => {
     const { provider, calls } = make({ '/invoice/publishing': [answers.published({ InvCode: 'C' })] });
@@ -274,6 +279,38 @@ describe('MISA adapter: adjustment and replacement', () => {
     expect(adjust?.SignType).toBe(2);
     expect(adjust?.InvoiceData[0]).toMatchObject({ ReferenceType: 2, OrgInvoiceType: 1, OrgInvTemplateNo: '1', OrgInvSeries: 'C26TYY', OrgInvNo: '00000001', OrgInvDate: '2026-11-03' });
     expect(replace?.InvoiceData[0]).toMatchObject({ ReferenceType: 1, OrgInvNo: '00000001' });
+  });
+
+  it('sends the reason code with the original, on an adjustment and on a replacement (#3571)', async () => {
+    const { provider, calls } = make({ '/invoice/publishing': [answers.published({ InvCode: 'C' })] });
+    await provider.adjust(SECRET, { ...request(), original: { ...original, kind: 'adjustment', reasonCode: 'TEST-1' } });
+    await provider.replace(SECRET, { ...request(), original: { ...original, kind: 'replacement', reasonCode: 'TEST-2' } });
+    const [adjust, replace] = publishing(calls).map((c) => (JSON.parse(c.body ?? '') as { InvoiceData: Record<string, unknown>[] }));
+    expect(adjust?.InvoiceData[0]).toMatchObject({ ReferenceType: 2, AdjustReplaceReasonCode: 'TEST-1' });
+    expect(replace?.InvoiceData[0]).toMatchObject({ ReferenceType: 1, AdjustReplaceReasonCode: 'TEST-2' });
+  });
+
+  it('refuses a missing or unknown reason code before any call, and a plain invoice carries none', async () => {
+    const { provider, calls } = make({ '/invoice/publishing': [answers.published({ InvCode: 'C' })] });
+    const refused = { state: 'rejected', ref: null, code: 'invalid_data' };
+    for (const reasonCode of ['', 'NOT-IN-THE-LIST', ' TEST-1']) {
+      expect(await provider.adjust(SECRET, { ...request(), original: { ...original, kind: 'adjustment', reasonCode } })).toEqual(refused);
+      expect(await provider.replace(SECRET, { ...request(), original: { ...original, kind: 'replacement', reasonCode } })).toEqual(refused);
+    }
+    const missing = { ...original, kind: 'adjustment' as const } as Partial<typeof original> & { kind: 'adjustment' };
+    delete missing.reasonCode;
+    expect(await provider.adjust(SECRET, { ...request(), original: missing as never })).toEqual(refused);
+    expect(calls).toEqual([]);
+    await provider.issue(SECRET, request());
+    expect('AdjustReplaceReasonCode' in ((bodyOf(publishing(calls)[0]).InvoiceData as Record<string, unknown>[])[0] ?? {})).toBe(false);
+  });
+
+  it('refuses every adjustment and replacement while the real list is empty (no code is invented)', async () => {
+    const r = replay({ [T]: [answers.token()], '/invoice/publishing': [answers.published({ InvCode: 'C' })] });
+    const provider = createMisaEInvoiceProvider({ transport: r.transport, now: fixedNow });
+    expect(ADJUST_REPLACE_REASON_CODES.codes).toEqual([]);
+    expect(await provider.adjust(SECRET, { ...request(), original: { ...original, kind: 'adjustment' } })).toEqual({ state: 'rejected', ref: null, code: 'invalid_data' });
+    expect(r.calls).toEqual([]);
   });
 
   it('is refused by the document\'s business codes as a refusal of the provider', async () => {
