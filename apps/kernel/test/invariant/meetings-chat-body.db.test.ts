@@ -2,8 +2,7 @@
 // What the database lets a queued post to a Slack or Teams channel carry (meetings integrations B4, #3168, owner decision of 2026-11-15 in the Meetings PO's chat): the body the worker reads out
 // through chat_post_get is the one thing of `crove_meetings` that returns meeting text besides the minutes webhook's, so its shape is pinned in the database. chat_body_ok accepts the title, the day,
 // the summary, the decisions, the action items (title, owner as said, date) and the link back, with exact keys at every level and the limits of the message, and nothing else: no transcript, audio,
-// video, image, attachment, excerpt or attendee contact detail has a key to ride in, in the body, in an action item or beside it. Written before the feature and tolerant of its absence: while
-// `crove_meetings.chat_body_ok` does not exist the tests pass cleanly with zero skipped tests; once it exists they run against it. Part of the invariant suite: self-contained, imports nothing
+// video, image, attachment, excerpt or attendee contact detail has a key to ride in, in the body, in an action item or beside it. Both objects must exist: the first test fails when `crove_meetings.chat_post_body` or `crove_meetings.chat_body_ok(jsonb)` is missing (dropped or renamed), so a later migration cannot make this file pass with zero checks running (#3285; before B4 landed the file tolerated their absence). Part of the invariant suite: self-contained, imports nothing
 // from outside this directory but the code under test.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -30,7 +29,6 @@ const SMUGGLERS = ['transcript', 'audio', 'video', 'image', 'images', 'attachmen
 suite('the body of a queued post to a channel (B4, #3168)', () => {
   const dbName = `crove_test_chat_body_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
-  let present = false;
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = new pg.Client({ connectionString: adminUrl });
@@ -52,8 +50,6 @@ suite('the body of a queued post to a channel (B4, #3168)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    // Present when the check function OR the body table exists: a body table without its check function fails the tests below instead of passing vacuously.
-    present = (await admin((c) => c.query<{ ok: boolean }>(`SELECT (to_regprocedure('crove_meetings.chat_body_ok(jsonb)') IS NOT NULL OR to_regclass('crove_meetings.chat_post_body') IS NOT NULL) AS ok`))).rows[0]?.ok === true;
   }, 300_000);
 
   afterAll(async () => {
@@ -64,15 +60,18 @@ suite('the body of a queued post to a channel (B4, #3168)', () => {
     await root.end();
   });
 
+  it('has both the body table and its check function, so no later migration can drop one and leave this file running nothing', async () => {
+    const found = (await admin((c) => c.query<{ fn: boolean; tbl: boolean }>(`SELECT to_regprocedure('crove_meetings.chat_body_ok(jsonb)') IS NOT NULL AS fn, to_regclass('crove_meetings.chat_post_body') IS NOT NULL AS tbl`))).rows[0];
+    expect(found, 'crove_meetings.chat_body_ok(jsonb) and crove_meetings.chat_post_body must both exist').toEqual({ fn: true, tbl: true });
+  });
+
   it('accepts exactly the message: title, day, summary, decisions, items and link, and a null link', async () => {
-    if (!present) return;
     expect(await ok(GOOD)).toBe(true);
     expect(await ok({ ...GOOD, link: null })).toBe(true);
     expect(await ok({ ...GOOD, lang: 'en', summary: '', decisions: [], items: [] })).toBe(true);
   });
 
   it('refuses a body with any other key, at the top and in an action item, whatever it is called or holds', async () => {
-    if (!present) return;
     for (const key of SMUGGLERS) {
       expect(await ok({ ...GOOD, [key]: 'CANARY' }), `top-level ${key}`).toBe(false);
       expect(await ok({ ...GOOD, [key]: ['CANARY'] }), `top-level ${key} array`).toBe(false);
@@ -87,7 +86,6 @@ suite('the body of a queued post to a channel (B4, #3168)', () => {
   });
 
   it('refuses a value of the wrong shape or past a limit', async () => {
-    if (!present) return;
     const bad: Array<[string, unknown]> = [
       ['version', { ...GOOD, v: 2 }],
       ['language', { ...GOOD, lang: 'fr' }],
@@ -119,7 +117,6 @@ suite('the body of a queued post to a channel (B4, #3168)', () => {
   });
 
   it('is the check of the body table, and the table has a column for nothing else of the meeting', async () => {
-    if (!present) return;
     const { rows } = await admin((c) => c.query<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'crove_meetings' AND table_name = 'chat_post_body' ORDER BY ordinal_position`));
     expect(rows.map((r) => r.column_name)).toEqual(['org_id', 'id', 'post_id', 'body', 'created_at']);
     const checks = await admin((c) =>
