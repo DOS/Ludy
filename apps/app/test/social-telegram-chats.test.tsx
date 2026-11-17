@@ -98,7 +98,7 @@ describe('the Telegram chats card', () => {
   it('speaks English too', () => {
     const html = render('off', 'WEBHOOK_NEEDS_HTTPS', true, 'en');
     expect(text(html)).toContain("Customers' private messages in the Inbox");
-    expect(text(html)).toContain('Telegram only sends to an https address');
+    expect(text(html)).toContain('Telegram only sends to a public https address');
     expect(text(html)).toContain("Receive customers' messages");
     expect(text(render('on', null, true, 'en'))).toContain('Stop receiving messages');
   });
