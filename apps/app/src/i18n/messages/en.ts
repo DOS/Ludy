@@ -4589,9 +4589,10 @@ export const en = {
     sectionHint: 'Hint for Vy (optional)',
     addSection: 'Add a section',
     removeSection: 'Remove section',
-    moveUp: 'Move up',
-    moveDown: 'Move down',
-    sectionCount: '{count} sections',
+    moveUp: 'Move section {n} up',
+    moveDown: 'Move section {n} down',
+    removeSectionN: 'Remove section {n}',
+    sectionCount: '{count, plural, one {# section} other {# sections}}',
     limit: 'The company already has {max} active templates. Archive one before adding another.',
   },
   legalEntities: {

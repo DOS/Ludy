@@ -343,7 +343,7 @@ export function MeetingDetailPage() {
       <MeetingBrief slug={slug} meetingId={id} />
       {/* The open items of the previous meeting of its series (#3542), and the recorder's way to put a meeting in a series */}
       <MeetingSeries meetingId={id} isRecorder={meeting.isRecorder} startedAt={meeting.startedAt} />
-      {meeting.isRecorder && <MeetingNotes meetingId={id} />}
+      {meeting.isRecorder && <MeetingNotes meetingId={id} minutesTemplate={meeting.minutesTemplate} />}
       <MeetingResults
         meetingId={id}
         slug={slug}

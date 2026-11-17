@@ -53,7 +53,8 @@ export function TemplatePicker({ meetingId, template, copy }: { meetingId: strin
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.get.key() });
     },
   });
-  const current = template === 'custom' && copy ? CURRENT_COPY : template;
+  // Code without a copy treats a custom meeting as the general summary (the contract), so that is what the select shows then.
+  const current = template === 'custom' ? (copy ? CURRENT_COPY : 'general') : template;
   return (
     <div className="space-y-1" data-testid="template-picker">
       <label htmlFor="minutes-template" className="text-xs font-medium text-muted-foreground">
@@ -81,9 +82,12 @@ export function TemplatePicker({ meetingId, template, copy }: { meetingId: strin
 }
 
 // The heading of a section: an organization's template gives its own (from the meeting's copy, shown as text), a built-in one the app's words.
-function useSectionHeading(template: MeetingSummaryTemplate, copy: MinutesTemplateCopy | null) {
+export function sectionHeadingText(t: (key: never) => string, template: MeetingSummaryTemplate, copy: MinutesTemplateCopy | null, key: string): string {
+  return template === 'custom' ? (copy?.sections.find((s) => s.key === key)?.title ?? '') : t(`templates.sections.${template}.${key}` as never);
+}
+export function useSectionHeading(template: MeetingSummaryTemplate, copy: MinutesTemplateCopy | null) {
   const tm = useTranslations('meetings');
-  return (key: string): string => (template === 'custom' ? (copy?.sections.find((s) => s.key === key)?.title ?? '') : tm(`templates.sections.${template}.${key}` as never));
+  return (key: string): string => sectionHeadingText(tm as unknown as (key: never) => string, template, copy, key);
 }
 
 // The recorder's draft summary and decisions (one decision per line). On a template the summary is typed section by section; the kernel makes the one text from them.

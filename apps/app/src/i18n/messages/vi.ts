@@ -4587,9 +4587,10 @@ export const vi = {
     sectionHint: 'Gợi ý cho Vy (không bắt buộc)',
     addSection: 'Thêm mục',
     removeSection: 'Bỏ mục',
-    moveUp: 'Đưa lên',
-    moveDown: 'Đưa xuống',
-    sectionCount: '{count} mục',
+    moveUp: 'Đưa mục {n} lên',
+    moveDown: 'Đưa mục {n} xuống',
+    removeSectionN: 'Bỏ mục {n}',
+    sectionCount: '{count, plural, other {# mục}}',
     limit: 'Công ty đã có {max} mẫu đang dùng. Hãy lưu trữ bớt một mẫu trước khi thêm mẫu mới.',
   },
   legalEntities: {

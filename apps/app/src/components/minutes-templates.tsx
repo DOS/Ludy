@@ -79,13 +79,13 @@ function TemplateForm({
                 {t('sectionTitle', { n: String(i + 1) })}
               </label>
               <div className="flex gap-1">
-                <Button type="button" size="sm" variant="ghost" disabled={i === 0} aria-label={t('moveUp')} onClick={() => move(i, -1)}>
+                <Button type="button" size="sm" variant="ghost" disabled={i === 0} aria-label={t('moveUp', { n: String(i + 1) })} onClick={() => move(i, -1)}>
                   &uarr;
                 </Button>
-                <Button type="button" size="sm" variant="ghost" disabled={i === sections.length - 1} aria-label={t('moveDown')} onClick={() => move(i, 1)}>
+                <Button type="button" size="sm" variant="ghost" disabled={i === sections.length - 1} aria-label={t('moveDown', { n: String(i + 1) })} onClick={() => move(i, 1)}>
                   &darr;
                 </Button>
-                <Button type="button" size="sm" variant="ghost" disabled={sections.length === 1} onClick={() => setSections((all) => all.filter((_, at) => at !== i))}>
+                <Button type="button" size="sm" variant="ghost" disabled={sections.length === 1} aria-label={t('removeSectionN', { n: String(i + 1) })} onClick={() => setSections((all) => all.filter((_, at) => at !== i))}>
                   {t('removeSection')}
                 </Button>
               </div>
@@ -133,7 +133,7 @@ function TemplateRow({ template }: { template: MinutesTemplateView }) {
         <div>
           {/* React renders the name as text: markup typed into it is shown as typed. */}
           <p className="text-sm font-medium">{template.name}</p>
-          <p className="text-xs text-muted-foreground">{t('sectionCount', { count: String(template.sections.length) })}</p>
+          <p className="text-xs text-muted-foreground">{t('sectionCount', { count: template.sections.length })}</p>
         </div>
         {template.archived ? (
           <Badge variant="outline">{t('archived')}</Badge>

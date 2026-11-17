@@ -67,7 +67,7 @@ export function buildMinutes(meeting: MinutesMeeting, results: MeetingResults, n
   const people = [meeting.recorderUserId, ...meeting.readers.filter((id) => id !== meeting.recorderUserId)];
   let sections: MinutesSection[] = [];
   if (published) {
-    const copy = meeting.minutesTemplate;
+    const copy = meeting.summaryTemplate === 'custom' ? meeting.minutesTemplate : null;
     const parsed = textToSections(meeting.summaryTemplate, published.summary, copy?.sections ?? null);
     // Text not in the template's form (the template changed since it was shared) is shown whole, as it was shared.
     sections = parsed ? parsed.filter((s) => s.text !== '').map((s) => ({ key: s.key, title: copy?.sections.find((c) => c.key === s.key)?.title ?? null, text: s.text })) : published.summary.trim() === '-' ? [] : [{ key: null, title: null, text: published.summary }];
