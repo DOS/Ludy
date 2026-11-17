@@ -232,10 +232,11 @@ async function runRecorderVy(deps: MeetingSummaryDeps, orgId: string, actor: Use
       // The minutes template the recorder picked (A4, #3162): the same run fills its sections; the templates are code, the model only writes the text. On a template the org wrote (#3578) the
       // sections are the meeting's own copy, and the run carries the copy's hash so the save can tell it from a run made for another layout.
       const copy = meeting.minutesTemplate;
-      const template =
-        meeting.summaryTemplate === 'custom' && copy
-          ? { code: meeting.summaryTemplate, sections: templateSections(meeting.summaryTemplate, copy.sections), hash: copy.hash }
-          : { code: meeting.summaryTemplate, sections: templateSections(meeting.summaryTemplate) };
+      // A custom meeting without its copy cannot be (the database refuses it), and a run for it must never go as a general one labelled custom: it fails closed.
+      if (meeting.summaryTemplate === 'custom' && !copy) throw new Error('MINUTES_TEMPLATE_COPY_MISSING');
+      const template = copy
+        ? { code: meeting.summaryTemplate, sections: templateSections(meeting.summaryTemplate, copy.sections), hash: copy.hash }
+        : { code: meeting.summaryTemplate, sections: templateSections(meeting.summaryTemplate) };
       const segments = transcript.segments.map((s) => ({ startSeconds: s.startSeconds, endSeconds: s.endSeconds, speakerLabel: s.speakerLabel, text: s.text }));
       // The people of the meeting, by display name, as the recorder reads them: the summary may suggest which of them a speaker is (#3502). Only the summary asks; the notes run does not.
       const attendees = kind === 'summary' ? (await deps.runtime.query<{ names: string[] }>('meetings.summary.attendees', { meetingId }, as)).names : [];

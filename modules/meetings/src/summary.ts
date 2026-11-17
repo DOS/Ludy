@@ -135,7 +135,7 @@ export const summaryCopyResult = defineCommand({
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can copy its summary');
     const body = await readRunResult(ctx, input.meetingId, input.runId, ctx.now);
     // The meeting's day and who may be named: the recorder and the attendees, by the names the org knows them by (member_profiles answers for members only).
-    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['started_at', 'summary_template', 'minutes_template_sections', 'minutes_template_hash']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
+    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['started_at', 'summary_template', 'minutes_template_sections', 'minutes_template_hash']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forUpdate().executeTakeFirstOrThrow();
     const meetingDay = vnDay(row.started_at ?? new Date());
     // A4 (#3162): a run was asked for one template; if the recorder picked another since, its sections would not fit the headings they now type under, so it is not copied.
     // #3578: on a custom template the run is tied to the copy of the sections it was asked to fill (its hash), so another org template, or the same one edited and picked again, is refused too.

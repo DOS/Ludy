@@ -114,7 +114,7 @@ export const meetingSummarySave = defineCommand({
     await recorderMeeting(ctx, input.meetingId, 'write its summary');
     // On a template the recorder types its sections and code makes the one summary text from them (the headings are code's); on the general template the recorder types
     // the summary itself. The two are never mixed, so a result is one text however it was typed.
-    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['summary_template', 'minutes_template_sections']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
+    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['summary_template', 'minutes_template_sections']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forUpdate().executeTakeFirstOrThrow();
     // On a custom template (#3578) the sections are the meeting's own copy, so the recorder types under the headings the meeting was given, whatever the org's template says now.
     const copy = row.minutes_template_sections === null ? null : parseStoredSections(row.minutes_template_sections);
     const defs = templateSections(row.summary_template, copy);

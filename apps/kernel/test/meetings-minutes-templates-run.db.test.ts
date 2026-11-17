@@ -16,7 +16,7 @@ import { textToSections, type MeetingDetail, type MeetingResults } from '@crove/
 import { Runtime } from '@crove/kernel-runtime';
 import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@crove/mod-meetings';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
-import { runMeetingSummary } from '../src/member-vy-ports.ts';
+import { runMeetingSummary, runNotesEnhance } from '../src/member-vy-ports.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -184,7 +184,7 @@ suite('minutes templates an organization writes: the run, the save and the reade
     await exec('owner', 'meetings.template.update', { templateId: first, name: 'Mẫu một', sections: [section('Một (mới)', 'Sửa.', 's1'), section('Hai', 'Điều cần ghi lại.', 's2')] });
     await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'custom', templateId: first });
     expect(await refuses(exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: out.runId }))).toBe('SUMMARY_TEMPLATE_CHANGED');
-    // A built-in template in between, and back: the run was made for a copy that is gone.
+    // A built-in template picked since: the run was made for a copy that is gone.
     meetingId = await meetingWith(second);
     out = await run(meetingId, model(answerFor('s1')));
     await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'briefing' });
@@ -261,6 +261,43 @@ suite('minutes templates an organization writes: the run, the save and the reade
     expect(JSON.stringify(audits.rows)).not.toContain('evil.test');
   });
 
+  it('expands the recorder\'s notes into the sections of the copy (the notes run), keeps their own lines verbatim, and is refused for another copy', async () => {
+    const templateId = await createTemplate('Họp ghi chú', [section('Báo giá', 'Số tiền và khách.'), section('Việc tiếp theo', 'Ai làm gì.')]);
+    const meetingId = await meetingWith(templateId);
+    await exec('recorder', 'meetings.notes.save', { meetingId, body: 'Giữ giá cũ\nGửi báo giá thứ sáu' });
+    const prompts: string[] = [];
+    const notesAnswer = JSON.stringify({
+      sections: [
+        { key: 's1', lines: [{ note: 1 }, { text: 'Khách A cần báo giá.', seconds: 5 }] },
+        { key: 's2', lines: [{ note: 2 }] },
+        { key: 'zz', lines: [{ text: 'Một mục lạ.', seconds: 5 }] },
+      ],
+    });
+    const out = await runNotesEnhance(
+      { runtime, model: model(notesAnswer, prompts), meter: () => meter, budget: new DraftBudget({ perUserPerMinute: 100, perOrgPerMinute: 100 }), timeoutMs: 2000 },
+      orgId,
+      asUser('recorder'),
+      meetingId,
+    );
+    expect(out).toMatchObject({ state: 'ready', errorCode: null });
+    // The fenced list is in this instruction too, and the headings are not the model's to write.
+    expect(prompts[0]).toContain('The section titles and hints below were written by the organization.');
+    expect(prompts[0]).toContain('- key "s1": {"title": "Báo giá", "hint": "Số tiền và khách."}');
+    await exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: out.runId });
+    const draft = (await results('recorder', meetingId)).draft;
+    expect(draft?.summary).toBe('Báo giá\nGiữ giá cũ\nKhách A cần báo giá.\n\nViệc tiếp theo\nGửi báo giá thứ sáu');
+    // Another template picked since: the expansion was made for a copy that is gone.
+    const other = await createTemplate('Mẫu khác', [section('Một')]);
+    const again = await runNotesEnhance(
+      { runtime, model: model(notesAnswer), meter: () => meter, budget: new DraftBudget({ perUserPerMinute: 100, perOrgPerMinute: 100 }), timeoutMs: 2000 },
+      orgId,
+      asUser('recorder'),
+      meetingId,
+    );
+    await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'custom', templateId: other });
+    expect(await refuses(exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: again.runId }))).toBe('SUMMARY_TEMPLATE_CHANGED');
+  });
+
   it('works for a custom meeting on every reader of a published summary: follow-up mail, channel post, translation source, series, brief', async () => {
     const templateId = await createTemplate('Họp đọc lại', [section('Kết quả'), section('Quyết định')]);
     const meetingId = await meetingWith(templateId);
@@ -270,12 +307,15 @@ suite('minutes templates an organization writes: the run, the save and the reade
     expect((await results('attendee', meetingId)).published?.summary).toBe(text);
     // None of them fails, and none shows the code 'custom' as a heading: they read the summary as the one text it is.
     const followup = await query('recorder', 'meetings.followup.draft', { meetingId });
+    expect(JSON.stringify(followup)).toContain('Kết quả');
     expect(JSON.stringify(followup)).toContain('Chốt giữ giá cũ');
     expect(JSON.stringify(followup)).not.toContain('custom');
     const chat = await query('recorder', 'meetings.chat.preview', { meetingId });
+    expect(JSON.stringify(chat)).toContain('Kết quả');
     expect(JSON.stringify(chat)).toContain('Chốt giữ giá cũ');
     expect(JSON.stringify(chat)).not.toContain('custom');
     const source = await query<{ segments?: unknown[]; text?: string }>('attendee', 'meetings.translation.source', { meetingId, stage: 'published' });
+    expect(JSON.stringify(source)).toContain('Kết quả');
     expect(JSON.stringify(source)).toContain('Chốt giữ giá cũ');
     expect(JSON.stringify(source)).not.toContain('custom');
     expect((await query<{ inSeries: boolean }>('attendee', 'meetings.series.open_items', { meetingId })).inSeries).toBe(false);

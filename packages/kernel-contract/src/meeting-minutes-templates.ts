@@ -46,7 +46,12 @@ export const zTemplateSectionInput = z.strictObject({
 });
 export type TemplateSectionInput = z.infer<typeof zTemplateSectionInput>;
 
-export const zTemplateSections = z.array(zTemplateSectionInput).min(1).max(SECTIONS_MAX);
+// Titles are headings read back by their text, so two sections of one template may not share a title.
+export const zTemplateSections = z
+  .array(zTemplateSectionInput)
+  .min(1)
+  .max(SECTIONS_MAX)
+  .refine((list) => new Set(list.map((s) => s.title)).size === list.length, { message: 'Two sections of a template cannot have the same title' });
 
 export const zMinutesTemplateCreate = z.strictObject({ name: zTemplateName, sections: zTemplateSections });
 export const zMinutesTemplateUpdate = z.strictObject({ templateId: zId, name: zTemplateName, sections: zTemplateSections });

@@ -52,6 +52,8 @@ describe('what is stripped from a title, a hint and a name', () => {
     // 200 characters of hint padded with separators that are stripped still fit.
     expect(zMinutesTemplateCreate.safeParse({ name: 'Mẫu', sections: [section('Mục', `\n\u2028${'x'.repeat(SECTION_HINT_MAX)}\n`)] }).success).toBe(true);
     expect(zMinutesTemplateCreate.safeParse({ name: 'Mẫu', sections: [] }).success).toBe(false);
+    // Two sections of one template cannot share a title: the headings are read back by their text.
+    expect(zMinutesTemplateCreate.safeParse({ name: 'Mẫu', sections: [section('Mục'), section('Mục', 'khác')] }).success).toBe(false);
     expect(zMinutesTemplateCreate.safeParse({ name: 'Mẫu', sections: Array.from({ length: SECTIONS_MAX + 1 }, (_, i) => section(`Mục ${i}`)) }).success).toBe(false);
     expect(zMinutesTemplateCreate.safeParse({ name: 'Mẫu', sections: [{ title: 'Mục', hint: '', extra: 1 }] }).success).toBe(false);
     expect(zMinutesTemplateUpdate.safeParse({ templateId: 'not-an-id', name: 'Mẫu', sections: [section('Mục')] }).success).toBe(false);
