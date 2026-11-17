@@ -55,9 +55,9 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     await expect(page.getByText('einvoice-basic.xml')).toBeVisible();
     // The worker reads the XML and raises the proposal; the Inbox polls every few seconds.
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
-    // The file says its proposal waits for a person, in the proposal's words (#2009). The upload panel's chips are
-    // walked in bulk-intake.spec.ts and unit tested in intake.test.ts.
-    await expect(page.getByTestId('recent-file').filter({ hasText: 'einvoice-basic.xml' })).toContainText('Chờ duyệt');
+    // A file read into a proposal is that proposal's row, not a second chip saying the same (#3598). The upload panel's
+    // chips are walked in bulk-intake.spec.ts and unit tested in intake.test.ts.
+    await expect(page.getByTestId('recent-file')).toHaveCount(0);
   });
 
   await test.step('open the proposal and approve it', async () => {
@@ -90,8 +90,6 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     // The Inbox says what the approval did, in its button's verb (#1384).
     await expect(page.getByRole('status').filter({ hasText: `Đã duyệt và ghi sổ ${SELLER}` })).toBeVisible();
     await expect(page.getByText('Không có đề xuất nào chờ duyệt')).toBeVisible();
-    // Posted now: the file says so, no longer waiting (#2009).
-    await expect(page.getByTestId('recent-file').filter({ hasText: 'einvoice-basic.xml' })).toContainText('Đã ghi sổ');
     await page.getByRole('tab', { name: 'Đã ghi sổ' }).click();
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible();
   });
