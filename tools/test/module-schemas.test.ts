@@ -115,6 +115,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/report-link.ts': { modules: ['social'], why: 'public report link routes, registered only when social is installed (http.ts)' },
   'apps/kernel/src/review-link.ts': { modules: ['social'], why: 'public review link routes, registered only when social is installed (http.ts)' },
   'apps/kernel/src/short-link.ts': { modules: ['social'], why: 'the short link route, registered only when social is installed (http.ts)' },
+  'apps/kernel/src/sign-direct-link.ts': { modules: ['sign'], why: 'the orgless public direct eSign link ceremony resolvers (crove_sign.public_direct_* definers), registered only when sign is installed (http.ts)' },
   'apps/kernel/src/sign-link.ts': { modules: ['sign'], why: 'the orgless public eSign link and verification resolvers (crove_sign.public_* definers), registered only when sign is installed (http.ts)' },
   'apps/kernel/src/worker.ts': {
     modules: ['ads', 'social'],
