@@ -133,7 +133,13 @@ export const signerMailData = defineCommand({
   handler: async (
     ctx,
     input,
-  ): Promise<{ token: string | null; signerName: string; message: string | null; expiresAt: string } | null> => {
+  ): Promise<{
+    token: string | null;
+    signerName: string;
+    signerRole: 'signer' | 'approver';
+    message: string | null;
+    expiresAt: string;
+  } | null> => {
     assertSystem(ctx);
     if (input.messageId) {
       const defaultExpiry = new Date(Math.max(ctx.now.getTime(), Date.now()) + DEFAULT_LINK_TTL_HOURS * 3_600_000);
@@ -160,6 +166,13 @@ export const signerMailData = defineCommand({
       if (!data) {
         return null;
       }
+      const signerRow = await ctx.trx
+        .selectFrom('crove_sign.signer')
+        .select(['signer_role'])
+        .where('org_id', '=', ctx.orgId)
+        .where('envelope_id', '=', input.envelopeId)
+        .where('id', '=', input.signerId)
+        .executeTakeFirst();
       ctx.audit({
         envelopeId: input.envelopeId,
         signerId: input.signerId,
@@ -169,6 +182,7 @@ export const signerMailData = defineCommand({
       return {
         token: data.token,
         signerName: data.signerName,
+        signerRole: signerRow?.signer_role === 'approver' ? 'approver' : 'signer',
         message: data.message,
         expiresAt: data.expiresAt,
       };
@@ -222,6 +236,7 @@ export const signerMailData = defineCommand({
     return {
       token: rawToken,
       signerName: signer.name,
+      signerRole: signer.signer_role === 'approver' ? 'approver' : 'signer',
       message: envelope.message,
       expiresAt: tokenExpiresAt.toISOString(),
     };

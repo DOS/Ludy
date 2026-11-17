@@ -65,7 +65,15 @@ const { SignerPanel } = await import('../src/components/sign/signer-panel.tsx');
 const { VyClausePanel } = await import('../src/components/sign/vy-clause-panel.tsx');
 const { fetchEnvelopesForTab, filterEnvelopesByTab, SignEnvelopesPage } = await import('../src/routes/sign-envelopes.tsx');
 const { filterPendingProposalsForSigners } = await import('../src/routes/sign-envelope-detail.tsx');
-const { canSubmitCeremony, SignCeremonyPage } = await import('../src/routes/sign-ceremony.tsx');
+const {
+  buildSignSubmitPayload,
+  canSubmitCeremony,
+  isApproverCeremonyMode,
+  isFieldComplete,
+  isFieldFilled,
+  SignCeremonyPage,
+  SignCeremonyReadyView,
+} = await import('../src/routes/sign-ceremony.tsx');
 const { extractCertificateJsonFields, SignVerifyPage } = await import('../src/routes/sign-verify.tsx');
 const { normalizeAiAnalysis, signApi } = await import('../src/lib/sign-api.ts');
 const {
@@ -86,6 +94,16 @@ function renderVi(node: ReactNode, client = new QueryClient()): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <IntlProvider locale="vi" messages={catalog('vi')} timeZone="Asia/Ho_Chi_Minh">
+        {node}
+      </IntlProvider>
+    </QueryClientProvider>,
+  );
+}
+
+function renderEn(node: ReactNode, client = new QueryClient()): string {
+  return renderToStaticMarkup(
+    <QueryClientProvider client={client}>
+      <IntlProvider locale="en" messages={catalog('en')} timeZone="Asia/Ho_Chi_Minh">
         {node}
       </IntlProvider>
     </QueryClientProvider>,
@@ -915,5 +933,251 @@ describe('Public signing ceremony and offline SHA-256 verifier (#3325)', () => {
         { objs: emptyStore, commonObjs: emptyStore },
       ),
     ).toBe(true);
+  });
+
+  it('renders dedicated Approver ceremony UI without signature pad while keeping Signer ceremony intact (#3528)', async () => {
+    const noop = () => {};
+    const approverView = {
+      state: 'ready' as const,
+      orgName: 'Công ty ABC',
+      title: 'Hợp đồng cung cấp dịch vụ 2026',
+      message: 'Nhờ anh/chị xem xét phê duyệt.',
+      signerName: 'Trần Thị Bình',
+      roleLabel: 'Kế toán trưởng',
+      signerRole: 'approver' as const,
+      expiresAt: '2027-02-01T00:00:00.000Z',
+      pageCount: 1,
+      fields: [],
+    };
+    const commonProps = {
+      answers: {},
+      pdfBytes: new Uint8Array([1, 2, 3]),
+      loadingPdf: false,
+      pdfError: null,
+      viewerRenderError: null,
+      pageNumber: 1,
+      scale: 1,
+      consentChecked: true,
+      canSubmit: true,
+      submitting: false,
+      submitError: null,
+      declineOpen: false,
+      declineReason: '',
+      declining: false,
+      declineError: null,
+      padFieldId: null,
+      onPageChange: noop,
+      onScaleChange: noop,
+      onRenderStatusChange: noop,
+      onJumpToNext: noop,
+      onOpenPad: noop,
+      onUpdateAnswer: noop,
+      onConsentChange: noop,
+      onSubmit: noop,
+      onDeclineOpenChange: noop,
+      onDeclineReasonChange: noop,
+      onDeclineSubmit: noop,
+    };
+
+    expect(isApproverCeremonyMode(approverView)).toBe(true);
+    const viApproverHtml = renderVi(<SignCeremonyReadyView viewState={approverView} {...commonProps} />);
+    expect(viApproverHtml).toContain('data-testid="ceremony-role-badge"');
+    expect(viApproverHtml).toContain('Người duyệt');
+    expect(viApproverHtml).toContain('data-testid="ceremony-approver-card"');
+    expect(viApproverHtml).toContain('Không cần vẽ chữ ký');
+    expect(viApproverHtml).toContain('Tôi xác nhận đã xem xét và phê duyệt tài liệu này bằng phương thức điện tử.');
+    expect(viApproverHtml).toContain('Phê duyệt tài liệu');
+    expect(viApproverHtml).toContain('Từ chối phê duyệt');
+    expect(viApproverHtml).not.toContain('Bấm để ký');
+    expect(viApproverHtml).not.toContain('Hoàn tất ký');
+
+    const enApproverHtml = renderEn(<SignCeremonyReadyView viewState={approverView} {...commonProps} />);
+    expect(enApproverHtml).toContain('Approver');
+    expect(enApproverHtml).toContain('Approve document');
+    expect(enApproverHtml).toContain('Decline approval');
+
+    // Optional text/date/checkbox fields for approver keep paired labels and accurate optional/filled badges.
+    const approverWithOptionalFields = {
+      ...approverView,
+      fields: [
+        {
+          id: 'field-note-1',
+          fieldType: 'text' as const,
+          pageNumber: 1,
+          xNorm: 0.1,
+          yNorm: 0.2,
+          wNorm: 0.3,
+          hNorm: 0.05,
+          label: 'Ghi chú duyệt',
+          required: false,
+        },
+        {
+          id: 'field-chk-1',
+          fieldType: 'checkbox' as const,
+          pageNumber: 1,
+          xNorm: 0.1,
+          yNorm: 0.3,
+          wNorm: 0.05,
+          hNorm: 0.05,
+          label: 'Đã kiểm tra ngân sách',
+          required: false,
+        },
+      ],
+    };
+    expect(isApproverCeremonyMode(approverWithOptionalFields)).toBe(true);
+    expect(isFieldFilled(approverWithOptionalFields.fields[0]!, undefined)).toBe(false);
+    expect(isFieldComplete(approverWithOptionalFields.fields[0]!, undefined)).toBe(true);
+
+    const optionalFieldsHtml = renderVi(
+      <SignCeremonyReadyView
+        viewState={approverWithOptionalFields}
+        {...commonProps}
+        answers={{ 'field-chk-1': { valueChecked: true } }}
+      />,
+    );
+    expect(optionalFieldsHtml).toContain('for="ceremony-field-input-field-note-1"');
+    expect(optionalFieldsHtml).toContain('id="ceremony-field-input-field-note-1"');
+    expect(optionalFieldsHtml).toContain('for="ceremony-field-checkbox-field-chk-1"');
+    expect(optionalFieldsHtml).toContain('id="ceremony-field-checkbox-field-chk-1"');
+    expect(optionalFieldsHtml).toContain('Không bắt buộc');
+    expect(optionalFieldsHtml).toContain('Đã điền');
+    expect(optionalFieldsHtml).not.toContain('Bấm để ký');
+
+    const approverPayload = buildSignSubmitPayload({
+      token: 'T'.repeat(43),
+      fields: approverWithOptionalFields.fields,
+      answers: {
+        'field-note-1': { valueText: 'Đồng ý chi' },
+        'field-chk-1': { valueChecked: true },
+      },
+    });
+    expect(approverPayload.signatureKind).toBeUndefined();
+    expect(approverPayload.fields).toEqual([
+      { fieldId: 'field-note-1', valueText: 'Đồng ý chi' },
+      { fieldId: 'field-chk-1', valueChecked: true },
+    ]);
+
+    // Standard signer ceremony keeps signature pad CTA and signer consent/buttons.
+    const signerView = {
+      ...approverView,
+      signerRole: 'signer' as const,
+      roleLabel: 'Bên A',
+      fields: [
+        {
+          id: 'field-sig-1',
+          fieldType: 'signature' as const,
+          pageNumber: 1,
+          xNorm: 0.5,
+          yNorm: 0.7,
+          wNorm: 0.25,
+          hNorm: 0.08,
+          label: null,
+          required: true,
+        },
+      ],
+    };
+    expect(isApproverCeremonyMode(signerView)).toBe(false);
+    const signerHtml = renderVi(<SignCeremonyReadyView viewState={signerView} {...commonProps} />);
+    expect(signerHtml).not.toContain('data-testid="ceremony-role-badge"');
+    expect(signerHtml).toContain('data-testid="ceremony-sign-btn-field-sig-1"');
+    expect(signerHtml).toContain('Bấm để ký');
+    expect(signerHtml).toContain('Hoàn tất ký');
+    expect(signerHtml).toContain('Từ chối ký');
+
+    const signerPayload = buildSignSubmitPayload({
+      token: 'T'.repeat(43),
+      fields: signerView.fields,
+      answers: {
+        'field-sig-1': {
+          signaturePngDataUrl: 'data:image/png;base64,AAAA',
+          signatureKind: 'drawn',
+        },
+      },
+    });
+    expect(signerPayload.signatureKind).toBe('draw');
+
+    // Guardrail: an approver row unexpectedly assigned a signature field still sees signature controls.
+    expect(isApproverCeremonyMode({ ...signerView, signerRole: 'approver' })).toBe(false);
+
+    // Public view normalizes signerRole strictly from server JSON.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            state: 'ready',
+            orgName: 'Công ty ABC',
+            title: 'HD',
+            message: null,
+            signerName: 'Bình',
+            roleLabel: 'Người duyệt',
+            signerRole: 'approver',
+            expiresAt: '2027-02-01T00:00:00Z',
+            pageCount: 1,
+            fields: [],
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const normalizedApprover = await publicSignApi.view('T'.repeat(43));
+    expect(normalizedApprover.state).toBe('ready');
+    if (normalizedApprover.state === 'ready') {
+      expect(normalizedApprover.signerRole).toBe('approver');
+    }
+
+    // Missing or unrecognized signerRole defaults safely to 'signer'; required date field and pdfError render cleanly for approvers.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            state: 'ready',
+            orgName: 'Công ty ABC',
+            title: 'HD',
+            message: null,
+            signerName: 'An',
+            roleLabel: 'Bên A',
+            signerRole: 'unexpected',
+            expiresAt: '2027-02-01T00:00:00Z',
+            pageCount: 1,
+            fields: [],
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const normalizedDefault = await publicSignApi.view('T'.repeat(43));
+    expect(normalizedDefault.state).toBe('ready');
+    if (normalizedDefault.state === 'ready') {
+      expect(normalizedDefault.signerRole).toBe('signer');
+    }
+
+    const approverRequiredDateHtml = renderVi(
+      <SignCeremonyReadyView
+        viewState={{
+          ...approverView,
+          fields: [
+            {
+              id: 'field-date-1',
+              fieldType: 'date',
+              pageNumber: 1,
+              xNorm: 0.2,
+              yNorm: 0.3,
+              wNorm: 0.2,
+              hNorm: 0.05,
+              label: 'Ngày duyệt',
+              required: true,
+            },
+          ],
+        }}
+        {...commonProps}
+        canSubmit={false}
+        pdfError="Không tải được tệp"
+      />,
+    );
+    expect(approverRequiredDateHtml).toContain('Bắt buộc');
+    expect(approverRequiredDateHtml).toContain('data-testid="ceremony-remaining-badge"');
+    expect(approverRequiredDateHtml).toContain('Vui lòng đợi tài liệu tải xong trước khi phê duyệt.');
   });
 });
