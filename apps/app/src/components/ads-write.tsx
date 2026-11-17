@@ -214,7 +214,7 @@ function PendingRow({ p, slug }: { p: AdsWriteState['pending'][number]; slug: st
   return (
     <li className="py-2">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <span className="min-w-0 break-words text-foreground">{adsChangeLine(p.change, root, (amount, currency) => f.money(amount, currency))}</span>
+        <span className="min-w-0 break-words text-foreground">{adsChangeLine(p.change, root, (amount, currency) => f.money(amount, currency), (day) => f.date(day))}</span>
         <span className="flex flex-wrap items-baseline gap-x-3 text-xs text-subtle-foreground">
           <span>{t('pendingAsked', { when: f.dateTime(p.requestedAt) })}</span>
           <Link to="/o/$slug/inbox/$id" params={{ slug, id: p.proposalId }} className="text-link hover:underline">
