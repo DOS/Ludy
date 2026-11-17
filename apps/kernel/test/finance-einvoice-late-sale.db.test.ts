@@ -127,7 +127,8 @@ suite('a late sales invoice is declared in the period of its sale (#3535)', () =
     buyer: { kind: 'business', partyId: null, taxCode: BUYER_TAX_CODE, name: 'Công ty Mua Thử', address: '1 Phố Thử, Hà Nội', email: null },
     lines: [
       { description: 'Hàng A', unit: 'cái', quantity: '2', unitPrice: '100000', vatRate: '10%' },
-      { description: 'Hàng B', unit: null, quantity: '1.5', unitPrice: '33333', vatRate: '8%' },
+      // 5%, a rate valid on any date: 8% by sale date would be refused once the month of SALE_DATE is outside its period (#3680).
+      { description: 'Hàng B', unit: null, quantity: '1.5', unitPrice: '33333', vatRate: '5%' },
     ],
     ...extra,
   });

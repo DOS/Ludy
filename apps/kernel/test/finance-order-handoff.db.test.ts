@@ -290,15 +290,16 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
     it('makes a draft from the item lines, computed by the server, with the order line kept on each draft line and no buyer in the audit', async () => {
       const o = await org();
       await addSeries(o);
-      const handoff = handoffOf(o.entity, [{ description: 'Hàng A', quantity: '2', unitPrice: '100000' }, { description: 'Ghi chú giao hàng', kind: 'text' }, { description: 'Hàng B', quantity: '1', unitPrice: '33333', vatRate: '8%' }]);
+      // The second line's 5% is a rate valid on any date: the draft is dated today, and 8% is refused outside its period (#3680).
+      const handoff = handoffOf(o.entity, [{ description: 'Hàng A', quantity: '2', unitPrice: '100000' }, { description: 'Ghi chú giao hàng', kind: 'text' }, { description: 'Hàng B', quantity: '1', unitPrice: '33333', vatRate: '5%' }]);
       const draft = await draftFrom(o, handoff);
       expect(draft.state).toBe('draft');
       expect(draft.seriesId).toEqual(expect.any(String));
       expect(draft.lines.map((l) => [l.lineNo, l.description, l.amount, l.vatAmount, l.vatRate])).toEqual([
         [1, 'Hàng A', '200000', '20000', '10%'],
-        [2, 'Hàng B', '33333', '2667', '8%'],
+        [2, 'Hàng B', '33333', '1667', '5%'],
       ]);
-      expect([draft.subtotal, draft.vatAmount, draft.total]).toEqual(['233333', '22667', '256000']);
+      expect([draft.subtotal, draft.vatAmount, draft.total]).toEqual(['233333', '21667', '255000']);
       expect(draft.issues).toEqual([]);
       // The draft's lines 1 and 2 are the order's lines 1 and 3 (the note is a text line and is not invoiced).
       expect((await sources(o)).map((s) => [s.source_id, s.source_line_no, s.line_no])).toEqual([
