@@ -421,7 +421,7 @@ export function VoucherFormPanel({ slug, onClose, fromLine }: { slug: string; on
           <>
             {t('form.duplicate', { code: duplicate.code, date: f.date(duplicate.date), amount: f.money(duplicate.amount) })}{' '}
             {duplicate.journalEntryId && (
-              <Link to="/o/$slug/journal" params={{ slug }} hash={`entry-${duplicate.journalEntryId}`} className="text-link underline">
+              <Link to="/o/$slug/journal" params={{ slug }} hash={`entry-${duplicate.journalEntryId}`} target="_blank" rel="noreferrer" className="text-link underline">
                 {t('viewEntry')}
               </Link>
             )}

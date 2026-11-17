@@ -365,10 +365,10 @@ export function FixedAssetsPage() {
   const org = useQuery(orpc.org.get.queryOptions());
   const [adding, setAdding] = useState(false);
   const [depreciating, setDepreciating] = useState(false);
-  const [ending, setEnding] = useState<string | null>(null);
+  // The asset being stopped, kept whole so the panel and the reason typed in it survive a refetch of the list.
+  const [ending, setEnding] = useState<FixedAsset | null>(null);
   const canEnter = canEnterVoucher(org.data?.role);
   const rows = assets.data ?? [];
-  const endingAsset = rows.find((a) => a.id === ending) ?? null;
 
   const exportXlsx = useMutation({
     mutationFn: async () => {
@@ -408,7 +408,7 @@ export function FixedAssetsPage() {
       {exportXlsx.error && <ErrorText>{errorMessage(exportXlsx.error)}</ErrorText>}
       {adding && <AssetFormPanel onClose={() => setAdding(false)} />}
       {depreciating && <DepreciationPanel slug={slug} onClose={() => setDepreciating(false)} />}
-      {endingAsset && <EndPanel key={endingAsset.id} asset={endingAsset} onClose={() => setEnding(null)} />}
+      {ending && <EndPanel key={ending.id} asset={ending} onClose={() => setEnding(null)} />}
       {assets.isPending ? (
         <TableSkeleton columns={5} />
       ) : assets.error ? (
@@ -438,7 +438,7 @@ export function FixedAssetsPage() {
                 </div>
                 {a.ended && <div className="mt-1 text-xs text-subtle-foreground">{a.ended.reason}</div>}
                 {canEnter && !a.ended && (
-                  <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setEnding(a.id)}>
+                  <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setEnding(a)}>
                     {t('end')}
                   </Button>
                 )}

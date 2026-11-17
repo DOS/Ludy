@@ -43,6 +43,8 @@ export function FormPanel({
   return (
     <Sheet
       open
+      // A form is not dropped by a stray click on the dimmed page: Escape and the close button still cancel it, as the cancel button did.
+      disablePointerDismissal={onSubmit !== undefined}
       onOpenChange={(open) => {
         if (!open && !busy) onClose();
       }}
