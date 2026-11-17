@@ -851,5 +851,53 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: null,
       dueTime: null,
     });
+
+    // Unrelated "buổi <period>" later in the sentence never shifts an earlier standalone clock
+    expect(parseTodoQuickAdd('Chuẩn bị lúc 9h cho buổi tối', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Chuẩn bị cho buổi tối',
+      dueOn: '2026-11-17',
+      dueTime: '09:00',
+    });
+
+    // "cuối tháng sau/tới/này" resolves as a one-off month-end due date (not monthly recurrence); "cuối tháng trước" stays text
+    expect(parseTodoQuickAdd('Chốt sổ cuối tháng sau', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Chốt sổ',
+      dueOn: '2026-12-31',
+      recurrence: null,
+    });
+    expect(parseTodoQuickAdd('Chốt sổ cuối tháng tới', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Chốt sổ',
+      dueOn: '2026-12-31',
+      recurrence: null,
+    });
+    expect(parseTodoQuickAdd('Chốt sổ cuối tháng này', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Chốt sổ',
+      dueOn: '2026-11-30',
+      recurrence: null,
+    });
+    expect(parseTodoQuickAdd('Xem lại cuối tháng trước', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Xem lại cuối tháng trước',
+      dueOn: null,
+      recurrence: null,
+    });
+
+    // Dismissing a date chip that absorbed a period ("tối thứ sáu") preserves the period for any kept clock ("8h" -> 20:00)
+    const periodDateClockInput = 'Gọi khách tối thứ sáu 8h';
+    const initialPeriodDateClock = parseTodoQuickAdd(periodDateClockInput, { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(initialPeriodDateClock).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2026-11-20',
+      dueTime: '20:00',
+    });
+    const afterDismissFriday = parseTodoQuickAdd(periodDateClockInput, {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+      dismissedTokens: initialPeriodDateClock.tokens.filter((t) => t.kind === 'date'),
+    });
+    expect(afterDismissFriday).toMatchObject({
+      title: 'Gọi khách tối thứ sáu',
+      dueOn: '2026-11-17',
+      dueTime: '20:00',
+    });
   });
 });

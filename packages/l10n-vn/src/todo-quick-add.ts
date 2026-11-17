@@ -747,6 +747,13 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const w3 = words[i + 3];
     const w4 = words[i + 4];
 
+    const hasMonthModifierAfter = (endIdx: number): boolean => {
+      const lastW = words[endIdx];
+      const nextW = words[endIdx + 1];
+      if (!lastW || !nextW || !spacesOnlyBetween(input, lastW.end, nextW.start)) return false;
+      return vnMatchAny(nextW, ['này', 'sau', 'tới', 'trước', 'qua']) || /^\d{1,2}$/.test(nextW.nfcLower);
+    };
+
     // 4a. "cuối tháng" / "ngày cuối tháng" / "cuối mỗi tháng" / "cuối tháng hàng tháng" / "last day of [every|the] month"
     if (
       w1 &&
@@ -754,7 +761,8 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       w3 &&
       contiguous(i, i + 3) &&
       ((vnMatch(w0, 'cuối') && vnMatch(w1, 'tháng') && vnMatchAny(w2, ['hàng', 'hằng', 'mỗi']) && vnMatch(w3, 'tháng')) ||
-        (w0.nfcLower === 'last' && w1.nfcLower === 'day' && w2.nfcLower === 'of' && w3.nfcLower === 'month'))
+        (w0.nfcLower === 'last' && w1.nfcLower === 'day' && w2.nfcLower === 'of' && w3.nfcLower === 'month')) &&
+      !hasMonthModifierAfter(i + 3)
     ) {
       const span = spanOf(i + 3);
       if (isWordPhraseEndAvailable(span)) {
@@ -775,7 +783,8 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       w1.nfcLower === 'day' &&
       w2.nfcLower === 'of' &&
       (w3.nfcLower === 'every' || w3.nfcLower === 'the') &&
-      w4.nfcLower === 'month'
+      w4.nfcLower === 'month' &&
+      !hasMonthModifierAfter(i + 4)
     ) {
       const span = spanOf(i + 4);
       if (isWordPhraseEndAvailable(span)) {
@@ -792,7 +801,8 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       contiguous(i, i + 2) &&
       ((vnMatch(w0, 'ngày') && vnMatch(w1, 'cuối') && vnMatch(w2, 'tháng')) ||
         (vnMatch(w0, 'cuối') && vnMatchAny(w1, ['mỗi', 'hàng', 'hằng']) && vnMatch(w2, 'tháng')) ||
-        (w0.nfcLower === 'end' && w1.nfcLower === 'of' && w2.nfcLower === 'month'))
+        (w0.nfcLower === 'end' && w1.nfcLower === 'of' && w2.nfcLower === 'month')) &&
+      !hasMonthModifierAfter(i + 2)
     ) {
       const span = spanOf(i + 2);
       if (isWordPhraseEndAvailable(span)) {
@@ -804,7 +814,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         continue;
       }
     }
-    if (w1 && contiguous(i, i + 1) && vnMatch(w0, 'cuối') && vnMatch(w1, 'tháng')) {
+    if (w1 && contiguous(i, i + 1) && vnMatch(w0, 'cuối') && vnMatch(w1, 'tháng') && !hasMonthModifierAfter(i + 1)) {
       const span = spanOf(i + 1);
       if (isWordPhraseEndAvailable(span)) {
         const start = expandConnectorBefore(input, words, span.start, [['vào']], occupied);
@@ -1392,7 +1402,44 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       return true;
     };
 
-    // 7a. "day after tomorrow"
+    // 7a. "day after tomorrow" and "[ngày] cuối tháng này|sau|tới" / "end of this|next month"
+    const w3 = words[i + 3];
+    const resolveMonthEndOffset = (monthOffset: number): string => {
+      const todayParts = parseIsoCalendarDate(today) ?? { year: 2026, month: 1, day: 1 };
+      const totalMonths = todayParts.year * 12 + (todayParts.month - 1) + monthOffset;
+      const targetYear = Math.floor(totalMonths / 12);
+      const targetMonth = (totalMonths % 12) + 1;
+      return formatIsoDate(targetYear, targetMonth, daysInCalendarMonth(targetYear, targetMonth));
+    };
+    if (
+      w1 &&
+      w2 &&
+      w3 &&
+      contiguous(i, i + 3) &&
+      ((vnMatch(w0, 'ngày') && vnMatch(w1, 'cuối') && vnMatch(w2, 'tháng') && vnMatchAny(w3, ['này', 'sau', 'tới'])) ||
+        (w0.nfcLower === 'end' && w1.nfcLower === 'of' && (w2.nfcLower === 'this' || w2.nfcLower === 'next') && w3.nfcLower === 'month'))
+    ) {
+      const monthOffset = vnMatch(w3, 'này') || w2.nfcLower === 'this' ? 0 : 1;
+      const resolved = resolveMonthEndOffset(monthOffset);
+      if (recordDateRange(i, i + 3, resolved, resolved === today)) {
+        i += 3;
+        continue;
+      }
+    }
+    if (
+      w1 &&
+      w2 &&
+      contiguous(i, i + 2) &&
+      vnMatch(w0, 'cuối') &&
+      vnMatch(w1, 'tháng') &&
+      vnMatchAny(w2, ['này', 'sau', 'tới'])
+    ) {
+      const resolved = resolveMonthEndOffset(vnMatch(w2, 'này') ? 0 : 1);
+      if (recordDateRange(i, i + 2, resolved, resolved === today)) {
+        i += 2;
+        continue;
+      }
+    }
     if (w1 && w2 && contiguous(i, i + 2) && w0.nfcLower === 'day' && w1.nfcLower === 'after' && w2.nfcLower === 'tomorrow') {
       if (recordDateRange(i, i + 2, addLocalDays(today, 2), false)) {
         i += 2;
@@ -1667,8 +1714,8 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     if (!p) continue;
     const span = { start: w0.start, end: w1.end };
     if (!isWordSpanAvailable(span)) continue;
-    contextPeriod = p;
     if (!parsedTime && !suppressDefaultPeriodTime) {
+      contextPeriod = p;
       parsedTime = { hour: PERIOD_DEFAULT_HOUR[p], minute: 0, explicitClock: false, period: p };
       claimToken('time', span.start, span.end);
     } else if (parsedTime && parsedTime.explicitClock && !parsedTime.hasAmPm && !parsedTime.period) {
@@ -1680,6 +1727,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       );
       const hostTok = adjacentTime ?? adjacentDate;
       if (hostTok) {
+        contextPeriod = p;
         if (spacesOnlyBetween(input, hostTok.end, span.start)) hostTok.end = span.end;
         else hostTok.start = span.start;
         hostTok.raw = input.slice(hostTok.start, hostTok.end);
@@ -1687,6 +1735,23 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       }
     }
     break;
+  }
+
+  // If the user dismissed a date chip that absorbed a period ("tối thứ sáu"), keep its period context for any remaining clock ("8h" -> 20:00).
+  if (parsedTime && parsedTime.explicitClock && !parsedTime.hasAmPm && !parsedTime.period && !contextPeriod) {
+    for (const tok of dismissedList) {
+      if (tok.kind !== 'date') continue;
+      for (let wi = 0; wi < words.length; wi++) {
+        const w = words[wi];
+        if (!w || w.start < tok.start || w.end > tok.end) continue;
+        const p = w.nfcLower === 'tonight' ? 'evening' : matchDayPeriod(w, true, words[wi - 1]);
+        if (p && !hasOverlap(dismissedTimeSpans, w)) {
+          contextPeriod = p;
+          break;
+        }
+      }
+      if (contextPeriod) break;
+    }
   }
 
   // Reconcile contextual period with explicit clock time when separated by a date (e.g. "chiều thứ sáu 3h")
