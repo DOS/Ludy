@@ -69,6 +69,7 @@ import {
   type RecordingStopReason,
   type MeetingLanguage,
   type MeetingSummaryTemplate,
+  parseStoredSections,
   type MeetingOwnerList,
   type MeetingOwnerListItem,
   type MeetingStatus,
@@ -148,6 +149,9 @@ interface MeetingRow {
   keep_video: boolean;
   live_notes: boolean;
   summary_template: MeetingSummaryTemplate;
+  minutes_template_name: string | null;
+  minutes_template_sections: unknown;
+  minutes_template_hash: string | null;
   consent_method: ConsentMethod;
   consent_confirmed_by: string;
   consent_confirmed_at: Date | string;
@@ -702,6 +706,10 @@ export const meetingGet = defineQuery({
       readers: readerIds,
       videoRetentionDate,
       isRecorder: meeting.recorder_user_id === userId,
+      minutesTemplate:
+        meeting.minutes_template_sections === null || meeting.minutes_template_name === null || meeting.minutes_template_hash === null
+          ? null
+          : { name: meeting.minutes_template_name, hash: meeting.minutes_template_hash, sections: parseStoredSections(meeting.minutes_template_sections) },
     };
   },
 });

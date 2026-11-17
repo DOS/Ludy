@@ -70,6 +70,9 @@ export type MinutesTemplates = z.infer<typeof zMinutesTemplates>;
 export function parseStoredSections(raw: unknown): TemplateSection[] {
   return z.array(zTemplateSectionView).parse(raw);
 }
+// The meeting's own copy of the template it was summarized with (#3578): its name, its sections (with the hints Vy was given) and the md5 of the sections as stored.
+export const zMinutesTemplateCopy = z.strictObject({ name: z.string(), hash: z.string().regex(/^[0-9a-f]{32}$/), sections: z.array(zTemplateSectionView) });
+export type MinutesTemplateCopy = z.infer<typeof zMinutesTemplateCopy>;
 export const zMinutesTemplateDone = z.strictObject({ templateId: zId, archived: z.boolean() });
 
 // Keys are code's. A section that exists keeps its key, a new one gets the next `s<n>` after the highest key the template holds now. Within one edit a removed section's key is not handed to a
