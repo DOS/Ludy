@@ -25,7 +25,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), queryClient: client.current, errorMessage: String };
 });
 
-const { MeetingResults } = await import('../src/components/meeting-results.tsx');
+const { MeetingResults, SpeakerSuggestions } = await import('../src/components/meeting-results.tsx');
 
 const item = (id: string, over: Partial<ActionItemView> = {}): ActionItemView => ({
   id,
@@ -187,3 +187,34 @@ describe('MeetingResults with a minutes template', () => {
   });
 });
 
+
+// Speaker names suggested by the recorder's Vy (#3502): each suggestion is a line with the moment it rests on and a click of the recorder's own; with none, nothing is drawn.
+describe('speaker suggestions', () => {
+  const draw = (suggestions: Array<{ label: string; name: string; seconds: number }>) => {
+    client.current.setQueryData(['meetings', 'results', 'speakerSuggestions'], { meetingId: 'm1', runId: 'r1', suggestions });
+    return renderToStaticMarkup(
+      <QueryClientProvider client={client.current}>
+        <IntlProvider locale="en" messages={catalog('en')}>
+          <SpeakerSuggestions meetingId="m1" runId="r1" />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+  };
+
+  it('shows each suggestion with the time of the line it rests on and a button, and says nothing is renamed without the click', () => {
+    const html = draw([
+      { label: 'Người nói 2', name: 'Trần Thị Lan', seconds: 125 },
+      { label: 'Người nói 1', name: 'Hoàng Văn Ghi', seconds: 5 },
+    ]);
+    expect(html).toContain('data-testid="speaker-suggestions"');
+    expect(html).toContain(en.meetings.results.vy.speakers.title);
+    expect(html).toContain(en.meetings.results.vy.speakers.hint);
+    expect(html).toContain('Người nói 2 may be Trần Thị Lan (heard at 2:05)');
+    expect(html).toContain('Người nói 1 may be Hoàng Văn Ghi (heard at 0:05)');
+    expect(html.match(new RegExp(`>${en.meetings.results.vy.speakers.apply}<`, 'g'))).toHaveLength(2);
+  });
+
+  it('draws nothing when there is no suggestion', () => {
+    expect(draw([])).toBe('');
+  });
+});
