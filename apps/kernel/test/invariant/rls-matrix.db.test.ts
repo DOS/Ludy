@@ -111,7 +111,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
-  'crove_meetings.minutes_template',
   'crove_notes.attachment',
   'crove_notes.link',
   'crove_notes.note',
@@ -2846,7 +2845,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     }),
   },
   // #3578 (meetings): a minutes template the org wrote. Every member of the org reads it; a RESTRICTIVE write policy lets an owner or admin write it (the factory's owner is one), and the
-  // table grants no DELETE to a login role. Lands before its table (PENDING_TABLES).
+  // table grants no DELETE to a login role. Its factory landed before the table (#3625); the table is on main with the migration of #3578.
   'crove_meetings.minutes_template': {
     make: (o) => ({
       row: { org_id: o.id, id: randomUUID(), name: `RLS matrix template ${tag()}`, sections: JSON.stringify([{ key: 's1', title: 'Nội dung', hint: '' }]), created_by: o.owner },

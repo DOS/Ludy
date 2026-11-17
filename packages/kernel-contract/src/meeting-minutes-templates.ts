@@ -18,6 +18,7 @@ export const TEMPLATES_ACTIVE_MAX = 50;
 
 // What is stripped from a title, a hint or a name: C0 and C1 controls (a newline and a tab included), the line and paragraph separators, the bidirectional controls and the zero-width
 // characters that hide text. Whitespace left is collapsed to single spaces.
+// oxlint-disable-next-line no-control-regex
 const STRIP = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/gu;
 export function cleanTemplateText(raw: string): string {
   return raw.replace(STRIP, ' ').replace(/\s+/gu, ' ').trim();

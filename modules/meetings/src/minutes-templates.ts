@@ -21,7 +21,6 @@ import {
   zMinutesTemplates,
   type MinutesTemplateView,
   type MinutesTemplates,
-  type TemplateSection,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { ROLES, userOf } from './transcript.ts';
