@@ -6,6 +6,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AVAILABLE_MODULES } from '../../apps/kernel/src/config.ts';
 
 const repo = resolve(import.meta.dirname, '../..');
 const script = join(repo, 'tools/deploy/deploy.sh');
@@ -1794,6 +1795,328 @@ describe.skipIf(!runHere)('deploy.sh', { timeout: 300_000 }, () => {
       expect(stale.status).toBe(1);
       expect(stale.out).toContain('smoke failed: /api/config names the configured Auth URL');
       expect(stale.out).not.toContain('idp.example.com');
+    });
+  });
+
+  // #3531: opt-in module settings (--modules) and /api/config module verification.
+  describe('module settings (#3531)', () => {
+    const IDP: Record<string, string> = {
+      AUTH_ISSUER: 'https://idp.example.com/auth/v1',
+      AUTH_JWKS_URL: 'https://idp.example.com/auth/v1/.well-known/jwks.json',
+      PUBLIC_AUTH_URL: 'https://idp.example.com/auth/v1',
+      PUBLIC_AUTH_ANON_KEY: 'sb_publishable_TESTKEYabcdef0123456789',
+      AUTH_ALLOWED_EMAILS: '@example.com,owner@example.org',
+    };
+    const MOD_BEFORE = [
+      'POSTGRES_PASSWORD=x',
+      'CROVE_CONTEXT_TOKEN_KEY=already-here',
+      '# CROVE_MODULES=commented-old',
+      'CROVE_MODULES_EXTRA=keep',
+      'CROVE_MODULES=finance,crm,social',
+      'OTHER=1',
+      '',
+    ].join('\n');
+    const COMBINED_BEFORE = [
+      'POSTGRES_PASSWORD=x',
+      'CROVE_CONTEXT_TOKEN_KEY=already-here',
+      'AUTH_JWT_SECRET=keep-this-secret',
+      'AUTH_ISSUER=crove-auth',
+      'AUTH_SESSION_CHECK=db',
+      'AUTH_UPSTREAM_URL=http://auth:9999',
+      'AUTH_SIGNUP_POLICY=invite_only',
+      'CROVE_MODULES=finance,crm,social',
+      'PUBLIC_URL=https://api.example.com',
+      '',
+    ].join('\n');
+    const envFile = () => readFileSync(`${dir}/.env`, 'utf8');
+    const lines = (text: string) => text.split('\n').filter(Boolean);
+    const copies = () => readdirSync(dir).filter((f) => f.startsWith('.env.bak-'));
+    const settingsPath = () => `${dir}/.deploy/incoming/run/auth-settings.env`;
+    const writeSettings = (values: Record<string, string>) => {
+      mkdirSync(`${dir}/.deploy/incoming/run`, { recursive: true });
+      writeFileSync(settingsPath(), Object.entries(values).map(([k, v]) => `${k}=${v}\n`).join(''));
+    };
+    const deployModules = (release: string, c: string, modules: string, env: Record<string, string> = {}) =>
+      run(['deploy', '--release', release, '--image', image(c), '--extract-image', extract(c), '--media-image', media(c), '--compose', compose, '--modules', modules], env);
+    const deployBoth = (release: string, c: string, values: Record<string, string>, modules: string, env: Record<string, string> = {}) => {
+      writeSettings(values);
+      return run(['deploy', '--release', release, '--image', image(c), '--extract-image', extract(c), '--media-image', media(c), '--compose', compose, '--auth-settings', settingsPath(), '--modules', modules], env);
+    };
+
+    it('check-modules accepts valid comma-separated module lists and rejects invalid, duplicate, whitespace, or shell inputs', () => {
+      expect(run(['check-modules', AVAILABLE_MODULES.join(',')]).status).toBe(0);
+      for (const valid of ['finance', 'kernel', 'finance,crm,social,sign', 'kernel,finance,social,ads,crm,notes,hr,meetings,projects,sign']) {
+        const res = run(['check-modules', valid]);
+        expect(res.status, `${valid}: ${res.out}`).toBe(0);
+        expect(res.out).toContain(`CROVE_MODULES=${valid}`);
+      }
+      expect(run(['check-modules']).status).toBe(2);
+      expect(run(['check-modules', 'finance', 'crm']).status).toBe(2);
+      for (const bad of [
+        '',
+        ' ',
+        'billing',
+        'finance,unknown',
+        'finance,finance',
+        'finance,crm,finance',
+        ',finance',
+        'finance,',
+        'finance,,crm',
+        'finance, crm',
+        ' finance',
+        'Finance',
+        '"finance"',
+        "'finance'",
+        'finance\ncrm',
+        'finance\n',
+        'finance\r',
+        'finance;id',
+        'finance$(id)',
+        'finance`id`',
+        'finance&crm',
+        'finance|crm',
+        'kernel,finance,social,ads,crm,notes,hr,meetings,projects,sign,extra',
+      ]) {
+        const res = run(['check-modules', bad]);
+        expect(res.status, `${JSON.stringify(bad)}: ${res.out}`).toBe(2);
+      }
+    });
+
+    it('deploy --modules refuses an invalid list before touching docker or .env', () => {
+      writeFileSync(`${dir}/.env`, MOD_BEFORE);
+      const res = deployModules('v1.0.0', 'a', 'finance,unknown');
+      expect(res.status, res.out).toBe(2);
+      expect(res.out).toContain('nothing was changed');
+      expect(calls()).toEqual([]);
+      expect(envFile()).toBe(MOD_BEFORE);
+      expect(copies()).toEqual([]);
+    });
+
+    it('writes CROVE_MODULES, preserves lines/comments/CRLF/inode/mode, backs up once, verifies /api/config, and is idempotent', () => {
+      writeFileSync(`${dir}/.env`, MOD_BEFORE);
+      chmodSync(`${dir}/.env`, 0o600);
+      const beforeStat = statSync(`${dir}/.env`);
+      const res = deployModules('v1.0.0', 'a', 'finance,crm,social,sign');
+      expect(res.status, res.out).toBe(0);
+      expect(lines(envFile())).toEqual([
+        'POSTGRES_PASSWORD=x',
+        'CROVE_CONTEXT_TOKEN_KEY=already-here',
+        '# CROVE_MODULES=commented-old',
+        'CROVE_MODULES_EXTRA=keep',
+        'CROVE_MODULES=finance,crm,social,sign',
+        'OTHER=1',
+      ]);
+      const afterStat = statSync(`${dir}/.env`);
+      expect(afterStat.ino).toBe(beforeStat.ino);
+      if (process.platform !== 'win32') {
+        expect(afterStat.mode & 0o777).toBe(0o600);
+        expect(statSync(`${dir}/${copies()[0]}`).mode & 0o777).toBe(0o600);
+      }
+      expect(copies()).toHaveLength(1);
+      expect(readFileSync(`${dir}/${copies()[0]}`, 'utf8')).toBe(MOD_BEFORE);
+      expect(state('env-backup')).toMatch(new RegExp(`^${releaseDir('v1.0.0', 'a')} ${dir}/${copies()[0]} [0-9a-f]{64}$`));
+      expect(res.out).toContain('module settings written to');
+      expect(res.out).toContain('smoke ok: /api/config lists the expected modules');
+
+      // Re-running with the same module list (even when CROVE_MODULES sits in the middle of .env) makes no backup and writes nothing.
+      const done = envFile();
+      const second = deployModules('v1.1.0', 'b', 'finance,crm,social,sign');
+      expect(second.status, second.out).toBe(0);
+      expect(second.out).toContain('already in');
+      expect(envFile()).toBe(done);
+      expect(copies()).toHaveLength(1);
+      expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
+
+      // Deduplicates multiple assignments, appends when missing, and preserves CRLF line endings.
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\r\nCROVE_CONTEXT_TOKEN_KEY=already-here\r\nCROVE_MODULES=old\r\nOTHER=1\r\nexport CROVE_MODULES = finance\r\n');
+      const crlf = deployModules('v1.2.0', 'c', 'finance,sign');
+      expect(crlf.status, crlf.out).toBe(0);
+      expect(envFile()).toBe('POSTGRES_PASSWORD=x\r\nCROVE_CONTEXT_TOKEN_KEY=already-here\r\nOTHER=1\r\nCROVE_MODULES=finance,sign\r\n');
+      expect(deployModules('v1.3.0', 'd', 'finance,sign').out).toContain('already in');
+
+      writeFileSync(`${dir}/.env`, 'POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=already-here\n');
+      const appended = deployModules('v1.4.0', 'e', 'finance,sign');
+      expect(appended.status, appended.out).toBe(0);
+      expect(envFile()).toBe('POSTGRES_PASSWORD=x\nCROVE_CONTEXT_TOKEN_KEY=already-here\nCROVE_MODULES=finance,sign\n');
+    });
+
+    it('smoke checks /api/config modules as {kernel} U <modules> regardless of JSON order and rejects mismatches', () => {
+      for (const modulesJson of [
+        '["kernel","finance","social","crm","sign"]',
+        '["crm","finance","kernel","sign","social"]',
+        '[ "sign" , "social" , "crm" , "finance" , "kernel" ]',
+      ]) {
+        const ok = run(['smoke', 'https://crove.example.test'], { SMOKE_EXPECT_MODULES: 'finance,crm,social,sign', STUB_CONFIG_MODULES: modulesJson });
+        expect(ok.status, `${modulesJson}: ${ok.out}`).toBe(0);
+        expect(ok.out).toContain('smoke ok: /api/config lists the expected modules');
+      }
+      expect(run(['smoke', 'https://crove.example.test'], { SMOKE_EXPECT_MODULES: 'kernel', STUB_CONFIG_MODULES: '["kernel"]' }).status).toBe(0);
+
+      for (const badJson of ['[]', '["kernel","finance","crm","social"]', '["kernel","finance","crm","social","sign","ads"]', '["kernel","finance","finance"]']) {
+        const bad = run(['smoke', 'https://crove.example.test'], { SMOKE_EXPECT_MODULES: 'finance,crm,social,sign', STUB_CONFIG_MODULES: badJson });
+        expect(bad.status, `${badJson}: ${bad.out}`).toBe(1);
+        expect(bad.out).toContain('smoke failed: /api/config lists the expected modules');
+      }
+    });
+
+    it('restores .env on compose failure or smoke module mismatch, and handles rollback cleanly', () => {
+      writeFileSync(`${dir}/.env`, MOD_BEFORE);
+      // Even on a first deploy with no previous release, a smoke module mismatch restores .env.
+      const firstFail = deployModules('v1.0.0', 'a', 'finance,crm,social,sign', { STUB_CONFIG_MODULES: 'kernel,finance' });
+      expect(firstFail.status, firstFail.out).toBe(1);
+      expect(firstFail.out).toContain('there is no earlier release to roll back to');
+      expect(envFile()).toBe(MOD_BEFORE);
+
+      expect(deploy('v1.0.0', 'a').status).toBe(0);
+
+      // Bad compose config after rewrite puts .env back immediately.
+      const badCompose = deployModules('v1.1.0', 'b', 'finance,crm,social,sign', { STUB_CONFIG_FAIL_IF_ENV_HAS: 'CROVE_MODULES=finance,crm,social,sign' });
+      expect(badCompose.status, badCompose.out).toBe(1);
+      expect(badCompose.out).toContain('do not load with the module settings; the env file was put back');
+      expect(envFile()).toBe(MOD_BEFORE);
+      expect(state('current')).toBe(releaseDir('v1.0.0', 'a'));
+
+      // Smoke module mismatch triggers recover: restores .env and clears SMOKE_EXPECT_MODULES for the previous release.
+      const badSmoke = deployModules('v1.1.0', 'b', 'finance,crm,social,sign', { STUB_CONFIG_MODULES: 'kernel,finance,crm,social' });
+      expect(badSmoke.status, badSmoke.out).toBe(1);
+      expect(badSmoke.out).toContain('smoke failed: /api/config lists the expected modules');
+      expect(badSmoke.out).toContain(`rolled back to ${releaseDir('v1.0.0', 'a')}, which serves again`);
+      expect(envFile()).toBe(MOD_BEFORE);
+      expect(state('current')).toBe(releaseDir('v1.0.0', 'a'));
+
+      // Successful deploy followed by rollback (even with caller SMOKE_EXPECT_MODULES set) restores MOD_BEFORE when unmodified.
+      expect(deployModules('v1.1.0', 'b', 'finance,crm,social,sign').status).toBe(0);
+      const written = envFile();
+      expect(written).toContain('CROVE_MODULES=finance,crm,social,sign');
+
+      // Failed rollback puts module settings back so release b keeps running with its settings.
+      const failedRollback = run(['rollback'], { STUB_BAD_DIGEST: digest('a') });
+      expect(failedRollback.status, failedRollback.out).toBe(1);
+      expect(envFile()).toBe(written);
+      expect(state('env-backup')).toContain(releaseDir('v1.1.0', 'b'));
+
+      const back = run(['rollback'], { SMOKE_EXPECT_MODULES: 'finance,crm,social,sign' });
+      expect(back.status, back.out).toBe(0);
+      expect(back.out).not.toContain('lists the expected modules');
+      expect(envFile()).toBe(MOD_BEFORE);
+      expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
+
+      // Re-deploy and edit .env by hand: rollback leaves manual edits alone and names the backup.
+      expect(deployModules('v1.2.0', 'c', 'finance,crm,social,sign').status).toBe(0);
+      const edited = envFile().replace('POSTGRES_PASSWORD=x', 'POSTGRES_PASSWORD=rotated');
+      writeFileSync(`${dir}/.env`, edited);
+      const backEdited = run(['rollback']);
+      expect(backEdited.status, backEdited.out).toBe(0);
+      expect(backEdited.out).toContain('was edited after release');
+      expect(backEdited.out).toContain('is left as it is');
+      expect(envFile()).toBe(edited);
+      expect(existsSync(`${dir}/.deploy/env-backup`)).toBe(false);
+    });
+
+    it('prunes old env backups when --modules writes .env and stops before pulling if .env is read-only', () => {
+      writeFileSync(`${dir}/.env`, MOD_BEFORE);
+      for (let n = 0; n < 7; n++) writeFileSync(`${dir}/.env.bak-2026010${n + 1}T000000Z-abcdef`, 'old\n', { mode: 0o600 });
+      expect(deployModules('v1.0.0', 'a', 'finance,crm,social,sign').status).toBe(0);
+      expect(copies().length).toBeLessThanOrEqual(6);
+      expect(existsSync(`${dir}/.env.bak-20260101T000000Z-abcdef`)).toBe(false);
+
+      if (process.platform === 'win32' || process.getuid?.() === 0) return;
+      chmodSync(`${dir}/.env`, 0o444);
+      try {
+        const ro = deployModules('v1.1.0', 'b', 'finance,sign');
+        expect(ro.status, ro.out).toBe(2);
+        expect(ro.out).toContain('writable by the deploy user');
+        expect(ro.out).toContain('nothing was changed');
+      } finally {
+        chmodSync(`${dir}/.env`, 0o600);
+      }
+    });
+
+    it('composes --auth-settings and --modules into one pre-deploy backup and restores both on failure or rollback', () => {
+      writeFileSync(`${dir}/.env`, COMBINED_BEFORE);
+      expect(deploy('v1.0.0', 'a').status).toBe(0);
+
+      // Failure on module smoke mismatch restores the true pre-deploy .env (both old AUTH_* and old CROVE_MODULES).
+      const modFail = deployBoth('v1.1.0', 'b', IDP, 'finance,crm,social,sign', { STUB_CONFIG_MODULES: 'kernel,finance,crm,social' });
+      expect(modFail.status, modFail.out).toBe(1);
+      expect(modFail.out).toContain('smoke failed: /api/config lists the expected modules');
+      expect(envFile()).toBe(COMBINED_BEFORE);
+      expect(copies()).toHaveLength(1);
+
+      // Failure on Auth URL mismatch restores the true pre-deploy .env too.
+      const authFail = deployBoth('v1.1.0', 'b', IDP, 'finance,crm,social,sign', { STUB_AUTH_URL: 'https://other.example.com/auth/v1' });
+      expect(authFail.status, authFail.out).toBe(1);
+      expect(authFail.out).toContain('smoke failed: /api/config names the configured Auth URL');
+      expect(envFile()).toBe(COMBINED_BEFORE);
+
+      // Successful combined deploy creates a single pre-deploy backup and updates both.
+      for (const old of copies()) rmSync(`${dir}/${old}`);
+      const ok = deployBoth('v1.1.0', 'b', IDP, 'finance,crm,social,sign');
+      expect(ok.status, ok.out).toBe(0);
+      expect(copies()).toHaveLength(1);
+      expect(readFileSync(`${dir}/${copies()[0]}`, 'utf8')).toBe(COMBINED_BEFORE);
+      expect(envFile()).toContain('CROVE_MODULES=finance,crm,social,sign');
+      expect(envFile()).toContain('AUTH_SESSION_CHECK=jwt');
+      expect(ok.out).toContain('smoke ok: /api/config names the configured Auth URL');
+      expect(ok.out).toContain('smoke ok: /api/config lists the expected modules');
+      expect(state('env-backup')).toMatch(new RegExp(`^${releaseDir('v1.1.0', 'b')} ${dir}/${copies()[0]} [0-9a-f]{64}$`));
+
+      // Re-running with both matching makes no backup and writes nothing.
+      const afterBoth = envFile();
+      const noop = deployBoth('v1.1.0', 'b', IDP, 'finance,crm,social,sign');
+      expect(noop.status, noop.out).toBe(0);
+      expect(noop.out).toContain('identity provider settings already in');
+      expect(noop.out).toContain('module settings already in');
+      expect(copies()).toHaveLength(1);
+      expect(envFile()).toBe(afterBoth);
+
+      // Manual rollback restores COMBINED_BEFORE (both AUTH_* and CROVE_MODULES).
+      const back = run(['rollback']);
+      expect(back.status, back.out).toBe(0);
+      expect(envFile()).toBe(COMBINED_BEFORE);
+
+      // One unchanged + one changed on a new release still creates a backup and updates only what changed; rollback restores cleanly.
+      const modOnlyChanged = deployBoth('v1.2.0', 'c', IDP, 'finance,crm,social,sign');
+      expect(modOnlyChanged.status, modOnlyChanged.out).toBe(0);
+      const afterC = envFile();
+      // Redeploy same release c with same auth-settings (already matching) and new modules: keeps pre-c backup!
+      const secondC = deployBoth('v1.2.0', 'c', IDP, 'finance,sign');
+      expect(secondC.status, secondC.out).toBe(0);
+      expect(envFile()).toContain('CROVE_MODULES=finance,sign');
+      expect(envFile()).not.toBe(afterC);
+      expect(run(['rollback']).status).toBe(0);
+      expect(envFile()).toBe(COMBINED_BEFORE);
+
+      // Fresh release where CROVE_MODULES already matches while auth-settings changes -> backs up, updates AUTH_*, rollback restores.
+      const authOnlyChanged = deployBoth('v1.2.1', 'f', IDP, 'finance,crm,social');
+      expect(authOnlyChanged.status, authOnlyChanged.out).toBe(0);
+      expect(authOnlyChanged.out).toContain('identity provider settings written to');
+      expect(envFile()).toContain('CROVE_MODULES=finance,crm,social');
+      expect(envFile()).toContain('AUTH_SESSION_CHECK=jwt');
+      expect(run(['rollback']).status).toBe(0);
+      expect(envFile()).toBe(COMBINED_BEFORE);
+
+      // Next fresh release where auth-settings already matches while CROVE_MODULES changes -> backs up, updates CROVE_MODULES, rollback restores.
+      expect(deployBoth('v1.2.1', 'f', IDP, 'finance,crm,social').status).toBe(0);
+      const afterAuthOnly = envFile();
+      const freshModOnly = deployBoth('v1.2.2', '1', IDP, 'finance,sign');
+      expect(freshModOnly.status, freshModOnly.out).toBe(0);
+      expect(freshModOnly.out).toContain('module settings written to');
+      expect(envFile()).toContain('CROVE_MODULES=finance,sign');
+      expect(run(['rollback']).status).toBe(0);
+      expect(envFile()).toBe(afterAuthOnly);
+      // Reset .env to COMBINED_BEFORE before testing sequential --auth-settings then --modules on the same release.
+      writeFileSync(`${dir}/.env`, COMBINED_BEFORE);
+
+      // Redeploy same release e: first --auth-settings only, then --modules only -> keeps pre-e backup and restores both on rollback.
+      expect(deploy('v1.3.0', 'd').status).toBe(0);
+      writeSettings(IDP);
+      expect(run(['deploy', '--release', 'v1.4.0', '--image', image('e'), '--extract-image', extract('e'), '--media-image', media('e'), '--compose', compose, '--auth-settings', settingsPath()]).status).toBe(0);
+      expect(deployModules('v1.4.0', 'e', 'finance,crm,social,sign').status).toBe(0);
+      expect(envFile()).toContain('CROVE_MODULES=finance,crm,social,sign');
+      expect(envFile()).toContain('AUTH_SESSION_CHECK=jwt');
+      expect(run(['rollback']).status).toBe(0);
+      expect(envFile()).toBe(COMBINED_BEFORE);
     });
   });
 });

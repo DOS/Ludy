@@ -13,7 +13,7 @@
 # $STUB_LOG.upload, an RPC body to $STUB_LOG.rpc. STUB_SIGNIN_FAIL refuses the sign-in, STUB_FILE_STATUS sets the
 # uploaded file's status (default proposed), STUB_REJECT_FAIL fails the rejection. A remote identity provider (#2704): its
 # keys at .../.well-known/jwks.json (STUB_JWKS_FAIL: 404, STUB_JWKS_EMPTY, STUB_JWKS_OCT) and its https .../auth/v1/health (STUB_IDP_HEALTH_FAIL: 404, or
-# STUB_IDP_REDIRECT: 301). STUB_IDP_HEALTH_HTML: the Auth URL is this API's address by mistake (its page answers). STUB_NO_PROXY: this deployment has no /auth/v1 proxy (404 anywhere but at https://idp.*). /api/config reports authUrl as <base>/auth/v1, or STUB_AUTH_URL.
+# STUB_IDP_REDIRECT: 301). STUB_IDP_HEALTH_HTML: the Auth URL is this API's address by mistake (its page answers). STUB_NO_PROXY: this deployment has no /auth/v1 proxy (404 anywhere but at https://idp.*). /api/config reports authUrl as <base>/auth/v1, or STUB_AUTH_URL, and modules from CROVE_MODULES in $STUB_DEPLOY_DIR/.env (with kernel), or STUB_CONFIG_MODULES.
 set -euo pipefail
 
 printf '%s\n' "$*" >>"$STUB_LOG.argv"
@@ -76,10 +76,29 @@ case "$url" in
     body="{\"build\":\"$build\",\"migrationsMissing\":$missing}"
     ;;
   */api/config)
-    # What the running API reports: the PUBLIC_AUTH_URL of the host's env file when it has one (the settings of #2704), else the
-    # bundled proxy under the address asked; STUB_AUTH_URL overrides both.
+    # What the running API reports: the PUBLIC_AUTH_URL and CROVE_MODULES of the host's env file when present (#2704, #3531),
+    # else the bundled proxy and empty modules; STUB_AUTH_URL and STUB_CONFIG_MODULES override them.
     configured="$(sed -n 's/^PUBLIC_AUTH_URL=//p' "$STUB_DEPLOY_DIR/.env" 2>/dev/null | tail -n 1 | tr -d '\r')"
-    body="{\"authUrl\":\"${STUB_AUTH_URL:-${configured:-${url%/api/config}/auth/v1}}\",\"modules\":[]}"
+    modules_json='[]'
+    if [ -n "${STUB_CONFIG_MODULES+x}" ]; then
+      if [[ "$STUB_CONFIG_MODULES" == \[* ]]; then
+        modules_json="$STUB_CONFIG_MODULES"
+      elif [ -n "$STUB_CONFIG_MODULES" ]; then
+        modules_json="[\"${STUB_CONFIG_MODULES//,/\",\"}\"]"
+      fi
+    else
+      configured_modules="$(sed -n -E 's/\r$//; s/^[[:space:]]*(export[[:space:]]+)?CROVE_MODULES[[:space:]]*[=:][[:space:]]*(.*)$/\2/p' "$STUB_DEPLOY_DIR/.env" 2>/dev/null | tail -n 1)"
+      if [ -n "$configured_modules" ]; then
+        modules_list='kernel'
+        IFS=',' read -r -a stub_mods <<<"$configured_modules"
+        for m in "${stub_mods[@]}"; do
+          m="${m// /}"
+          [ -n "$m" ] && [ "$m" != kernel ] && [[ ",$modules_list," != *",$m,"* ]] && modules_list+=",$m"
+        done
+        modules_json="[\"${modules_list//,/\",\"}\"]"
+      fi
+    fi
+    body="{\"authUrl\":\"${STUB_AUTH_URL:-${configured:-${url%/api/config}/auth/v1}}\",\"modules\":$modules_json}"
     ;;
   */auth/v1/health)
     # A remote identity provider's address (https://...) answers unless STUB_IDP_HEALTH_FAIL; the key travels in a header file.
