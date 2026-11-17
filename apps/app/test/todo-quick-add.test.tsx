@@ -208,7 +208,10 @@ describe('TodoQuickAddBar & ShellNav SSR rendering (#3556)', () => {
     expect(viHtml).toContain('data-testid="quick-add-chip-list"');
     expect(viHtml).toContain('KeToan');
     expect(viHtml).toContain('data-testid="quick-add-dismiss-date"');
+    expect(viHtml).toContain('min-h-6');
+    expect(viHtml).toContain('size-6');
     expect(viHtml).toContain('data-testid="quick-add-preview"');
+    expect(buildTodoCreatePayload('vào buổi tối nay', parseTodoQuickAdd('vào buổi tối nay', { now: NOW, timeZone: TZ }), NOW)).toBeNull();
 
     const enHtml = renderInApp(
       'en',

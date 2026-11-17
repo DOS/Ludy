@@ -328,7 +328,7 @@ export function TodoQuickAddBar({
             <li key={`${tok.kind}:${tok.start}:${tok.end}`} className="max-w-full">
               <Badge
                 variant={variant}
-                className="max-w-full gap-1 pr-1"
+                className="h-auto min-h-6 max-w-full gap-1 py-0 pr-0.5 pl-2"
                 data-testid={`quick-add-chip-${tok.kind}`}
               >
                 {icon}
@@ -338,9 +338,9 @@ export function TodoQuickAddBar({
                   onClick={() => handleDismiss(tok)}
                   aria-label={t('quickAddDismiss', { label })}
                   data-testid={`quick-add-dismiss-${tok.kind}`}
-                  className="ml-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full hover:bg-foreground/10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:outline-none"
+                  className="ml-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full hover:bg-foreground/10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:outline-none"
                 >
-                  <ProjectIcon name="remove" className="size-3" />
+                  <ProjectIcon name="remove" className="size-3.5" />
                 </button>
               </Badge>
             </li>

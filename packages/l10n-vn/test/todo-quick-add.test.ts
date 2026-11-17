@@ -1051,6 +1051,78 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-18',
       dueTime: '09:00',
     });
+
+    // Clocks attached to unchosen alternative dates stay untouched instead of attaching to the chosen date
+    expect(
+      parseTodoQuickAdd('Họp ngày 25/11 thay vì ngày 26/11 lúc 10h', { now: TUE_MORNING, timeZone: VN_TZ }),
+    ).toMatchObject({
+      title: 'Họp thay vì ngày 26/11 lúc 10h',
+      dueOn: '2026-11-25',
+      dueTime: null,
+    });
+    expect(
+      parseTodoQuickAdd('Họp ngày 25/11 lúc 9h thay vì ngày 26/11 lúc 10h', { now: TUE_MORNING, timeZone: VN_TZ }),
+    ).toMatchObject({
+      title: 'Họp thay vì ngày 26/11 lúc 10h',
+      dueOn: '2026-11-25',
+      dueTime: '09:00',
+    });
+    expect(
+      parseTodoQuickAdd('Họp ngày 25/11 lúc 10h, ngày 26/11', { now: TUE_MORNING, timeZone: VN_TZ }),
+    ).toMatchObject({
+      title: 'Họp, ngày 26/11',
+      dueOn: '2026-11-25',
+      dueTime: '10:00',
+    });
+    expect(
+      parseTodoQuickAdd('Họp ngày 25/11 thay vì 10h tối nay', { now: TUE_MORNING, timeZone: VN_TZ }),
+    ).toMatchObject({
+      title: 'Họp thay vì 10h tối nay',
+      dueOn: '2026-11-25',
+      dueTime: null,
+    });
+
+    // "[vào] [buổi] tối nay" and "on this/tomorrow morning" absorb connector prefixes cleanly
+    expect(parseTodoQuickAdd('vào buổi tối nay', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: '',
+      dueOn: '2026-11-17',
+      dueTime: '19:00',
+    });
+    const vaoBuoiToiNay = parseTodoQuickAdd('Họp vào buổi tối nay', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(vaoBuoiToiNay).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-17',
+      dueTime: '19:00',
+    });
+    expect(vaoBuoiToiNay.tokens.map((t) => [t.kind, t.raw])).toEqual([
+      ['time', 'vào buổi tối'],
+      ['date', 'nay'],
+    ]);
+    const vaoBuoiDismissTime = parseTodoQuickAdd('Họp vào buổi tối nay', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+      dismissedTokens: [vaoBuoiToiNay.tokens.find((t) => t.kind === 'time')!],
+    });
+    expect(vaoBuoiDismissTime).toMatchObject({
+      title: 'Họp vào buổi tối',
+      dueOn: '2026-11-17',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp 9h vào buổi tối nay', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-17',
+      dueTime: '21:00',
+    });
+    expect(parseTodoQuickAdd('Meeting on this morning', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Meeting',
+      dueOn: '2026-11-17',
+      dueTime: '09:00',
+    });
+    expect(parseTodoQuickAdd('Meeting on tomorrow morning', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Meeting',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+    });
   });
 
   it('stays linear on 50k-character adversarial --, %, and tab inputs without ReDoS', () => {

@@ -1461,19 +1461,19 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
               contextPeriod = enPeriod;
               if (isTmr && !parsedTime && !suppressDefaultPeriodTime) {
                 parsedTime = { hour: PERIOD_DEFAULT_HOUR[enPeriod], minute: 0, explicitClock: false, period: enPeriod };
-                claimToken('date', w0.start, w0.end);
-                dateSpans.push({ start: w0.start, end: w0.end });
+                claimToken('date', prefixStart, w0.end);
+                dateSpans.push({ start: prefixStart, end: w0.end });
                 claimToken('time', w1.start, w1.end);
                 timeSpans.push({ start: w1.start, end: w1.end });
               } else if (isTmr && hasExplicitClockRange && !parsedTime) {
-                claimToken('date', w0.start, w0.end);
-                dateSpans.push({ start: w0.start, end: w0.end });
+                claimToken('date', prefixStart, w0.end);
+                dateSpans.push({ start: prefixStart, end: w0.end });
               } else {
                 if (!parsedTime && !suppressDefaultPeriodTime) {
                   parsedTime = { hour: PERIOD_DEFAULT_HOUR[enPeriod], minute: 0, explicitClock: false, period: enPeriod };
                 }
-                claimToken('date', span.start, span.end);
-                dateSpans.push(span);
+                claimToken('date', prefixStart, span.end);
+                dateSpans.push({ start: prefixStart, end: span.end });
               }
             },
           });
@@ -1514,28 +1514,29 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       continue;
     }
 
-    // 7e. "sáng nay" / "trưa nay" / "chiều nay" / "tối nay" / "đêm nay"
+    // 7e. "sáng nay" / "trưa nay" / "chiều nay" / "tối nay" / "đêm nay" (plus "[vào] [buổi] <period> nay")
     const pToday = matchDayPeriod(w0, false, words[i - 1]);
     if (pToday && w1 && contiguous(i, i + 1) && vnMatch(w1, 'nay')) {
       const span = { start: w0.start, end: w1.end };
       if (isWordSpanAvailable(span)) {
+        const prefixStart = expandConnectorBefore(input, words, w0.start, [['vào', 'buổi'], ['buổi'], ['vào']], occupied);
         dateCandidates.push({
           start: span.start,
           end: span.end,
-          prefixStart: span.start,
+          prefixStart,
           apply: () => {
             explicitDueOn = today;
             explicitTodaySpecified = true;
             contextPeriod = pToday;
             if (parsedTime || (timeTokenDismissed && !hasExplicitClockRange)) {
-              claimToken('date', w0.start, w1.end);
-              dateSpans.push(span);
+              claimToken('date', prefixStart, w1.end);
+              dateSpans.push({ start: prefixStart, end: w1.end });
             } else if (hasExplicitClockRange) {
               claimToken('date', w1.start, w1.end);
               dateSpans.push({ start: w1.start, end: w1.end });
             } else {
               parsedTime = { hour: PERIOD_DEFAULT_HOUR[pToday], minute: 0, explicitClock: false, period: pToday };
-              claimToken('time', w0.start, w0.end);
+              claimToken('time', prefixStart, w0.end);
               claimToken('date', w1.start, w1.end);
               dateSpans.push({ start: w1.start, end: w1.end });
             }
@@ -1704,7 +1705,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   };
 
   const ALLOWED_DATE_TO_CLOCK_GAP = new Set(['', ',', 'luc', 'vao luc', 'vao', 'at', '@']);
-  const ALLOWED_CLOCK_TO_DATE_GAP = new Set(['', ',', 'ngay', 'vao', 'vao ngay', 'on']);
+  const ALLOWED_CLOCK_TO_DATE_GAP = new Set(['', 'ngay', 'vao', 'vao ngay', 'on']);
 
   const endAfterOptionalAttachedClock = (anchorEnd: number, limitEnd?: number): number => {
     for (let idx = 0; idx < dedupedTimeCandidates.length; idx++) {
@@ -1812,12 +1813,14 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     return rangeEndIdx;
   };
 
-  // Detect multi-date & date-time ranges before claiming clocks so "từ 25/11 9h đến 26/11 10h" stays intact.
+  // Detect multi-date & date-time ranges (and clocks bound to unchosen dates) before claiming clocks.
   const rawEnglishTimeSpans = dedupedTimeCandidates
     .filter((tc) => tc.hasAmPm || expandConnectorBefore(input, words, tc.start, [['at']], occupied) < tc.start)
     .map((tc) => ({ start: tc.start, end: tc.end }));
   const preDateCandidates = collectDateCandidates(rawEnglishTimeSpans);
   const skippedDateRangeSpans: Span[] = [];
+  let chosenDateCandidate: DateCandidate | undefined;
+  const unchosenDateCandidates: DateCandidate[] = [];
   for (let idx = 0; idx < preDateCandidates.length; idx++) {
     const dc = preDateCandidates[idx];
     if (!dc) continue;
@@ -1832,13 +1835,38 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       const rangeEnd = endAfterOptionalAttachedClock(lastDc.end);
       skippedDateRangeSpans.push({ start: rangeStart, end: rangeEnd });
       idx = rangeEndIdx;
+    } else if (!chosenDateCandidate) {
+      chosenDateCandidate = dc;
+    } else {
+      unchosenDateCandidates.push(dc);
+    }
+  }
+  const skippedClockSpans: Span[] = [...skippedDateRangeSpans];
+  if (chosenDateCandidate && unchosenDateCandidates.length > 0) {
+    const chosenEnd = endAfterOptionalAttachedClock(chosenDateCandidate.end);
+    for (const uc of unchosenDateCandidates) {
+      const ucStart = Math.min(
+        uc.prefixStart,
+        startBeforeOptionalAttachedClock(uc.prefixStart, chosenEnd),
+        startBeforeOptionalAttachedClock(uc.start, chosenEnd),
+      );
+      const ucEnd = endAfterOptionalAttachedClock(uc.end);
+      if (ucStart < uc.prefixStart) skippedClockSpans.push({ start: ucStart, end: uc.prefixStart });
+      if (ucEnd > uc.end) skippedClockSpans.push({ start: uc.end, end: ucEnd });
+    }
+    for (const tc of dedupedTimeCandidates) {
+      if (tc.start < chosenEnd) continue;
+      const rc = resolveClockPeriod(tc);
+      if (unchosenDateCandidates.some((uc) => rc.start < uc.end && rc.end > uc.prefixStart)) {
+        skippedClockSpans.push({ start: rc.start, end: rc.end });
+      }
     }
   }
 
   // 6. Explicit clock times (14:30, 9h30, 9h, 9am, 2:30pm)
   for (let idx = 0; idx < dedupedTimeCandidates.length; idx++) {
     const tc = dedupedTimeCandidates[idx];
-    if (!tc || !isAvailable(tc) || hasOverlap(skippedDateRangeSpans, tc)) continue;
+    if (!tc || !isAvailable(tc) || hasOverlap(skippedClockSpans, tc)) continue;
 
     if (hasHalfUnitRangeBefore(tc.start)) {
       if (hasCleanRightBoundary(tc)) hasExplicitClockRange = true;
