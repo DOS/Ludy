@@ -482,6 +482,7 @@ export const todoComplete = defineCommand({
       }
       const resolvedNextDueOn = nextTodoOccurrenceDate(rule, anchorDate, targetMonthDay);
       nextDueOn = resolvedNextDueOn;
+      const beforeCreatedAt = new Date(before.created_at);
       // Do not spawn if an occurrence for nextDueOn already exists OR if a newer open occurrence in the series is
       // already active. Earlier reopened occurrences never block a newer occurrence from advancing the series.
       const existingSibling = await ctx.trx
@@ -497,8 +498,8 @@ export const todoComplete = defineCommand({
             eb.and([
               eb('status', '=', 'open'),
               eb.or([
-                eb('created_at', '>', before.created_at),
-                eb.and([eb('created_at', '=', before.created_at), eb('id', '>', before.id)]),
+                eb('created_at', '>', beforeCreatedAt),
+                eb.and([eb('created_at', '=', beforeCreatedAt), eb('id', '>', before.id)]),
                 eb('due_on', '>=', resolvedNextDueOn),
               ]),
             ]),
