@@ -86,6 +86,11 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
+  '/api/sign/direct/view': 'public eSign direct template link view (Slice 2a A1): fragment token resolves 1-signer template metadata with org_app_on + entitlement opaque 404',
+  '/api/sign/direct/pdf': 'public eSign direct link template PDF stream (Slice 2a A1): fragment token + optional OTP gate before streaming template PDF',
+  '/api/sign/direct/otp/request': 'public eSign direct link email OTP request (Slice 2a A1): rate limited per IP and email/token',
+  '/api/sign/direct/otp/verify': 'public eSign direct link email OTP verify (Slice 2a A1): validates 6-digit OTP and returns short-lived verified claim',
+  '/api/sign/direct/start': 'public eSign direct link self-service start (Slice 2a A1): creates signer envelope from 1-signer template under IP/token rate limits + optional OTP, returning single-use submit token without storing plaintext token',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
