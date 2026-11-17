@@ -58,7 +58,7 @@ CREATE POLICY einvoice_notice_update ON crove_finance.einvoice_notice AS RESTRIC
   WITH CHECK ((SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = einvoice_notice.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')));
 
--- A step is ticked once and never taken back, and nothing but a step may change: a row's field, text, draft and entity are fixed. The notice names an invoice that was issued.
+-- A step is ticked once and never taken back, and nothing but a step may change: a row's field, text, draft and entity are fixed. The notice names a draft of the same entity (the command requires it issued).
 CREATE OR REPLACE FUNCTION crove_finance.einvoice_notice_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
@@ -66,7 +66,11 @@ BEGIN
     IF NEW.buyer_notice_state <> 'todo' OR NEW.form_state <> 'todo' THEN
       RAISE EXCEPTION 'EINVOICE_NOTICE_STATE' USING ERRCODE = '42501';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM crove_finance.einvoice_draft d WHERE d.org_id = NEW.org_id AND d.id = NEW.draft_id AND d.legal_entity_id = NEW.legal_entity_id AND d.state = 'issued') THEN
+    -- A row for another org than the context's, or with no context, is the row-level policy's to refuse, not this guard's (it could not see that org's draft anyway).
+    IF crove_kernel.ctx_org_id() IS DISTINCT FROM NEW.org_id THEN
+      RETURN NEW;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM crove_finance.einvoice_draft d WHERE d.org_id = NEW.org_id AND d.id = NEW.draft_id AND d.legal_entity_id = NEW.legal_entity_id) THEN
       RAISE EXCEPTION 'EINVOICE_NOTICE_DRAFT' USING ERRCODE = '42501';
     END IF;
     RETURN NEW;

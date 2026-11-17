@@ -243,6 +243,7 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
   ['crove_finance.einvoice_connection', ['update', 'delete']],
   ['crove_finance.einvoice_draft', ['update', 'delete']],
   ['crove_finance.einvoice_draft_line', ['update', 'delete']],
+  ['crove_finance.einvoice_notice', ['update']],
   ['crove_finance.einvoice_series', ['update', 'delete']],
   ['crove_finance.marketplace_connection', ['update', 'delete']],
   ['crove_finance.stock_alias', ['delete']],
@@ -1442,6 +1443,22 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_finance.einvoice_draft', values: { org_id: o.id, id: draft, invoice_date: '2026-11-03', buyer_kind: 'consumer', subtotal: '100', vat_amount: '10', total: '110' } }],
         row: { org_id: o.id, id: randomUUID(), draft_id: draft, line_no: 1, description: 'RLS matrix', quantity: '1', unit_price: '100', amount: '100', vat_rate: '10%', vat_amount: '10' },
+      };
+    },
+  },
+  // #2504: an error recorded on an invoice (a buyer notice and a form 04/SS to do). It needs a draft of the same entity, seeded with it; tenant roles update only the four step columns
+  // (a column grant), so the update probes assign a step to itself, and there is no delete grant at all. The command, not the table, requires the draft to be issued.
+  'crove_finance.einvoice_notice': {
+    update: { set: 'buyer_notice_state = buyer_notice_state' },
+    make: (o) => {
+      const draft = randomUUID();
+      const entity = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: `RLS matrix notice ${tag()}`, created_by: o.owner } },
+          { table: 'crove_finance.einvoice_draft', values: { org_id: o.id, id: draft, legal_entity_id: entity, invoice_date: '2026-11-03', buyer_kind: 'consumer', subtotal: '0', vat_amount: '0', total: '0' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, draft_id: draft, field: 'buyer_name', correct_text: 'RLS matrix' },
       };
     },
   },

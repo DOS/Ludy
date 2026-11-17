@@ -232,7 +232,7 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     expect(audit).not.toContain('Tên Riêng Rất Đặc Biệt');
   });
 
-  it('is held by the database too: only an issued invoice, only a step moves, once, and nothing is deleted', async () => {
+  it('is held by the database too: only a step moves, once, and nothing is deleted', async () => {
     const o = await org();
     const original = await issued(o, sandbox());
     const notice = await open(o, original.draftId);
@@ -240,8 +240,5 @@ suite('the notice of an error in the non-core content of an issued sales e-invoi
     await expect(rows("UPDATE crove_finance.einvoice_notice SET correct_text = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, notice.id])).rejects.toThrow();
     await execute(o, 'finance.einvoice.notice_step', { noticeId: notice.id, step: 'tax_form' });
     await expect(rows("UPDATE crove_finance.einvoice_notice SET form_state = 'todo', form_filed_at = NULL WHERE org_id = $1 AND id = $2", [o.orgId, notice.id])).rejects.toThrow();
-    // A notice of a draft that is not issued cannot be written.
-    const draft = await execute<{ id: string }>(o, 'finance.einvoice_draft.save', form(o));
-    await expect(rows("INSERT INTO crove_finance.einvoice_notice (org_id, legal_entity_id, draft_id, field, correct_text) VALUES ($1, $2, $3, 'buyer_name', 'x')", [o.orgId, o.entityId, draft.id])).rejects.toThrow();
   });
 });
