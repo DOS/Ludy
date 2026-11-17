@@ -3,7 +3,7 @@
 // modes (slow, reject, a lost answer, pending), adjustment and replacement, and that no step needs a host or a credential
 // that is not the sandbox's.
 import { describe, expect, it } from 'vitest';
-import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, createSandboxEInvoiceProvider, isEInvoiceProvider, type EInvoiceRequest } from '../src/index.ts';
+import { ADJUST_REPLACE_REASON_CODES, EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, createSandboxEInvoiceProvider, isEInvoiceProvider, type EInvoiceRequest } from '../src/index.ts';
 
 const request = (key: string, extra: Partial<EInvoiceRequest> = {}): EInvoiceRequest => ({
   key,
@@ -25,6 +25,8 @@ const request = (key: string, extra: Partial<EInvoiceRequest> = {}): EInvoiceReq
 
 const secret = SANDBOX_EINVOICE_SECRET;
 const instant = async (): Promise<void> => undefined;
+// A stand-in list: the real one is data (reason-codes.ts), empty until read from MISA's guide; these codes are made up for the tests.
+const TEST_CODES = [{ code: 'TEST-1', label: 'Mã thử nghiệm 1' }, { code: 'TEST-2', label: 'Mã thử nghiệm 2' }] as const;
 
 describe('the offline e-invoice provider', () => {
   it('is a provider id, has no host and no cancel', () => {
@@ -155,19 +157,36 @@ describe('the offline e-invoice provider', () => {
   });
 
   it('adjusts and replaces with the original in the XML, as new invoices', async () => {
-    const { provider } = createSandboxEInvoiceProvider();
+    const { provider } = createSandboxEInvoiceProvider({ reasonCodes: TEST_CODES });
     const original = await provider.issue(secret, request('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'));
     if (original.state !== 'issued') throw new Error('not issued');
-    const ref = { kind: 'adjustment' as const, templateNo: '1', symbol: 'C26TSB', number: original.number, date: '2026-11-03' };
+    const ref = { kind: 'adjustment' as const, templateNo: '1', symbol: 'C26TSB', number: original.number, date: '2026-11-03', reasonCode: 'TEST-1' };
     const adjusted = await provider.adjust(secret, { ...request('ffffffff-ffff-4fff-8fff-ffffffffffff'), original: ref });
     if (adjusted.state !== 'issued') throw new Error('not issued');
     expect(adjusted.number).toBe('0000002');
     const xml = new TextDecoder().decode((await provider.files(secret, adjusted.ref)).xml);
     expect(xml).toContain('<TCHDon>2</TCHDon>');
     expect(xml).toContain('<SHDCLQuan>0000001</SHDCLQuan>');
+    // The reason code is echoed in the tag MISA names for it (#3571).
+    expect(xml).toContain('<LDDCTThe>TEST-1</LDDCTThe>');
     const replaced = await provider.replace(secret, { ...request('00000000-0000-4000-8000-000000000001'), original: { ...ref, kind: 'replacement' } });
     if (replaced.state !== 'issued') throw new Error('not issued');
     expect(new TextDecoder().decode((await provider.files(secret, replaced.ref)).xml)).toContain('<TCHDon>1</TCHDon>');
+  });
+
+  it('refuses a missing or unknown reason code, recording nothing, and refuses all of them while the real list is empty', async () => {
+    const { provider, control } = createSandboxEInvoiceProvider({ reasonCodes: TEST_CODES });
+    const original = { kind: 'adjustment' as const, templateNo: '1', symbol: 'C26TSB', number: '0000001', date: '2026-11-03' };
+    const refused = { state: 'rejected', ref: null, code: 'invalid_data' };
+    for (const reasonCode of ['', 'NOT-IN-THE-LIST']) {
+      expect(await provider.adjust(secret, { ...request('11111111-1111-4111-8111-111111111111'), original: { ...original, reasonCode } })).toEqual(refused);
+      expect(await provider.replace(secret, { ...request('22222222-2222-4222-8222-222222222222'), original: { ...original, kind: 'replacement', reasonCode } })).toEqual(refused);
+    }
+    expect(await provider.adjust(secret, request('33333333-3333-4333-8333-333333333333') as Parameters<typeof provider.adjust>[1])).toEqual(refused);
+    expect(control.calls).toEqual([]);
+    const real = createSandboxEInvoiceProvider().provider;
+    expect(ADJUST_REPLACE_REASON_CODES.codes).toEqual([]);
+    expect(await real.adjust(secret, { ...request('44444444-4444-4444-8444-444444444444'), original: { ...original, reasonCode: 'TEST-1' } })).toEqual(refused);
   });
 
   it('never records a credential', async () => {

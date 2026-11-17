@@ -74,6 +74,9 @@ export interface EInvoiceOriginal {
   symbol: string;
   number: string;
   date: string;
+  // Why the original is adjusted or replaced: a code of the Appendix XVII list (reason-codes.ts), required by MISA from 2026-12-15 (#3571). An adapter refuses a missing or unknown
+  // code as `invalid_data` before any call.
+  reasonCode: string;
 }
 
 export interface EInvoiceRequest {

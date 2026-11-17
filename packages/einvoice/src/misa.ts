@@ -12,6 +12,7 @@
 // token is held in memory only, per credential. Amounts are the decimal strings the caller computed, written into the request as exact numbers, never through a JS number.
 import { createHash } from 'node:crypto';
 import { fromMinor, toMinor } from './decimal.ts';
+import { ADJUST_REPLACE_REASON_CODES, isReasonCode, type ReasonCode } from './reason-codes.ts';
 import {
   EInvoiceProviderError,
   type ConnectionState,
@@ -60,6 +61,8 @@ export type MisaTransport = (request: MisaRequest) => Promise<MisaResponse>;
 export interface MisaOptions {
   transport: MisaTransport;
   now?: () => Date;
+  // The codes an adjustment or a replacement may carry; the default is the data file's list (reason-codes.ts). A test passes its own.
+  reasonCodes?: readonly ReasonCode[];
 }
 
 // The fields the org types to connect, in the order the form shows them. ClientID and ClientSecret are the app's (issued by MISA to the owner's developer app).
@@ -201,8 +204,10 @@ type Refusal = 'invalid_data' | 'series_unknown';
 
 // The invoice as MISA's InvoiceData, or why it is refused before anything is sent: a currency other than VND (the document's exchange-rate fields are not built), too many
 // lines, a series that is not MISA's shape, an amount that is not an exact decimal, a rate the document has no name for.
-function invoiceData(request: EInvoiceRequest, series: string, original: EInvoiceOriginal | null, kind: 'adjustment' | 'replacement' | null): Obj | Refusal {
+function invoiceData(request: EInvoiceRequest, series: string, original: EInvoiceOriginal | null, kind: 'adjustment' | 'replacement' | null, reasonCodes: readonly ReasonCode[]): Obj | Refusal {
   if (request.currency !== 'VND') return 'invalid_data';
+  // An adjustment or a replacement carries a reason code of the list (#3571); without one, or with an unknown one, nothing is sent.
+  if (original && kind && !isReasonCode(original.reasonCode, reasonCodes)) return 'invalid_data';
   if (request.lines.length === 0 || request.lines.length > MISA_LIMITS.maxLinesPerInvoice) return 'invalid_data';
   if (!/^[1-9]$/.test(request.templateNo) || !SYMBOL.test(request.symbol) || !SERIES.test(series)) return 'series_unknown';
   if (![request.subtotal, request.vatAmount, request.total].every((v) => DECIMAL.test(v))) return 'invalid_data';
@@ -290,6 +295,8 @@ function invoiceData(request: EInvoiceRequest, series: string, original: EInvoic
     data.OrgInvSeries = original.symbol;
     data.OrgInvNo = original.number;
     data.OrgInvDate = original.date;
+    // The reason, from Appendix XVII (shown in the XML as <LDDCTThe>), required from 2026-12-15. MISA's notice puts it in the OriginalInvoice object; the adapter sends it with the original's other fields.
+    data.AdjustReplaceReasonCode = original.reasonCode;
   }
   return data;
 }
@@ -307,6 +314,7 @@ const tag = (xml: string, name: string): string | null => {
 
 export function createMisaEInvoiceProvider(options: MisaOptions): EInvoiceProvider {
   const now = options.now ?? (() => new Date());
+  const reasonCodes = options.reasonCodes ?? ADJUST_REPLACE_REASON_CODES.codes;
   // The token of a credential, in memory only (valid about 14 days at MISA; held for a few hours so a restart and a rotation cost nothing).
   const tokens = new Map<string, { token: string; at: number }>();
   // Requests are sequential per series (the document's rule): one publishing at a time for a credential and a series.
@@ -432,7 +440,7 @@ export function createMisaEInvoiceProvider(options: MisaOptions): EInvoiceProvid
   // key was asked for and found nowhere.
   async function publish(secret: string, request: EInvoiceRequest, kind: 'adjustment' | 'replacement' | null): Promise<EInvoiceOutcome> {
     const series = `${request.templateNo}${request.symbol}`;
-    const data = invoiceData(request, series, request.original ?? null, kind);
+    const data = invoiceData(request, series, request.original ?? null, kind, reasonCodes);
     if (typeof data === 'string') return { state: 'rejected', ref: null, code: data };
     // Per process: one publishing at a time for a seller's tax code and a series.
     const lane = `${parseCredentials(secret).taxCode}:${series}`;
