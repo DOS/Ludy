@@ -21,6 +21,7 @@ test('lock a month, see a posting into it refused, then unlock it with a reason'
   await test.step('lock September 2026 on the ledger screen', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
+    await page.getByRole('tab', { name: 'Kết thúc kỳ' }).click();
     await expect(page.getByText('Chưa khóa sổ tháng nào.', { exact: false })).toBeVisible();
     await page.getByLabel('Tháng khóa sổ').fill('2026-09');
     await page.getByRole('button', { name: 'Khóa sổ tháng 09/2026' }).click();

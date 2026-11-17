@@ -648,16 +648,17 @@ export function LedgerPage() {
         <TabsContent value="statements">
           <Statements period={period} />
         </TabsContent>
+        {/* Locking a month and archiving a year are the end of a period, not a report (#3602): their own tab, so a lock is not a card under the trial balance. */}
+        <TabsContent value="closing">
+          <section aria-labelledby="ledger-closing">
+            <h2 id="ledger-closing" className="mb-3 text-sm font-semibold">
+              {t('closingTitle')}
+            </h2>
+            <PeriodLockPanel />
+            <YearArchivePanel />
+          </section>
+        </TabsContent>
       </Tabs>
-      {/* Locking a month and archiving a year come after the reports they close (#1264): the reports are what this
-          screen is opened for, the lock once a month and the archive once a year. */}
-      <section className="mt-10 border-t pt-6" aria-labelledby="ledger-closing">
-        <h2 id="ledger-closing" className="mb-3 text-sm font-semibold">
-          {t('closingTitle')}
-        </h2>
-        <PeriodLockPanel />
-        <YearArchivePanel />
-      </section>
     </>
   );
 }

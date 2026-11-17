@@ -3,6 +3,7 @@
 // issued and no provider is called from this screen yet: a draft is a working copy. The amounts are the server's, computed from the lines (the form has no
 // total to type), and the checks of the invoice's required fields show on the fields as the draft is typed.
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
 import { useDeferredValue, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerKind, type DraftIssueCode, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@crove/kernel-contract';
@@ -588,6 +589,7 @@ export function SalesInvoicesPage() {
   const t = useTranslations('salesInvoices');
   const f = useFormat();
   const entity = useChosenEntity();
+  const { slug } = useParams({ strict: false }) as { slug: string };
   const org = useQuery(orpc.org.get.queryOptions());
   const canWrite = org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member';
   const canSync = org.data?.role === 'owner' || org.data?.role === 'admin';
@@ -631,12 +633,18 @@ export function SalesInvoicesPage() {
       {series.length === 0 && !seriesQuery.isPending && (
         <Card className="mb-4 block p-4" data-testid="invoice-no-series">
           <p className="text-sm text-foreground">{t('noSeries')}</p>
+          {/* The next step (#3602): the provider is connected in Cài đặt, section Kết nối; a deployment that runs the offline sandbox can also read its sample series. */}
+          <p className="mt-2 text-sm text-muted-foreground">
+            {status.data?.sandbox ? t('noSeriesSandbox') : t('noProvider')}{' '}
+            <Link to="/o/$slug/settings" params={{ slug }} hash="integrations" className="text-link hover:underline" data-testid="invoice-open-connections">
+              {t('openConnections')}
+            </Link>
+          </p>
           {status.data?.sandbox && canSync && (
             <Button className="mt-3" variant="outline" size="sm" loading={sync.isPending} onClick={() => sync.mutate()} data-testid="invoice-sync">
               {t('syncSandbox')}
             </Button>
           )}
-          {!status.data?.sandbox && <p className="mt-2 text-xs text-subtle-foreground">{t('noProvider')}</p>}
           {sync.error && <ErrorText>{errorMessage(sync.error)}</ErrorText>}
         </Card>
       )}

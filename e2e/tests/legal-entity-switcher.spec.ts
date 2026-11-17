@@ -46,6 +46,7 @@ test('the finance screens follow the legal entity chosen in the sidebar', async 
   await test.step('September locked in the second entity', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
+    await page.getByRole('tab', { name: 'Kết thúc kỳ' }).click();
     await switcher.selectOption({ label: BRANCH });
     await expect(page.getByText('Chưa khóa sổ tháng nào.', { exact: false })).toBeVisible();
     await page.getByLabel('Tháng khóa sổ').fill('2026-09');
