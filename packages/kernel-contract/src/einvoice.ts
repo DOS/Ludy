@@ -9,7 +9,7 @@ export const BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
 export type BuyerKind = (typeof BUYER_KINDS)[number];
 
 // What an individual buyer may give instead of a tax code (Decree 123/2020 as read in plan einvoice-issue.md section 3a, row 4): the personal ID number (CCCD, 12 digits), a passport
-// number or the code of a unit with a budget relation (7 digits), one at a time. Personal data (class `pii` in the finance manifest); the shapes are checked, never the person.
+// number or the code of a unit with a budget relation (7 digits), one at a time. Personal data (class `national_id` in the finance manifest); the shapes are checked, never the person.
 export const BUYER_IDENTITY_KINDS = ['cccd', 'passport', 'budget_code'] as const;
 export type BuyerIdentityKind = (typeof BUYER_IDENTITY_KINDS)[number];
 

@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- The identity an individual buyer gives on a sales e-invoice draft instead of a tax code (#3678, plan einvoice-issue.md section 3a, row 4): the personal ID number (CCCD, 12 digits),
 -- a passport number or the code of a unit with a budget relation, one at a time. The shape is the check's business (a draft may hold one that does not pass yet), so the database keeps
--- only the kind, the length and that it belongs to an individual. Personal data: classified `pii` in the finance manifest and listed in the personal-data registry. Both columns are
+-- only the kind, the length and that it belongs to an individual. Personal data: classified `national_id` in the finance manifest (the PO's security review of #3681, as HR classes the same data) and listed in the personal-data registry. Both columns are
 -- content of the invoice: einvoice_draft_guard compares whole rows, so they are frozen with the rest once a draft leaves `draft`.
 ALTER TABLE crove_finance.einvoice_draft ADD COLUMN IF NOT EXISTS buyer_identity_kind text;
 ALTER TABLE crove_finance.einvoice_draft ADD COLUMN IF NOT EXISTS buyer_identity text;
