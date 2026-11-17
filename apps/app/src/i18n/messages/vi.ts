@@ -12934,6 +12934,7 @@ export const vi = {
         record: 'Cấn trừ phí của sàn đang chờ hóa đơn (Nợ 331, Có 1388) thành một bút toán',
       },
       einvoice: {
+        correction_options: 'Xem danh sách mã lý do điều chỉnh hoặc thay thế hóa đơn',
         draft_from_order: 'Lập bản nháp hóa đơn bán ra từ đơn bán hàng',
         issue: 'Phát hành hóa đơn bán ra',
         issue_request: 'Xem đề nghị phát hành hóa đơn bán ra',

@@ -12935,6 +12935,7 @@ export const en = {
         record: "Clear a platform's fees waiting for an invoice (Dr 331, Cr 1388) as one journal entry",
       },
       einvoice: {
+        correction_options: 'View the reason codes for adjusting or replacing an invoice',
         draft_from_order: 'Make a sales invoice draft from a sales order',
         issue: 'Issue a sales invoice',
         issue_request: 'View the request to issue a sales invoice',
