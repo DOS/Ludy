@@ -1352,7 +1352,7 @@ export function MyWorkPage() {
               </Button>
             </div>
           )}
-          <QuickAdd inputRef={quickAdd} listId={activeList ? activeList.id : null} label={activeList ? t('quickAddInList', { name: activeList.name }) : undefined} />
+          <QuickAdd inputRef={quickAdd} listId={activeList ? activeList.id : null} {...(activeList ? { label: t('quickAddInList', { name: activeList.name }) } : {})} />
           {view === 'open' && effectiveListFilter === 'all' && work.data?.noSeatHint && (
             <Alert className="border-border bg-muted/35" data-testid="my-work-no-seat-hint">
               <AlertDescription className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground">
