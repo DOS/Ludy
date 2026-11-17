@@ -96,7 +96,6 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
-  'crove_finance.einvoice_notice',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
