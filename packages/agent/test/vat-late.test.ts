@@ -100,6 +100,19 @@ describe('checkVatLateSentence', () => {
     }
   });
 
+  it('allows only a closed vocabulary around the invoices and periods, so a status cannot be said in other words', () => {
+    const two: VatLateFacts = { language: 'en', items: [{ number: 'AA-0001', period: '2026-08', supplementary: true, issuedHere: true }, { number: 'AA-0002', period: '2026-09', supplementary: false, issuedHere: true }] };
+    const run = (t: string) => checkVatLateSentence(two, { sentence: t });
+    expect(run('Invoices AA-0001 (2026-08) and AA-0002 (2026-09) were issued late.').kind).toBe('sentence');
+    for (const t of [
+      'AA-0001 (2026-08) was included in that period; AA-0002 (2026-09) requires an additional VAT return.',
+      'AA-0001 (2026-08) is settled; AA-0002 (2026-09) is outstanding.',
+      'AA-0001 (2026-08) đã được ghi nhận; AA-0002 (2026-09) còn thiếu tờ khai.',
+    ]) {
+      expect(run(t), t).toEqual({ kind: 'none', code: 'STATUS' });
+    }
+  });
+
   it('drops a sentence that states another figure, scales one or says a number in words', () => {
     expect(check(`${GOOD} Tổng 3 hóa đơn.`)).toEqual({ kind: 'none', code: 'FIGURES' });
     expect(check(`${GOOD} Thuế khoảng 5 triệu.`)).toEqual({ kind: 'none', code: 'FIGURES' });
