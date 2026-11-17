@@ -20,17 +20,20 @@ export function GeneralSettings({ children, open: initial }: { children: ReactNo
   const [open, setOpen] = useState(() => initial ?? startsOpen());
   const id = useId();
   return (
-    <section className="space-y-3" aria-label={t('generalSettingsTitle')}>
+    <section className="space-y-3">
       <button
         type="button"
         aria-expanded={open}
         aria-controls={id}
+        aria-describedby={`${id}-hint`}
         onClick={() => setOpen(!open)}
         className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 text-left focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
       >
         <span>
           <span className="block text-sm font-medium text-foreground">{t('generalSettingsTitle')}</span>
-          <span className="block text-xs text-subtle-foreground">{t('generalSettingsHint')}</span>
+          <span id={`${id}-hint`} className="block text-xs text-subtle-foreground">
+            {t('generalSettingsHint')}
+          </span>
         </span>
         <span aria-hidden="true" className={cn('text-muted-foreground transition-transform', open && 'rotate-180')}>
           ▾
