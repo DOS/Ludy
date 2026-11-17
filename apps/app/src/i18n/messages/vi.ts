@@ -5684,6 +5684,8 @@ export const vi = {
       filed: 'Đã nộp ngày {date}',
       notFiled: 'Chưa nộp',
       basis: 'Ludy tính từ [35], [22] và [25] đề xuất ({amount}: [24] trừ thuế không được khấu trừ). Các chỉ tiêu [36] đến [43] còn lại do kế toán xác định.',
+      basisFiled: 'Theo các chỉ tiêu [22] và [25] của tờ khai đã đánh dấu nộp. Các chỉ tiêu [36] đến [43] còn lại do kế toán xác định.',
+      fileNote: 'File XML đang ghi [25] = {amount}, khác số đề xuất. Đổi trong mục Cách tính bên dưới.',
     },
     rules: {
       title: 'Cách tính',

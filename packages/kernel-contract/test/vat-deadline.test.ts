@@ -62,7 +62,7 @@ describe('vatDueDate', () => {
   it('gives the due day of the period picked, after the weekend rule', () => {
     expect(vatDueDate('2026-10')).toBe('2026-11-20');
     expect(vatDueDate('2026-12')).toBe('2027-01-20');
-    // 2026-08-20 is a Thursday; 2026-09-20 is a Sunday, so the August return is due on Thursday and the September one on Monday.
+    // 2026-08-20 is a Thursday; 2026-09-20 is a Sunday, so the July return is due on Thursday 20/08 and the August one on Monday 21/09.
     expect(vatDueDate('2026-07')).toBe('2026-08-20');
     expect(vatDueDate('2026-08')).toBe('2026-09-21');
     expect(vatDueDate('2026-Q3')).toBe('2026-11-02');

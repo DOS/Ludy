@@ -5688,6 +5688,8 @@ export const en = {
       filed: 'Filed on {date}',
       notFiled: 'Not filed',
       basis: 'Ludy works this out from [35], [22] and the suggested [25] ({amount}: [24] minus VAT that may not be deducted). Your accountant decides the other indicators from [36] to [43].',
+      basisFiled: 'From [22] and [25] of the return marked filed. Your accountant decides the other indicators from [36] to [43].',
+      fileNote: 'The XML file currently writes [25] = {amount}, which differs from the suggestion. Change it under How it is worked out below.',
     },
     rules: {
       title: 'How it is worked out',

@@ -446,18 +446,24 @@ function FiledReturn({
 export function ResultStrip({
   data,
   carried,
+  fileDeduct25,
   action,
 }: {
   data: Pick<VatReport, 'period' | 'indicators' | 'filed' | 'paymentChecks'>;
   carried: string | null;
+  // The [25] the HTKK file will hold (the accountant's choice in "Cách tính").
+  fileDeduct25: string;
   action: ReactNode;
 }) {
   const t = useTranslations('vat.strip');
   const f = useFormat();
   const amountOf = (code: string) => data.indicators.find((i) => i.code === code)?.amount ?? '0';
-  // [25] is the suggestion (the input VAT less what may not be deducted), whatever the XML file is set to write: the file is the accountant's to complete, the strip is the owner's first answer.
+  // A filed return speaks with its own [22] and [25]; otherwise [25] is the suggestion (the input VAT less what may not be deducted), whatever the XML file is set to write: the file is the
+  // accountant's to complete, the strip is the owner's first answer. An [22] that is not a whole number leaves no result rather than a wrong one.
   const suggested25 = roundDong(data.paymentChecks.suggested25);
-  const result = vatResultOf(amountOf('35'), suggested25, carried ?? '0');
+  const c22 = data.filed ? data.filed.carriedIn : carried;
+  const c25 = data.filed ? data.filed.deductible : suggested25;
+  const result = c22 === null ? null : vatResultOf(amountOf('35'), c25, c22);
   const due = vatDueDate(data.period.period);
   return (
     <section aria-labelledby="vat-strip-title" data-testid="vat-strip" className="rounded-lg border border-border bg-card p-4">
@@ -466,9 +472,9 @@ export function ResultStrip({
       </h2>
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
-          <p className="text-xs font-medium text-muted-foreground">{t(result.kind)}</p>
-          <p className="mt-1 text-3xl font-semibold tabular-nums text-foreground" data-testid="vat-strip-result" data-kind={result.kind}>
-            {f.money(result.amount)}
+          <p className="text-xs font-medium text-muted-foreground">{t(result?.kind ?? 'carried')}</p>
+          <p className="mt-1 text-3xl font-semibold tabular-nums text-foreground" data-testid="vat-strip-result" data-kind={result?.kind ?? 'unknown'}>
+            {result ? f.money(result.amount) : '-'}
           </p>
         </div>
         <div className="md:shrink-0 [&>*]:w-full md:[&>*]:w-auto">{action}</div>
@@ -497,7 +503,8 @@ export function ResultStrip({
           </dd>
         </div>
       </dl>
-      <p className="mt-3 text-xs text-subtle-foreground">{t('basis', { amount: f.money(suggested25) })}</p>
+      <p className="mt-3 text-xs text-subtle-foreground">{data.filed ? t('basisFiled') : t('basis', { amount: f.money(suggested25) })}</p>
+      {!data.filed && fileDeduct25 !== suggested25 && <p className="mt-1 text-xs text-warning">{t('fileNote', { amount: f.money(fileDeduct25) })}</p>}
     </section>
   );
 }
@@ -629,6 +636,7 @@ export function VatPage() {
           <ResultStrip
             data={data}
             carried={carried}
+            fileDeduct25={deductAmount(deduct, data.indicators.find((i) => i.code === '24')?.amount ?? '0', data.paymentChecks.suggested25)}
             action={xmlButton}
           />
           <CarryForward data={data} text={carriedText} onChange={(text) => setCarriedEdit(text === null ? null : { period, text })} />

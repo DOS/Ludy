@@ -101,7 +101,7 @@ describe('VAT result strip', () => {
     paymentChecks: { suggested25: '710000' } as never,
   };
   it('shows input and output VAT, the deadline, the status and the action, and the result carried forward', () => {
-    const html = render(<ResultStrip data={data} carried="0" action={<button>Xuất XML cho HTKK</button>} />);
+    const html = render(<ResultStrip data={data} carried="0" fileDeduct25="710000" action={<button>Xuất XML cho HTKK</button>} />);
     expect(html).toMatch(/710[.,]000/);
     expect(html).toContain('20/11/2026');
     expect(html).toContain('Chưa nộp');
@@ -109,9 +109,16 @@ describe('VAT result strip', () => {
     expect(html).toContain('data-kind="carried"');
     expect(html).toContain('[36] đến [43]');
   });
+  it('uses the filed return\'s own [22] and [25], and says when the XML file writes another [25]', () => {
+    const filed = { markedAt: '2026-11-18T03:00:00.000Z', carriedIn: '0', deductible: '0', carriedOut: '710000', source: 'marked' } as never;
+    expect(render(<ResultStrip data={{ ...data, filed }} carried="5" fileDeduct25="0" action={null} />)).toContain('data-kind="carried"');
+    const open = render(<ResultStrip data={data} carried="0" fileDeduct25="0" action={null} />);
+    expect(open).toContain('File XML đang ghi [25]');
+    expect(render(<ResultStrip data={data} carried={null} fileDeduct25="710000" action={null} />)).toContain('data-kind="unknown"');
+  });
   it('says in English that it is an estimate and shows the filed date', () => {
     const filed = { markedAt: '2026-11-18T03:00:00.000Z', carriedIn: '0', deductible: '0', carriedOut: '0', source: 'marked' } as never;
-    const html = render(<ResultStrip data={{ ...data, filed }} carried="0" action={null} />, 'en');
+    const html = render(<ResultStrip data={{ ...data, filed }} carried="0" fileDeduct25="710000" action={null} />, 'en');
     expect(html).toContain('Filed on');
     expect(html).toContain('estimate');
   });
