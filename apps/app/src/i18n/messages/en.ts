@@ -3445,8 +3445,10 @@ export const en = {
     importFile: 'Import from file',
     // The panel that adds a person or a company (docs/plan/crm.md, K4).
     panel: {
-      personHint: 'A name is enough. Address, notes and deals can be added later, on this person’s row.',
+      personHint: 'A name is enough. Notes and deals can be added later, on this person’s row.',
       companyIntro: 'A tax code recognises a company you already have and puts invoices in the right place.',
+      more: 'More details',
+      placeholder: { personName: 'For example: Nguyen Van An', companyName: 'For example: Anh Duong Co., Ltd', phone: 'For example: 0901 234 567', taxCode: '10 or 13 digits', address: 'Street, district, province' },
       emailPlaceholder: 'name@company.com',
       companyPlaceholder: 'Search companies, or type a new company name',
       companyNew: 'A new company “{name}” will be created when you save.',

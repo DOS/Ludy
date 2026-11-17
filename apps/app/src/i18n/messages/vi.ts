@@ -3443,8 +3443,10 @@ export const vi = {
     importFile: 'Nhập từ tệp',
     // The panel that adds a person or a company (docs/plan/crm.md, K4).
     panel: {
-      personHint: 'Chỉ cần tên. Địa chỉ, ghi chú và cơ hội bổ sung sau, ngay trên dòng của người này.',
+      personHint: 'Chỉ cần tên. Ghi chú và cơ hội bổ sung sau, ngay trên dòng của người này.',
       companyIntro: 'Mã số thuế giúp nhận ra công ty đã có và gắn hóa đơn đúng chỗ.',
+      more: 'Thông tin thêm',
+      placeholder: { personName: 'Ví dụ: Nguyễn Văn An', companyName: 'Ví dụ: Công ty TNHH Ánh Dương', phone: 'Ví dụ: 0901 234 567', taxCode: '10 hoặc 13 chữ số', address: 'Số nhà, đường, quận, tỉnh' },
       emailPlaceholder: 'ten@congty.vn',
       companyPlaceholder: 'Tìm công ty, hoặc gõ tên công ty mới',
       companyNew: 'Sẽ tạo công ty mới “{name}” khi lưu.',

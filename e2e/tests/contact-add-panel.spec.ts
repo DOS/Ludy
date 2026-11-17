@@ -20,7 +20,10 @@ test('add a person with a new company, see the duplicate email, add a company an
     await expect(panel()).toBeVisible();
     await expect(panel().getByLabel('Email')).toBeFocused();
     await expect(panel().getByLabel('Mã số thuế')).toHaveCount(0);
+    // The address sits in a folded section.
     await expect(panel().getByLabel('Địa chỉ')).toHaveCount(0);
+    await panel().getByRole('button', { name: 'Thông tin thêm' }).click();
+    await expect(panel().getByLabel('Địa chỉ')).toBeVisible();
     await expect(page.getByTestId('add-contact-kind')).toHaveCount(0);
     const box = await panel().boundingBox();
     const viewport = page.viewportSize();
@@ -72,6 +75,7 @@ test('add a person with a new company, see the duplicate email, add a company an
     await page.getByRole('button', { name: 'Thêm công ty', exact: true }).click();
     await panel().getByLabel('Tên', { exact: true }).fill('Công ty Xanh');
     await panel().getByLabel('Mã số thuế').fill('0123456780');
+    await panel().getByRole('button', { name: 'Thông tin thêm' }).click();
     await panel().getByLabel('Địa chỉ').fill('12 Lê Lợi, Quận 1');
     await panel().getByRole('button', { name: 'Lưu', exact: true }).click();
     await expect(panel()).toHaveCount(0);

@@ -2,14 +2,14 @@
 // "Thêm liên hệ" and "Thêm công ty" (docs/plan/crm.md, K4): a person or a company by hand, in a panel at the right edge that opens over the
 // list (DESIGN.md 4.5), full screen on a phone. A person takes Email, Tên, Điện thoại and the Công ty they work at (an existing one, or a
 // new one typed here, linked with kernel.party.set_company); no tax code, which a private person does not have. A company takes Tên,
-// Mã số thuế, Email, Điện thoại and Địa chỉ. Address and the rest of a person stay on their row, which opens after saving.
+// Mã số thuế, Email and Điện thoại. The address of either sits in a folded "Thông tin thêm" section; the rest of a person stays on their row, which opens after saving.
 // While the email (or a company's tax code) is typed, the contacts search is asked for it, and a contact that already has it is shown under the
 // field with a way to open it; saving then needs an explicit "Vẫn thêm". The AI part is the sales coworker's suggestion of the company from
 // the email's domain (company-link.tsx), which the opened person shows; nothing in this panel calls a model. kernel.party.create checks
 // again on the server and names the contact that already holds a tax code.
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { normalizeTaxCode, type Contact, type FilterAst } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
@@ -140,9 +140,19 @@ function AddContactForm({ kind, onSaved, onOpenExisting, onCancel }: { kind: Kin
   // The person is saved but the company could not be linked: said here, with a way to the saved person.
   const [saved, setSaved] = useState<{ added: AddedContact; reason: string } | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // The less used fields (the address) sit in a section that starts folded, as in Apollo and HubSpot.
+  const [more, setMore] = useState(false);
   // The value of the duplicate the person chose to go on with, so a different email asks again.
   const [confirmed, setConfirmed] = useState<string | null>(null);
   const root = useRef<HTMLFormElement>(null);
+  // The panel may be closed while a save is on its way: the save still finishes, but it no longer moves the list to the new contact.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const dupField = person ? 'email' : 'taxCode';
   const key = duplicateKey(dupField, form[dupField], isEmailAddress);
@@ -163,6 +173,7 @@ function AddContactForm({ kind, onSaved, onOpenExisting, onCancel }: { kind: Kin
     setForm((current) => ({ ...current, [name]: value }));
     if (name === 'name' || name === 'taxCode' || name === 'email') fields.edit(name);
     setNote(null);
+    setError(null);
   };
   const text = (name: keyof typeof form, props: { type?: string; maxLength: number; required?: boolean; placeholder?: string; autoComplete?: string }) => {
     const id = `add-contact-${name}`;
@@ -184,7 +195,10 @@ function AddContactForm({ kind, onSaved, onOpenExisting, onCancel }: { kind: Kin
     if (company) return company.id;
     const typed = companyText.trim();
     if (typed === '') return null;
-    const have = companySearch.choices.find((c) => same(c.name, typed));
+    // A fresh read of the companies with this name, not the choices shown (which may be for an earlier word or cut at a few): a company that exists is never made twice.
+    const filters: FilterAst = { v: 1, all: [{ field: 'kind', op: 'is', value: 'organization' }, { field: 'search', op: 'contains', value: typed }] };
+    const found = await queryClient.fetchQuery({ ...orpc.crm.contacts.list.queryOptions({ input: { filters, limit: DUPLICATE_READ } }), staleTime: 0 });
+    const have = found.items.find((c) => same(c.name, typed));
     if (have) return have.id;
     const made = await client.parties.create({ kind: 'organization', name: typed, taxCode: null, address: null, email: null, phone: null });
     // The company exists now: a retry after a failure further on links it and does not make a second one.
@@ -205,11 +219,14 @@ function AddContactForm({ kind, onSaved, onOpenExisting, onCancel }: { kind: Kin
       if (now && confirmed !== now.value) {
         const items = (await queryClient.fetchQuery({ ...orpc.crm.contacts.list.queryOptions({ input: { filters: duplicateSearch(now), limit: DUPLICATE_READ } }), staleTime: 0 })).items;
         if (findDuplicate(now, items)) {
+          // Pressed before the pause in typing ended: the notice comes with the next read, so the field is named and focused at once.
+          setError(t(dupField === 'email' ? 'panel.duplicate.email' : 'panel.duplicate.taxCode'));
+          root.current?.querySelector<HTMLInputElement>(`#add-contact-${dupField}`)?.focus();
           return;
         }
       }
       const companyId = await companyOf();
-      const created = await client.parties.create({ kind, name: form.name.trim(), taxCode: person ? null : orNull(form.taxCode), address: person ? null : orNull(form.address), email: orNull(form.email), phone: orNull(form.phone) });
+      const created = await client.parties.create({ kind, name: form.name.trim(), taxCode: person ? null : orNull(form.taxCode), address: orNull(form.address), email: orNull(form.email), phone: orNull(form.phone) });
       const added = { partyId: created.partyId, name: form.name.trim() };
       if (companyId) {
         try {
@@ -230,11 +247,11 @@ function AddContactForm({ kind, onSaved, onOpenExisting, onCancel }: { kind: Kin
         setNote(t('panel.saved', { name: added.name }));
         root.current?.querySelector<HTMLInputElement>('input')?.focus();
       }
-      onSaved(added, another);
+      if (alive.current) onSaved(added, another);
     } catch (e) {
-      setError(errorMessage(e));
+      if (alive.current) setError(errorMessage(e));
     } finally {
-      setPending(false);
+      if (alive.current) setPending(false);
     }
   };
   const submit = (e: FormEvent<HTMLFormElement>) => {
@@ -248,19 +265,31 @@ function AddContactForm({ kind, onSaved, onOpenExisting, onCancel }: { kind: Kin
         {person ? (
           <>
             {text('email', { type: 'email', maxLength: 254, placeholder: t('panel.emailPlaceholder'), autoComplete: 'off' })}
-            {text('name', { maxLength: 300, required: true, autoComplete: 'off' })}
-            {text('phone', { type: 'tel', maxLength: 30, autoComplete: 'off' })}
+            {text('name', { maxLength: 300, required: true, placeholder: t('panel.placeholder.personName'), autoComplete: 'off' })}
+            {text('phone', { type: 'tel', maxLength: 30, placeholder: t('panel.placeholder.phone'), autoComplete: 'off' })}
             <CompanyField text={companyText} picked={company} choices={companySearch.choices} searching={companySearch.pending} onText={setCompanyText} onPick={setCompany} />
           </>
         ) : (
           <>
-            {text('name', { maxLength: 300, required: true, autoComplete: 'off' })}
-            {text('taxCode', { maxLength: 20, autoComplete: 'off' })}
+            {text('name', { maxLength: 300, required: true, placeholder: t('panel.placeholder.companyName'), autoComplete: 'off' })}
+            {text('taxCode', { maxLength: 20, placeholder: t('panel.placeholder.taxCode'), autoComplete: 'off' })}
             {text('email', { type: 'email', maxLength: 254, placeholder: t('panel.emailPlaceholder'), autoComplete: 'off' })}
-            {text('phone', { type: 'tel', maxLength: 30, autoComplete: 'off' })}
-            {text('address', { maxLength: 500, autoComplete: 'off' })}
+            {text('phone', { type: 'tel', maxLength: 30, placeholder: t('panel.placeholder.phone'), autoComplete: 'off' })}
           </>
         )}
+        <div className="border-t border-border pt-3">
+          <button type="button" className="flex w-full items-center justify-between gap-2 py-1 text-left text-sm font-medium text-link" aria-expanded={more} aria-controls="add-contact-more" onClick={() => setMore(!more)}>
+            {t('panel.more')}
+            <svg aria-hidden="true" viewBox="0 0 16 16" className={more ? 'size-4 rotate-180' : 'size-4'} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 6l4 4 4-4" />
+            </svg>
+          </button>
+          {more && (
+            <div id="add-contact-more" className="mt-3 space-y-4">
+              {text('address', { maxLength: 500, placeholder: t('panel.placeholder.address'), autoComplete: 'off' })}
+            </div>
+          )}
+        </div>
         {note && (
           <p role="status" className="text-sm text-muted-foreground" data-testid="add-contact-note">
             {note}
