@@ -1070,7 +1070,7 @@ export function MyWorkPage() {
         <button
           type="button"
           data-testid="todo-title"
-          className={cn('min-w-0 flex-1 truncate text-left text-sm text-foreground hover:underline focus-visible:underline focus-visible:outline-none', todo.status === 'done' && 'text-subtle-foreground line-through')}
+          className={cn('min-h-6 min-w-40 flex-1 truncate text-left text-sm text-foreground hover:underline focus-visible:underline focus-visible:outline-none', todo.status === 'done' && 'text-subtle-foreground line-through')}
           onClick={() => {
             setSelected(todo.id);
             if (view !== 'trash') setEditing(todo.id);

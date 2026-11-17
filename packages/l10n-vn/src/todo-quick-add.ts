@@ -862,8 +862,19 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   };
 
   // 4. Recurrence phrases (evaluated before dates/weekdays so "hàng tuần thứ hai" and "ngày 20 hàng tháng" stay unified)
-  let recurrence: TodoQuickAddRecurrence | null = null;
-  let recurrenceDerivedDueOn: string | null = null;
+  const recurrenceState: { rule: TodoQuickAddRecurrence | null; derivedDueOn: string | null } = {
+    rule: null,
+    derivedDueOn: null,
+  };
+  const recordRecurrence = (rule: TodoQuickAddRecurrence, derivedDue: string, start: number, end: number) => {
+    occupied.push({ start, end });
+    // Only the first recurrence rule is saved/tokenized; secondary rules stay occupied so trailing weekdays don't leak into Step 7.
+    if (recurrenceState.rule === null) {
+      recurrenceState.rule = rule;
+      recurrenceState.derivedDueOn = derivedDue;
+      tokens.push({ kind: 'recurrence', raw: input.slice(start, end), start, end });
+    }
+  };
 
   for (let i = 0; i < words.length; i++) {
     const w0 = words[i];
@@ -939,9 +950,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     ) {
       const span = spanOf(i + 3);
       if (isWordPhraseEndAvailable(span)) {
-        recurrence = { freq: 'monthly', interval: 1, byMonthDay: -1 };
-        recurrenceDerivedDueOn = nextMonthDayDate(today, -1);
-        claimToken('recurrence', span.start, span.end);
+        recordRecurrence({ freq: 'monthly', interval: 1, byMonthDay: -1 }, nextMonthDayDate(today, -1), span.start, span.end);
         i += 3;
         continue;
       }
@@ -961,9 +970,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     ) {
       const span = spanOf(i + 4);
       if (isWordPhraseEndAvailable(span)) {
-        recurrence = { freq: 'monthly', interval: 1, byMonthDay: -1 };
-        recurrenceDerivedDueOn = nextMonthDayDate(today, -1);
-        claimToken('recurrence', span.start, span.end);
+        recordRecurrence({ freq: 'monthly', interval: 1, byMonthDay: -1 }, nextMonthDayDate(today, -1), span.start, span.end);
         i += 4;
         continue;
       }
@@ -980,9 +987,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       const span = spanOf(i + 2);
       if (isWordPhraseEndAvailable(span)) {
         const start = expandConnectorBefore(input, words, span.start, [['vào']], occupied);
-        recurrence = { freq: 'monthly', interval: 1, byMonthDay: -1 };
-        recurrenceDerivedDueOn = nextMonthDayDate(today, -1);
-        claimToken('recurrence', start, span.end);
+        recordRecurrence({ freq: 'monthly', interval: 1, byMonthDay: -1 }, nextMonthDayDate(today, -1), start, span.end);
         i += 2;
         continue;
       }
@@ -991,9 +996,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       const span = spanOf(i + 1);
       if (isWordPhraseEndAvailable(span)) {
         const start = expandConnectorBefore(input, words, span.start, [['vào']], occupied);
-        recurrence = { freq: 'monthly', interval: 1, byMonthDay: -1 };
-        recurrenceDerivedDueOn = nextMonthDayDate(today, -1);
-        claimToken('recurrence', start, span.end);
+        recordRecurrence({ freq: 'monthly', interval: 1, byMonthDay: -1 }, nextMonthDayDate(today, -1), start, span.end);
         i += 1;
         continue;
       }
@@ -1016,9 +1019,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       if (d >= 1 && d <= 31) {
         const span = spanOf(i + 4);
         if (isWordPhraseEndAvailable(span)) {
-          recurrence = { freq: 'monthly', interval: 1, byMonthDay: d };
-          recurrenceDerivedDueOn = nextMonthDayDate(today, d);
-          claimToken('recurrence', span.start, span.end);
+          recordRecurrence({ freq: 'monthly', interval: 1, byMonthDay: d }, nextMonthDayDate(today, d), span.start, span.end);
           i += 4;
           continue;
         }
@@ -1037,9 +1038,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         const span = spanOf(i + 3);
         if (isWordPhraseEndAvailable(span)) {
           const start = expandConnectorBefore(input, words, span.start, [['vào']], occupied);
-          recurrence = { freq: 'monthly', interval: 1, byMonthDay: d };
-          recurrenceDerivedDueOn = nextMonthDayDate(today, d);
-          claimToken('recurrence', start, span.end);
+          recordRecurrence({ freq: 'monthly', interval: 1, byMonthDay: d }, nextMonthDayDate(today, d), start, span.end);
           i += 3;
           continue;
         }
@@ -1060,9 +1059,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       if (d >= 1 && d <= 31) {
         const span = spanOf(i + 3);
         if (isWordPhraseEndAvailable(span)) {
-          recurrence = { freq: 'monthly', interval: 1, byMonthDay: d };
-          recurrenceDerivedDueOn = nextMonthDayDate(today, d);
-          claimToken('recurrence', span.start, span.end);
+          recordRecurrence({ freq: 'monthly', interval: 1, byMonthDay: d }, nextMonthDayDate(today, d), span.start, span.end);
           i += 3;
           continue;
         }
@@ -1078,9 +1075,12 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       const endIdx = wd ? afterWeekIdx + wd.consumed - 1 : i + 1;
       const span = spanOf(endIdx);
       if (isWordPhraseEndAvailable(span)) {
-        recurrence = wd ? { freq: 'weekly', interval: 1, byWeekday: wd.weekday } : { freq: 'weekly', interval: 1 };
-        recurrenceDerivedDueOn = wd ? nextOccurrenceOfWeekday(today, wd.weekday, true) : today;
-        claimToken('recurrence', span.start, span.end);
+        recordRecurrence(
+          wd ? { freq: 'weekly', interval: 1, byWeekday: wd.weekday } : { freq: 'weekly', interval: 1 },
+          wd ? nextOccurrenceOfWeekday(today, wd.weekday, true) : today,
+          span.start,
+          span.end,
+        );
         i = endIdx;
         continue;
       }
@@ -1092,9 +1092,12 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       const endIdx = wd ? afterWeekIdx + wd.consumed - 1 : i + 1;
       const span = spanOf(endIdx);
       if (isWordPhraseEndAvailable(span)) {
-        recurrence = wd ? { freq: 'weekly', interval: 1, byWeekday: wd.weekday } : { freq: 'weekly', interval: 1 };
-        recurrenceDerivedDueOn = wd ? nextOccurrenceOfWeekday(today, wd.weekday, true) : today;
-        claimToken('recurrence', span.start, span.end);
+        recordRecurrence(
+          wd ? { freq: 'weekly', interval: 1, byWeekday: wd.weekday } : { freq: 'weekly', interval: 1 },
+          wd ? nextOccurrenceOfWeekday(today, wd.weekday, true) : today,
+          span.start,
+          span.end,
+        );
         i = endIdx;
         continue;
       }
@@ -1104,9 +1107,12 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       if (wd) {
         const span = spanOf(i + wd.consumed);
         if (isWordPhraseEndAvailable(span)) {
-          recurrence = { freq: 'weekly', interval: 1, byWeekday: wd.weekday };
-          recurrenceDerivedDueOn = nextOccurrenceOfWeekday(today, wd.weekday, true);
-          claimToken('recurrence', span.start, span.end);
+          recordRecurrence(
+            { freq: 'weekly', interval: 1, byWeekday: wd.weekday },
+            nextOccurrenceOfWeekday(today, wd.weekday, true),
+            span.start,
+            span.end,
+          );
           i += wd.consumed;
           continue;
         }
@@ -1127,9 +1133,12 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       ) {
         const span = spanOf(afterIdx + 1);
         if (isWordPhraseEndAvailable(span)) {
-          recurrence = { freq: 'weekly', interval: 1, byWeekday: leadingWd.weekday };
-          recurrenceDerivedDueOn = nextOccurrenceOfWeekday(today, leadingWd.weekday, true);
-          claimToken('recurrence', span.start, span.end);
+          recordRecurrence(
+            { freq: 'weekly', interval: 1, byWeekday: leadingWd.weekday },
+            nextOccurrenceOfWeekday(today, leadingWd.weekday, true),
+            span.start,
+            span.end,
+          );
           i = afterIdx + 1;
           continue;
         }
@@ -1151,9 +1160,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         if (freq) {
           const span = spanOf(i + 2);
           if (isWordPhraseEndAvailable(span)) {
-            recurrence = { freq, interval };
-            recurrenceDerivedDueOn = today;
-            claimToken('recurrence', span.start, span.end);
+            recordRecurrence({ freq, interval }, today, span.start, span.end);
             i += 2;
             continue;
           }
@@ -1170,9 +1177,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     ) {
       const span = spanOf(i + 1);
       if (isWordPhraseEndAvailable(span)) {
-        recurrence = { freq: 'daily', interval: 1 };
-        recurrenceDerivedDueOn = today;
-        claimToken('recurrence', span.start, span.end);
+        recordRecurrence({ freq: 'daily', interval: 1 }, today, span.start, span.end);
         i += 1;
         continue;
       }
@@ -1185,9 +1190,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     ) {
       const span = spanOf(i + 1);
       if (isWordPhraseEndAvailable(span)) {
-        recurrence = { freq: 'monthly', interval: 1 };
-        recurrenceDerivedDueOn = today;
-        claimToken('recurrence', span.start, span.end);
+        recordRecurrence({ freq: 'monthly', interval: 1 }, today, span.start, span.end);
         i += 1;
         continue;
       }
@@ -1200,9 +1203,12 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
             const endIdx = i + 1 + wd.consumed;
             const span = spanOf(endIdx);
             if (isWordPhraseEndAvailable(span)) {
-              recurrence = { freq: 'weekly', interval: 1, byWeekday: wd.weekday };
-              recurrenceDerivedDueOn = nextOccurrenceOfWeekday(today, wd.weekday, true);
-              claimToken('recurrence', span.start, span.end);
+              recordRecurrence(
+                { freq: 'weekly', interval: 1, byWeekday: wd.weekday },
+                nextOccurrenceOfWeekday(today, wd.weekday, true),
+                span.start,
+                span.end,
+              );
               i = endIdx;
               continue;
             }
@@ -1215,13 +1221,13 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
           (w1 !== undefined && !isAvailable(w1));
         if (atClauseEdge || w0.nfcLower === 'everyday') {
           const freq = w0.nfcLower === 'weekly' ? 'weekly' : w0.nfcLower === 'monthly' ? 'monthly' : 'daily';
-          recurrence = { freq, interval: 1 };
-          recurrenceDerivedDueOn = today;
-          claimToken('recurrence', w0.start, w0.end);
+          recordRecurrence({ freq, interval: 1 }, today, w0.start, w0.end);
         }
       }
     }
   }
+  const recurrence = recurrenceState.rule;
+  const recurrenceDerivedDueOn = recurrenceState.derivedDueOn;
 
   // 5. Explicit numeric dates (yyyy-mm-dd, dd/mm/yyyy, dd/mm)
   let explicitDueOn: string | null = null;
@@ -1299,6 +1305,14 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     return /^(?:-|\u2013|\u2014|to|till|until|den|toi|->|~)$/u.test(foldedBetween);
   };
 
+  const afterClockPeriodOk = (w: WordToken): boolean =>
+    isWordSpanAvailable(w) ||
+    (isAvailable(w) && hasCleanLeftBoundary(w) && /^(?:-|\u2013|\u2014|->|~)\s*\d/u.test(input.slice(w.end)));
+
+  const beforeClockPeriodOk = (w: WordToken): boolean =>
+    isWordSpanAvailable(w) ||
+    (isAvailable(w) && hasCleanRightBoundary(w) && /\d\s*(?:-|\u2013|\u2014|->|~)$/u.test(input.slice(0, w.start)));
+
   const resolveClockPeriod = (
     tc: (typeof dedupedTimeCandidates)[number],
   ): { start: number; end: number; period: DayPeriod | undefined; shortGBlocked: boolean } => {
@@ -1308,14 +1322,14 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     if (!tc.hasAmPm) {
       const afterWord = findAdjacentWordAfter(input, words, end, occupied);
       const afterPeriod =
-        afterWord && isWordSpanAvailable(afterWord) ? matchDayPeriod(afterWord, false, wordBefore(words, afterWord)) : null;
+        afterWord && afterClockPeriodOk(afterWord) ? matchDayPeriod(afterWord, false, wordBefore(words, afterWord)) : null;
       if (afterWord && afterPeriod) {
         period = afterPeriod;
         end = afterWord.end;
       } else {
         const beforeWord = findAdjacentWordBefore(input, words, start, occupied);
         const beforePeriod =
-          beforeWord && isWordSpanAvailable(beforeWord) ? matchDayPeriod(beforeWord, false, wordBefore(words, beforeWord)) : null;
+          beforeWord && beforeClockPeriodOk(beforeWord) ? matchDayPeriod(beforeWord, false, wordBefore(words, beforeWord)) : null;
         if (beforeWord && beforePeriod) {
           period = beforePeriod;
           start = beforeWord.start;
@@ -1967,14 +1981,21 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const period = resolvedClock.period;
     if (resolvedClock.shortGBlocked || isDurationClock(tc, period)) continue;
 
-    // Skip time ranges ("từ 9h đến 10h", "9h - 11h", "9:00am - 11:00am") intact rather than stripping only one side.
+    // Skip time ranges ("từ 9h đến 10h", "9h - 11h", "9h sáng-2h chiều", "9:00am - 11:00am") intact rather than stripping only one side.
     let rangeEndIdx = idx;
     let cursorEnd = end;
     while (rangeEndIdx + 1 < dedupedTimeCandidates.length) {
       const nextTc = dedupedTimeCandidates[rangeEndIdx + 1];
-      if (!nextTc || !isAvailable(nextTc) || !isRangeBetweenClocks(cursorEnd, nextTc.start)) break;
+      if (!nextTc || !isAvailable(nextTc)) break;
+      const nextResolved = resolveClockPeriod(nextTc);
+      if (
+        !isRangeBetweenClocks(cursorEnd, nextTc.start) &&
+        !(nextResolved.start < nextTc.start && isRangeBetweenClocks(cursorEnd, nextResolved.start))
+      ) {
+        break;
+      }
       rangeEndIdx += 1;
-      cursorEnd = nextTc.end;
+      cursorEnd = nextResolved.end;
     }
     if (rangeEndIdx > idx) {
       const lastTc = dedupedTimeCandidates[rangeEndIdx];

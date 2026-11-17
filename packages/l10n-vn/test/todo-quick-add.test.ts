@@ -1195,6 +1195,40 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueTime: '09:00',
       recurrence: { freq: 'daily', interval: 1 },
     });
+
+    // Multiple recurrence rules keep only the first rule/chip and leave additional rules intact in title
+    const multiRec = parseTodoQuickAdd('Call every Monday and every Friday', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(multiRec).toMatchObject({
+      title: 'Call and every Friday',
+      dueOn: '2026-11-23',
+      recurrence: { freq: 'weekly', interval: 1, byWeekday: 1 },
+    });
+    expect(multiRec.tokens.filter((t) => t.kind === 'recurrence')).toHaveLength(1);
+
+    const multiRecVn = parseTodoQuickAdd('Họp hàng ngày, rà soát hàng tuần', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(multiRecVn).toMatchObject({
+      title: 'Họp, rà soát hàng tuần',
+      dueOn: '2026-11-17',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    expect(multiRecVn.tokens.filter((t) => t.kind === 'recurrence')).toHaveLength(1);
+
+    // Period-qualified compact clock ranges ("9h sáng-2h chiều ngày mai", "9h sáng-11 ngày mai") stay intact
+    expect(parseTodoQuickAdd('Họp 9h sáng-2h chiều ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp 9h sáng-2h chiều',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp 9h sáng-2h chiều', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp 9h sáng-2h chiều',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp 9h sáng-11 ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp 9h sáng-11',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
   });
 
   it('stays linear on 50k-character adversarial --, %, and tab inputs without ReDoS', () => {
