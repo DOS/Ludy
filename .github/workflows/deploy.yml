@@ -15,6 +15,10 @@ name: deploy
 # DEPLOY_IDP_AUTH_HOSTED_LOGIN_TOKEN_URL, DEPLOY_IDP_AUTH_HOSTED_LOGIN_NAME and the secret DEPLOY_IDP_AUTH_ALLOWED_EMAILS)
 # into the host's env file (docs/runbooks/pilot-sign-in-remote-idp.md, step 5). Define them in the environment only, never at
 # repository or organization level: those fall back into every environment. Without the opt-in the env file is never edited.
+#
+# Opt-in (#3531): when DEPLOY_MODULES_ENVIRONMENT names the environment being deployed, the deploy writes
+# CROVE_MODULES=<DEPLOY_CROVE_MODULES> into the host's env file and verifies /api/config reports those modules (plus kernel).
+# Define DEPLOY_MODULES_ENVIRONMENT and DEPLOY_CROVE_MODULES in the environment only.
 
 on:
   push:
@@ -356,6 +360,40 @@ jobs:
             echo "auth_url=$DEPLOY_IDP_PUBLIC_AUTH_URL"
           } >> "$GITHUB_OUTPUT"
 
+      # Opt-in (#3531): when DEPLOY_MODULES_ENVIRONMENT names this environment, validate DEPLOY_CROVE_MODULES and pass it via
+      # --modules to deploy.sh, plus SMOKE_EXPECT_MODULES to the public smoke check. Define both in the environment only.
+      - name: Prepare the module settings
+        id: modules
+        if: steps.config.outputs.ready == 'true' && needs.target.outputs.action == 'deploy'
+        env:
+          ENVIRONMENT: ${{ needs.target.outputs.environment }}
+          OPT_IN: ${{ vars.DEPLOY_MODULES_ENVIRONMENT }}
+          MODULES: ${{ vars.DEPLOY_CROVE_MODULES }}
+        run: |
+          set -euo pipefail
+          if [ "$OPT_IN" != "$ENVIRONMENT" ]; then
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            if [ -n "$MODULES" ]; then
+              echo "::notice title=Module settings ignored::DEPLOY_CROVE_MODULES is defined but DEPLOY_MODULES_ENVIRONMENT is not '$ENVIRONMENT': the host env file is left alone. Define them in the environment only."
+            else
+              echo 'No module settings opted in for this environment: the host env file is left alone.'
+            fi
+            exit 0
+          fi
+          if [ -z "$MODULES" ]; then
+            echo "::error::DEPLOY_MODULES_ENVIRONMENT is '$ENVIRONMENT' but DEPLOY_CROVE_MODULES is empty"
+            exit 1
+          fi
+          case "$MODULES" in
+            *$'\n'* | *$'\r'*) echo '::error::DEPLOY_CROVE_MODULES must be one line'; exit 1 ;;
+          esac
+          bash tools/deploy/deploy.sh check-modules "$MODULES"
+          echo "Modules given: $MODULES" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo 'enabled=true'
+            echo "modules=$MODULES"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Upload the deploy script and the compose file
         if: steps.config.outputs.ready == 'true'
         env:
@@ -385,6 +423,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ACTOR: ${{ github.actor }}
           IDP_ENABLED: ${{ steps.idp.outputs.enabled }}
+          MODULES_ENABLED: ${{ steps.modules.outputs.enabled }}
+          MODULES: ${{ steps.modules.outputs.modules }}
         run: |
           set -euo pipefail
           [[ "$ACTOR" =~ ^[A-Za-z0-9._-]+(\[bot\])?$ ]] || { echo '::error::unexpected actor name'; exit 1; }
@@ -397,7 +437,11 @@ jobs:
             [[ "$BUILD" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::the release commit is missing'; exit 1; }
             # The settings file is on the host (sent above); deploy.sh edits the env file only when it is given.
             settings=''
-            if [ "$IDP_ENABLED" = true ]; then settings=" --auth-settings '$REMOTE/auth-settings.env'"; fi
+            if [ "$IDP_ENABLED" = true ]; then settings+=" --auth-settings '$REMOTE/auth-settings.env'"; fi
+            if [ "$MODULES_ENABLED" = true ]; then
+              [[ "$MODULES" =~ ^[a-z][a-z0-9_]{0,31}(,[a-z][a-z0-9_]{0,31}){0,9}$ ]] || { echo '::error::unexpected module list'; exit 1; }
+              settings+=" --modules '$MODULES'"
+            fi
             printf '%s\n' "$GH_TOKEN" | ssh -F "$SSH_CONFIG" crove-target \
               "bash '$REMOTE/deploy.sh' deploy $registry --release '$RELEASE' --image '$IMAGE' --extract-image '$EXTRACT' --media-image '$MEDIA' --build '$BUILD' --compose '$REMOTE/docker-compose.yml'$settings"
           fi
@@ -416,6 +460,7 @@ jobs:
           # A remote identity provider has no /auth/v1 proxy on this host (#2704): the smoke test reads that from the deployed
           # /api/config, not from these settings. When this run wrote the settings it also demands the Auth URL it was given.
           SMOKE_EXPECT_AUTH_URL: ${{ steps.idp.outputs.auth_url }}
+          SMOKE_EXPECT_MODULES: ${{ steps.modules.outputs.modules }}
         run: |
           if [ "$ACTION" = deploy ]; then bash tools/deploy/deploy.sh smoke "$PUBLIC_URL" "$BUILD"; else bash tools/deploy/deploy.sh smoke "$PUBLIC_URL"; fi
 
@@ -440,10 +485,13 @@ jobs:
           HOST_OUTCOME: ${{ steps.host.outcome }}
           SMOKE_OUTCOME: ${{ steps.public-smoke.outcome }}
           IDP_ENABLED: ${{ steps.idp.outputs.enabled }}
+          MODULES_ENABLED: ${{ steps.modules.outputs.enabled }}
+          MODULES: ${{ steps.modules.outputs.modules }}
         run: |
           {
             echo "- $ACTION on the host: $HOST_OUTCOME"
             if [ "$IDP_ENABLED" = true ]; then echo '- identity provider settings: given to the deploy (the host log names what changed)'; fi
+            if [ "$MODULES_ENABLED" = true ]; then echo "- module settings: updated for CROVE_MODULES=$MODULES (when changed; see host log)"; fi
             echo "- public smoke test: ${SMOKE_OUTCOME:-not run (no DEPLOY_PUBLIC_URL)}"
             if [ "$ACTION" = deploy ]; then echo "- release: $RELEASE"; fi
           } >> "$GITHUB_STEP_SUMMARY"
