@@ -53,6 +53,9 @@ interface Invoice {
   partyTaxCode: string | null;
   rates: Array<{ rate: Rate; taxable: string; vat: string }>;
   warnings: Warning[];
+  // A replacement or an adjustment invoice (#916): the invoice it corrects, and which date its period follows.
+  correction?: { kind: 'replacement' | 'adjustment'; series: string; number: string; basis: 'issue_date' | 'posting_date' } | null;
+  postingDate?: string;
 }
 
 // A money cell: right-aligned with tabular figures, under a header DataTable aligns the same way (DESIGN.md §4.3, #2001).
@@ -93,6 +96,13 @@ export function InvoiceTable({ invoices, partyLabel }: { invoices: Invoice[]; pa
                     </Badge>
                   ))}
                 </div>
+              )}
+              {/* What a correction invoice corrects and why it counts in this period (#916): a plain note the accountant can read and question, not a warning. */}
+              {i === 0 && invoice.correction && (
+                <p className="mt-1 text-xs text-subtle-foreground" data-testid="vat-correction-note">
+                  {t(`correction.${invoice.correction.kind}`, { original: `${invoice.correction.series ? `${invoice.correction.series}-` : ''}${invoice.correction.number}` })}
+                  {invoice.correction.kind === 'adjustment' ? ` · ${invoice.correction.basis === 'posting_date' && invoice.postingDate ? t('correction.byPostingDate', { date: f.date(invoice.postingDate) }) : t('correction.byIssueDate')}` : ''}
+                </p>
               )}
             </TableCell>
           </TableRow>
