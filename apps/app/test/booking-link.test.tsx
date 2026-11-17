@@ -115,6 +115,8 @@ function page(role: 'owner' | 'viewer', types: EventType[], bookings: BookingIte
   );
 }
 
+// A text as a pattern: every character with a meaning of its own, the backslash included, escaped.
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const count = (html: string, text: string) => html.split(text).length - 1;
 
 describe('Lịch hẹn: the booking link', () => {
@@ -218,7 +220,7 @@ describe('Settings: event types and their link', () => {
     const html = card([]);
     const form = html.slice(html.indexOf('<form'));
     for (const field of ['title', 'durationMin', 'locationKind', 'locationValue'] as const) {
-      expect(form).toMatch(new RegExp(`<label[^>]*>${en.eventTypes.fields[field].replace(/[()]/g, '\\$&')}<`));
+      expect(form).toMatch(new RegExp(`<label[^>]*>${escaped(en.eventTypes.fields[field])}<`));
     }
     expect(form).toContain(`>${en.eventTypes.moreOptions}</button>`);
     expect(form).toContain('aria-expanded="false"');
