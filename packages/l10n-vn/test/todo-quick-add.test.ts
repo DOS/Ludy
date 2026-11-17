@@ -1161,6 +1161,40 @@ describe('parseTodoQuickAdd (#3556)', () => {
       title: 'Meeting 2:30 p.m. - 4:00 p.m.',
       dueTime: null,
     });
+
+    // Overlapping cargo/business noun + date phrases ("Nhận hàng ngày kia", "Giao hàng tuần sau") prefer full date over "hàng ngày"/"hàng tuần"
+    expect(parseTodoQuickAdd('Nhận hàng ngày kia', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Nhận hàng',
+      dueOn: '2026-11-19',
+      recurrence: null,
+    });
+    expect(parseTodoQuickAdd('Nhan hang ngay kia', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Nhan hang',
+      dueOn: '2026-11-19',
+      recurrence: null,
+    });
+    expect(parseTodoQuickAdd('Giao hàng tuần sau', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Giao hàng',
+      dueOn: '2026-11-23',
+      recurrence: null,
+    });
+    expect(parseTodoQuickAdd('Giao hàng thứ sáu', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Giao hàng',
+      dueOn: '2026-11-20',
+      recurrence: null,
+    });
+    expect(parseTodoQuickAdd('Gọi khách hàng ngày mai 9h', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi khách hàng',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+      recurrence: null,
+    });
+    expect(parseTodoQuickAdd('Kiểm tra hàng ngày 9 giờ', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Kiểm tra',
+      dueOn: '2026-11-17',
+      dueTime: '09:00',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
   });
 
   it('stays linear on 50k-character adversarial --, %, and tab inputs without ReDoS', () => {

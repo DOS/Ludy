@@ -110,19 +110,19 @@ export function shiftDismissedTokens(
 }
 
 /**
- * Builds the `notes.todo.create` payload from a parsed Quick Add input.
+ * Builds the `notes.todos.create` payload from a parsed Quick Add input.
  *
- * Strips `date` and `time` tokens into `dueOn`, `dueTime` (producing `dueAt` server-side), and
- * `reminder`, while keeping non-date tokens (`recurrence`, `priority`, `#tag`, `/List`) intact in
- * `title` until #3557 and #3558 land their DB columns so zero user intent is lost.
+ * Maps parsed `dueOn`, `dueTime`, `reminder`, and `recurrence` into `zTodoCreate`, stripping
+ * `'date'`, `'time'`, and `'recurrence'` spans from `title` while keeping `#3558` tokens
+ * (`priority`, `#tag`, `/List`) intact in `title` until those DB columns land.
  */
 export function buildTodoCreatePayload(
   input: string,
   parsed: TodoQuickAddResult,
   now: Date = new Date(),
 ): TodoCreateInput | null {
-  const dateTimeSpans = parsed.tokens.filter((t) => t.kind === 'date' || t.kind === 'time');
-  const title = buildTitleWithoutSpans(input, dateTimeSpans).slice(0, TODO_TITLE_MAX).trim();
+  const consumedSpans = parsed.tokens.filter((t) => t.kind === 'date' || t.kind === 'time' || t.kind === 'recurrence');
+  const title = buildTitleWithoutSpans(input, consumedSpans).slice(0, TODO_TITLE_MAX).trim();
   if (title === '') return null;
 
   const dueOn = parsed.dueOn;
@@ -139,6 +139,7 @@ export function buildTodoCreatePayload(
     dueTime,
     timeZone: parsed.timeZone,
     reminder,
+    ...(parsed.recurrence !== null ? { recurrence: parsed.recurrence } : {}),
   };
 }
 

@@ -144,7 +144,7 @@ describe('Alt+Q global Quick Capture shortcut guard (#3556)', () => {
 });
 
 describe('Quick Add payload builder & dismissed-span shifting (#3556)', () => {
-  it('wires dueOn, dueTime, timeZone, and future remindAt into zTodoCreate while preserving non-date tokens', () => {
+  it('wires dueOn, dueTime, timeZone, reminder, and recurrence into zTodoCreate while preserving #3558 tokens', () => {
     const input = 'Gửi báo cáo ngày mai 9h mỗi tuần !p1 #thue /KeToan';
     const parsed = parseTodoQuickAdd(input, { now: NOW, timeZone: TZ });
     const payload = buildTodoCreatePayload(input, parsed, NOW);
@@ -153,9 +153,23 @@ describe('Quick Add payload builder & dismissed-span shifting (#3556)', () => {
     expect(payload?.dueTime).toBe('09:00');
     expect(payload?.timeZone).toBe(TZ);
     expect(payload?.reminder).toEqual({ at: '2026-11-18T08:30:00+07:00' });
-    // Non-date tokens stay intact in title until V2-1/V2-3 DB columns land
-    expect(payload?.title).toBe('Gửi báo cáo mỗi tuần !p1 #thue /KeToan');
+    expect(payload?.recurrence).toEqual({ freq: 'weekly', interval: 1 });
+    // Non-date tokens from #3558 stay intact in title until their DB columns land
+    expect(payload?.title).toBe('Gửi báo cáo !p1 #thue /KeToan');
     expect(zTodoCreate.safeParse(payload).success).toBe(true);
+
+    const dailyInput = 'Gọi khách mỗi ngày 9h';
+    const dailyPayload = buildTodoCreatePayload(dailyInput, parseTodoQuickAdd(dailyInput, { now: NOW, timeZone: TZ }), NOW);
+    expect(dailyPayload).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2026-11-17',
+      dueTime: '09:00',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    expect(zTodoCreate.safeParse(dailyPayload).success).toBe(true);
+
+    const recurrenceOnly = 'mỗi ngày';
+    expect(buildTodoCreatePayload(recurrenceOnly, parseTodoQuickAdd(recurrenceOnly, { now: NOW, timeZone: TZ }), NOW)).toBeNull();
   });
 
   it('falls back to auto reminder when remindAt is already past and rejects empty titles', () => {

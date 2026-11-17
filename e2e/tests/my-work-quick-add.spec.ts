@@ -62,6 +62,13 @@ test('natural-language Quick Add parses chips, restores dismissed tokens, and Al
 
     await quickInput.press('Enter');
     await expect(page.getByTestId('todo-row').filter({ hasText: 'Đọc lại kế hoạch ngày mai' })).toBeVisible();
+
+    await quickInput.fill('Kiểm tra kho mỗi ngày 9h');
+    await expect(page.getByTestId('quick-add-chip-recurrence')).toBeVisible();
+    await quickInput.press('Enter');
+    const recurringRow = page.getByTestId('todo-row').filter({ hasText: 'Kiểm tra kho' });
+    await expect(recurringRow).toBeVisible();
+    await expect(recurringRow.getByTestId('todo-recurrence-badge')).toContainText('Hàng ngày');
   });
 
   await test.step('360px phone layout fits with zero horizontal scroll and passes axe in light and dark', async () => {

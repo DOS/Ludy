@@ -131,6 +131,54 @@ const MAI_BEFORE_GUARDS = [
   'giao',
 ] as const;
 const MAI_AFTER_GUARDS = ['mối', 'sau', 'một', 'phục'] as const;
+const HANG_CARGO_FOLDED_MODIFIERS = new Set([
+  'boc',
+  'check',
+  'chot',
+  'chuyen',
+  'dat',
+  'don',
+  'dong',
+  'giao',
+  'gom',
+  'gui',
+  'hoan',
+  'huy',
+  'khach',
+  'kho',
+  'khui',
+  'kiem',
+  'lay',
+  'mua',
+  'ngan',
+  'nguon',
+  'nhan',
+  'nhap',
+  'ship',
+  'soan',
+  'xuat',
+  'xuong',
+]);
+const HANG_CARGO_EXACT_MODIFIERS = new Set([
+  'bán',
+  'bạn',
+  'chở',
+  'cửa',
+  'đổi',
+  'lô',
+  'mẫu',
+  'mặt',
+  'mối',
+  'nhà',
+  'quầy',
+  'sạp',
+  'tiền',
+  'tiệm',
+  'trả',
+  'tồn',
+  'tuyến',
+  'xếp',
+]);
 
 const URL_RE = /(?:https?:\/\/|ftp:\/\/|mailto:|www\.)[^\s<>"{}|\\^`]+/gi;
 const EMAIL_RE =
@@ -850,6 +898,35 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       return true;
     };
 
+    const isHangCargoWord = (idx: number): boolean => {
+      const tok = words[idx];
+      const prev = words[idx - 1];
+      if (!tok || !prev || !contiguous(idx - 1, idx)) return false;
+      const isHangForm = tok.nfcLower === 'hàng' || (tok.isAscii && tok.nfcLower === 'hang');
+      if (!isHangForm) return false;
+      return HANG_CARGO_FOLDED_MODIFIERS.has(prev.folded) || HANG_CARGO_EXACT_MODIFIERS.has(prev.nfcLower);
+    };
+
+    const unitStartsDatePhrase = (unitIdx: number): boolean => {
+      const unitW = words[unitIdx];
+      const nextW = words[unitIdx + 1];
+      if (!unitW || !nextW || !contiguous(unitIdx, unitIdx + 1)) return false;
+      if (vnMatch(unitW, 'ngày')) {
+        if (vnMatchAny(nextW, ['mai', 'kia', 'mốt', 'nay', 'hôm', 'cuối'])) return true;
+        if (/^\d{1,2}$/.test(nextW.nfcLower) && (!startsClockAt(nextW.start) || /^[/:]/.test(input.slice(nextW.end)))) {
+          return true;
+        }
+        return matchWeekday(input, words, unitIdx + 1, false) !== null;
+      }
+      if (vnMatch(unitW, 'tuần')) {
+        return vnMatchAny(nextW, ['này', 'sau', 'tới', 'trước', 'qua']);
+      }
+      if (vnMatch(unitW, 'tháng')) {
+        return hasMonthModifierAfter(unitIdx);
+      }
+      return false;
+    };
+
     // 4a. "cuối tháng" / "ngày cuối tháng" / "cuối mỗi tháng" / "cuối tháng hàng tháng" / "last day of [every|the] month"
     if (
       w1 &&
@@ -973,6 +1050,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       w2 &&
       w3 &&
       contiguous(i, i + 3) &&
+      !isHangCargoWord(i) &&
       vnMatchAny(w0, ['hàng', 'hằng', 'mỗi']) &&
       vnMatch(w1, 'tháng') &&
       vnMatch(w2, 'ngày') &&
@@ -992,7 +1070,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     }
 
     // 4c. "hàng tuần [vào] <weekday>" / "mỗi tuần [vào] <weekday>" / "every week [on] <weekday>" / "every <weekday>" / "<weekday> hàng tuần"
-    if (vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) && w1 && contiguous(i, i + 1) && vnMatch(w1, 'tuần')) {
+    if (!isHangCargoWord(i) && vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) && w1 && contiguous(i, i + 1) && vnMatch(w1, 'tuần') && !unitStartsDatePhrase(i + 1)) {
       let afterWeekIdx = i + 2;
       const connWord = words[afterWeekIdx];
       if (connWord && vnMatch(connWord, 'vào') && contiguous(i + 1, afterWeekIdx)) afterWeekIdx += 1;
@@ -1021,7 +1099,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         continue;
       }
     }
-    if (vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) || w0.nfcLower === 'every') {
+    if ((!isHangCargoWord(i) && vnMatchAny(w0, ['mỗi', 'hàng', 'hằng'])) || w0.nfcLower === 'every') {
       const wd = w1 && contiguous(i, i + 1) ? matchWeekday(input, words, i + 1, w0.nfcLower === 'every') : null;
       if (wd) {
         const span = spanOf(i + wd.consumed);
@@ -1084,7 +1162,12 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     }
 
     // 4e. Simple daily / monthly / weekly
-    if (w1 && contiguous(i, i + 1) && ((vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) && vnMatch(w1, 'ngày')) || (w0.nfcLower === 'every' && w1.nfcLower === 'day'))) {
+    if (
+      w1 &&
+      contiguous(i, i + 1) &&
+      ((!isHangCargoWord(i) && vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) && vnMatch(w1, 'ngày') && !unitStartsDatePhrase(i + 1)) ||
+        (w0.nfcLower === 'every' && w1.nfcLower === 'day'))
+    ) {
       const span = spanOf(i + 1);
       if (isWordPhraseEndAvailable(span)) {
         recurrence = { freq: 'daily', interval: 1 };
@@ -1094,7 +1177,12 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         continue;
       }
     }
-    if (w1 && contiguous(i, i + 1) && ((vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) && vnMatch(w1, 'tháng')) || (w0.nfcLower === 'every' && w1.nfcLower === 'month'))) {
+    if (
+      w1 &&
+      contiguous(i, i + 1) &&
+      ((!isHangCargoWord(i) && vnMatchAny(w0, ['mỗi', 'hàng', 'hằng']) && vnMatch(w1, 'tháng') && !unitStartsDatePhrase(i + 1)) ||
+        (w0.nfcLower === 'every' && w1.nfcLower === 'month'))
+    ) {
       const span = spanOf(i + 1);
       if (isWordPhraseEndAvailable(span)) {
         recurrence = { freq: 'monthly', interval: 1 };
