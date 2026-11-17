@@ -92,7 +92,7 @@ export const vi = {
     uploadEntity: 'Ghi sổ vào',
     org: 'Tổ chức',
     allClients: 'Tất cả doanh nghiệp',
-    addOrg: '+ Thêm tổ chức',
+    addOrg: 'Thêm tổ chức',
     overview: 'Tổng quan',
     accountingOverview: 'Tổng quan tài chính',
     employees: 'Nhân viên',
