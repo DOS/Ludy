@@ -1897,4 +1897,102 @@ suite('eSign Slice 1a core on PostgreSQL (#3323)', () => {
     });
     expect(afterDeclineView.status).toBe(404);
   });
+
+  it('forwards detectedTags from runSignPdfInspectJob to envelope and template inspect_complete (#3552)', async () => {
+    const tagOwner: Account = { subject: randomUUID(), email: 'tag-owner@sign.test', session: randomUUID(), userId: '' };
+    const me = await rpc('me/get', tagOwner, undefined, null);
+    expect(me.status).toBe(200);
+    tagOwner.userId = String(me.body.userId);
+
+    const createdOrg = await rpc('org/create', tagOwner, { name: 'Tag Worker Org', idempotencyKey: randomUUID() }, null);
+    expect(createdOrg.status).toBe(200);
+    const tagOrgId = String(createdOrg.body.orgId);
+    const tagOrgSlug = String(createdOrg.body.slug);
+
+    const up = await uploadFile(app, tagOwner, pdfFixture('worker-tags-3552'), 'tags-3552.pdf', 'sign_document', 'application/pdf', tagOrgSlug);
+    expect(up.status).toBe(200);
+    const sourceFileId = ((up.body?.files as Array<{ fileId: string }>) ?? [])[0]!.fileId;
+
+    const sampleDetectedTags = [
+      {
+        pageNumber: 1,
+        fieldType: 'signature' as const,
+        roleOrder: 1,
+        roleKey: 'r1',
+        required: true,
+        label: null,
+        xNorm: 0.2,
+        yNorm: 0.7,
+        wNorm: 0.22,
+        hNorm: 0.06,
+      },
+      {
+        pageNumber: 1,
+        fieldType: 'date' as const,
+        roleOrder: 1,
+        roleKey: 'r1',
+        required: true,
+        label: null,
+        xNorm: 0.5,
+        yNorm: 0.71,
+        wNorm: 0.16,
+        hNorm: 0.03,
+      },
+    ];
+
+    const extractWithTags: ExtractClient = {
+      async extract(kind) {
+        if (kind === 'pdf_inspect') {
+          return {
+            ok: true,
+            kind: 'pdf_inspect',
+            pageCount: 1,
+            pages: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0, text: '{{signature, r1}} {{date, r1}}' }],
+            detectedTags: sampleDetectedTags,
+          } as never;
+        }
+        throw new Error(`unexpected kind ${kind}`);
+      },
+    };
+
+    const env = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Ho so co the PDF', sourceFileId },
+      { actor: asUser(tagOwner), orgId: tagOrgId },
+    );
+    const envRes = await runSignPdfInspectJob(
+      { workerDb, runtime: workerRuntime, store, extract: extractWithTags },
+      { orgId: tagOrgId, envelopeId: env.envelopeId },
+    );
+    expect(envRes).toEqual({ status: 'passed', pageCount: 1 });
+
+    const fetchedEnv = await runtime.query<{ envelope: { detectedTags: typeof sampleDetectedTags } }>(
+      'sign.envelope.get',
+      { envelopeId: env.envelopeId },
+      { actor: asUser(tagOwner), orgId: tagOrgId },
+    );
+    expect(fetchedEnv.envelope.detectedTags).toEqual(sampleDetectedTags);
+
+    const upTpl = await uploadFile(app, tagOwner, pdfFixture('worker-tpl-tags-3552'), 'tpl-tags-3552.pdf', 'sign_document', 'application/pdf', tagOrgSlug);
+    expect(upTpl.status).toBe(200);
+    const tplFileId = ((upTpl.body?.files as Array<{ fileId: string }>) ?? [])[0]!.fileId;
+
+    const tpl = await runtime.execute<{ templateId: string }>(
+      'sign.template.create',
+      { title: 'Mau co the PDF', routingMode: 'parallel', sourceFileId: tplFileId },
+      { actor: asUser(tagOwner), orgId: tagOrgId },
+    );
+    const tplRes = await runSignPdfInspectJob(
+      { workerDb, runtime: workerRuntime, store, extract: extractWithTags },
+      { orgId: tagOrgId, targetKind: 'template', templateId: tpl.templateId },
+    );
+    expect(tplRes).toEqual({ status: 'passed', pageCount: 1 });
+
+    const fetchedTpl = await runtime.query<{ template: { detectedTags: typeof sampleDetectedTags } }>(
+      'sign.template.get',
+      { templateId: tpl.templateId },
+      { actor: asUser(tagOwner), orgId: tagOrgId },
+    );
+    expect(fetchedTpl.template.detectedTags).toEqual(sampleDetectedTags);
+  });
 });

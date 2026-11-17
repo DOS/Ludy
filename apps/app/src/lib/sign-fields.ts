@@ -46,6 +46,15 @@ export interface DraftFieldPlacement extends NormalizedBox {
   fontSizePt?: number | null;
 }
 
+export interface SignDetectedTag extends NormalizedBox {
+  pageNumber: number;
+  fieldType: SignFieldType;
+  roleOrder: number;
+  roleKey: string;
+  required: boolean;
+  label: string | null;
+}
+
 export const DEFAULT_FIELD_SIZE: Record<SignFieldType, { readonly wNorm: number; readonly hNorm: number }> = {
   signature: { wNorm: 0.24, hNorm: 0.08 },
   initials: { wNorm: 0.14, hNorm: 0.065 },
@@ -154,4 +163,134 @@ export function checkSendReadiness(input: {
     }
   }
   return null;
+}
+
+export interface PlannedTagPlacement extends NormalizedBox {
+  signerId: string;
+  fieldType: SignFieldType;
+  pageNumber: number;
+  label: string | null;
+  required: boolean;
+}
+
+function isDuplicateTagPlacement(
+  existing: readonly Pick<DraftFieldPlacement, 'signerId' | 'fieldType' | 'pageNumber' | 'xNorm' | 'yNorm'>[],
+  candidate: PlannedTagPlacement,
+): boolean {
+  return existing.some(
+    (f) =>
+      f.signerId === candidate.signerId &&
+      f.fieldType === candidate.fieldType &&
+      f.pageNumber === candidate.pageNumber &&
+      Math.abs(f.xNorm - candidate.xNorm) <= 0.002 &&
+      Math.abs(f.yNorm - candidate.yNorm) <= 0.002,
+  );
+}
+
+export function planDetectedTagsForSigners(input: {
+  detectedTags: readonly SignDetectedTag[];
+  signers: readonly { id: string; routingOrder: number; signerRole: string; roleKey?: string | null | undefined }[];
+  existingFields: readonly Pick<DraftFieldPlacement, 'signerId' | 'fieldType' | 'pageNumber' | 'xNorm' | 'yNorm'>[];
+  pageCount: number;
+}): {
+  totalTags: number;
+  applicable: PlannedTagPlacement[];
+  unmatchedRoleOrders: number[];
+  alreadyAppliedCount: number;
+} {
+  const maxPage = Math.max(1, input.pageCount);
+  const applicable: PlannedTagPlacement[] = [];
+  const unmatchedSet = new Set<number>();
+  let alreadyAppliedCount = 0;
+
+  for (const tag of input.detectedTags) {
+    const explicitByKey = input.signers.find((s) => s.roleKey === tag.roleKey);
+    const matchedSigner = explicitByKey
+      ? explicitByKey.signerRole !== 'cc'
+        ? explicitByKey
+        : undefined
+      : input.signers.find((s) => !s.roleKey && s.signerRole !== 'cc' && s.routingOrder === tag.roleOrder);
+    if (!matchedSigner) {
+      unmatchedSet.add(tag.roleOrder);
+      continue;
+    }
+    const box = clampFieldBox(tag);
+    const candidate: PlannedTagPlacement = {
+      signerId: matchedSigner.id,
+      fieldType: tag.fieldType,
+      pageNumber: Math.min(maxPage, Math.max(1, tag.pageNumber)),
+      ...box,
+      label: tag.label,
+      required: tag.required,
+    };
+    if (isDuplicateTagPlacement(input.existingFields, candidate) || isDuplicateTagPlacement(applicable, candidate)) {
+      alreadyAppliedCount += 1;
+      continue;
+    }
+    applicable.push(candidate);
+  }
+
+  return {
+    totalTags: input.detectedTags.length,
+    applicable,
+    unmatchedRoleOrders: [...unmatchedSet].sort((a, b) => a - b),
+    alreadyAppliedCount,
+  };
+}
+
+export function planDetectedTagsForTemplateRoles(input: {
+  detectedTags: readonly SignDetectedTag[];
+  roles: readonly { id: string; roleKey: string; routingOrder: number; signerRole: string }[];
+  existingFields: readonly Pick<DraftFieldPlacement, 'signerId' | 'fieldType' | 'pageNumber' | 'xNorm' | 'yNorm'>[];
+  pageCount: number;
+}): {
+  totalTags: number;
+  applicable: PlannedTagPlacement[];
+  unmatchedRoleKeys: string[];
+  alreadyAppliedCount: number;
+} {
+  const maxPage = Math.max(1, input.pageCount);
+  const applicable: PlannedTagPlacement[] = [];
+  const unmatchedMap = new Map<number, string>();
+  let alreadyAppliedCount = 0;
+
+  for (const tag of input.detectedTags) {
+    const explicitByKey = input.roles.find((r) => r.roleKey === tag.roleKey);
+    const matchedRole = explicitByKey
+      ? explicitByKey.signerRole !== 'cc'
+        ? explicitByKey
+        : undefined
+      : input.roles.find(
+          (r) => r.signerRole !== 'cc' && !/^r[1-9]\d*$/.test(r.roleKey) && r.routingOrder === tag.roleOrder,
+        );
+    if (!matchedRole) {
+      unmatchedMap.set(tag.roleOrder, tag.roleKey);
+      continue;
+    }
+    const box = clampFieldBox(tag);
+    const candidate: PlannedTagPlacement = {
+      signerId: matchedRole.id,
+      fieldType: tag.fieldType,
+      pageNumber: Math.min(maxPage, Math.max(1, tag.pageNumber)),
+      ...box,
+      label: tag.label,
+      required: tag.required,
+    };
+    if (isDuplicateTagPlacement(input.existingFields, candidate) || isDuplicateTagPlacement(applicable, candidate)) {
+      alreadyAppliedCount += 1;
+      continue;
+    }
+    applicable.push(candidate);
+  }
+
+  const unmatchedRoleKeys = [...unmatchedMap.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, key]) => key);
+
+  return {
+    totalTags: input.detectedTags.length,
+    applicable,
+    unmatchedRoleKeys,
+    alreadyAppliedCount,
+  };
 }

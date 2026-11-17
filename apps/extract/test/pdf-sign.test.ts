@@ -1355,10 +1355,11 @@ describe('pdf_seal', () => {
     for (let i = 1; i < checkDoc.getPageCount(); i++) {
       const certPage = checkDoc.getPage(i);
       const crop = certPage.getCropBox();
+      // Source page has CropBox [0, 400, 600, 800] (600x400) rotated 90 degrees -> effective visual size 400x600.
       expect(crop.x).toBeCloseTo(0, 1);
       expect(crop.y).toBeCloseTo(0, 1);
-      expect(crop.width).toBeCloseTo(595.28, 1);
-      expect(crop.height).toBeCloseTo(841.89, 1);
+      expect(crop.width).toBeCloseTo(400, 1);
+      expect(crop.height).toBeCloseTo(600, 1);
       expect(certPage.getRotation().angle).toBe(0);
     }
 

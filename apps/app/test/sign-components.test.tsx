@@ -64,7 +64,7 @@ const { isCurrentPdfTargetRendered } = await import('../src/components/sign/pdf-
 const { SignerPanel } = await import('../src/components/sign/signer-panel.tsx');
 const { VyClausePanel } = await import('../src/components/sign/vy-clause-panel.tsx');
 const { fetchEnvelopesForTab, filterEnvelopesByTab, SignEnvelopesPage } = await import('../src/routes/sign-envelopes.tsx');
-const { filterPendingProposalsForSigners } = await import('../src/routes/sign-envelope-detail.tsx');
+const { filterPendingProposalsForSigners, SignEnvelopeDetailPage } = await import('../src/routes/sign-envelope-detail.tsx');
 const {
   buildSignSubmitPayload,
   canSubmitCeremony,
@@ -1179,5 +1179,118 @@ describe('Public signing ceremony and offline SHA-256 verifier (#3325)', () => {
     expect(approverRequiredDateHtml).toContain('Bắt buộc');
     expect(approverRequiredDateHtml).toContain('data-testid="ceremony-remaining-badge"');
     expect(approverRequiredDateHtml).toContain('Vui lòng đợi tài liệu tải xong trước khi phê duyệt.');
+  });
+
+  it('surfaces deterministic PDF text tags in Prepare screen with 100% AI-off parity (#3552)', () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const envId = routerState.id;
+
+    qc.setQueryData(['sign', 'envelope', envId], {
+      envelope: {
+        id: envId,
+        title: 'Hợp đồng xuất từ Google Docs',
+        subject: null,
+        message: null,
+        status: 'draft',
+        routingMode: 'sequential',
+        sourceKind: 'standalone',
+        sourceId: null,
+        sourceFileId: '01900000-0000-7000-8000-000000000099',
+        sourceSha256: 'a'.repeat(64),
+        inspectStatus: 'passed',
+        inspectError: null,
+        pageCount: 2,
+        pageDimensions: [
+          { page: 1, widthPt: 595.28, heightPt: 841.89, rotation: 0 },
+          { page: 2, widthPt: 595.28, heightPt: 841.89, rotation: 0 },
+        ],
+        detectedTags: [
+          {
+            pageNumber: 1,
+            fieldType: 'signature',
+            roleOrder: 1,
+            roleKey: 'r1',
+            required: true,
+            label: null,
+            xNorm: 0.15,
+            yNorm: 0.72,
+            wNorm: 0.22,
+            hNorm: 0.06,
+          },
+          {
+            pageNumber: 1,
+            fieldType: 'date',
+            roleOrder: 1,
+            roleKey: 'r1',
+            required: true,
+            label: null,
+            xNorm: 0.45,
+            yNorm: 0.73,
+            wNorm: 0.16,
+            hNorm: 0.03,
+          },
+          {
+            pageNumber: 2,
+            fieldType: 'text',
+            roleOrder: 2,
+            roleKey: 'r2',
+            required: true,
+            label: 'Chức danh',
+            xNorm: 0.2,
+            yNorm: 0.5,
+            wNorm: 0.24,
+            hNorm: 0.03,
+          },
+        ],
+        sealedFileId: null,
+        sealedSha256: null,
+        sealStatus: null,
+        certificateFileId: null,
+        certificateSha256: null,
+        certificateCode: null,
+        expiresAt: null,
+        sentAt: null,
+        completedAt: null,
+        declinedAt: null,
+        voidedAt: null,
+        voidedBy: null,
+        voidReason: null,
+        expiredAt: null,
+        version: 2,
+        createdBy: '01900000-0000-7000-8000-000000000088',
+        createdAt: '2026-11-17T00:00:00Z',
+        updatedAt: '2026-11-17T00:00:00Z',
+      },
+      signers: [
+        SIGNER_1,
+        {
+          ...SIGNER_1,
+          id: 'signer-2',
+          routingOrder: 2,
+          roleLabel: 'Bên B',
+          name: 'Trần Thị B',
+          email: 'b@example.com',
+        },
+      ],
+      fields: [],
+    });
+
+    // AI completely turned off (AI_ENABLED=false / org AI off).
+    qc.setQueryData(['sign', 'ai', envId], {
+      status: 'disabled',
+      summaryText: null,
+      riskLevel: null,
+      proposedFields: [],
+      riskClauses: [],
+    } satisfies SignAiAnalysis);
+
+    const viHtml = renderVi(<SignEnvelopeDetailPage />, qc);
+    expect(viHtml).toContain('data-testid="sign-detected-tags-banner"');
+    expect(viHtml).toContain('data-testid="sign-apply-detected-tags-btn"');
+    expect(viHtml).toContain('Áp dụng 3 ô từ thẻ tài liệu');
+    expect(viHtml).toContain('Tính năng AI đang tắt hoặc hết ngân sách tháng.');
+
+    const enHtml = renderEn(<SignEnvelopeDetailPage />, qc);
+    expect(enHtml).toContain('Apply 3 tag fields');
   });
 });

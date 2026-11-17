@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   EXTRACT_LIMITS,
   decodePdfSealInput,
+  type PdfDetectedTag,
   type PdfInspectPage,
   type PdfInspectResult,
   type PdfSealCertificate,
@@ -54,11 +55,14 @@ import {
   type PDFPage,
 } from 'pdf-lib';
 import { PdfFontContext, type FontWeight, type PageRotation } from './fonts.ts';
+import { extractPageDeterministicTags, type PdfRawTextItem } from './pdf-tags.ts';
 
 const PDF_MAGIC = '%PDF-';
 const PNG_MAGIC = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const A4_WIDTH_PT = 595.28;
 const A4_HEIGHT_PT = 841.89;
+const MIN_CERT_PAGE_WIDTH_PT = 280;
+const MIN_CERT_PAGE_HEIGHT_PT = 360;
 const MAX_PDF_GRAPH_NODES = 250_000;
 const MAX_PDF_BOX_PT = 20_000;
 const MAX_PNG_DIM = 4096;
@@ -2987,7 +2991,7 @@ function capPerPageTexts(texts: readonly string[], maxTotalBytes: number): strin
 export async function inspectPdf(bytes: Uint8Array): Promise<PdfInspectResult> {
   const pdfDoc = await loadValidatedPdf(bytes);
   await validatePdfSourceFlattenable(pdfDoc);
-  const { extractText, getDocumentProxy } = await import('unpdf');
+  const { getDocumentProxy } = await import('unpdf');
 
   let proxy: Awaited<ReturnType<typeof getDocumentProxy>>;
   try {
@@ -3005,31 +3009,74 @@ export async function inspectPdf(bytes: Uint8Array): Promise<PdfInspectResult> {
       throw new PdfSignError('Số trang PDF không nhất quán');
     }
 
-    const extracted = await extractText(proxy, { mergePages: false });
-    const rawPages = Array.isArray(extracted.text) ? extracted.text : [extracted.text];
-    const normalizedTexts = Array.from({ length: pageCount }, (_, i) => normalizeExtractedText(rawPages[i] ?? ''));
-    const cappedTexts = capPerPageTexts(normalizedTexts, EXTRACT_LIMITS.maxPdfInspectTextBytes);
+    const rawPages: string[] = [];
+    const pageGeometries: Array<{ readonly widthPt: number; readonly heightPt: number; readonly rotation: PageRotation }> = [];
+    const detectedTags: PdfDetectedTag[] = [];
 
-    const pages: PdfInspectPage[] = [];
     for (let i = 0; i < pageCount; i++) {
       const pdfPage = pdfDoc.getPage(i);
       const { box, rot: rotation, userUnit } = getPageMetrics(pdfDoc, pdfPage);
       const widthPt = (rotation === 90 || rotation === 270 ? box.height : box.width) * userUnit;
       const heightPt = (rotation === 90 || rotation === 270 ? box.width : box.height) * userUnit;
-      pages.push({
-        page: i + 1,
+      pageGeometries.push({
         widthPt: Number(widthPt.toFixed(4)),
         heightPt: Number(heightPt.toFixed(4)),
         rotation,
-        text: cappedTexts[i] ?? '',
       });
+
+      const pageProxy = await proxy.getPage(i + 1);
+      const textContent = await pageProxy.getTextContent();
+      const collectTags = detectedTags.length < EXTRACT_LIMITS.maxPdfDetectedTags;
+      const rawItems: PdfRawTextItem[] = [];
+      let rawPageText = '';
+      for (const entry of textContent.items) {
+        if ('str' in entry && typeof entry.str === 'string') {
+          rawPageText += entry.str + (entry.hasEOL ? '\n' : '');
+          if (collectTags) {
+            rawItems.push({
+              str: entry.str,
+              ...(typeof entry.width === 'number' ? { width: entry.width } : {}),
+              ...(typeof entry.height === 'number' ? { height: entry.height } : {}),
+              ...(Array.isArray(entry.transform) ? { transform: entry.transform } : {}),
+              ...(typeof entry.fontName === 'string' ? { fontName: entry.fontName } : {}),
+              ...(typeof entry.hasEOL === 'boolean' ? { hasEOL: entry.hasEOL } : {}),
+            });
+          }
+        }
+      }
+      rawPages.push(rawPageText);
+
+      if (collectTags) {
+        const pageTags = extractPageDeterministicTags({
+          pageNumber: i + 1,
+          box,
+          rotation,
+          userUnit,
+          items: rawItems,
+          styles: textContent.styles as Readonly<Record<string, { readonly fontFamily?: string }>> | undefined,
+          maxTags: EXTRACT_LIMITS.maxPdfDetectedTags - detectedTags.length,
+        });
+        detectedTags.push(...pageTags);
+      }
     }
+
+    const normalizedTexts = Array.from({ length: pageCount }, (_, i) => normalizeExtractedText(rawPages[i] ?? ''));
+    const cappedTexts = capPerPageTexts(normalizedTexts, EXTRACT_LIMITS.maxPdfInspectTextBytes);
+
+    const pages: PdfInspectPage[] = pageGeometries.map((geom, i) => ({
+      page: i + 1,
+      widthPt: geom.widthPt,
+      heightPt: geom.heightPt,
+      rotation: geom.rotation,
+      text: cappedTexts[i] ?? '',
+    }));
 
     return {
       ok: true,
       kind: 'pdf_inspect',
       pageCount,
       pages,
+      detectedTags,
     };
   } finally {
     if (typeof proxy.cleanup === 'function') {
@@ -7592,19 +7639,59 @@ function formatOtpStatus(status: PdfSealOtpStatus): string {
   }
 }
 
-async function drawCertHeader(page: PDFPage, fonts: PdfFontContext, certificateCode: string, continued: boolean): Promise<void> {
-  const headerH = continued ? 52 : 68;
+interface CertificatePageSize {
+  readonly widthPt: number;
+  readonly heightPt: number;
+}
+
+function resolveCertificatePageSize(pdfDoc: PDFDocument, sourcePageCount: number): CertificatePageSize {
+  if (sourcePageCount < 1) {
+    return { widthPt: A4_WIDTH_PT, heightPt: A4_HEIGHT_PT };
+  }
+  try {
+    const lastPage = pdfDoc.getPage(sourcePageCount - 1);
+    const { box, rot, userUnit } = getPageMetrics(pdfDoc, lastPage);
+    const widthPt = Number(((rot === 90 || rot === 270 ? box.height : box.width) * userUnit).toFixed(4));
+    const heightPt = Number(((rot === 90 || rot === 270 ? box.width : box.height) * userUnit).toFixed(4));
+    if (
+      !Number.isFinite(widthPt) ||
+      !Number.isFinite(heightPt) ||
+      widthPt < MIN_CERT_PAGE_WIDTH_PT ||
+      heightPt < MIN_CERT_PAGE_HEIGHT_PT ||
+      widthPt > MAX_PDF_BOX_PT ||
+      heightPt > MAX_PDF_BOX_PT
+    ) {
+      return { widthPt: A4_WIDTH_PT, heightPt: A4_HEIGHT_PT };
+    }
+    return { widthPt, heightPt };
+  } catch {
+    return { widthPt: A4_WIDTH_PT, heightPt: A4_HEIGHT_PT };
+  }
+}
+
+async function drawCertHeader(
+  page: PDFPage,
+  fonts: PdfFontContext,
+  certificateCode: string,
+  continued: boolean,
+  pageSize: CertificatePageSize,
+  marginX: number,
+  vScale: number,
+  tScale: number,
+): Promise<number> {
+  const { widthPt, heightPt } = pageSize;
+  const headerH = continued ? Math.round(52 * vScale) : Math.round(68 * vScale);
   page.drawRectangle({
     x: 0,
-    y: A4_HEIGHT_PT - headerH,
-    width: A4_WIDTH_PT,
+    y: heightPt - headerH,
+    width: widthPt,
     height: headerH,
     color: COLOR_NAVY,
   });
   page.drawRectangle({
     x: 0,
-    y: A4_HEIGHT_PT - headerH - 3,
-    width: A4_WIDTH_PT,
+    y: heightPt - headerH - 3,
+    width: widthPt,
     height: 3,
     color: COLOR_ACCENT,
   });
@@ -7612,15 +7699,14 @@ async function drawCertHeader(page: PDFPage, fonts: PdfFontContext, certificateC
   const title = continued
     ? `CHỨNG NHẬN KÝ KẾT ĐIỆN TỬ / AUDIT CERTIFICATE (Tiếp theo - ${certificateCode})`
     : 'CHỨNG NHẬN KÝ KẾT ĐIỆN TỬ / AUDIT CERTIFICATE';
-  const marginX = 42;
-  const maxTitleW = A4_WIDTH_PT - marginX * 2;
+  const maxTitleW = widthPt - marginX * 2;
   const titleLayout = await fitWrappedTextInBox(
     fonts,
     title,
     'bold',
     maxTitleW,
-    continued ? 38 : 22,
-    continued ? 11.5 : 14,
+    continued ? Math.max(24, headerH - 12) : Math.max(15, Math.round(22 * vScale)),
+    Number(((continued ? 11.5 : 14) * tScale).toFixed(2)),
     'Mã chứng nhận điện tử vượt quá kích thước tiêu đề trang',
   );
   if (titleLayout.lines.length === 1) {
@@ -7629,10 +7715,11 @@ async function drawCertHeader(page: PDFPage, fonts: PdfFontContext, certificateC
       sizePt: titleLayout.sizePt,
       color: COLOR_WHITE,
       x: marginX,
-      y: A4_HEIGHT_PT - (continued ? 31 : 30),
+      y: heightPt - (continued ? Math.round(31 * vScale) : Math.round(30 * vScale)),
     });
   } else {
-    const topPad = Math.max(8, (headerH - titleLayout.blockHeightPt) / 2);
+    const titleBandH = continued ? headerH : Math.max(24, Math.round(41 * vScale));
+    const topPad = Math.max(5, (titleBandH - titleLayout.blockHeightPt) / 2);
     for (let i = 0; i < titleLayout.lines.length; i++) {
       const line = titleLayout.lines[i] ?? '';
       if (line.length === 0) continue;
@@ -7641,19 +7728,30 @@ async function drawCertHeader(page: PDFPage, fonts: PdfFontContext, certificateC
         sizePt: titleLayout.sizePt,
         color: COLOR_WHITE,
         x: marginX,
-        y: A4_HEIGHT_PT - topPad - (titleLayout.baselineOffsetsPt[i] ?? 0),
+        y: heightPt - topPad - (titleLayout.baselineOffsetsPt[i] ?? 0),
       });
     }
   }
   if (!continued) {
-    await fonts.drawText(page, 'Crove eSign - Bằng chứng hoàn tất giao dịch ký số / Signing Completion Record', {
+    const subtitle = 'Crove eSign - Bằng chứng hoàn tất giao dịch ký số / Signing Completion Record';
+    const subLayout = await fitWrappedTextInBox(
+      fonts,
+      subtitle,
+      'regular',
+      maxTitleW,
+      Math.max(10, Math.round(14 * vScale)),
+      Number((8.8 * tScale).toFixed(2)),
+      'Phụ đề chứng nhận vượt quá kích thước tiêu đề trang',
+    );
+    await fonts.drawText(page, subLayout.lines[0] ?? subtitle, {
       weight: 'regular',
-      sizePt: 8.8,
+      sizePt: subLayout.sizePt,
       color: rgb(0.78, 0.86, 0.96),
       x: marginX,
-      y: A4_HEIGHT_PT - 49,
+      y: heightPt - Math.round(50 * vScale),
     });
   }
+  return headerH;
 }
 
 function collapseSingleLineText(value: string): string {
@@ -7664,10 +7762,16 @@ async function appendAuditCertificatePages(
   pdfDoc: PDFDocument,
   fonts: PdfFontContext,
   certificate: PdfSealCertificate,
+  pageSize: CertificatePageSize,
 ): Promise<void> {
-  const marginX = 42;
-  const contentW = A4_WIDTH_PT - marginX * 2;
-  const bottomLimit = 52;
+  const { widthPt: pageW, heightPt: pageH } = pageSize;
+  const vScale = Math.min(1, Math.max(0.66, pageH / 600));
+  const tScale = Math.min(1, Math.max(0.75, Math.min(pageW / 540, pageH / 560)));
+  const marginX = Math.max(22, Math.min(56, Math.round(pageW * 0.07)));
+  const contentW = pageW - marginX * 2;
+  const cardPadX = Math.max(8, Math.round(12 * tScale));
+  const innerTextW = contentW - cardPadX * 2;
+  const bottomLimit = Math.max(34, Math.round(52 * vScale));
   const certPages: PDFPage[] = [];
   const certificateCode = collapseSingleLineText(certificate.certificateCode);
   const envelopeTitle = collapseSingleLineText(certificate.envelopeTitle);
@@ -7681,15 +7785,15 @@ async function appendAuditCertificatePages(
         `Trang chứng nhận điện tử vượt quá giới hạn tối đa ${EXTRACT_LIMITS.maxPdfAuditCertPages} trang`,
       );
     }
-    const page = pdfDoc.addPage([A4_WIDTH_PT, A4_HEIGHT_PT]);
+    const page = pdfDoc.addPage([pageW, pageH]);
     // Override any inherited MediaBox/CropBox/Rotate/UserUnit from the source /Pages tree.
-    page.setMediaBox(0, 0, A4_WIDTH_PT, A4_HEIGHT_PT);
-    page.setCropBox(0, 0, A4_WIDTH_PT, A4_HEIGHT_PT);
+    page.setMediaBox(0, 0, pageW, pageH);
+    page.setCropBox(0, 0, pageW, pageH);
     page.setRotation(degrees(0));
     page.node.delete(PDFName.of('UserUnit'));
     certPages.push(page);
-    await drawCertHeader(page, fonts, certificateCode, continued);
-    return { page, cursorY: A4_HEIGHT_PT - (continued ? 74 : 92) };
+    const headerH = await drawCertHeader(page, fonts, certificateCode, continued, pageSize, marginX, vScale, tScale);
+    return { page, cursorY: pageH - headerH - Math.round((continued ? 22 : 24) * vScale) };
   };
 
   let state = await startPage(false);
@@ -7703,16 +7807,22 @@ async function appendAuditCertificatePages(
     { label: 'Chuỗi sự kiện / Event Chain Tip', value: eventChainTipHash },
   ];
 
+  const metaLabelSize = Number((8 * tScale).toFixed(2));
+  const metaValSize = Number((8.8 * tScale).toFixed(2));
+  const metaLabelStep = Number((12 * vScale).toFixed(2));
+  const metaLineStep = Number((11.5 * vScale).toFixed(2));
+  const metaRowGap = Number((5 * vScale).toFixed(2));
+
   const metaMeasured: Array<{ readonly label: string; readonly lines: string[] }> = [];
-  let metaBoxH = 18;
+  let metaBoxH = Math.round(18 * vScale);
   for (const row of metaFields) {
-    const lines = await fonts.wrapLines(row.value, 'regular', 8.8, contentW - 24);
+    const lines = await fonts.wrapLines(row.value, 'regular', metaValSize, innerTextW);
     metaMeasured.push({ label: row.label, lines });
-    metaBoxH += 12 + lines.length * 11.5 + 5;
+    metaBoxH += metaLabelStep + lines.length * metaLineStep + metaRowGap;
   }
 
   if (state.cursorY - metaBoxH < bottomLimit) {
-    throw new PdfSignError('Thông tin chứng nhận điện tử vượt quá kích thước trang A4');
+    throw new PdfSignError('Thông tin chứng nhận điện tử vượt quá kích thước trang chứng nhận');
   }
 
   state.page.drawRectangle({
@@ -7725,30 +7835,39 @@ async function appendAuditCertificatePages(
     borderWidth: 0.8,
   });
 
-  let metaY = state.cursorY - 16;
+  let metaY = state.cursorY - Math.round(16 * vScale);
   for (const item of metaMeasured) {
     await fonts.drawText(state.page, item.label, {
       weight: 'bold',
-      sizePt: 8,
+      sizePt: metaLabelSize,
       color: COLOR_MUTED,
-      x: marginX + 12,
+      x: marginX + cardPadX,
       y: metaY,
     });
-    metaY -= 12;
+    metaY -= metaLabelStep;
     for (const line of item.lines) {
       await fonts.drawText(state.page, line, {
         weight: 'regular',
-        sizePt: 8.8,
+        sizePt: metaValSize,
         color: COLOR_INK,
-        x: marginX + 12,
+        x: marginX + cardPadX,
         y: metaY,
       });
-      metaY -= 11.5;
+      metaY -= metaLineStep;
     }
-    metaY -= 5;
+    metaY -= metaRowGap;
   }
 
-  state.cursorY -= metaBoxH + 18;
+  state.cursorY -= metaBoxH + Math.round(18 * vScale);
+
+  const signerHeadingSize = Number((10 * tScale).toFixed(2));
+  const signerHeadingGap = Math.round(12 * vScale);
+  const signerTitleSize = Number((9.5 * tScale).toFixed(2));
+  const signerDetailSize = Number((8.5 * tScale).toFixed(2));
+  const signerTitleStep = Number((12 * vScale).toFixed(2));
+  const signerDetailStep = Number((11.5 * vScale).toFixed(2));
+  const cardTopPad = Math.round(15 * vScale);
+  const cardGap = Math.round(8 * vScale);
 
   const signerCards: Array<{
     readonly titleLines: readonly string[];
@@ -7763,7 +7882,7 @@ async function appendAuditCertificatePages(
     const signerName = collapseSingleLineText(signer.name);
     const roleLabel = collapseSingleLineText(signer.roleLabel);
     const titleText = `${i + 1}. ${signerName} (${roleLabel})`;
-    const titleLines = await fonts.wrapLines(titleText, 'bold', 9.5, contentW - 24);
+    const titleLines = await fonts.wrapLines(titleText, 'bold', signerTitleSize, innerTextW);
     const emailDisplay = signer.maskedEmail ? collapseSingleLineText(signer.maskedEmail) : 'N/A';
     const deliveryDisplay = signer.deliveryMode === 'email' ? 'Email' : 'Link';
     const sigKindSuffix = signer.signatureKind
@@ -7771,33 +7890,33 @@ async function appendAuditCertificatePages(
       : '';
     const ipHashDisplay = signer.ipHashPrefix ? collapseSingleLineText(signer.ipHashPrefix) : 'N/A';
     const detailLines = [
-      ...(await fonts.wrapLines(`Email: ${emailDisplay} | Kênh gửi / Delivery: ${deliveryDisplay}`, 'regular', 8.5, contentW - 24)),
-      ...(await fonts.wrapLines(`Xác thực OTP / OTP: ${formatOtpStatus(signer.otpStatus)}${sigKindSuffix}`, 'regular', 8.5, contentW - 24)),
+      ...(await fonts.wrapLines(`Email: ${emailDisplay} | Kênh gửi / Delivery: ${deliveryDisplay}`, 'regular', signerDetailSize, innerTextW)),
+      ...(await fonts.wrapLines(`Xác thực OTP / OTP: ${formatOtpStatus(signer.otpStatus)}${sigKindSuffix}`, 'regular', signerDetailSize, innerTextW)),
       ...(await fonts.wrapLines(
         `Thời điểm ký / Signed At: ${formatUtcPlus7(signer.signedAtIso)} | IP hash: ${ipHashDisplay}`,
         'regular',
-        8.5,
-        contentW - 24,
+        signerDetailSize,
+        innerTextW,
       )),
     ];
 
-    const cardH = 16 + titleLines.length * 12 + detailLines.length * 11.5 + 6;
+    const cardH = Math.round(16 * vScale) + titleLines.length * signerTitleStep + detailLines.length * signerDetailStep + Math.round(6 * vScale);
     signerCards.push({ titleLines, detailLines, cardH });
   }
 
   const firstCardH = signerCards[0]?.cardH ?? 0;
-  if (state.cursorY - 12 - firstCardH < bottomLimit) {
+  if (state.cursorY - signerHeadingGap - firstCardH < bottomLimit) {
     state = await startPage(true);
   }
 
   await fonts.drawText(state.page, `DANH SÁCH NGƯỜI KÝ / SIGNERS (${certificate.signers.length})`, {
     weight: 'bold',
-    sizePt: 10,
+    sizePt: signerHeadingSize,
     color: COLOR_NAVY,
     x: marginX,
     y: state.cursorY,
   });
-  state.cursorY -= 12;
+  state.cursorY -= signerHeadingGap;
 
   for (const card of signerCards) {
     const { titleLines, detailLines, cardH } = card;
@@ -7825,31 +7944,35 @@ async function appendAuditCertificatePages(
       color: COLOR_ACCENT,
     });
 
-    let y = state.cursorY - 15;
+    let y = state.cursorY - cardTopPad;
     for (const line of titleLines) {
       await fonts.drawText(state.page, line, {
         weight: 'bold',
-        sizePt: 9.5,
+        sizePt: signerTitleSize,
         color: COLOR_INK,
-        x: marginX + 12,
+        x: marginX + cardPadX,
         y,
       });
-      y -= 12;
+      y -= signerTitleStep;
     }
-    y -= 2;
+    y -= Math.max(1, Math.round(2 * vScale));
     for (const line of detailLines) {
       await fonts.drawText(state.page, line, {
         weight: 'regular',
-        sizePt: 8.5,
+        sizePt: signerDetailSize,
         color: COLOR_MUTED,
-        x: marginX + 12,
+        x: marginX + cardPadX,
         y,
       });
-      y -= 11.5;
+      y -= signerDetailStep;
     }
 
-    state.cursorY -= cardH + 8;
+    state.cursorY -= cardH + cardGap;
   }
+
+  const footerMaxH = Math.max(18, Math.round(28 * vScale));
+  const footerTargetSize = Number((8 * tScale).toFixed(2));
+  const footerBaseY = Math.max(16, Math.round(26 * vScale));
 
   for (let p = 0; p < certPages.length; p++) {
     const certPage = certPages[p];
@@ -7860,11 +7983,11 @@ async function appendAuditCertificatePages(
       footerText,
       'regular',
       contentW,
-      28,
-      8,
+      footerMaxH,
+      footerTargetSize,
       'Mã chứng nhận điện tử vượt quá kích thước chân trang',
     );
-    const topY = 26 + footerLayout.blockHeightPt * 0.5;
+    const topY = footerBaseY + footerLayout.blockHeightPt * 0.5;
     for (let i = 0; i < footerLayout.lines.length; i++) {
       const line = footerLayout.lines[i] ?? '';
       if (line.length === 0) continue;
@@ -7873,7 +7996,7 @@ async function appendAuditCertificatePages(
         sizePt: footerLayout.sizePt,
         color: COLOR_MUTED,
         x: marginX,
-        y: footerLayout.lines.length === 1 ? 26 : topY - (footerLayout.baselineOffsetsPt[i] ?? 0),
+        y: footerLayout.lines.length === 1 ? footerBaseY : topY - (footerLayout.baselineOffsetsPt[i] ?? 0),
       });
     }
   }
@@ -7884,6 +8007,7 @@ export async function sealPdf(bytes: Uint8Array): Promise<PdfSealResult> {
   const pdfBytes = decodeStrictBase64(input.pdfBase64, 'Tài liệu PDF');
   const pdfDoc = await loadValidatedPdf(pdfBytes);
   const sourcePageCount = pdfDoc.getPageCount();
+  const certPageSize = resolveCertificatePageSize(pdfDoc, sourcePageCount);
 
   const fonts = await PdfFontContext.create(pdfDoc);
   for (const page of pdfDoc.getPages()) {
@@ -7892,7 +8016,7 @@ export async function sealPdf(bytes: Uint8Array): Promise<PdfSealResult> {
   const isolatedPages = new Set<number>();
   await flattenAcroFormAndAnnotations(pdfDoc, fonts, sourcePageCount, isolatedPages);
   await stampFields(pdfDoc, fonts, input.fields, sourcePageCount, isolatedPages);
-  await appendAuditCertificatePages(pdfDoc, fonts, input.certificate);
+  await appendAuditCertificatePages(pdfDoc, fonts, input.certificate, certPageSize);
   stripInteractiveElements(pdfDoc);
   await pdfDoc.flush();
   pruneUnreferencedIndirectObjects(pdfDoc);

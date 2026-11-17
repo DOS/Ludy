@@ -4,7 +4,15 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
 import { kernelManifest } from '@crove/kernel';
-import { SIGN_MAX_PAGES, SIGN_NORM_SCALE, tableWrite, zSignEnvelopePageDimension } from '@crove/kernel-contract';
+import {
+  SIGN_MAX_DETECTED_TAGS,
+  SIGN_MAX_PAGES,
+  SIGN_NORM_SCALE,
+  tableWrite,
+  zSignDetectedTag,
+  zSignEnvelopePageDimension,
+  type SignDetectedTag,
+} from '@crove/kernel-contract';
 import { DomainError, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
 import { signManifest } from './manifest.ts';
@@ -201,6 +209,29 @@ export function parsePageDimensions(raw: unknown): Array<{ page: number; widthPt
     }
   }
   return null;
+}
+
+export const zSignInspectDetectedTags = z.array(zSignDetectedTag).max(SIGN_MAX_DETECTED_TAGS).default([]);
+
+export function parseDetectedTags(raw: unknown, pageCount?: number | null): SignDetectedTag[] {
+  let candidate: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      candidate = JSON.parse(raw) as unknown;
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(candidate) || candidate.length === 0) return [];
+  const out: SignDetectedTag[] = [];
+  for (const entry of candidate) {
+    if (out.length >= SIGN_MAX_DETECTED_TAGS) break;
+    const parsed = zSignDetectedTag.safeParse(entry);
+    if (!parsed.success) continue;
+    if (typeof pageCount === 'number' && parsed.data.pageNumber > pageCount) continue;
+    out.push(parsed.data);
+  }
+  return out;
 }
 
 export async function sendDraftEnvelope(
