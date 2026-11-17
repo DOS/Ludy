@@ -90,7 +90,45 @@ const PERIOD_DEFAULT_HOUR: Record<DayPeriod, number> = {
 };
 
 const ORDINAL_GUARD_WORDS = ['lần', 'bước', 'câu', 'người', 'phần', 'hạng', 'mục', 'loại', 'đợt', 'vòng', 'kỳ', 'tập'] as const;
-const MAI_BEFORE_GUARDS = ['khuyến', 'khuyên', 'hoa', 'mỉa', 'anh', 'chị', 'em', 'bạn', 'cô', 'chú', 'bác', 'ông', 'bà'] as const;
+const MAI_BEFORE_GUARDS = [
+  'khuyến',
+  'khuyên',
+  'hoa',
+  'mỉa',
+  'anh',
+  'chị',
+  'em',
+  'bạn',
+  'cô',
+  'chú',
+  'bác',
+  'ông',
+  'bà',
+  'sếp',
+  'thầy',
+  'cho',
+  'với',
+  'của',
+  'nhờ',
+  'cùng',
+  'giúp',
+  'giùm',
+  'thay',
+  'gặp',
+  'mời',
+  'đón',
+  'tìm',
+  'kêu',
+  'theo',
+  'về',
+  'hỏi',
+  'nhắc',
+  'gửi',
+  'bảo',
+  'nhắn',
+  'đưa',
+  'giao',
+] as const;
 const MAI_AFTER_GUARDS = ['mối', 'sau', 'một', 'phục'] as const;
 
 const URL_RE = /(?:https?:\/\/|ftp:\/\/|mailto:|www\.)[^\s<>"{}|\\^`]+/gi;
@@ -118,7 +156,7 @@ const CLOCK_VN_GIO_RE = new RegExp(
   'giu',
 );
 const CLOCK_VN_SHORT_RE = new RegExp(
-  `(?<![\\p{L}\\p{N}\\p{M}_:.])(\\d{1,2})\\s*[hg](?:([0-5]?\\d)(?!\\d|\\/|\\.[0-9]|-[0-9])(?:\\s*${VN_PHUT_WORD})?|\\s+([0-5]?\\d)(?!\\d|\\/|\\.[0-9]|-[0-9])\\s*${VN_PHUT_WORD}|\\s*(${VN_RUOI_WORD}))?(?![\\p{L}\\p{N}\\p{M}])`,
+  `(?<![\\p{L}\\p{N}\\p{M}_:.])(\\d{1,2})\\s*([hg])(?:([0-5]?\\d)(?!\\d|\\/|\\.[0-9]|-[0-9])(?:\\s*${VN_PHUT_WORD})?|\\s+([0-5]?\\d)(?!\\d|\\/|\\.[0-9]|-[0-9])\\s*${VN_PHUT_WORD}|\\s*(${VN_RUOI_WORD}))?(?![\\p{L}\\p{N}\\p{M}])`,
   'giu',
 );
 
@@ -1021,7 +1059,15 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   let parsedTime: ParsedTimeInfo | null = null;
   const timeSpans: Span[] = [];
   const englishTimeSpans: Span[] = [];
-  const timeCandidates: Array<{ start: number; end: number; hour: number; minute: number; hasAmPm: boolean }> = [];
+  const timeCandidates: Array<{
+    start: number;
+    end: number;
+    hour: number;
+    minute: number;
+    hasAmPm: boolean;
+    usesShortG?: boolean | undefined;
+    hasMinutesOrHalf?: boolean | undefined;
+  }> = [];
 
   for (const m of input.matchAll(CLOCK_COLON_RE)) {
     const hour = Number(m[1]);
@@ -1071,11 +1117,20 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   for (const m of input.matchAll(CLOCK_VN_SHORT_RE)) {
     const hour = Number(m[1]);
     if (hour < 0 || hour > 23) continue;
-    const minuteDigits = m[2] ?? m[3];
-    const half = m[4] !== undefined;
+    const unit = (m[2] ?? '').toLowerCase();
+    const minuteDigits = m[3] ?? m[4];
+    const half = m[5] !== undefined;
     const minute = half ? 30 : minuteDigits ? Number(minuteDigits) : 0;
     if (minute < 0 || minute > 59) continue;
-    timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour, minute, hasAmPm: false });
+    timeCandidates.push({
+      start: m.index,
+      end: m.index + m[0].length,
+      hour,
+      minute,
+      hasAmPm: false,
+      usesShortG: unit === 'g',
+      hasMinutesOrHalf: minuteDigits !== undefined || half,
+    });
   }
 
   timeCandidates.sort((a, b) => a.start - b.start || b.end - a.end);
@@ -1118,6 +1173,25 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     return /^(?:-|\u2013|\u2014|to|till|until|den|toi|->|~)$/u.test(foldedBetween);
   };
 
+  const hasHalfUnitRangeBefore = (candStart: number): boolean => {
+    const prefixBefore = input.slice(0, candStart);
+    const dashMatch = /(?:^|[\s([,])(\d{1,2})\s*(?:-|\u2013|\u2014|->|~)\s*$/u.exec(prefixBefore);
+    if (dashMatch && Number(dashMatch[1]) <= 23) return true;
+    const conn = findAdjacentWordBefore(input, words, candStart, occupied);
+    if (conn && (vnMatchAny(conn, ['đến', 'tới']) || conn.nfcLower === 'to' || conn.nfcLower === 'till' || conn.nfcLower === 'until')) {
+      const startHourWord = findAdjacentWordBefore(input, words, conn.start, occupied);
+      if (
+        startHourWord &&
+        /^\d{1,2}$/.test(startHourWord.nfcLower) &&
+        Number(startHourWord.nfcLower) <= 23 &&
+        (startHourWord.start === 0 || (input[startHourWord.start - 1] !== '/' && input[startHourWord.start - 1] !== ':'))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   let hasExplicitClockRange = false;
   for (let idx = 0; idx < dedupedTimeCandidates.length; idx++) {
     const tc = dedupedTimeCandidates[idx];
@@ -1141,7 +1215,18 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       }
     }
 
+    // Require "g" (easily confused with grams "20 g bột" or 5G) to have minutes/rưỡi, a day period, or lúc/vào.
+    if (tc.usesShortG && !tc.hasMinutesOrHalf && !period) {
+      const beforeClock = findAdjacentWordBefore(input, words, start, occupied);
+      if (!beforeClock || !vnMatchAny(beforeClock, ['lúc', 'vào'])) continue;
+    }
+
     if (isDurationClock(tc, period)) continue;
+
+    if (hasHalfUnitRangeBefore(tc.start)) {
+      hasExplicitClockRange = true;
+      continue;
+    }
 
     // Skip time ranges ("từ 9h đến 10h", "9h - 11h", "9:00am - 11:00am") intact rather than stripping only one side.
     let rangeEndIdx = idx;
@@ -1345,7 +1430,12 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       const next = words[i + 1];
       const blockedBefore = prev && spacesOnlyBetween(input, prev.end, w0.start) && vnMatchAny(prev, MAI_BEFORE_GUARDS);
       const blockedAfter = next && spacesOnlyBetween(input, w0.end, next.start) && vnMatchAny(next, MAI_AFTER_GUARDS);
-      if (!blockedBefore && !blockedAfter && recordDateRange(i, i, addLocalDays(today, 1), false)) {
+      const capitalizedMidSentence =
+        i > 0 &&
+        /^[A-Z]/.test(w0.raw) &&
+        !(prev && /[.!?\n]/.test(input.slice(prev.end, w0.start))) &&
+        !(prev && spacesOnlyBetween(input, prev.end, w0.start) && matchDayPeriod(prev, false, words[i - 2]) !== null);
+      if (!blockedBefore && !blockedAfter && !capitalizedMidSentence && recordDateRange(i, i, addLocalDays(today, 1), false)) {
         continue;
       }
     }

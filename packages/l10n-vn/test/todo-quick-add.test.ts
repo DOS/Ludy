@@ -674,5 +674,51 @@ describe('parseTodoQuickAdd (#3556)', () => {
     expect(buoiBeforeDateAfterClock.title).toBe('Họp');
     expect(buoiBeforeDateAfterClock.dueOn).toBe('2026-11-18');
     expect(buoiBeforeDateAfterClock.dueTime).toBe('15:00');
+
+    // Gram quantities ("20 g", "5g") are never misread as hours, while "9g30"/"lúc 9g"/"9g sáng" still parse
+    expect(parseTodoQuickAdd('Mua 20 g bột', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Mua 20 g bột',
+      dueTime: null,
+      dueOn: null,
+    });
+    expect(parseTodoQuickAdd('Mua 5g vàng', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Mua 5g vàng',
+      dueTime: null,
+      dueOn: null,
+    });
+    expect(parseTodoQuickAdd('Họp lúc 9g ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+    });
+
+    // Half-unit time ranges ("9-10h", "9-10am", "từ 9 đến 10 giờ") keep full range intact
+    expect(parseTodoQuickAdd('Họp 9-10h ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp 9-10h',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Meeting 9-10am tomorrow', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Meeting 9-10am',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp từ 9 đến 10 giờ ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp từ 9 đến 10 giờ',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+
+    // Recipient name "Mai" is preserved without creating a fake tomorrow due date
+    expect(parseTodoQuickAdd('Gửi báo cáo cho Mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gửi báo cáo cho Mai',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Gọi Mai 9h', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi Mai',
+      dueOn: '2026-11-17',
+      dueTime: '09:00',
+    });
   });
 });
