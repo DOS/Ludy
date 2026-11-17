@@ -486,12 +486,16 @@ export const KERNEL_ERROR_CODES = [
   'MEETING_SETTINGS_INVALID',
   // A strict org accepts only a written consent method (A2, #3160).
   'CONSENT_METHOD_NOT_ALLOWED',
-  // A member's own to-dos (#1673).
+  // A member's own to-dos (#1673, #3558).
   'TODO_NOT_FOUND',
   'TODO_IN_TRASH',
   'TODO_REVISION_CONFLICT',
   'TODO_NOT_CHANGEABLE',
   'TODO_REMINDER_PAST',
+  'TODO_LIST_NOT_FOUND',
+  'TODO_LIST_REVISION_CONFLICT',
+  'TODO_SECTION_NOT_FOUND',
+  'TODO_LIST_LIMIT_REACHED',
   // Projects (#2591, #2607).
   'PROJECT_NOT_FOUND',
   'PROJECT_ARCHIVED',

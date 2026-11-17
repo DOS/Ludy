@@ -2,13 +2,19 @@
 // the open tasks of the positions they hold, grouped by the due day (the kernel works the group out), the to-dos in the
 // member's own order. The pure parts of the screen live here: the groups, the keyboard shortcuts, where a move puts a
 // to-do and the text a hand-over proposes.
-import { DEFAULT_TIME_ZONE, TODO_DUE_GROUPS, isTimeZone, type MyWorkTask, type TodoDueGroup, type TodoStep, type TodoSummary } from '@crove/kernel-contract';
+import { DEFAULT_TIME_ZONE, TODO_DUE_GROUPS, isTimeZone, type MyWorkTask, type TodoDueGroup, type TodoListSection, type TodoStep, type TodoSummary } from '@crove/kernel-contract';
 
 export interface TodoGroup {
   id: TodoDueGroup;
   items: TodoSummary[];
   // The team tasks of the group (#1674), after the to-dos, soonest first as the kernel sends them.
   tasks: MyWorkTask[];
+}
+
+export interface TodoSectionGroup {
+  id: string | null;
+  name: string | null;
+  items: TodoSummary[];
 }
 
 export interface MyWorkProjectOption {
@@ -50,6 +56,20 @@ export function groupTodos(todos: readonly TodoSummary[], tasks: readonly MyWork
   return TODO_DUE_GROUPS.map((id) => ({ id, items: todos.filter((t) => (t.group ?? 'none') === id), tasks: tasks.filter((t) => t.group === id) })).filter(
     (g) => g.items.length > 0 || g.tasks.length > 0,
   );
+}
+
+/** Groups a personal list's to-dos into its sections in section order, plus unsectioned items (or orphaned sectionIds). */
+export function groupTodosBySection(todos: readonly TodoSummary[], sections: readonly TodoListSection[]): TodoSectionGroup[] {
+  const validIds = new Set(sections.map((s) => s.id));
+  const unsectioned = todos.filter((t) => t.sectionId === null || !validIds.has(t.sectionId));
+  const out: TodoSectionGroup[] = [];
+  if (unsectioned.length > 0 || sections.length === 0) {
+    out.push({ id: null, name: null, items: unsectioned });
+  }
+  for (const s of sections) {
+    out.push({ id: s.id, name: s.name, items: todos.filter((t) => t.sectionId === s.id) });
+  }
+  return out;
 }
 
 /**

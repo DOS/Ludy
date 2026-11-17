@@ -20,6 +20,10 @@ const baseSummaryRow = (id: string, sourceNoteId: string | null = null) => ({
   title: `Todo ${id}`,
   checklist: [],
   status: 'open' as const,
+  priority: 4,
+  tags: [],
+  list_id: null,
+  section_id: null,
   due_on: null,
   due_at: null,
   time_zone: 'Asia/Ho_Chi_Minh',
@@ -133,6 +137,10 @@ describe('todo source notes (#1676)', () => {
         title: 'Gọi khách',
         details: '',
         checklist: [],
+        priority: 4,
+        tags: [],
+        listId: null,
+        sectionId: null,
         dueOn: null,
         dueTime: null,
         timeZone: 'Asia/Ho_Chi_Minh',
@@ -146,6 +154,10 @@ describe('todo source notes (#1676)', () => {
       title: 'Gọi khách',
       details: '',
       checklist: [],
+      priority: 4,
+      tags: [],
+      listId: null,
+      sectionId: null,
       dueOn: null,
       dueTime: null,
       timeZone: 'Asia/Ho_Chi_Minh',
@@ -161,6 +173,10 @@ describe('todo source notes (#1676)', () => {
       title: 'Theo gợi ý AI',
       details: '',
       checklist: [],
+      priority: 4,
+      tags: [],
+      listId: null,
+      sectionId: null,
       dueOn: null,
       dueTime: null,
       timeZone: 'Asia/Ho_Chi_Minh',
@@ -210,7 +226,7 @@ describe('todo source notes (#1676)', () => {
       },
     } as unknown as QueryContext;
 
-    const listed = await todoList.handler(ctx, { view: 'open', limit: 200 });
+    const listed = await todoList.handler(ctx, { view: 'open', sort: 'manual', limit: 200 });
     expect(listed.map((t) => t.sourceNote)).toEqual([
       { id: NOTE_1, title: 'Biên bản họp', available: true },
       { id: NOTE_2, title: null, available: false },
@@ -219,7 +235,7 @@ describe('todo source notes (#1676)', () => {
     const got = await todoGet.handler(ctx, { todoId: TODO_1 });
     expect(got.sourceNote).toEqual({ id: NOTE_1, title: 'Biên bản họp', available: true });
 
-    const work = await myWork.handler(ctx, { timeZone: 'Asia/Ho_Chi_Minh' });
+    const work = await myWork.handler(ctx, { timeZone: 'Asia/Ho_Chi_Minh', sort: 'manual' });
     expect(work.todos.map((t) => t.sourceNote)).toEqual([
       { id: NOTE_1, title: 'Biên bản họp', available: true },
       { id: NOTE_2, title: null, available: false },

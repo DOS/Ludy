@@ -1109,6 +1109,12 @@ export function createRpcHandler(
         handOver: os.notes.todos.handOver.handler(notesCommand('notes.todo.hand_over')),
         myWork: os.notes.todos.myWork.handler(notesQuery('notes.my_work')),
         counts: os.notes.todos.counts.handler(notesQuery('notes.todo.counts')),
+        lists: {
+          list: os.notes.todos.lists.list.handler(notesQuery('notes.todo_list.list')),
+          create: os.notes.todos.lists.create.handler(notesCommand('notes.todo_list.create')),
+          update: os.notes.todos.lists.update.handler(notesCommand('notes.todo_list.update')),
+          delete: os.notes.todos.lists.delete.handler(notesCommand('notes.todo_list.delete')),
+        },
       },
     },
     meetings: {

@@ -2,12 +2,16 @@
 // shortcuts and the text a hand-over proposes.
 import { describe, expect, it } from 'vitest';
 import type { MyWorkTask, TodoSummary } from '@crove/kernel-contract';
-import { filterMyWork, groupTodos, handOverDescription, moveTarget, myWorkProjects, myWorkShortcut, stepSelection } from '../src/lib/my-work.ts';
+import { filterMyWork, groupTodos, groupTodosBySection, handOverDescription, moveTarget, myWorkProjects, myWorkShortcut, stepSelection } from '../src/lib/my-work.ts';
 
-const todo = (id: string, group: TodoSummary['group']): TodoSummary => ({
+const todo = (id: string, group: TodoSummary['group'], extra: Partial<TodoSummary> = {}): TodoSummary => ({
   id,
   title: id,
   status: 'open',
+  priority: 4,
+  tags: [],
+  listId: null,
+  sectionId: null,
   dueOn: null,
   dueAt: null,
   dueTime: null,
@@ -25,6 +29,7 @@ const todo = (id: string, group: TodoSummary['group']): TodoSummary => ({
   updatedAt: '2026-11-03T00:00:00.000Z',
   doneAt: null,
   deletedAt: null,
+  ...extra,
 });
 
 const key = (k: string, more: Partial<{ altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; repeat: boolean; target: EventTarget | null }> = {}) => ({
@@ -127,5 +132,22 @@ describe('My work', () => {
     expect(stepSelection(order, 'a', -1)).toBe('a');
     expect(stepSelection(order, 'gone', 1)).toBe('a');
     expect(stepSelection([], 'a', 1)).toBeNull();
+  });
+
+  it('groups list to-dos by section order and preserves unsectioned items (#3558)', () => {
+    const sections = [
+      { id: 'sec-1', name: 'Sáng' },
+      { id: 'sec-2', name: 'Chiều' },
+    ];
+    const items = [
+      todo('a', 'none', { listId: 'l1', sectionId: 'sec-2' }),
+      todo('b', 'none', { listId: 'l1', sectionId: null }),
+      todo('c', 'none', { listId: 'l1', sectionId: 'sec-1' }),
+    ];
+    expect(groupTodosBySection(items, sections).map((s) => [s.id, s.name, s.items.map((x) => x.id)])).toEqual([
+      [null, null, ['b']],
+      ['sec-1', 'Sáng', ['c']],
+      ['sec-2', 'Chiều', ['a']],
+    ]);
   });
 });

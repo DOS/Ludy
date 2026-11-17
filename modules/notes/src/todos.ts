@@ -6,12 +6,18 @@
 // Audit rows are anchored in the WORM stream and outlive an erasure, so a command's audit facts carry ids, the due day
 // and changed field names, and a marker for the text (auditValue), never the title, details or steps. Command results
 // carry ids and the revision only, since idempotency rows keep them.
+import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
   PROJECT_TASK_MAP_LIMIT,
+  REBALANCE_AT,
+  TODO_LISTS_MAX,
+  TODO_LIST_COLORS,
   auditValue,
   countTaskChecklistSteps,
+  keyBetween,
+  spreadKeys,
   taskStanding,
   todoAutoReminder,
   todoDueInstant,
@@ -19,13 +25,13 @@ import {
   todoStanding,
   zMyWorkInput,
   zTodoCreate,
-  REBALANCE_AT,
-  keyBetween,
-  spreadKeys,
   zTodoHandOver,
   zTodoLinkAdd,
   zTodoLinkRemove,
   zTodoList,
+  zTodoListCreate,
+  zTodoListRef,
+  zTodoListUpdate,
   zTodoRef,
   zTodoReorder,
   zTodoUpdate,
@@ -36,6 +42,13 @@ import {
   type Todo,
   type TodoCount,
   type TodoHandedOver,
+  type TodoListColor,
+  type TodoListSection,
+  type TodoListSectionInput,
+  type TodoListSummary,
+  type TodoListWritten,
+  type TodoListsResponse,
+  type TodoPriority,
   type TodoReminder,
   type TodoSourceNote,
   type TodoStatus,
@@ -54,12 +67,17 @@ const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const TODO = notesManifest.tables.crove_notes.todo;
+const TODO_LIST = notesManifest.tables.crove_notes.todo_list;
 
 export const TODO_SUMMARY_COLUMNS = [
   'id',
   'title',
   'checklist',
   'status',
+  'priority',
+  'tags',
+  'list_id',
+  'section_id',
   'due_on',
   'due_at',
   'time_zone',
@@ -81,6 +99,10 @@ interface SummaryRow {
   title: string;
   checklist: unknown;
   status: TodoStatus;
+  priority: number;
+  tags: string[];
+  list_id: string | null;
+  section_id: string | null;
   due_on: string | null;
   due_at: Date | string | null;
   time_zone: string;
@@ -132,6 +154,10 @@ export function todoSummaryRow(r: SummaryRow, now: Date, sourceNotes?: ReadonlyM
     id: r.id,
     title: r.title,
     status: r.status,
+    priority: (r.priority ?? 4) as TodoPriority,
+    tags: Array.isArray(r.tags) ? r.tags : [],
+    listId: r.list_id ?? null,
+    sectionId: r.section_id ?? null,
     dueOn: r.due_on,
     dueAt: dueAt?.toISOString() ?? null,
     dueTime: dueAt ? todoLocalTime(dueAt, r.time_zone) : null,
@@ -161,6 +187,56 @@ function userOf(actor: QueryContext['actor']): string {
 const notFound = () => new DomainError('TODO_NOT_FOUND', 404, 'Không tìm thấy việc này');
 const revisionConflict = (revision: number) =>
   new DomainError('TODO_REVISION_CONFLICT', 409, 'Việc này vừa được sửa ở nơi khác; hãy tải lại trước khi lưu', { revision });
+const listNotFound = () => new DomainError('TODO_LIST_NOT_FOUND', 404, 'Không tìm thấy danh sách này');
+const listRevisionConflict = (revision: number) =>
+  new DomainError('TODO_LIST_REVISION_CONFLICT', 409, 'Danh sách này vừa được sửa ở nơi khác; hãy tải lại trước khi lưu', { revision });
+const sectionNotFound = () => new DomainError('TODO_SECTION_NOT_FOUND', 400, 'Không tìm thấy mục này trong danh sách');
+const listLimitReached = () => new DomainError('TODO_LIST_LIMIT_REACHED', 422, 'Bạn đã tạo tối đa số danh sách cá nhân');
+
+const listTarget = (input: { listId: string }) => ({ type: 'notes.todo_list', id: input.listId });
+const listWritten = (row: { id: string; revision: number }): TodoListWritten => ({ listId: row.id, revision: row.revision });
+const listColorOf = (raw: string | null): TodoListColor | null =>
+  raw !== null && (TODO_LIST_COLORS as readonly string[]).includes(raw) ? (raw as TodoListColor) : null;
+
+function parseSections(raw: unknown): TodoListSection[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TodoListSection[] = [];
+  for (const item of raw) {
+    if (typeof item === 'object' && item !== null && 'id' in item && 'name' in item && typeof item.id === 'string' && typeof item.name === 'string') {
+      out.push({ id: item.id, name: item.name });
+    }
+  }
+  return out;
+}
+
+function normalizeSections(inputs: ReadonlyArray<TodoListSectionInput>): TodoListSection[] {
+  const seen = new Set<string>();
+  return inputs.map((item) => {
+    let id = item.id ?? `sec_${randomUUID().slice(0, 8)}`;
+    while (seen.has(id)) id = `sec_${randomUUID().slice(0, 8)}`;
+    seen.add(id);
+    return { id, name: item.name };
+  });
+}
+
+// Verify personal list readability/liveness under caller RLS and section_id membership (no existence oracle).
+async function validateTodoListAndSection(ctx: Pick<CommandContext, 'trx' | 'orgId'>, listId: string | null, sectionId: string | null): Promise<void> {
+  if (listId === null) {
+    if (sectionId !== null) throw sectionNotFound();
+    return;
+  }
+  const list = await ctx.trx
+    .selectFrom('crove_notes.todo_list')
+    .select(['id', 'sections'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', listId)
+    .where('deleted_at', 'is', null)
+    .executeTakeFirst();
+  if (!list) throw listNotFound();
+  if (sectionId !== null && !parseSections(list.sections).some((s) => s.id === sectionId)) {
+    throw sectionNotFound();
+  }
+}
 
 // The caller's to-do (row policies: their own only), with its details, locked for a change when `lock` is set.
 async function load(ctx: Pick<QueryContext, 'trx' | 'orgId'>, todoId: string, lock: boolean): Promise<SummaryRow & { details: string | null }> {
@@ -269,6 +345,7 @@ export const todoCreate = defineCommand({
       if (!sourceNote) throw new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú này');
       sourceTainted = sourceNote.tainted;
     }
+    await validateTodoListAndSection(ctx, input.listId, input.sectionId);
     // A new to-do goes first in the caller's list.
     const rows = await ownKeys(ctx, null);
     const sortKey = await placeBetween(ctx, rows, -1, 0);
@@ -282,6 +359,10 @@ export const todoCreate = defineCommand({
         title: input.title,
         details: detailsOf(input.details),
         checklist: checklistOf(input.checklist),
+        priority: input.priority,
+        tags: input.tags,
+        list_id: input.listId,
+        section_id: input.sectionId,
         ...when,
         remind_at: remind.at,
         reminded_at: remind.passed ? ctx.now : null,
@@ -299,6 +380,10 @@ export const todoCreate = defineCommand({
       title: auditValue(TODO, 'title', input.title),
       details: auditValue(TODO, 'details', detailsOf(input.details)),
       checklist: auditValue(TODO, 'checklist', input.checklist.length > 0 ? input.checklist : null),
+      priority: input.priority,
+      tags: auditValue(TODO, 'tags', input.tags.length > 0 ? input.tags : null),
+      ...(input.listId !== null ? { listId: input.listId } : {}),
+      ...(input.sectionId !== null ? { sectionId: input.sectionId } : {}),
       dueOn: input.dueOn,
       dueTime: input.dueTime !== null,
       timeZone: input.timeZone,
@@ -327,6 +412,14 @@ export const todoUpdate = defineCommand({
     const next = due(input);
     const details = detailsOf(input.details);
     const checklist = checklistOf(input.checklist);
+    const nextPriority = input.priority ?? before.priority;
+    const nextTags = input.tags ?? before.tags;
+    const nextListId = input.listId !== undefined ? input.listId : before.list_id;
+    const listChanged = nextListId !== before.list_id;
+    const nextSectionId = nextListId === null ? null : input.sectionId !== undefined ? input.sectionId : listChanged ? null : before.section_id;
+    if (listChanged || nextSectionId !== before.section_id) {
+      await validateTodoListAndSection(ctx, nextListId, nextSectionId);
+    }
     const beforeDueAt = before.due_at === null ? null : new Date(before.due_at).getTime();
     const dueMoved = before.due_on !== next.due_on || beforeDueAt !== (next.due_at?.getTime() ?? null) || before.time_zone !== next.time_zone;
     const beforeRemind = before.remind_at === null ? null : new Date(before.remind_at);
@@ -338,10 +431,15 @@ export const todoUpdate = defineCommand({
         : beforeRemind.getTime() === todoAutoReminder({ dueOn: before.due_on, dueAt: beforeDueAt === null ? null : new Date(beforeDueAt), timeZone: before.time_zone })?.getTime();
     const remind = input.reminder !== undefined ? remindAt(input.reminder, next, ctx.now) : dueMoved && wasAuto ? remindAt('auto', next, ctx.now) : null;
     const remindChanged = remind !== null && (beforeRemind?.getTime() ?? null) !== (remind.at?.getTime() ?? null);
+    const tagsChanged = before.tags.length !== nextTags.length || before.tags.some((v, i) => v !== nextTags[i]);
     const changed = [
       ...(before.title !== input.title ? ['title'] : []),
       ...(before.details !== details ? ['details'] : []),
       ...(checklistOf(steps(before.checklist)) !== checklist ? ['checklist'] : []),
+      ...(before.priority !== nextPriority ? ['priority'] : []),
+      ...(tagsChanged ? ['tags'] : []),
+      ...(listChanged ? ['listId'] : []),
+      ...(before.section_id !== nextSectionId ? ['sectionId'] : []),
       ...(before.due_on !== next.due_on || beforeDueAt !== (next.due_at?.getTime() ?? null) ? ['due'] : []),
       ...(before.time_zone !== next.time_zone ? ['timeZone'] : []),
       ...(remindChanged ? ['reminder'] : []),
@@ -353,6 +451,10 @@ export const todoUpdate = defineCommand({
         title: input.title,
         details,
         checklist,
+        priority: nextPriority,
+        tags: nextTags,
+        list_id: nextListId,
+        section_id: nextSectionId,
         ...next,
         ...(remind !== null && remindChanged ? { remind_at: remind.at, reminded_at: remind.passed ? ctx.now : null } : {}),
         revision: before.revision + 1,
@@ -362,7 +464,16 @@ export const todoUpdate = defineCommand({
       .where('id', '=', input.todoId)
       .returning(['id', 'revision'])
       .executeTakeFirstOrThrow();
-    ctx.audit({ todoId: row.id, revision: row.revision, changed, dueOn: next.due_on, ...(remind !== null && remindChanged ? { remindAt: remind.at?.toISOString() ?? null } : {}) });
+    ctx.audit({
+      todoId: row.id,
+      revision: row.revision,
+      changed,
+      dueOn: next.due_on,
+      priority: nextPriority,
+      ...(nextListId !== null ? { listId: nextListId } : {}),
+      ...(nextSectionId !== null ? { sectionId: nextSectionId } : {}),
+      ...(remind !== null && remindChanged ? { remindAt: remind.at?.toISOString() ?? null } : {}),
+    });
     return written(row);
   },
 });
@@ -561,19 +672,40 @@ export const todoLinkRemove = defineCommand({
   },
 });
 
+interface TodoFilterInput {
+  listId?: string | undefined;
+  tag?: string | undefined;
+  priority?: TodoPriority | undefined;
+}
+
+function applyTodoFilters<Q extends { where: (...args: any[]) => Q }>(query: Q, input: TodoFilterInput): Q {
+  let q = query;
+  if (input.listId === 'inbox') q = q.where('list_id', 'is', null);
+  else if (input.listId !== undefined) q = q.where('list_id', '=', input.listId);
+  if (input.tag !== undefined) q = q.where(sql<boolean>`tags @> ARRAY[${input.tag}]::text[]`);
+  if (input.priority !== undefined) q = q.where('priority', '=', input.priority);
+  return q;
+}
+
 export const todoList = defineQuery({
   name: 'notes.todo.list',
   input: zTodoList,
   access: READERS,
   handler: async (ctx, input): Promise<TodoSummary[]> => {
     userOf(ctx.actor);
-    let q = ctx.trx.selectFrom('crove_notes.todo').select(SUMMARY).where('org_id', '=', ctx.orgId);
+    let q = applyTodoFilters(ctx.trx.selectFrom('crove_notes.todo').select(SUMMARY).where('org_id', '=', ctx.orgId), input);
     // Words typed without Vietnamese marks find them ("hoa don" finds "hóa đơn"), each as a prefix.
     if (input.q !== undefined) q = q.where(sql<boolean>`search @@ crove_kernel.search_query(${input.q})`);
     if (input.view === 'trash') q = q.where('deleted_at', 'is not', null).orderBy('deleted_at', 'desc');
     else {
       q = q.where('deleted_at', 'is', null);
-      q = input.view === 'open' ? q.where('status', '=', 'open').orderBy('sort_key') : q.where('status', '<>', 'open').orderBy(sql`coalesce(done_at, updated_at)`, 'desc');
+      if (input.view === 'open') {
+        q = q.where('status', '=', 'open');
+        if (input.sort === 'priority') q = q.orderBy('priority', 'asc');
+        q = q.orderBy('sort_key');
+      } else {
+        q = q.where('status', '<>', 'open').orderBy(sql`coalesce(done_at, updated_at)`, 'desc');
+      }
     }
     const rows = await q.orderBy('id').limit(input.limit).execute();
     const sourceNotes = await loadSourceNotes(ctx, rows);
@@ -620,17 +752,13 @@ export const myWork = defineQuery({
   access: READERS,
   handler: async (ctx, input): Promise<MyWork> => {
     const userId = userOf(ctx.actor);
+    let todoQ = applyTodoFilters(
+      ctx.trx.selectFrom('crove_notes.todo').select(SUMMARY).where('org_id', '=', ctx.orgId).where('deleted_at', 'is', null).where('status', '=', 'open'),
+      input,
+    );
+    if (input.sort === 'priority') todoQ = todoQ.orderBy('priority', 'asc');
     const [rows, found, memberCountRow, ownSeatRow] = await Promise.all([
-      ctx.trx
-        .selectFrom('crove_notes.todo')
-        .select(SUMMARY)
-        .where('org_id', '=', ctx.orgId)
-        .where('deleted_at', 'is', null)
-        .where('status', '=', 'open')
-        .orderBy('sort_key')
-        .orderBy('id')
-        .limit(MY_WORK_LIMIT)
-        .execute(),
+      todoQ.orderBy('sort_key').orderBy('id').limit(MY_WORK_LIMIT).execute(),
       ctx.query<{ tasks: KernelTask[] }>('kernel.task.list', { mine: true, status: [...OPEN_TASK_STATUSES] }),
       ctx.trx
         .selectFrom('crove_kernel.tenant_member')
@@ -699,7 +827,224 @@ export const todoCounts = defineQuery({
   },
 });
 
-export const todoCommands = [todoCreate, todoUpdate, todoComplete, todoReopen, todoReorder, todoDelete, todoRestore, todoHandOver, todoLinkAdd, todoLinkRemove];
+// Personal to-do lists and inline sections (#3558, ADR-0037): strictly private to each owner.
+export const todoListList = defineQuery({
+  name: 'notes.todo_list.list',
+  input: z.strictObject({}),
+  access: READERS,
+  handler: async (ctx): Promise<TodoListsResponse> => {
+    userOf(ctx.actor);
+    const [listRows, countRows] = await Promise.all([
+      ctx.trx
+        .selectFrom('crove_notes.todo_list')
+        .select(['id', 'name', 'color', 'sections', 'sort_key', 'revision', 'created_at', 'updated_at'])
+        .where('org_id', '=', ctx.orgId)
+        .where('deleted_at', 'is', null)
+        .orderBy('sort_key')
+        .orderBy('id')
+        .execute(),
+      ctx.trx
+        .selectFrom('crove_notes.todo')
+        .select((eb) => ['list_id', eb.fn.countAll<string>().as('n')])
+        .where('org_id', '=', ctx.orgId)
+        .where('deleted_at', 'is', null)
+        .where('status', '=', 'open')
+        .groupBy('list_id')
+        .execute(),
+    ]);
+    let inboxCount = 0;
+    const listCounts = new Map<string, number>();
+    for (const c of countRows) {
+      const n = Number(c.n);
+      if (c.list_id === null) inboxCount = n;
+      else listCounts.set(c.list_id, n);
+    }
+    const lists: TodoListSummary[] = listRows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      color: listColorOf(r.color),
+      sections: parseSections(r.sections),
+      sortKey: r.sort_key,
+      openCount: listCounts.get(r.id) ?? 0,
+      revision: r.revision,
+      createdAt: new Date(r.created_at).toISOString(),
+      updatedAt: new Date(r.updated_at).toISOString(),
+    }));
+    return { lists, inboxCount };
+  },
+});
+
+export const todoListCreate = defineCommand({
+  name: 'notes.todo_list.create',
+  input: zTodoListCreate,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  handler: async (ctx, input): Promise<TodoListWritten> => {
+    const userId = userOf(ctx.actor);
+    const existing = await ctx.trx
+      .selectFrom('crove_notes.todo_list')
+      .select(['id', 'sort_key'])
+      .where('org_id', '=', ctx.orgId)
+      .where('deleted_at', 'is', null)
+      .orderBy('sort_key')
+      .orderBy('id')
+      .execute();
+    if (existing.length >= TODO_LISTS_MAX) throw listLimitReached();
+    let sortKey = keyBetween(existing.at(-1)?.sort_key ?? null, null);
+    if (sortKey.length > REBALANCE_AT) {
+      const fresh = spreadKeys(existing.length + 1);
+      for (let i = 0; i < existing.length; i++) {
+        await ctx.trx
+          .updateTable('crove_notes.todo_list')
+          .set({ sort_key: fresh[i] as string })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', existing[i]!.id)
+          .execute();
+      }
+      sortKey = fresh[existing.length] as string;
+    }
+    const sections = normalizeSections(input.sections);
+    const row = await ctx.trx
+      .insertInto('crove_notes.todo_list')
+      .values({
+        org_id: ctx.orgId,
+        owner_user_id: userId,
+        name: input.name,
+        color: input.color,
+        sections: JSON.stringify(sections),
+        sort_key: sortKey,
+        created_at: ctx.now,
+        updated_at: ctx.now,
+      })
+      .returning(['id', 'revision'])
+      .executeTakeFirstOrThrow();
+    ctx.audit({
+      todoListId: row.id,
+      name: auditValue(TODO_LIST, 'name', input.name),
+      sections: auditValue(TODO_LIST, 'sections', sections.length > 0 ? sections : null),
+      color: input.color,
+      sectionCount: sections.length,
+    });
+    return listWritten(row);
+  },
+});
+
+export const todoListUpdate = defineCommand({
+  name: 'notes.todo_list.update',
+  input: zTodoListUpdate,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: listTarget,
+  handler: async (ctx, input): Promise<TodoListWritten> => {
+    userOf(ctx.actor);
+    const before = await ctx.trx
+      .selectFrom('crove_notes.todo_list')
+      .select(['id', 'name', 'color', 'sections', 'revision', 'deleted_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.listId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!before || before.deleted_at !== null) throw listNotFound();
+    if (before.revision !== input.revision) throw listRevisionConflict(before.revision);
+    const prevSections = parseSections(before.sections);
+    const nextSections = normalizeSections(input.sections);
+    const nextIds = new Set(nextSections.map((s) => s.id));
+    const removedIds = prevSections.map((s) => s.id).filter((id) => !nextIds.has(id));
+    if (removedIds.length > 0) {
+      await ctx.trx
+        .updateTable('crove_notes.todo')
+        .set({ section_id: null, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('list_id', '=', input.listId)
+        .where('section_id', 'in', removedIds)
+        .execute();
+    }
+    const sectionsChanged = JSON.stringify(prevSections) !== JSON.stringify(nextSections);
+    const changed = [
+      ...(before.name !== input.name ? ['name'] : []),
+      ...(before.color !== input.color ? ['color'] : []),
+      ...(sectionsChanged ? ['sections'] : []),
+    ];
+    const row = await ctx.trx
+      .updateTable('crove_notes.todo_list')
+      .set({
+        name: input.name,
+        color: input.color,
+        sections: JSON.stringify(nextSections),
+        revision: before.revision + 1,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.listId)
+      .returning(['id', 'revision'])
+      .executeTakeFirstOrThrow();
+    ctx.audit({
+      todoListId: row.id,
+      revision: row.revision,
+      changed,
+      sectionCount: nextSections.length,
+      removedSectionCount: removedIds.length,
+    });
+    return listWritten(row);
+  },
+});
+
+export const todoListDelete = defineCommand({
+  name: 'notes.todo_list.delete',
+  input: zTodoListRef,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: listTarget,
+  handler: async (ctx, input): Promise<TodoListWritten> => {
+    userOf(ctx.actor);
+    const before = await ctx.trx
+      .selectFrom('crove_notes.todo_list')
+      .select(['id', 'revision', 'deleted_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.listId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!before || before.deleted_at !== null) throw listNotFound();
+    // Move all to-dos of this list back to Inbox before soft-deleting the list.
+    await ctx.trx
+      .updateTable('crove_notes.todo')
+      .set({ list_id: null, section_id: null, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('list_id', '=', input.listId)
+      .execute();
+    const row = await ctx.trx
+      .updateTable('crove_notes.todo_list')
+      .set({
+        deleted_at: ctx.now,
+        revision: before.revision + 1,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.listId)
+      .returning(['id', 'revision'])
+      .executeTakeFirstOrThrow();
+    ctx.audit({ todoListId: row.id, revision: row.revision, changed: ['deletedAt'] });
+    return listWritten(row);
+  },
+});
+
+export const todoCommands = [
+  todoCreate,
+  todoUpdate,
+  todoComplete,
+  todoReopen,
+  todoReorder,
+  todoDelete,
+  todoRestore,
+  todoHandOver,
+  todoLinkAdd,
+  todoLinkRemove,
+];
 export const todoQueries = [todoList, todoGet, todoCounts];
+export const todoListCommands = [todoListCreate, todoListUpdate, todoListDelete];
+export const todoListQueries = [todoListList];
 // My work reads to-dos and the kernel's tasks, so it is the module's, not the to-do list's.
 export const myWorkQueries = [myWork];

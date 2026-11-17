@@ -8,7 +8,25 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MyWorkTask, NoteLinkTargetInput, Todo, TodoListView, TodoSourceNote, TodoStep, TodoSummary } from '@crove/kernel-contract';
+import {
+  TODO_LIST_COLORS,
+  TODO_LIST_NAME_MAX,
+  TODO_LIST_SECTION_NAME_MAX,
+  TODO_LIST_SECTIONS_MAX,
+  TODO_PRIORITIES,
+  type MyWorkTask,
+  type NoteLinkTargetInput,
+  type Todo,
+  type TodoListColor,
+  type TodoListSectionInput,
+  type TodoListSort,
+  type TodoListSummary,
+  type TodoListView,
+  type TodoPriority,
+  type TodoSourceNote,
+  type TodoStep,
+  type TodoSummary,
+} from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -18,6 +36,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, Di
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { ProjectIcon } from '@crove/ui/components/project-icon';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { cn } from '@crove/ui/lib/utils';
@@ -33,8 +52,50 @@ import { client, clientForOrg, errorMessage, orpc, queryClient } from '../lib/ap
 import { isModuleOff } from '../lib/errors.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { toast } from '../lib/toast.ts';
-import { browserTimeZone, filterMyWork, groupTodos, handOverDescription, moveTarget, myWorkProjects, myWorkShortcut, stepSelection, type MyWorkAction } from '../lib/my-work.ts';
+import {
+  browserTimeZone,
+  filterMyWork,
+  groupTodos,
+  groupTodosBySection,
+  handOverDescription,
+  moveTarget,
+  myWorkProjects,
+  myWorkShortcut,
+  stepSelection,
+  type MyWorkAction,
+} from '../lib/my-work.ts';
+import { parseTags, tagCounts } from '../lib/notes.ts';
 import { projectsInstalled } from '../lib/projects.ts';
+
+const LIST_COLOR_DOT: Record<TodoListColor, string> = {
+  slate: 'bg-muted-foreground',
+  blue: 'bg-label-blue',
+  emerald: 'bg-label-green',
+  amber: 'bg-label-yellow',
+  rose: 'bg-label-red',
+  violet: 'bg-label-purple',
+};
+
+const PRIORITY_BADGE_VARIANT: Record<TodoPriority, 'destructive' | 'warning' | 'brand' | 'outline'> = {
+  1: 'destructive',
+  2: 'warning',
+  3: 'brand',
+  4: 'outline',
+};
+
+function PriorityBadge({ priority }: { priority: TodoPriority }) {
+  const t = useTranslations('myWork');
+  if (priority === 4) return null;
+  const label = t(`priorities.p${priority}`);
+  return (
+    <Badge variant={PRIORITY_BADGE_VARIANT[priority]} title={label} aria-label={label} data-testid="todo-priority-badge">
+      <svg viewBox="0 0 12 12" className="size-3 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
+        <path d="M2.5 1.5v9M2.5 2h6.5l-1.5 2.5L9 7H2.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      {t('priorityShort', { level: String(priority) })}
+    </Badge>
+  );
+}
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.notes.todos.key() });
 
@@ -292,7 +353,7 @@ function TaskRow({ task, slug, chart, projectsActive }: { task: MyWorkTask; slug
 // saved against its revision. The reminder is on unless the member turned it off: a to-do with a due day and no
 // reminder had it turned off (or its time had passed when it was written). Untouched, the box sends nothing and the
 // server keeps the reminder, moving an automatic one with the due day; a time picked elsewhere stays.
-function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
+function TodoEditor({ todo, lists, onClose }: { todo: Todo; lists: readonly TodoListSummary[]; onClose: () => void }) {
   const { slug } = useParams({ strict: false }) as { slug: string };
   const t = useTranslations('myWork');
   const common = useTranslations('common');
@@ -301,30 +362,57 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
   const [details, setDetails] = useState(todo.details);
   const [steps, setSteps] = useState<TodoStep[]>(todo.checklist);
   const [newStep, setNewStep] = useState('');
+  const [priority, setPriority] = useState<TodoPriority>(todo.priority);
+  const [tagsInput, setTagsInput] = useState(todo.tags.join(', '));
+  const [listId, setListId] = useState<string>(todo.listId ?? '');
+  const [sectionId, setSectionId] = useState<string>(todo.sectionId ?? '');
   const [dueOn, setDueOn] = useState(todo.dueOn ?? '');
   const [dueTime, setDueTime] = useState(todo.dueTime ?? '');
   const [remind, setRemind] = useState(todo.remindAt !== null || todo.dueOn === null);
   const [remindTouched, setRemindTouched] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   useEffect(() => titleRef.current?.focus(), []);
+  const selectedList = lists.find((l) => l.id === listId);
+  const availableSections = selectedList?.sections ?? [];
+  const parsedTags = parseTags(tagsInput);
   // A change not saved yet: the hand-over waits for it, so it never hands over a to-do other than the one shown.
   const dirty =
     title !== todo.title ||
     details !== todo.details ||
     JSON.stringify(steps) !== JSON.stringify(todo.checklist) ||
+    priority !== todo.priority ||
+    JSON.stringify(parsedTags) !== JSON.stringify(todo.tags) ||
+    (listId || null) !== todo.listId ||
+    (sectionId || null) !== todo.sectionId ||
     dueOn !== (todo.dueOn ?? '') ||
     dueTime !== (todo.dueTime ?? '') ||
     remind !== (todo.remindAt !== null || todo.dueOn === null) ||
     newStep.trim() !== '';
   // The values of one save are its variables, so an edit made while it runs does not change what it sends.
   const save = useMutation({
-    mutationFn: (v: { title: string; details: string; steps: TodoStep[]; dueOn: string; dueTime: string; remind: boolean; remindTouched: boolean }) =>
+    mutationFn: (v: {
+      title: string;
+      details: string;
+      steps: TodoStep[];
+      priority: TodoPriority;
+      tags: string[];
+      listId: string | null;
+      sectionId: string | null;
+      dueOn: string;
+      dueTime: string;
+      remind: boolean;
+      remindTouched: boolean;
+    }) =>
       client.notes.todos.update({
         todoId: todo.id,
         revision: todo.revision,
         title: v.title.trim(),
         details: v.details,
         checklist: v.steps,
+        priority: v.priority,
+        tags: v.tags,
+        listId: v.listId,
+        sectionId: v.listId === null ? null : v.sectionId,
         dueOn: v.dueOn || null,
         dueTime: v.dueOn && v.dueTime ? v.dueTime : null,
         // A due day is read in the zone the to-do was written in, unless it gets a new day here.
@@ -369,7 +457,21 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (title.trim()) save.mutate({ title, details, steps, dueOn, dueTime, remind, remindTouched });
+    if (title.trim()) {
+      save.mutate({
+        title,
+        details,
+        steps,
+        priority,
+        tags: parsedTags,
+        listId: listId || null,
+        sectionId: sectionId || null,
+        dueOn,
+        dueTime,
+        remind,
+        remindTouched,
+      });
+    }
   };
   return (
     <div className="mt-2 border-t pt-3" data-testid="todo-editor">
@@ -432,6 +534,89 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
             </Button>
           </div>
         </fieldset>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-xs">
+            <span className="text-subtle-foreground">{t('fieldPriority')}</span>
+            <NativeSelect
+              data-testid="todo-editor-priority"
+              aria-label={t('fieldPriority')}
+              value={String(priority)}
+              onChange={(e) => setPriority(Number(e.target.value) as TodoPriority)}
+              className="mt-1 h-9 w-full text-xs sm:h-8"
+            >
+              {TODO_PRIORITIES.map((p) => (
+                <NativeSelectOption key={p} value={String(p)}>
+                  {t(`priorities.p${p}`)}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </label>
+          <label className="block text-xs">
+            <span className="text-subtle-foreground">{t('fieldTags')}</span>
+            <Input
+              data-testid="todo-editor-tags"
+              aria-label={t('fieldTags')}
+              placeholder={t('tagsPlaceholder')}
+              value={tagsInput}
+              onChange={(e) => setTagsInput(e.target.value)}
+              className="mt-1 h-9 text-xs sm:h-8"
+            />
+          </label>
+        </div>
+        {parsedTags.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {parsedTags.map((tag) => (
+              <Badge key={tag} variant="outline" className="text-xs font-normal">
+                #{tag}
+              </Badge>
+            ))}
+          </div>
+        )}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-xs">
+            <span className="text-subtle-foreground">{t('fieldList')}</span>
+            <NativeSelect
+              data-testid="todo-editor-list"
+              aria-label={t('fieldList')}
+              value={listId}
+              onChange={(e) => {
+                const nextId = e.target.value;
+                setListId(nextId);
+                const nextList = lists.find((l) => l.id === nextId);
+                if (!nextList || !nextList.sections.some((s) => s.id === sectionId)) {
+                  setSectionId('');
+                }
+              }}
+              className="mt-1 h-9 w-full text-xs sm:h-8"
+            >
+              <NativeSelectOption value="">{t('listInbox')}</NativeSelectOption>
+              {lists.map((l) => (
+                <NativeSelectOption key={l.id} value={l.id}>
+                  {l.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </label>
+          {listId && availableSections.length > 0 && (
+            <label className="block text-xs">
+              <span className="text-subtle-foreground">{t('fieldSection')}</span>
+              <NativeSelect
+                data-testid="todo-editor-section"
+                aria-label={t('fieldSection')}
+                value={sectionId}
+                onChange={(e) => setSectionId(e.target.value)}
+                className="mt-1 h-9 w-full text-xs sm:h-8"
+              >
+                <NativeSelectOption value="">{t('noSection')}</NativeSelectOption>
+                {availableSections.map((s) => (
+                  <NativeSelectOption key={s.id} value={s.id}>
+                    {s.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </label>
+          )}
+        </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-xs">
             <span className="text-subtle-foreground">{t('fieldDueOn')}</span>
@@ -499,41 +684,306 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
   );
 }
 
-function EditorFor({ id, onClose }: { id: string; onClose: () => void }) {
+function EditorFor({ id, lists, onClose }: { id: string; lists: readonly TodoListSummary[]; onClose: () => void }) {
   const todo = useQuery(orpc.notes.todos.get.queryOptions({ input: { todoId: id } }));
   if (todo.isPending) return <ListSkeleton rows={1} />;
   if (todo.error) return <ErrorText>{errorMessage(todo.error)}</ErrorText>;
   // Keyed by revision, so a change saved elsewhere opens fresh.
-  return <TodoEditor key={`${todo.data.id}:${todo.data.revision}`} todo={todo.data} onClose={onClose} />;
+  return <TodoEditor key={`${todo.data.id}:${todo.data.revision}`} todo={todo.data} lists={lists} onClose={onClose} />;
 }
 
-function QuickAdd({ inputRef }: { inputRef: RefObject<HTMLInputElement | null> }) {
+function ListEditDialog({
+  mode,
+  list,
+  open,
+  onOpenChange,
+  onDeleted,
+  onCreated,
+}: {
+  mode: 'create' | 'edit';
+  list: TodoListSummary | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onDeleted: (deletedId: string) => void;
+  onCreated: (createdId: string) => void;
+}) {
+  const t = useTranslations('myWork');
+  const common = useTranslations('common');
+  const [name, setName] = useState(list?.name ?? '');
+  const [color, setColor] = useState<TodoListColor | null>(list?.color ?? null);
+  const [sections, setSections] = useState<TodoListSectionInput[]>(list?.sections ?? []);
+  const [newSection, setNewSection] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setName(list?.name ?? '');
+    setColor(list?.color ?? null);
+    setSections(list?.sections ?? []);
+    setNewSection('');
+    setConfirmDelete(false);
+  }, [open, list]);
+
+  const create = useMutation({
+    mutationFn: (v: { name: string; color: TodoListColor | null; sections: TodoListSectionInput[] }) =>
+      client.notes.todos.lists.create({ name: v.name, color: v.color, sections: v.sections }),
+    onSuccess: (res, v) => {
+      refresh();
+      toast(t('listCreatedToast', { name: v.name }), 'success');
+      onCreated(res.listId);
+      onOpenChange(false);
+    },
+  });
+
+  const update = useMutation({
+    mutationFn: (v: { listId: string; revision: number; name: string; color: TodoListColor | null; sections: TodoListSectionInput[] }) =>
+      client.notes.todos.lists.update(v),
+    onSuccess: (_res, v) => {
+      refresh();
+      toast(t('listUpdatedToast', { name: v.name }), 'success');
+      onOpenChange(false);
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: (listId: string) => client.notes.todos.lists.delete({ listId }),
+    onSuccess: (_res, listId) => {
+      refresh();
+      toast(t('listDeletedToast', { name: list?.name ?? name }), 'success');
+      onDeleted(listId);
+      onOpenChange(false);
+    },
+  });
+
+  const addSection = () => {
+    const trimmed = newSection.trim();
+    if (!trimmed || sections.length >= TODO_LIST_SECTIONS_MAX) return;
+    setSections([...sections, { name: trimmed }]);
+    setNewSection('');
+  };
+
+  const moveSection = (index: number, delta: -1 | 1) => {
+    const target = index + delta;
+    if (target < 0 || target >= sections.length) return;
+    const copy = [...sections];
+    const [picked] = copy.splice(index, 1);
+    if (!picked) return;
+    copy.splice(target, 0, picked);
+    setSections(copy);
+  };
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const cleanSections = sections
+      .map((s) => ({ ...(s.id ? { id: s.id } : {}), name: s.name.trim() }))
+      .filter((s) => s.name !== '');
+    if (mode === 'create' || !list) {
+      if (!create.isPending) create.mutate({ name: trimmed, color, sections: cleanSections });
+    } else if (!update.isPending) {
+      update.mutate({ listId: list.id, revision: list.revision, name: trimmed, color, sections: cleanSections });
+    }
+  };
+
+  const busy = create.isPending || update.isPending || remove.isPending;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent closeLabel={common('close')} className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{mode === 'create' ? t('newList') : t('editList')}</DialogTitle>
+          <DialogDescription className="sr-only">{mode === 'create' ? t('newList') : t('editList')}</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-4">
+          <label className="block text-xs">
+            <span className="text-subtle-foreground">{t('listNameLabel')}</span>
+            <Input
+              autoFocus
+              required
+              maxLength={TODO_LIST_NAME_MAX}
+              placeholder={t('newListPlaceholder')}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              data-testid="list-dialog-name"
+              className="mt-1"
+            />
+          </label>
+          <div className="space-y-1.5 text-xs">
+            <span className="block text-subtle-foreground">{t('listColorLabel')}</span>
+            <div className="flex flex-wrap gap-1.5">
+              <Button
+                type="button"
+                size="sm"
+                variant={color === null ? 'secondary' : 'outline'}
+                onClick={() => setColor(null)}
+              >
+                {t('listColorNone')}
+              </Button>
+              {TODO_LIST_COLORS.map((c) => (
+                <Button
+                  key={c}
+                  type="button"
+                  size="sm"
+                  variant={color === c ? 'secondary' : 'outline'}
+                  onClick={() => setColor(c)}
+                  data-testid={`list-color-${c}`}
+                >
+                  <span className={cn('size-2.5 rounded-full', LIST_COLOR_DOT[c])} aria-hidden="true" />
+                  {t(`listColors.${c}`)}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <fieldset className="space-y-2">
+            <legend className="text-xs text-subtle-foreground">{t('sectionsTitle')}</legend>
+            {sections.length > 0 && (
+              <ul className="space-y-1.5">
+                {sections.map((s, i) => (
+                  <li key={s.id ?? `new-${i}`} className="flex items-center gap-1.5" data-testid="list-dialog-section-row">
+                    <Input
+                      aria-label={t('renameSection')}
+                      maxLength={TODO_LIST_SECTION_NAME_MAX}
+                      value={s.name}
+                      onChange={(e) => setSections(sections.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
+                      className="h-8 text-xs"
+                    />
+                    <Button type="button" size="icon-xs" variant="ghost" disabled={i === 0} aria-label={t('moveSectionUp', { name: s.name })} onClick={() => moveSection(i, -1)}>
+                      <ProjectIcon name="arrowUp" className="size-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      disabled={i === sections.length - 1}
+                      aria-label={t('moveSectionDown', { name: s.name })}
+                      onClick={() => moveSection(i, 1)}
+                    >
+                      <ProjectIcon name="arrowDown" className="size-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label={t('removeSection', { name: s.name })}
+                      onClick={() => setSections(sections.filter((_, j) => j !== i))}
+                    >
+                      <ProjectIcon name="remove" className="size-3.5" />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex gap-2">
+              <Input
+                aria-label={t('addSectionPlaceholder')}
+                placeholder={t('addSectionPlaceholder')}
+                maxLength={TODO_LIST_SECTION_NAME_MAX}
+                value={newSection}
+                onChange={(e) => setNewSection(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addSection();
+                  }
+                }}
+                data-testid="list-dialog-new-section"
+                className="h-8 text-xs"
+              />
+              <Button type="button" size="sm" variant="outline" onClick={addSection} disabled={!newSection.trim() || sections.length >= TODO_LIST_SECTIONS_MAX} data-testid="list-dialog-add-section">
+                {t('addSection')}
+              </Button>
+            </div>
+          </fieldset>
+          {mode === 'edit' && list && confirmDelete && (
+            <Alert className="border-destructive/30 bg-destructive/5">
+              <AlertDescription className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span>{t('deleteListHint', { name: list.name })}</span>
+                <Button type="button" size="sm" variant="destructive" disabled={busy} onClick={() => remove.mutate(list.id)} data-testid="list-dialog-confirm-delete">
+                  {t('deleteListConfirm')}
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+          {(create.error || update.error || remove.error) && <ErrorText>{errorMessage(create.error ?? update.error ?? remove.error)}</ErrorText>}
+          <DialogFooter className="flex-wrap gap-2">
+            {mode === 'edit' && list && !confirmDelete && (
+              <Button type="button" variant="destructive" className="mr-auto" disabled={busy} onClick={() => setConfirmDelete(true)} data-testid="list-dialog-delete">
+                {t('deleteList')}
+              </Button>
+            )}
+            <DialogClose render={<Button type="button" variant="outline" disabled={busy}>{common('cancel')}</Button>} />
+            <Button type="submit" loading={create.isPending || update.isPending} disabled={busy || !name.trim()} data-testid="list-dialog-save">
+              {t('save')}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function QuickAdd({
+  inputRef,
+  listId,
+  sectionId = null,
+  label,
+}: {
+  inputRef?: RefObject<HTMLInputElement | null>;
+  listId: string | null;
+  sectionId?: string | null;
+  label?: string;
+}) {
   const t = useTranslations('myWork');
   const [title, setTitle] = useState('');
+  const [priority, setPriority] = useState<TodoPriority>(4);
   const create = useMutation({
-    mutationFn: (value: string) => client.notes.todos.create({ title: value, timeZone: browserTimeZone() }),
+    mutationFn: (v: { title: string; priority: TodoPriority }) =>
+      client.notes.todos.create({
+        title: v.title,
+        timeZone: browserTimeZone(),
+        priority: v.priority,
+        listId,
+        sectionId,
+      }),
     // Only what was sent is cleared: a title typed meanwhile stays.
     onSuccess: (_, sent) => {
-      setTitle((current) => (current.trim() === sent ? '' : current));
+      setTitle((current) => (current.trim() === sent.title ? '' : current));
       refresh();
     },
   });
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const value = title.trim();
-    if (value && !create.isPending) create.mutate(value);
+    if (value && !create.isPending) create.mutate({ title: value, priority });
   };
   return (
-    <form onSubmit={submit} className="mb-4">
-      <Input
-        ref={inputRef}
-        aria-label={t('quickAdd')}
-        placeholder={t('quickAdd')}
-        maxLength={300}
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        onKeyDown={(e) => e.key === 'Escape' && e.currentTarget.blur()}
-      />
+    <form onSubmit={submit} className="space-y-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          ref={inputRef}
+          aria-label={label ?? t('quickAdd')}
+          placeholder={label ?? t('quickAdd')}
+          maxLength={300}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => e.key === 'Escape' && e.currentTarget.blur()}
+          className="min-w-0 flex-1"
+        />
+        <NativeSelect
+          aria-label={t('fieldPriority')}
+          data-testid={sectionId ? `quick-add-priority-${sectionId}` : 'quick-add-priority'}
+          value={String(priority)}
+          onChange={(e) => setPriority(Number(e.target.value) as TodoPriority)}
+          className="h-9 w-28 shrink-0 text-xs sm:h-9"
+        >
+          {TODO_PRIORITIES.map((p) => (
+            <NativeSelectOption key={p} value={String(p)}>
+              {t(`priorities.p${p}`)}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </div>
       {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
     </form>
   );
@@ -545,20 +995,51 @@ export function MyWorkPage() {
   const common = useTranslations('common');
   const f = useFormat();
   const [view, setView] = useState<TodoListView>('open');
+  const [listFilter, setListFilter] = useState<'all' | 'inbox' | string>('all');
+  const [tagFilter, setTagFilter] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState<TodoPriority | null>(null);
+  const [sortMode, setSortMode] = useState<TodoListSort>('manual');
   const [projectFilter, setProjectFilter] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const [listDialog, setListDialog] = useState<{ mode: 'create'; list: null } | { mode: 'edit'; list: TodoListSummary } | null>(null);
   const quickAdd = useRef<HTMLInputElement>(null);
   const live = useStreamLive();
   // Read again every minute while the stream is down, and every few minutes anyway: the groups move with the clock
   // (midnight, a due time passing), which sends no hint. The open view also brings the tasks of my positions.
   const refetchInterval = pollEvery(live, 60_000, SAFETY_POLL_MS);
-  const work = useQuery({ ...orpc.notes.todos.myWork.queryOptions({ input: { timeZone: browserTimeZone() } }), refetchInterval, enabled: view === 'open' });
-  const closed = useQuery({ ...orpc.notes.todos.list.queryOptions({ input: { view, limit: LIST_LIMIT } }), refetchInterval, enabled: view !== 'open' });
+  const listsQuery = useQuery({ ...orpc.notes.todos.lists.list.queryOptions({ input: {} }), refetchInterval });
+  const personalLists = listsQuery.data?.lists ?? [];
+  const activeList = listFilter !== 'all' && listFilter !== 'inbox' ? personalLists.find((l) => l.id === listFilter) : undefined;
+  const effectiveListFilter = listFilter === 'all' || listFilter === 'inbox' || activeList ? listFilter : 'all';
+  const listById = useMemo(() => new Map(personalLists.map((l) => [l.id, l])), [personalLists]);
+
+  const myWorkInput = useMemo(
+    () => ({
+      timeZone: browserTimeZone(),
+      ...(effectiveListFilter !== 'all' ? { listId: effectiveListFilter } : {}),
+      ...(tagFilter ? { tag: tagFilter } : {}),
+      ...(priorityFilter !== null ? { priority: priorityFilter } : {}),
+      ...(sortMode === 'priority' ? { sort: 'priority' as const } : {}),
+    }),
+    [effectiveListFilter, tagFilter, priorityFilter, sortMode],
+  );
+  const closedInput = useMemo(
+    () => ({
+      view,
+      limit: LIST_LIMIT,
+      ...(effectiveListFilter !== 'all' ? { listId: effectiveListFilter } : {}),
+      ...(tagFilter ? { tag: tagFilter } : {}),
+      ...(priorityFilter !== null ? { priority: priorityFilter } : {}),
+    }),
+    [view, effectiveListFilter, tagFilter, priorityFilter],
+  );
+  const work = useQuery({ ...orpc.notes.todos.myWork.queryOptions({ input: myWorkInput }), refetchInterval, enabled: view === 'open' });
+  const closed = useQuery({ ...orpc.notes.todos.list.queryOptions({ input: closedInput }), refetchInterval, enabled: view !== 'open' });
   const list = view === 'open' ? work : closed;
   const chart = useQuery({ ...orpc.chart.get.queryOptions(), enabled: (work.data?.tasks.length ?? 0) > 0 });
   const todos = useMemo(() => (view === 'open' ? (work.data?.todos ?? []) : (closed.data ?? [])), [view, work.data, closed.data]);
-  const tasks = useMemo(() => (view === 'open' ? (work.data?.tasks ?? []) : []), [view, work.data]);
+  const tasks = useMemo(() => (view === 'open' && effectiveListFilter === 'all' ? (work.data?.tasks ?? []) : []), [view, effectiveListFilter, work.data]);
   const projectsActive = projectsInstalled() && work.data?.projectsAvailable !== false;
   const projectOptions = useMemo(() => (projectsActive ? myWorkProjects(tasks) : []), [projectsActive, tasks]);
   const effectiveProjectFilter =
@@ -567,9 +1048,28 @@ export function MyWorkPage() {
     () => (view === 'open' ? filterMyWork(todos, tasks, effectiveProjectFilter) : { todos, tasks }),
     [view, todos, tasks, effectiveProjectFilter],
   );
-  const groups = useMemo(() => (view === 'open' ? groupTodos(filtered.todos, filtered.tasks) : []), [view, filtered.todos, filtered.tasks]);
+  const groups = useMemo(() => (view === 'open' && !activeList ? groupTodos(filtered.todos, filtered.tasks) : []), [view, activeList, filtered.todos, filtered.tasks]);
+  const sectionGroups = useMemo(
+    () => (view === 'open' && activeList ? groupTodosBySection(filtered.todos, activeList.sections) : []),
+    [view, activeList, filtered.todos],
+  );
+  const tagChips = useMemo(() => {
+    const counts = tagCounts(todos);
+    if (tagFilter && !counts.some((c) => c.tag === tagFilter)) {
+      return [{ tag: tagFilter, count: todos.length }, ...counts];
+    }
+    return counts;
+  }, [todos, tagFilter]);
   // The order J and K walk: as the screen shows the rows.
-  const order = useMemo(() => (view === 'open' ? groups.flatMap((g) => g.items.map((i) => i.id)) : todos.map((i) => i.id)), [view, groups, todos]);
+  const order = useMemo(
+    () =>
+      view === 'open'
+        ? activeList
+          ? sectionGroups.flatMap((s) => s.items.map((i) => i.id))
+          : groups.flatMap((g) => g.items.map((i) => i.id))
+        : todos.map((i) => i.id),
+    [view, activeList, sectionGroups, groups, todos],
+  );
   const visibleSelected = selected && order.includes(selected) ? selected : null;
 
   const act = useMutation({
@@ -628,15 +1128,16 @@ export function MyWorkPage() {
   }, [visibleSelected]);
 
   const row = (todo: TodoSummary, group: readonly TodoSummary[]) => {
-    const up = view === 'open' ? moveTarget(group, todo.id, 'up') : null;
-    const down = view === 'open' ? moveTarget(group, todo.id, 'down') : null;
+    const up = view === 'open' && sortMode === 'manual' ? moveTarget(group, todo.id, 'up') : null;
+    const down = view === 'open' && sortMode === 'manual' ? moveTarget(group, todo.id, 'down') : null;
+    const todoList = todo.listId ? listById.get(todo.listId) : undefined;
     return (
       <li
         key={todo.id}
         data-todo-id={todo.id}
         data-testid="todo-row"
         aria-current={visibleSelected === todo.id ? 'true' : undefined}
-        className={cn('flex flex-wrap items-center gap-3 px-4 py-2', visibleSelected === todo.id && 'bg-primary/5 ring-1 ring-primary/40 ring-inset')}
+        className={cn('flex flex-wrap items-center gap-2 px-4 py-2 sm:gap-3', visibleSelected === todo.id && 'bg-primary/5 ring-1 ring-primary/40 ring-inset')}
       >
         {(view === 'open' || view === 'done') && (todo.status === 'open' || todo.status === 'done') ? (
           <Checkbox
@@ -660,6 +1161,40 @@ export function MyWorkPage() {
         >
           {todo.title}
         </button>
+        <PriorityBadge priority={todo.priority} />
+        {todo.tags.map((tag) => (
+          <Button
+            key={tag}
+            type="button"
+            variant={tagFilter === tag ? 'secondary' : 'outline'}
+            size="sm"
+            data-testid="todo-tag-chip"
+            aria-label={t('tagShow', { tag })}
+            onClick={() => {
+              setTagFilter((current) => (current === tag ? '' : tag));
+              setSelected(null);
+            }}
+            className="h-auto rounded-full px-2 py-0.5 text-xs font-normal"
+          >
+            #{tag}
+          </Button>
+        ))}
+        {effectiveListFilter === 'all' && todoList && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-testid="todo-list-badge"
+            onClick={() => {
+              setListFilter(todoList.id);
+              setSelected(null);
+            }}
+            className="h-auto gap-1.5 rounded-full px-2 py-0.5 text-xs text-subtle-foreground"
+          >
+            <span className={cn('size-2 rounded-full', LIST_COLOR_DOT[todoList.color ?? 'slate'])} aria-hidden="true" />
+            <span className="max-w-28 truncate">{todoList.name}</span>
+          </Button>
+        )}
         {todo.steps.total > 0 && (
           <span className="text-xs text-subtle-foreground" aria-label={t('stepsDone', { done: String(todo.steps.done), total: String(todo.steps.total) })}>
             {todo.steps.done}/{todo.steps.total}
@@ -697,124 +1232,353 @@ export function MyWorkPage() {
         {editing === todo.id && (
           <div className="basis-full">
             {/* A save or delete that ends after another to-do was opened leaves that one's editor open. */}
-            <EditorFor id={todo.id} onClose={() => setEditing((current) => (current === todo.id ? null : current))} />
+            <EditorFor id={todo.id} lists={personalLists} onClose={() => setEditing((current) => (current === todo.id ? null : current))} />
           </div>
         )}
       </li>
     );
   };
 
+  const hasFilters = tagFilter !== '' || priorityFilter !== null || effectiveProjectFilter !== '';
+
   return (
     <div className="space-y-4">
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
       <NotesSubnav slug={slug} active="my-work" />
-      <QuickAdd inputRef={quickAdd} />
-      {view === 'open' && work.data?.noSeatHint && (
-        <Alert className="border-border bg-muted/35" data-testid="my-work-no-seat-hint">
-          <AlertDescription className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground">
-            <span>{t('noSeatHint')}</span>
-            <Link
-              to="/o/$slug/agents"
-              params={{ slug }}
-              className="rounded font-medium text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      <div className="grid gap-4 md:grid-cols-[220px_minmax(0,1fr)] md:items-start">
+        <aside aria-label={t('listsTitle')} data-testid="my-work-lists-sidebar" className="space-y-2">
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-xs font-medium tracking-wide text-subtle-foreground uppercase">{t('listsTitle')}</h2>
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              data-testid="new-list-button"
+              onClick={() => setListDialog({ mode: 'create', list: null })}
             >
-              {t('openOrgChart')}
-            </Link>
-          </AlertDescription>
-        </Alert>
-      )}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Tabs
-          value={view}
-          onValueChange={(value) => {
-            setView(value as TodoListView);
-            setSelected(null);
-            setEditing(null);
-          }}
-        >
-          <TabsList>
-            <TabsTrigger value="open">{t('viewOpen')}</TabsTrigger>
-            <TabsTrigger value="done">{t('viewDone')}</TabsTrigger>
-            <TabsTrigger value="trash">{t('viewTrash')}</TabsTrigger>
-          </TabsList>
-        </Tabs>
-        {view === 'open' && projectsActive && projectOptions.length > 0 && (
-          <div className="flex min-w-44 items-center gap-2">
-            <Label htmlFor="my-work-project-filter" className="sr-only">
-              {t('projectFilter')}
-            </Label>
-            <NativeSelect
-              id="my-work-project-filter"
-              aria-label={t('projectFilter')}
-              data-testid="my-work-project-filter"
-              value={effectiveProjectFilter}
-              onChange={(e) => {
-                setProjectFilter(e.target.value);
+              <ProjectIcon name="plus" className="size-3.5" />
+              {t('newList')}
+            </Button>
+          </div>
+          <nav className="flex flex-wrap gap-1.5 md:flex-col md:gap-1" aria-label={t('listsTitle')}>
+            <Button
+              type="button"
+              variant={effectiveListFilter === 'all' ? 'secondary' : 'ghost'}
+              size="sm"
+              data-testid="list-nav-all"
+              aria-current={effectiveListFilter === 'all' ? 'page' : undefined}
+              onClick={() => {
+                setListFilter('all');
                 setSelected(null);
                 setEditing(null);
               }}
-              className="h-9 w-full text-xs sm:h-8"
+              className="justify-between md:w-full"
             >
-              <NativeSelectOption value="">{t('allProjects')}</NativeSelectOption>
-              {projectOptions.map((project) => (
-                <NativeSelectOption key={project.id} value={project.id}>
-                  {project.name}
-                </NativeSelectOption>
-              ))}
-              <NativeSelectOption value="none">{t('noProject')}</NativeSelectOption>
-            </NativeSelect>
-          </div>
-        )}
-      </div>
-      {list.isPending ? (
-        <ListSkeleton />
-      ) : list.error ? (
-        <ErrorText>{errorMessage(list.error)}</ErrorText>
-      ) : filtered.todos.length === 0 && filtered.tasks.length === 0 ? (
-        <Empty
-          title={
-            view === 'open'
-              ? effectiveProjectFilter
-                ? t('emptyProjectFilter')
-                : t('empty')
-              : view === 'done'
-                ? t('emptyDone')
-                : t('emptyTrash')
-          }
-          hint={view === 'open' ? (effectiveProjectFilter ? t('emptyProjectFilterHint') : t('emptyHint')) : undefined}
-        />
-      ) : view === 'open' ? (
-        groups.map((g) => (
-          <section key={g.id} aria-labelledby={`todo-group-${g.id}`} data-testid={`todo-group-${g.id}`}>
-            <h2 id={`todo-group-${g.id}`} className={cn('mb-1 text-sm font-medium', g.id === 'overdue' ? 'text-destructive' : 'text-foreground')}>
-              {t(`groups.${g.id}`)} <span className="text-subtle-foreground">({g.items.length + g.tasks.length})</span>
-            </h2>
-            <Card className="block p-0">
-              <ul className="divide-y">
-                {g.items.map((todo) => row(todo, g.items))}
-                {g.tasks.map((task) => (
-                  <TaskRow key={task.id} task={task} slug={slug} chart={chart.data} projectsActive={projectsActive} />
+              <span className="truncate">{t('listAll')}</span>
+            </Button>
+            <Button
+              type="button"
+              variant={effectiveListFilter === 'inbox' ? 'secondary' : 'ghost'}
+              size="sm"
+              data-testid="list-nav-inbox"
+              aria-current={effectiveListFilter === 'inbox' ? 'page' : undefined}
+              onClick={() => {
+                setListFilter('inbox');
+                setSelected(null);
+                setEditing(null);
+              }}
+              className="justify-between gap-2 md:w-full"
+            >
+              <span className="truncate">{t('listInbox')}</span>
+              {listsQuery.data && <span className="text-xs text-subtle-foreground">{listsQuery.data.inboxCount}</span>}
+            </Button>
+            {personalLists.map((item) => (
+              <div key={item.id} className="flex items-center gap-1 md:w-full">
+                <Button
+                  type="button"
+                  variant={effectiveListFilter === item.id ? 'secondary' : 'ghost'}
+                  size="sm"
+                  data-testid="list-nav-item"
+                  aria-current={effectiveListFilter === item.id ? 'page' : undefined}
+                  onClick={() => {
+                    setListFilter(item.id);
+                    setSelected(null);
+                    setEditing(null);
+                  }}
+                  className="min-w-0 flex-1 justify-between gap-2"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className={cn('size-2.5 shrink-0 rounded-full', LIST_COLOR_DOT[item.color ?? 'slate'])} aria-hidden="true" />
+                    <span className="truncate">{item.name}</span>
+                  </span>
+                  <span className="text-xs text-subtle-foreground">{item.openCount}</span>
+                </Button>
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  data-testid="list-edit-button"
+                  aria-label={`${t('editList')}: ${item.name}`}
+                  onClick={() => setListDialog({ mode: 'edit', list: item })}
+                >
+                  <ProjectIcon name="edit" className="size-3.5" />
+                </Button>
+              </div>
+            ))}
+          </nav>
+        </aside>
+
+        <div className="min-w-0 space-y-4">
+          {activeList && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-2" data-testid="selected-list-header">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className={cn('size-3 shrink-0 rounded-full', LIST_COLOR_DOT[activeList.color ?? 'slate'])} aria-hidden="true" />
+                <h2 className="truncate text-base font-medium text-foreground">{activeList.name}</h2>
+              </div>
+              <Button type="button" size="sm" variant="outline" data-testid="edit-selected-list-button" onClick={() => setListDialog({ mode: 'edit', list: activeList })}>
+                <ProjectIcon name="edit" className="size-3.5" />
+                {t('editList')}
+              </Button>
+            </div>
+          )}
+          <QuickAdd inputRef={quickAdd} listId={activeList ? activeList.id : null} />
+          {view === 'open' && effectiveListFilter === 'all' && work.data?.noSeatHint && (
+            <Alert className="border-border bg-muted/35" data-testid="my-work-no-seat-hint">
+              <AlertDescription className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground">
+                <span>{t('noSeatHint')}</span>
+                <Link
+                  to="/o/$slug/agents"
+                  params={{ slug }}
+                  className="rounded font-medium text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                >
+                  {t('openOrgChart')}
+                </Link>
+              </AlertDescription>
+            </Alert>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Tabs
+              value={view}
+              onValueChange={(value) => {
+                setView(value as TodoListView);
+                setSelected(null);
+                setEditing(null);
+              }}
+            >
+              <TabsList>
+                <TabsTrigger value="open">{t('viewOpen')}</TabsTrigger>
+                <TabsTrigger value="done">{t('viewDone')}</TabsTrigger>
+                <TabsTrigger value="trash">{t('viewTrash')}</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <div className="flex flex-wrap items-center gap-2">
+              <Label htmlFor="my-work-priority-filter" className="sr-only">
+                {t('priorityFilter')}
+              </Label>
+              <NativeSelect
+                id="my-work-priority-filter"
+                aria-label={t('priorityFilter')}
+                data-testid="my-work-priority-filter"
+                value={priorityFilter === null ? '' : String(priorityFilter)}
+                onChange={(e) => {
+                  setPriorityFilter(e.target.value ? (Number(e.target.value) as TodoPriority) : null);
+                  setSelected(null);
+                }}
+                className="h-9 w-36 text-xs sm:h-8"
+              >
+                <NativeSelectOption value="">{t('allPriorities')}</NativeSelectOption>
+                {TODO_PRIORITIES.map((p) => (
+                  <NativeSelectOption key={p} value={String(p)}>
+                    {t(`priorities.p${p}`)}
+                  </NativeSelectOption>
                 ))}
-              </ul>
+              </NativeSelect>
+              {view === 'open' && (
+                <>
+                  <Label htmlFor="my-work-sort" className="sr-only">
+                    {t('sortLabel')}
+                  </Label>
+                  <NativeSelect
+                    id="my-work-sort"
+                    aria-label={t('sortLabel')}
+                    data-testid="my-work-sort"
+                    value={sortMode}
+                    onChange={(e) => {
+                      setSortMode(e.target.value as TodoListSort);
+                      setSelected(null);
+                    }}
+                    className="h-9 w-36 text-xs sm:h-8"
+                  >
+                    <NativeSelectOption value="manual">{t('sortManual')}</NativeSelectOption>
+                    <NativeSelectOption value="priority">{t('sortPriority')}</NativeSelectOption>
+                  </NativeSelect>
+                </>
+              )}
+              {view === 'open' && effectiveListFilter === 'all' && projectsActive && projectOptions.length > 0 && (
+                <div className="flex min-w-44 items-center gap-2">
+                  <Label htmlFor="my-work-project-filter" className="sr-only">
+                    {t('projectFilter')}
+                  </Label>
+                  <NativeSelect
+                    id="my-work-project-filter"
+                    aria-label={t('projectFilter')}
+                    data-testid="my-work-project-filter"
+                    value={effectiveProjectFilter}
+                    onChange={(e) => {
+                      setProjectFilter(e.target.value);
+                      setSelected(null);
+                      setEditing(null);
+                    }}
+                    className="h-9 w-full text-xs sm:h-8"
+                  >
+                    <NativeSelectOption value="">{t('allProjects')}</NativeSelectOption>
+                    {projectOptions.map((project) => (
+                      <NativeSelectOption key={project.id} value={project.id}>
+                        {project.name}
+                      </NativeSelectOption>
+                    ))}
+                    <NativeSelectOption value="none">{t('noProject')}</NativeSelectOption>
+                  </NativeSelect>
+                </div>
+              )}
+            </div>
+          </div>
+          {tagChips.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5" data-testid="my-work-tag-bar">
+              {tagChips.map(({ tag, count }) => (
+                <Button
+                  key={tag}
+                  type="button"
+                  size="sm"
+                  variant={tagFilter === tag ? 'secondary' : 'outline'}
+                  data-testid={`tag-filter-${tag}`}
+                  aria-pressed={tagFilter === tag}
+                  onClick={() => {
+                    setTagFilter((current) => (current === tag ? '' : tag));
+                    setSelected(null);
+                  }}
+                  className="h-auto rounded-full px-2.5 py-0.5 text-xs"
+                >
+                  #{tag} ({count})
+                </Button>
+              ))}
+              {tagFilter && (
+                <Button type="button" size="sm" variant="ghost" onClick={() => setTagFilter('')} className="h-auto px-2 py-0.5 text-xs">
+                  {t('clearTagFilter', { tag: tagFilter })}
+                </Button>
+              )}
+            </div>
+          )}
+          {list.isPending ? (
+            <ListSkeleton />
+          ) : list.error ? (
+            <ErrorText>{errorMessage(list.error)}</ErrorText>
+          ) : activeList && view === 'open' ? (
+            sectionGroups.every((s) => s.items.length === 0) && activeList.sections.length === 0 ? (
+              <Empty
+                title={hasFilters ? t('emptyFiltered') : t('emptyList')}
+                hint={hasFilters ? t('emptyFilteredHint') : t('emptyListHint')}
+              />
+            ) : (
+              sectionGroups.map((sec) => (
+                <section
+                  key={sec.id ?? 'unsectioned'}
+                  aria-labelledby={sec.id ? `todo-section-${sec.id}` : undefined}
+                  data-testid={sec.id ? `todo-section-${sec.id}` : 'todo-section-unsectioned'}
+                  className="space-y-2"
+                >
+                  {(sec.name !== null || activeList.sections.length > 0) && (
+                    <h3 id={sec.id ? `todo-section-${sec.id}` : undefined} className="text-sm font-medium text-foreground">
+                      {sec.name ?? t('unsectioned')} <span className="text-subtle-foreground">({sec.items.length})</span>
+                    </h3>
+                  )}
+                  <Card className="block p-0">
+                    {sec.items.length > 0 && <ul className="divide-y">{sec.items.map((todo) => row(todo, sec.items))}</ul>}
+                    {sec.id !== null && (
+                      <div className={cn('p-3', sec.items.length > 0 && 'border-t')}>
+                        <QuickAdd listId={activeList.id} sectionId={sec.id} label={t('quickAddInSection', { name: sec.name ?? '' })} />
+                      </div>
+                    )}
+                  </Card>
+                </section>
+              ))
+            )
+          ) : filtered.todos.length === 0 && filtered.tasks.length === 0 ? (
+            <Empty
+              title={
+                view === 'open'
+                  ? effectiveProjectFilter
+                    ? t('emptyProjectFilter')
+                    : hasFilters
+                      ? t('emptyFiltered')
+                      : t('empty')
+                  : view === 'done'
+                    ? t('emptyDone')
+                    : t('emptyTrash')
+              }
+              hint={
+                view === 'open'
+                  ? effectiveProjectFilter
+                    ? t('emptyProjectFilterHint')
+                    : hasFilters
+                      ? t('emptyFilteredHint')
+                      : t('emptyHint')
+                  : undefined
+              }
+            />
+          ) : view === 'open' ? (
+            groups.map((g) => (
+              <section key={g.id} aria-labelledby={`todo-group-${g.id}`} data-testid={`todo-group-${g.id}`}>
+                <h2 id={`todo-group-${g.id}`} className={cn('mb-1 text-sm font-medium', g.id === 'overdue' ? 'text-destructive' : 'text-foreground')}>
+                  {t(`groups.${g.id}`)} <span className="text-subtle-foreground">({g.items.length + g.tasks.length})</span>
+                </h2>
+                <Card className="block p-0">
+                  <ul className="divide-y">
+                    {g.items.map((todo) => row(todo, g.items))}
+                    {g.tasks.map((task) => (
+                      <TaskRow key={task.id} task={task} slug={slug} chart={chart.data} projectsActive={projectsActive} />
+                    ))}
+                  </ul>
+                </Card>
+              </section>
+            ))
+          ) : (
+            <Card className="block p-0">
+              <ul className="divide-y">{todos.map((todo) => row(todo, todos))}</ul>
             </Card>
-          </section>
-        ))
-      ) : (
-        <Card className="block p-0">
-          <ul className="divide-y">{todos.map((todo) => row(todo, todos))}</ul>
-        </Card>
+          )}
+          {(!effectiveProjectFilter || view !== 'open') && todos.length >= LIST_LIMIT && <p className="text-xs text-subtle-foreground">{t('truncated', { count: String(LIST_LIMIT) })}</p>}
+          {view === 'open' && effectiveListFilter === 'all' && work.data?.tasksTruncated && (
+            <p className="text-xs text-subtle-foreground">
+              {t('tasksTruncated')}{' '}
+              <Link to="/o/$slug/tasks" params={{ slug }} search={{ filter: 'mine' }} className="text-link underline">
+                {t('openTasks')}
+              </Link>
+            </p>
+          )}
+          {act.error && <ErrorText>{errorMessage(act.error)}</ErrorText>}
+          <p className="text-xs text-subtle-foreground">{t('shortcuts')}</p>
+        </div>
+      </div>
+      {listDialog && (
+        <ListEditDialog
+          mode={listDialog.mode}
+          list={listDialog.list}
+          open={listDialog !== null}
+          onOpenChange={(open) => {
+            if (!open) setListDialog(null);
+          }}
+          onCreated={(createdId) => {
+            setListFilter(createdId);
+            setView('open');
+            setSelected(null);
+          }}
+          onDeleted={(deletedId) => {
+            if (listFilter === deletedId) setListFilter('all');
+            setSelected(null);
+          }}
+        />
       )}
-      {(!effectiveProjectFilter || view !== 'open') && todos.length >= LIST_LIMIT && <p className="text-xs text-subtle-foreground">{t('truncated', { count: String(LIST_LIMIT) })}</p>}
-      {view === 'open' && work.data?.tasksTruncated && (
-        <p className="text-xs text-subtle-foreground">
-          {t('tasksTruncated')}{' '}
-          <Link to="/o/$slug/tasks" params={{ slug }} search={{ filter: 'mine' }} className="text-link underline">
-            {t('openTasks')}
-          </Link>
-        </p>
-      )}
-      {act.error && <ErrorText>{errorMessage(act.error)}</ErrorText>}
-      <p className="text-xs text-subtle-foreground">{t('shortcuts')}</p>
     </div>
   );
 }

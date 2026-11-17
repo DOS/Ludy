@@ -8,7 +8,7 @@
 // answer never grows past what the server and the browser can hold).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { NOTES_EXPORT_LIMIT, NOTES_EXPORT_TEXT, type NotesExport } from '@crove/kernel-contract';
+import { NOTES_EXPORT_LIMIT, NOTES_EXPORT_TEXT, type NotesExport, type TodoPriority } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
 
@@ -44,7 +44,12 @@ export const notesExportMine = defineQuery({
     const { rows: todoIds } = await sql<{ id: string; fits: boolean }>`
       SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT - used}) AS fits FROM (
         SELECT id, pg_catalog.row_number() OVER w AS n,
-               pg_catalog.sum(pg_catalog.length(title) + COALESCE(pg_catalog.length(details), 0) + pg_catalog.length(checklist::text)) OVER w AS running
+               pg_catalog.sum(
+                 pg_catalog.length(title)
+                 + COALESCE(pg_catalog.length(details), 0)
+                 + pg_catalog.length(checklist::text)
+                 + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))
+               ) OVER w AS running
           FROM crove_notes.todo
          WHERE org_id = ${ctx.orgId}::uuid AND owner_user_id = ${userId}::uuid
         WINDOW w AS (ORDER BY created_at DESC, id)) t
@@ -68,7 +73,7 @@ export const notesExportMine = defineQuery({
         ? []
         : await ctx.trx
             .selectFrom('crove_notes.todo')
-            .select(['id', 'title', 'details', 'checklist', 'status', 'due_on', 'due_at', 'time_zone', 'remind_at', 'created_at', 'updated_at', 'done_at', 'deleted_at', 'source_note_id', 'task_id'])
+            .select(['id', 'title', 'details', 'checklist', 'status', 'priority', 'tags', 'list_id', 'section_id', 'due_on', 'due_at', 'time_zone', 'remind_at', 'created_at', 'updated_at', 'done_at', 'deleted_at', 'source_note_id', 'task_id'])
             .where('org_id', '=', ctx.orgId)
             .where('owner_user_id', '=', userId)
             .where('id', 'in', todoKeep)
@@ -125,6 +130,10 @@ export const notesExportMine = defineQuery({
         details: t.details ?? '',
         checklist: (Array.isArray(t.checklist) ? (t.checklist as { text: string; done: boolean }[]) : []).map((s) => ({ text: s.text, done: s.done })),
         status: t.status,
+        priority: t.priority as TodoPriority,
+        tags: t.tags,
+        listId: t.list_id,
+        sectionId: t.section_id,
         dueOn: t.due_on,
         dueAt: iso(t.due_at),
         timeZone: t.time_zone,

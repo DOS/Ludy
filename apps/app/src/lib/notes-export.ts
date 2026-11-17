@@ -48,6 +48,7 @@ export function notesMarkdown(data: NotesExport, w: NotesExportWords): string {
   out.push('', `## ${w.todos} (${data.todos.length})`);
   for (const t of data.todos) {
     out.push('', `### [${t.status === 'done' ? 'x' : ' '}] ${flat(t.title)}`, '', line(w.status[t.status], t.id));
+    if (t.tags.length > 0) out.push(line(w.tags, t.tags.join(', ')));
     if (t.dueAt) out.push(line(w.due, `${t.dueAt} (${t.timeZone})`));
     else if (t.dueOn) out.push(line(w.due, t.dueOn));
     if (t.remindAt) out.push(line(w.remind, t.remindAt));

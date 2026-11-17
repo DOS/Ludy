@@ -213,6 +213,7 @@ export interface CroveNotesSchema {
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;
+  'crove_notes.todo_list': NotesTodoListTable;
 }
 
 export interface CroveProjectsSchema {
@@ -3222,6 +3223,21 @@ export interface NotesNoteTable {
   summary_run_ids: Generated<string[]>;
 }
 
+/** crove_notes.todo_list */
+export interface NotesTodoListTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  owner_user_id: ColumnType<string, string, NotGranted>;
+  name: string;
+  color: string | null;
+  sections: ColumnType<unknown, string | undefined, string>;
+  sort_key: string;
+  revision: Generated<number>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
 /** crove_notes.todo */
 export interface NotesTodoTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -3248,6 +3264,10 @@ export interface NotesTodoTable {
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
   source_run_seq: ColumnType<number | null, number | null, NotGranted>;
+  priority: Generated<number>;
+  tags: Generated<string[]>;
+  list_id: string | null;
+  section_id: string | null;
 }
 
 /** crove_projects.project_member */

@@ -34,9 +34,12 @@ suite('personal to-dos on PostgreSQL (#1673, ADR-0037)', () => {
   const users = { owner: '', admin: '', mine: '', member: '', viewer: '', limited: '' };
   // The member's open to-do with a checklist, and one in the trash.
   const todos = { open: randomUUID(), trashed: randomUUID() };
+  // A personal to-do list of the member (#3558) with one section.
+  const todoLists = { open: randomUUID(), sectionId: 'sec-thue' };
   // A private note of the to-do's owner and one of another member, for to-dos made from a note.
   const notes = { own: randomUUID(), theirs: randomUUID() };
   let agent = { agentId: '', runId: '' };
+  let memberVy = { agentId: '', runId: '' };
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
 
@@ -79,6 +82,11 @@ suite('personal to-dos on PostgreSQL (#1673, ADR-0037)', () => {
     name: 'an agent context',
     url: () => workerUrl,
     enter: (c) => c.query('SELECT crove_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [orgId, agent.agentId, agent.runId]),
+  };
+  const memberVyActor: Actor = {
+    name: "the to-do owner's member Vy",
+    url: () => workerUrl,
+    enter: (c) => c.query('SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [orgId, memberVy.agentId, memberVy.runId]),
   };
   const owner = member('the to-do owner', () => users.mine);
   // Everyone but the to-do's owner.
@@ -138,10 +146,15 @@ suite('personal to-dos on PostgreSQL (#1673, ADR-0037)', () => {
         users.owner,
       ]);
       await c.query(
-        `INSERT INTO crove_notes.todo (org_id, id, owner_user_id, title, details, checklist, due_on, sort_key, deleted_at) VALUES
-           ($1, $2, $4, $5, $5, '[{"text": "Gửi email cho khách", "done": false}]'::jsonb, current_date, 'V', NULL),
-           ($1, $3, $4, 'Việc đã bỏ', NULL, '[]'::jsonb, NULL, 'k', now() - interval '40 days')`,
-        [orgId, todos.open, todos.trashed, users.mine, SECRET],
+        `INSERT INTO crove_notes.todo_list (org_id, id, owner_user_id, name, color, sections, sort_key)
+         VALUES ($1, $2, $3, 'Danh sách thuế riêng', 'blue', $4::jsonb, 'V')`,
+        [orgId, todoLists.open, users.mine, JSON.stringify([{ id: todoLists.sectionId, name: 'Khai thuế bí mật' }])],
+      );
+      await c.query(
+        `INSERT INTO crove_notes.todo (org_id, id, owner_user_id, title, details, checklist, priority, tags, list_id, section_id, due_on, sort_key, deleted_at) VALUES
+           ($1, $2, $4, $5, $5, '[{"text": "Gửi email cho khách", "done": false}]'::jsonb, 1, ARRAY['vip', 'thue-rieng'], $6, $7, current_date, 'V', NULL),
+           ($1, $3, $4, 'Việc đã bỏ', NULL, '[]'::jsonb, 4, '{}'::text[], NULL, NULL, NULL, 'k', now() - interval '40 days')`,
+        [orgId, todos.open, todos.trashed, users.mine, SECRET, todoLists.open, todoLists.sectionId],
       );
       await c.query(`INSERT INTO crove_notes.note (org_id, id, author_user_id, title) VALUES ($1, $2, $3, 'Của tôi'), ($1, $4, $5, 'Của người khác')`, [
         orgId,
@@ -159,6 +172,24 @@ suite('personal to-dos on PostgreSQL (#1673, ADR-0037)', () => {
     await api.runtime.execute('kernel.task.create', { title: 'Việc thử', assigneePositionId: installed.positionId }, { actor: asUser(users.owner), orgId });
     const started = await worker.execute<{ runId: string | null }>('kernel.agent.run.start', { agentId: installed.agentId }, { actor: SYSTEM, orgId });
     agent = { agentId: installed.agentId, runId: started.runId as string };
+    const vyAgent = randomUUID();
+    const vyRun = randomUUID();
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by)
+         VALUES ($1, $2, 'kernel.member_vy', 'Vy của tôi', 'member_vy', $3, $3)`,
+        [orgId, vyAgent, users.mine],
+      );
+      await c.query(
+        `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, feature, started_at, expires_at)
+         VALUES ($1, $2, $3, 'notes', 'running', 'notes.summary', now(), now() + interval '4 hours')`,
+        [orgId, vyRun, vyAgent],
+      );
+      await c.query('COMMIT');
+    });
+    memberVy = { agentId: vyAgent, runId: vyRun };
   }, 300_000);
 
   afterAll(async () => {
@@ -270,12 +301,88 @@ suite('personal to-dos on PostgreSQL (#1673, ADR-0037)', () => {
     expect(due.rows).toEqual([{ org_id: orgId }]);
   });
 
+  it("isolates crove_notes.todo_list and todo.tags from every other member, owner, admin, viewer, memberVy, agent and system context (#3558)", async () => {
+    const ownRead = await run(owner, async (c) => ({
+      lists: (await c.query<{ id: string }>('SELECT id FROM crove_notes.todo_list ORDER BY id')).rows.map((r) => r.id),
+      tagSearch: (await c.query(`SELECT id FROM crove_notes.todo WHERE search @@ crove_kernel.search_query('thue-rieng')`)).rowCount,
+    }));
+    expect(ownRead.lists).toEqual([todoLists.open]);
+    expect(ownRead.tagSearch).toBe(1);
+
+    for (const actor of [...others, memberVyActor]) {
+      const where = actor.name;
+      const seen = await run(actor, async (c) => ({
+        lists: (await c.query('SELECT id FROM crove_notes.todo_list')).rowCount,
+        listById: (await c.query('SELECT name FROM crove_notes.todo_list WHERE id = $1', [todoLists.open])).rowCount,
+        byTag: (await c.query(`SELECT id FROM crove_notes.todo WHERE 'vip' = ANY(tags)`)).rowCount,
+        byTagSearch: (await c.query(`SELECT id FROM crove_notes.todo WHERE search @@ crove_kernel.search_query('thue-rieng')`)).rowCount,
+      }));
+      expect(seen, `${where} reading todo_list or tags`).toEqual({ lists: 0, listById: 0, byTag: 0, byTagSearch: 0 });
+
+      const updated = await outcome(run(actor, (c) => c.query(`UPDATE crove_notes.todo_list SET name = 'đổi tên' WHERE id = $1`, [todoLists.open])));
+      if (updated.ok) expect(updated.value.rowCount, `${where} updating todo_list`).toBe(0);
+      else expect(updated, `${where} updating todo_list`).toMatchObject({ code: '42501' });
+
+      const swept = await outcome(run(actor, (c) => c.query(`UPDATE crove_notes.todo_list SET sort_key = sort_key`)));
+      if (swept.ok) expect(swept.value.rowCount, `${where} sweeping todo_list`).toBe(0);
+      else expect(swept, `${where} sweeping todo_list`).toMatchObject({ code: '42501' });
+
+      expect(
+        await outcome(run(actor, (c) => c.query('DELETE FROM crove_notes.todo_list WHERE id = $1', [todoLists.open]))),
+        `${where} deleting todo_list`,
+      ).toMatchObject({ ok: false, code: '42501' });
+
+      expect(
+        await outcome(
+          run(actor, (c) =>
+            c.query(`INSERT INTO crove_notes.todo_list (org_id, owner_user_id, name, sort_key) VALUES ($1, $2, 'giả', 'a')`, [orgId, users.mine]),
+          ),
+        ),
+        `${where} inserting todo_list for owner`,
+      ).toMatchObject({ ok: false, code: '42501' });
+    }
+
+    // Another member cannot reference owner's todo_list in their own todo (no existence oracle vs non-existent id).
+    const attachOther = (listId: string) =>
+      outcome(
+        run(member('another member', () => users.member), (c) =>
+          c.query(`INSERT INTO crove_notes.todo (org_id, owner_user_id, title, sort_key, list_id) VALUES ($1, $2, 'Cướp list', 'a', $3)`, [orgId, users.member, listId]),
+        ),
+      );
+    expect(await attachOther(todoLists.open)).toMatchObject({ ok: false, code: '42501' });
+    expect(await attachOther(randomUUID())).toMatchObject({ ok: false, code: '42501' });
+
+    // Viewer cannot create even their own todo_list.
+    expect(
+      await outcome(
+        run(member('a viewer', () => users.viewer), (c) =>
+          c.query(`INSERT INTO crove_notes.todo_list (org_id, owner_user_id, name, sort_key) VALUES ($1, $2, 'Danh sách xem', 'a')`, [orgId, users.viewer]),
+        ),
+      ),
+    ).toMatchObject({ ok: false, code: '42501' });
+
+    // Owner cannot attach a section not in list.sections.
+    expect(
+      await outcome(
+        run(owner, (c) =>
+          c.query(
+            `INSERT INTO crove_notes.todo (org_id, owner_user_id, title, sort_key, list_id, section_id) VALUES ($1, $2, 'Sai mục', 'z', $3, 'khong-co')`,
+            [orgId, users.mine, todoLists.open],
+          ),
+        ),
+      ),
+    ).toMatchObject({ ok: false, code: '23514' });
+
+    const listAfter = await admin((c) => c.query<{ name: string }>('SELECT name FROM crove_notes.todo_list WHERE id = $1', [todoLists.open]));
+    expect(listAfter.rows).toEqual([{ name: 'Danh sách thuế riêng' }]);
+  });
+
   // Last: it removes the owner from the org.
   it("removes a former member's to-dos and private notes only once they are no longer a member", async () => {
     const purge = () => run(system, async (c) => (await c.query<{ n: string }>('SELECT crove_notes.member_items_purge($1::uuid) AS n', [users.mine])).rows[0]?.n);
     expect(await purge()).toBe('0');
     await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.mine]));
-    // Their two to-dos and their private note.
-    expect(await purge()).toBe('3');
+    // Their two to-dos, their personal to-do list, and their private note.
+    expect(await purge()).toBe('4');
   });
 });

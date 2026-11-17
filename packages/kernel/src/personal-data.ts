@@ -324,7 +324,10 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_notes.todo.title': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.details': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.checklist': { kind: 'free_text', handling: 'erase', reason: 'Steps of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
-  'crove_notes.todo.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a to-do's title, details and steps, rebuilt from them" },
+  'crove_notes.todo.tags': { kind: 'free_text', handling: 'erase', reason: 'Tags of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always', list: true },
+  'crove_notes.todo.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a to-do's title, details, tags and steps, rebuilt from them" },
+  'crove_notes.todo_list.name': { kind: 'free_text', handling: 'erase', reason: 'Name of a personal to-do list, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
+  'crove_notes.todo_list.sections': { kind: 'free_text', handling: 'erase', reason: 'Section names of a personal to-do list, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   // Meetings (ADR-0047 points 7 and 11, issues #2579, #2594): a recording holds voices (its file references are not classified: a column named file_id is shared by every table, and a class on that name would force auditValue on every file fact of the books), and
   // what was said, summarized and promised may name or describe a person. The text columns are free text the finder searches (freeTextMatch): the rows an actor reads
   // are listed like any other (row security keeps an attendees-only meeting and every draft to its readers), and what the owner cannot read is counted per recorder through
@@ -983,6 +986,7 @@ export const personalDataNotify = defineCommand({
       key: keys[0]?.key ?? null,
       notes: items('note'),
       todos: items('todo'),
+      todo_lists: items('todo_list'),
       meeting_key: meetingKey,
       meetings: meetingRows.map((m) => `${m.meeting_id}:${m.stamp}`),
       meetings_skipped: meetingsSkipped,
