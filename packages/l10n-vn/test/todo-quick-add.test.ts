@@ -810,5 +810,19 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-18',
       dueTime: null,
     });
+    expect(parseTodoQuickAdd('Họp 9h-11 sáng nay', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp 9h-11',
+      dueOn: '2026-11-17',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp 9h - 2 ngày nữa', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      dueOn: '2026-11-19',
+      dueTime: '09:00',
+    });
+    expect(parseTodoQuickAdd('Gửi thư lúc 12pm buổi sáng', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gửi thư buổi sáng',
+      dueOn: '2026-11-17',
+      dueTime: '12:00',
+    });
   });
 });

@@ -195,6 +195,23 @@ const VN_COUNT_NOUNS_AFTER_CLOCK = new Set([
   'vnd',
 ]);
 
+const TEMPORAL_UNITS_AFTER_CLOCK = new Set([
+  'tuan',
+  'thang',
+  'nam',
+  'day',
+  'days',
+  'week',
+  'weeks',
+  'month',
+  'months',
+  'year',
+  'years',
+  'giay',
+  'second',
+  'seconds',
+]);
+
 function foldVn(text: string): string {
   return text.normalize('NFD').replace(/\p{M}+/gu, '').replace(/[đĐ]/g, 'd').toLowerCase();
 }
@@ -1204,15 +1221,28 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   };
 
   const hasHalfUnitRangeAfter = (candEnd: number): boolean => {
+    const isBlockedAfterRangeNum = (numEnd: number): boolean => {
+      const nextWord = findAdjacentWordAfter(input, words, numEnd, occupied);
+      if (!nextWord) return false;
+      if (VN_COUNT_NOUNS_AFTER_CLOCK.has(nextWord.folded) || TEMPORAL_UNITS_AFTER_CLOCK.has(nextWord.folded)) {
+        return true;
+      }
+      if (vnMatch(nextWord, 'ngày')) {
+        const afterDateWord = findAdjacentWordAfter(input, words, nextWord.end, occupied);
+        // "ngày mai/kia/mốt" is an adjacent VN date phrase ("11 ngày mai"), not "<N> ngày nữa" ("2 ngày nữa").
+        if (!afterDateWord || !vnMatchAny(afterDateWord, ['mai', 'kia', 'mốt'])) return true;
+      }
+      return false;
+    };
+
     const suffix = input.slice(candEnd);
     const dashMatch = /^\s*(?:-|\u2013|\u2014|->|~)\s*(\d{1,2})(?=$|[\s.,;:!?)\]])/u.exec(suffix);
     if (dashMatch && Number(dashMatch[1]) <= 23) {
       const numText = dashMatch[1] ?? '';
       const numStart = candEnd + dashMatch[0].length - numText.length;
       const numSpan = { start: numStart, end: numStart + numText.length };
-      if (!isWordSpanAvailable(numSpan)) return false;
-      const afterDashWord = findAdjacentWordAfter(input, words, numSpan.end, occupied);
-      if (afterDashWord && VN_COUNT_NOUNS_AFTER_CLOCK.has(afterDashWord.folded)) return false;
+      if (!isAvailable(numSpan) || !hasCleanRightBoundary(numSpan)) return false;
+      if (isBlockedAfterRangeNum(numSpan.end)) return false;
       return true;
     }
     const conn = findAdjacentWordAfter(input, words, candEnd, occupied);
@@ -1226,8 +1256,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       ) {
         const afterChar = endHourWord.end < input.length ? input[endHourWord.end] : '';
         if (afterChar === '/' || afterChar === ':' || afterChar === '.') return false;
-        const afterEndWord = findAdjacentWordAfter(input, words, endHourWord.end, occupied);
-        if (afterEndWord && VN_COUNT_NOUNS_AFTER_CLOCK.has(afterEndWord.folded)) return false;
+        if (isBlockedAfterRangeNum(endHourWord.end)) return false;
         return true;
       }
     }
@@ -1290,11 +1319,11 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       continue;
     }
 
-    if (!hasCleanRightBoundary(tc)) continue;
     if (hasHalfUnitRangeAfter(end)) {
       hasExplicitClockRange = true;
       continue;
     }
+    if (!hasCleanRightBoundary(tc)) continue;
 
     const startBeforeAt = start;
     start = expandConnectorBefore(input, words, start, [['vào', 'lúc'], ['lúc'], ['at']], occupied);
@@ -1608,7 +1637,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         parsedTime = { hour: PERIOD_DEFAULT_HOUR[afterPeriod], minute: 0, explicitClock: false, period: afterPeriod };
         claimToken('time', afterW.start, afterW.end);
         timeSpans.push({ start: afterW.start, end: afterW.end });
-      } else if (parsedTime && parsedTime.explicitClock && !parsedTime.period && dateSpans.includes(ds)) {
+      } else if (parsedTime && parsedTime.explicitClock && !parsedTime.hasAmPm && !parsedTime.period && dateSpans.includes(ds)) {
         const dateTok = tokens.find((t) => t.kind === 'date' && t.start === ds.start && t.end === ds.end);
         if (dateTok) {
           dateTok.end = afterW.end;
@@ -1633,7 +1662,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     if (!parsedTime && !timeTokenDismissed) {
       parsedTime = { hour: PERIOD_DEFAULT_HOUR[p], minute: 0, explicitClock: false, period: p };
       claimToken('time', span.start, span.end);
-    } else if (parsedTime && parsedTime.explicitClock && !parsedTime.period) {
+    } else if (parsedTime && parsedTime.explicitClock && !parsedTime.hasAmPm && !parsedTime.period) {
       const adjacentTime = tokens.find(
         (t) => t.kind === 'time' && (spacesOnlyBetween(input, t.end, span.start) || spacesOnlyBetween(input, span.end, t.start)),
       );
