@@ -13,6 +13,7 @@ import { proposalReminderMailTemplate } from './proposal-reminder-mail.ts';
 import { QUOTE_MAIL_TEMPLATE, quoteMailTemplate } from './quote-mail.ts';
 import { reportMailTemplate } from './report-mail.ts';
 import { signMailTemplates } from './sign-mail.ts';
+import { summaryReadyMailTemplate } from './summary-ready-mail.ts';
 import { todayMailTemplate } from './today-mail.ts';
 import { usageDeferredMailTemplate } from './usage-deferred-mail.ts';
 
@@ -41,6 +42,8 @@ export const MAIL_TEMPLATES: MailTemplates = {
   [QUOTE_MAIL_TEMPLATE]: quoteMailTemplate,
   // The follow-up of a meeting, sent by the recorder's click with the published summary (L3, #2590).
   [FOLLOWUP_MAIL_TEMPLATE]: followupMailTemplate,
+  // The recorder's "minutes draft ready" mail: the meeting's title and the link, no text of the draft (#3730).
+  'meetings.summary_ready': summaryReadyMailTemplate,
   // A project's weekly status shared by email to project members (#2609).
   'projects.weekly_status': projectWeeklyStatusMailTemplate,
   // Public eSign invitation, reminder, OTP verification, and completed document notifications (#3324).
