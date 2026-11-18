@@ -1725,13 +1725,13 @@ export interface FinanceSupplierPaymentTable {
   approver_step_up_at: ColumnType<Date, Date | string, NotGranted>;
   payable_after: ColumnType<Date | null, Date | string | null, NotGranted>;
   hold_reason: ColumnType<string | null, string | null, NotGranted>;
-  confirmed_by: ColumnType<string | null, string | null, string | null>;
+  confirmed_by: string | null;
   confirmed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
-  confirmed_channel: ColumnType<string | null, string | null, string | null>;
+  confirmed_channel: string | null;
   stale_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
-  cancelled_by: ColumnType<string | null, string | null, string | null>;
+  cancelled_by: string | null;
   cancelled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
-  cancel_reason: ColumnType<string | null, string | null, string | null>;
+  cancel_reason: string | null;
   paid_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
