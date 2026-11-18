@@ -68,7 +68,8 @@ describe('ZoomMeetingPlatform.list', () => {
       title: 'Weekly sync (audio, video and transcript)',
       startedAt: '2026-11-17T02:00:00.000Z',
       lengthSeconds: 41 * 60,
-      sizeBytes: 52_000_000,
+      // The size of the audio file the job will fetch, not of the audio and the video together.
+      sizeBytes: 4_000_000,
       hasAudio: true,
       hasVideo: true,
       hasTranscript: true,
@@ -132,6 +133,36 @@ describe('ZoomMeetingPlatform.list', () => {
     }
   });
 
+  it('does not offer a kind of file that Zoom made in several segments (a host who stopped and started recording): importing one would hand over part of the meeting', async () => {
+    const file = (id: string, type: string, kind: string, size: number) => ({ id, file_type: type, file_size: size, recording_type: kind, status: 'completed', download_url: `https://us02web.zoom.us/rec/download/${id}` });
+    const meeting = (uuid: string, files: unknown[]) => ({ uuid, topic: uuid, start_time: '2026-11-17T01:00:00Z', duration: 10, recording_files: files });
+    const { adapter } = zoom([
+      {
+        json: {
+          meetings: [
+            // Two audio segments and one video: the audio is not offered, the video is.
+            meeting('two-audio', [file('a1', 'M4A', 'audio_only', 10), file('a2', 'M4A', 'audio_only', 10), file('v1', 'MP4', 'shared_screen_with_speaker_view', 100)]),
+            // Two audio segments and nothing else: not listed at all.
+            meeting('only-segments', [file('a1', 'M4A', 'audio_only', 10), file('a2', 'M4A', 'audio_only', 10)]),
+            // Two video segments of the preferred kind: no video is offered (a single file of a lesser kind is not taken instead); the audio still is.
+            meeting('two-video', [file('a1', 'M4A', 'audio_only', 10), file('v1', 'MP4', 'shared_screen_with_speaker_view', 100), file('v2', 'MP4', 'shared_screen_with_speaker_view', 100), file('g1', 'MP4', 'gallery_view', 100)]),
+            // One file of each of two video kinds: the better kind is used.
+            meeting('two-kinds', [file('v1', 'MP4', 'gallery_view', 100), file('v2', 'MP4', 'active_speaker', 200)]),
+          ],
+        },
+      },
+    ]);
+    const listed = await adapter.list(CREDENTIAL, SINCE);
+    const by = (id: string) => listed.find((r) => r.id === id);
+    expect(by('two-audio')).toMatchObject({ hasAudio: false, hasVideo: true, sizeBytes: 100 });
+    expect(by('only-segments')).toBeUndefined();
+    expect(by('two-video')).toMatchObject({ hasAudio: true, hasVideo: false, sizeBytes: 10 });
+    expect(by('two-kinds')).toMatchObject({ hasAudio: false, hasVideo: true, sizeBytes: 200 });
+    // The download of a segmented kind is refused the same way.
+    const segmented = { recording_files: [file('a1', 'M4A', 'audio_only', 10), file('a2', 'M4A', 'audio_only', 10)] };
+    expect(await codeOf(zoom([{ json: segmented }]).adapter.prepareDownload(CREDENTIAL, 'u', 'audio'))).toBe('no_audio');
+  });
+
   it('keeps a title the database can hold and ignores a meeting without an id or a start', async () => {
     const files = [{ id: 'f', file_type: 'M4A', file_size: 10, recording_type: 'audio_only', status: 'completed', download_url: 'https://us02web.zoom.us/rec/download/x' }];
     const { adapter } = zoom([
@@ -172,6 +203,14 @@ describe('ZoomMeetingPlatform.prepareDownload', () => {
     expect(video).toMatchObject({ url: 'https://us02web.zoom.us/rec/download/f-video-fresh', format: 'video', contentType: 'video/mp4', sizeBytes: 48_000_000 });
   });
 
+  it('refuses an id that would climb the path, with no call', async () => {
+    for (const id of ['', '.', '..']) {
+      const { adapter, calls } = zoom([{ json: fixture('meeting-recordings') }]);
+      expect(await codeOf(adapter.prepareDownload(CREDENTIAL, id, 'audio')), id).toBe('recording_gone');
+      expect(calls).toEqual([]);
+    }
+  });
+
   it('encodes a meeting uuid that begins with a slash or holds two, twice, as Zoom asks', async () => {
     const { adapter, calls } = zoom([{ json: fixture('meeting-recordings') }, { json: fixture('meeting-recordings') }]);
     await adapter.prepareDownload(CREDENTIAL, '/BBBB//BBBBBBBBBBBBBBB==', 'audio');
@@ -203,6 +242,9 @@ describe('ZoomMeetingPlatform.prepareDownload', () => {
       'ftp://zoom.us/rec/download/x',
       'https://169.254.169.254/rec/download/x',
       '//us02web.zoom.us/rec/download/x',
+      'https://zoom.us./rec/download/x',
+      'https://[::1]/rec/download/x',
+      'https://us02web.zoom.us%2f.evil.example.com/x',
       'not a url',
     ]) {
       const files = { recording_files: [{ id: 'a', file_type: 'M4A', file_size: 1, recording_type: 'audio_only', status: 'completed', download_url: bad }] };

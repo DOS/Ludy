@@ -383,8 +383,6 @@ export function channelConversationAdapters(config: WhatsAppConfig): Record<stri
   return whatsapp ? { whatsapp: new WhatsAppConversations(new Graph(whatsapp.appSecret, whatsapp.graphVersion)) } : {};
 }
 
-// The outside calendar providers this deployment has an OAuth app for (#2123), by OAuth provider id; one without
-// credentials is not offered, and with none the connect buttons are hidden.
 // The meeting platforms a deployment has (Meetings C1 and C3): the offline sandbox when the channel sandbox is on, and Zoom only when the deployment has its own Zoom OAuth app (off by default).
 export function meetingPlatformsOf(config: Pick<Config, 'CHANNEL_SANDBOX' | 'ZOOM_OAUTH_CLIENT_ID' | 'ZOOM_OAUTH_CLIENT_SECRET'>) {
   return meetingPlatformAdapters({
@@ -393,6 +391,8 @@ export function meetingPlatformsOf(config: Pick<Config, 'CHANNEL_SANDBOX' | 'ZOO
   });
 }
 
+// The outside calendar providers this deployment has an OAuth app for (#2123), by OAuth provider id; one without
+// credentials is not offered, and with none the connect buttons are hidden.
 export function calendarAdapters(config: Pick<Config, 'CALENDAR_GOOGLE_CLIENT_ID' | 'CALENDAR_GOOGLE_CLIENT_SECRET' | 'CALENDAR_MICROSOFT_CLIENT_ID' | 'CALENDAR_MICROSOFT_CLIENT_SECRET' | 'CALENDAR_MICROSOFT_TENANT'>): Partial<Record<string, CalendarAdapter>> {
   const adapters: Partial<Record<string, CalendarAdapter>> = {};
   if (config.CALENDAR_GOOGLE_CLIENT_ID && config.CALENDAR_GOOGLE_CLIENT_SECRET) adapters.google_calendar = new GoogleCalendarAdapter({ clientId: config.CALENDAR_GOOGLE_CLIENT_ID, clientSecret: config.CALENDAR_GOOGLE_CLIENT_SECRET });

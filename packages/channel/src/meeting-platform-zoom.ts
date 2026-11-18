@@ -32,7 +32,7 @@ export const ZOOM_DOWNLOAD_SUFFIX = 'zoom.us';
 // How far back a list may reach. The sweep asks for 14 days; Zoom refuses a range over one month.
 const MAX_RANGE_DAYS = 30;
 const PAGE_SIZE = 100;
-// A list never reads more than this many pages, whatever Zoom says.
+// A list never reads more than this many pages, whatever Zoom says. Zoom documents no order for the pages, so with more than 500 meetings in the window some could be left out; the answer is sorted and cut afterwards.
 const MAX_PAGES = 5;
 const TITLE_MAX = 200;
 
@@ -65,12 +65,17 @@ const ymd = (date: Date) => date.toISOString().slice(0, 10);
 
 // The files that are finished (Zoom lists a file it is still processing with another status).
 const completed = (files: ZoomFile[]) => files.filter((f) => text(f.status).toLowerCase() === 'completed');
+// The one file of a kind, or undefined. A host who stops and starts recording gets one file PER SEGMENT of the same kind, and importing one of them would hand over a partial recording with no sign of it, so
+// a kind with more than one file counts as not importable here (joining the segments needs the audio extraction of crove-media, a later step).
+const only = (files: ZoomFile[]): ZoomFile | undefined => (files.length === 1 ? files[0] : undefined);
 // The audio-only file: the shared M4A Zoom makes when the host records audio-only files.
-const audioOf = (files: ZoomFile[]) => completed(files).find((f) => text(f.recording_type) === 'audio_only' && (text(f.file_type).toUpperCase() === 'M4A' || text(f.file_extension).toUpperCase() === 'M4A'));
-// A video file: an MP4 that is not the audio-only track. The speaker view with the shared screen is preferred.
+const audioOf = (files: ZoomFile[]) => only(completed(files).filter((f) => text(f.recording_type) === 'audio_only' && (text(f.file_type).toUpperCase() === 'M4A' || text(f.file_extension).toUpperCase() === 'M4A')));
+// The video kinds, best first: the speaker view with the shared screen is the one a minutes taker wants; the first kind present is the one used, and it must be a single file.
+const VIDEO_KINDS = ['shared_screen_with_speaker_view', 'shared_screen_with_gallery_view', 'active_speaker', 'gallery_view', 'shared_screen'] as const;
 const videoOf = (files: ZoomFile[]) => {
   const mp4s = completed(files).filter((f) => text(f.recording_type) !== 'audio_only' && (text(f.file_type).toUpperCase() === 'MP4' || text(f.file_extension).toUpperCase() === 'MP4'));
-  return mp4s.find((f) => text(f.recording_type) === 'shared_screen_with_speaker_view') ?? mp4s[0];
+  const kind = VIDEO_KINDS.find((k) => mp4s.some((f) => text(f.recording_type) === k));
+  return kind ? only(mp4s.filter((f) => text(f.recording_type) === kind)) : only(mp4s);
 };
 const transcriptOf = (files: ZoomFile[]) => completed(files).find((f) => text(f.recording_type) === 'audio_transcript' || text(f.file_type).toUpperCase() === 'TRANSCRIPT');
 const sizeOf = (file: ZoomFile | undefined): number => (file && typeof file.file_size === 'number' && Number.isFinite(file.file_size) && file.file_size > 0 ? Math.floor(file.file_size) : 0);
@@ -90,7 +95,8 @@ function listedOf(meeting: Record<string, unknown>): MeetingPlatformListed | nul
   const transcript = transcriptOf(files);
   if (!audio && !video && !transcript) return null;
   const minutes = Number(meeting.duration);
-  const size = sizeOf(audio) + sizeOf(video);
+  // The size of the file the job will fetch (audio when there is one, else the video), not of every file: the job refuses a declared size over its cap before any call.
+  const size = audio ? sizeOf(audio) : sizeOf(video);
   return {
     id: uuid,
     title: titleOf(meeting.topic),
@@ -185,6 +191,8 @@ export class ZoomMeetingPlatform implements MeetingPlatformAdapter {
   }
 
   async prepareDownload(credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, signal?: AbortSignal): Promise<MeetingPlatformDownload> {
+    // An id is a meeting uuid from the list; `.` and `..` would climb the path, and are no recording.
+    if (recordingId === '' || recordingId === '.' || recordingId === '..') throw new MeetingPlatformError('recording_gone');
     const body = await this.get(`https://${ZOOM_API_HOST}/v2/meetings/${meetingPathId(recordingId)}/recordings`, credential, signal);
     const files = filesOf(body);
     const file = format === 'audio' ? audioOf(files) : videoOf(files);
