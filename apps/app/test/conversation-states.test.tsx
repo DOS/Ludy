@@ -61,6 +61,12 @@ describe('an Inbox with no channel (IN-7)', () => {
     expect(en).toContain('or forward an email to this address:');
   });
 
+  it('offers no connect button to someone who cannot connect a channel, but still says nothing is connected', () => {
+    const html = render(<NoChannelsEmpty slug="shop" address={null} canConnect={false} />);
+    expect(html).toContain('Chưa kết nối kênh nào');
+    expect(html).not.toContain('inbox-connect-channel');
+  });
+
   it('leaves the forwarding line out where the server has no mail address, and is a tap target on a phone', () => {
     const html = render(<NoChannelsEmpty slug="shop" address={null} />);
     expect(html).not.toContain('inbox-forward-address');
@@ -97,7 +103,6 @@ describe('tap targets (IN-8)', () => {
     expect(TOUCH_MIN_PX).toBe(44);
     expect(TOUCH_BUTTON).toBe('max-sm:min-h-11 pointer-coarse:min-h-11');
     expect(TOUCH_SELECT).toContain('[&_select]:min-h-11');
-    // min-h-11 is 2.75rem: 44 px at the root size the app uses.
-    expect(11 * 4).toBe(TOUCH_MIN_PX);
+    // The classes are strings only here; the measured 44 px at 390 wide is the Playwright test of the empty Inbox (e2e/tests/conversations.spec.ts).
   });
 });

@@ -84,7 +84,7 @@ function PaneEmpty({ title, hint, testId }: { title: string; hint?: string | und
 
 // An Inbox with no channel to receive from is not "all clear" (#3638): it says so, offers the one action (connect a channel), and, where the server receives mail, the
 // other way in: forward an email to the Inbox's own address.
-export function NoChannelsEmpty({ slug, address }: { slug: string; address: string | null }) {
+export function NoChannelsEmpty({ slug, address, canConnect = true }: { slug: string; address: string | null; canConnect?: boolean }) {
   const t = useTranslations('conversations.inbox');
   return (
     <div className="flex min-h-48 flex-1 flex-col items-center justify-center gap-3 px-6 py-10 text-center" data-testid="inbox-no-channels">
@@ -92,9 +92,12 @@ export function NoChannelsEmpty({ slug, address }: { slug: string; address: stri
         <p className="text-sm font-medium text-foreground">{t('noChannels')}</p>
         <p className="max-w-xs text-xs text-subtle-foreground">{t('noChannelsHint')}</p>
       </div>
-      <Link to="/o/$slug/social/channels" params={{ slug }} className={cn(buttonVariants({ size: 'lg' }), TOUCH_BUTTON)} data-testid="inbox-connect-channel">
-        {t('connectChannel')}
-      </Link>
+      {/* A viewer cannot connect a channel, so the button is for those who may answer; the others read the hint. */}
+      {canConnect && (
+        <Link to="/o/$slug/social/channels" params={{ slug }} className={cn(buttonVariants({ size: 'lg' }), TOUCH_BUTTON)} data-testid="inbox-connect-channel">
+          {t('connectChannel')}
+        </Link>
+      )}
       {address && (
         <p className="max-w-xs text-xs text-subtle-foreground" data-testid="inbox-forward-address">
           {t('orForward')} <span className="font-mono break-all text-foreground">{address}</span>
@@ -177,6 +180,8 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
   const channelList = (channels.data ?? []).filter((c) => c.status !== 'revoked');
   // Nothing connected (the channel list has loaded and holds none): the empty New tab says so instead of "no new conversations".
   const noChannels = channels.data !== undefined && channelList.length === 0;
+  // Neither empty text is drawn until the channel list has answered: a list that finishes first must not say "all clear" to an org with no channel for a moment.
+  const emptyReady = list.loaded && channels.data !== undefined;
   const { slug } = useParams({ strict: false }) as { slug: string };
   const org = useQuery(orpc.org.get.queryOptions());
   const paneClass = 'min-h-0 min-w-0';
@@ -273,8 +278,8 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
                 <PaneError message={errorMessage(list.error)} onRetry={list.retry} testId="inbox-list-error" />
               </div>
             )}
-            {list.loaded && items.length === 0 && noChannels && !search.q && status === 'new' && <NoChannelsEmpty slug={slug} address={org.data?.conversationAddress ?? null} />}
-            {list.loaded && items.length === 0 && !(noChannels && !search.q && status === 'new') && <PaneEmpty title={search.q ? ti('noMatch') : ti(`empty.${status}`)} hint={!search.q && status === 'new' ? ti('emptyNewHint') : undefined} testId="inbox-list-empty" />}
+            {emptyReady && items.length === 0 && noChannels && !search.q && status === 'new' && <NoChannelsEmpty slug={slug} address={org.data?.conversationAddress ?? null} canConnect={canWrite} />}
+            {emptyReady && items.length === 0 && !(noChannels && !search.q && status === 'new') && <PaneEmpty title={search.q ? ti('noMatch') : ti(`empty.${status}`)} hint={!search.q && status === 'new' ? ti('emptyNewHint') : undefined} testId="inbox-list-empty" />}
             {items.length > 0 && (
               <ul className="divide-y divide-border">
                 {items.map((c) => (

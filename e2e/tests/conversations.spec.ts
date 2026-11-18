@@ -3,6 +3,7 @@
 // post, an owner answers it (the worker sends the reply through the sandbox and the message settles), hides it, adds a note and
 // resolves it, and the comment inbox lists it as resolved. The comment itself is a demo one the owner asks the sandbox for, which
 // takes the intake a platform's notice takes. Each test has its own user and org.
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { exec, sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
@@ -202,6 +203,16 @@ test('an Inbox with no channel connected says so and offers to connect one, inst
   await expect(empty).toBeVisible();
   await expect(empty).toContainText('Chưa kết nối kênh nào');
   await expect(page.getByTestId('inbox-list-empty')).toHaveCount(0);
+  // The Inbox passes axe (WCAG 2.2 AA, serious and critical) at desktop and phone width, and the action is a 44 px target on the phone.
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(empty).toBeVisible();
+    const scan = await new AxeBuilder({ page }).include('[data-testid="inbox"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
+    const bad = scan.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical').map((v) => `${width}: ${v.id} on ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(', ')}`);
+    expect(bad).toEqual([]);
+  }
+  const box = await page.getByTestId('inbox-connect-channel').boundingBox();
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
   await page.getByTestId('inbox-connect-channel').click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/channels`));
 });
