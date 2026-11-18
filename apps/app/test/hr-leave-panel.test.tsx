@@ -33,7 +33,7 @@ vi.mock('../src/lib/api.ts', async () => {
   };
 });
 
-const { LeaveBalancePanel, normalizeLeaveDaysInput } = await import('../src/components/hr-leave-panel.tsx');
+const { LeaveBalancePanel, isValidLeaveDaysInput, normalizeLeaveDaysInput } = await import('../src/components/hr-leave-panel.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
@@ -126,5 +126,13 @@ describe('Annual leave ledger panel and pay-run leave copy (#3394)', () => {
     const multi = normalizeLeaveDaysInput('1,5,2');
     expect(multi).toBe('1.5.2');
     expect(/^\d{1,3}(\.\d{1,2})?$/.test(multi)).toBe(false);
+    expect(isValidLeaveDaysInput('unpaid_leave', '1.5')).toBe(true);
+    expect(isValidLeaveDaysInput('unpaid_leave', '1.50')).toBe(true);
+    expect(isValidLeaveDaysInput('unpaid_leave', '1.25')).toBe(false);
+    expect(isValidLeaveDaysInput('annual_leave', '31')).toBe(true);
+    expect(isValidLeaveDaysInput('annual_leave', '32')).toBe(false);
+    expect(isValidLeaveDaysInput('opening_balance', '5.83')).toBe(true);
+    expect(isValidLeaveDaysInput('opening_balance', '366')).toBe(true);
+    expect(isValidLeaveDaysInput('opening_balance', '366.5')).toBe(false);
   });
 });

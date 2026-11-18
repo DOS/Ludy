@@ -12008,6 +12008,8 @@ export const vi = {
       HR_INTERVIEW_SLOT_TAKEN: 'Khung giờ này đã có lịch bận, hãy chọn giờ khác',
       HR_LEAVE_BALANCE_UNAVAILABLE: 'Không tính được số dư phép năm với thông số đã chọn',
       HR_LEAVE_DAYS_OUT_OF_RANGE: 'Số ngày nghỉ không lương đồng bộ sang bảng lương chỉ hỗ trợ tối đa 1 chữ số thập phân (0 - 99,9 ngày)',
+      HR_LEAVE_AFTER_END: 'Tháng nghỉ phép không thể sau tháng nhân viên đã nghỉ việc',
+      HR_LEAVE_BASELINE_INVALID: 'Số ngày phép năm chuẩn không được thấp hơn mức tối thiểu theo quy định cho nhóm công việc này',
       HR_RUN_NOT_APPROVED: 'Chỉ bảng lương đã được duyệt mới hạch toán được',
       HR_POSTING_OPEN: 'Bảng lương này đã có một đề xuất hạch toán đang chờ duyệt',
       HR_POSTING_DONE: 'Bảng lương này đã được hạch toán',

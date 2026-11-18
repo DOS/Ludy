@@ -2,7 +2,16 @@
 // Monthly employee leave ledger & statutory leave balance (issue #3394, #2540 slice 1c-2, docs/plan/payroll.md section 5 rows 3 & 6.7, section 7, ADR-0046).
 // Owners and admins only, in the commands/queries and in the database's policies (crove_hr.payroll_leave_entry owner_admin and le_scope).
 // Audit facts carry ids, month, kind and approved/cleared flags only, never raw leave day counts.
-import { calculateLeaveBalance, money, PAYROLL_RULES, PayrollRefusedError, toMoney } from '@crove/l10n-vn';
+import {
+  calculateLeaveBalance,
+  money,
+  PAYROLL_RULES,
+  PayrollRefusedError,
+  toMoney,
+  type LeaveBalanceResult,
+  type LeaveEntry,
+  type PayrollRule,
+} from '@crove/l10n-vn';
 import type { MemberRole } from '@crove/db';
 import {
   tableWrite,
@@ -10,12 +19,14 @@ import {
   zHrLeaveDelete,
   zHrLeaveSet,
   type HrLeaveBalanceResult,
+  type HrLeaveCategory,
   type HrLeaveEntryView,
+  type HrLeaveWorkweek,
   type HrLeaveWritten,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { hrManifest } from './manifest.ts';
-import { isoDate as iso } from './payroll-dates.ts';
+import { isoDate as iso, monthStart } from './payroll-dates.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
@@ -39,6 +50,40 @@ async function loadEmployeeForLeave(trx: QueryContext['trx'], orgId: string, emp
   if (!row) throw employeeNotFound();
   if (row.erased_at !== null) throw erasedError();
   return row;
+}
+
+export interface AnnualLeaveEvaluationInput {
+  year: string;
+  category?: HrLeaveCategory;
+  standardAnnualDays?: string;
+  hireDate: string;
+  endedOn?: string | null;
+  entries?: readonly LeaveEntry[];
+  asOfMonth?: string;
+  workweek?: HrLeaveWorkweek;
+}
+
+/**
+ * Evaluates statutory or employer-configured annual leave balance for both `hr.payroll.leave.balance`
+ * and pay-run compliance checks (`annual_leave_exceeded` in `hr.payroll.run.sheet` and Ly).
+ */
+export function computeAnnualLeaveBalance(
+  input: AnnualLeaveEvaluationInput,
+  rules: readonly PayrollRule[] = PAYROLL_RULES,
+): LeaveBalanceResult {
+  return calculateLeaveBalance(
+    {
+      year: input.year,
+      category: input.category ?? 'standard',
+      ...(input.standardAnnualDays !== undefined ? { standardAnnualDays: input.standardAnnualDays } : {}),
+      hireDate: input.hireDate,
+      endedOn: input.endedOn ?? null,
+      entries: input.entries ?? [],
+      ...(input.asOfMonth !== undefined ? { asOfMonth: input.asOfMonth } : {}),
+      ...(input.workweek !== undefined ? { workweek: input.workweek } : {}),
+    },
+    rules,
+  );
 }
 
 export const leaveSet = defineCommand({
@@ -75,14 +120,7 @@ export const leaveSet = defineCommand({
       .limit(1)
       .executeTakeFirst();
     const days = money(input.days);
-    if (input.kind !== 'opening_balance') {
-      if (firstTerm && input.month < iso(firstTerm.effective_from).slice(0, 7)) {
-        throw new DomainError('HR_LEAVE_BEFORE_HIRE', 422, 'Tháng nghỉ phép không thể trước tháng vào làm');
-      }
-      if (days.greaterThan('31')) {
-        throw new DomainError('HR_LEAVE_DAYS_EXCEEDS_MONTH', 422, 'Số ngày nghỉ trong một tháng không vượt quá 31 ngày');
-      }
-    }
+    // Allow clearing (`days = '0'`) any existing leave slot even if `ended_on` was later moved earlier than `input.month`.
     if (days.isZero()) {
       const deleted = await ctx.trx
         .deleteFrom('crove_hr.payroll_leave_entry')
@@ -101,7 +139,32 @@ export const leaveSet = defineCommand({
       });
       return { employeeId: employee.id, entryId: deleted?.id ?? null, deleted: Boolean(deleted) };
     }
-    const storedDays = days.toDecimalPlaces(2).toFixed();
+    if (!firstTerm) {
+      throw new DomainError('HR_EMPLOYEE_NOT_PAID', 409, 'Nhân viên này chưa có hợp đồng làm việc');
+    }
+    if (input.kind === 'unpaid_leave' && !days.toDecimalPlaces(1).equals(days)) {
+      throw new DomainError(
+        'HR_LEAVE_DAYS_OUT_OF_RANGE',
+        422,
+        'Số ngày nghỉ không lương chỉ hỗ trợ tối đa 1 chữ số thập phân (0 - 31 ngày)',
+      );
+    }
+    if (input.kind !== 'opening_balance') {
+      if (input.month < iso(firstTerm.effective_from).slice(0, 7)) {
+        throw new DomainError('HR_LEAVE_BEFORE_HIRE', 422, 'Tháng nghỉ phép không thể trước tháng vào làm');
+      }
+      // Match pay-run active employment scoping (`peopleOf`): an employee whose `ended_on` precedes the 1st of `input.month`
+      // has zero active employment in `input.month` and cannot accrue or record monthly leave in that month.
+      if (employee.ended_on !== null && iso(employee.ended_on) < monthStart(input.month)) {
+        throw new DomainError('HR_LEAVE_AFTER_END', 422, 'Tháng nghỉ phép không thể sau tháng nhân viên đã nghỉ việc');
+      }
+      if (days.greaterThan('31')) {
+        throw new DomainError('HR_LEAVE_DAYS_EXCEEDS_MONTH', 422, 'Số ngày nghỉ trong một tháng không vượt quá 31 ngày');
+      }
+    } else if (employee.ended_on !== null && iso(employee.ended_on) < `${input.month.slice(0, 4)}-01-01`) {
+      throw new DomainError('HR_LEAVE_AFTER_END', 422, 'Năm kết chuyển phép đầu kỳ không thể sau năm nhân viên đã nghỉ việc');
+    }
+    const storedDays = input.kind === 'unpaid_leave' ? days.toDecimalPlaces(1).toFixed() : days.toDecimalPlaces(2).toFixed();
     const saved = await ctx.trx
       .insertInto('crove_hr.payroll_leave_entry')
       .values({
@@ -207,12 +270,13 @@ export const leaveBalance = defineQuery({
     }));
     const hireDate = iso(firstTerm.effective_from);
     const endedOn = employee.ended_on === null ? null : iso(employee.ended_on);
-    let balance: ReturnType<typeof calculateLeaveBalance>;
+    let balance: LeaveBalanceResult;
     try {
-      balance = calculateLeaveBalance(
+      balance = computeAnnualLeaveBalance(
         {
           year: input.year,
           category: input.category,
+          ...(input.standardAnnualDays !== undefined ? { standardAnnualDays: input.standardAnnualDays } : {}),
           hireDate,
           endedOn,
           entries: entries
