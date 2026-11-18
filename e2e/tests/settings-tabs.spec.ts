@@ -26,6 +26,8 @@ test('every tab of Settings has its own address, shows one kind of setting and s
     await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toHaveText('Cài đặt');
     await page.waitForLoadState('networkidle');
     const height = await page.getByRole('main').evaluate((main) => main.scrollHeight);
+    const cards = await page.getByRole('main').locator('div.grid.max-w-4xl > *').evaluateAll((nodes) => nodes.map((n) => Math.round(n.getBoundingClientRect().height)));
+    console.log(`settings tab ${tab}: ${height} px in all, cards ${cards.join(' + ')}`);
     // Soft, so one run reports the height of every tab, not only the first that is too tall.
     expect.soft(height, `${tab} tab is ${height} px tall`).toBeLessThan(1200);
   }
