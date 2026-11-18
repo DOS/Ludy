@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A payment to a supplier approved in Ludy (#3113 S2, #3699; JOY's answers of 2026-11-14 on #3113). Ludy moves no money: an owner or an admin approves paying one received invoice to the bank
 // account they saw, and the bank file and the bank-line match (S3) follow. What keeps the approved amount from going to an account the approver did not see lives in the database
-// (migration 20270113120000: the 24-hour hold of a single owner or admin with a new account, `stale` when the account changes, `paid` only after the hold and to the pinned account); these
+// (migration 20270115130000: the 24-hour hold of a single owner or admin with a new account, `stale` when the account changes, `paid` only after the hold and to the pinned account); these
 // commands feed and read it.
 // - finance.supplier_payment.prepare (owners and admins; R1): checks the invoice and the supplier's one active account and builds the request for approval. It writes nothing;
 //   kernel.proposal.request stores the proposal. One live payment or open request per invoice.
