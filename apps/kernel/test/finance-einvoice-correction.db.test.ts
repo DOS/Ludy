@@ -576,6 +576,40 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     expect(kept.lines.map((l) => l.vatRate)).toEqual(['10%', '8%']);
   });
 
+  it('reads for the coworker only the list, the buyer kind and the lines without a price, and only of an invoice that was issued here (#3690)', async () => {
+    const o = await org();
+    const original = await issued(o, sandbox());
+    const query = <T>(name: string, input: unknown) => rt.query<T>(name, input, { actor: asUser(o.owner), orgId: o.orgId });
+    type Source = { codes: Array<{ code: string; label: string }>; buyerKind: string; originalDate: string; lines: Array<Record<string, unknown>> };
+    const source = await query<Source>('finance.einvoice.reason_source', { originalDraftId: original.draftId });
+    expect(source).toEqual({
+      codes: REASONS,
+      buyerKind: 'business',
+      originalDate: today(),
+      lines: [
+        { description: 'Hàng A', unit: 'cái', quantity: '2', vatRate: '10%' },
+        { description: 'Hàng B', unit: null, quantity: '1.5', vatRate: '8%' },
+      ],
+    });
+    // Nothing of the buyer but its kind, no amount and no price, no number of the invoice.
+    const text = JSON.stringify(source);
+    for (const secret of ['Công ty Mua Thử', BUYER_TAX_CODE, '1 Phố Thử', '100000', '33333', '200000']) expect(text).not.toContain(secret);
+    expect(Object.keys(source).sort()).toEqual(['buyerKind', 'codes', 'lines', 'originalDate']);
+    // With no list entered the source says so (the API then asks no model).
+    useCorrectionReasonCodes([]);
+    try {
+      expect((await query<Source>('finance.einvoice.reason_source', { originalDraftId: original.draftId })).codes).toEqual([]);
+    } finally {
+      useCorrectionReasonCodes(REASONS);
+    }
+    // An invoice that was not issued, and one that is not here, are the answers of start_correction.
+    const notIssued = await execute<{ id: string }>(o, 'finance.einvoice_draft.save', form(o));
+    expect(await refusal(query('finance.einvoice.reason_source', { originalDraftId: notIssued.id }))).toBe('EINVOICE_ORIGINAL_NOT_ISSUED');
+    expect(await refusal(query('finance.einvoice.reason_source', { originalDraftId: randomUUID() }))).toBe('EINVOICE_DRAFT_NOT_FOUND');
+    // It is a read: no draft was made and nothing was audited as a command.
+    expect(await rows('SELECT 1 FROM crove_finance.einvoice_draft WHERE org_id = $1 AND original_draft_id = $2', [o.orgId, original.draftId])).toHaveLength(0);
+  });
+
   it('sends the consumer label and a passport\'s nationality in the provider\'s document (#3709)', async () => {
     const o = await org();
     const { provider, control } = sandbox();

@@ -1962,6 +1962,18 @@ export const vi = {
       methodReplacement: 'thay thế',
       reason: 'Lý do',
       reasonPick: 'Chọn lý do',
+      reasonNote: 'Mô tả sai sót để gợi ý lý do (không bắt buộc)',
+      reasonNotePlaceholder: 'Ví dụ: ghi sai địa chỉ người mua',
+      reasonSuggest: 'Gợi ý lý do',
+      reasonState: {
+        no_list: 'Danh sách mã lý do chưa được nhập nên chưa gợi ý được.',
+        no_note: 'Hãy mô tả sai sót trước.',
+        off: 'AI đang tắt nên không gợi ý được; hãy chọn lý do ở trên.',
+        busy: 'Bạn gợi ý hơi nhanh, hãy đợi vài giây rồi thử lại.',
+        budget: 'Ngân sách AI tháng này đã hết; hãy chọn lý do ở trên.',
+        failed: 'Chưa gợi ý được lúc này; hãy chọn lý do ở trên.',
+        refused: 'Không có mã nào trong danh sách khớp rõ với mô tả; hãy chọn lý do ở trên.',
+      },
       optionsRetry: 'Thử lại',
       optionsRetryHint: 'Chưa tải được danh sách mã lý do. Hãy kiểm tra kết nối rồi thử lại.',
       orgChanged: 'Bạn đã chuyển sang tổ chức khác trong lúc tải biên bản lên, nên chưa lập bản nháp. Hãy mở lại hóa đơn trong đúng tổ chức và làm lại.',
@@ -2084,6 +2096,7 @@ export const vi = {
     // The finance coworker on a draft (#2505): lines, the VAT rate the text states and the buyer, proposed from a text a person typed or pasted.
     ai: {
       rateCoworker: '{finance} giải thích',
+      reasonWhy: '{finance} gợi ý lý do này vì: {why} Bạn có thể đổi lý do trước khi lập bản nháp.',
       label: 'Nhờ {finance} soạn từ lời nhắn bán hàng',
       placeholder: 'Ví dụ: bán 10 hộp bánh A giá 120k cho anh Nam, thuế 8%',
       button: 'Nhờ {finance} soạn',
@@ -8250,6 +8263,7 @@ export const vi = {
       finance_stock_reorder: 'Soạn tin đặt thêm hàng gửi nhà cung cấp',
       finance_einvoice_draft: 'Soạn dòng hàng, thuế suất và người mua cho bản nháp hóa đơn bán ra',
       finance_einvoice_rate_explain: 'Giải thích thuế suất đề xuất cho hóa đơn điều chỉnh hoặc thay thế',
+      finance_einvoice_reason_suggest: 'Gợi ý mã lý do cho hóa đơn điều chỉnh hoặc thay thế',
       finance_payroll_prepare: 'Gợi ý những gì có thể đổi khi mở kỳ lương mới',
       finance_payroll_flag: 'Viết một câu cho mỗi điểm bất thường của bảng lương',
       finance_payroll_explain: 'Giải thích một phiếu lương từ các khoản đã lưu',
@@ -13528,6 +13542,7 @@ export const vi = {
       einvoice: {
         correction_options: 'Xem danh sách mã lý do điều chỉnh hoặc thay thế hóa đơn',
         correction_rate: 'Xem thuế suất đề xuất cho hóa đơn điều chỉnh hoặc thay thế',
+        reason_source: 'Đọc các dòng của hóa đơn gốc để gợi ý mã lý do điều chỉnh hoặc thay thế',
         draft_from_order: 'Lập bản nháp hóa đơn bán ra từ đơn bán hàng',
         issue: 'Phát hành hóa đơn bán ra',
         issue_request: 'Xem đề nghị phát hành hóa đơn bán ra',

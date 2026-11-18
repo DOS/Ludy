@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useDeferredValue, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { BUYER_IDENTITY_KINDS, BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_RATE_NATURES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerIdentityKind, type BuyerKind, type DraftIssueCode, EINVOICE_NOTICE_FIELDS, einvoiceNoticeText, type EInvoiceCorrection, type EInvoiceCorrectionKind, type EInvoiceNotice, type EInvoiceNoticeField, type EInvoiceNoticeList, type EInvoiceNoticeStep, type EInvoiceRateNature, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@crove/kernel-contract';
+import { BUYER_IDENTITY_KINDS, BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_RATE_NATURES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerIdentityKind, type BuyerKind, type DraftIssueCode, EINVOICE_NOTICE_FIELDS, einvoiceNoticeText, type EInvoiceCorrection, type EInvoiceCorrectionKind, type EInvoiceNotice, type EInvoiceNoticeField, type EInvoiceNoticeList, type EInvoiceNoticeStep, type EInvoiceRateNature, type EInvoiceReasonSuggested, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -578,6 +578,25 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
   const options = useQuery(orpc.einvoice.drafts.correctionOptions.queryOptions({ input: {} }));
   const [kind, setKind] = useState<EInvoiceCorrectionKind | null>(openWith);
   const [reason, setReason] = useState('');
+  // The coworker's proposal of the reason code (#3690): the person describes the error, the select is filled with the code proposed and the why is shown as the coworker's; nothing is saved until the
+  // correction is started. Once an answer says the model is off or the AI budget is spent, the button stays off.
+  const [errorNote, setErrorNote] = useState('');
+  const [reasonAi, setReasonAi] = useState<EInvoiceReasonSuggested['ai'] | null>(null);
+  const [reasonWhy, setReasonWhy] = useState<string | null>(null);
+  const suggest = useMutation({
+    mutationFn: (method: EInvoiceCorrectionKind) => client.einvoice.drafts.suggestReason({ originalDraftId: draft.id, kind: method, note: errorNote.trim() }),
+    onSuccess: (proposal) => {
+      setReasonAi(proposal.ai);
+      // The code is one of the list the select holds; anything else fills nothing.
+      const known = proposal.code !== null && (options.data?.reasonCodes ?? []).some((c) => c.code === proposal.code);
+      if (proposal.ai === 'used' && known) {
+        setReason(proposal.code as string);
+        setReasonWhy(proposal.why);
+      } else {
+        setReasonWhy(null);
+      }
+    },
+  });
   const [file, setFile] = useState<File | null>(null);
   // What the correction is about decides the VAT rate (#3709): the code proposes the basis for it, the coworker may explain it, and the person confirms before the draft is made.
   const [nature, setNature] = useState<EInvoiceRateNature | ''>('');
@@ -602,6 +621,9 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
       setFile(null);
       setNature('');
       setRateConfirmed(false);
+      setErrorNote('');
+      setReasonAi(null);
+      setReasonWhy(null);
       onStarted(made.id);
     },
   });
@@ -644,6 +666,35 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
                   </NativeSelectOption>
                 ))}
               </NativeSelect>
+              {/* "Gợi ý lý do" (#3690): the person says what is wrong and the coworker proposes a code of the list; the person can change it. */}
+              <div className="mt-2 space-y-1" data-testid="invoice-correction-reason-ai">
+                <Label htmlFor={`${id}-error-note`}>{t('correction.reasonNote')}</Label>
+                <Textarea id={`${id}-error-note`} rows={2} maxLength={600} value={errorNote} placeholder={t('correction.reasonNotePlaceholder')} onChange={(e) => setErrorNote(e.target.value)} data-testid="invoice-correction-error-note" />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    loading={suggest.isPending}
+                    disabled={errorNote.trim() === '' || suggest.isPending || reasonAi === 'off' || reasonAi === 'budget'}
+                    onClick={() => suggest.mutate(kind)}
+                    data-testid="invoice-correction-reason-suggest"
+                  >
+                    {t('correction.reasonSuggest')}
+                  </Button>
+                  {reasonAi !== null && reasonAi !== 'used' && (
+                    <p className="text-xs text-subtle-foreground" role="status" data-testid="invoice-correction-reason-state" data-state={reasonAi}>
+                      {t(`correction.reasonState.${reasonAi}`)}
+                    </p>
+                  )}
+                </div>
+                {reasonWhy !== null && (
+                  <p className="text-xs text-foreground" role="status" data-testid="invoice-correction-reason-why">
+                    {t('ai.reasonWhy', { why: reasonWhy })}
+                  </p>
+                )}
+                {suggest.error && <ErrorText>{errorMessage(suggest.error)}</ErrorText>}
+              </div>
             </div>
           )}
           <div className="mt-2">
@@ -712,6 +763,9 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
                 setFile(null);
                 setNature('');
                 setRateConfirmed(false);
+                setErrorNote('');
+                setReasonAi(null);
+                setReasonWhy(null);
               }}
             >
               {t('correction.cancel')}
