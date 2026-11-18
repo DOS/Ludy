@@ -15,7 +15,9 @@ import {
   journalVoucherCode,
   zJournalVoucherProposal,
   zJournalVoucherRequest,
+  zSurplusResolutionRequest,
   type JournalVoucherProposal,
+  type JournalVoucherRequest,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
@@ -35,6 +37,7 @@ import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { refuseSecondFeeAccrual } from './marketplace-fee-accrual-guard.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
+import { checkSurplusVoucher, surplusVoucherRequest } from './stock-surplus.ts';
 
 const REQUESTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
@@ -65,11 +68,21 @@ export async function checkJournalVoucherLines(ctx: QueryContext, lines: Readonl
 
 export const prepareJournalVoucher = defineCommand({
   name: 'finance.journal_voucher.prepare',
-  input: zJournalVoucherRequest,
+  // A voucher as entered, or the resolution of the surplus of a count (#3712 slice 2a): that one names a count and an account, and the lines come from the books (stock-surplus.ts).
+  input: z.union([zJournalVoucherRequest, zSurplusResolutionRequest]),
   risk: 'R1',
   sideEffect: 'internal',
   access: REQUESTERS,
-  handler: async (ctx, input) => {
+  handler: async (ctx, raw) => {
+    let input: JournalVoucherRequest;
+    let surplusCountId: string | null = null;
+    if ('surplus' in raw) {
+      const asked = await surplusVoucherRequest(ctx, raw);
+      input = asked.request;
+      surplusCountId = asked.surplusCountId;
+    } else {
+      input = raw;
+    }
     const lines = input.lines.map((l) => ({ ...l, partyId: l.partyId ?? null }));
     const parties = await checkJournalVoucherLines(ctx, lines, false);
     // The legal entity whose books the voucher goes to (#1280), stored with the proposal so the approver posts it there.
@@ -100,6 +113,7 @@ export const prepareJournalVoucher = defineCommand({
       }),
       total: journalVoucherTotal(lines),
       legalEntityId,
+      ...(surplusCountId === null ? {} : { surplusCountId }),
     };
     // The payload is stored as the proposal and parsed again with this schema when it is approved. One the schema
     // refuses (a party whose stored name is longer than a voucher holds, say) could never be approved, so it is
@@ -131,6 +145,7 @@ export async function postJournalVoucher(
   payout: { settlementId: string; bankLineId: string } | null = null,
   feeDocumentId: string | null = null,
   settlementMonth: string | null = null,
+  surplusCountId: string | null = null,
 ) {
   if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
   const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
@@ -159,6 +174,8 @@ export async function postJournalVoucher(
       ...(payout === null ? {} : { payout_settlement_id: payout.settlementId, payout_bank_line_id: payout.bankLineId }),
       // The column of a marketplace fee clearing is written only for one, as the others.
       ...(feeDocumentId === null ? {} : { fee_document_id: feeDocumentId }),
+      // The column of the resolution of a count's surplus is written only for one, as the others.
+      ...(surplusCountId === null ? {} : { surplus_count_id: surplusCountId }),
       created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
     })
     .returning(['id', 'number'])
@@ -204,6 +221,8 @@ export const recordJournalVoucher = defineCommand({
     if (journalVoucherTotal(lines) !== payload.total) {
       throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Tổng số tiền không khớp các dòng của phiếu', { problems: ['TOTAL_MISMATCH'] });
     }
-    return postJournalVoucher(ctx, payload);
+    // The resolution of a count's surplus (stock-surplus.ts): the amount is worked out again from the count and a proposal that is not exactly that voucher is refused.
+    await checkSurplusVoucher(ctx, payload, ctx.proposalId);
+    return postJournalVoucher(ctx, payload, null, null, null, null, null, null, null, null, payload.surplusCountId ?? null);
   },
 });

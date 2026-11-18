@@ -198,9 +198,9 @@ import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMark
 import { zMarketplaceFeeClearingRequest, zMarketplacePayoutRequest, zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
-import { zBankSupplierMatch, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
+import { zBankSupplierMatch, zSupplierPayableList, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentPrepare, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
 import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep } from './einvoice-notice.ts';
-import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceCorrectionOptions, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
+import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceCorrectionOptions, zEInvoiceCorrectionRateExplained, zEInvoiceCorrectionRateInput, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
@@ -266,7 +266,7 @@ import {
   zConversationAddress,
 } from './conversations.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
-import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } from './journal-voucher.ts';
+import { zDepreciationRequest, zJournalVoucherRequest, zSurplusResolutionRequest, zYearClosingRequest } from './journal-voucher.ts';
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
 import { zStatementsHtkkCheck, zStatementsHtkkYear } from './statements-htkk.ts';
 import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
@@ -2131,7 +2131,8 @@ export const contract = {
           z.object({ command: z.literal('finance.journal.reverse'), input: zJournalReversal, idempotencyKey: zId }),
           z.object({ command: z.literal('finance.voucher.record'), input: zCashVoucherRequest, idempotencyKey: zId }),
           // A general journal voucher (NVK, #888) entered by hand.
-          z.object({ command: z.literal('finance.journal_voucher.record'), input: zJournalVoucherRequest, idempotencyKey: zId }),
+          // A voucher as entered, or the resolution of a count's surplus (#3712 slice 2a): a count and an account, the lines and the amount come from the books.
+          z.object({ command: z.literal('finance.journal_voucher.record'), input: z.union([zJournalVoucherRequest, zSurplusResolutionRequest]), idempotencyKey: zId }),
           // The year-end closing (#889): the server builds the lines from the ledger.
           z.object({ command: z.literal('finance.closing.record'), input: zYearClosingRequest, idempotencyKey: zId }),
           // A month's depreciation and allocation (#919): the server builds the lines from the register.
@@ -2151,6 +2152,9 @@ export const contract = {
           // The payment of a pay run's net pay or one remittance (#2532): the server builds the voucher from the frozen run; an owner or an admin approves. HR_RUN_NOT_FOUND (404),
           // HR_RUN_NOT_APPROVED, HR_PAYMENT_NOT_POSTED, HR_PAYMENT_POSTING_REVERSED, HR_PAYMENT_DONE, HR_PAYMENT_OPEN (409), HR_PAYMENT_NOTHING_DUE, HR_POSTING_MISMATCH, VOUCHER_INVALID (422).
           z.object({ command: z.literal('finance.payroll_payment.record'), input: zHrPaymentRequest, idempotencyKey: zId }),
+          // The payment of a received invoice to its supplier's bank account (#3113 S4b): the server builds the request from the invoice and the supplier's one active account; an owner or an admin approves (four-eyes,
+          // or a fresh second factor and a 24 hour hold on a new account). SUPPLIER_PAYMENT_INVOICE_NOT_FOUND (404), SUPPLIER_PAYMENT_NO_ACCOUNT, _ACCOUNT_AMBIGUOUS, _EXISTS, _PENDING (409).
+          z.object({ command: z.literal('finance.supplier_payment.record'), input: zSupplierPaymentPrepare, idempotencyKey: zId }),
           // The settlement of an approved supplier payment by its bank line (#3700 S3c): the server builds the voucher (Dr 331 / Cr the bank) from the payment and the line; an owner or an admin (or the chief
           // accountant) approves. SUPPLIER_PAYMENT_NOT_FOUND (404), SUPPLIER_PAYMENT_NOT_APPROVED, _HELD, _ACCOUNT_CHANGED, _DOCUMENT, _NOT_EXPORTED, _ACCOUNT_MISMATCH, _SETTLE_PENDING (409), _CURRENCY, _LINE_MISMATCH, _LINE_BEFORE_FILE (422).
           z.object({ command: z.literal('finance.supplier_payment.settle.record'), input: zSupplierPaymentSettlePrepare, idempotencyKey: zId }),
@@ -2414,6 +2418,8 @@ export const contract = {
   // SUPPLIER_PAYMENT_ALREADY_CONFIRMED (409).
   supplierPayment: {
     list: oc.input(zSupplierPaymentListInput).output(zSupplierPaymentList),
+    // The received invoices that can be asked for payment (#3113 S4b), oldest first.
+    payable: oc.input(z.strictObject({})).output(zSupplierPayableList),
     confirmAccount: oc.input(zSupplierPaymentConfirm).output(zSupplierPayment),
     cancel: oc.input(zSupplierPaymentCancel).output(zSupplierPayment),
   },
@@ -2479,6 +2485,9 @@ export const contract = {
       startCorrection: oc.input(zEInvoiceStartCorrection).output(zEInvoiceDraft),
       // The reason codes a correction may carry (#2504); empty until Appendix XVII is entered. Owners, admins and members.
       correctionOptions: oc.input(z.object({})).output(zEInvoiceCorrectionOptions),
+      // The VAT rate a correction proposes for the nature a person picked (#3709): the basis and the rate by code, the fixed reason and the Official Letter 2121/TCT-CS note, and the accounting
+      // coworker's plain explanation when the model is on and the AI budget allows (`ai` says why not). Read only; the person confirms by starting the correction. Owners, admins and members.
+      correctionRate: oc.input(zEInvoiceCorrectionRateInput).output(zEInvoiceCorrectionRateExplained),
       // An error only in the non-core content of an issued invoice (#2504): records it with the text that is right, and the two steps the seller does outside Ludy (tell the buyer; file the
       // form 04/SS-HĐĐT, a working answer of #2506 not confirmed by the accountant). Ludy sends nothing. Owners, admins and members.
       noticeOpen: oc.input(zEInvoiceNoticeOpen).output(zEInvoiceNotice),

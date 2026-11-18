@@ -73,7 +73,7 @@ export function MeetingHookCard() {
   return (
     <Card data-testid="meeting-hook">
       <CardHeader>
-        <CardTitle>{t('title')}</CardTitle>
+        <CardTitle role="heading" aria-level={2}>{t('title')}</CardTitle>
         <CardDescription>{t('hint')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
@@ -157,9 +157,9 @@ export function MeetingHookCard() {
               >
                 <label className="block space-y-1">
                   <span className="text-foreground">{t('url')}</span>
-                  <Input type="url" inputMode="url" autoComplete="off" placeholder="https://" value={shownUrl} maxLength={2048} aria-invalid={urlProblem !== null} onChange={(e) => setUrl(e.target.value)} />
+                  <Input type="url" inputMode="url" autoComplete="off" placeholder="https://" value={shownUrl} maxLength={2048} aria-invalid={urlProblem !== null} aria-describedby={urlProblem ? 'hook-url-error' : undefined} onChange={(e) => setUrl(e.target.value)} />
                 </label>
-                {urlProblem && <ErrorText>{t('urlRule')}</ErrorText>}
+                {urlProblem && <ErrorText id="hook-url-error">{t('urlRule')}</ErrorText>}
                 <fieldset className="space-y-1">
                   <legend className="text-foreground">{t('fieldsLegend')}</legend>
                   <p className="text-xs text-subtle-foreground">{t('alwaysSent')}</p>
