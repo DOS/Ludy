@@ -4,7 +4,8 @@
 //   after the grant was made wakes nothing); never a member-bound grant (the 2026-11-13 hold: member grants get no signals and no minutes event, and the database refuses the type for one), never
 //   another org's grant;
 // - when: one event per publish of a RESULT of a meeting whose visibility is 'org'; an attendees-only meeting, a draft, a publish of items alone and a refused publish send nothing, a retry of the
-//   same event sends nothing new, a second publish sends one more, an event older than 24 hours when it would be sent is dropped and audited by its id, and nothing is sent while Meetings is off;
+//   same event sends nothing new, a second publish sends one more, an event older than 24 hours when it would be sent is dropped and audited by its id, and nothing is sent while Meetings is off (the
+//   relay does not park Meetings' events, so such an event is not released later);
 // - what: a body of ids and instants only, exactly the six top-level keys and the two data keys `meeting_id` and `published_at`; a title and a summary seeded with canary strings are in no stored
 //   row, not in the outbox event and not in any body;
 // - the list of grants to wake is a worker-only definer that returns ids.
@@ -179,9 +180,8 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
     expect(rows.map((r) => r.grant_id).sort()).toEqual([ids.gOwner, ids.gAdmin].sort());
     for (const none of ['gMember', 'gNoWake', 'gRevoked', 'gDemoted', 'gOtherOrg']) expect(rows.map((r) => r.grant_id), none).not.toContain(ids[none]);
     expect(sent.map((s) => s.id).sort()).toEqual(rows.map((r) => r.id).sort());
-    // Nothing for another org's grant either way round: the same event run in org B's name finds no event of its own.
-    const otherRows = await sqlAdmin(`SELECT 1 FROM crove_kernel.agent_wake_delivery WHERE org_id = $1`, [orgB]);
-    expect(otherRows.rowCount).toBe(0);
+    // Nothing for another org's grant: org B stored no delivery of any kind (the list of grants is scoped to the org of the event, pinned again on the definer below).
+    expect((await sqlAdmin(`SELECT 1 FROM crove_kernel.agent_wake_delivery WHERE org_id = $1`, [orgB])).rowCount).toBe(0);
   });
 
   it('stores a body of ids and instants only: the six top-level keys and the two data keys, the grant\'s own ids, the instant the list shows, and no word of the title or the summary anywhere', async () => {
@@ -253,11 +253,40 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
     const audit = (await sqlAdmin<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.minutes_targets' ORDER BY occurred_at DESC LIMIT 1`, [orgA])).rows[0];
     expect(audit?.detail).toMatchObject({ eventId: (event as { id: string }).id, dropped: true });
     expect(JSON.stringify(audit)).not.toContain('BÍ MẬT');
+    // The bound is "older than 24 hours": at exactly 24 hours the event is still sent.
+    const edge = await wake((event as { id: string }).id, { now: () => new Date(at + 24 * HOUR) });
+    expect(edge).toMatchObject({ dropped: false, stored: 2, handedOver: 2 });
+    await reset();
     const fresh = await wake((event as { id: string }).id, { now: () => new Date(at + 23 * HOUR) });
     expect(fresh).toMatchObject({ dropped: false, stored: 2, handedOver: 2 });
   });
 
-  it('sends nothing while Meetings is off for the org, and sends again once it is on', async () => {
+  it('keeps a delivery whose hand-over to the queue failed, stores nothing new when the job runs again, and leaves it to the existing sweep to hand over', async () => {
+    await reset();
+    const meetingId = await seedMeeting('handOver', 'org', true);
+    const [event] = await events(meetingId);
+    const failed = await wakeMinutesPublished({ runtime: worker, send: async () => Promise.reject(new Error('queue down')) }, { orgId: orgA, eventId: (event as { id: string }).id });
+    expect(failed).toMatchObject({ stored: 2, handedOver: 0 });
+    const stored = await deliveries();
+    expect(stored.map((r) => r.status)).toEqual(['queued', 'queued']);
+    expect(await wake((event as { id: string }).id)).toMatchObject({ stored: 0, handedOver: 0 });
+    expect(sent).toEqual([]);
+    // The sweep's own list (mcp_wake_open: never handed over for three minutes) picks both up, as the worker's login sees it.
+    await sqlAdmin(`UPDATE crove_kernel.agent_wake_delivery SET queued_at = now() - interval '4 minutes' WHERE org_id = $1 AND type = $2`, [orgA, TYPE]);
+    const url = new URL(adminUrl);
+    url.username = 'crove_worker';
+    url.password = 'test-worker-pw';
+    const asWorker = new pg.Client({ connectionString: url.toString() });
+    await asWorker.connect();
+    try {
+      const open = await asWorker.query<{ id: string; kind: string }>(`SELECT id, kind FROM crove_kernel.mcp_wake_open(100)`);
+      expect(open.rows.filter((r) => stored.some((s) => s.id === r.id)).map((r) => r.kind)).toEqual(['send', 'send']);
+    } finally {
+      await asWorker.end();
+    }
+  });
+
+  it('sends nothing while Meetings is off for the org (the event is not parked: running the same job again once it is on is what sends it)', async () => {
     await reset();
     const meetingId = await seedMeeting('offApp', 'org', true);
     const [event] = await events(meetingId);
@@ -299,7 +328,8 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
     const id = randomUUID();
     const body = { id, type: TYPE, created_at: '2026-11-18T03:00:00.000Z', org: orgA, grant: ids.gMember, data: { meeting_id: randomUUID(), published_at: '2026-11-18T02:59:58.123Z' } };
     const error = await refusal(worker.execute('kernel.mcp.wake.enqueue', { id, grantId: ids.gMember, type: TYPE, body }, { actor: { type: 'system', component: 'kernel.mcp.wake' }, orgId: orgA }));
-    expect(error.status).toBeGreaterThanOrEqual(400);
+    // The kind is what refuses: INVALID (422), not the grant failing to stand (MCP_WAKE_GRANT_NOT_FOUND, 404), which this grant does not (it is live with a wake-up).
+    expect([error.code, error.status]).toEqual(['INVALID', 422]);
     expect((await sqlAdmin(`SELECT 1 FROM crove_kernel.agent_wake_delivery WHERE org_id = $1 AND grant_id = $2 AND type = $3`, [orgA, ids.gMember, TYPE])).rowCount).toBe(0);
     // The same body for a company grant is stored, which shows the refusal is the grant's kind and not the body.
     const companyId = randomUUID();

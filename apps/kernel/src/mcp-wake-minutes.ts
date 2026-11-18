@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The wake-up for published minutes (#3803, ADR-0051 decision 4): when the recorder publishes a result of a meeting shared with the whole company, `meetings.result.publish` stores one outbox event
 // (`meetings.minutes.published`: the meeting's id and the instant, no word of the minutes), and the worker's notify job calls this with the event's id. It reaches no URL and enters no grant's context:
-//   1. Meetings must be on for the org (the relay already parks the events of an app that is off; this asks again, as the sweep of the minutes webhook does).
+//   1. Meetings must be on for the org, asked fresh when the job runs (the relay does not park this app's events, outbox-hold.ts: while Meetings is off the event is not sent and not released later;
+//      the agent reads current state through the tool, so nothing it needs is lost).
 //   2. `kernel.mcp.wake.minutes_targets` reads the event itself, lists the company grants whose wake-up stands now (worker-only definer, ids only) and drops, with an audit row by the event's id, an
 //      event older than 24 hours when it would be sent.
 //   3. For each grant: the body is built by the one builder (mcp-wake-body.ts), stored through `kernel.mcp.wake.enqueue` (the database checks the body again and refuses the type for a member-bound
 //      grant) and handed to the queue (mcp-wake.ts signs and sends it). A queue failure leaves the delivery stored, to be handed over again by the sweep; a grant that stopped standing between the list
-//      and the store is skipped; a failure for one grant never stops the others.
+//      and the store is skipped; any other failure for one grant (a deadlock, a lost connection) never stops the others, and is thrown after them so the job retries: the derived ids make the retry
+//      store only what is missing.
 // Dedupe: the delivery's id is derived from the outbox event's id and the grant's id (a name-based UUID), so a retry of the same event stores nothing new and sends nothing new, while a second publish is
 // a second event and sends one more.
 import { createHash } from 'node:crypto';
@@ -58,6 +60,7 @@ export async function wakeMinutesPublished(deps: MinutesWakeDeps, job: { orgId: 
   const targets = await deps.runtime.execute<McpWakeMinutesTargets | null>('kernel.mcp.wake.minutes_targets', { eventId: job.eventId, now: now().toISOString() }, ctx);
   if (!targets) return result;
   if (targets.dropped) return { ...result, dropped: true };
+  let failure: unknown = null;
   for (const grantId of targets.grants) {
     const id = wakeDeliveryId(job.eventId, grantId);
     try {
@@ -70,9 +73,11 @@ export async function wakeMinutesPublished(deps: MinutesWakeDeps, job: { orgId: 
         (error: unknown) => console.warn(`[mcp-wake-minutes] ${id.slice(0, 8)} not handed over, will be again`, codeOf(error)),
       );
     } catch (error) {
-      // A grant that no longer stands, or a store that failed: the others go on.
+      // A grant that no longer stands (it stopped between the list and the store) is skipped for good; any other failure is kept and thrown once the other grants are done, so the job retries.
       console.warn(`[mcp-wake-minutes] grant ${grantId.slice(0, 8)}`, codeOf(error));
+      if (!(error instanceof DomainError && error.code === 'MCP_WAKE_GRANT_NOT_FOUND')) failure ??= error;
     }
   }
+  if (failure !== null) throw failure;
   return result;
 }

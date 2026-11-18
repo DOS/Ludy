@@ -360,7 +360,8 @@ export const mcpWakeMinutesTargets = defineCommand({
       ? []
       : (await sql<{ grant_id: string }>`SELECT grant_id FROM crove_kernel.mcp_wake_company_targets(${ctx.orgId}::uuid, ${MINUTES_WAKE_GRANTS_MAX}::int)`.execute(ctx.trx)).rows.map((r) => r.grant_id);
     // The event's id and what came of it: never a body.
-    ctx.audit({ eventId: input.eventId, dropped: stale, grants: grants.length });
+    // `capped` says the list stopped at its limit, so a count equal to it is never read as the whole.
+    ctx.audit({ eventId: input.eventId, dropped: stale, grants: grants.length, capped: grants.length >= MINUTES_WAKE_GRANTS_MAX });
     return { meetingId: published.meetingId, publishedAt: published.publishedAt, grants, dropped: stale };
   },
 });
