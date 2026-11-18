@@ -48,7 +48,7 @@ import { StoryLine, StoryTotals } from '../components/social-story-metrics.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient, uploadFiles } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
-import { dayKey, dayRange, defaultSocialTab, isSocialScreen, providerName, SOCIAL_STATUS_TABS, SOCIAL_VIEWS, tabOfView, variantStatusKey, variantTone, viewOfTab, type SocialSearch, type SocialStatusTab, type SocialTab, type SocialView } from '../lib/social.ts';
+import { dayKey, dayRange, defaultSocialTab, isSocialScreen, providerName, SOCIAL_STATUS_TABS, SOCIAL_VIEWS, tabOfView, variantStatusKey, variantTone, viewOfTab, type SocialSearch, type SocialTab, type SocialView } from '../lib/social.ts';
 import { pollEvery, SAFETY_POLL_MS, useStreamLive } from '../lib/stream-hook.ts';
 
 type Tab = SocialTab;
@@ -647,9 +647,10 @@ export function SocialPage() {
   // library are screens of their own with a way back to the status list the visit came from.
   const screen = isSocialScreen(tab);
   const view: SocialView = viewOfTab(tab) ?? 'list';
-  const [lastStatus, setLastStatus] = useState<SocialStatusTab>('upcoming');
+  // The list, calendar or board the visit came from: the way back from a screen (#3655).
+  const [lastStatus, setLastStatus] = useState<SocialTab>('upcoming');
   useEffect(() => {
-    if ((SOCIAL_STATUS_TABS as readonly string[]).includes(tab)) setLastStatus(tab as SocialStatusTab);
+    if (!isSocialScreen(tab)) setLastStatus(tab);
   }, [tab]);
   // Changes the address, so the back button and a shared link keep the list; replaces rather than piles up history.
   const setSearch = useCallback(
@@ -821,8 +822,8 @@ export function SocialPage() {
                 {canWrite && !noChannels && (
                   <DropdownMenuLinkItem render={<Link to="/o/$slug/social/import" params={{ slug }} />}>{t('import.open')}</DropdownMenuLinkItem>
                 )}
-                <DropdownMenuLinkItem render={<Link to="/o/$slug/social" params={{ slug }} search={{ tab: 'library' }} />}>{t('tabs.library')}</DropdownMenuLinkItem>
-                <DropdownMenuLinkItem render={<Link to="/o/$slug/social" params={{ slug }} search={{ tab: 'metrics' }} />}>{t('tabs.metrics')}</DropdownMenuLinkItem>
+                <DropdownMenuLinkItem render={<Link to="/o/$slug/social" params={{ slug }} search={(prev: SocialSearch) => clean({ ...prev, tab: 'library' })} />}>{t('tabs.library')}</DropdownMenuLinkItem>
+                <DropdownMenuLinkItem render={<Link to="/o/$slug/social" params={{ slug }} search={(prev: SocialSearch) => clean({ ...prev, tab: 'metrics' })} />}>{t('tabs.metrics')}</DropdownMenuLinkItem>
                 {canWrite && (
                   <>
                     <DropdownMenuSeparator />
@@ -867,7 +868,7 @@ export function SocialPage() {
         {screen ? (
           // The figures and the photo library are screens of their own (#3655): a way back, then the screen.
           <div className="flex flex-wrap items-center gap-3">
-            <Link to="/o/$slug/social" params={{ slug }} search={{ tab: lastStatus }} className={buttonVariants({ variant: 'ghost' })}>
+            <Link to="/o/$slug/social" params={{ slug }} search={(prev: SocialSearch) => clean({ ...prev, tab: lastStatus })} className={buttonVariants({ variant: 'ghost' })}>
               {t('screenBack')}
             </Link>
             <h2 className="text-base font-semibold text-foreground">{t(`tabs.${tab}`)}</h2>
