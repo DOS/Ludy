@@ -30,7 +30,7 @@ export function clock(seconds: number): string {
   return h > 0 ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
 }
 
-function Line({ segment, editable, focused, translation }: { segment: TranscriptSegment; editable: boolean; focused: boolean; translation?: { part: Parameters<typeof TranslatedLine>[0]['part']; to: string } | undefined }) {
+function Line({ segment, editable, focused, focusToken, translation }: { segment: TranscriptSegment; editable: boolean; focused: boolean; focusToken?: number | undefined; translation?: { part: Parameters<typeof TranslatedLine>[0]['part']; to: string } | undefined }) {
   const t = useTranslations('meetings.transcript');
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(segment.text);
@@ -50,9 +50,10 @@ function Line({ segment, editable, focused, translation }: { segment: Transcript
   const unchanged = text.trim() === segment.text && speaker.trim() === segment.speakerLabel;
   // The line a search hit opened the page at: scrolled to the middle once and marked.
   const ref = useRef<HTMLLIElement | null>(null);
+  // `focusToken` moves on every chapter click, so a click on the chapter of the line already marked scrolls to it again.
   useEffect(() => {
     if (focused) ref.current?.scrollIntoView?.({ block: 'center' });
-  }, [focused]);
+  }, [focused, focusToken]);
 
   return (
     <li ref={ref} className={focused ? 'space-y-1 rounded-md bg-warning/15 px-2 py-2 text-sm' : 'space-y-1 py-2 text-sm'} data-testid="transcript-line" {...(focused ? { 'aria-current': 'location' as const, 'data-focused': 'true' } : {})}>
@@ -208,7 +209,8 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
   );
 }
 
-export function MeetingTranscript({ meetingId, focusSegmentId }: { meetingId: string; focusSegmentId?: string }) {
+// `focusSecond`: a chapter was clicked (#3844): the first line that starts at that whole second is marked and scrolled to; `token` changes on each click.
+export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond }: { meetingId: string; focusSegmentId?: string; focusSecond?: { second: number; token: number } | undefined }) {
   const t = useTranslations('meetings.transcript');
   const query = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   // The member's own translated parts beside the lines (E2, #3185); none until they asked.
@@ -226,6 +228,7 @@ export function MeetingTranscript({ meetingId, focusSegmentId }: { meetingId: st
     ) : null;
   }
   const draft = transcript.stage === 'draft';
+  const focusedId = focusSecond ? transcript.segments.find((s) => Math.floor(s.startSeconds) === focusSecond.second)?.id : focusSegmentId;
   return (
     <div className="space-y-3">
       {transcript.isRecorder && <VyTranscribe meetingId={meetingId} hasDraft={draft} />}
@@ -242,7 +245,8 @@ export function MeetingTranscript({ meetingId, focusSegmentId }: { meetingId: st
               key={segment.id}
               segment={segment}
               editable={transcript.isRecorder}
-              focused={segment.id === focusSegmentId}
+              focused={segment.id === focusedId}
+              focusToken={focusSecond?.token}
               translation={translated.parts.has(segment.id) ? { part: translated.parts.get(segment.id) as Parameters<typeof TranslatedLine>[0]['part'], to: translated.to } : undefined}
             />
           ))}

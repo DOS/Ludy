@@ -55,6 +55,9 @@ export const AI_FEATURES = {
   // The accounting coworker's plain-Vietnamese reason for the VAT rate a correcting e-invoice proposes (#3709): code decided the basis and the rate, a person confirms; the model is told the nature, two
   // dates and the rates only, and its text is refused when it states a figure or a rate the facts do not hold.
   'finance.einvoice_rate_explain': 'finance',
+  // The accounting coworker's proposal of the reason code of an adjusting or replacing e-invoice (#3690): the model answers a number into the list of Appendix XVII codes it is shown, so a code outside
+  // the list cannot come out; its one-line why is refused when it states a figure the note, the lines or the labels do not hold. A person confirms by starting the correction.
+  'finance.einvoice_reason_suggest': 'finance',
   // The finance coworker on payroll (#2534): prepare the month from the diff of last month, put the anomalies code found in a sentence, explain one payslip. The model sees the pseudonymized sheet only
   // (an alias per employee, fixed component labels and amounts); every text is refused when it states a figure it was not given, and a person decides.
   'finance.payroll_prepare': 'finance',
@@ -68,6 +71,9 @@ export const AI_FEATURES = {
   // The finance coworker's one line on the Sàn screen (#2516 slice E): code read the facts from the books (settlements waiting to be posted, what the platforms owe, fees awaiting an invoice), the model
   // only words them from those four numbers; a line that states a figure it was not given, a link, or says something was posted, approved or paid is refused. A read, never a post.
   'finance.marketplace_line': 'finance',
+  // The finance coworker's one line above the received invoices to pay (#3113 S4c): code read the facts (how many invoices wait, their total, the oldest date, how many are of a supplier whose bank account
+  // changed recently), the model only words them; a line that states a figure it was not given, a link, advice, or says something was paid or sent is refused. A read, it asks for no payment.
+  'finance.supplier_payable_line': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
   // The sales coworker's proposal for the lines of a quote (#2698): from the deal, what the customer wrote and the earlier quotes to them; a price no source holds stays empty, and a person applies each line.

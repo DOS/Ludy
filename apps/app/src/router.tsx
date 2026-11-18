@@ -74,6 +74,7 @@ import { parseVouchersSearch } from './lib/vouchers.ts';
 import { SocialChannelsPage } from './routes/social-channels.tsx';
 import { OAuthCallbackPage } from './routes/social-oauth.tsx';
 import { CalendarOAuthCallbackPage } from './routes/calendar-oauth.tsx';
+import { MeetingPlatformOAuthCallbackPage } from './routes/meeting-platform-oauth.tsx';
 import { SocialComposePage, SocialPostPage } from './routes/social-post.tsx';
 import { SocialSharePage } from './routes/social-share.tsx';
 import { SHARE_PATH, forgetShare, pendingShare, readShareFragment, readShareOrg, rememberShare } from './lib/social-share.ts';
@@ -394,6 +395,17 @@ const calendarOAuthCallbackRoute = createRoute({
     await requireAuth();
   },
   component: CalendarOAuthCallbackPage,
+});
+
+// Where a meeting platform's OAuth dialog sends the browser back (Zoom, C3, #3175); the attempt remembers its org the same way.
+const meetingPlatformOAuthCallbackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/meetings/oauth/$provider/callback',
+  beforeLoad: async ({ matches }) => {
+    requireInstalledOutside(matches);
+    await requireAuth();
+  },
+  component: MeetingPlatformOAuthCallbackPage,
 });
 
 const onboardingRoute = createRoute({
@@ -726,6 +738,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
+  meetingPlatformOAuthCallbackRoute,
   orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, signEnvelopesRoute, signEnvelopeDetailRoute, signTemplatesRoute, signVerifyRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, settingsMembersRoute, settingsAppsRoute, settingsBookingsRoute, settingsSalesRoute, settingsQuotesRoute, settingsAccountingRoute, settingsConnectionsRoute, settingsSecurityRoute, settingsDataRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 

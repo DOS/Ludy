@@ -207,6 +207,31 @@ export const zEInvoiceCorrectionRateExplained = zEInvoiceCorrectionRate.extend({
 });
 export type EInvoiceCorrectionRateExplained = z.infer<typeof zEInvoiceCorrectionRateExplained>;
 
+// The accounting coworker's proposal of the reason code of an adjusting or a replacing invoice (#3690, the AI part of #2504). The person describes the error (`note`, never stored or logged); the code
+// the coworker proposes is one of Appendix XVII's list (packages/einvoice reason-codes.ts) by number, checked in code, and the person confirms it by starting the correction, which checks it again.
+// `ai` says why there is no proposal: 'no_list' (the list of codes is empty, nothing to propose), 'no_note' (nothing was described), 'off' (no model on this deployment), 'busy' (the member asks too often),
+// 'budget' (the AI budget is spent), 'failed' (the call failed) or 'refused' (the answer was not one of the list or stated what the facts do not hold). With any of them the form works as it does with AI off.
+export const zEInvoiceReasonInput = z.strictObject({ originalDraftId: zId, kind: z.enum(['adjustment', 'replacement']), note: z.string().trim().max(600) });
+export type EInvoiceReasonInput = z.infer<typeof zEInvoiceReasonInput>;
+// What the model may see of the original, read in the member's own transaction (finance.einvoice.reason_source): the list, the buyer's kind and the lines without a price or an amount. No name, address,
+// tax code, email or ID of the buyer.
+export const zEInvoiceReasonSourceInput = z.strictObject({ originalDraftId: zId });
+export const zEInvoiceReasonSource = z.object({
+  codes: z.array(z.object({ code: z.string(), label: z.string() })),
+  buyerKind: z.enum(BUYER_KINDS),
+  originalDate: z.string(),
+  lines: z.array(z.object({ description: z.string(), unit: z.string().nullable(), quantity: z.string(), vatRate: z.string() })),
+});
+export type EInvoiceReasonSource = z.infer<typeof zEInvoiceReasonSource>;
+export const EINVOICE_REASON_STATES = ['used', 'no_list', 'no_note', 'off', 'busy', 'budget', 'failed', 'refused'] as const;
+export const zEInvoiceReasonSuggested = z.object({
+  ai: z.enum(EINVOICE_REASON_STATES),
+  code: z.string().nullable(),
+  label: z.string().nullable(),
+  why: z.string().nullable(),
+});
+export type EInvoiceReasonSuggested = z.infer<typeof zEInvoiceReasonSuggested>;
+
 export const zEInvoiceDraft = z.object({
   id: zId,
   legalEntityId: zId,

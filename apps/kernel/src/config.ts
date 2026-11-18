@@ -538,6 +538,10 @@ const schema = z.object({
   CALENDAR_MICROSOFT_CLIENT_ID: optional,
   CALENDAR_MICROSOFT_CLIENT_SECRET: optional,
   CALENDAR_MICROSOFT_TENANT: optional,
+  // Zoom recordings (Meetings C3, #3175): the operator's own Zoom OAuth app, a user-managed app (authorization code with PKCE; a self-hoster's own private app needs no Zoom review) with the granular
+  // cloud recording read scopes and the redirect URL APP_URL/meetings/oauth/zoom/callback (docs/runbooks/meetings-zoom.md). Off by default: with neither set there is no Zoom adapter and no Zoom connection. Both or neither.
+  ZOOM_OAUTH_CLIENT_ID: optional,
+  ZOOM_OAUTH_CLIENT_SECRET: optional,
   // The deployment's TikTok app (Login Kit and Content Posting API, Direct Post), S9. Callback URL:
   // APP_URL/channels/oauth/tiktok/callback.
   CHANNEL_TIKTOK_CLIENT_KEY: optional,
@@ -917,6 +921,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.CALENDAR_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CALENDAR_GOOGLE_CLIENT_ID)) throw new Error('CALENDAR_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.CALENDAR_MICROSOFT_CLIENT_ID) !== Boolean(config.CALENDAR_MICROSOFT_CLIENT_SECRET)) throw new Error('set both CALENDAR_MICROSOFT_CLIENT_ID and CALENDAR_MICROSOFT_CLIENT_SECRET, or neither');
   if (config.CALENDAR_MICROSOFT_CLIENT_ID && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(config.CALENDAR_MICROSOFT_CLIENT_ID)) throw new Error('CALENDAR_MICROSOFT_CLIENT_ID is the application (client) id of a Microsoft Entra app registration, a UUID');
+  if (Boolean(config.ZOOM_OAUTH_CLIENT_ID) !== Boolean(config.ZOOM_OAUTH_CLIENT_SECRET)) throw new Error('set both ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET, or neither');
+  if (config.ZOOM_OAUTH_CLIENT_ID && !/^[A-Za-z0-9_-]{8,64}$/.test(config.ZOOM_OAUTH_CLIENT_ID)) throw new Error('ZOOM_OAUTH_CLIENT_ID is the client id of the Zoom app (letters, digits, - and _)');
   if (config.CALENDAR_MICROSOFT_TENANT && !/^(?:common|organizations|consumers|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|(?:[A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63})$/.test(config.CALENDAR_MICROSOFT_TENANT)) throw new Error('CALENDAR_MICROSOFT_TENANT is common, organizations, consumers, a directory id or a verified domain');
   if (config.CHANNEL_GOOGLE_BUSINESS === 'true' && !config.CHANNEL_GOOGLE_CLIENT_ID) throw new Error('CHANNEL_GOOGLE_BUSINESS needs CHANNEL_GOOGLE_CLIENT_ID and CHANNEL_GOOGLE_CLIENT_SECRET');
   if (config.CHANNEL_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CHANNEL_GOOGLE_CLIENT_ID)) throw new Error('CHANNEL_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');

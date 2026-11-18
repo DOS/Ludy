@@ -197,6 +197,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.live_chunk', () => 'false'], // The recorder's own live pieces, read by the recorder, a user (ADR-0052 L4a, #3109).
   ['crove_meetings.live_line', () => 'false'], // The live preview of a recording, read by the recorder, a user (ADR-0052 L4a, #3110).
   ['crove_meetings.meeting', () => 'false'], // As above.
+  ['crove_meetings.meeting_chapter', () => 'false'], // The chapters of a meeting, read by the recorder and, once published, the readers of the meeting, users (meetings chapters, #3844).
   ['crove_meetings.meeting_link', () => 'false'], // As above (a link is read through its meeting's readers, L1 #2587).
   ['crove_meetings.meeting_note', () => 'false'], // The recorder's own rough notes, read by the recorder, a user (meetings integrations A5, #3163).
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
@@ -246,6 +247,7 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
   ['crove_finance.einvoice_notice', ['update']],
   ['crove_finance.einvoice_series', ['update', 'delete']],
   ['crove_finance.marketplace_connection', ['update', 'delete']],
+  ['crove_finance.misa_amis_connection', ['update', 'delete']],
   ['crove_finance.stock_alias', ['delete']],
   ['crove_finance.stock_count', ['update']],
   ['crove_finance.stock_count_line', ['update']],
@@ -294,6 +296,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.live_line', 'false'],
   // Meeting records (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting', 'false'],
+  // The chapters of a meeting (meetings chapters, #3844): the recorder reads every stage and the readers the published ones, users; worker system context reads and writes nothing.
+  ['crove_meetings.meeting_chapter', 'false'],
   // Meeting readers (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_link', 'false'],
   // The recorder's own rough notes (meetings integrations A5, #3163): the recorder's alone; worker system context reads and writes nothing.
@@ -1603,6 +1607,22 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #3875 (S2 of #3854): an entity's connection to MISA AMIS Kế toán: the channel connection that holds the sealed access code and the entity it is for (one connection per entity, so each row
+  // takes an entity of its own). Tenant roles update only the result of the last connection test (a column grant), so the update probes assign the state to itself.
+  'crove_finance.misa_amis_connection': {
+    update: { set: 'last_test_state = last_test_state' },
+    make: (o) => {
+      const entity = randomUUID();
+      const connection = { ...channelConnectionRow(o), provider: 'accounting_misa_amis' };
+      return {
+        setup: [
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: `RLS matrix AMIS entity ${tag()}`, kind: 'branch', created_by: o.owner } },
+          { table: 'crove_kernel.channel_connection', values: connection },
+        ],
+        row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, channel_connection_id: connection.id },
+      };
+    },
+  },
   // #1398: an org's MISA SME item and warehouse codes (Mã hàng, Mã kho) for purchase lines on a stock account (152, 153,
   // 156 or a sub-account of one), one row per (org, account). Owners and admins set and clear them.
   'crove_finance.misa_goods_code': {
@@ -2903,6 +2923,17 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       setup: [{ table: 'crove_meetings.meeting', values: meetingsMeetingRow(o, 'org') }],
       row: meetingsMeetingRow(o, 'attendees'),
     }),
+  },
+  // #3844 (meetings chapters): one chapter of a meeting's table of contents, a title and the second of the transcript line it starts at; a draft (born tainted when it comes from a run of the recorder's
+  // Vy) that only the recorder reads, and a published row that the readers of the meeting read too. The table is in main now.
+  'crove_meetings.meeting_chapter': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, stage: 'draft', position: 1, title: 'RLS matrix chapter', start_seconds: 0, tainted: 'true' },
+      };
+    },
   },
   // #2587 (L1): a meeting's link to a deal (the CRM module is reached through ctx.query, so the deal id has no foreign key).
   'crove_meetings.meeting_link': {

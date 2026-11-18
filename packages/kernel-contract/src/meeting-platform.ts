@@ -14,6 +14,13 @@ export const MEETING_PLATFORM_OAUTH_PROVIDERS = ['google_recordings', 'zoom_reco
 export type MeetingPlatformOAuthProvider = (typeof MEETING_PLATFORM_OAUTH_PROVIDERS)[number];
 export const zMeetingPlatformOAuthProvider = z.enum(MEETING_PLATFORM_OAUTH_PROVIDERS);
 
+// The platforms a member connects through the platform's own OAuth dialog (C3 onwards; the sandbox connects without one), and the name of their attempt in the oauth_state table. The return address of the
+// dialog is `<APP_URL>/meetings/oauth/<platform>/callback`, a page of the app.
+export const MEETING_PLATFORM_CONNECT_PROVIDERS = ['zoom'] as const;
+export type MeetingPlatformConnectProvider = (typeof MEETING_PLATFORM_CONNECT_PROVIDERS)[number];
+export const zMeetingPlatformConnectProvider = z.enum(MEETING_PLATFORM_CONNECT_PROVIDERS);
+export const MEETING_PLATFORM_OAUTH_NAME: Record<MeetingPlatformConnectProvider, MeetingPlatformOAuthProvider> = { zoom: 'zoom_recordings' };
+
 export const MEETING_PLATFORM_CONNECTION_STATUSES = ['active', 'expired'] as const;
 // suggested -> importing (the click) -> staged (the worker's bytes wait in staging) -> claimed (the member's request took them) -> imported; failed and dismissed branch off.
 export const MEETING_PLATFORM_RECORDING_STATUSES = ['suggested', 'importing', 'staged', 'claimed', 'imported', 'failed', 'dismissed'] as const;
@@ -25,6 +32,9 @@ export const MEETING_PLATFORM_LIST_DAYS = 14;
 export const MEETING_PLATFORM_STAGING_MINUTES = 55;
 // The job buffers a download in memory (the blob store has no streaming write to a staging key), so the declared size and the counted stream stay under the audio cap of an upload (MAX_MEETING_AUDIO_BYTES).
 export const MEETING_PLATFORM_IMPORT_MAX_BYTES = 300 * 1024 * 1024;
+// The most a platform's video file may be when its audio is taken out of it (C2a, #3306): the product's video upload cap (plan section 10) and crove-media's own MEDIA_MAX_INPUT_BYTES default. The audio
+// cap above is unchanged and counts the audio that comes out. A video over this fails `too_large`.
+export const MEETING_PLATFORM_VIDEO_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 // The connection's list is refreshed at most this often by the sweep, unless the member asked (last_synced_at cleared).
 export const MEETING_PLATFORM_SYNC_MINUTES = 10;
 

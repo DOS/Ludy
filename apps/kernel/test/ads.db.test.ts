@@ -3001,6 +3001,276 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(stored).not.toMatch(/accessToken|secret|envelope|sandboxwrite_ads:/i);
             });
           });
+
+          // W3 (#3834): boost a published post. A boost is a W1 draft whose creative came from a post, so it is asked for, approved, capped, launched, stopped and
+          // paused by the commands and jobs of W1 and W2; these tests drive that whole path from the post, on the sandbox writer, and pin what is new: the
+          // refusal while writing is off, the plan a goal, a budget, some days and an audience make, and the state the post shows.
+          describe('boost a published post (W3, #3834)', () => {
+            const POST_COPY = { headline: 'Giảm 20% cuối tuần', primaryText: 'Ghé quán hôm nay để nhận ưu đãi, bí mật qzk9191.' };
+            // The Facebook Page every ad runs as, made once (the options list it; the launch stops a plan without one).
+            let pageId = '';
+            beforeAll(async () => {
+              pageId = randomUUID();
+              await row(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'facebook_page', $3, 'Trang đẩy bài', $4)`, [orgId, pageId, String(100_000_000 + Math.floor(Math.random() * 899_999_999)), owner.userId]);
+            });
+            const boostBody = (account: string, post: string, over: Record<string, unknown> = {}) => ({
+              idempotencyKey: key(),
+              adAccountId: account,
+              postId: post,
+              goal: 'traffic',
+              budget: '300000',
+              days: 3,
+              audience: 'vn_all',
+              creative: POST_COPY,
+              linkUrl: 'https://example.com/khuyen-mai',
+              pageConnectionId: pageId,
+              ...over,
+            });
+            const boost = (who: Account, account: string, post: string, over: Record<string, unknown> = {}) => callAs(who, 'ads/draftBoost', boostBody(account, post, over));
+            const boosted = async (who: Account, account: string, post: string, over: Record<string, unknown> = {}) => {
+              const made = await boost(who, account, post, over);
+              expect(made.status, JSON.stringify(made.body)).toBe(200);
+              return made.body as { edited: boolean; draft: { id: string; status: string; maxSpend: string | null; days: number | null; plan: Record<string, unknown>; issues: Array<{ code: string; severity: string }>; origin: string } };
+            };
+            const boostStates = async (who: Account, posts: string[]) => (await callAs(who, 'ads/boostStates', { postIds: posts })).body as Array<{ postId: string; state: string; draftId: string; proposalId: string | null; launchId: string | null; maxSpend: string | null; days: number | null; startOn: string | null; endOn: string | null }>;
+            const submitBoost = (who: Account, draftId: string) => ask(who, { change: 'campaign_launch', draftId });
+            // The launch ledger's guard is on for every role, so a test that moves a launch along does it with the guard off for the statement, as the ledger's own tests do.
+            const setLaunch = (statement: string, params: unknown[]) =>
+              admin(async (c) => {
+                await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
+                try {
+                  await c.query(statement, params);
+                } finally {
+                  await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+                }
+              });
+            afterAll(async () => {
+              await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() });
+            });
+
+            it('drafts a boost from a post for a member: the plan a goal, a budget, days and an audience make, starting tomorrow, the largest amount never over the budget, and ids only in the audit', async () => {
+              const account = await ready('Đẩy bài cơ bản');
+              const post = randomUUID();
+              const options = await callAs(member, 'ads/boostOptions', undefined);
+              expect(options).toMatchObject({ status: 200, body: { enabled: true, reason: null } });
+              expect((options.body as { accounts: Array<{ id: string; currency: string }> }).accounts.find((a) => a.id === account)).toMatchObject({ currency: 'VND' });
+              const first = await boosted(member, account, post);
+              expect(first).toMatchObject({
+                edited: false,
+                draft: {
+                  status: 'draft',
+                  origin: 'human',
+                  maxSpend: '300000',
+                  days: 3,
+                  plan: { objective: 'traffic', dailyBudget: '100000', startOn: inDays(1), endOn: inDays(3), sourcePostId: post, linkUrl: 'https://example.com/khuyen-mai', targeting: { locations: [{ country: 'VN' }], ageMin: 18, ageMax: 65, gender: 'all' } },
+                },
+              });
+              expect(first.draft.issues.filter((i) => i.severity === 'error')).toEqual([]);
+              expect(await boostStates(member, [post])).toEqual([expect.objectContaining({ postId: post, draftId: first.draft.id, state: 'draft', proposalId: null, launchId: null, maxSpend: '300000', days: 3, startOn: inDays(1), endOn: inDays(3) })]);
+              // It is the builder's draft: the builder lists it, and it carries the post as an opaque reference.
+              expect(((await callAs(member, 'ads/campaignDrafts', { adAccountId: account })).body as Array<{ id: string }>).some((d) => d.id === first.draft.id)).toBe(true);
+              // The same post and account again edits the open draft in place (a new budget, a new audience): one draft, never two.
+              const again = await boosted(member, account, post, { budget: '100000', audience: 'hcm_hn', goal: 'engagement' });
+              expect(again).toMatchObject({ edited: true, draft: { id: first.draft.id, maxSpend: '99999', plan: { objective: 'engagement', dailyBudget: '33333', targeting: { locations: [{ country: 'VN', region: 'Ho Chi Minh City' }, { country: 'VN', region: 'Hanoi' }] } } } });
+              expect(Number(again.draft.maxSpend)).toBeLessThanOrEqual(100000);
+              expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND source_post_id = $2`, [orgId, post]))[0]?.n).toBe('1');
+              // Every ad runs as the Page, a Messenger one has no link; the options list the Pages an ad can run as.
+              expect(first.draft.plan).toMatchObject({ pageConnectionId: pageId });
+              expect((options.body as { pages: Array<{ id: string; name: string }> }).pages).toEqual(expect.arrayContaining([{ id: pageId, name: 'Trang đẩy bài' }]));
+              const messages = await boosted(adminAccount, account, randomUUID(), { goal: 'messages', linkUrl: null });
+              expect(messages.draft.plan).toMatchObject({ objective: 'messenger', linkUrl: null, pageConnectionId: pageId });
+              // The audit row has ids and numbers, never the post's words.
+              const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.boost.draft' AND outcome = 'ok' ORDER BY id`, [orgId]);
+              expect(audit.length).toBeGreaterThanOrEqual(3);
+              expect(audit[0]?.detail).toMatchObject({ boost: true, postId: post, goal: 'traffic', days: 3, budget: '300000', draftId: first.draft.id });
+              expect(JSON.stringify(audit.map((a) => a.detail))).not.toMatch(/Giảm|qzk9191|Ghé quán/);
+            });
+
+            it('refuses what cannot be boosted: no role but a drafter, a plan the post cannot make, a post another boost holds, and another org’s account', async () => {
+              const account = await ready('Đẩy bài bị từ chối');
+              const post = randomUUID();
+              for (const who of [viewer, outsider]) expect((await boost(who, account, post)).status, who.email).toBe(403);
+              // The system, and so no agent, drafts a boost (no agent is listed for the command).
+              await expect(api.execute('ads.boost.draft', { adAccountId: account, postId: post, goal: 'traffic', budget: '300000', days: 3, audience: 'vn_all', creative: POST_COPY, linkUrl: 'https://example.com/a', pageConnectionId: pageId }, { actor: SYSTEM, orgId })).rejects.toBeTruthy();
+              // What the post cannot make: Traffic with no link, Messages with no Page, a budget below one unit a day, a page of another org.
+              expect(await boost(member, account, post, { linkUrl: null })).toMatchObject({ status: 422, body: { code: 'ADS_BOOST_LINK_NEEDED' } });
+              // The Page every ad runs as: one of another org, one that is not a Facebook Page, one that is closed.
+              expect(await boost(member, account, post, { pageConnectionId: randomUUID() })).toMatchObject({ status: 422, body: { code: 'ADS_BOOST_PAGE_NEEDED' } });
+              const sandboxConnection = (await row<{ id: string }>(`SELECT channel_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0]?.id;
+              expect(await boost(member, account, post, { pageConnectionId: sandboxConnection })).toMatchObject({ status: 422, body: { code: 'ADS_BOOST_PAGE_NEEDED' } });
+              expect(await boost(member, account, post, { budget: '2', days: 3 })).toMatchObject({ status: 422, body: { code: 'ADS_BOOST_BUDGET_TOO_SMALL' } });
+              // Input the contract does not take.
+              for (const over of [{ days: 31 }, { days: 0 }, { budget: '10.123' }, { audience: 'everyone' }, { goal: 'sales' }, { extra: true }]) expect((await boost(member, account, post, over)).status, JSON.stringify(over)).toBe(400);
+              // An account that is not this org's.
+              expect((await boost(member, randomUUID(), post)).status).toBe(404);
+              expect(await boostStates(member, [post])).toEqual([]);
+              expect((await callAs(viewer, 'ads/boostStates', { postIds: [post] })).status).toBe(403);
+              expect((await callAs(viewer, 'ads/boostOptions', undefined)).status).toBe(403);
+              expect((await callAs(member, 'ads/boostStates', { postIds: [] })).status).toBe(400);
+            });
+
+            it('has no boost while writing is off: no option, and the command is refused, for the org, for the account and for launches blocked', async () => {
+              const account = await ready('Đẩy bài khi tắt');
+              const post = randomUUID();
+              await boosted(member, account, post);
+              // Launches blocked (the kill switch): the options say why, and a new boost is refused.
+              expect((await callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() })).status).toBe(200);
+              expect(await callAs(member, 'ads/boostOptions', undefined)).toMatchObject({ status: 200, body: { enabled: false, reason: 'launches_blocked', accounts: [] } });
+              expect(await boost(member, account, randomUUID())).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_BLOCKED' } });
+              // The account's own flag withdrawn: the org's switch is on, the account is not an option, and the command says so.
+              await open();
+              expect((await callAs(owner, 'ads/disableAccountWrite', { adAccountId: account, idempotencyKey: key() })).status).toBe(200);
+              expect(await callAs(member, 'ads/boostOptions', undefined)).toMatchObject({ body: { accounts: expect.not.arrayContaining([expect.objectContaining({ id: account })]) } });
+              expect(await boost(member, account, randomUUID())).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_ACCOUNT_OFF' } });
+              // The org's switch off: no option at all, and the command is refused.
+              expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
+              expect(await callAs(member, 'ads/boostOptions', undefined)).toMatchObject({ status: 200, body: { enabled: false, reason: 'writing_off', accounts: [] } });
+              expect(await boost(member, account, randomUUID())).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_OFF' } });
+              // What was drafted before stays a draft (and a draft spends nothing): the post still shows it.
+              expect(await boostStates(member, [post])).toEqual([expect.objectContaining({ state: 'draft' })]);
+            });
+
+            it('refuses a boost over a cap at the request for approval, with the finding on the draft: the budget is the person’s, the cap is the owner’s', async () => {
+              const account = await ready('Đẩy bài quá hạn mức');
+              const post = randomUUID();
+              // 900 000 over three days is 300 000 a day: over the org's daily cap of 200 000.
+              const over = await boosted(member, account, post, { budget: '900000' });
+              expect(over.draft.issues).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'daily_cap_exceeded', severity: 'error' })]));
+              expect(await submitBoost(owner, over.draft.id)).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_INVALID' } });
+              expect(await boostStates(member, [post])).toEqual([expect.objectContaining({ state: 'draft', proposalId: null })]);
+              // Brought under the cap it goes through the request.
+              const fixed = await boosted(member, account, post, { budget: '300000' });
+              expect(fixed.draft.id).toBe(over.draft.id);
+              expect(fixed.draft.issues.filter((i) => i.severity === 'error')).toEqual([]);
+              expect((await submitBoost(owner, fixed.draft.id)).status).toBe(200);
+            });
+
+            it('asks for the same approval as any plan, launches once on the sandbox, shows each state on the post, and the stop pauses it', async () => {
+              const account = await ready('Đẩy bài chạy thử');
+              const done = await callAs(owner, 'ads/connectSandboxWrite', { adAccountId: account, idempotencyKey: key() });
+              expect(done.status, JSON.stringify(done.body)).toBe(200);
+              const post = randomUUID();
+              const made = await boosted(member, account, post);
+              // A member drafts; asking for approval is the owner's or an admin's, and an agent never (no agent is listed for the request).
+              expect((await submitBoost(member, made.draft.id)).status).toBe(403);
+              await expect(api.execute('ads.campaign.prepare_launch', { draftId: made.draft.id }, { actor: SYSTEM, orgId })).rejects.toBeTruthy();
+              const id = proposalId(await submitBoost(adminAccount, made.draft.id));
+              // It waits in the Inbox, and the card is the same one a plan from the builder has: the plan whole and the largest amount.
+              expect(await boostStates(member, [post])).toEqual([expect.objectContaining({ state: 'waiting_approval', proposalId: id, draftId: made.draft.id })]);
+              expect((await callAs(owner, 'ads/proposal', { id })).body).toMatchObject({ change: { change: 'campaign_launch', draftId: made.draft.id, amount: '300000', currency: 'VND', days: 3, plan: { sourcePostId: post, objective: 'traffic' } } });
+              // A second boost of the post is refused while the first waits, and says which.
+              expect(await boost(member, account, post)).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_EXISTS', data: { draftId: made.draft.id, state: 'waiting_approval' } } });
+              // The author does not approve it; an approver behind a second factor does, and then it is queued, holding its amount.
+              expect(await approve(adminAccount, id)).toMatchObject({ status: 403, body: { code: 'FOUR_EYES_REQUIRED' } });
+              expect((await approve(owner, id)).status).toBe(200);
+              const queuedState = (await boostStates(member, [post]))[0];
+              expect(queuedState).toMatchObject({ state: 'queued', proposalId: null, maxSpend: '300000' });
+              const launch = (await row<{ id: string; state: string; amount: string; start_on: string; end_on: string; commit_until: string | null; tag: string }>(`SELECT id, state, amount::text, start_on::text, end_on::text, commit_until::text, tag FROM crove_ads.ad_launch WHERE org_id = $1 AND draft_id = $2`, [orgId, made.draft.id]))[0];
+              expect(launch).toMatchObject({ id: queuedState?.launchId, state: 'queued', amount: '300000', start_on: inDays(1), end_on: inDays(3), commit_until: inDays(3) });
+              // The launch job creates the plan's objects at the sandbox platform, every one paused, once; the activation waits for the first day.
+              const w = new SandboxAdWriter();
+              expect(await run(w, launch?.id as string)).toMatchObject({ ended: 'paused' });
+              expect([...w.objects.values()].map((o) => o.status)).toEqual(Array(4).fill('paused'));
+              expect([...w.objects.values()].every((o) => o.name.includes(launch?.tag as string))).toBe(true);
+              expect(await runAdsActivate({ runtime: worker, broker: vault, activators: adActivators({ sandbox: w }) }, { orgId, launchId: launch?.id as string })).toMatchObject({ steps: 0 });
+              expect([...w.objects.values()].every((o) => o.status === 'paused')).toBe(true);
+              expect(await run(w, launch?.id as string)).toEqual({ steps: 0, ended: 'paused' });
+              expect(w.received).toHaveLength(4);
+              expect(await boostStates(member, [post])).toEqual([expect.objectContaining({ state: 'launching', step: 'paused', launchId: launch?.id })]);
+              // A boost still going is not boosted again.
+              expect(await boost(member, account, post)).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_EXISTS', data: { state: 'launching' } } });
+              // The post shows a live boost too (the activation's own rule is W2-4b's: here the ledger is moved along as the activation leaves it).
+              await setLaunch(`UPDATE crove_ads.ad_launch SET state = 'live', step = 'live' WHERE org_id = $1 AND id = $2`, [orgId, launch?.id]);
+              expect(await boostStates(member, [post])).toEqual([expect.objectContaining({ state: 'live' })]);
+              // The stop (owner or admin) ends it; the pause job pauses what it made, and the post shows it stopped.
+              expect((await callAs(adminAccount, 'ads/stopLaunch', { launchId: launch?.id, idempotencyKey: key() })).status).toBe(200);
+              expect(await runAdsPause({ runtime: worker, broker: vault, pausers: adPausers({ sandbox: w }) }, { orgId, launchId: launch?.id as string })).toBeTruthy();
+              expect([...w.objects.values()].every((o) => o.status === 'paused')).toBe(true);
+              expect(await boostStates(member, [post])).toEqual([expect.objectContaining({ state: 'stopped' })]);
+              // Once it is over the post may be boosted again: a new draft, never the old one.
+              const next = await boosted(member, account, post, { budget: '150000' });
+              expect(next.draft.id).not.toBe(made.draft.id);
+              expect(next.edited).toBe(false);
+              expect((await boostStates(member, [post]))[0]).toMatchObject({ draftId: next.draft.id, state: 'draft', maxSpend: '150000' });
+            });
+
+            it('keeps another org out: its posts, its accounts and its Pages, through the API as that org and with its real ids', async () => {
+              const account = await ready('Đẩy bài riêng tổ chức');
+              const [a, b] = [randomUUID(), randomUUID()];
+              await boosted(member, account, a);
+              await boosted(member, account, b, { goal: 'engagement' });
+              expect((await boostStates(member, [a])).map((s) => s.postId)).toEqual([a]);
+              expect((await boostStates(member, [a, b, randomUUID()])).map((s) => s.postId).sort()).toEqual([a, b].sort());
+              // The other org, asking as its own owner with these very post ids, sees none of them.
+              const theirs = await rpc('ads/boostStates', await tokenFor(outsider), { postIds: [a, b] }, otherSlug);
+              expect(theirs).toMatchObject({ status: 200, body: [] });
+              // Its real account and Page: this org's member cannot boost with them, and their owner cannot boost with ours.
+              const [theirConnection, theirAccount, theirPage] = [randomUUID(), randomUUID(), randomUUID()];
+              await row(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Của tổ chức khác', $4), ($1, $5, 'facebook_page', $6, 'Trang tổ chức khác', $4)`, [otherOrgId, theirConnection, `act-${randomUUID().slice(0, 8)}`, outsider.userId, theirPage, String(100_000_000 + Math.floor(Math.random() * 899_999_999))]);
+              await row(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản tổ chức khác', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`, [otherOrgId, theirAccount, theirConnection, `act-${randomUUID().slice(0, 8)}`]);
+              expect((await boost(member, theirAccount, randomUUID())).status).toBe(404);
+              expect(await boost(member, account, randomUUID(), { pageConnectionId: theirPage })).toMatchObject({ status: 422, body: { code: 'ADS_BOOST_PAGE_NEEDED' } });
+              expect((await rpc('ads/draftBoost', await tokenFor(outsider), boostBody(account, randomUUID()), otherSlug)).status).toBe(404);
+              expect((await rpc('ads/boostOptions', await tokenFor(outsider), undefined, otherSlug)).body).toMatchObject({ enabled: false });
+            });
+
+            it('keeps a post to one boost: two drafts made at the same moment make one, and a draft left in another account is dropped when it is boosted from this one', async () => {
+              const first = await ready('Đẩy bài tài khoản một');
+              const second = await ready('Đẩy bài tài khoản hai');
+              // Two tabs at once: the post's lock queues them, the second edits the first's draft in place.
+              const post = randomUUID();
+              const both = await Promise.all([boost(member, first, post), boost(adminAccount, first, post, { budget: '150000' })]);
+              expect(both.map((r) => r.status)).toEqual([200, 200]);
+              expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND source_post_id = $2 AND status <> 'discarded'`, [orgId, post]))[0]?.n).toBe('1');
+              expect(both.filter((r) => (r.body as { edited: boolean }).edited)).toHaveLength(1);
+              // Boosted from another account: the open draft of the first account is discarded and the post has one draft, in the second.
+              const moved = await boosted(member, second, post);
+              expect(moved.edited).toBe(false);
+              const open = await row<{ ad_account_id: string; status: string }>(`SELECT ad_account_id, status FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND source_post_id = $2 ORDER BY created_at`, [orgId, post]);
+              expect(open.map((d) => [d.ad_account_id, d.status])).toEqual([[first, 'discarded'], [second, 'draft']]);
+              expect((await boostStates(member, [post]))[0]).toMatchObject({ draftId: moved.draft.id, adAccountId: second });
+            });
+
+            it('keeps a waiting boost as the post’s boost when a draft is made from the same post in the builder afterwards, and says which goal a draft continues with', async () => {
+              const account = await ready('Đẩy bài và trình tạo');
+              const post = randomUUID();
+              const made = await boosted(member, account, post);
+              expect((await boostStates(member, [post]))[0]).toMatchObject({ draftId: made.draft.id, state: 'draft', objective: 'traffic', adAccountId: account });
+              const id = proposalId(await submitBoost(owner, made.draft.id));
+              // A newer draft of the same post from the campaign builder does not hide the boost that is waiting for approval.
+              const builder = await callAs(member, 'ads/saveCampaignDraft', { idempotencyKey: key(), adAccountId: account, plan: { name: 'Từ trình tạo', objective: 'traffic', sourcePostId: post } });
+              expect(builder.status, JSON.stringify(builder.body)).toBe(200);
+              expect(await boostStates(member, [post])).toEqual([expect.objectContaining({ draftId: made.draft.id, state: 'waiting_approval', proposalId: id })]);
+              expect(await boost(member, account, post)).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_EXISTS' } });
+            });
+
+            it('shows a boost whose last day has passed as ended, so the post may be boosted again without stopping a launch that simply ran out', async () => {
+              const account = await ready('Đẩy bài hết lịch');
+              const post = randomUUID();
+              const made = await boosted(member, account, post);
+              expect((await approve(adminAccount, proposalId(await submitBoost(owner, made.draft.id)))).status).toBe(200);
+              expect((await boostStates(member, [post]))[0]).toMatchObject({ state: 'queued' });
+              expect(await boost(member, account, post)).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_EXISTS' } });
+              // Its flight moves ten days into the past (the ledger's guard lifted for the statement, as the ledger's own tests do): live, but over.
+              await setLaunch(`UPDATE crove_ads.ad_launch SET start_on = start_on - 10, end_on = end_on - 10, commit_until = commit_until - 10, state = 'live', step = 'live' WHERE org_id = $1 AND draft_id = $2`, [orgId, made.draft.id]);
+              expect((await boostStates(member, [post]))[0]).toMatchObject({ state: 'ended', draftId: made.draft.id });
+              const again = await boosted(member, account, post, { budget: '150000' });
+              expect(again.draft.id).not.toBe(made.draft.id);
+              expect((await boostStates(member, [post]))[0]).toMatchObject({ state: 'draft', draftId: again.draft.id });
+            });
+
+            it('does not offer an account whose time zone is not read yet, and refuses it: a launch cannot start without the zone', async () => {
+              const account = await ready('Đẩy bài chưa có múi giờ');
+              await row(`UPDATE crove_ads.ad_account SET time_zone = NULL WHERE org_id = $1 AND id = $2`, [orgId, account]);
+              try {
+                const options = await callAs(member, 'ads/boostOptions', undefined);
+                expect((options.body as { accounts: Array<{ id: string }> }).accounts.some((a) => a.id === account)).toBe(false);
+                expect(await boost(member, account, randomUUID())).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_ACCOUNT_NOT_READY' } });
+              } finally {
+                await row(`UPDATE crove_ads.ad_account SET time_zone = 'Asia/Ho_Chi_Minh' WHERE org_id = $1 AND id = $2`, [orgId, account]);
+              }
+            });
+          });
         });
       });
     });

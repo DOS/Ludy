@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
+import { zChapters, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
   zBulkApproveItems,
   SOCIAL_REVIEW_CHECKS_MAX,
@@ -195,13 +196,14 @@ import {
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
 import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisStatus } from './misa-amis-connections.ts';
+import { zMisaCheck, zMisaCheckAsk } from './misa-check.ts';
 import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
-import { zMarketplaceFeeClearingRequest, zMarketplacePayoutRequest, zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
+import { zMarketplaceSuggestInput, zMarketplaceSuggested, zMarketplaceFeeClearingRequest, zMarketplacePayoutRequest, zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
-import { zBankSupplierMatch, zSupplierPayableList, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentPrepare, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
+import { zBankSupplierMatch, zSupplierPayableLine, zSupplierPayableLineAsk, zSupplierPayableList, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentPrepare, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
 import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep } from './einvoice-notice.ts';
-import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceCorrectionOptions, zEInvoiceCorrectionRateExplained, zEInvoiceCorrectionRateInput, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
+import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceCorrectionOptions, zEInvoiceCorrectionRateExplained, zEInvoiceCorrectionRateInput, zEInvoiceReasonInput, zEInvoiceReasonSuggested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
@@ -274,7 +276,7 @@ import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
 import { zSinceYesterday, zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting, zTodayWeekly, zTodayWeeklyInput } from './today.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
-import { zMeetingPlatformConnectionRef, zMeetingPlatformConnectionView, zMeetingPlatformRecordingRef, zMeetingPlatformRecordingView } from './meeting-platform.ts';
+import { zMeetingPlatformConnectProvider, zMeetingPlatformConnectionRef, zMeetingPlatformConnectionView, zMeetingPlatformRecordingRef, zMeetingPlatformRecordingView } from './meeting-platform.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
 import { zEInvoiceDraftFromOrder, zOrderLineInvoiceStates, zOrderLineInvoiceStatesInput, zStockMoveFromOrderLine, zStockMoveFromOrderLineResult } from './finance-orders.ts';
 import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCancel, zSalesOrderDeliver, zSalesOrderDeliveryChanged, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderPage, zSalesOrderRef, zSalesOrderSummary, zSalesOrderUndeliver } from './crm-sales-orders.ts';
@@ -576,6 +578,7 @@ import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsCommitted, zAdsCommittedInput, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
+import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStatesInput, zAdsBoostStateView } from './ads-boost.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
@@ -805,6 +808,15 @@ export const contract = {
     dismiss: oc.input(zMeetingPlatformRecordingRef).output(z.strictObject({ recordingId: zId, dismissed: z.literal(true) })),
     disconnect: oc.input(zMeetingPlatformConnectionRef).output(z.strictObject({ connectionId: zId, disconnected: z.literal(true) })),
     connectSandbox: oc.input(z.strictObject({})).output(z.strictObject({ connectionId: zId, reconnected: z.boolean() })),
+    // The platforms this deployment lets a member connect through the platform's own dialog (Zoom, C3): empty without the app credentials and a credential key, so the screen shows no connect button the
+    // server could not finish. Start returns where to send the browser; the platform sends it back to /meetings/oauth/<platform>/callback, whose screen finishes the attempt with the code and state.
+    providers: oc.output(z.array(zMeetingPlatformConnectProvider)),
+    connectStart: oc
+      .input(z.strictObject({ provider: zMeetingPlatformConnectProvider }))
+      .output(z.strictObject({ authorizeUrl: z.url({ protocol: /^https$/ }), state: zOAuthState, expiresAt: z.iso.datetime({ offset: true }) })),
+    connectFinish: oc
+      .input(z.strictObject({ provider: zMeetingPlatformConnectProvider, state: zOAuthState, code: z.string().min(1).max(2048) }))
+      .output(z.strictObject({ connectionId: zId, displayName: z.string(), reconnected: z.boolean() })),
   },
   taxRegistry: {
     lookup: oc.input(z.object({ taxCode: z.string().trim().max(20) })).output(zTaxRegistryEntry),
@@ -1339,6 +1351,9 @@ export const contract = {
       // as the summary), `enhancePreview` the finished expansion with their own lines and Vy's told apart, copied into the draft by `copySummary`.
       notesGet: oc.input(zMeetingRef).output(zNotes),
       notesSave: oc.input(zNotesSave).output(zNotesSaved),
+      // The table of contents (#3844): `chaptersGet` the recorder's draft and published chapters, or a reader's published ones; `chaptersSave` the recorder's own set, replacing their draft.
+      chaptersGet: oc.input(zMeetingRef).output(zChapters),
+      chaptersSave: oc.input(zChaptersSave).output(zChaptersSaved),
       enhance: oc.input(zSummaryRef).output(zSummarized),
       enhancePreview: oc.input(zNotesPreviewInput).output(zNotesPreview),
       // Speaker names (#3502): the recorder's Vy may suggest which attendee a speaker label is; `speakerSuggestions` is what a finished summary run suggested and still applies,
@@ -2320,6 +2335,8 @@ export const contract = {
         z.object({ from: zLocalDate.optional(), to: zLocalDate.optional(), type: zVoucherType.optional(), before: zVoucherCursor.optional(), legalEntityId: zId.optional() }),
       )
       .output(zCashVoucherPage),
+    // What MISA's import will refuse or cut in one of the seven MISA SME voucher exports (#3848), found by code over the rows the file is built from, before the download. A read; the export is unchanged and never blocked.
+    misaCheck: oc.input(zMisaCheckAsk).output(zMisaCheck),
   },
   // Opening balances from Excel (#320), owners and admins. preview checks a trial balance read from the template and
   // writes nothing; post checks it again and posts it as the org's one opening entry (R3: fresh MFA). A retry with the
@@ -2404,6 +2421,8 @@ export const contract = {
     list: oc.input(zSupplierPaymentListInput).output(zSupplierPaymentList),
     // The received invoices that can be asked for payment (#3113 S4b), oldest first.
     payable: oc.input(z.strictObject({})).output(zSupplierPayableList),
+    // The finance coworker's one line above that list (#3113 S4c): the facts by code, and one metered sentence when there is a model. A read; it asks for no payment.
+    payableLine: oc.input(zSupplierPayableLineAsk).output(zSupplierPayableLine),
     confirmAccount: oc.input(zSupplierPaymentConfirm).output(zSupplierPayment),
     cancel: oc.input(zSupplierPaymentCancel).output(zSupplierPayment),
   },
@@ -2472,6 +2491,9 @@ export const contract = {
       // The VAT rate a correction proposes for the nature a person picked (#3709): the basis and the rate by code, the fixed reason and the Official Letter 2121/TCT-CS note, and the accounting
       // coworker's plain explanation when the model is on and the AI budget allows (`ai` says why not). Read only; the person confirms by starting the correction. Owners, admins and members.
       correctionRate: oc.input(zEInvoiceCorrectionRateInput).output(zEInvoiceCorrectionRateExplained),
+      // The accounting coworker's proposal of the reason code of an adjusting or replacing invoice (#3690): a read that never stores; the code is one of the entered list, picked by number and checked in code,
+      // and the person confirms by starting the correction (`ai` says why there is none). The note typed is never stored or logged. Owners, admins and members.
+      suggestReason: oc.input(zEInvoiceReasonInput).output(zEInvoiceReasonSuggested),
       // An error only in the non-core content of an issued invoice (#2504): records it with the text that is right, and the two steps the seller does outside Ludy (tell the buyer; file the
       // form 04/SS-HĐĐT, a working answer of #2506 not confirmed by the accountant). Ludy sends nothing. Owners, admins and members.
       noticeOpen: oc.input(zEInvoiceNoticeOpen).output(zEInvoiceNotice),
@@ -2507,6 +2529,9 @@ export const contract = {
     // MARKETPLACE_LINE_ASSIGNED, MARKETPLACE_LINE_NOT_SHIPPED (409), MARKETPLACE_LINE_NOT_FOUND (404), STOCK_ITEM_ENTITY_MISMATCH (422), STOCK_ITEM_INACTIVE (409).
     unassigned: oc.input(zMarketplaceUnassignedInput.optional()).output(z.array(zMarketplaceUnassignedLine)),
     assign: oc.input(zMarketplaceAssign.extend({ idempotencyKey: zId })).output(z.object({ moves: z.number().int() })),
+    // The coworker's proposal of the item for unassigned lines (#2686): a read that never stores; it sees the product name and the SKU text of each line and the entity's items, nothing else of the order. A person
+    // fills the picker and assigns. Owners, admins and members.
+    suggest: oc.input(zMarketplaceSuggestInput).output(zMarketplaceSuggested),
     // Takes a line back from its item: its stock comes back and it waits to be assigned again (#2633). MARKETPLACE_LINE_NOT_ASSIGNED (409) for a line that names no item, MARKETPLACE_LINE_CANCELLED (409) for one cancelled after it shipped (its stock came back by itself). forgot: whether the taught name of that SKU went too (only the one that put the line on its item).
     unassign: oc.input(zMarketplaceUnassign.extend({ idempotencyKey: zId })).output(z.object({ moves: z.number().int(), forgot: z.boolean() })),
     // The income reports (#2516): the platform's own statement of what it paid for the orders of a period, staged from a file until a member confirms. incomeStaged lists the reports waiting,
@@ -2855,6 +2880,11 @@ export const contract = {
     campaignDraft: oc.input(z.strictObject({ draftId: zId })).output(zAdsCampaignDraftView),
     saveCampaignDraft: oc.input(zAdsCampaignDraftSaveCall).output(zAdsCampaignDraftView),
     discardCampaignDraft: oc.input(zAdsCampaignDraftDiscardCall).output(z.object({ draftId: zId })),
+    // Boost a published Social post (W3, #3834): the options (is it possible, with which accounts), the newest boost of each of some posts, and drafting one from a
+    // post. Drafting makes the same draft W1 builds; asking for approval is requestChange (campaign_launch), the same approval and launch as any plan.
+    boostOptions: oc.output(zAdsBoostOptions),
+    boostStates: oc.input(zAdsBoostStatesInput).output(z.array(zAdsBoostStateView)),
+    draftBoost: oc.input(zAdsBoostDraftCall).output(zAdsBoostDrafted),
     // Cancels a launch that has not started (W2-2): an approved plan's commitment against the caps is released. Owners and admins.
     cancelLaunch: oc.input(zAdsLaunchCancelCall).output(z.object({ launchId: zId, released: z.string() })),
     // Stops a launch that has started (W2-4a): owners and admins. It keeps the launch's commitment against the caps to at least today in the account's time zone (a person's

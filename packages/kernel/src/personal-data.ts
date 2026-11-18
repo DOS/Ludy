@@ -388,6 +388,16 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "The recorder's own rough notes of a meeting, which may name or describe a person: read by the recorder alone; the owner's erasure edits the value out of every recorder's notes and counts them per recorder; deleted with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge)",
   },
+  // The chapters (table of contents) of a meeting (#3844): a short title and the second of the transcript line it starts at, typed by the recorder (or copied from a run of their own Vy, tainted until
+  // they review it), a draft that only the recorder reads until they publish it with the minutes, then read by the readers of the meeting. A title may name a person, so it is handled as the title of a
+  // meeting is, whatever the probes can match (the command refuses an email address and a run of eight or more digits in it, but nothing here rests on that): the finder lists it where the actor reads
+  // the meeting (crove_meetings.personal_row_ids, kind 6), counts it per recorder where the owner cannot (crove_meetings.personal_matches, as a title), and the erasure redacts the value in it by the rule
+  // of the other meeting rows (crove_meetings.personal_erase, counted in the titles). It goes with the meeting, and a draft after 30 days.
+  'crove_meetings.meeting_chapter.title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "A chapter title of a meeting, which may name or describe a person: read by the recorder alone until published, then by the meeting's readers; the owner's erasure edits the value out of it as out of a meeting title; deleted with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge), and a draft 30 days after it was made",
+  },
   // The title of an event of a member's own Google Calendar (meetings B1, issue #3165): an 8-day cache (1 day back to 7 ahead) kept only while the member's switch "Cho Ludy đọc tên và giờ
   // cuộc họp trong lịch" is on. Read by that member alone (row security: an owner, an admin, another member, an agent and the system context read none), so there is no finder and no
   // erasure of a value inside it: a request is answered the way it is for the live preview, by the member turning the read off, which deletes it at once, or by disconnecting the calendar.
@@ -698,7 +708,7 @@ async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): 
 }
 
 // The tables of crove_meetings.personal_row_ids's kind codes.
-const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting', 5: 'meeting_note' };
+const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting', 5: 'meeting_note', 6: 'meeting_chapter' };
 
 // Every row of the org that holds the value, column by column (the finder's answer), and, when privateCounts, per author
 // how many of their private notes and to-dos mention it (ADR-0037: counted, never shown, whoever runs the finder).
@@ -925,6 +935,7 @@ const SHORT_NUMBER_MEETING_COLUMNS = new Set([
   'crove_meetings.action_item.who_drafted',
   'crove_meetings.action_item.when_drafted',
   'crove_meetings.meeting_note.body',
+  'crove_meetings.meeting_chapter.title',
 ]);
 export const ACTIVITY_SHORT_NUMBER_REASON =
   'A number of fewer than 10 digits may also be an amount or a voucher number in a timeline line or a task, so the erasure does not replace it there; check these rows and tell the person, or ask for a longer value';

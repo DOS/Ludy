@@ -15,6 +15,7 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       .filter((name) => name.endsWith('.sql') && /crove_meetings\.translation\b/.test(readFileSync(join(MIGRATIONS, name), 'utf8')))
       .map((name) => name.replace(/^\d+_/, ''));
     // The org purge's list names every tenant table, so each later restatement of it (A5, #3163: the rough notes table; B1, #3165: the calendar cache; A6, #3164: the member's webhook tables; B4, #3168; C1, #3173: the meeting platform import tables; #2591: projects; #3323: sign; #3394: payroll_leave_entry; #3412: hr departments; #3310 C3b: outbox_held; #3526: sign templates; #3578: minutes templates; #3558: personal to-do lists) names this one too, as the list's entry and nothing else; the purge of a former member's Vy rows, which deletes by org and member and judges the latest exit by created_at (#3194), and the index that serves its reads sit before the last five restatements (the e-invoice notice's, the to-do lists', the supplier bank accounts' and the supplier payments' of #3113, and the MISA AMIS connection's of #3875).
+    // #3844 (chapters): crove_meetings_chapters.sql restates personal_erase to reach chapter titles; the translation branch is unchanged (it deletes translations of touched meetings), never read as a source.
     expect(naming).toEqual([
       'crove_meetings_translation.sql',
       'crove_kernel_org_purge_translation.sql',
@@ -40,6 +41,7 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_todo_list.sql',
       'crove_kernel_org_purge_supplier_bank_account.sql',
       'crove_kernel_org_purge_supplier_payment.sql',
+      'crove_meetings_chapters.sql',
       'crove_kernel_org_purge_misa_amis_connection.sql',
     ]);
   });
