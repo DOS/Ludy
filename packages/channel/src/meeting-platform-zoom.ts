@@ -14,11 +14,14 @@
 // - Tokens live only in the credential the job opens (ADR-0025); an error carries a short code, never a token, the platform's response body or its words.
 import { MeetingPlatformError, MEETING_PLATFORM_LIST_MAX } from './meeting-platform.ts';
 import type {
+  MeetingPlatformAccount,
   MeetingPlatformAdapter,
+  MeetingPlatformAuthorizeInput,
   MeetingPlatformCredential,
   MeetingPlatformDownload,
   MeetingPlatformFormat,
   MeetingPlatformListed,
+  MeetingPlatformOAuth,
 } from './meeting-platform.ts';
 import { allowlistedFetch, type Fetch } from './oauth.ts';
 
@@ -135,8 +138,11 @@ export function zoomDownloadUrl(candidate: unknown): { url: string; host: string
   return { url: url.toString(), host };
 }
 
-export class ZoomMeetingPlatform implements MeetingPlatformAdapter {
+export class ZoomMeetingPlatform implements MeetingPlatformAdapter, MeetingPlatformOAuth {
   readonly provider = 'zoom' as const;
+  readonly oauthProvider = 'zoom_recordings' as const;
+  // Zoom's user-managed OAuth app takes PKCE with the client secret (docs: authorization code flow); the verifier is kept in the attempt like a calendar's.
+  readonly pkce = true;
   readonly hosts: readonly string[] = ZOOM_HOSTS;
   private readonly config: ZoomAppConfig;
   private readonly http: Fetch;
@@ -209,6 +215,64 @@ export class ZoomMeetingPlatform implements MeetingPlatformAdapter {
       // The guard's first host is exactly this host; a redirect may go to zoom.us or a subdomain and nowhere else.
       hosts: [target.host],
       hostSuffixes: [ZOOM_DOWNLOAD_SUFFIX],
+    };
+  }
+
+  // The Zoom authorize address. The permissions are the ones the Marketplace app declares, not a parameter of the request, so there is no `scope` here (docs/runbooks/meetings-zoom.md lists them).
+  authorizeUrl(input: MeetingPlatformAuthorizeInput): string {
+    const query = new URLSearchParams({ response_type: 'code', client_id: this.config.clientId, redirect_uri: input.redirectUri, state: input.state });
+    if (input.codeChallenge) {
+      query.set('code_challenge', input.codeChallenge);
+      query.set('code_challenge_method', 'S256');
+    }
+    return `https://${ZOOM_OAUTH_HOST}/oauth/authorize?${query.toString()}`;
+  }
+
+  // The code grant, then the one read of who the grant belongs to. A code Zoom refuses (used, expired, a redirect address that is not the app's) or a client it does not know is `platform_refused`; a platform
+  // that did not answer is `platform_unavailable`. The account is named by the Zoom user's email, lowercased: it is the connection's key and a Zoom account has exactly one.
+  async exchange(input: { code: string; redirectUri: string; codeVerifier: string | null }, signal?: AbortSignal): Promise<MeetingPlatformAccount> {
+    const basic = Buffer.from(`${this.config.clientId}:${this.config.clientSecret}`).toString('base64');
+    const form = new URLSearchParams({ grant_type: 'authorization_code', code: input.code, redirect_uri: input.redirectUri });
+    if (input.codeVerifier) form.set('code_verifier', input.codeVerifier);
+    let grant: Record<string, unknown>;
+    try {
+      grant = await this.call(`https://${ZOOM_OAUTH_HOST}/oauth/token`, {
+        method: 'POST',
+        headers: { authorization: `Basic ${basic}`, 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+        body: form.toString(),
+        ...(signal ? { signal } : {}),
+      });
+    } catch (error) {
+      // Here a 401 is the app's own credentials, not a member's token that expired.
+      if (error instanceof MeetingPlatformError && error.code === 'connection_expired') throw new MeetingPlatformError('platform_refused');
+      throw error;
+    }
+    const accessToken = text(grant.access_token);
+    if (accessToken === '') throw new MeetingPlatformError('platform_unavailable');
+    const refreshToken = text(grant.refresh_token);
+    const seconds = Number(grant.expires_in);
+    const expiresAt = new Date(this.now().getTime() + (Number.isFinite(seconds) && seconds > 0 ? seconds : 3600) * 1000);
+    let me: Record<string, unknown>;
+    try {
+      me = await this.get(`https://${ZOOM_API_HOST}/v2/users/me`, { accessToken }, signal);
+    } catch (error) {
+      if (error instanceof MeetingPlatformError && error.code === 'connection_expired') throw new MeetingPlatformError('platform_refused');
+      throw error;
+    }
+    const email = text(me.email).trim().toLowerCase();
+    // No address means the app lacks the permission to read the profile: nothing identifies the account, so nothing is stored.
+    if (email === '' || email.length > 200) throw new MeetingPlatformError('platform_refused', 'Zoom did not return the account address');
+    const name = [text(me.display_name), `${text(me.first_name)} ${text(me.last_name)}`.trim(), email].find((n) => n.trim() !== '') ?? email;
+    const scopes = text(grant.scope)
+      .split(/\s+/)
+      .filter((s) => s !== '' && s.length <= 200)
+      .slice(0, 20);
+    return {
+      externalAccount: email,
+      displayName: name.trim().slice(0, 200),
+      scopes,
+      expiresAt,
+      secret: JSON.stringify({ accessToken, ...(refreshToken ? { refreshToken } : {}), expiresAt: expiresAt.toISOString() }),
     };
   }
 

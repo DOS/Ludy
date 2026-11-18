@@ -2690,7 +2690,18 @@ export const en = {
         disconnectNo: 'Keep it',
         connectSandbox: 'Connect the test platform (sandbox)',
         connectedToast: 'Test platform connected.',
-        moreLater: 'Google Meet, Zoom and Microsoft Teams come in later versions.',
+        connectZoom: 'Connect Zoom',
+        zoomNote: "Zoom: Ludy lists the cloud recordings of your own Zoom account (you need a Zoom plan that keeps cloud recordings), and prefers the audio-only file. A recording with only video can be imported only where the server has the media sandbox turned on; ask whoever runs your Ludy. You approve Zoom's permissions on Zoom's own screen, and you can remove the app in Zoom at any time.",
+        moreLater: 'Google Meet and Microsoft Teams come in later versions.',
+      },
+      // Where Zoom's dialog sends the browser back (/meetings/oauth/zoom/callback): the connect is finished here, then the member returns to Settings.
+      oauth: {
+        title: 'Connect a meeting platform',
+        finishing: 'Finishing the connection...',
+        connected: 'Connected {name}. Ludy will list its recordings within a few minutes.',
+        cancelled: 'You cancelled the connection, nothing changed.',
+        lost: 'This connection attempt was not found in this browser (it may have started in another tab). Start again from Settings.',
+        back: 'Back to Settings',
       },
       recordings: {
         title: 'Recordings on your meeting platforms',
@@ -14394,6 +14405,8 @@ export const en = {
         import_holds: 'Check whether a meeting platform recording still holds its staging key',
         import_open: 'View the meeting platform recordings waiting to download',
         import_staged: 'Record that a meeting platform recording was downloaded',
+        oauth_begin: 'Start connecting a meeting platform',
+        oauth_consume: 'Finish connecting a meeting platform',
         recording: {
           dismiss: 'Dismiss a suggested recording from a meeting platform',
         },
