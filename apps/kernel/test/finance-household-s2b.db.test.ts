@@ -75,6 +75,14 @@ suite('the S2b-HKD revenue book of a household business (#2517 slice 2c)', () =>
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
     await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    // The seeded law rows are `confirmed` from #3710 (finance-household.db.test.ts checks that). This file exercises the provisional label, so it starts from the rows as they were before:
+    // `commentary`, restored here as the database owner (the law tables are read-only to every tenant login).
+    const restore = new pg.Client({ connectionString: adminUrl });
+    await restore.connect();
+    await restore.query(
+      "UPDATE crove_finance.household_threshold SET status = 'commentary'; UPDATE crove_finance.household_trade_rate SET status = 'commentary'; UPDATE crove_finance.household_form_version SET status = 'commentary'; UPDATE crove_finance.household_return_form_version SET status = 'commentary'",
+    );
+    await restore.end();
     const app = new URL(adminUrl);
     app.username = 'crove_app';
     app.password = 'test-app-pw';

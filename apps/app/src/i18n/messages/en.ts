@@ -1788,7 +1788,7 @@ export const en = {
     cardValue: 'Value in',
     directions: { purchase: 'Purchase', sale: 'Sale' },
     sources: { document_line: 'From an invoice', manual: 'Entered by hand', reversal: 'Reversal', order_line: 'From a marketplace order', count: 'Stock count', crm_order_line: 'Delivery of a sales order' },
-    trades: { goods: 'Goods', services: 'Services', catering: 'Catering', other: 'Other' },
+    trades: { goods: 'Goods', services: 'Services', catering: 'Catering', digital_content: 'Digital content', other: 'Other' },
     // The finance coworker on stock (#2514): the item it suggests for an unassigned line.
     suggest: {
       button: 'Ask {finance} to suggest items',
@@ -4751,7 +4751,7 @@ export const en = {
     pitMethod: 'Personal income tax method',
     methods: { percentage: 'A percentage of revenue', income: 'On income' },
     trades: 'Trades',
-    tradeNames: { goods: 'Goods', services: 'Services', catering: 'Catering and construction with materials', other: 'Other' },
+    tradeNames: { goods: 'Goods', services: 'Services', catering: 'Catering and construction with materials', digital_content: 'Digital content (games, film, photos, music, digital ads)', other: 'Other' },
     einvoice: 'Registered for e-invoices',
     representative: 'Representative (printed beside the signature)',
     yes: 'Yes',

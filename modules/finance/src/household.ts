@@ -4,7 +4,7 @@
 // - finance.household.profile_set (owners and admins; R1, audited): a new row from a date, for an entity of kind household. A profile is never edited: a change is a later row, and it may
 //   not start inside a locked period, so the books of a closed period keep the profile they were made under.
 // - finance.household.profile_get (every role): the profile in force on a date and the books it requires.
-// - finance.household.rules (every role): the thresholds, the percentages by trade, the expense groups and the forms in force on a date, each with its source and status.
+// - finance.household.rules (every role): the thresholds, the percentages by trade, the tax reductions, the expense groups and the forms in force on a date, each with its source and status.
 // No rate, threshold or group is a constant here: they are rows with an effective date (migration 20261231030035), a source and a status. A row is `commentary` until the accountant has checked
 // it against the primary text (#2520); the answers say so (`commentary`), and nothing that files or computes a tax may rely on one yet. The audit rows hold ids, the group, the method, the dates
 // and the trades, never the representative's name.
@@ -166,6 +166,11 @@ export const householdRulesGet = defineQuery({
       (r) => r.trade,
       date,
     ).map((r) => ({ trade: r.trade, vatPercent: r.vat_percent, pitPercent: r.pit_percent, effectiveFrom: r.effective_from, source: r.source, status: r.status }));
+    const reductions = pickInForce(
+      await ctx.trx.selectFrom('crove_finance.household_tax_reduction').select(['kind', 'effective_from', 'cut_percent', 'revenue_ceiling', 'source', 'status']).where('effective_from', '<=', date).execute(),
+      (r) => r.kind,
+      date,
+    ).map((r) => ({ kind: r.kind, cutPercent: r.cut_percent, revenueCeiling: r.revenue_ceiling, effectiveFrom: r.effective_from, source: r.source, status: r.status }));
     const expenseGroups = pickInForce(
       await ctx.trx.selectFrom('crove_finance.household_expense_group_map').select(['expense_group', 'account_prefix', 'effective_from', 'source', 'status']).where('effective_from', '<=', date).execute(),
       (r) => r.account_prefix,
@@ -176,8 +181,8 @@ export const householdRulesGet = defineQuery({
       (r) => r.book,
       date,
     ).map((r) => ({ book: r.book, version: r.version, name: r.name, pitMethods: [...r.pit_methods] as Array<'none' | 'percentage' | 'income'>, effectiveFrom: r.effective_from, source: r.source, status: r.status }));
-    const commentary = [...thresholds, ...tradeRates, ...expenseGroups, ...forms].some((r) => r.status !== 'confirmed');
-    return { date, thresholds, tradeRates, expenseGroups, forms, commentary };
+    const commentary = [...thresholds, ...tradeRates, ...reductions, ...expenseGroups, ...forms].some((r) => r.status !== 'confirmed');
+    return { date, thresholds, tradeRates, reductions, expenseGroups, forms, commentary };
   },
 });
 
