@@ -331,7 +331,7 @@ export const financeSupplierPaymentsWaitingSignals = defineQuery({
           JOIN crove_kernel.party pa ON pa.org_id = p.org_id AND pa.id = p.party_id
          WHERE p.org_id = ${ctx.orgId}::uuid AND p.status = 'approved'
         UNION ALL
-        SELECT coalesce(pa.duplicate_of, pa.id) AS kept, CASE WHEN q.payload ->> 'amount' ~ '^[0-9]{1,15}(\\.[0-9]{1,4})?$' THEN (q.payload ->> 'amount')::numeric ELSE 0 END AS amount, q.payload ->> 'currency' AS currency
+        SELECT coalesce(pa.duplicate_of, pa.id) AS kept, CASE WHEN q.payload ->> 'amount' ~ '^[0-9]{1,16}(\\.[0-9]{1,4})?$' THEN (q.payload ->> 'amount')::numeric ELSE 0 END AS amount, q.payload ->> 'currency' AS currency
           FROM crove_kernel.proposal q
           JOIN crove_kernel.party pa ON pa.org_id = q.org_id AND pa.id::text = pg_catalog.lower(q.payload ->> 'partyId')
          WHERE q.org_id = ${ctx.orgId}::uuid AND q.command = ${SUPPLIER_PAYMENT_COMMAND} AND q.status = 'pending'

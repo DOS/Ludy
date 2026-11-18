@@ -36,7 +36,7 @@ The body is one JSON object with the keys `id`, `type`, `created_at`, `org`, `gr
 | --- | --- | --- |
 | `kernel.signals.deal_without_invoice` | `deal_without_invoice:<deal id>` | a deal won 7 days ago or more with no sales invoice after the win (`deal_id`, `days`, `amount`) |
 | `kernel.signals.receivable_with_open_deal` | `receivable_with_open_deal:<party id>` | a customer with an overdue receivable who has an open deal (`party_id`, `amount`, `due_on`) |
-| `kernel.signals.supplier_bank_changed` | `supplier_bank_changed:<party id>` | **never yet**, see below |
+| `kernel.signals.supplier_bank_changed` | `supplier_bank_changed:<party id>` | when a supplier changed its bank account in the last 30 days and has a payment waiting, see below |
 
 An item carries ids, the severity, a day and an amount, nothing a person typed (no name, title, note or invoice number); anything else is read through the MCP tools. A signal fires when its `key` first appears and again only after it went away and came back; up to 20 items go in one event, and the keys are stored in the same transaction as the event, so a failure fires it again and never loses it. A key is forgotten only when its rule answered in full: a rule that failed or answered in part leaves its keys as they were.
 

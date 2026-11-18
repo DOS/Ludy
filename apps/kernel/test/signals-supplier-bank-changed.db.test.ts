@@ -156,6 +156,13 @@ suite('rule 3: a supplier bank account changed while a payment waits (#3113 S4)'
     expect(await waiting(o, [duplicate])).toEqual([{ partyId: duplicate, count: 2, amount: '310' }]);
   });
 
+  it('keeps a pending amount of the largest size the request allows (16 integer digits) instead of reading it as 0', async () => {
+    const o = await org();
+    await addAccount(o);
+    await ask(o, await invoice(o, o.supplier, '1000000000000000'));
+    expect(await waiting(o, [o.supplier])).toEqual([{ partyId: o.supplier, count: 1, amount: '1000000000000000' }]);
+  });
+
   it('is quiet when nothing waits, when the waiting payment is another supplier\'s, and when the change is older than 30 days', async () => {
     const o = await org();
     const other = await party(o.orgId, 'Nhà cung cấp khác');
