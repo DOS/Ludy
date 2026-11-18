@@ -185,7 +185,17 @@ describe('the card of the deal board (#3648)', () => {
   it('shows the next step the server raised, in words, not only a badge', () => {
     const html = render(undefined, 'vi', withCard({ followUp: { id: '00000000-0000-4000-8000-0000000000f1', reason: 'past_close', sinceOn: '2026-11-10' } }));
     expect(html).toContain('data-testid="deal-card-next"');
-    expect(html).toContain('Nhắc: đã quá ngày dự kiến chốt 2026-11-10');
+    expect(html).toContain('Nhắc: đã quá ngày dự kiến chốt 10/11/2026');
     expect(render(undefined)).not.toContain('deal-card-next');
+  });
+
+  it('writes the expected close as dd/mm/yyyy, and says "Quá hạn" in words when it is past (#3649)', () => {
+    const late = render(undefined, 'vi', withCard({ expectedClose: '2020-01-31' }));
+    expect(late).toContain('Quá hạn, dự kiến chốt 31/01/2020');
+    expect(late).not.toContain('2020-01-31');
+    const later = render(undefined, 'vi', withCard({ expectedClose: '2999-01-31' }));
+    expect(later).toContain('Dự kiến chốt 31/01/2999');
+    expect(later).not.toContain('Quá hạn');
+    expect(render(undefined, 'en', withCard({ expectedClose: '2020-01-31' }))).toContain('Overdue, expected to close 31/01/2020');
   });
 });

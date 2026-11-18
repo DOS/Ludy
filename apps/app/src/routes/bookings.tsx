@@ -111,7 +111,7 @@ function BookingRow({
   return (
     <>
       <TableRow data-testid="booking-row">
-        <TableCell className="px-4 text-sm">{when}</TableCell>
+        <TableCell className="px-4 text-sm font-medium text-foreground">{when}</TableCell>
         <TableCell className="px-4 text-sm">
           <p>{b.eventType.title}</p>
           <p className="text-xs text-muted-foreground">
@@ -288,7 +288,7 @@ export function BookingsPage() {
           <Empty title={t(period === 'upcoming' ? 'emptyUpcoming' : 'emptyPast')} />
         )
       ) : (
-        <DataTable head={[t('colWhen'), t('colType'), t('colVisitor'), t('colStatus'), '']}>
+        <DataTable stacked head={[t('colWhen'), t('colType'), t('colVisitor'), t('colStatus'), '']}>
           {bookings.data.map((b) => (
             <BookingRow key={b.id} b={b} slug={slug} zone={zone} locale={locale} now={now} nameOf={nameOf} />
           ))}

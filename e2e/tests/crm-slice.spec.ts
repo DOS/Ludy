@@ -105,6 +105,18 @@ test('import contacts, find and save a view, add a deal, move it to Won, read th
       await expect(ready).toBeVisible();
       expect(await sidewaysScroll(), path).toBeLessThanOrEqual(0);
     }
+    // #3649: the Deals list is cards on a phone: the open control, the stage select and the row buttons are all inside the 375 px, and 44 px high.
+    await page.goto(`/o/${slug}/deals`);
+    const row = page.getByTestId('deal-row').first();
+    await expect(row).toBeVisible();
+    for (const control of [row.getByTestId('deal-row-open'), row.getByRole('combobox'), row.getByRole('button', { name: 'Sửa', exact: false })]) {
+      const box = await control.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+    }
+    expect((await row.getByRole('combobox').boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    expect((await row.getByRole('button', { name: 'Sửa', exact: false }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
     // The keyboard alone: focus the button, press Enter, the form is there.
     await page.goto(`/o/${slug}/deals`);
     await page.getByRole('button', { name: 'Thêm cơ hội' }).focus();
