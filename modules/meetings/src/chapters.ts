@@ -47,17 +47,24 @@ export const chaptersSave = defineCommand({
       const anchored = new Set(found.rows.map((r) => r.second));
       if (seconds.some((s) => !anchored.has(s))) throw new DomainError('CHAPTER_NOT_ANCHORED', 422, 'A chapter must start at a line of the transcript');
     }
-    // The draft set is replaced whole. A chapter that starts at the second of a chapter the model wrote keeps the mark (and the run it came from) even when its title is edited: only the recorder's review
+    // The draft set is replaced whole. A chapter that starts at the second of a chapter the model wrote, or that carries its title, keeps the mark (and the run it came from) even when the other is edited: only the recorder's review
     // (meetings.draft.review) clears it, never a save. A chapter at any other second is the recorder's own.
     const marked = await ctx.trx
       .selectFrom('crove_meetings.meeting_chapter')
-      .select(['start_seconds', 'source_run_id'])
+      .select(['start_seconds', 'title', 'source_run_id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .where('stage', '=', 'draft')
       .where('tainted', '=', true)
       .execute();
-    const runOf = new Map(marked.map((m) => [m.start_seconds, m.source_run_id]));
+    const runBySecond = new Map(marked.map((m) => [m.start_seconds, m.source_run_id]));
+    const runByTitle = new Map(marked.map((m) => [m.title, m.source_run_id]));
+    // The mark follows the chapter by its second or by its title: moving a chapter to another line, or changing only its title, never clears it.
+    const runOf = (c: { title: string; startSeconds: number }): { marked: boolean; run: string | null } => {
+      const bySecond = runBySecond.has(c.startSeconds);
+      const byTitle = runByTitle.has(c.title);
+      return { marked: bySecond || byTitle, run: bySecond ? (runBySecond.get(c.startSeconds) ?? null) : (runByTitle.get(c.title) ?? null) };
+    };
     await ctx.trx.deleteFrom('crove_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').execute();
     if (chapters.length > 0) {
       await ctx.trx
@@ -70,8 +77,8 @@ export const chaptersSave = defineCommand({
             position: i + 1,
             title: c.title,
             start_seconds: c.startSeconds,
-            tainted: runOf.has(c.startSeconds),
-            source_run_id: runOf.get(c.startSeconds) ?? null,
+            tainted: runOf(c).marked,
+            source_run_id: runOf(c).run,
           })),
         )
         .execute();

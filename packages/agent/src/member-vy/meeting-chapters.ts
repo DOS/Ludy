@@ -62,7 +62,13 @@ const NUL = /\u0000/g;
 export function cleanChapterTitle(raw: string): string {
   const spaced = raw.replace(/[\r\n\u2028\u2029]+/g, ' ').replace(NUL, '').replace(LONE_SURROGATE, '').replace(STRIP, '');
   const folded = spaced.replace(/\s+/g, ' ').trim();
-  return Array.from(folded).slice(0, CHAPTER_LIMITS.titleChars).join('').trim();
+  // At the limit in UTF-16 units (what the contract and the database count), never through a pair.
+  let out = '';
+  for (const char of folded) {
+    if (out.length + char.length > CHAPTER_LIMITS.titleChars) break;
+    out += char;
+  }
+  return out.trim();
 }
 
 const wholeSecond = (seconds: number): number => Math.max(0, Math.floor(seconds));

@@ -158,7 +158,7 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
     const runId = await finishedRun('recorder', meetingId, BODY);
     expect(await refuses(exec('reader', 'meetings.chapters.copy_result', { meetingId, runId }))).toBe('FORBIDDEN');
     expect(await refuses(exec('recorder', 'meetings.chapters.copy_result', { meetingId: other, runId }))).toBe('SUMMARY_RESULT_NOT_FOUND');
-    // A summary run, a run of another member and a run not finished are not chapters of this meeting.
+    // A summary run and a run not finished are not chapters of this meeting.
     const summaryRun = await finishedRun('recorder', meetingId, { summary: 'Họp.', decisions: [], items: [], dropped: 0 }, 'meetings.summary');
     expect(await refuses(exec('recorder', 'meetings.chapters.copy_result', { meetingId, runId: summaryRun }))).toBe('SUMMARY_RESULT_NOT_FOUND');
     const open = (await exec<{ runId: string }>('recorder', 'kernel.member_vy.run.start', { feature: 'meetings.chapters', subjectType: 'meeting', subjectId: meetingId })).runId;
@@ -218,6 +218,23 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
     expect(await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true })).toMatchObject({ chapters: 3 });
     expect(titles((await get('reader', meetingId)).published)).toEqual(['Mở đầu, sửa', 'Báo giá', 'Chiết khấu']);
     expect((await get('reader', meetingId)).published.every((c) => c.tainted === false)).toBe(true);
+  });
+
+  it('keeps the mark when a chapter Vy wrote is moved to another line or only its title is changed, and a chapter of the recorder\'s own stays clean', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const runId = await finishedRun('recorder', meetingId, { chapters: [{ title: 'Mở đầu', startSeconds: 0 }, { title: 'Báo giá', startSeconds: 10 }], dropped: 0 });
+    await exec('recorder', 'meetings.chapters.copy_result', { meetingId, runId });
+    // Only the line changes (10 to 20): the title is still the model's.
+    await save('recorder', meetingId, [{ title: 'Mở đầu', startSeconds: 0 }, { title: 'Báo giá', startSeconds: 20 }]);
+    expect((await rowsOf(meetingId, 'draft')).map((r) => [r.title, r.start_seconds, r.tainted])).toEqual([['Mở đầu', 0, true], ['Báo giá', 20, true]]);
+    expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('DRAFT_NOT_REVIEWED');
+    // Only the title changes: the line is still the model's.
+    await save('recorder', meetingId, [{ title: 'Mở đầu', startSeconds: 0 }, { title: 'Báo giá khách A', startSeconds: 20 }]);
+    expect((await rowsOf(meetingId, 'draft')).every((r) => r.tainted)).toBe(true);
+    // Both changed, at a line and with a title that are the recorder's own: theirs, clean.
+    await save('recorder', meetingId, [{ title: 'Mở đầu', startSeconds: 0 }, { title: 'Giao hàng', startSeconds: 300 }]);
+    expect((await rowsOf(meetingId, 'draft')).map((r) => [r.title, r.tainted])).toEqual([['Mở đầu', true], ['Giao hàng', false]]);
+    expect((await sqlAdmin<{ n: number }>(`SELECT count(*)::int AS n FROM crove_meetings.meeting_chapter WHERE meeting_id = $1 AND source_run_id = $2`, [meetingId, runId])).rows[0]?.n).toBe(1);
   });
 
   it('refuses a title with a line or paragraph separator, a zero-width, bidi or control character, by the command and by the database (#3882)', async () => {

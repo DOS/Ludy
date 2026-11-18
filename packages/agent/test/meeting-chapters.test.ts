@@ -92,7 +92,9 @@ describe('checkChapters', () => {
     expect(cleanChapterTitle('a\u{e0041}b\ufeffc\u2066d\u2069e\u3164f\u00adg\u034fh')).toBe('abcdefgh');
     expect(cleanChapterTitle('x\ud800y')).toBe('xy');
     const long = cleanChapterTitle('😀'.repeat(100));
-    expect(Array.from(long)).toHaveLength(CHAPTER_LIMITS.titleChars);
+    // 80 UTF-16 units, 40 whole emoji: what the contract and the database count.
+    expect(long).toHaveLength(CHAPTER_LIMITS.titleChars);
+    expect(Array.from(long)).toHaveLength(40);
     expect(long.includes('\ufffd')).toBe(false);
     const out = checkChapters(json({ chapters: [{ title: 'Mở\u200b đầu\u2028 họp', startSecond: 0 }, { title: '\u200b\u202e', startSecond: 20 }] }), SEGMENTS);
     expect(out.chapters).toEqual([{ title: 'Mở đầu họp', startSeconds: 0 }]);
