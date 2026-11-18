@@ -6,6 +6,7 @@
 import { expect, test } from '@playwright/test';
 import { exec, sql } from '../lib/db.ts';
 import { createOrg, newEmail, signUp } from '../lib/session.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 test('set an expiry, find an expired proposal with its reason and ask for it again', async ({ page }) => {
   const email = newEmail('expiry');
@@ -15,6 +16,10 @@ test('set an expiry, find an expired proposal with its reason and ask for it aga
 
   await test.step('expiry is offered only after the owners are told, and only for longer', async () => {
     await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+    await openSettingsTab(page, 'members');
+    // The reminders show their values with a "Sửa" button; the three selects appear after it and save on change.
+    const reminders = page.locator('dt', { hasText: 'Nhắc duyệt đề xuất' }).locator('..');
+    await reminders.getByRole('button', { name: 'Sửa' }).click();
     const expire = page.getByLabel('Hết hạn sau');
     await expect(expire).toBeDisabled();
     await page.getByLabel('Báo chủ sở hữu sau').selectOption('7');
@@ -23,6 +28,7 @@ test('set an expiry, find an expired proposal with its reason and ask for it aga
     await expire.selectOption('14');
     await expect(expire).toHaveValue('14');
     await page.reload();
+    await reminders.getByRole('button', { name: 'Sửa' }).click();
     await expect(page.getByLabel('Hết hạn sau')).toHaveValue('14');
     const policy = sql<{ escalate: number; expire: number }>(
       `SELECT p.escalate_after_days AS escalate, p.expire_after_days AS expire
