@@ -5166,6 +5166,29 @@ export const vi = {
       not_recognized: 'Không nhận ra định dạng đơn hàng từ sàn',
     },
   },
+  misaAmisConnections: {
+    title: 'MISA AMIS Kế toán: gửi chứng từ cho kế toán',
+    intro:
+      'Kết nối dữ liệu AMIS Kế toán của công ty để sau này gửi chứng từ sang AMIS dưới dạng đề nghị sinh chứng từ; người của bạn trong AMIS vẫn là người lập chứng từ. Bước này chỉ lưu kết nối, chưa gửi gì sang AMIS.',
+    off: 'Bộ kết nối MISA AMIS đang tắt trên hệ thống này.',
+    noConnections: 'Chưa kết nối AMIS nào.',
+    connectTitle: 'Kết nối AMIS',
+    entity: 'Pháp nhân',
+    accessCode: 'Mã kết nối lấy từ AMIS',
+    accessCodeNote: 'Mã kết nối do người có quyền quản trị dữ liệu kết nối trong AMIS tạo. Mã vừa nhập được mã hóa ngay khi gửi đi và không hiển thị lại.',
+    connect: 'Kết nối',
+    connectedSince: 'Đã kết nối từ {when}',
+    disconnect: 'Ngắt kết nối',
+    disconnectConfirm: 'Ngắt kết nối này? Mã kết nối đã lưu sẽ bị xóa; chứng từ đã có trong AMIS không bị ảnh hưởng.',
+    disconnectYes: 'Ngắt kết nối',
+    keep: 'Giữ lại',
+    status: {
+      active: 'Đang kết nối',
+      expired: 'Đã hết hạn, hãy kết nối lại',
+      revoked: 'Đã ngắt',
+      error: 'Có lỗi, hãy kết nối lại',
+    },
+  },
   bankFeeds: {
     title: 'Nguồn giao dịch ngân hàng',
     intro:
@@ -12701,6 +12724,9 @@ export const vi = {
       MARKETPLACE_CONNECTION_EXISTS: 'Pháp nhân này đã có một kết nối với sàn này.',
       MARKETPLACE_CONNECTION_NOT_FOUND: 'Không tìm thấy kết nối sàn này.',
       MARKETPLACE_CONNECTION_LIVE: 'Hãy ngắt kết nối với sàn trước khi xóa dòng này.',
+      MISA_AMIS_DISABLED: 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này.',
+      MISA_AMIS_CONNECTION_EXISTS: 'Pháp nhân này đã có một kết nối MISA AMIS.',
+      MISA_AMIS_CONNECTION_LIVE: 'Hãy ngắt kết nối MISA AMIS trước khi xóa dòng này.',
       MARKETPLACE_PROVIDER_NOT_READY: 'Bộ kết nối này chưa kiểm tra hoặc lấy đơn được từ màn hình; sẽ có khi bộ kết nối của nó hoàn thành.',
       MARKETPLACE_NOT_STAGED: 'Báo cáo này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách.',
       MARKETPLACE_BUSY: 'Có báo cáo khác đang được nhập cùng lúc; hãy thử lại sau ít phút.',
@@ -13656,6 +13682,12 @@ export const vi = {
       },
       mcp: {
         invoices: 'Cho ứng dụng AI xem danh sách hóa đơn đã ghi sổ',
+      },
+      misa_amis_connection: {
+        connect: 'Kết nối MISA AMIS Kế toán',
+        list: 'Xem các kết nối MISA AMIS',
+        target: 'Kiểm tra pháp nhân của kết nối MISA AMIS',
+        unlink: 'Ngắt kết nối MISA AMIS',
       },
       misa_goods_code: {
         remove: 'Xóa mã hàng MISA',
