@@ -5,12 +5,13 @@
 // what each item says about who and when: the "who" is matched to an attendee only when exactly one attendee answers to that name, the "when" is parsed
 // against the meeting's own date, and a link, email address or phone number in a title is flagged. Nothing is shared by this; the recorder's publish does that.
 import { sql } from 'kysely';
-import { zSummaryCopy, zSummaryCopied, zSummaryResult, zSummaryRef, zNotesPreview, zNotesPreviewInput, zSpeakerSuggestions, zSpeakerSuggestionsInput, ITEMS_PER_MEETING_MAX, parseStoredSections, sectionsToText, templateSections, type Enhanced, type MeetingSummaryTemplate, type NotesPreview, type SpeakerSuggestions, type SummaryResult, type TemplateSection } from '@crove/kernel-contract';
+import { CHAPTERS_MAX, chapterTitleProblem, zChaptersCopied, zChaptersCopy, zChaptersResult, zSummaryCopy, zSummaryCopied, zSummaryResult, zSummaryRef, zNotesPreview, zNotesPreviewInput, zSpeakerSuggestions, zSpeakerSuggestionsInput, ITEMS_PER_MEETING_MAX, parseStoredSections, sectionsToText, templateSections, type Enhanced, type MeetingSummaryTemplate, type NotesPreview, type SpeakerSuggestions, type SummaryResult, type TemplateSection } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { itemFlags } from './results.ts';
 import { plainName } from './plain-name.ts';
 import { attendeeNames, draftLabels } from './speaker.ts';
 import { dayAfter, vnDay } from './retention.ts';
+import { CHAPTERS_FEATURE } from './chapters-run.ts';
 import { SUMMARY_FEATURE as FEATURE, isSummaryEnabled } from './summary-run.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
@@ -89,7 +90,7 @@ export function parseWhen(text: string, meetingDay: string): string | null {
 // The recorder's own finished summary run of this meeting, read in the recorder's own context (the row is sealed to its member) and read back strictly: the body is the model's, checked once
 // by the agent package, and is never trusted for its shape. A run of another meeting or feature, one past its expiry, one not finished or one with an unreadable body is refused with the
 // same fixed codes whoever asks (the copy and the preview of an expansion share it).
-async function readRunResult(ctx: CommandContext | QueryContext, meetingId: string, runId: string, now: Date): Promise<SummaryResult> {
+async function readRunBody(ctx: CommandContext | QueryContext, meetingId: string, runId: string, now: Date, feature: string): Promise<string> {
   const found = await ctx
     .query<{ status: string; feature: string; subjectType: string; subjectId: string; body: string | null; expiresAt: string }>('kernel.member_vy.result.get', { runId })
     .catch((error: unknown) => {
@@ -99,14 +100,18 @@ async function readRunResult(ctx: CommandContext | QueryContext, meetingId: stri
     });
   if (found.status !== 'ok') throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
   const result = found.value;
-  if (result.feature !== FEATURE || result.subjectType !== 'meeting' || result.subjectId !== meetingId) {
+  if (result.feature !== feature || result.subjectType !== 'meeting' || result.subjectId !== meetingId) {
     throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
   }
   // An answer past its expiry is gone for the member, as the kernel's own read treats it: it is not copied into a draft.
   if (new Date(result.expiresAt).getTime() <= now.getTime()) throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
   if (result.status !== 'ready' || result.body === null) throw new DomainError('SUMMARY_RESULT_NOT_READY', 409, 'The summary is not finished');
+  return result.body;
+}
+async function readRunResult(ctx: CommandContext | QueryContext, meetingId: string, runId: string, now: Date): Promise<SummaryResult> {
+  const raw = await readRunBody(ctx, meetingId, runId, now, FEATURE);
   try {
-    return zSummaryResult.parse(JSON.parse(result.body));
+    return zSummaryResult.parse(JSON.parse(raw));
   } catch {
     throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The summary result cannot be read');
   }
@@ -289,5 +294,59 @@ export const speakerSuggestions = defineQuery({
   },
 });
 
-export const summaryCommands = [summaryCopyResult];
+
+// The recorder's own click that copies a finished chapters run (#3844) into their DRAFT chapters: each chapter is the model's text (tainted, with the run it came from) until the recorder reads it
+// (meetings.draft.review) and only then can it be published. Code, not the model, decides what is kept: the run's result is read back strictly, every start second must still be the start of a real
+// line of the transcript as it is now (a line replaced since drops its chapter) and every title passes the same checks as one the recorder types. One copy of a run; the earlier model-written draft
+// goes, a draft the recorder typed or read stays and blocks the copy (they save over it or clear it first).
+export const chaptersCopyResult = defineCommand({
+  name: 'meetings.chapters.copy_result',
+  input: zChaptersCopy,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ROLES,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    if (!isSummaryEnabled()) throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here; type the chapters by hand');
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can copy its chapters');
+    const raw = await readRunBody(ctx, input.meetingId, input.runId, ctx.now, CHAPTERS_FEATURE);
+    let body: { chapters: Array<{ title: string; startSeconds: number }>; dropped: number };
+    try {
+      body = zChaptersResult.parse(JSON.parse(raw));
+    } catch {
+      throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The chapters result cannot be read');
+    }
+    // The meeting row is held, so a copy, a save and a publish of the same meeting are one after the other, and a delete or an erase waits for this copy.
+    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forNoKeyUpdate().execute();
+    const already = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('source_run_id', '=', input.runId).executeTakeFirst();
+    if (already) throw new DomainError('CHAPTERS_ALREADY_COPIED', 409, 'These chapters were already copied into the draft');
+    // The anchors again, against the transcript as it is at the copy.
+    const seconds = body.chapters.map((c) => c.startSeconds);
+    const found = await sql<{ second: number }>`
+      SELECT DISTINCT pg_catalog.floor(s.start_seconds)::int AS second
+        FROM crove_meetings.transcript_segment s
+       WHERE s.org_id = ${ctx.orgId}::uuid AND s.meeting_id = ${input.meetingId}::uuid AND pg_catalog.floor(s.start_seconds)::int = ANY(${sql.val(seconds)}::int[])`.execute(ctx.trx);
+    const anchored = new Set(found.rows.map((r) => r.second));
+    const seen = new Set<number>();
+    const kept = body.chapters
+      .filter((c) => anchored.has(c.startSeconds) && chapterTitleProblem(c.title) === null && !seen.has(c.startSeconds) && seen.add(c.startSeconds))
+      .sort((a, b) => a.startSeconds - b.startSeconds)
+      .slice(0, CHAPTERS_MAX);
+    if (kept.length === 0) throw new DomainError('CHAPTERS_STALE', 409, 'No chapter of this run starts at a line of the transcript any more; ask Vy again');
+    // The earlier model-written draft goes (the recorder asked for a new run); what the recorder typed, or read and kept, stays and blocks the copy.
+    await ctx.trx.deleteFrom('crove_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute();
+    const mine = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').executeTakeFirst();
+    if (mine) throw new DomainError('DRAFT_CHAPTERS_EXIST', 409, 'You already have a chapters draft; clear it or share it before copying Vy\'s');
+    await ctx.trx
+      .insertInto('crove_meetings.meeting_chapter')
+      .values(kept.map((c, i) => ({ org_id: ctx.orgId, meeting_id: input.meetingId, stage: 'draft' as const, position: i + 1, title: c.title, start_seconds: c.startSeconds, tainted: true, source_run_id: input.runId })))
+      .execute();
+    ctx.audit({ meetingId: input.meetingId, runId: input.runId, chapterCount: kept.length, dropped: body.dropped + (body.chapters.length - kept.length) });
+    return zChaptersCopied.parse({ meetingId: input.meetingId, chapters: kept.length, dropped: body.dropped + (body.chapters.length - kept.length) });
+  },
+});
+
+export const summaryCommands = [summaryCopyResult, chaptersCopyResult];
 export const summaryQueries = [notesPreview, summaryAttendees, speakerSuggestions];

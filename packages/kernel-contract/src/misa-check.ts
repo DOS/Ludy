@@ -54,3 +54,24 @@ export const zMisaCheck = z.strictObject({
   groups: z.array(zMisaFindingGroup).max(200),
 });
 export type MisaCheck = z.infer<typeof zMisaCheck>;
+
+// The finance coworker's one line above the list (#3848 slice B): a second read that runs the check again on the server (so what the model is told comes from the books, never from the caller) and answers
+// the counts per kind it was written from, so the screen shows the sentence only while those counts equal the list on screen, and the sentence when there is one. `ai` says why there is no sentence: `off` (no
+// model), `busy` (too frequent), `budget` (the AI budget is spent), `failed` (the call failed or its text was refused; the reason is logged as a code, never the words) or `none` (nothing is flagged).
+export const zMisaCheckLineAsk = zMisaCheckAsk.extend({ lang: z.enum(['vi', 'en']).optional() });
+export type MisaCheckLineAsk = z.infer<typeof zMisaCheckLineAsk>;
+export const zMisaCheckCounts = z.strictObject({
+  rows: z.number().int().min(0),
+  codes: z.number().int().min(0),
+  required: z.number().int().min(0),
+  vat: z.number().int().min(0),
+  accounts: z.number().int().min(0),
+  tooLong: z.number().int().min(0),
+});
+export type MisaCheckCounts = z.infer<typeof zMisaCheckCounts>;
+export const zMisaCheckLine = z.strictObject({
+  counts: zMisaCheckCounts,
+  ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']),
+  text: z.string().nullable(),
+});
+export type MisaCheckLine = z.infer<typeof zMisaCheckLine>;

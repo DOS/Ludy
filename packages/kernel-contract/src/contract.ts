@@ -1,6 +1,6 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
-import { zChapters, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
+import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
   zBulkApproveItems,
   SOCIAL_REVIEW_CHECKS_MAX,
@@ -196,7 +196,7 @@ import {
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
 import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisStatus } from './misa-amis-connections.ts';
-import { zMisaCheck, zMisaCheckAsk } from './misa-check.ts';
+import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './misa-check.ts';
 import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
 import { zMarketplaceSuggestInput, zMarketplaceSuggested, zMarketplaceFeeClearingRequest, zMarketplacePayoutRequest, zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
@@ -1354,6 +1354,11 @@ export const contract = {
       // The table of contents (#3844): `chaptersGet` the recorder's draft and published chapters, or a reader's published ones; `chaptersSave` the recorder's own set, replacing their draft.
       chaptersGet: oc.input(zMeetingRef).output(zChapters),
       chaptersSave: oc.input(zChaptersSave).output(zChaptersSaved),
+      // The recorder's Vy writing the chapters (#3844, the same run family and budget lines as the summary but its own meter key): `chaptersStatus` feeds the button, `chaptersRun` makes the run,
+      // `chaptersCopy` copies a finished run into the recorder's draft as the model's text, not yet read.
+      chaptersStatus: oc.input(zSummaryRef).output(zSummaryStatus),
+      chaptersRun: oc.input(zSummaryRef).output(zSummarized),
+      chaptersCopy: oc.input(zChaptersCopy).output(zChaptersCopied),
       enhance: oc.input(zSummaryRef).output(zSummarized),
       enhancePreview: oc.input(zNotesPreviewInput).output(zNotesPreview),
       // Speaker names (#3502): the recorder's Vy may suggest which attendee a speaker label is; `speakerSuggestions` is what a finished summary run suggested and still applies,
@@ -2337,6 +2342,8 @@ export const contract = {
       .output(zCashVoucherPage),
     // What MISA's import will refuse or cut in one of the seven MISA SME voucher exports (#3848), found by code over the rows the file is built from, before the download. A read; the export is unchanged and never blocked.
     misaCheck: oc.input(zMisaCheckAsk).output(zMisaCheck),
+    // The finance coworker's one line above that list (#3848 slice B): the check run again on the server and one metered sentence about its counts when there is a model. A read; it changes no voucher.
+    misaCheckLine: oc.input(zMisaCheckLineAsk).output(zMisaCheckLine),
   },
   // Opening balances from Excel (#320), owners and admins. preview checks a trial balance read from the template and
   // writes nothing; post checks it again and posts it as the org's one opening entry (R3: fresh MFA). A retry with the
