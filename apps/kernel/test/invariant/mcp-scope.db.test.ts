@@ -76,7 +76,7 @@ const SIGNALS = [
 // The finance reads of the connected coworker (#3849, plan docs/plan/vy.md section 5 C2 and C3, owner decision 2026-11-18): the overview figures, the open receivables and payables per party, and one payment
 // reminder draft. They may join the set one at a time, each when its line and the PO's security review have read what it returns (step 1 of the landing, like the signals above: this list lets a name in, it
 // does not require it). A name outside this list still fails, and so do the checks below on every query that carries `mcp`: never sensitive, streamed, role-less or open to member mode or an extension token.
-// Never returned by any of them: a customer's email or phone, the org's bank account numbers or holders (the reminder read leaves out `payTo`), the lines of an invoice, anything from a query that is `sensitive`.
+// Must never be returned by any of them (each tool PR pins it under test/invariant/): a customer's email or phone, the org's bank account numbers or holders (the reminder read leaves out `payTo`), the lines of an invoice, anything from a query that is `sensitive`.
 const FINANCE_READS = [
   'finance.mcp.open_balances:ludy.read',
   'finance.mcp.payment_reminder:ludy.read',
