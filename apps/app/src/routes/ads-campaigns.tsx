@@ -14,6 +14,7 @@ import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { AdsRunStatus } from '../components/ads-run-status.tsx';
+import { BoostSuggestions } from '../components/ads-boost.tsx';
 import { CampaignAsk, hasWaitingRequest } from '../components/ads-campaign-ask.tsx';
 import { CampaignBuilder, type PageChoice } from '../components/ads-campaign-builder.tsx';
 import { PostPicker } from '../components/ads-post-picker.tsx';
@@ -142,6 +143,8 @@ export function AdsCampaignsPage() {
             </Field>
           )}
           {aiOn && <CampaignAsk key={account.id} account={account} brief={brief} onBrief={setBrief} sourcePostId={start?.sourcePostId ?? null} requests={requests.data ?? []} onOpenDraft={openThe} />}
+          {/* The posts the marketing coworker suggests boosting (W3, #3834): a suggestion only. */}
+          <BoostSuggestions slug={slug} />
           <section className="space-y-3" aria-labelledby="campaign-drafts-title">
             <h2 id="campaign-drafts-title" className="text-base font-semibold text-foreground">
               {t('campaigns.draftsTitle')}

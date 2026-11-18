@@ -3723,6 +3723,16 @@ export function createRpcHandler(
           return runtime.execute('ads.campaign.draft_save', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+      // Boost a published Social post (W3, #3834): the options, the newest boost of each of some posts, and drafting one (the same draft the builder makes; asking for
+      // approval is requestChange, the same approval and launch as any plan).
+      boostOptions: os.ads.boostOptions.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.boost.options', {}, { actor, orgId }))),
+      boostStates: os.ads.boostStates.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.boost.states', input, { actor, orgId }))),
+      draftBoost: os.ads.draftBoost.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.boost.draft', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
       discardCampaignDraft: os.ads.discardCampaignDraft.handler(({ context, input }) =>
         inAds(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
