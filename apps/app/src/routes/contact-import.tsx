@@ -212,7 +212,7 @@ export function ContactImportPage() {
         <div className="space-y-3 rounded-lg border border-border p-4">
           <p className="text-sm text-muted-foreground">{t('choose.hint', { max: String(IMPORT_MAX_ROWS) })}</p>
           <Field label={t('choose.file')}>
-            {(c) => <input {...c} ref={input}  type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="block w-full text-sm text-muted-foreground file:mr-3 file:min-h-9 file:cursor-pointer file:rounded-lg file:border file:border-input file:bg-background file:px-3 file:text-sm file:font-medium file:text-foreground hover:file:bg-muted" onChange={(e) => void choose(e.target.files?.[0])} />}
+            {(c) => <input {...c} ref={input} type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="block w-full text-sm text-muted-foreground file:mr-3 file:min-h-9 file:cursor-pointer file:rounded-lg file:border file:border-input file:bg-background file:px-3 file:text-sm file:font-medium file:text-foreground hover:file:bg-muted" onChange={(e) => void choose(e.target.files?.[0])} />}
           </Field>
           <Button type="button" variant="outline" size="sm" onClick={() => download(t('templateFile'), templateBook((f) => t(`field.${f}`), { sheet: t('templateSheet'), example: t('choose.example'), email: t('templateEmail'), phone: t('templatePhone'), address: t('templateAddress') }).slice(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}>
             {t('choose.template')}
@@ -338,7 +338,7 @@ export function ContactImportPage() {
           {(commit.error || cancel.error) && <ErrorText>{errorMessage(commit.error ?? cancel.error)}</ErrorText>}
           {counts.newRows === 0 && !(onDuplicate === 'fill_empty' && counts.duplicateRows > 0) && (
             <p className="text-xs text-muted-foreground" role="status">
-              {t('preview.nothingNew')}
+              {t(counts.duplicateRows > 0 ? 'preview.nothingNewDuplicates' : 'preview.nothingNew')}
             </p>
           )}
           <div className="flex gap-2">

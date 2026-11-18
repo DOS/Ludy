@@ -68,7 +68,9 @@ export function timeZones(current: string): string[] {
   const all = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
   // Vietnam first, where most members are (#3650); the rest as the browser lists them.
   const rest = all.filter((z) => !isVietnamZone(z));
-  const list = [VIETNAM_ZONE, ...rest];
+  // The member's own Vietnam zone is the first entry, whichever of its two names was saved, so it is listed once.
+  const first = isVietnamZone(current) ? current : VIETNAM_ZONE;
+  const list = [first, ...rest];
   return list.includes(current) ? list : [current, ...list];
 }
 

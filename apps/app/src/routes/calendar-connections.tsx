@@ -71,7 +71,8 @@ function ConnectionRow({
         <span className={connection.status === 'expired' || connection.statusReason ? 'block text-xs text-destructive' : 'block text-xs text-subtle-foreground'}>{note}</span>
       </span>
       <ConfirmDialog
-        render={<Button type="button" variant="ghost" size="sm" disabled={disconnect.isPending} aria-label={t('externalDisconnectOf', { name: connection.displayName })} />}
+        render={<Button type="button" variant="ghost" size="sm" aria-label={t('externalDisconnectOf', { name: connection.displayName })} />}
+        disabled={disconnect.isPending}
         title={t('externalDisconnectTitle', { name: connection.displayName })}
         description={t('externalDisconnectDescription')}
         confirm={t('externalDisconnect')}
@@ -83,15 +84,18 @@ function ConnectionRow({
       </div>
       {offerWriteBack &&
         (connection.canWriteBack ? (
-          <label className="mt-1 flex items-start gap-2 text-xs text-muted-foreground">
-            <Checkbox checked={connection.writeBack} disabled={writeBack.isPending} onCheckedChange={(on) => writeBack.mutate({ connectionId: connection.id, enabled: on === true })} />
-            <span>
+          <div className="mt-1">
+            <label className="flex items-start gap-2 text-xs text-muted-foreground">
+              <Checkbox checked={connection.writeBack} disabled={writeBack.isPending} onCheckedChange={(on) => writeBack.mutate({ connectionId: connection.id, enabled: on === true })} />
               <span className="font-medium text-foreground">{t('externalWriteBack')}</span>
+            </label>
+            {/* Outside the label, so opening the words never ticks the box. */}
+            <div className="ml-6">
               <More>
                 <p>{t('externalWriteBackHint')}</p>
               </More>
-            </span>
-          </label>
+            </div>
+          </div>
         ) : (
           <div className="mt-1 text-xs text-muted-foreground">
             <p className="font-medium text-foreground">{t('externalWriteBack')}</p>
@@ -106,15 +110,17 @@ function ConnectionRow({
       {writeBack.error && <ErrorText>{errorMessage(writeBack.error)}</ErrorText>}
       {offerReadEvents &&
         (connection.canReadEvents ? (
-          <label className="mt-1 flex items-start gap-2 text-xs text-muted-foreground">
-            <Checkbox checked={connection.readEvents} disabled={readEvents.isPending} onCheckedChange={(on) => readEvents.mutate({ connectionId: connection.id, enabled: on === true })} data-testid="calendar-read-events" />
-            <span>
+          <div className="mt-1">
+            <label className="flex items-start gap-2 text-xs text-muted-foreground">
+              <Checkbox checked={connection.readEvents} disabled={readEvents.isPending} onCheckedChange={(on) => readEvents.mutate({ connectionId: connection.id, enabled: on === true })} data-testid="calendar-read-events" />
               <span className="font-medium text-foreground">{t('externalReadEvents')}</span>
+            </label>
+            <div className="ml-6">
               <More>
                 <p>{microsoft ? t('externalReadEventsHintMicrosoft') : t('externalReadEventsHint')}</p>
               </More>
-            </span>
-          </label>
+            </div>
+          </div>
         ) : (
           <div className="mt-1 text-xs text-muted-foreground">
             <p className="font-medium text-foreground">{t('externalReadEvents')}</p>
@@ -165,7 +171,9 @@ export function ExternalCalendars({ canEdit }: { canEdit: boolean }) {
   const offered: readonly CalendarOAuthProvider[] = providers.data ?? [];
   const rows = connections.data ?? [];
   // Nothing to connect and nothing connected: the feature is not on here, which the card says in one line instead of vanishing (#3650).
-  if (offered.length === 0 && rows.length === 0) {
+  // While the two reads are on their way, or one failed, the card does not claim the feature is off.
+  if (providers.isPending || connections.isPending) return null;
+  if (offered.length === 0 && rows.length === 0 && !providers.error && !connections.error) {
     return (
       <div className="mt-4" aria-label={t('externalTitle')}>
         <p className="text-xs font-medium text-muted-foreground">{t('externalTitle')}</p>

@@ -58,5 +58,9 @@ describe('a time zone as a person says it (#3650)', () => {
   it('lists Vietnam first and keeps the member\'s own zone when the browser does not list it', () => {
     expect(timeZones('Asia/Tokyo')[0]).toBe('Asia/Ho_Chi_Minh');
     expect(timeZones('Not/Listed')[0]).toBe('Not/Listed');
+    // A member whose saved zone is the other Vietnam name sees Vietnam once.
+    const saigon = timeZones('Asia/Saigon');
+    expect(saigon[0]).toBe('Asia/Saigon');
+    expect(saigon.filter((z) => z === 'Asia/Ho_Chi_Minh' || z === 'Asia/Saigon')).toHaveLength(1);
   });
 });

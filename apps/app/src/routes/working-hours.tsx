@@ -3,7 +3,7 @@
 // off without being listed. A viewer sees their hours and changes nothing. The server enforces every rule. Dates read
 // dd/mm/yyyy and times 24-hour HH:mm whatever the browser's language (DESIGN.md §5.5, #1428).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { CALENDAR_RANGE_MAX_DAYS, type MyCalendar, type Weekday } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
@@ -27,6 +27,13 @@ function HoursForm({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boole
   const [timeZone, setTimeZone] = useState(calendar.hours.timeZone);
   const [days, setDays] = useState<DayHours[]>(() => daysOf(calendar.hours));
   const [invalid, setInvalid] = useState<Weekday | null>(null);
+  // The zones as people say them, Vietnam first and the rest by their names (#3650); made once, not on every keystroke in a time field.
+  const vietnam = t('zoneVietnam');
+  const savedZone = calendar.hours.timeZone;
+  const zones = useMemo(() => {
+    const all = timeZones(savedZone).map((zone) => ({ zone, label: zoneLabel(zone, vietnam) }));
+    return [...all.slice(0, 1), ...all.slice(1).sort((a, b) => a.label.localeCompare(b.label))];
+  }, [savedZone, vietnam]);
   // "Đã lưu giờ làm việc." (#3650): the save was silent before, and the button looked as it did.
   const save = useMutation(
     orpc.calendar.saveHours.mutationOptions({
@@ -50,9 +57,9 @@ function HoursForm({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boole
   return (
     <form className="mt-3 space-y-2" onSubmit={submit} aria-label={t('title')}>
       <NativeSelect className="w-full" value={timeZone} disabled={!canEdit} onChange={(e) => setTimeZone(e.target.value)} aria-label={t('timeZone')}>
-        {timeZones(timeZone).map((z) => (
-          <NativeSelectOption key={z} value={z}>
-            {zoneLabel(z, t('zoneVietnam'))}
+        {zones.map(({ zone, label }) => (
+          <NativeSelectOption key={zone} value={zone}>
+            {label}
           </NativeSelectOption>
         ))}
       </NativeSelect>
