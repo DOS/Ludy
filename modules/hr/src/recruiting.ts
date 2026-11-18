@@ -1324,6 +1324,7 @@ export const candidateHire = defineCommand({
 
 export const candidateErase = defineCommand({
   name: 'hr.recruiting.candidate.erase',
+  runsWhenOff: 'PDPL Art. 16 erasure of a job applicant while HR is off (#3447)',
   input: zHrCandidateRef,
   risk: 'R3',
   sideEffect: 'irreversible',
