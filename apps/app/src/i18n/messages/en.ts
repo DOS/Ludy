@@ -14318,6 +14318,7 @@ export const en = {
       mcp: {
         list: 'Let an AI app list the meetings with published minutes shared with the whole company',
         minutes: 'Let an AI app read the published minutes of a meeting shared with the whole company',
+        open_actions: 'Let an AI app list the open action items from the published minutes of meetings shared with the whole company',
       },
       hook: {
         clear: 'Remove your address for minutes',
