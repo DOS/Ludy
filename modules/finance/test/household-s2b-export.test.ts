@@ -137,7 +137,7 @@ describe('the S2b-HKD workbook', () => {
 describe('the S2b-HKD workbook and the Decree 174 VAT cut (#3710)', () => {
   it('writes the cut and the VAT payable when the profile answered yes, and the total follows', async () => {
     const { rows } = await rowsOf(book({ vatCut: { answer: 'yes', percent: '20.0000', applied: true, lines: [{ trade: 'goods', cut: '2200', vatPayable: '8800' }, { trade: 'services', cut: '4000', vatPayable: '16000' }], total: { cut: '6200', vatPayable: '24800' }, ifEligible: null } }));
-    expect(find(rows, 'Giảm thuế GTGT 20.0000% theo Nghị định 174')).toContain('6200');
+    expect(find(rows, 'Giảm thuế GTGT 20.0000% theo Nghị định 174 (theo tỷ lệ của kỳ, tham khảo)')).toContain('6200');
     expect(find(rows, 'Thuế GTGT sau giảm (tham khảo theo tỷ lệ của kỳ)')).toContain('24800');
     expect(find(rows, 'Tổng thuế GTGT sau giảm')).toContain('24800');
   });

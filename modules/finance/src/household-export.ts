@@ -201,10 +201,10 @@ export async function buildCnkdWorkbook(sheetData: HouseholdCnkd, brand = 'Ludy'
   // The Decree 174 VAT cut, only where the household's profile answered yes (#3710): the cut and the tax after it. With no answer, the file says what the VAT would be if the household were eligible.
   const cut = sheetData.vatCut;
   if (cut.applied && cut.total) {
-    money(`Giảm thuế GTGT ${cut.percent}% theo Nghị định 174`, cut.total.cut, false, true);
+    money(`Giảm thuế GTGT ${cut.percent}% theo Nghị định 174 (theo tỷ lệ của kỳ, tham khảo)`, cut.total.cut, false, true);
     money('Tổng thuế GTGT và TNCN sau giảm, theo tỷ lệ trên doanh thu của kỳ, chưa xét ngưỡng năm', toMoney(decimal(cut.total.vatPayable).plus(totals?.pit ?? '0')), false, true);
   }
-  if (cut.ifEligible) line(`Chưa trả lời câu hỏi giảm thuế GTGT (Nghị định 174) trong hồ sơ: nếu thuộc diện được giảm, thuế GTGT sẽ là ${cut.ifEligible.vatPayable} đồng (giảm ${cut.ifEligible.cut} đồng).`);
+  if (cut.ifEligible) line(`Chưa trả lời câu hỏi giảm thuế GTGT (Nghị định 174) trong hồ sơ: nếu thuộc diện được giảm, thuế GTGT sẽ là ${cut.ifEligible.vatPayable} đồng (giảm ${cut.ifEligible.cut} đồng), tính theo tỷ lệ của kỳ để tham khảo; thuế phải nộp theo quy tắc doanh thu cả năm.`);
   sheet.addRow([]);
   writeYearToDate(sheetData.yearToDate, true, {
     text: (label, bold) => void line(label, bold),
@@ -313,7 +313,7 @@ async function buildTradeWorkbook(book: TradeBookView, brand: string, opts: { sh
   // The Decree 174 VAT cut, only where the household's profile answered yes (#3710).
   const cutOf = new Map(book.vatCut.lines.map((l) => [l.trade, l]));
   if (book.vatCut.applied) {
-    perLine(`Giảm thuế GTGT ${book.vatCut.percent}% theo Nghị định 174`, (l) => cutOf.get(l.trade)?.cut ?? '0', book.vatCut.total?.cut, 'money');
+    perLine(`Giảm thuế GTGT ${book.vatCut.percent}% theo Nghị định 174 (theo tỷ lệ của kỳ, tham khảo)`, (l) => cutOf.get(l.trade)?.cut ?? '0', book.vatCut.total?.cut, 'money');
     perLine('Thuế GTGT sau giảm (tham khảo theo tỷ lệ của kỳ)', (l) => cutOf.get(l.trade)?.vatPayable ?? l.vat, book.vatCut.total?.vatPayable, 'money');
   }
   if (opts.pit) {
@@ -332,7 +332,7 @@ async function buildTradeWorkbook(book: TradeBookView, brand: string, opts: { sh
   tax.font = { bold: true };
   if (book.vatCut.ifEligible) {
     sheet.addRow([]);
-    line(`Chưa trả lời câu hỏi giảm thuế GTGT (Nghị định 174) trong hồ sơ: nếu thuộc diện được giảm, thuế GTGT sẽ là ${book.vatCut.ifEligible.vatPayable} đồng (giảm ${book.vatCut.ifEligible.cut} đồng).`);
+    line(`Chưa trả lời câu hỏi giảm thuế GTGT (Nghị định 174) trong hồ sơ: nếu thuộc diện được giảm, thuế GTGT sẽ là ${book.vatCut.ifEligible.vatPayable} đồng (giảm ${book.vatCut.ifEligible.cut} đồng), tính theo tỷ lệ của kỳ để tham khảo; thuế phải nộp theo quy tắc doanh thu cả năm.`);
   }
   sheet.addRow([]);
   writeYearToDate(book.yearToDate, opts.pit, {

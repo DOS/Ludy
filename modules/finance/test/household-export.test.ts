@@ -203,7 +203,7 @@ describe('the 01/CNKD worksheet and the Decree 174 VAT cut (#3710)', () => {
         due: '44800',
       }),
     );
-    expect(rows.get('Giảm thuế GTGT 20.0000% theo Nghị định 174')?.getCell(2).value).toBe(8000);
+    expect(rows.get('Giảm thuế GTGT 20.0000% theo Nghị định 174 (theo tỷ lệ của kỳ, tham khảo)')?.getCell(2).value).toBe(8000);
     // VAT payable 32000 plus the PIT 17000.
     expect(rows.get('Tổng thuế GTGT và TNCN sau giảm, theo tỷ lệ trên doanh thu của kỳ, chưa xét ngưỡng năm')?.getCell(2).value).toBe(49000);
     expect(rows.get('Số thuế còn phải nộp')?.getCell(2).value).toBe(44800);
