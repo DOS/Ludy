@@ -585,6 +585,12 @@ export type EInvoiceNoticeTable = Refine<
   { field: EInvoiceNoticeField; buyer_notice_state: Generated<(typeof EINVOICE_NOTICE_BUYER_STATES)[number]>; form_state: Generated<(typeof EINVOICE_NOTICE_FORM_STATES)[number]>; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
+// A supplier's bank account and the history of its changes (#3113): an account is active or retired, a change adds, replaces or retires one.
+export const SUPPLIER_BANK_ACCOUNT_STATUSES = ['active', 'retired'] as const;
+export const SUPPLIER_BANK_ACCOUNT_CHANGE_KINDS = ['added', 'replaced', 'retired'] as const;
+export type SupplierBankAccountChangeKind = (typeof SUPPLIER_BANK_ACCOUNT_CHANGE_KINDS)[number];
+export type SupplierBankAccountTable = Refine<G.FinanceSupplierBankAccountTable, { status: Generated<(typeof SUPPLIER_BANK_ACCOUNT_STATUSES)[number]> }>;
+export type SupplierBankAccountChangeTable = Refine<G.FinanceSupplierBankAccountChangeTable, { kind: SupplierBankAccountChangeKind }>;
 // A connection to a marketplace (#2519): the result of its last test and of its last poll, as states and never the platform's own text.
 export const MARKETPLACE_TEST_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable'] as const;
 export type MarketplaceTestState = (typeof MARKETPLACE_TEST_STATES)[number];
@@ -1419,6 +1425,8 @@ type Refined = Tables<{
   'crove_finance.stock_move': StockMoveTable;
   'crove_finance.stock_period': StockPeriodTable;
   'crove_finance.stock_period_item': StockPeriodItemTable;
+  'crove_finance.supplier_bank_account': SupplierBankAccountTable;
+  'crove_finance.supplier_bank_account_change': SupplierBankAccountChangeTable;
   'crove_finance.stock_count': StockCountTable;
   'crove_finance.stock_count_line': StockCountLineTable;
   'crove_finance.categorization_rule': CategorizationRuleTable;

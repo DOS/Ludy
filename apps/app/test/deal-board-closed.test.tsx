@@ -65,13 +65,13 @@ const board: Board = {
 
 const emptyBoard: Board = { columns: board.columns.map((c) => ({ ...c, count: 0, total: '0', cards: [] })) };
 
-function render(onShowAll: ((kind: 'won' | 'lost') => void) | undefined, locale: 'vi' | 'en' = 'vi', shown: Board = board, canEdit = true): string {
+function render(onShowAll: ((kind: 'won' | 'lost') => void) | undefined, locale: 'vi' | 'en' = 'vi', shown: Board = board, canEdit = true, members: { userId: string; displayName: string | null; email: string }[] = []): string {
   client.current.setQueryData(['crm', 'deals', 'board', {}], shown);
   return renderToStaticMarkup(
     <I18nProvider>
       <QueryClientProvider client={client.current}>
         <IntlProvider locale={locale} messages={catalog(locale)}>
-          <DealBoard members={[]} canEdit={canEdit} onAdd={() => undefined} onShowAll={onShowAll} />
+          <DealBoard members={members} canEdit={canEdit} onAdd={() => undefined} onOpen={() => undefined} onShowAll={onShowAll} />
         </IntlProvider>
       </QueryClientProvider>
     </I18nProvider>,
@@ -158,5 +158,34 @@ describe('the layout and the empty state of the deal board (#3647)', () => {
     expect(html).toContain('Bảng chưa có cơ hội nào.');
     expect(html).not.toContain('Thêm cơ hội');
     expect(html).not.toContain('Nhập khách hàng');
+  });
+});
+
+describe('the card of the deal board (#3648)', () => {
+  const withCard = (over: Partial<Deal>): Board => ({ columns: board.columns.map((c, i) => (i === 0 ? { ...c, cards: [{ ...card, ...over }] } : c)) });
+
+  it('is one click target that opens the deal, and holds no Sửa, Báo giá or Lịch hẹn buttons', () => {
+    const html = render(undefined);
+    expect(html).toContain('data-testid="deal-card-open"');
+    expect(html).toContain('role="button"');
+    // Named by its content, which holds the customer and the amount too.
+    expect(html).not.toContain('aria-label="Mở cơ hội');
+    for (const word of ['>Sửa<', '>Báo giá<', '>Lịch hẹn<']) expect(html).not.toContain(word);
+    // The stage menu stays.
+    expect(html).toContain('aria-label="Giai đoạn của cơ hội Gói kế toán năm"');
+  });
+
+  it("shows the owner's name, or that there is none", () => {
+    expect(render(undefined)).toContain('Chưa có người phụ trách');
+    const owned = render(undefined, 'vi', withCard({ ownerUserId: 'u1' }), true, [{ userId: 'u1', displayName: 'Lan', email: 'lan@example.test' }]);
+    expect(owned).toContain('Phụ trách: Lan');
+    expect(render(undefined, 'en', withCard({ ownerUserId: 'u1' }), true, [{ userId: 'u1', displayName: null, email: 'lan@example.test' }])).toContain('Owner: lan@example.test');
+  });
+
+  it('shows the next step the server raised, in words, not only a badge', () => {
+    const html = render(undefined, 'vi', withCard({ followUp: { id: '00000000-0000-4000-8000-0000000000f1', reason: 'past_close', sinceOn: '2026-11-10' } }));
+    expect(html).toContain('data-testid="deal-card-next"');
+    expect(html).toContain('Nhắc: đã quá ngày dự kiến chốt 2026-11-10');
+    expect(render(undefined)).not.toContain('deal-card-next');
   });
 });

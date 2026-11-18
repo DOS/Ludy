@@ -31,7 +31,7 @@ vi.mock('../src/lib/api.ts', async () => {
 
 const { DealForm } = await import('../src/components/deal-form.tsx');
 const { NewPartyGroup } = await import('../src/components/deal-party-new.tsx');
-const { ContactDeals } = await import('../src/routes/contacts.tsx');
+const { ContactDeals } = await import('../src/components/contact-deals.tsx');
 
 const PARTY = { id: '00000000-0000-4000-8000-000000000010', name: 'Công ty ABC', kind: 'organization' as const, taxCode: '0123456780' };
 const CONTACT = { id: PARTY.id, name: PARTY.name, kind: 'organization', taxCode: PARTY.taxCode } as unknown as Contact;
@@ -94,5 +94,56 @@ describe("the contact panel's deals", () => {
     const viewer = render(<ContactDeals contact={CONTACT} canEdit={false} />);
     expect(viewer).not.toContain('Thêm cơ hội');
     expect(viewer).toContain('Mở màn Cơ hội');
+  });
+});
+
+describe("the deals in the Inbox's contact panel (#3648)", () => {
+  const deal = (id: string, title: string, stageKind: 'open' | 'won' | 'lost') => ({
+    id,
+    partyId: PARTY.id,
+    partyName: PARTY.name,
+    title,
+    amount: '15000000.00',
+    currency: 'VND',
+    stageId: '00000000-0000-4000-8000-0000000000a0',
+    stageKind,
+    expectedClose: null,
+    ownerUserId: null,
+    lostReason: null,
+    closedAt: null,
+    version: 1,
+    canDelete: true,
+    followUp: null,
+    partyDuplicateOf: null,
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z',
+  });
+  function renderWith(node: React.ReactNode): string {
+    const qc = new QueryClient();
+    qc.setQueryData(['crm', 'deals', 'byParty'], [deal('00000000-0000-4000-8000-000000000001', 'Gói kế toán năm', 'open'), deal('00000000-0000-4000-8000-000000000002', 'Gói cũ đã thắng', 'won')]);
+    // The open ones come from the list read, filtered by the server.
+    qc.setQueryData(['crm', 'deals', 'list'], { items: [deal('00000000-0000-4000-8000-000000000001', 'Gói kế toán năm', 'open')], next: null });
+    return renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="vi" messages={catalog('vi')}>
+          {node}
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('lists the open deals with title, stage and amount, each title opening the deal, and "Thêm cơ hội"', () => {
+    const html = renderWith(<ContactDeals contact={CONTACT} canEdit openOnly />);
+    expect(html).toContain('Cơ hội đang mở');
+    expect(html).toContain('>Gói kế toán năm</button>');
+    expect(html).not.toContain('Gói cũ đã thắng');
+    expect(html).toMatch(/15[.,]000[.,]000/);
+    expect(html).toContain('aria-label="Thêm cơ hội cho Công ty ABC"');
+  });
+
+  it("lists every deal on the contact's own screen", () => {
+    const html = renderWith(<ContactDeals contact={CONTACT} canEdit />);
+    expect(html).toContain('>Gói kế toán năm</button>');
+    expect(html).toContain('>Gói cũ đã thắng</button>');
   });
 });

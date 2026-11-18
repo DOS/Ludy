@@ -614,8 +614,10 @@ export function createRpcHandler(
     record: (kind, checked) => runtime.execute('hr.payroll.labor_check.audit', { kind, checked }, { actor, orgId }),
   });
   const recruitingBriefPorts = (orgId: string, actor: UserActor): RecruitingBriefPorts => ({
-    read: (candidateId, lang) => runtime.query<HrRecruitingBriefSnapshot>('hr.recruiting.brief.read', { candidateId, lang }, { actor, orgId }),
-    record: (candidateId, aiReason) => runtime.execute('hr.recruiting.brief.audit', { candidateId, aiReason }, { actor, orgId }),
+    read: (candidateId, lang, includeNotes) =>
+      runtime.query<HrRecruitingBriefSnapshot>('hr.recruiting.brief.read', { candidateId, lang, includeNotes }, { actor, orgId }),
+    record: (candidateId, aiReason, includeNotes) =>
+      runtime.execute('hr.recruiting.brief.audit', { candidateId, aiReason, includeNotes }, { actor, orgId }),
   });
   const hrQuery =
     (name: string) =>
@@ -2947,6 +2949,13 @@ export function createRpcHandler(
           return explainOverview(financeOverviewAi, orgId, actor.userId, overview, lang ?? 'vi');
         }),
       ),
+    },
+    supplierBank: {
+      list: os.supplierBank.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_bank_account.list', input, { actor, orgId }))),
+      add: os.supplierBank.add.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.add', input, { actor, orgId }))),
+      replace: os.supplierBank.replace.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.replace', input, { actor, orgId }))),
+      retire: os.supplierBank.retire.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.retire', input, { actor, orgId }))),
+      erase: os.supplierBank.erase.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.erase', input, { actor, orgId }))),
     },
     paymentReminders: {
       list: os.paymentReminders.list.handler(({ context, input }) =>

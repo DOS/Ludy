@@ -7,7 +7,7 @@
 // Audit facts carry IDs, stages, counts, and changed field names (plus auditValue on payroll baseWage),
 // never candidate PII or raw notes. Calendar interview event titles carry the opening role only, never candidate PII.
 import { sql } from 'kysely';
-import { busyOf, kernelManifest, workingHoursOf } from '@crove/kernel';
+import { acquireAdvisoryXactLock, advisoryLockKey, busyOf, kernelManifest, workingHoursOf } from '@crove/kernel';
 import {
   CALENDAR_RANGE_MAX_DAYS,
   HR_ERASED_NAME,
@@ -202,6 +202,60 @@ async function hasActiveInterview(ctx: Pick<CommandContext, 'trx' | 'orgId'>, in
     .where('status', '=', 'active')
     .executeTakeFirst();
   return Boolean(row);
+}
+
+type LockedInterviewEvent = {
+  id: string;
+  user_id: string;
+  kind: string;
+  status: string;
+};
+
+/**
+ * Recruiting interviews are org-owned hiring invites linked from a locked `crove_hr.candidate` row and managed by
+ * org `owner` and `admin` roles (`MANAGERS`, reinforced by RESTRICTIVE `owner_admin` + `le_scope` RLS on
+ * `crove_hr.candidate`, and `OWNERS` for `candidate.erase`). Unlike `kernel.calendar.event.cancel` (which is open
+ * to `member` editors for their own personal calendar blocks and therefore requires `user_id = actor.userId`), any
+ * `owner` or `admin` managing the candidate within `ctx.orgId` and the candidate's legal-entity scope may reschedule
+ * or cancel that candidate's linked `kind = 'manual'` interview event, even when another `owner` or `admin` booked it.
+ * Lookup and cancellation are strictly scoped to `(org_id = ctx.orgId AND id = candidate.interview_event_id)` from the
+ * locked candidate row, never a caller-supplied `eventId`.
+ */
+async function lockLinkedInterviewEvent(ctx: CommandContext, interviewEventId: string | null): Promise<LockedInterviewEvent | undefined> {
+  if (!interviewEventId) return undefined;
+  return ctx.trx
+    .selectFrom('crove_kernel.calendar_event')
+    .select(['id', 'user_id', 'kind', 'status'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', interviewEventId)
+    .forUpdate()
+    .executeTakeFirst();
+}
+
+async function cancelLockedInterviewEvent(
+  ctx: CommandContext,
+  cancelledByUserId: string,
+  event: LockedInterviewEvent | undefined,
+): Promise<string | null> {
+  if (!event || event.kind !== 'manual' || event.status !== 'active') return null;
+  await ctx.trx
+    .updateTable('crove_kernel.calendar_event')
+    .set({ status: 'cancelled', cancelled_by: cancelledByUserId, cancelled_at: ctx.now })
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', event.id)
+    .where('kind', '=', 'manual')
+    .where('status', '=', 'active')
+    .execute();
+  return event.id;
+}
+
+async function cancelLinkedInterviewEvent(
+  ctx: CommandContext,
+  cancelledByUserId: string,
+  interviewEventId: string | null,
+): Promise<string | null> {
+  const event = await lockLinkedInterviewEvent(ctx, interviewEventId);
+  return cancelLockedInterviewEvent(ctx, cancelledByUserId, event);
 }
 
 async function lockOpening(ctx: CommandContext, openingId: string) {
@@ -444,6 +498,13 @@ export const candidateList = defineQuery({
       .where('c.org_id', '=', ctx.orgId);
     if (input.openingId !== undefined) q = q.where('c.opening_id', '=', input.openingId);
     if (input.stage !== undefined) q = q.where('c.stage', '=', input.stage);
+    if (input.cursor !== undefined) {
+      // Compare against the cursor row's stored microsecond timestamptz in PostgreSQL rather than an ISO millisecond
+      // copy so candidates created or updated within the same millisecond paginate deterministically without gaps or duplicates.
+      q = q.where(
+        sql<boolean>`EXISTS (SELECT 1 FROM crove_hr.candidate cur WHERE cur.org_id = ${ctx.orgId}::uuid AND cur.id = ${input.cursor}::uuid AND (c.updated_at, c.id) < (cur.updated_at, cur.id))`,
+      );
+    }
     const rows = await q.orderBy('c.updated_at', 'desc').orderBy('c.id', 'desc').limit(input.limit).execute();
     return rows.map(toCandidateView);
   },
@@ -532,13 +593,14 @@ export const interviewSlotsQuery = defineQuery({
 });
 
 // Audited sensitive read for recruiting coworker Ly: loads pseudonymized inputs + forbidden candidate PII.
+// Free-text candidate notes stay excluded by default unless the caller explicitly opts in with `includeNotes: true`.
 export const recruitingBriefRead = defineQuery({
   name: 'hr.recruiting.brief.read',
   input: zHrRecruitingBriefAsk,
   access: MANAGERS,
   sensitive: true,
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
-  auditDetail: (input) => ({ lang: input.lang }),
+  auditDetail: (input) => ({ lang: input.lang, include_notes: input.includeNotes ? 'true' : 'false' }),
   handler: async (ctx, input): Promise<HrRecruitingBriefSnapshot> => {
     const row = await ctx.trx
       .selectFrom('crove_hr.candidate as c')
@@ -595,7 +657,8 @@ export const recruitingBriefRead = defineQuery({
       if (localPart && localPart.length >= 3) forbiddenSet.add(localPart);
     }
 
-    const notes = row.notes && row.notes.trim() !== '' ? [row.notes.trim()] : [];
+    const includeNotes = input.includeNotes === true;
+    const notes = includeNotes && row.notes && row.notes.trim() !== '' ? [row.notes.trim()] : [];
     return {
       candidateId: row.id,
       input: {
@@ -932,8 +995,20 @@ export const candidateMoveStage = defineCommand({
   sideEffect: 'internal',
   access: MANAGERS,
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'candidate', ['stage', 'agreed_wage', 'planned_start_on', 'updated_at'])],
+  writes: [
+    tableWrite(kernelManifest.tables, 'crove_kernel', 'calendar_event', ['status', 'cancelled_by', 'cancelled_at']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'candidate', [
+      'stage',
+      'agreed_wage',
+      'planned_start_on',
+      'interview_event_id',
+      'interview_starts_at',
+      'interview_ends_at',
+      'updated_at',
+    ]),
+  ],
   handler: async (ctx, input): Promise<HrCandidateWritten> => {
+    const userId = userOf(ctx.actor);
     const existing = await lockCandidate(ctx, input.candidateId);
     if (existing.erased_at !== null) throw candidateErased();
     const nextAgreedWage = input.agreedWage !== undefined ? input.agreedWage : existing.agreed_wage;
@@ -949,12 +1024,17 @@ export const candidateMoveStage = defineCommand({
     if (!transition.allowed) {
       throw new DomainError('HR_RECRUITING_TRANSITION_REFUSED', 422, transition.errors[0]?.messageVi ?? 'Không thể chuyển giai đoạn tuyển dụng');
     }
+    const cancelledInterviewEventId =
+      input.toStage === 'rejected' ? await cancelLinkedInterviewEvent(ctx, userId, existing.interview_event_id) : null;
     await ctx.trx
       .updateTable('crove_hr.candidate')
       .set({
         stage: input.toStage,
         ...(input.agreedWage !== undefined ? { agreed_wage: input.agreedWage } : {}),
         ...(input.plannedStartOn !== undefined ? { planned_start_on: input.plannedStartOn } : {}),
+        ...(input.toStage === 'rejected'
+          ? { interview_event_id: null, interview_starts_at: null, interview_ends_at: null }
+          : {}),
         updated_at: ctx.now,
       })
       .where('org_id', '=', ctx.orgId)
@@ -966,6 +1046,7 @@ export const candidateMoveStage = defineCommand({
       fromStage: existing.stage,
       toStage: input.toStage,
       warnings: transition.warningCodes,
+      cancelledInterviewEventId,
     });
     return { candidateId: existing.id, legalEntityId: existing.legal_entity_id, stage: input.toStage };
   },
@@ -1006,18 +1087,9 @@ export const candidateScheduleInterview = defineCommand({
     }
 
     // Serialize concurrent HR interview bookings on this interviewer's calendar inside this org (modules stay isolated per ADR-0031).
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_hr.interview:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
+    await acquireAdvisoryXactLock(ctx.trx, advisoryLockKey('crove_hr.interview', ctx.orgId, userId));
 
-    let prevEvent: { id: string; user_id: string; kind: string; status: string } | undefined;
-    if (existing.interview_event_id) {
-      prevEvent = await ctx.trx
-        .selectFrom('crove_kernel.calendar_event')
-        .select(['id', 'user_id', 'kind', 'status'])
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', existing.interview_event_id)
-        .forUpdate()
-        .executeTakeFirst();
-    }
+    const prevEvent = await lockLinkedInterviewEvent(ctx, existing.interview_event_id);
 
     const startsAt = new Date(startMs);
     const endsAt = new Date(endMs);
@@ -1028,14 +1100,7 @@ export const candidateScheduleInterview = defineCommand({
       throw new DomainError('HR_INTERVIEW_SLOT_TAKEN', 409, 'Khung giờ này đã có lịch bận, hãy chọn giờ khác');
     }
 
-    if (prevEvent && prevEvent.kind === 'manual' && prevEvent.status === 'active') {
-      await ctx.trx
-        .updateTable('crove_kernel.calendar_event')
-        .set({ status: 'cancelled', cancelled_by: userId, cancelled_at: ctx.now })
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', prevEvent.id)
-        .execute();
-    }
+    const cancelledPreviousEventId = await cancelLockedInterviewEvent(ctx, userId, prevEvent);
 
     let openingTitle: string | null = null;
     if (existing.opening_id) {
@@ -1093,6 +1158,7 @@ export const candidateScheduleInterview = defineCommand({
       candidateId: existing.id,
       legalEntityId: existing.legal_entity_id,
       eventId,
+      cancelledPreviousEventId,
       fromStage: existing.stage,
       toStage: nextStage,
       startsAt: startsAt.toISOString(),
@@ -1263,13 +1329,28 @@ export const candidateErase = defineCommand({
   sideEffect: 'irreversible',
   access: OWNERS,
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'candidate', ['display_name', 'email', 'phone', 'notes', 'erased_at', 'updated_at'])],
+  writes: [
+    tableWrite(kernelManifest.tables, 'crove_kernel', 'calendar_event', ['status', 'cancelled_by', 'cancelled_at']),
+    tableWrite(hrManifest.tables, 'crove_hr', 'candidate', [
+      'display_name',
+      'email',
+      'phone',
+      'notes',
+      'interview_event_id',
+      'interview_starts_at',
+      'interview_ends_at',
+      'erased_at',
+      'updated_at',
+    ]),
+  ],
   handler: async (ctx, input): Promise<HrCandidateEraseResult> => {
+    const userId = userOf(ctx.actor);
     const existing = await lockCandidate(ctx, input.candidateId);
     if (existing.erased_at !== null) throw candidateErased();
     if (existing.stage !== 'hired' && existing.stage !== 'rejected') {
       throw new DomainError('HR_CANDIDATE_STILL_IN_PIPELINE', 409, 'Chỉ xóa dữ liệu ứng viên sau khi đã nhận việc hoặc đã từ chối');
     }
+    const cancelledInterviewEventId = await cancelLinkedInterviewEvent(ctx, userId, existing.interview_event_id);
     await ctx.trx
       .updateTable('crove_hr.candidate')
       .set({
@@ -1277,6 +1358,9 @@ export const candidateErase = defineCommand({
         email: null,
         phone: null,
         notes: null,
+        interview_event_id: null,
+        interview_starts_at: null,
+        interview_ends_at: null,
         erased_at: ctx.now,
         updated_at: ctx.now,
       })
@@ -1289,6 +1373,7 @@ export const candidateErase = defineCommand({
       stage: existing.stage,
       erasedAt: ctx.now.toISOString(),
       cleared: ['displayName', 'email', 'phone', 'notes'],
+      cancelledInterviewEventId,
     });
     return { candidateId: existing.id, erasedAt: ctx.now.toISOString() };
   },
@@ -1302,7 +1387,11 @@ export const recruitingBriefAudit = defineCommand({
   access: MANAGERS,
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
   handler: async (ctx, input): Promise<{ ok: true }> => {
-    ctx.audit({ candidateId: input.candidateId, aiReason: input.aiReason });
+    ctx.audit({
+      candidateId: input.candidateId,
+      aiReason: input.aiReason,
+      include_notes: Boolean(input.includeNotes),
+    });
     return { ok: true };
   },
 });

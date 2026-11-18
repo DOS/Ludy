@@ -99,7 +99,7 @@ export const accountingEn: AccountingCopy = {
   },
   coworker: {
     title: `What ${N.finance} does in Ludy Finance`,
-    lead: `${N.finance} is the AI CFO, your coworker in Ludy Finance (and reviewing payroll changes in Ludy HR), working under ${N.gm}’s coordination. ${N.finance} does the reading; whether a number is right is decided by fixed rules and by people.`,
+    lead: `${N.finance} is the AI CFO, your coworker in Ludy Finance (and flagging pay changes, contract alerts and candidate briefs in Ludy HR), working under ${N.gm}’s coordination. ${N.finance} does the reading; whether a number is right is decided by fixed rules and by people.`,
     doesTitle: `${N.finance} does`,
     does: [
       'Reads PDF and photo invoices into structured data',
@@ -144,7 +144,7 @@ export const accountingEn: AccountingCopy = {
       },
       {
         q: 'How far along are Sales invoices, Items and payroll today?',
-        a: 'Sales invoices creates drafts and runs test issuance in a built-in sandbox, without a live e-invoice provider connection for real authority codes yet. Items computes provisional weighted-average stock until month close and imports marketplace payout files. Payroll and employee records live in their own app in the switcher, Ludy HR, which drafts monthly pay runs while statutory payroll rules await accountant confirmation. There is no cash-flow statement yet.',
+        a: 'Sales invoices creates drafts and runs test issuance in a built-in sandbox, without a live e-invoice provider connection for real authority codes yet. Items computes provisional weighted-average stock until month close and imports marketplace payout files. Payroll and employee records live in their own app, Ludy HR (/nhan-su), covering employee records, departments, labor contracts, timekeeping and annual leave, lightweight recruiting and draft monthly pay runs; approving a pay run to hand off aggregate entries to Ludy Finance waits until our partner accountant confirms the statutory payroll rules. There is no cash-flow statement yet.',
       },
       {
         q: 'How does data get into MISA?',

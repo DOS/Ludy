@@ -14,13 +14,11 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
-import { DealBookings } from '../components/booking-deal.tsx';
-import { LinkedMeetings, meetingsInstalled } from '../components/linked-meetings.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DealBoard, DealsEmpty } from '../components/deal-board.tsx';
 import { DealFilterBar } from '../components/deal-filter-bar.tsx';
-import { DealForm, DealPartyDuplicate, refreshDeals, type Member } from '../components/deal-form.tsx';
-import { DealQuotes } from '../components/deal-quotes.tsx';
+import { DealPartyDuplicate, refreshDeals, type Member } from '../components/deal-form.tsx';
+import { DealSheet, type DealSheetTarget } from '../components/deal-sheet.tsx';
 import { DealNextSteps, useNextStepCount } from '../components/deal-next-steps.tsx';
 import { SALES_PROCESS_ID } from '../components/sales-process-card.tsx';
 import { DataTable, Empty, ErrorText, Field, PageHeader, TableSkeleton } from '../components/ui.tsx';
@@ -37,13 +35,9 @@ const SCOPE = 'crm.deal';
 // The search waits for a pause in typing, so one request goes out per word and not per key.
 const SEARCH_PAUSE_MS = 300;
 
-function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal: Deal; stages: readonly PipelineStage[]; members: readonly Member[]; canEdit: boolean; canDelete: boolean; columns: number }) {
+function DealRow({ deal, stages, members, canEdit, canDelete, columns, onOpen }: { deal: Deal; stages: readonly PipelineStage[]; members: readonly Member[]; canEdit: boolean; canDelete: boolean; columns: number; onOpen: () => void }) {
   const t = useTranslations('deals');
   const { locale } = useLocaleSetting();
-  const [editing, setEditing] = useState(false);
-  const [quoting, setQuoting] = useState(false);
-  const [meetingsOpen, setMeetingsOpen] = useState(false);
-  const [bookingsOpen, setBookingsOpen] = useState(false);
   // A move into a lost stage asks for an optional reason first.
   const [losing, setLosing] = useState<PipelineStage | null>(null);
   const [reason, setReason] = useState('');
@@ -69,32 +63,19 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
     <>
       <TableRow data-testid="deal-row">
         <TableCell className="px-4 text-sm">
-          <p className="font-medium text-foreground">
+          {/* The deal opens in its side sheet: details, quotes, bookings and meetings (#3648). */}
+          <button type="button" onClick={onOpen} data-testid="deal-row-open" className="rounded-sm text-left font-medium text-foreground outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
             {deal.title}
-            {deal.followUp && (
-              <>
-                {' '}
-                <Badge variant="warning" data-testid="follow-up-badge">
-                  {t('followUp')}
-                </Badge>
-              </>
-            )}
-          </p>
+          </button>
+          {deal.followUp && (
+            <>
+              {' '}
+              <Badge variant="warning" data-testid="follow-up-badge">
+                {t('followUp')}
+              </Badge>
+            </>
+          )}
           {deal.lostReason && <p className="text-xs text-muted-foreground">{t('lostReason', { reason: deal.lostReason })}</p>}
-          <Button size="sm" variant="ghost" className="-ml-2 mt-1" onClick={() => setQuoting((q) => !q)} aria-expanded={quoting} data-testid="deal-quotes-toggle">
-            {t('quotes')}
-          </Button>
-          {meetingsInstalled() && (
-            <Button size="sm" variant="ghost" className="mt-1" onClick={() => setMeetingsOpen((o) => !o)} aria-expanded={meetingsOpen} data-testid="deal-meetings-toggle">
-              {t('meetings')}
-            </Button>
-          )}
-          {/* The deal's bookings and "Đặt lịch" (#3103); a viewer reads no booking, so has no button. */}
-          {canEdit && (
-            <Button size="sm" variant="ghost" className="mt-1" onClick={() => setBookingsOpen((o) => !o)} aria-expanded={bookingsOpen} data-testid="deal-bookings-toggle">
-              {t('bookings')}
-            </Button>
-          )}
         </TableCell>
         <TableCell className="px-4 text-sm">
           {deal.partyName}
@@ -119,7 +100,7 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
         {canEdit && (
           <TableCell className="px-4">
             <div className="flex flex-wrap gap-1">
-              <Button size="sm" variant="outline" onClick={() => setEditing((e) => !e)} aria-expanded={editing}>
+              <Button size="sm" variant="outline" onClick={onOpen} aria-label={t('editOf', { title: deal.title })}>
                 {t('edit')}
               </Button>
               {canDelete && (
@@ -168,34 +149,6 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
           </TableCell>
         </TableRow>
       )}
-      {meetingsOpen && (
-        <TableRow>
-          <TableCell colSpan={columns} className="px-4 py-3">
-            <LinkedMeetings kind="deal" targetId={deal.id} />
-          </TableCell>
-        </TableRow>
-      )}
-      {bookingsOpen && (
-        <TableRow>
-          <TableCell colSpan={columns} className="px-4 py-3">
-            <DealBookings deal={deal} canEdit={canEdit} />
-          </TableCell>
-        </TableRow>
-      )}
-      {quoting && (
-        <TableRow>
-          <TableCell colSpan={columns} className="px-4 py-3">
-            <DealQuotes deal={deal} canEdit={canEdit} onClose={() => setQuoting(false)} />
-          </TableCell>
-        </TableRow>
-      )}
-      {editing && (
-        <TableRow>
-          <TableCell colSpan={columns} className="px-4 py-3">
-            <DealForm key={deal.version} deal={deal} members={members} onDone={() => setEditing(false)} />
-          </TableCell>
-        </TableRow>
-      )}
     </>
   );
 }
@@ -217,7 +170,7 @@ export function DealsPage() {
   const canEdit = role === 'owner' || role === 'admin' || role === 'member';
   const members = org.data?.members ?? [];
   const canManage = role === 'owner' || role === 'admin';
-  const [adding, setAdding] = useState(false);
+  const [sheet, setSheet] = useState<DealSheetTarget | null>(null);
   const { slug } = useParams({ strict: false }) as { slug: string };
   const [view, setViewState] = useState<View>(() => {
     try {
@@ -295,18 +248,13 @@ export function DealsPage() {
               </TabsList>
             </Tabs>
             {canEdit && !noDeals && (
-              <Button onClick={() => setAdding((a) => !a)} aria-expanded={adding}>
+              <Button onClick={() => setSheet({ kind: 'new' })}>
                 {t('add')}
               </Button>
             )}
           </div>
         }
       />
-      {adding && (
-        <div className="mb-4">
-          <DealForm deal={null} members={members} onDone={() => setAdding(false)} />
-        </div>
-      )}
       {view === 'next' ? (
         <DealNextSteps canEdit={canEdit} />
       ) : (
@@ -334,7 +282,8 @@ export function DealsPage() {
         <DealBoard
           members={members}
           canEdit={canEdit}
-          onAdd={() => setAdding(true)}
+          onAdd={() => setSheet({ kind: 'new' })}
+          onOpen={(deal) => setSheet({ kind: 'deal', deal })}
           filters={applied.all.length > 0 ? applied : undefined}
           onShowAll={(kind) => {
             setBar(showAllClosed(kind));
@@ -347,12 +296,12 @@ export function DealsPage() {
       ) : (deals.error || stages.error) && rows.length === 0 ? (
         <ErrorText>{errorMessage(deals.error ?? stages.error)}</ErrorText>
       ) : rows.length === 0 ? (
-        filtered ? <Empty title={t('filters.noMatch')} /> : <DealsEmpty title={t('empty')} hint={canEdit ? t('emptyHint') : undefined} canEdit={canEdit} onAdd={() => setAdding(true)} />
+        filtered ? <Empty title={t('filters.noMatch')} /> : <DealsEmpty title={t('empty')} hint={canEdit ? t('emptyHint') : undefined} canEdit={canEdit} onAdd={() => setSheet({ kind: 'new' })} />
       ) : (
         <>
           <DataTable head={head} numeric={[3]}>
             {rows.map((d) => (
-              <DealRow key={d.id} deal={d} stages={stageList} members={members} canEdit={canEdit} canDelete={d.canDelete} columns={head.length} />
+              <DealRow key={d.id} deal={d} stages={stageList} members={members} canEdit={canEdit} canDelete={d.canDelete} columns={head.length} onOpen={() => setSheet({ kind: 'deal', deal: d })} />
             ))}
           </DataTable>
           {deals.hasNextPage && (
@@ -366,6 +315,7 @@ export function DealsPage() {
       )}
         </>
       )}
+      {sheet && <DealSheet target={sheet} members={members} canEdit={canEdit} onClose={() => setSheet(null)} />}
     </>
   );
 }
