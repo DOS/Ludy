@@ -35,6 +35,8 @@ test('a member writes a note on the overview, pins it, and finds it on the notes
   });
 
   await test.step('find it on the notes screen by words typed without marks', async () => {
+    // The overview shows no app menu (#3588): switch to Cộng tác first.
+    await page.getByRole('navigation').getByRole('list', { name: 'Ứng dụng' }).getByRole('link', { name: 'Cộng tác', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Ghi chú', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Ghi chú', level: 1 })).toBeVisible();
     await page.getByRole('searchbox', { name: 'Tìm ghi chú' }).fill('giam doc');
