@@ -33,7 +33,7 @@ describe('one spelling set and plain Social labels (SO-26, SO-28)', () => {
   const text = JSON.stringify(vi.social);
 
   it('writes Hủy, Xóa and Khung giờ trống the way the rest of the app does', () => {
-    expect(text).not.toMatch(/Huỷ|Xoá|Ô Trống/);
+    expect(text).not.toMatch(/huỷ|xoá|ô trống/i);
     expect(vi.social.views.cancel).toBe('Hủy');
     expect(vi.social.views.remove).toBe('Xóa');
   });

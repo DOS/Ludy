@@ -3053,7 +3053,7 @@ export const en = {
       kindLabel: 'Kind of channel',
       nameLabel: 'Channel name',
       namePlaceholder: '#weekly-sync channel',
-      urlLabel: 'Chat group link for messages',
+      urlLabel: 'Webhook address',
       urlHintSlack: 'Make an Incoming Webhook in your Slack app and paste its address, like https://hooks.slack.com/services/...',
       urlHintTeams: 'In Teams, make a Workflows flow "Post to a channel when a webhook request is received" and paste its address (https://...logic.azure.com/... or https://...api.powerplatform.com/...).',
       urlOnce: 'The address shows only while you paste it. Once saved, Ludy keeps an encrypted copy and shows it to nobody again. Anyone who has the address can post to the channel, so do not share it.',
@@ -9244,7 +9244,7 @@ export const en = {
     insights: {
       title: 'What works',
       hint: "Each channel's posts in the window against the channel's own typical engagement (half its posts do better, half worse): by format, label, weekday, posting hour (in your time zone) and hashtags used on 3 posts or more. Engagement is reactions, comments, shares and saves.",
-      channelLine: '{posts} posts, median {median} engagements',
+      channelLine: '{posts} posts, typical {median} engagements',
       best: 'Best posts',
       worst: 'Weakest posts',
       byFormat: 'By format',

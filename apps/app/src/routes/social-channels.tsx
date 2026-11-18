@@ -286,7 +286,7 @@ function QueueEditor({ channel, canEdit, copyTargets }: { channel: Channel; canE
                   <button
                     type="button"
                     aria-label={t('removeSlot')}
-                    className="-my-1 inline-flex min-h-6 min-w-6 items-center justify-center rounded text-subtle-foreground hover:text-destructive focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none max-sm:min-h-11 max-sm:min-w-11"
+                    className="inline-flex min-h-6 min-w-6 items-center justify-center rounded text-subtle-foreground hover:text-destructive focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none max-sm:min-h-11 max-sm:min-w-11"
                     onClick={() => setDraft({ ...current, slots: current.slots.filter((x) => !(x.weekday === s.weekday && x.minute === s.minute)) })}
                   >
                     ×
