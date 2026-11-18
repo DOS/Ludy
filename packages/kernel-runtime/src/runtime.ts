@@ -4,6 +4,7 @@ import { PostgresQueryCompiler, sql, type KyselyPlugin, type RawBuilder, type Tr
 import { createHmac, randomUUID } from 'node:crypto';
 import { v7 as uuidv7 } from 'uuid';
 import { SubjectKeyError, SubjectVault, parseSealed } from './subject-vault.ts';
+import { keyedHash } from './keyed-hash.ts';
 import type { z } from 'zod';
 import { contextTaint, singleCell, type CellResolver, type Database, type Db, type MemberRole } from '@crove/db';
 import { DomainError, toDomainError } from './errors.ts';
@@ -502,6 +503,10 @@ export interface CommandContext extends QueryContext {
   // none, and answers the text to store in the column at `place` (ADR-0017). Only a user's command seals (never an agent, the system or the worker); the
   // value is 1 byte to 4 KiB. Sealing is the command's own step, before its insert: no other path writes a sealed column.
   seal(ref: string, place: string, value: string): Promise<string>;
+  // A keyed hash (HMAC-SHA256 hex) of a short value, for comparing it later without reading it back (a bank account number: is it the same account, did it change). The key derives from
+  // the deployment's key material for this purpose (a lowercase name, such as `supplier_bank_account.number`) and this org, so the same value gives other hashes elsewhere; it never leaves
+  // the runtime. 1 byte to 4 KiB. The deployment needs its credential key (BROKER_NOT_CONFIGURED otherwise). Not sealed under a subject: it survives the shred of a subject's key.
+  keyedHash(purpose: string, value: string): string;
   // Runs another registered command in the same transaction (audited on its own row).
   run<O>(name: string, input: unknown, options?: { proposalId?: string }): Promise<O>;
   // Runs another registered command as run() does, inside a savepoint, for a command that goes on when that one is
@@ -692,6 +697,9 @@ export interface RuntimeOptions {
   // Seals personal values under per-subject keys (ctx.seal, ctx.open; ADR-0017, #2640): the wrap keys derive from the credential key
   // (apps/kernel serverRuntime). Absent, null: both answer 503 BROKER_NOT_CONFIGURED.
   subjectVault?: SubjectVault | null;
+  // The deployment secret ctx.keyedHash derives its per-purpose and per-org keys from (apps/kernel serverRuntime derives it from CREDENTIAL_KEY). Absent, null: ctx.keyedHash answers 503
+  // BROKER_NOT_CONFIGURED. Never stored, logged or put in an error.
+  keyedHashRoot?: Buffer | null;
   // The tables of the module manifests (ModuleManifest['tables'] of each module, #1710). register() checks each
   // declared write (CommandDef.writes) against them: the table is a manifest's and the classes it carries are exactly
   // that manifest's, so P04 rests on the manifests rather than on classes a declaration builds by hand. Required
@@ -1621,6 +1629,8 @@ export class Runtime {
   readonly #contextTokenKey: Buffer | null;
   // The key of the sensitive-read audit hash (RuntimeOptions.readAuditKey), or null: never logged, never in an error.
   readonly #readAuditKey: Buffer | null;
+  // The root of ctx.keyedHash (RuntimeOptions.keyedHashRoot), or null.
+  readonly #keyedHashRoot: Buffer | null;
   // The subject vault (RuntimeOptions.subjectVault), or null.
   readonly #subjectVault: SubjectVault | null;
   // Where each transaction opens (Decision 14): tenant work on the org's cell, org-less work on the control plane.
@@ -1678,6 +1688,7 @@ export class Runtime {
     const contextTokenKey = options.contextTokenKey === undefined ? process.env.CROVE_CONTEXT_TOKEN_KEY : options.contextTokenKey;
     this.#contextTokenKey = contextTokenKey?.trim() ? contextTokenKeyBytes(contextTokenKey) : null;
     this.#readAuditKey = options.readAuditKey ? Buffer.from(options.readAuditKey) : null;
+    this.#keyedHashRoot = options.keyedHashRoot ? Buffer.from(options.keyedHashRoot) : null;
     this.#subjectVault = options.subjectVault ?? null;
     Object.freeze(this);
   }
@@ -2755,6 +2766,11 @@ export class Runtime {
           refuseSealed('ctx.seal reference', ref);
           return aside(() => this.sealSubject(trx, base.orgId, base.actor, ref, place, value));
         }),
+      keyedHash: (purpose, value) => {
+        refuseClosed('ctx.keyedHash');
+        if (this.#keyedHashRoot === null) throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa (CREDENTIAL_KEY)');
+        return keyedHash(this.#keyedHashRoot, base.orgId, purpose, value);
+      },
       permissionEntity: (legalEntityId) => {
         refuseClosed('ctx.permissionEntity');
         if (permissionEntities === null) return;

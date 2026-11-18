@@ -6,4 +6,5 @@ export * from './vault.ts';
 export * from './egress.ts';
 export * from './event-payload.ts';
 export * from './subject-vault.ts';
+export * from './keyed-hash.ts';
 export * from './blob-cipher.ts';

@@ -337,6 +337,8 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
   const runtime = new Runtime(cells, {
     // The key of the sensitive-read audit hash: derived from the credential key (environment or key file, never the database), none without one.
     readAuditKey: createCredentialBroker(config).derive?.('crove.audit.read.v1') ?? null,
+    // The root of ctx.keyedHash (#3113): derived from the credential key too, never the database; the per-purpose and per-org keys come from it inside the runtime.
+    keyedHashRoot: createCredentialBroker(config).derive?.('crove.keyed-hash.root.v1') ?? null,
     ...runtimeOptions,
     // ctx.query into one of them answers not_installed; any other unknown query is QUERY_NOT_FOUND.
     absentModules,
