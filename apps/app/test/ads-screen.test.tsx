@@ -58,6 +58,9 @@ const { AccountHeader, AdsEmpty, AdsSettingsCard, Breakdowns, ConnectGoogle, Con
 const { AdsWeeklyNoteCard } = await import('../src/components/ads-weekly-note.tsx');
 const { AdsWriteCard, CapForm, isCapAmount } = await import('../src/components/ads-write.tsx');
 const { AdsProposalCard } = await import('../src/components/ads-proposal-card.tsx');
+const { AdsRunStatus } = await import('../src/components/ads-run-status.tsx');
+const { AdsCardError } = await import('../src/components/ads-card-error.tsx');
+const { AdsFlagSettingsCard } = await import('../src/components/ads-flag-settings.tsx');
 
 // useFormat() follows the app's active locale, not the IntlProvider below. Pinning it (and providing it through the app's
 // own provider) makes the money and dates in the markup the rendered language's on every runtime: left alone, it is read
@@ -176,11 +179,17 @@ describe('the empty Ads screen', () => {
     expect(html).not.toContain('<select');
   });
 
-  it.each([true, false])('says no ad platform is set up on a deployment without one (can manage: %s)', (canManage) => {
-    const html = empty(canManage, false);
-    expect(html).toContain(en.ads.noPlatform);
-    expect(html).not.toContain('<form');
-    expect(html).not.toContain('<button');
+  // #3640: only an owner or an admin can do anything about a deployment with no ad platform, so only they are told; a member reads the explanation and nothing else.
+  it('tells an owner or admin that no ad platform is turned on, with who to ask, and a member nothing they cannot act on', () => {
+    const owner = empty(true, false);
+    expect(owner).toContain(en.ads.noPlatform);
+    expect(owner).toContain('Ask whoever runs the system');
+    expect(owner).not.toContain('<form');
+    expect(owner).not.toContain('<button');
+    const member = empty(false, false);
+    expect(member).not.toContain(en.ads.noPlatform);
+    expect(member).toContain(en.ads.emptyTitle);
+    expect(member).not.toContain('<button');
   });
 
   it('has words in Vietnamese too', () => {
@@ -227,7 +236,7 @@ describe('the empty Ads screen where Meta ads is offered', () => {
 
   it.each([true, false])('offers no Meta button where the deployment has no Meta ads app (can manage: %s)', (canManage) => {
     const html = empty(canManage, false, false);
-    expect(html).toContain(en.ads.noPlatform);
+    expect(html.includes(en.ads.noPlatform)).toBe(canManage);
     expect(html).not.toContain(en.ads.connectMeta.action);
     expect(html).not.toContain('<button');
   });
@@ -1748,5 +1757,73 @@ describe('the committed spend of the month next to the actual spend (#3297)', ()
   it('is hidden while running ads is off, and for an account whose currency is not read yet', () => {
     expect(strip(data(), false)).toBe('');
     expect(strip(data(), true, 'en', account({ currency: null }))).toBe('');
+  });
+});
+
+// #3640 (Engage audit AD-2, AD-3, AD-13, AD-14): the settings are apart from the figures, the empty screen has one primary action, the campaign page says when running ads is
+// off, and the cards of the settings load as shapes and fail with a retry.
+describe('the Ads settings apart from the working screen (#3640)', () => {
+  // The buttons of a rendering that carry the primary fill: a button that is the one action to take.
+  const primaryButtons = (html: string) => [...html.matchAll(/<button\b[^>]*>/g)].map((m) => m[0]).filter((b) => /\bbg-primary\b/.test(b));
+
+  it('shows one primary action on the empty screen when every platform is offered, the others are outline', () => {
+    const html = render(<AdsEmpty canManage sandbox meta={{ slug: 'acme' }} google={{ slug: 'acme' }} entities={one} onConnected={() => undefined} />);
+    expect(html).toContain(en.ads.connectMeta.action);
+    expect(html).toContain(en.ads.connectGoogle.action);
+    expect(html).toContain(`>${en.ads.connect}<`);
+    expect(primaryButtons(html)).toHaveLength(1);
+    // Google alone, or the test form alone, is the one action there.
+    expect(primaryButtons(render(<AdsEmpty canManage sandbox={false} google={{ slug: 'acme' }} entities={one} onConnected={() => undefined} />))).toHaveLength(1);
+    expect(primaryButtons(render(<AdsEmpty canManage sandbox entities={one} onConnected={() => undefined} />))).toHaveLength(1);
+  });
+
+  it('says the cost and results are next to the books and that running ads is turned on in the settings, not that Ludy only reads', () => {
+    expect(en.ads.subtitle).toContain('To run ads from Ludy, turn it on in Ads settings');
+    expect(viMessages.ads.subtitle).toBe('Chi phí và kết quả quảng cáo của bạn, cạnh sổ sách. Muốn chạy quảng cáo từ Ludy, bật ở Cài đặt quảng cáo.');
+    for (const text of [en.ads.subtitle, en.ads.emptyHint, viMessages.ads.subtitle, viMessages.ads.emptyHint]) expect(text).not.toMatch(/chỉ để xem|never creates, edits or pauses|không tạo, sửa hay tắt/);
+  });
+
+  it('draws a one-line status of running ads with a link to the settings, for owners and admins', () => {
+    client.current.setQueryData(['ads', 'writeState'], { writeEnabled: false, launchesBlocked: false, updatedAt: null, caps: [], pending: [], tokenRevokes: [] });
+    const off = render(<AdsRunStatus slug="acme" canManage />);
+    expect(off).toContain('data-testid="ads-run-status"');
+    expect(off).toContain('Running ads: off');
+    expect(off).toContain('href="/o/acme/ads"');
+    expect(off).toContain('>Open settings<');
+    expect(render(<AdsRunStatus slug="acme" canManage />, 'vi')).toContain('Chạy quảng cáo: đang tắt');
+    client.current.setQueryData(['ads', 'writeState'], { writeEnabled: true, launchesBlocked: false, updatedAt: null, caps: [], pending: [], tokenRevokes: [] });
+    expect(render(<AdsRunStatus slug="acme" canManage />)).toContain('Running ads: on');
+    // A member has no such line.
+    expect(render(<AdsRunStatus slug="acme" canManage={false} />)).toBe('');
+  });
+
+  it('tells the owner on the campaign page that running ads is off, and says nothing there once it is on', () => {
+    client.current.setQueryData(['ads', 'writeState'], { writeEnabled: false, launchesBlocked: false, updatedAt: null, caps: [], pending: [], tokenRevokes: [] });
+    const off = render(<AdsRunStatus slug="acme" canManage variant="campaigns" />);
+    expect(off).toContain(en.ads.adsSettings.campaignsOff);
+    expect(render(<AdsRunStatus slug="acme" canManage variant="campaigns" />, 'vi')).toContain(viMessages.ads.adsSettings.campaignsOff);
+    client.current.setQueryData(['ads', 'writeState'], { writeEnabled: true, launchesBlocked: false, updatedAt: null, caps: [], pending: [], tokenRevokes: [] });
+    expect(render(<AdsRunStatus slug="acme" canManage variant="campaigns" />)).toBe('');
+  });
+
+  it('draws the running-ads and threshold cards as skeletons while they load, never nothing', () => {
+    client.current.clear();
+    for (const html of [render(<AdsWriteCard role="owner" accounts={[]} slug="acme" />), render(<AdsFlagSettingsCard />)]) {
+      expect(html).toContain('aria-busy="true"');
+      expect(html).not.toBe('');
+    }
+  });
+
+  it('shows what failed with a retry button, in both languages', () => {
+    const html = render(<AdsCardError message="Mất kết nối" onRetry={() => undefined} />);
+    expect(html).toContain('Mất kết nối');
+    expect(html).toContain('data-testid="ads-card-retry"');
+    expect(html).toContain('>Try again<');
+    expect(render(<AdsCardError message="x" onRetry={() => undefined} />, 'vi')).toContain('>Thử lại<');
+  });
+
+  it('has the same keys of the settings words in both languages', () => {
+    expect(Object.keys(viMessages.ads.adsSettings).sort()).toEqual(Object.keys(en.ads.adsSettings).sort());
+    expect(Object.keys(viMessages.ads.adsSettings.status).sort()).toEqual(['off', 'on']);
   });
 });

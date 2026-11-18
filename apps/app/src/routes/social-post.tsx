@@ -2536,6 +2536,8 @@ function SharedFields({
         </div>
         <TextStyleHint text={base.body} providers={providers} />
         <BannedWordHints texts={[{ field: 'body', text: base.body }, ...(needsTitle && base.title ? [{ field: 'title', text: base.title }] : [])]} words={banned} />
+        {/* What Uy is, before the first Uy button (#3657). */}
+        {!disabled && onAiUsed && getConfig().aiEnabled === true && base.body.trim() !== '' && <p className="text-xs text-subtle-foreground">{t('uyGloss')}</p>}
         {!disabled && <HashtagSuggestions text={base.body} connectionId={null} onAiUsed={onAiUsed} onPick={(tag) => onChange({ ...base, body: withHashtag(base.body, tag) })} />}
         {!disabled && onAiUsed && (
           <AiRewrite
@@ -2903,6 +2905,8 @@ export function SocialComposePage() {
                 </Button>
               )}
             </div>
+            {/* The first Uy button of a shared link: what Uy is comes with it (#3657). */}
+            {shared.link && aiEnabled && <p className="text-xs text-subtle-foreground">{t('uyGloss')}</p>}
             {shared.link && aiEnabled && chosen.length === 0 && <p className="text-xs text-subtle-foreground">{t('share.pickChannelFirst')}</p>}
             {shared.link && aiDraft.error && aiDraft.variables === shared.link && <ErrorText>{errorMessage(aiDraft.error)}</ErrorText>}
           </div>

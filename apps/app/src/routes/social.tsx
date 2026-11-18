@@ -7,6 +7,7 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button, buttonVariants } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Checkbox } from '@crove/ui/components/checkbox';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuLinkItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@crove/ui/components/dropdown-menu';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES } from '@crove/kernel-contract';
@@ -21,7 +22,6 @@ import { UnansweredComments, UnansweredProvider } from '../components/social-una
 import { useChannelScope } from '../components/social-channel-access.tsx';
 import { SocialCalendar } from '../components/social-calendar.tsx';
 import { SavedViews } from '../components/social-saved-views.tsx';
-import { CalendarFeedCard } from '../components/social-calendar-feed.tsx';
 import { InstagramGrid } from '../components/social-instagram-grid.tsx';
 import { PostLabels, useLabels, type SocialLabel } from '../components/social-labels.tsx';
 import { isOverdue } from '../lib/social-assign.ts';
@@ -29,7 +29,7 @@ import { BulkBar } from '../components/social-bulk.tsx';
 import { DraftsFromMediaPanel } from '../components/social-bulk-drafts.tsx';
 import { DraftFromPhotoLink, useAiPhotos } from '../components/social-ai-photos.tsx';
 import { DRAFTS_FROM_MEDIA_MAX, togglePick } from '../lib/social-bulk-drafts.ts';
-import { PlanFromPosts, PlanReviewCard } from '../components/social-plan-review.tsx';
+import { PlanFromPosts } from '../components/social-plan-review.tsx';
 import { ReportLinks } from '../components/social-report-links.tsx';
 import { MetricsSummary, useCanSummarize, useMetricsSummary } from '../components/social-summary.tsx';
 import { GoalsCard } from '../components/social-goals.tsx';
@@ -48,11 +48,10 @@ import { StoryLine, StoryTotals } from '../components/social-story-metrics.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient, uploadFiles } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
-import { dayKey, dayRange, defaultSocialTab, providerName, SOCIAL_TABS, variantStatusKey, variantTone, type SocialSearch, type SocialTab } from '../lib/social.ts';
+import { dayKey, dayRange, defaultSocialTab, isSocialScreen, providerName, SOCIAL_STATUS_TABS, SOCIAL_VIEWS, tabOfView, variantStatusKey, variantTone, viewOfTab, type SocialSearch, type SocialTab, type SocialView } from '../lib/social.ts';
 import { pollEvery, SAFETY_POLL_MS, useStreamLive } from '../lib/stream-hook.ts';
 
 type Tab = SocialTab;
-const TABS = SOCIAL_TABS;
 // Posts a list page shows; Load more asks for the next ones.
 const PAGE = 50;
 type ListTab = 'review' | 'attention' | 'drafts' | 'done' | 'archived';
@@ -78,8 +77,11 @@ function ChannelChips({ post, names }: { post: Post; names: Map<string, string> 
       {post.variants
         .filter((v) => v.status !== 'cancelled')
         .map((v) => (
-          <Badge key={v.id} variant={variantTone(v)} title={names.get(v.connectionId)}>
-            {providerName(v.provider)} · {t(`status.${variantStatusKey(v)}`)}
+          // The channel's own name is on the chip (#3655): on a phone a title shows nothing, and two Pages of one network look alike.
+          <Badge key={v.id} variant={variantTone(v)} title={names.get(v.connectionId)} className="max-w-full">
+            <span className="truncate">
+              {names.get(v.connectionId) ? `${providerName(v.provider)} (${names.get(v.connectionId)})` : providerName(v.provider)} · {t(`status.${variantStatusKey(v)}`)}
+            </span>
           </Badge>
         ))}
     </div>
@@ -155,7 +157,7 @@ function Metrics({ slug, names, labelId, action }: { slug: string; names: Map<st
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         {[7, 30, 90].map((d) => (
-          <Button key={d} variant={d === days ? 'secondary' : 'ghost'} size="sm" onClick={() => setDays(d)}>
+          <Button key={d} variant={d === days ? 'secondary' : 'ghost'} size="sm" aria-pressed={d === days} onClick={() => setDays(d)}>
             {t('metricsDays', { days: String(d) })}
           </Button>
         ))}
@@ -641,6 +643,15 @@ export function SocialPage() {
   }, [landed, review.isPending, attention.isPending, review.isFetching, attention.isFetching, review.data, attention.data]);
   const resolving = !search.tab && landed === null;
   const tab: Tab = search.tab ?? landed ?? 'upcoming';
+  // The posts' views (#3655): the status lists are one, the calendar and the board the others; the figures and the photo
+  // library are screens of their own with a way back to the status list the visit came from.
+  const screen = isSocialScreen(tab);
+  const view: SocialView = viewOfTab(tab) ?? 'list';
+  // The list, calendar or board the visit came from: the way back from a screen (#3655).
+  const [lastStatus, setLastStatus] = useState<SocialTab>('upcoming');
+  useEffect(() => {
+    if (!isSocialScreen(tab)) setLastStatus(tab);
+  }, [tab]);
   // Changes the address, so the back button and a shared link keep the list; replaces rather than piles up history.
   const setSearch = useCallback(
     (next: { [K in keyof SocialSearch]?: SocialSearch[K] | undefined }) => void navigate({ to: '/o/$slug/social', params: { slug }, search: (prev: SocialSearch) => clean({ ...prev, ...next }), replace: true }),
@@ -796,29 +807,35 @@ export function SocialPage() {
         subtitle={t('subtitle')}
         actions={
           <>
-            <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-              {t('channels')}
-            </Link>
-            {canWrite && !noChannels && (
-              <Link to="/o/$slug/social/import" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-                {t('import.open')}
-              </Link>
-            )}
-            <Link to="/o/$slug/social/ideas" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-              {t('ideas.title')}
-            </Link>
-            <Link to="/o/$slug/social/bio" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-              {t('bio.pageTitle')}
-            </Link>
-            <Link to="/o/$slug/social/feeds" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-              {t('feeds.title')}
-            </Link>
-            <Link to="/o/$slug/social/snippets" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-              {t('snippets.title')}
-            </Link>
-            <Link to="/o/$slug/social/labels" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-              {t('labels.title')}
-            </Link>
+            {/* One main action and one menu (#3655): the tools and settings are not equal to writing a post. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="outline" size="lg" />}>
+                {t('tools.open')}
+                <span aria-hidden="true" className="text-muted-foreground">
+                  ▾
+                </span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                {canWrite && (
+                  <DropdownMenuLinkItem render={<Link to="/o/$slug/social/ideas" params={{ slug }} />}>{t('ideas.title')}</DropdownMenuLinkItem>
+                )}
+                {canWrite && !noChannels && (
+                  <DropdownMenuLinkItem render={<Link to="/o/$slug/social/import" params={{ slug }} />}>{t('import.open')}</DropdownMenuLinkItem>
+                )}
+                <DropdownMenuLinkItem render={<Link to="/o/$slug/social" params={{ slug }} search={(prev: SocialSearch) => clean({ ...prev, tab: 'library' })} />}>{t('tabs.library')}</DropdownMenuLinkItem>
+                <DropdownMenuLinkItem render={<Link to="/o/$slug/social" params={{ slug }} search={(prev: SocialSearch) => clean({ ...prev, tab: 'metrics' })} />}>{t('tabs.metrics')}</DropdownMenuLinkItem>
+                {canWrite && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLinkItem render={<Link to="/o/$slug/social/channels" params={{ slug }} />}>{t('channels')}</DropdownMenuLinkItem>
+                    <DropdownMenuLinkItem render={<Link to="/o/$slug/social/feeds" params={{ slug }} />}>{t('feeds.title')}</DropdownMenuLinkItem>
+                    <DropdownMenuLinkItem render={<Link to="/o/$slug/social/snippets" params={{ slug }} />}>{t('snippets.title')}</DropdownMenuLinkItem>
+                    <DropdownMenuLinkItem render={<Link to="/o/$slug/social/labels" params={{ slug }} />}>{t('labels.title')}</DropdownMenuLinkItem>
+                    <DropdownMenuLinkItem render={<Link to="/o/$slug/social/bio" params={{ slug }} />}>{t('bio.pageTitle')}</DropdownMenuLinkItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
             {!canWrite ? null : noChannels ? (
               <Button size="lg" disabled>
                 {t('compose')}
@@ -848,26 +865,38 @@ export function SocialPage() {
         <Spinner />
       ) : (
       <Tabs className="gap-4" value={tab} onValueChange={(value) => setTab(value as Tab)}>
-        {/* Nine tabs do not fit on one line at phone width: they wrap, so the page never scrolls sideways (#1043). The
-            active tab's underline sits at the foot of its own tab, so on a first row it is not left in the gap (#1230). */}
-        <TabsList variant="line" className="w-full flex-wrap justify-start gap-y-2 border-b group-data-horizontal/tabs:h-auto">
-          {TABS.map((id) => (
-            <TabsTrigger key={id} value={id} className="h-8 flex-none px-3 group-data-horizontal/tabs:after:bottom-0">
-              {t(`tabs.${id}`)}
-              {id === 'review' && reviewCount > 0 && <span className="ml-1.5 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">{reviewCount}</span>}
-              {id === 'attention' && attentionCount > 0 && <span className="ml-1.5 rounded-full bg-destructive px-1.5 text-xs text-primary-foreground">{attentionCount}</span>}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        {/* Named filters, private or shared with the team (#1300): applied in one click, the address takes them. */}
-        {postFilters && (
-          <SavedViews
-            // The tab on screen, which the address may not name (#3654): a view saved here keeps it.
-            search={{ ...search, tab }}
-            members={members}
-            canShare={canWrite}
-            onApply={(next) => void navigate({ to: '/o/$slug/social', params: { slug }, search: { tab: 'upcoming' as const, ...next }, replace: true })}
-          />
+        {screen ? (
+          // The figures and the photo library are screens of their own (#3655): a way back, then the screen.
+          <div className="flex flex-wrap items-center gap-3">
+            <Link to="/o/$slug/social" params={{ slug }} search={(prev: SocialSearch) => clean({ ...prev, tab: lastStatus })} className={buttonVariants({ variant: 'ghost' })}>
+              {t('screenBack')}
+            </Link>
+            <h2 className="text-base font-semibold text-foreground">{t(`tabs.${tab}`)}</h2>
+          </div>
+        ) : (
+          <>
+            {/* The status lists, and beside them how to look at the posts: a list, the calendar or the board (#3655). Six
+                tabs and three views, not ten tabs. The tabs wrap at phone width so the page never scrolls sideways (#1043);
+                the active tab's underline sits at the foot of its own tab (#1230). */}
+            <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b">
+              <TabsList variant="line" className="flex-wrap justify-start gap-y-2 group-data-horizontal/tabs:h-auto">
+                {SOCIAL_STATUS_TABS.map((id) => (
+                  <TabsTrigger key={id} value={id} className="h-8 flex-none px-3 group-data-horizontal/tabs:after:bottom-0">
+                    {t(`tabs.${id}`)}
+                    {id === 'review' && reviewCount > 0 && <span className="ml-1.5 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">{reviewCount}</span>}
+                    {id === 'attention' && attentionCount > 0 && <span className="ml-1.5 rounded-full bg-destructive px-1.5 text-xs text-primary-foreground">{attentionCount}</span>}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              <div className="flex gap-1 pb-1" role="group" aria-label={t('postViews.label')}>
+                {SOCIAL_VIEWS.map((v) => (
+                  <Button key={v} variant={view === v ? 'secondary' : 'ghost'} size="sm" aria-pressed={view === v} onClick={() => setTab(tabOfView(v, lastStatus))}>
+                    {t(`postViews.${v}`)}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </>
         )}
         {(postFilters || labelFilter) && (
           <div className="flex flex-wrap items-end gap-3">
@@ -915,7 +944,8 @@ export function SocialPage() {
                 )}
               </>
             )}
-            {postFilters && (
+            {/* Whose posts matters from two members on (#3655); a link that names someone still shows the filter. */}
+            {postFilters && (members.length >= 2 || Boolean(search.assignee || search.author)) && (
               <>
                 {memberFilter('assignee')}
                 {memberFilter('author')}
@@ -927,6 +957,18 @@ export function SocialPage() {
               </Button>
             )}
           </div>
+        )}
+        {/* Named filters, private or shared with the team (#1300), applied in one click, the address takes them. Offered after
+            the filters, and "save" only while one is set (#3655). */}
+        {postFilters && (
+          <SavedViews
+            // The tab on screen, which the address may not name (#3654): a view saved here keeps it.
+            search={{ ...search, tab }}
+            members={members}
+            canShare={canWrite}
+            canSave={filtered}
+            onApply={(next) => void navigate({ to: '/o/$slug/social', params: { slug }, search: { tab: 'upcoming' as const, ...next }, replace: true })}
+          />
         )}
         <TabsContent value="upcoming">
           {agendaActions.length > 0 && (
@@ -984,8 +1026,6 @@ export function SocialPage() {
                 }
               />
               <InstagramGrid slug={slug} channels={(channels.data ?? []).filter((c) => c.provider === 'instagram' && c.status !== 'revoked')} canDecide={role === 'owner' || role === 'admin'} />
-              <PlanReviewCard channels={channels.data ?? []} canManage={canDecide} />
-              <CalendarFeedCard canManage={role === 'owner' || role === 'admin'} />
             </div>
           )}
         </TabsContent>

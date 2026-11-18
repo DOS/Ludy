@@ -252,6 +252,12 @@ describe('the address', () => {
   it('keeps a valid account and period, lower-cases the id, and drops anything else', () => {
     expect(parseAdsSearch({ account: '0190C4A1-0000-7000-8000-000000000001', range: 'last3Months' })).toEqual({ account: '0190c4a1-0000-7000-8000-000000000001', range: 'last3Months' });
     expect(parseAdsSearch({ account: 'not-an-id', range: 'forever' })).toEqual({});
+    // The Ads settings (#3640): only a true value opens them; anything else is the figures.
+    expect(parseAdsSearch({ settings: true })).toEqual({ settings: true });
+    expect(parseAdsSearch({ settings: 'true' })).toEqual({ settings: true });
+    expect(parseAdsSearch({ settings: 1 })).toEqual({ settings: true });
+    expect(parseAdsSearch({ settings: 'yes' })).toEqual({});
+    expect(parseAdsSearch({ settings: false })).toEqual({});
     expect(parseAdsSearch({ account: 7, range: 3 })).toEqual({});
     expect(parseAdsSearch({})).toEqual({});
     for (const range of ADS_RANGES) expect(parseAdsSearch({ range })).toEqual({ range });

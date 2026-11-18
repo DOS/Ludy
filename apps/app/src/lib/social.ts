@@ -224,6 +224,23 @@ export function takeFlash(): string | null {
 // archived (#1299): the posts taken out of every other list, until they are restored.
 export const SOCIAL_TABS = ['upcoming', 'calendar', 'board', 'review', 'attention', 'drafts', 'done', 'archived', 'metrics', 'library'] as const;
 export type SocialTab = (typeof SOCIAL_TABS)[number];
+// The tabs the Posts screen draws (#3655): the status lists only. The schedule, the calendar and the board are views of
+// the same posts, switched beside them; the figures and the photo library are screens of their own, reached from the
+// tools menu. Every name stays valid in the address, so an old link or a saved view still opens.
+export const SOCIAL_STATUS_TABS = ['upcoming', 'review', 'attention', 'drafts', 'done', 'archived'] as const;
+export type SocialStatusTab = (typeof SOCIAL_STATUS_TABS)[number];
+// The views of the posts: a list (the status tabs), the calendar and the board.
+export const SOCIAL_VIEWS = ['list', 'calendar', 'board'] as const;
+export type SocialView = (typeof SOCIAL_VIEWS)[number];
+export function viewOfTab(tab: SocialTab): SocialView | null {
+  return tab === 'calendar' ? 'calendar' : tab === 'board' ? 'board' : tab === 'metrics' || tab === 'library' ? null : 'list';
+}
+// The tab a view opens: the list keeps the status tab it was on, else the schedule.
+export function tabOfView(view: SocialView, listTab: SocialTab): SocialTab {
+  return view === 'calendar' ? 'calendar' : view === 'board' ? 'board' : (SOCIAL_STATUS_TABS as readonly string[]).includes(listTab) ? listTab : 'upcoming';
+}
+// The two screens that are no list of posts: their own page under the Posts address.
+export const isSocialScreen = (tab: SocialTab): boolean => tab === 'metrics' || tab === 'library';
 // The tab the Posts screen opens on when the address names none (#3654): what waits for a person comes first. Posts in review,
 // then posts that failed or need someone, else the schedule.
 export function defaultSocialTab(counts: { review: number; attention: number }): SocialTab {
@@ -311,4 +328,10 @@ export function dayRange(from: string | undefined, to: string | undefined): { fr
     out.to = end.toISOString();
   }
   return out;
+}
+// The platforms whose picture rules differ enough to name (#3657): shown only for the channels the post has, in this order.
+export const MEDIA_RULE_PROVIDERS = ['instagram', 'facebook_page', 'zalo_oa'] as const;
+export type MediaRuleProvider = (typeof MEDIA_RULE_PROVIDERS)[number];
+export function mediaRuleProviders(providers: readonly string[]): MediaRuleProvider[] {
+  return MEDIA_RULE_PROVIDERS.filter((p) => providers.includes(p));
 }

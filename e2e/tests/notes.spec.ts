@@ -14,7 +14,7 @@ test('a member writes a note on the overview, pins it, and finds it on the notes
   const panel = page.getByRole('region', { name: 'Ghi chú' });
   await test.step('write a note on the overview: shared by default', async () => {
     await page.goto(`/o/${slug}/overview`);
-    await expect(panel.getByText('Ghi lại điều cần nhớ về khách hàng này')).toBeVisible();
+    await expect(panel.getByText('Ghi nhanh một việc cần nhớ')).toBeVisible();
     await panel.getByRole('button', { name: 'Thêm ghi chú' }).click();
     await panel.getByPlaceholder('Tiêu đề ghi chú').fill('Giám đốc chỉ nghe máy sau 15h');
     await panel.getByPlaceholder('Nội dung (không bắt buộc)').fill('Hỏi **kế toán trưởng** trước ngày 5');

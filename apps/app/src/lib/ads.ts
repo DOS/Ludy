@@ -15,6 +15,8 @@ export const DEFAULT_ADS_RANGE: AdsRangeKind = 'thisMonth';
 export interface AdsSearch {
   account?: string;
   range?: AdsRangeKind;
+  // ?settings=true is the Ads settings (#3640): the connections, thresholds, running ads and the account's own settings, apart from the figures. Left out for the figures.
+  settings?: true;
 }
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -24,6 +26,7 @@ export function parseAdsSearch(search: Record<string, unknown>): AdsSearch {
   const out: AdsSearch = {};
   if (typeof search.account === 'string' && ID.test(search.account)) out.account = search.account.toLowerCase();
   if (typeof search.range === 'string' && (ADS_RANGES as readonly string[]).includes(search.range)) out.range = search.range as AdsRangeKind;
+  if (search.settings === true || search.settings === 'true' || search.settings === 1) out.settings = true;
   return out;
 }
 

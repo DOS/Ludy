@@ -116,23 +116,12 @@ function DeclinePanel({ quote, onDone }: { quote: QuoteSummary; onDone: () => vo
   );
 }
 
-// The two buttons of a sent quote that has not lapsed, and the panel one of them opens. Owners, admins and members only (the server says the same).
-export function QuoteDecision({ quote, canEdit }: { quote: QuoteSummary; canEdit: boolean }) {
-  const t = useTranslations('quotes.decision');
-  const [mode, setMode] = useState<'accept' | 'decline' | null>(null);
-  if (!canEdit || quote.status !== 'sent' || quote.expired) return null;
-  return (
-    <>
-      <Button size="sm" variant="outline" onClick={() => setMode(mode === 'accept' ? null : 'accept')} aria-expanded={mode === 'accept'} data-testid="quote-accept-open">
-        {t('accept')}
-      </Button>
-      <Button size="sm" variant="ghost" onClick={() => setMode(mode === 'decline' ? null : 'decline')} aria-expanded={mode === 'decline'} data-testid="quote-decline-open">
-        {t('decline')}
-      </Button>
-      {mode === 'accept' && <AcceptPanel quote={quote} onDone={() => setMode(null)} />}
-      {mode === 'decline' && <DeclinePanel quote={quote} onDone={() => setMode(null)} />}
-    </>
-  );
+// The panel a sent quote's "Ghi nhận khách đồng ý" or "Ghi nhận khách từ chối" opens (#3645: the buttons are in the quote row, the second in its menu). Owners, admins and members only (the server says the same).
+export type QuoteDecisionMode = 'accept' | 'decline';
+export const canDecideQuote = (quote: Pick<QuoteSummary, 'status' | 'expired'>, canEdit: boolean): boolean => canEdit && quote.status === 'sent' && !quote.expired;
+
+export function QuoteDecisionPanel({ quote, mode, onDone }: { quote: QuoteSummary; mode: QuoteDecisionMode; onDone: () => void }) {
+  return mode === 'accept' ? <AcceptPanel quote={quote} onDone={onDone} /> : <DeclinePanel quote={quote} onDone={onDone} />;
 }
 
 function CancelPanel({ order, onDone }: { order: SalesOrderSummary; onDone: () => void }) {

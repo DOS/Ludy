@@ -12,6 +12,7 @@ import { Input } from '@crove/ui/components/input';
 import { ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { channelKindLabel } from '../lib/conversation-labels.ts';
 import { canInsertQuoteLink } from '../lib/quote-reply.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { ConversationTasks } from './conversation-tasks.tsx';
@@ -180,7 +181,7 @@ export function ContactPanel({ conversationId, onOpen, onErased }: { conversatio
           </p>
         )}
         <p className="text-xs text-muted-foreground">
-          {c.channel.displayName} · {tc(`kind.${c.kind}`)}
+          {channelKindLabel(c.channel.displayName, tc(`kind.${c.kind}`))}
         </p>
       </div>
       {canWrite && c.contact.partyId === null && <ContactSuggestions conversationId={conversationId} lastSeq={c.lastSeq} />}

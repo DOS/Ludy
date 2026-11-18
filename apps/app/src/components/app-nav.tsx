@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
+import { Button } from '@crove/ui/components/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from '@crove/ui/components/dropdown-menu';
 import { NavIcon, type NavIconName } from '@crove/ui/components/nav-icon';
+import { ProjectIcon } from '@crove/ui/components/project-icon';
 import { LocaleSwitcher } from '../i18n/provider.tsx';
 import { ADMIN_ITEMS, BELL_ITEM, TOP_ITEMS, currentMenuItem, isHeadedGroup, type AppId, type InstalledApp, type NavItem, type NavLabel } from '../lib/apps.ts';
 import { signOut } from '../lib/session-actions.ts';
@@ -46,6 +48,7 @@ export interface ShellNavProps {
   email: string | undefined;
   onOpenPalette: () => void;
   paletteKeys: string;
+  onOpenQuickCapture?: (() => void) | undefined;
   // Called after a link or the org switch navigates: the phone drawer closes then.
   onNavigate?: () => void;
 }
@@ -53,9 +56,10 @@ export interface ShellNavProps {
 // What the sidebar and the phone drawer both hold (#1245, #1528): the app switcher down the left edge, with the org's
 // own screens at its foot; beside it the org switch, the palette button, the current app's menu and the account menu.
 // Every control is at least 44px tall in the phone drawer (below md) and 24px in the sidebar.
-export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPalette, paletteKeys, onNavigate }: ShellNavProps) {
+export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPalette, paletteKeys, onOpenQuickCapture, onNavigate }: ShellNavProps) {
   const t = useTranslations('nav');
   const tp = useTranslations('palette');
+  const tmw = useTranslations('myWork');
   const groupIdBase = useId();
   const current = apps.find((a) => a.id === app) ?? apps[0];
   const hasBadge = (items: readonly NavItem[]) => items.some((item) => Boolean(badges[item.label]));
@@ -124,14 +128,30 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
           {/* The legal entity of the finance books (#1486), when the caller sees more than one. */}
           <EntitySwitcher slug={slug} />
         </div>
-        <button
-          type="button"
-          onClick={onOpenPalette}
-          className="mt-2 flex min-h-11 items-center justify-between gap-1.5 rounded-lg border bg-background px-2.5 py-1.5 text-left text-sm text-subtle-foreground hover:text-foreground md:min-h-0"
-        >
-          <span className="min-w-0 truncate">{tp('open')}</span>
-          <kbd className="shrink-0 rounded-sm border px-1 font-mono text-[11px] whitespace-nowrap">{paletteKeys}</kbd>
-        </button>
+        <div className="mt-2 flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onOpenPalette}
+            className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-1.5 rounded-lg border bg-background px-2.5 py-1.5 text-left text-sm text-subtle-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-0"
+          >
+            <span className="min-w-0 truncate">{tp('open')}</span>
+            <kbd className="shrink-0 rounded-sm border px-1 font-mono text-[11px] whitespace-nowrap">{paletteKeys}</kbd>
+          </button>
+          {onOpenQuickCapture && (
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={onOpenQuickCapture}
+              aria-label={tmw('quickCaptureTrigger')}
+              title={tmw('quickCaptureTrigger')}
+              data-testid="shell-quick-capture-btn"
+              className="min-h-11 min-w-11 shrink-0 md:size-8 md:min-h-0 md:min-w-0"
+            >
+              <ProjectIcon name="plus" className="size-4" />
+            </Button>
+          )}
+        </div>
         {/* The menu scrolls only on a very short window, so the account menu below it always stays on screen. */}
         <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto">
           {current && (

@@ -8,6 +8,7 @@ import { CommandPalette, type PaletteEntry } from '../components/command-palette
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { ScreenTabs } from '../components/screen-tabs.tsx';
 import { Toaster } from '../components/toaster.tsx';
+import { QuickCaptureDialog } from '../components/todo-quick-add.tsx';
 import { Logo, OrgLeftNotice } from '../components/ui.tsx';
 import { LOCALE_NAMES, LOCALES } from '../i18n/locale.ts';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
@@ -16,8 +17,9 @@ import { ALL_NAV, appOfPath, installedApps, type AppId, type NavItem } from '../
 import { getConfig } from '../lib/auth.ts';
 import { effectiveModules, installedItems } from '../lib/modules.ts';
 import { installedModules, setOrgModules, useModulesVersion } from '../lib/org-modules.ts';
-import { shellBadges } from '../lib/overview.ts';
+import { shellBadges, unreadNotices } from '../lib/overview.ts';
 import { isPaletteShortcut, searchTerm } from '../lib/palette.ts';
+import { hasOpenModalDialog, isQuickCaptureShortcut } from '../lib/quick-add.ts';
 import { documentNumber } from '../lib/search.ts';
 import { proposalName } from '../lib/review.ts';
 import { THEMES } from '../lib/theme.ts';
@@ -122,17 +124,21 @@ export function OrgLayout() {
   const unread = unreadLabel(notifications.data?.unread ?? 0);
   // The kernel's and finance's (#671).
   const work = useWorkNotifications();
-  const workUnread = unreadLabel(work.data?.unread ?? 0);
+  // The bell counts what Home counts (#3591): a notice that a proposal waits is that proposal, already on the Inbox badge and in Home's list.
+  const workUnread = unreadLabel(unreadNotices(work.data) ?? 0);
   const org = me.data?.orgs.find((o) => o.slug === slug);
   const tp = useTranslations('palette');
+  const tmw = useTranslations('myWork');
   const f = useFormat();
   const { locale, setLocale } = useLocaleSetting();
   const [theme, setTheme] = useThemeSetting();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   // The org's search (#673): parties, documents and journal entries for what is typed in the palette, where finance runs;
   // and the notes the member may read, where notes runs (#1675).
   const financeOn = NAV.some((n) => n.module === 'finance');
-  const notesOn = NAV.some((n) => n.module === 'notes');
+  const notesOn = installedModules().includes('notes');
+  const canQuickCapture = notesOn && me.isSuccess && Boolean(org) && roleHere !== 'viewer';
   const [paletteQuery, setPaletteQuery] = useState('');
   const typed = (financeOn || notesOn) && paletteOpen ? searchTerm(paletteQuery) : null;
   const term = useSettled(typed, 250);
@@ -161,15 +167,32 @@ export function OrgLayout() {
   const paletteKeys = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.userAgent) ? '⌘ K' : 'Ctrl K';
 
   // Ctrl K (Cmd K on a Mac) opens or closes the command palette from any screen of the org.
+  // Alt+Q opens the quick capture modal when the notes module is active and focus is not in an editable field.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!isPaletteShortcut(event)) return;
-      event.preventDefault();
-      setPaletteOpen((open) => !open);
+      if (isPaletteShortcut(event)) {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+        return;
+      }
+      if (
+        isQuickCaptureShortcut(event, {
+          notesEnabled: notesOn,
+          authenticated: me.isSuccess && Boolean(org),
+          canWrite: roleHere !== 'viewer',
+          modalOpen: hasOpenModalDialog(typeof document !== 'undefined' ? document : null),
+          activeElement: typeof document !== 'undefined' ? document.activeElement : null,
+        })
+      ) {
+        event.preventDefault();
+        setMenuOpen(false);
+        setPaletteOpen(false);
+        setQuickCaptureOpen(true);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [notesOn, me.isSuccess, org, roleHere]);
 
   const paletteEntries = useMemo<PaletteEntry[]>(
     () => [
@@ -215,9 +238,20 @@ export function OrgLayout() {
         keywords: 'theme giao dien sang toi dark light',
         run: () => setTheme(th),
       })),
+      ...(canQuickCapture
+        ? [
+            {
+              id: 'quick-capture',
+              group: 'actions' as const,
+              label: tmw('quickCapturePalette'),
+              keywords: 'todo viec nhanh quick capture alt q',
+              run: () => setQuickCaptureOpen(true),
+            },
+          ]
+        : []),
       { id: 'sign-out', group: 'actions' as const, label: tc('signOut'), run: () => void signOut() },
     ],
-    [NAV, pending.data, reviews.data, socialOn, me.data, slug, locale, theme, t, tp, tc, f, navigate, setLocale, setTheme],
+    [NAV, pending.data, reviews.data, socialOn, me.data, slug, locale, theme, canQuickCapture, t, tp, tmw, tc, f, navigate, setLocale, setTheme],
   );
   const foundEntries = useMemo<PaletteEntry[]>(() => {
     const settled = typed !== null && term === typed;
@@ -289,6 +323,14 @@ export function OrgLayout() {
         setPaletteOpen(true);
       }}
       paletteKeys={paletteKeys}
+      onOpenQuickCapture={
+        canQuickCapture
+          ? () => {
+              onNavigate?.();
+              setQuickCaptureOpen(true);
+            }
+          : undefined
+      }
       {...(onNavigate ? { onNavigate } : {})}
     />
   );
@@ -346,6 +388,7 @@ export function OrgLayout() {
           open={paletteOpen}
           onOpenChange={setPaletteOpen}
         />
+        {canQuickCapture && <QuickCaptureDialog slug={slug} open={quickCaptureOpen} onOpenChange={setQuickCaptureOpen} />}
       </div>
     </div>
   );

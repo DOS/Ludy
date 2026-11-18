@@ -13,6 +13,7 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { AdsRunStatus } from '../components/ads-run-status.tsx';
 import { CampaignAsk, hasWaitingRequest } from '../components/ads-campaign-ask.tsx';
 import { CampaignBuilder, type PageChoice } from '../components/ads-campaign-builder.tsx';
 import { PostPicker } from '../components/ads-post-picker.tsx';
@@ -104,6 +105,8 @@ export function AdsCampaignsPage() {
   return (
     <div>
       <PageHeader title={t('campaigns.title')} subtitle={t('campaigns.subtitle')} />
+      {/* When running ads is off, the page says so before the owner builds a plan, with the way to the setting (#3640), not only after a save. */}
+      {list.length > 0 && <AdsRunStatus slug={slug} canManage={canManage} variant="campaigns" />}
       {accounts.error || me.error ? (
         <ErrorText>{errorMessage(accounts.error ?? me.error)}</ErrorText>
       ) : !accounts.data || me.isPending ? (

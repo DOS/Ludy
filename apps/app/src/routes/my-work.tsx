@@ -6,7 +6,7 @@
 // team task, after the member confirms the text the team will read.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import {
   TODO_LIST_COLORS,
@@ -58,6 +58,7 @@ import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { refreshProjectQueries } from '../components/project-task-dialog.tsx';
 import { TaskChecklistBadge } from '../components/task-checklist.tsx';
+import { TodoQuickAddBar } from '../components/todo-quick-add.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isModuleOff } from '../lib/errors.ts';
@@ -1241,74 +1242,7 @@ function ListEditDialog({
   );
 }
 
-function QuickAdd({
-  inputRef,
-  listId,
-  sectionId = null,
-  label,
-}: {
-  inputRef?: RefObject<HTMLInputElement | null>;
-  listId: string | null;
-  sectionId?: string | null;
-  label?: string;
-}) {
-  const t = useTranslations('myWork');
-  const [title, setTitle] = useState('');
-  const [priority, setPriority] = useState<TodoPriority>(4);
-  const create = useMutation({
-    mutationFn: (v: { title: string; priority: TodoPriority }) =>
-      client.notes.todos.create({
-        title: v.title,
-        timeZone: browserTimeZone(),
-        priority: v.priority,
-        listId,
-        sectionId,
-      }),
-    // Only what was sent is cleared: a title typed meanwhile stays.
-    onSuccess: (_, sent) => {
-      setTitle((current) => (current.trim() === sent.title ? '' : current));
-      refresh();
-    },
-  });
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const value = title.trim();
-    if (value && !create.isPending) create.mutate({ title: value, priority });
-  };
-  return (
-    <form onSubmit={submit} className="space-y-1">
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          ref={inputRef}
-          aria-label={label ?? t('quickAdd')}
-          placeholder={label ?? t('quickAdd')}
-          maxLength={300}
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          onKeyDown={(e) => e.key === 'Escape' && e.currentTarget.blur()}
-          className="min-w-0 flex-1"
-        />
-        <NativeSelect
-          aria-label={t('fieldPriority')}
-          data-testid={sectionId ? `quick-add-priority-${sectionId}` : 'quick-add-priority'}
-          value={String(priority)}
-          onChange={(e) => setPriority(Number(e.target.value) as TodoPriority)}
-          className="h-9 w-28 shrink-0 text-xs sm:h-9"
-        >
-          {TODO_PRIORITIES.map((p) => (
-            <NativeSelectOption key={p} value={String(p)}>
-              {t(`priorities.p${p}`)}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-      </div>
-      {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
-    </form>
-  );
-}
-
 type MyWorkTab = TodoListView | 'upcoming';
-
 export function MyWorkPage() {
   const { slug } = useParams({ strict: false }) as { slug: string };
   const t = useTranslations('myWork');
@@ -1588,7 +1522,7 @@ export function MyWorkPage() {
         <button
           type="button"
           data-testid="todo-title"
-          className={cn('min-w-0 flex-1 truncate text-left text-sm text-foreground hover:underline focus-visible:underline focus-visible:outline-none', todo.status === 'done' && 'text-subtle-foreground line-through')}
+          className={cn('min-h-6 min-w-40 flex-1 truncate text-left text-sm text-foreground hover:underline focus-visible:underline focus-visible:outline-none', todo.status === 'done' && 'text-subtle-foreground line-through')}
           onClick={() => {
             setSelected(todo.id);
             if (view !== 'trash') setEditing(todo.id);
@@ -1918,7 +1852,17 @@ export function MyWorkPage() {
               </Button>
             </div>
           )}
-          <QuickAdd inputRef={quickAdd} listId={activeList ? activeList.id : null} {...(activeList ? { label: t('quickAddInList', { name: activeList.name }) } : {})} />
+          <TodoQuickAddBar
+            inputRef={quickAdd}
+            listId={activeList ? activeList.id : null}
+            lists={personalLists}
+            {...(activeList
+              ? {
+                  ariaLabel: t('quickAddInList', { name: activeList.name }),
+                  placeholder: t('quickAddInList', { name: activeList.name }),
+                }
+              : {})}
+          />
           {needsWork && effectiveListFilter === 'all' && work.data?.noSeatHint && (
             <Alert className="border-border bg-muted/35" data-testid="my-work-no-seat-hint">
               <AlertDescription className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground">
@@ -2208,7 +2152,16 @@ export function MyWorkPage() {
                     {sec.items.length > 0 && <ul className="divide-y">{sec.items.map((todo) => row(todo, sec.items))}</ul>}
                     {sec.id !== null && (
                       <div className={cn('p-3', sec.items.length > 0 && 'border-t')}>
-                        <QuickAdd listId={activeList.id} sectionId={sec.id} label={t('quickAddInSection', { name: sec.name ?? '' })} />
+                        <TodoQuickAddBar
+                          listId={activeList.id}
+                          sectionId={sec.id}
+                          lists={personalLists}
+                          ariaLabel={t('quickAddInSection', { name: sec.name ?? '' })}
+                          placeholder={t('quickAddInSection', { name: sec.name ?? '' })}
+                          showInlineSubmit={false}
+                          showHint={false}
+                          testIdPrefix={`section-${sec.id}`}
+                        />
                       </div>
                     )}
                   </Card>
