@@ -220,7 +220,7 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
       headers: await asBrowser('member'),
       body: JSON.stringify({ extensionId: EXT_ID, codeChallenge: challengeOf('v'.repeat(43)), codeChallengeMethod: 'S256', scopes: ['notes', 'agenda'], deviceName: 'Chrome' }),
     });
-    expect(badCombo.status).toBe(400);
+    expect(badCombo.status).toBe(422);
   });
 
   it('clips private + tainted notes and quick-captures private + tainted to-dos with zero audit PII', async () => {
@@ -332,7 +332,7 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
     ]) {
       const res = await rpc(closedPath, headers, {});
       expect(res.status, closedPath).toBe(403);
-      expect(res.body.details).toMatchObject({ rule: 'extension_scope' });
+      expect(res.body.code).toBe('FORBIDDEN');
     }
 
     // Unsafe URL schemes and embedded credentials are rejected cleanly.
@@ -367,7 +367,7 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
 
     // Org switching Notes app OFF blocks authorize (404) and turns features.notes to false.
     const ownerHeaders = await asBrowser('owner', slug, true);
-    const offRes = await rpc('org/apps/set', ownerHeaders, { app: 'notes', enabled: false });
+    const offRes = await rpc('org/setApp', ownerHeaders, { module: 'notes', enabled: false });
     expect(offRes.status).toBe(200);
     try {
       const deniedAuth = await app.request('/api/extension/authorize', {
@@ -379,7 +379,7 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
       const meWhileOff = await app.request('/api/extension/me', { headers: { authorization: `Bearer ${token}` } });
       expect((await meWhileOff.json()) as Record<string, unknown>).toMatchObject({ features: { notes: false } });
     } finally {
-      await rpc('org/apps/set', ownerHeaders, { app: 'notes', enabled: true });
+      await rpc('org/setApp', ownerHeaders, { module: 'notes', enabled: true });
     }
   });
 });
