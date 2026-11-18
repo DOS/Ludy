@@ -256,11 +256,11 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     const p = sandbox();
     const person = await issued(o, p, 'individual');
     const a = await start(o, person.draftId, 'adjustment');
-    expect(a.correction).toEqual({ kind: 'adjustment', originalDraftId: person.draftId, reasonCode: '1', agreementFileId: null });
+    expect(a.correction).toEqual({ kind: 'adjustment', originalDraftId: person.draftId, reasonCode: '1', agreementFileId: null, rateBasis: 'original' });
     const company = await issued(o, p);
     const file = await agreementFile(o);
     const b = await start(o, company.draftId, 'replacement', { agreementFileId: file });
-    expect(b.correction).toEqual({ kind: 'replacement', originalDraftId: company.draftId, reasonCode: '1', agreementFileId: file });
+    expect(b.correction).toEqual({ kind: 'replacement', originalDraftId: company.draftId, reasonCode: '1', agreementFileId: file, rateBasis: 'original' });
   });
 
   it('adjusts up and down: the original stays in force, each adjusting invoice is linked to it and posts only the difference, and the same method is kept', async () => {

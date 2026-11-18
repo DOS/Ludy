@@ -11,7 +11,7 @@
 // - finance.einvoice.correction_rate (owners, admins, members; read only): the proposal for a nature, with the fixed reason and the precedent note (#3709).
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { computeLineTotals, money, sumLineTotals } from '@crove/l10n-vn';
+import { computeLineTotals, money, normalizeVatRate, sumLineTotals } from '@crove/l10n-vn';
 import { ADJUST_REPLACE_REASON_CODES, isReasonCode, type ReasonCode } from '@crove/einvoice';
 import { zEInvoiceCorrectionRateInput, zEInvoiceStartCorrection, type EInvoiceCorrectionOptions, type EInvoiceCorrectionRate, type EInvoiceDraft, type EInvoiceRateNature } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
@@ -37,7 +37,7 @@ const dayOf = (value: string | Date): string => (typeof value === 'string' ? val
 async function proposalFor(ctx: Pick<QueryContext, 'trx' | 'orgId'>, originalId: string, originalDate: string, nature: EInvoiceRateNature, today: string): Promise<{ proposal: CorrectionRateProposal; has8: boolean }> {
   const rows = await ctx.trx.selectFrom('crove_finance.einvoice_draft_line').select('vat_rate').where('org_id', '=', ctx.orgId).where('draft_id', '=', originalId).orderBy('line_no').execute();
   const rates = rows.map((r) => r.vat_rate);
-  return { proposal: proposeCorrectionRates({ nature, rates, originalDate, correctionDate: today }), has8: rates.some((r) => r === '8%') };
+  return { proposal: proposeCorrectionRates({ nature, rates, originalDate, correctionDate: today }), has8: rates.some((r) => (normalizeVatRate(r) ?? r) === '8%') };
 }
 
 export const einvoiceStartCorrection = defineCommand({
