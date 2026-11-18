@@ -68,6 +68,7 @@ const book = (over: Partial<HouseholdS2b> = {}): HouseholdS2b => ({
   unassignedGross: '0',
   totals: { revenue: '900000', vat: '25000' },
   vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [], total: null, ifEligible: null },
+  yearToDate: { year: 2026, revenueToDate: '1500000', revenueBefore: '0', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: false, deductionTrade: null, deductionNeeded: false, payable: { vatBefore: '0', vatCut: '0', vat: '0', pitBefore: '0', pitCut: '0', pit: '0' }, pitCut: null },
   unconfirmed: [
     { kind: 'form', key: 'S2b 2026.1', effectiveFrom: '2026-01-01' },
     { kind: 'rate', key: 'goods', effectiveFrom: '2026-01-01' },
@@ -129,7 +130,8 @@ describe('the S2b-HKD book on the household screen (#2517 slice 2c)', () => {
   it('labels every figure that depends on a rule while a row behind it is unconfirmed: once under each line and the VAT total, the same words for a screen reader in the VAT cells', () => {
     const html = page();
     expect(html).toContain('data-testid="household-s2b-draft"');
-    expect(count(html, 'data-testid="household-s2b-provisional"')).toBe(3);
+    // Plus one under the period's VAT payable of the yearly section.
+    expect(count(html, 'data-testid="household-s2b-provisional"')).toBe(4);
     expect(count(html, `<span class="sr-only">${LABEL_EN}</span>`)).toBe(2);
     expect(html).toContain('S2b 2026.1');
   });
@@ -175,5 +177,18 @@ describe('the S2b-HKD book on the household screen (#2517 slice 2c)', () => {
     expect(html).toContain(LABEL_VI);
     expect(html).toContain('Thuế GTGT theo tỷ lệ');
     expect(html).toContain('Hàng hóa');
+  });
+});
+
+describe('the yearly threshold on the S2b screen (#3710 slice 3)', () => {
+  beforeEach(() => cache.current.clear());
+  it('shows the VAT payable once the threshold is crossed, never a PIT figure or a deduction question', () => {
+    const base = book().yearToDate;
+    const html = page({ s2b: book({ yearToDate: { ...base, revenueToDate: '1200000000', crossed: true, payable: { vatBefore: '12000000', vatCut: '2400000', vat: '9600000', pitBefore: '0', pitCut: '0', pit: '0' } } }) });
+    const t = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+    expect(html).toContain('data-testid="household-s2b-ytd"');
+    expect(t).toContain('VAT to pay for the period ₫9,600,000');
+    expect(t).not.toContain('PIT to pay for the period');
+    expect(html).not.toContain('household-s2b-ytd-deduction');
   });
 });

@@ -4,7 +4,7 @@
 // lists the rows, and puts the provisional label in a note column on every figure that depends on them; once the rows are confirmed there is no label. Text is never read as a formula.
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import type { HouseholdS2a } from '@crove/kernel-contract';
+import type { HouseholdS2a, HouseholdYearToDate } from '@crove/kernel-contract';
 import { HOUSEHOLD_PROVISIONAL_LABEL } from '@crove/kernel-contract';
 import { buildS2aWorkbook } from '../src/household-export.ts';
 
@@ -28,6 +28,7 @@ const book = (over: Partial<HouseholdS2a> = {}): HouseholdS2a => ({
   unassignedGross: '0',
   totals: { revenue: '1500000', vat: '31000', pit: '13500', tax: '44500' },
   vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [{ trade: 'goods', cut: '0', vatPayable: '11000' }, { trade: 'services', cut: '0', vatPayable: '20000' }], total: { cut: '0', vatPayable: '31000' }, ifEligible: null },
+  yearToDate: { year: 2026, revenueToDate: '1500000', revenueBefore: '0', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: false, deductionTrade: null, deductionNeeded: false, payable: { vatBefore: '0', vatCut: '0', vat: '0', pitBefore: '0', pitCut: '0', pit: '0' }, pitCut: null },
   unconfirmed: [
     { kind: 'form', key: 'S2a 2026.1', effectiveFrom: '2026-01-01' },
     { kind: 'rate', key: 'goods', effectiveFrom: '2026-01-01' },
@@ -100,7 +101,7 @@ describe('the S2a-HKD workbook', () => {
     expect(all.some((t) => t.includes('Chưa xác nhận: mẫu S2a 2026.1'))).toBe(true);
     expect(all.some((t) => t.includes('Chưa xác nhận: tỷ lệ thuế của ngành "Phân phối, cung cấp hàng hóa"'))).toBe(true);
     const labelled = rows.filter((r) => r.includes(HOUSEHOLD_PROVISIONAL_LABEL)).map((r) => r.find((c) => c.startsWith('Cộng') || c.startsWith('Tỷ lệ') || c.startsWith('Thuế') || c.startsWith('Tổng thuế')));
-    expect(labelled).toEqual(['Cộng doanh thu', 'Tỷ lệ thuế GTGT (%)', 'Thuế GTGT', 'Tỷ lệ thuế TNCN (%)', 'Thuế TNCN', 'Tổng thuế GTGT và TNCN']);
+    expect(labelled).toEqual(['Cộng doanh thu', 'Tỷ lệ thuế GTGT (%)', 'Thuế GTGT', 'Tỷ lệ thuế TNCN (%)', 'Thuế TNCN', 'Tổng thuế GTGT và TNCN', undefined, undefined, 'Thuế GTGT của kỳ theo doanh thu cả năm (trước giảm)', 'Thuế GTGT phải nộp của kỳ', 'Thuế TNCN của kỳ theo doanh thu cả năm (trước giảm)', 'Thuế TNCN phải nộp của kỳ']);
     // A plain entry row carries no label: it is a ledger fact, not a figure that rests on a rule.
     expect(find(rows, 'Bán hàng và sửa chữa')).not.toContain(HOUSEHOLD_PROVISIONAL_LABEL);
   });
@@ -190,5 +191,57 @@ describe('the S2a-HKD workbook and the Decree 174 VAT cut (#3710)', () => {
     expect(rows.flat().some((t) => t.includes('nếu thuộc diện được giảm, thuế GTGT sẽ là 24800 đồng (giảm 6200 đồng)'))).toBe(true);
     expect(find(rows, 'Thuế GTGT phải nộp sau giảm')).toBeUndefined();
     expect(find(rows, 'Tổng thuế GTGT và TNCN')).toContain('44500');
+  });
+});
+
+describe('the S2a-HKD workbook and the yearly rule (#3710 slice 3)', () => {
+  const allText = async (d: HouseholdS2a) => (await rowsOf(d)).rows.flat();
+  const amountOf = async (d: HouseholdS2a, label: string) => {
+    const { sheet } = await rowsOf(d);
+    let value: ExcelJS.CellValue | undefined;
+    sheet.eachRow((row) => {
+      if (row.getCell(3).value === label) value = row.getCell(sheet.columnCount - 1).value;
+    });
+    return value;
+  };
+  const YT: HouseholdYearToDate = { year: 2026, revenueToDate: '1500000000', revenueBefore: '1000000000', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: true, deductionTrade: 'goods', deductionNeeded: false, payable: { vatBefore: '12000000', vatCut: '2400000', vat: '9600000', pitBefore: '1000000', pitCut: '300000', pit: '700000' }, pitCut: { percent: '30', ceiling: '3000000000', applied: true } };
+  it('says nothing is owed yet below the threshold', async () => {
+    const d = book();
+    expect((await allText(d)).some((t) => t.includes('chưa vượt ngưỡng nên chưa phải nộp thuế'))).toBe(true);
+    expect(await amountOf(d, 'Doanh thu lũy kế từ đầu năm')).toBe(1500000);
+    expect(await amountOf(d, 'Ngưỡng doanh thu năm 2026 (từ 01/01/2026): chưa vượt')).toBe(1000000000);
+  });
+
+  it('writes each amount of the period when the threshold is crossed', async () => {
+    const d = book({ yearToDate: YT });
+    expect(await amountOf(d, 'Doanh thu lũy kế từ đầu năm')).toBe(1500000000);
+    expect(await amountOf(d, 'Ngưỡng doanh thu năm 2026 (từ 01/01/2026): đã vượt')).toBe(1000000000);
+    expect((await allText(d)).some((t) => t.includes('chưa vượt ngưỡng'))).toBe(false);
+    expect(await amountOf(d, 'Thuế GTGT của kỳ theo doanh thu cả năm (trước giảm)')).toBe(12000000);
+    expect(await amountOf(d, 'Giảm thuế GTGT theo Nghị định 174')).toBe(2400000);
+    expect(await amountOf(d, 'Thuế GTGT phải nộp của kỳ')).toBe(9600000);
+    expect(await amountOf(d, 'Thuế TNCN của kỳ theo doanh thu cả năm (trước giảm)')).toBe(1000000);
+    expect(await amountOf(d, 'Giảm thuế TNCN 30% theo Nghị định 398')).toBe(300000);
+    expect(await amountOf(d, 'Thuế TNCN phải nộp của kỳ')).toBe(700000);
+  });
+
+  it('asks the household to choose the trade that takes the deduction and writes no PIT figure', async () => {
+    const d = book({ yearToDate: { ...YT, deductionTrade: null, deductionNeeded: true, payable: null } });
+    expect((await allText(d)).some((t) => t.includes('hãy chọn ngành nghề được trừ'))).toBe(true);
+    expect(await amountOf(d, 'Thuế TNCN phải nộp của kỳ')).toBeUndefined();
+    expect(await amountOf(d, 'Thuế GTGT phải nộp của kỳ')).toBeUndefined();
+  });
+
+  it('says the revenue is not all on a trade when the payable is null', async () => {
+    const d = book({ yearToDate: { ...YT, payable: null } });
+    expect((await allText(d)).some((t) => t.includes('chưa được gán hết cho ngành nghề'))).toBe(true);
+    expect(await amountOf(d, 'Thuế GTGT phải nộp của kỳ')).toBeUndefined();
+  });
+
+  it('names the unconfirmed threshold and the PIT cut', async () => {
+    const d = book({ commentary: true, unconfirmed: [{ kind: 'threshold', key: 'no_tax_revenue', effectiveFrom: '2026-01-01' }, { kind: 'reduction', key: 'pit', effectiveFrom: '2026-07-01' }] });
+    const all = await allText(d);
+    expect(all).toContain('  Chưa xác nhận: ngưỡng doanh thu năm, từ 01/01/2026');
+    expect(all).toContain('  Chưa xác nhận: mức giảm thuế TNCN theo Nghị định 398, từ 01/07/2026');
   });
 });

@@ -68,6 +68,7 @@ const book = (over: Partial<HouseholdS2a> = {}): HouseholdS2a => ({
   unassignedGross: '0',
   totals: { revenue: '900000', vat: '25000', pit: '10500', tax: '35500' },
   vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [], total: null, ifEligible: null },
+  yearToDate: { year: 2026, revenueToDate: '1500000', revenueBefore: '0', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: false, deductionTrade: null, deductionNeeded: false, payable: { vatBefore: '0', vatCut: '0', vat: '0', pitBefore: '0', pitCut: '0', pit: '0' }, pitCut: null },
   unconfirmed: [
     { kind: 'form', key: 'S2a 2026.1', effectiveFrom: '2026-01-01' },
     { kind: 'rate', key: 'goods', effectiveFrom: '2026-01-01' },
@@ -129,8 +130,8 @@ describe('the S2a-HKD book on the household screen (#2517 slice 2a)', () => {
   it('labels every figure that depends on a rule while a row behind it is unconfirmed: once under each line and the tax, the same words for a screen reader in the VAT and PIT cells', () => {
     const html = page();
     expect(html).toContain('data-testid="household-s2a-draft"');
-    // Two lines and the total tax: three visible labels.
-    expect(count(html, 'data-testid="household-s2a-provisional"')).toBe(3);
+    // Two lines and the total tax: three visible labels, and two more under the period's VAT and PIT payable of the yearly section.
+    expect(count(html, 'data-testid="household-s2a-provisional"')).toBe(5);
     // Two lines, two cells each: four labels for a screen reader (the draft box and the visible labels carry the words too).
     expect(count(html, `<span class="sr-only">${LABEL_EN}</span>`)).toBe(4);
     expect(html).toContain('S2a 2026.1');
@@ -222,5 +223,59 @@ describe('the Decree 174 VAT cut on the S2a screen (#3710 slice 2)', () => {
     const confirmed = page({ s2a: book({ vatCut: cut, commentary: false, unconfirmed: [] }) });
     const confirmedBlock = confirmed.slice(confirmed.indexOf('data-testid="household-s2a-vatcut"'), confirmed.indexOf('data-testid="household-s2a-vatcut"') + 1500);
     expect(confirmedBlock).not.toContain('household-s2a-provisional');
+  });
+});
+
+describe('the yearly threshold on the S2a screen (#3710 slice 3)', () => {
+  beforeEach(() => cache.current.clear());
+  const text = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  const base = book().yearToDate;
+  const crossed = (over: Partial<HouseholdS2a['yearToDate']> = {}): HouseholdS2a['yearToDate'] => ({
+    ...base,
+    revenueToDate: '1200000000',
+    revenueBefore: '1100000000',
+    crossed: true,
+    deductionTrade: 'goods',
+    payable: { vatBefore: '12000000', vatCut: '2400000', vat: '9600000', pitBefore: '1000000', pitCut: '300000', pit: '700000' },
+    pitCut: { percent: '30.0000', ceiling: '3000000000', applied: true },
+    ...over,
+  });
+
+  it('says nothing is owed yet below the threshold', () => {
+    const html = page();
+    expect(html).toContain('data-testid="household-s2a-ytd"');
+    expect(html).toContain('data-testid="household-s2a-ytd-threshold"');
+    expect(text(html)).toContain('has not passed the threshold, so no tax is owed yet');
+    expect(html).not.toContain('household-s2a-ytd-deduction');
+  });
+
+  it('shows the revenue, the VAT and PIT payable and the PIT cut once the threshold is crossed', () => {
+    const html = page({ s2a: book({ yearToDate: crossed() }) });
+    const t = text(html);
+    expect(t).toContain('₫1,200,000,000');
+    expect(t).toContain('has passed the threshold');
+    expect(t).toContain('VAT to pay for the period ₫9,600,000');
+    expect(t).toContain('PIT to pay for the period ₫700,000');
+    expect(t).toContain('PIT cut 30.0000% ₫300,000');
+    expect(html).not.toContain('household-s2a-ytd-deduction');
+    const block = html.slice(html.indexOf('data-testid="household-s2a-ytd-payable"'));
+    expect(block).toContain('data-testid="household-s2a-provisional"');
+  });
+
+  it('asks which trade takes the deduction and shows no PIT figure while it is held back', () => {
+    const html = page({ s2a: book({ yearToDate: crossed({ deductionTrade: null, deductionNeeded: true, payable: null, pitCut: null }) }) });
+    expect(html).toContain('data-testid="household-s2a-ytd-deduction"');
+    expect(text(html)).toContain('Which trade takes the 1 billion dong deduction for PIT?');
+    expect(html).toContain('value="goods"');
+    expect(html).toContain('value="services"');
+    expect(html).not.toContain('household-s2a-ytd-pit"');
+    expect(html).not.toContain('household-s2a-ytd-payable');
+  });
+
+  it('lists the unconfirmed threshold and the PIT cut among the rows behind a provisional book', () => {
+    const html = page({ s2a: book({ unconfirmed: [{ kind: 'threshold', key: 'no_tax_revenue', effectiveFrom: '2026-01-01' }, { kind: 'reduction', key: 'pit', effectiveFrom: '2026-01-01' }] }) });
+    const t = text(html);
+    expect(t).toContain('The yearly revenue threshold below which no tax is owed, from');
+    expect(t).toContain('The personal income tax cut, from');
   });
 });

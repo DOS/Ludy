@@ -20,6 +20,8 @@ import { money, sum, toMoney } from '@crove/l10n-vn';
 import { pickInForce } from './domain/household-rules.ts';
 import { splitAmount, taxOn, type SplitBucket, type SplitWeight } from './domain/household-tax.ts';
 import { householdBookWindow, householdSalesRows, type HouseholdBookWindow } from './household-books.ts';
+import { yearToDateBlock, type YearRevenue } from './household-annual.ts';
+import { accountLedgerOf } from './ledger-reports.ts';
 import { vatCutBlock, vatCutInForce, vatCutUnconfirmed } from './household-vat-cut.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -119,7 +121,31 @@ export async function saleDocumentWeights(ctx: Ctx, entryIds: readonly string[],
 
 // What S2a and S2b share: the rows of 511 shared between the profile's trades, the percentage of each trade in force on the period's last day, the revenue, VAT and PIT of each line, the totals that wait for
 // every part to have a trade, and the rows behind the figures that the accountant has not confirmed. One code path, so the two books cannot disagree on a row, a split or a rounding. S2b drops the PIT.
-export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow, book: 'S2a' | 'S2b') {
+// The year's revenue by trade from 1 January, split by the same rule as the book's rows (a sale document's lines by their stock item's trade; one trade takes everything; anything else is unassigned): through the period's
+// last day, and up to the day before the book's first day. The household's yearly threshold is its own, so entries before its first profile count here though the book does not list them (#3710 slice 3).
+const YEAR_ROW_LIMIT = 500_000;
+async function yearRevenue(ctx: QueryContext, w: HouseholdBookWindow, trades: readonly HouseholdTrade[]): Promise<YearRevenue> {
+  const year = w.to.slice(0, 4);
+  const ledger = await accountLedgerOf(ctx, year, w.entity, '511');
+  const lines = ledger.lines.filter((l) => l.entryDate <= w.to);
+  const rows = householdSalesRows(lines, `${year}-01-01`, YEAR_ROW_LIMIT);
+  const weights = trades.length > 1 ? await saleDocumentWeights(ctx, rows.map((r) => r.entryId), trades) : new Map<string, SplitWeight[]>();
+  const toDate = new Map<string, ReturnType<typeof money>>();
+  const before = new Map<string, ReturnType<typeof money>>();
+  let unassignedGross = money(0);
+  for (const r of rows) {
+    const parts = trades.length === 1 ? [{ bucket: trades[0]! as SplitBucket, amount: r.amount }] : splitAmount(r.amount, weights.get(r.entryId) ?? []);
+    for (const p of parts) {
+      toDate.set(p.bucket, (toDate.get(p.bucket) ?? money(0)).plus(p.amount));
+      if (r.date < w.from) before.set(p.bucket, (before.get(p.bucket) ?? money(0)).plus(p.amount));
+      if (p.bucket === 'unassigned') unassignedGross = unassignedGross.plus(money(p.amount).abs());
+    }
+  }
+  const text = (m: Map<string, ReturnType<typeof money>>) => new Map([...m.entries()].map(([k, v]) => [k, toMoney(v)]));
+  return { toDate: text(toDate), before: text(before), unassignedHeld: !unassignedGross.isZero() };
+}
+
+export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow, book: 'S2a' | 'S2b', deductionTrade?: HouseholdTrade) {
   const trades = HOUSEHOLD_TRADES.filter((t) => w.profile.trades.includes(t));
 
   // The percentage of each trade the profile names, in force on the period's last day.
@@ -181,6 +207,9 @@ export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow
 
   const cutUnconfirmed = vatCutUnconfirmed(vatCut, cutRow);
   if (cutUnconfirmed) unconfirmed.push(cutUnconfirmed);
+  // The yearly rule (#3710 slice 3): the threshold, VAT on all revenue above it, PIT only above it, and the PIT cut; the period's tax is the difference of two year-to-date figures.
+  const year = await yearToDateBlock(ctx, { to: w.to, trades, rates, answer: w.profile.vatCutEligible, pitApplies: book === 'S2a', deductionTrade, revenue: await yearRevenue(ctx, w, trades) });
+  unconfirmed.push(...year.unconfirmed);
 
   const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();
   return {
@@ -194,6 +223,7 @@ export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow
     unassignedGross,
     totals,
     vatCut,
+    yearToDate: year.block,
     unconfirmed,
     commentary: unconfirmed.length > 0,
   };
@@ -207,7 +237,7 @@ export const householdS2a = defineQuery({
     const w = await householdBookWindow(ctx, input.legalEntityId, input.period, 'S2a');
     // S2a is the book of the percentage method; the form row says so, and the profile must agree on the last day.
     if (w.profile.pitMethod !== 'percentage') throw new DomainError('HOUSEHOLD_BOOK_NOT_REQUIRED', 422, 'Hồ sơ hộ kinh doanh của pháp nhân này không yêu cầu sổ S2a trong kỳ đã chọn');
-    return zHouseholdS2a.parse(await tradeRevenueBook(ctx, w, 'S2a'));
+    return zHouseholdS2a.parse(await tradeRevenueBook(ctx, w, 'S2a', input.deductionTrade));
   },
 });
 
