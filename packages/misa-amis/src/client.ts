@@ -98,11 +98,10 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
 
   const keyOf = (c: AmisConnection) => `${c.orgCompanyCode}\u0000${createHash('sha256').update(c.accessCode).digest('hex')}`;
 
-  async function send(path: string, method: AmisRequest['method'], body: unknown, token: string | null): Promise<Answer> {
+  // The request body is JSON text the caller wrote before its first wait (see `snapshot` below): what is sent, and sent again after a renewed token, is that text and nothing read from the caller's objects later.
+  async function send(path: string, method: AmisRequest['method'], text: string, token: string | null): Promise<Answer> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json', ClientID: clientId };
     if (token !== null) headers['X-MISA-AccessToken'] = token;
-    // Written first: a value that cannot be written is refused here, before the transport is asked to send anything.
-    const text = toJsonText(body);
     let response: AmisResponse;
     try {
       response = await transport({ method, url: `${AMIS_BASE_URL}${path}`, headers, body: text });
@@ -135,7 +134,7 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
   async function fetchToken(c: AmisConnection): Promise<string> {
     let answer: Answer;
     try {
-      answer = await send('/amiskt/v1/token', 'POST', { access_code: c.accessCode, org_company_code: c.orgCompanyCode }, null);
+      answer = await send('/amiskt/v1/token', 'POST', toJsonText({ access_code: c.accessCode, org_company_code: c.orgCompanyCode }), null);
     } catch (error: unknown) {
       // A refused token request means the access code (or the app) is refused: nothing to renew.
       if (error instanceof AmisError && error.kind === 'token') throw new AmisError('credentials', { code: error.code });
@@ -167,11 +166,11 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
   }
 
   // One call with the connection's token. An expired or refused token is renewed once; if the second answer is the same, the connection is what is refused.
-  async function authed(c: AmisConnection, path: string, method: AmisRequest['method'], body: unknown): Promise<unknown> {
+  async function authed(c: AmisConnection, path: string, method: AmisRequest['method'], text: string): Promise<unknown> {
     for (let attempt = 0; ; attempt++) {
       const token = await tokenOf(c);
       try {
-        return (await send(path, method, body, token)).data;
+        return (await send(path, method, text, token)).data;
       } catch (error: unknown) {
         if (!(error instanceof AmisError) || error.kind !== 'token') throw error;
         // Only the token that was refused is dropped: another call may have renewed it meanwhile.
@@ -198,9 +197,13 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
     if (!Number.isSafeInteger(skip) || skip < 0 || !Number.isSafeInteger(take) || take < 1 || take > PAGE_MAX) throw new AmisError('invalid_request', { reason: 'bad_page' });
   };
 
+  // The connection is read once, at the start of a call: a caller that changes its object while the call waits (for a token, for MISA) cannot move the call to another company or another code.
+  const snapshot = (c: AmisConnection): AmisConnection => ({ accessCode: c.accessCode, orgCompanyCode: c.orgCompanyCode });
+
   return {
-    async companyInfo(c, branchId = null) {
-      const data = await authed(c, '/amiskt/v1/get_company_info', 'POST', { branch_id: branchId });
+    async companyInfo(connection, branchId = null) {
+      const c = snapshot(connection);
+      const data = await authed(c, '/amiskt/v1/get_company_info', 'POST', toJsonText({ branch_id: branchId }));
       let value = data;
       if (typeof value === 'string') {
         try {
@@ -212,48 +215,59 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
       return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as AmisRecord) : null;
     },
 
-    async dictionary(c, query) {
-      page(query.skip, query.take);
-      const data = await authed(c, '/amiskt/v1/get_dictionary', 'POST', {
-        data_type: query.dataType,
-        skip: query.skip,
-        take: query.take,
-        last_sync_time: query.lastSyncTime ?? null,
-        branch_id: query.branchId ?? null,
-      });
+    async dictionary(connection, query) {
+      const c = snapshot(connection);
+      // Read once: the page size that is asked for is the bound the answer is held to.
+      const { dataType, skip, take } = query;
+      const lastSyncTime = query.lastSyncTime ?? null;
+      const branchId = query.branchId ?? null;
+      page(skip, take);
+      const data = await authed(c, '/amiskt/v1/get_dictionary', 'POST', toJsonText({ data_type: dataType, skip, take, last_sync_time: lastSyncTime, branch_id: branchId }));
       const rows = records(asList(data));
       // More rows than were asked for is not MISA's documented answer.
-      if (rows.length > query.take) throw new AmisError('invalid_response');
+      if (rows.length > take) throw new AmisError('invalid_response');
       return rows;
     },
 
-    async saveDictionary(c, dataType, rows) {
+    async saveDictionary(connection, dataType, input) {
+      const c = snapshot(connection);
+      // Counted and written in one go, before any wait: the text is the snapshot of the rows.
+      const rows = input.slice();
       if (rows.length === 0 || rows.length > AMIS_SAVE_BATCH_MAX) throw new AmisError('invalid_request', { reason: 'too_many_rows' });
-      toJsonText(rows);
-      await authed(c, '/amiskt/v1/save_dictionary', 'POST', { org_company_code: c.orgCompanyCode, data_type: dataType, dictionary: rows });
+      const text = toJsonText({ org_company_code: c.orgCompanyCode, data_type: dataType, dictionary: rows });
+      await authed(c, '/amiskt/v1/save_dictionary', 'POST', text);
     },
 
-    async save(c, vouchers) {
+    async save(connection, input) {
+      const c = snapshot(connection);
+      // Checked and written in one go, before any wait: the text is the snapshot of the vouchers, so a list that grows while the call waits cannot pass the 500-line limit, and a retry sends the same text.
+      const vouchers = input.slice();
       if (vouchers.length === 0 || vouchers.length > AMIS_SAVE_BATCH_MAX) throw new AmisError('invalid_request', { reason: 'too_many_vouchers' });
       for (const voucher of vouchers) checkVoucher(voucher);
       // One kind per call: the document does not say a mixed list is taken.
       if (new Set(vouchers.map((v) => v.voucher_type)).size > 1) throw new AmisError('invalid_request', { reason: 'mixed_voucher_types' });
-      await authed(c, '/amiskt/v1/save', 'POST', { org_company_code: c.orgCompanyCode, voucher: vouchers });
+      const text = toJsonText({ org_company_code: c.orgCompanyCode, voucher: vouchers });
+      await authed(c, '/amiskt/v1/save', 'POST', text);
     },
 
-    async remove(c, vouchers) {
-      if (vouchers.length === 0 || vouchers.length > AMIS_SAVE_BATCH_MAX) throw new AmisError('invalid_request', { reason: 'too_many_vouchers' });
+    async remove(connection, input) {
+      const c = snapshot(connection);
+      if (input.length === 0 || input.length > AMIS_SAVE_BATCH_MAX) throw new AmisError('invalid_request', { reason: 'too_many_vouchers' });
+      // Each pair is read once into a plain copy; what is checked is what is written.
+      const vouchers = input.map((v) => ({ voucher_type: v.voucher_type, org_refid: v.org_refid }));
       for (const v of vouchers) {
         if (!isOrgRefId(v.org_refid)) throw new AmisError('invalid_request', { reason: 'bad_org_refid' });
         if (!isKnownVoucherType(v.voucher_type)) throw new AmisError('invalid_request', { reason: 'bad_voucher_type' });
       }
-      await authed(c, '/amiskt/v1/delete', 'DELETE', { org_company_code: c.orgCompanyCode, voucher: vouchers.map((v) => ({ voucher_type: v.voucher_type, org_refid: v.org_refid })) });
+      await authed(c, '/amiskt/v1/delete', 'DELETE', toJsonText({ org_company_code: c.orgCompanyCode, voucher: vouchers }));
     },
 
-    async callbackResults(c, range) {
-      page(range.skip, range.take);
-      if (!DATE.test(range.from) || !DATE.test(range.to)) throw new AmisError('invalid_request', { reason: 'bad_page' });
-      const data = await authed(c, '/amiskt/v1/get_call_back_detail_error', 'POST', { from_date: range.from, to_date: range.to, skip: String(range.skip), take: String(range.take) });
+    async callbackResults(connection, query) {
+      const c = snapshot(connection);
+      const { from, to, skip, take } = query;
+      page(skip, take);
+      if (!DATE.test(from) || !DATE.test(to)) throw new AmisError('invalid_request', { reason: 'bad_page' });
+      const data = await authed(c, '/amiskt/v1/get_call_back_detail_error', 'POST', toJsonText({ from_date: from, to_date: to, skip: String(skip), take: String(take) }));
       const results = parseCallbackResults(typeof data === 'string' ? data : JSON.stringify(data ?? null));
       if (results === null) throw new AmisError('invalid_response');
       return results;

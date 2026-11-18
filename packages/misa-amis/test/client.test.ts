@@ -258,6 +258,82 @@ describe('the answer\'s status, the token under concurrency, and the transport\'
   });
 });
 
+describe('what the caller changes while a call waits', () => {
+  // The token request is held back, so the caller has time to change what it passed in.
+  function held() {
+    const fake = createFakeMisa({ clientId: CLIENT, accessCodes: { [CODE]: ORG }, dictionary: { [AMIS_DICTIONARIES.account]: [{ account_number: '1111' }, { account_number: '1121' }, { account_number: '1311' }] } });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => void (release = resolve));
+    const client = createAmisClient({
+      clientId: CLIENT,
+      transport: async (request) => {
+        if (request.url.endsWith('/amiskt/v1/token')) await gate;
+        return fake.transport(request);
+      },
+    });
+    return { fake, client, release };
+  }
+  const bodyOf = (fake: ReturnType<typeof createFakeMisa>, path: string) => JSON.parse(fake.calls.find((c) => c.path === path)?.body ?? 'null') as Record<string, unknown>;
+
+  it('keeps the connection it was given: when the token is renewed, the renewal asks for the same code and company, not what the caller set meanwhile', async () => {
+    const fake = createFakeMisa({ clientId: CLIENT, accessCodes: { [CODE]: ORG } });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => void (release = resolve));
+    let held = false;
+    const client = createAmisClient({
+      clientId: CLIENT,
+      transport: async (request) => {
+        // The first save is answered (ExpiredToken) only after the caller has changed its connection object.
+        if (request.url.endsWith('/amiskt/v1/save') && !held) {
+          held = true;
+          const response = await fake.transport(request);
+          await gate;
+          return response;
+        }
+        return fake.transport(request);
+      },
+    });
+    const mine: AmisConnection = { accessCode: CODE, orgCompanyCode: ORG };
+    await client.companyInfo(mine);
+    fake.expireTokens();
+    const call = client.save(mine, [voucher(REF1)]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    mine.orgCompanyCode = 'ludy-someone-else';
+    mine.accessCode = 'OTHER-CODE';
+    release();
+    await call;
+    const tokenBodies = fake.calls.filter((c) => c.path === '/amiskt/v1/token').map((c) => JSON.parse(c.body) as Record<string, unknown>);
+    expect(tokenBodies).toEqual([
+      { access_code: CODE, org_company_code: ORG },
+      { access_code: CODE, org_company_code: ORG },
+    ]);
+    expect(JSON.parse(fake.calls.filter((c) => c.path === '/amiskt/v1/save').at(-1)?.body ?? '{}').org_company_code).toBe(ORG);
+  });
+
+  it('sends the vouchers as they were when the call began: lines or vouchers added while it waits are not sent, so the 500-line limit holds', async () => {
+    const { fake, client, release } = held();
+    const vouchers = [voucher(REF1, AMIS_MAX_VOUCHER_LINES)];
+    const call = client.save(conn, vouchers);
+    vouchers[0]?.detail.push(line(AMIS_MAX_VOUCHER_LINES + 1));
+    vouchers.push(voucher(REF2));
+    release();
+    await call;
+    const sent = bodyOf(fake, '/amiskt/v1/save').voucher as { detail: unknown[] }[];
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.detail).toHaveLength(AMIS_MAX_VOUCHER_LINES);
+  });
+
+  it('holds a catalogue answer to the page size that was asked for, not to one changed while it waits', async () => {
+    const { fake, client, release } = held();
+    const query = { dataType: AMIS_DICTIONARIES.account, skip: 0, take: 10 };
+    const call = client.dictionary(conn, query);
+    query.take = 1;
+    release();
+    expect(await call).toHaveLength(3);
+    expect(bodyOf(fake, '/amiskt/v1/get_dictionary').take).toBe(10);
+  });
+});
+
 describe('what goes wrong', () => {
   it('maps a MISA error code to its kind, keeps only a plain-word code, and never lets server text into the error', async () => {
     const { fake, client } = setup();
