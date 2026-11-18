@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// One character class for a chapter title (#3882): the database's CHECK on meeting_chapter (20270117170000), the minutes templates' CHECK it copies (20270109090000), the contract's
+// One character class for a chapter title (#3882): the database's CHECK on meeting_chapter (20270117180000), the minutes templates' CHECK it copies (20270109090000), the contract's
 // chapterTitleProblem and the AI run's cleanChapterTitle must agree, so a title one of them lets in is never refused by another (a run's chapter that the database would reject, a typed title the
 // model path would strip). Pure file and function checks: no database.
 import { readFileSync } from 'node:fs';
@@ -22,7 +22,7 @@ function edges(cls: string): number[] {
 }
 
 describe('the character class of a chapter title (#3882)', () => {
-  const chapters = classOf(read('20270117170000_crove_meetings_chapters_run.sql'));
+  const chapters = classOf(read('20270117180000_crove_meetings_chapters_run.sql'));
   const templates = classOf(read('20270109090000_crove_meetings_minutes_template.sql'));
 
   it('is the minutes templates\' class, written once in the same way', () => {
