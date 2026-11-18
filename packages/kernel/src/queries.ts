@@ -591,6 +591,12 @@ export const fileGet = defineQuery({
       .where('id', '=', input.id)
       .executeTakeFirst();
     if (!file) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
+    // Confidential eSign artifacts (such as source_kind = 'hr_contract' PDFs and certificates, #3553) are gated by
+    // crove_sign.can_read_sign_file so unauthorized workspace members receive the same 404 as a missing file.
+    if (file.source === 'sign_document' || file.source === 'sign_sealed' || file.source === 'sign_certificate') {
+      const { rows } = await sql<{ allowed: boolean }>`SELECT crove_sign.can_read_sign_file(${file.id}::uuid) AS allowed`.execute(ctx.trx);
+      if (!rows[0]?.allowed) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
+    }
     // The original of a marketplace report is deleted 90 days after the decision (#2516, ADR-0045 point 8): the row and its hash stay, the bytes do not.
     if (file.original_deleted_at) throw new DomainError('FILE_ORIGINAL_DELETED', 409, 'Tệp gốc của báo cáo này đã được xóa sau 90 ngày kể từ khi bạn quyết định; chỉ còn bản tóm tắt');
     const { original_deleted_at: _deleted, ...rest } = file;
