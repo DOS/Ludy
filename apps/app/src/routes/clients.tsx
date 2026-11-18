@@ -212,7 +212,7 @@ export function ClientsPage() {
         <div className="flex flex-wrap items-center gap-3 text-xs text-subtle-foreground">
           <SupportLink className="text-link" />
           <span className="hidden truncate sm:inline">{me.data?.email}</span>
-          <button className="hover:text-muted-foreground" onClick={() => void signOut()}>
+          <button type="button" className="inline-flex min-h-11 items-center px-2 hover:text-muted-foreground md:min-h-6" onClick={() => void signOut()}>
             {tc('signOut')}
           </button>
           <LocaleSwitcher />

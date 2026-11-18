@@ -62,7 +62,10 @@ test('stale deals show a badge and a next steps list, done and snooze are one cl
   });
 
   await test.step('snooze is one click and hides the step', async () => {
-    await page.getByRole('button', { name: 'Hoãn 7 ngày: việc của cơ hội Báo cáo tài chính' }).click();
+    // #3650: one "Hoãn..." menu per row, in place of three buttons; "Xong" and the draft stay as buttons.
+    const row = page.getByTestId('next-step').filter({ hasText: 'Báo cáo tài chính' });
+    await expect(row.getByRole('button')).toHaveCount(2);
+    await row.getByRole('combobox', { name: 'Hoãn việc của cơ hội Báo cáo tài chính' }).selectOption({ label: 'Hoãn 7 ngày' });
     await expect(page.getByTestId('next-step')).toHaveCount(2);
     await expect(page.getByRole('status').filter({ hasText: 'Đã hoãn 1 việc.' })).toBeVisible();
     // The badge follows: the snoozed and the done deals show none.

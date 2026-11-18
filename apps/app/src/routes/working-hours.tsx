@@ -17,7 +17,8 @@ import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { BOOKING_SETTINGS_ID } from '../lib/booking.ts';
-import { WEEKDAY_KEYS, dayOffRange, daysOf, datesOf, hoursOf, timeZones, type DayHours } from '../lib/calendar.ts';
+import { WEEKDAY_KEYS, dayOffRange, daysOf, datesOf, hoursOf, timeZones, zoneLabel, type DayHours } from '../lib/calendar.ts';
+import { toast } from '../lib/toast.ts';
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.calendar.get.key() });
 
@@ -26,7 +27,15 @@ function HoursForm({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boole
   const [timeZone, setTimeZone] = useState(calendar.hours.timeZone);
   const [days, setDays] = useState<DayHours[]>(() => daysOf(calendar.hours));
   const [invalid, setInvalid] = useState<Weekday | null>(null);
-  const save = useMutation(orpc.calendar.saveHours.mutationOptions({ onSuccess: refresh }));
+  // "Đã lưu giờ làm việc." (#3650): the save was silent before, and the button looked as it did.
+  const save = useMutation(
+    orpc.calendar.saveHours.mutationOptions({
+      onSuccess: () => {
+        toast(t('saved'));
+        return refresh();
+      },
+    }),
+  );
   const set = (i: number, patch: Partial<DayHours>) => setDays((all) => all.map((d, k) => (k === i ? { ...d, ...patch } : d)));
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -43,7 +52,7 @@ function HoursForm({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boole
       <NativeSelect className="w-full" value={timeZone} disabled={!canEdit} onChange={(e) => setTimeZone(e.target.value)} aria-label={t('timeZone')}>
         {timeZones(timeZone).map((z) => (
           <NativeSelectOption key={z} value={z}>
-            {z}
+            {zoneLabel(z, t('zoneVietnam'))}
           </NativeSelectOption>
         ))}
       </NativeSelect>
@@ -69,9 +78,17 @@ function HoursForm({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boole
       </ul>
       {invalid !== null && <ErrorText>{t('invalidDay', { day: t(`weekdays.${WEEKDAY_KEYS[invalid]}`) })}</ErrorText>}
       {canEdit && (
-        <Button loading={save.isPending} type="submit" variant="outline" size="sm" disabled={save.isPending || !days.some((d) => d.on)}>
-          {t('save')}
-        </Button>
+        <>
+          <Button loading={save.isPending} type="submit" variant="outline" size="sm" disabled={save.isPending || !days.some((d) => d.on)} aria-describedby={days.some((d) => d.on) ? undefined : 'working-hours-save-hint'}>
+            {t('save')}
+          </Button>
+          {/* Why the button is off, in words (#3650). */}
+          {!days.some((d) => d.on) && (
+            <p id="working-hours-save-hint" className="text-xs text-muted-foreground">
+              {t('saveNeedsDay')}
+            </p>
+          )}
+        </>
       )}
       {!calendar.saved && <p className="text-xs text-subtle-foreground">{t('defaultHint')}</p>}
       {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}

@@ -3,7 +3,7 @@
 // and never stored), map its columns, read the preview of what would be new, duplicate, in conflict or invalid, and import.
 // Nothing is written to the contacts before the last button. The file's rows that were not imported can be downloaded again.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { Link, useParams } from '@tanstack/react-router';
+import { Link, useParams, useRouter } from '@tanstack/react-router';
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { IMPORT_MAX_ROWS, type ImportCommitted, type ImportCompanyState, type ImportOnDuplicate, type ImportOutcome, type ImportPreview, type ImportReason } from '@crove/kernel-contract';
@@ -30,17 +30,35 @@ function download(name: string, content: BlobPart, type = 'text/csv;charset=utf-
 }
 
 // A sample workbook: the columns the import knows and one made-up row, phone and tax code as text so they keep their zero.
-function templateBook(label: (field: ImportField) => string, example: string): Uint8Array {
-  const sample: Record<ImportField, string> = { name: example, kind: '', taxCode: '', email: 'mau@example.com', phone: '0900 000 000', address: '1 Đường Mẫu, Quận 1', company: '' };
+function templateBook(label: (field: ImportField) => string, sample: { sheet: string; example: string; email: string; phone: string; address: string }): Uint8Array {
+  const row: Record<ImportField, string> = { name: sample.example, kind: '', taxCode: '', email: sample.email, phone: sample.phone, address: sample.address, company: '' };
   return writeWorkbook([
     {
-      name: 'Liên hệ',
+      name: sample.sheet,
       widths: [28, 22, 18, 28, 18, 36, 28],
       headerRows: 1,
       textColumns: [IMPORT_FIELDS.indexOf('taxCode'), IMPORT_FIELDS.indexOf('phone')],
-      rows: [IMPORT_FIELDS.map(label), IMPORT_FIELDS.map((f) => sample[f])],
+      rows: [IMPORT_FIELDS.map(label), IMPORT_FIELDS.map((f) => row[f])],
     },
   ]);
+}
+
+// Back to the screen the import was opened from, People or Companies (#3650); the People list when the page was opened with no screen behind it (a link, a new tab).
+function BackLink({ slug, label }: { slug: string; label: string }) {
+  const router = useRouter();
+  const cameFromApp = ((window.history.state as { __TSR_index?: number } | null)?.__TSR_index ?? 0) > 0;
+  if (!cameFromApp) {
+    return (
+      <Link to="/o/$slug/contacts" params={{ slug }} className="text-link underline">
+        {label}
+      </Link>
+    );
+  }
+  return (
+    <Button type="button" variant="link" className="h-auto p-0" onClick={() => router.history.back()}>
+      {label}
+    </Button>
+  );
 }
 
 export function ContactImportPage() {
@@ -180,11 +198,7 @@ export function ContactImportPage() {
       <PageHeader
         title={t('title')}
         subtitle={t('subtitle')}
-        actions={
-          <Link to="/o/$slug/contacts" params={{ slug }} className="text-link underline">
-            {t('back')}
-          </Link>
-        }
+        actions={<BackLink slug={slug} label={t('back')} />}
       />
       <ol className="mb-4 flex flex-wrap gap-2 text-sm" aria-label={t('steps.label')}>
         {(['choose', 'map', 'preview', 'done'] as const).map((s, i) => (
@@ -198,9 +212,9 @@ export function ContactImportPage() {
         <div className="space-y-3 rounded-lg border border-border p-4">
           <p className="text-sm text-muted-foreground">{t('choose.hint', { max: String(IMPORT_MAX_ROWS) })}</p>
           <Field label={t('choose.file')}>
-            {(c) => <input {...c} ref={input} type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="text-sm" onChange={(e) => void choose(e.target.files?.[0])} />}
+            {(c) => <input {...c} ref={input}  type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="block w-full text-sm text-muted-foreground file:mr-3 file:min-h-9 file:cursor-pointer file:rounded-lg file:border file:border-input file:bg-background file:px-3 file:text-sm file:font-medium file:text-foreground hover:file:bg-muted" onChange={(e) => void choose(e.target.files?.[0])} />}
           </Field>
-          <Button type="button" variant="outline" size="sm" onClick={() => download('mau-lien-he.xlsx', templateBook((f) => t(`field.${f}`), t('choose.example')).slice(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}>
+          <Button type="button" variant="outline" size="sm" onClick={() => download(t('templateFile'), templateBook((f) => t(`field.${f}`), { sheet: t('templateSheet'), example: t('choose.example'), email: t('templateEmail'), phone: t('templatePhone'), address: t('templateAddress') }).slice(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}>
             {t('choose.template')}
           </Button>
           {readError && <ErrorText>{readError}</ErrorText>}
@@ -322,6 +336,11 @@ export function ContactImportPage() {
             </label>
           )}
           {(commit.error || cancel.error) && <ErrorText>{errorMessage(commit.error ?? cancel.error)}</ErrorText>}
+          {counts.newRows === 0 && !(onDuplicate === 'fill_empty' && counts.duplicateRows > 0) && (
+            <p className="text-xs text-muted-foreground" role="status">
+              {t('preview.nothingNew')}
+            </p>
+          )}
           <div className="flex gap-2">
             <Button disabled={counts.newRows === 0 && !(onDuplicate === 'fill_empty' && counts.duplicateRows > 0)} loading={commit.isPending} onClick={() => commit.mutate({ batchId: counts.id, onDuplicate, createCompanies })}>
               {t('preview.import', { count: String(counts.newRows) })}
@@ -346,7 +365,7 @@ export function ContactImportPage() {
                   variant="outline"
                   onClick={() =>
                     download(
-                      `${filename.replace(/\.csv$/i, '')}-chua-nhap.csv`,
+                      `${filename.replace(/\.csv$/i, '')}-${t('rejectsFile')}.csv`,
                       rejectsCsv(
                         csv.header,
                         done.skipped.map((s) => csv.rows[s.rowNo - 1] ?? []),
@@ -364,9 +383,7 @@ export function ContactImportPage() {
             <ErrorText>{t('done.expired')}</ErrorText>
           )}
           <div className="flex gap-3 text-sm">
-            <Link to="/o/$slug/contacts" params={{ slug }} className="text-link underline">
-              {t('done.toContacts')}
-            </Link>
+            <BackLink slug={slug} label={t('done.toContacts')} />
             <Button variant="ghost" size="sm" onClick={reset}>
               {t('done.again')}
             </Button>
