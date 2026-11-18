@@ -14,6 +14,34 @@ export function visitorTimeZone(): string {
   }
 }
 
+/** Vietnam's zone, the one a customer in Vietnam reads times in and is never told the name of (#3646). */
+export const VIETNAM_ZONE = 'Asia/Ho_Chi_Minh';
+const VIETNAM_ZONES: readonly string[] = [VIETNAM_ZONE, 'Asia/Saigon'];
+export const isVietnamZone = (zone: string): boolean => VIETNAM_ZONES.includes(zone);
+
+/** "GMT+9" or "GMT+5:30": a zone's offset from Greenwich at `at`, as people say it; "GMT" for UTC itself; empty where the browser cannot tell. */
+export function zoneOffset(zone: string, at: number): string {
+  try {
+    const part = new Intl.DateTimeFormat('en-GB', { timeZone: zone, timeZoneName: 'shortOffset' }).formatToParts(new Date(at)).find((p) => p.type === 'timeZoneName');
+    const value = part?.value ?? '';
+    return value === 'GMT+0' || value === 'GMT-0' ? 'GMT' : value;
+  } catch {
+    return '';
+  }
+}
+
+/** The offset of the week on screen: "GMT-5", or "GMT-5 / GMT-4" for a week that holds the clocks changing. */
+export function weekOffset(zone: string, range: { from: string; to: string }): string {
+  const first = zoneOffset(zone, Date.parse(range.from));
+  const last = zoneOffset(zone, Date.parse(range.to) - 1);
+  return first === last ? first : `${first} / ${last}`;
+}
+
+/** "New York" for "America/New_York": the place of a zone, without the region and the underscores of its IANA name. */
+export function zonePlace(zone: string): string {
+  return (zone.split('/').pop() ?? zone).replaceAll('_', ' ');
+}
+
 /**
  * The week `weeks` weeks after today in `timeZone`: from local midnight to local midnight seven days later, so a day is
  * never split between two weeks. What one page read covers.
