@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { defaultCoworkerName } from '@crove/kernel-contract';
+import { defaultCoworkerName, isKnownModule } from '@crove/kernel-contract';
 import { Alert, AlertDescription, AlertTitle } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -46,12 +46,10 @@ type Entity = { id: string; name: string; isDefault: boolean };
 
 const RISKS = ['R0', 'R1', 'R2'] as const;
 const AGENT_STATUSES = ['active', 'paused', 'retired'] as const;
-// A module by its name in the reader's language ("finance" reads "Kế toán"); a module this build does not know keeps its
-// id.
-const MODULE_IDS = ['kernel', 'finance', 'social'] as const;
+// A Module by its canonical name in the reader's language; an unknown id keeps its id.
 function useModuleName() {
   const t = useTranslations('modules');
-  return (id: string) => ((MODULE_IDS as readonly string[]).includes(id) ? t(id as (typeof MODULE_IDS)[number]) : id);
+  return (id: string) => (isKnownModule(id) ? t(id) : id);
 }
 
 const SCOPES = ['org', 'module', 'agent'] as const;

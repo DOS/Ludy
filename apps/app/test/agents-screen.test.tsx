@@ -5,11 +5,13 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MODULE_IDS } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { COWORKERS } from '../src/i18n/brand.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
+const configMock = vi.hoisted(() => ({ modules: ['kernel', 'accounting'] as string[] }));
 
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
@@ -32,7 +34,7 @@ vi.mock('../src/lib/api.ts', async () => {
   };
 });
 vi.mock('../src/lib/auth.ts', () => ({
-  getConfig: () => ({ modules: ['kernel', 'accounting'] }),
+  getConfig: () => ({ modules: configMock.modules }),
   auth: {},
   authErrorText: () => '',
   authFailure: () => ({}),
@@ -76,7 +78,10 @@ function page(role: string | null, entities = oneEntity, tpls: typeof templates 
 const positionCards = (html: string) => html.split('data-testid="position"').slice(1);
 
 describe('AgentsPage', () => {
-  beforeEach(() => client.current.clear());
+  beforeEach(() => {
+    client.current.clear();
+    configMock.modules = ['kernel', 'accounting'];
+  });
 
   it('labels the agent-held position as AI and not the member-held one', () => {
     const [agentHeld, memberHeld] = positionCards(page('owner'));
@@ -141,6 +146,24 @@ describe('AgentsPage', () => {
     expect(html).toContain(en.agents.aiBadge);
     for (const hidden of [en.agents.stop, en.agents.addPosition, en.agents.holder, en.agents.save, en.agents.install, en.agents.setBudget, en.agents.budgetsTitle]) {
       expect(html).not.toContain(`>${hidden}<`);
+    }
+  });
+
+  it('translates every canonical ModuleId in add-position options and template cards instead of showing raw slugs', () => {
+    configMock.modules = [...MODULE_IDS];
+    const escapeHtml = (s: string) => s.replaceAll('&', '&amp;');
+    const allTemplates = MODULE_IDS.filter((m) => m !== 'kernel').map((module, index) => ({
+      ...templates[0]!,
+      key: `${module}.helper_${index}`,
+      module,
+      title: `Helper ${module}`,
+    }));
+    const html = page('owner', oneEntity, allTemplates);
+    for (const id of MODULE_IDS) {
+      expect(html).toContain(`>${escapeHtml(en.modules[id])}<`);
+    }
+    for (const raw of ['>ads<', '>crm<', '>notes<', '>hr<', '>social<', '>meetings<', '>projects<', '>finance<', '>sign<', '>kernel<']) {
+      expect(html).not.toContain(raw);
     }
   });
 });

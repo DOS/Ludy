@@ -50,11 +50,14 @@ describe('Settings Apps', () => {
   it('shows an owner every app on with a switch each, no confirmation open, and the plain hint', () => {
     const html = render(true, [app('finance'), app('social'), app('crm')]);
     for (const id of ['finance', 'social', 'crm']) expect(html).toContain(`org-app-${id}`);
+    expect(html).toContain('org-app-group-engage');
+    expect(html).not.toContain('org-app-group-finance');
     expect(html).toContain(en.orgApps.hint.slice(0, 30));
     expect(html.match(/aria-checked="true"/g)).toHaveLength(3);
     expect(html).not.toContain('aria-disabled="true"');
     expect(html).not.toContain(en.orgApps.readOnly);
     expect(html).not.toContain('role="dialog"');
+    expect(html).not.toContain('>Social<');
   });
 
   it('says why an app is off: switched off by the owner, or not in the plan (and then it has no working switch)', () => {
@@ -78,14 +81,19 @@ describe('Settings Apps', () => {
     expect(render(true, [app('ads', { deployment: false })])).toBe('');
   });
 
-  it('speaks Vietnamese with the app names', () => {
-    const html = render(true, [app('finance'), app('meetings', { enabled: false }), app('sign')], 'vi');
-    expect(html).toContain(viMessages.orgApps.names.finance);
-    expect(html).toContain(viMessages.orgApps.names.meetings);
+  it('speaks Vietnamese with the app and module names', () => {
+    const html = render(true, [app('finance'), app('meetings', { enabled: false }), app('notes'), app('sign')], 'vi');
+    const escapeHtml = (s: string) => s.replaceAll('&', '&amp;');
+    expect(html).toContain('org-app-group-teamwork');
+    expect(html).toContain(escapeHtml(viMessages.nav.apps.teamwork));
+    expect(html).toContain(escapeHtml(viMessages.modules.finance));
+    expect(html).toContain(escapeHtml(viMessages.modules.meetings));
+    expect(html).toContain(escapeHtml(viMessages.modules.notes));
     expect(html).toContain('eSign');
-    expect(en.orgApps.names.sign).toBe('eSign');
-    expect(viMessages.orgApps.names.sign).toBe('eSign');
+    expect(en.modules.sign).toBe('eSign');
+    expect(viMessages.modules.sign).toBe('eSign');
     expect(html).toContain(viMessages.orgApps.status.off);
-    expect(html).toContain('Ứng dụng');
+    expect(html).toContain(escapeHtml(viMessages.orgApps.title));
+    expect(html).not.toContain('>Social<');
   });
 });

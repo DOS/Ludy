@@ -2,12 +2,12 @@
 // /o/$slug belongs to exactly one module's manifest and every declared screen is a route, every menu item is a screen
 // of its own module with its label in Vietnamese and English, and a screen of a module the deployment leaves out
 // redirects to the overview, whichever module it is.
-import { MODULE_SCREENS, type ModuleScreens } from '@crove/kernel-contract';
+import { APP_IDS, MODULE_CATALOG, MODULE_IDS, MODULE_SCREENS, isKnownModule, type ModuleScreens } from '@crove/kernel-contract';
 import { createMemoryHistory, createRouter, isNotFound } from '@tanstack/react-router';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { ADMIN_ITEMS, ALL_NAV, APPS, BELL_ITEM, GROUP_ORDER, TOP_ITEMS, appOfPath, installedApps, isHeadedGroup } from '../src/lib/apps.ts';
+import { ADMIN_ITEMS, ALL_NAV, APP_ORDER, APPS, BELL_ITEM, GROUP_ORDER, TOP_ITEMS, appOfPath, installedApps, isHeadedGroup } from '../src/lib/apps.ts';
 import { moduleOfOutsideRoute, moduleOfPath, outsideInstalled, screenInstalled } from '../src/lib/modules.ts';
 
 // What the org route's guard reads: a signed-in session and the modules of /api/config, set per test.
@@ -170,6 +170,26 @@ describe('module screens against the router (#1652)', () => {
       // An app whose modules do not give the order of its groups names it, and names every group it has.
       const order = GROUP_ORDER[app.id];
       if (order) expect(app.groups.map((g) => g.id), `order of the groups of ${app.id}`).toEqual(order);
+    }
+  });
+
+  it('keeps APP_IDS, MODULE_IDS, and bilingual App/Module labels in sync without legacy Social naming', () => {
+    expect(APP_ORDER).toEqual(APP_IDS);
+    for (const appId of APP_IDS) {
+      for (const messages of [viMessages.nav, en.nav]) {
+        expect(messages.apps, `nav.apps.${appId}`).toHaveProperty(appId);
+        expect(messages.appNames, `nav.appNames.${appId}`).toHaveProperty(appId);
+      }
+    }
+    for (const moduleId of MODULE_IDS) {
+      expect(isKnownModule(moduleId)).toBe(true);
+      expect(MODULE_CATALOG).toHaveProperty(moduleId);
+      for (const [lang, messages] of [['vi', viMessages], ['en', en]] as const) {
+        expect(messages.modules, `${lang}.modules.${moduleId}`).toHaveProperty(moduleId);
+        const label = messages.modules[moduleId];
+        expect(label.trim().length, `${lang}.modules.${moduleId} non-empty`).toBeGreaterThan(0);
+        expect(label, `${lang}.modules.${moduleId} must not be Social`).not.toBe('Social');
+      }
     }
   });
 

@@ -303,8 +303,9 @@ export const zMe = z.object({
   orgs: z.array(zOrgSummary),
 });
 
-// The apps an org may switch (ADR-0053, #3313): per app, whether the deployment runs it (CROVE_MODULES), the org holds
-// it (entitlements), the org did not switch it off, and all three (what its members get).
+// The per-org toggleable modules (ADR-0053, #3313; wire/table names keep `org.apps` / `apps_off` for compatibility):
+// each entry's `id` is a ModuleId, reporting whether the deployment runs it (CROVE_MODULES), the org holds it
+// (entitlements), the org did not switch it off, and all three (effective). Settings groups them under their Apps.
 export const zOrgApp = z.object({ id: z.string(), deployment: z.boolean(), entitled: z.boolean(), enabled: z.boolean(), effective: z.boolean() });
 export const zOrgApps = z.object({ apps: z.array(zOrgApp), version: z.number().int().positive(), canChange: z.boolean() });
 export const zOrgAppSet = z.object({ module: z.string().regex(/^[a-z][a-z0-9_]{0,49}$/), enabled: z.boolean() });

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Settings "Ứng dụng" (ADR-0053, slice d of #3307): one switch per app the build ships, every app on with no setup. An owner or admin switches an app off or on
-// (kernel.org.set_app, audited); every other member sees the same list read-only. Turning an app off asks first and says what it keeps: the data, and the connections,
-// which pause; an app that is busy (an open recording) refuses with its own message. The AI coworker here: none acts, every change is a person's. Menus and screens follow
-// the answer of kernel.org.apps through lib/org-modules.ts, not this card.
+// Settings "Ứng dụng & Phân hệ" (ADR-0053, slice d of #3307): toggle per-org switchable modules grouped under their
+// Apps in switcher order. Every module starts on with no setup. An owner or admin switches one off or on
+// (kernel.org.set_app, audited); every other member sees the same list read-only. Turning one off asks first and says
+// what it keeps: the data, and any connections, which pause; busy work (an open recording or live ad launch) refuses
+// with its own message. Menus and screens follow the answer of kernel.org.apps through lib/org-modules.ts.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
+import { APP_IDS, isKnownModule, modulesOfApp, type AppId } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Card } from '@crove/ui/components/card';
 import { Checkbox } from '@crove/ui/components/checkbox';
@@ -13,17 +15,52 @@ import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
 
-// The apps the messages name; one the build adds later shows its id until it has a name.
-const NAMED = ['finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign'] as const;
-type Named = (typeof NAMED)[number];
-const isNamed = (id: string): id is Named => (NAMED as readonly string[]).includes(id);
-// The apps that hold connections or public addresses, whose confirmation says what stays and pauses.
+// The modules that hold connections or public addresses, whose confirmation says what stays and pauses.
 const KEEPS = ['finance', 'social', 'ads', 'crm', 'meetings'] as const;
 type Keeps = (typeof KEEPS)[number];
 const keepsText = (id: string): id is Keeps => (KEEPS as readonly string[]).includes(id);
 
+interface OrgAppEntry {
+  readonly id: string;
+  readonly deployment: boolean;
+  readonly entitled: boolean;
+  readonly enabled: boolean;
+  readonly effective: boolean;
+}
+
+type OrgAppsSection =
+  | { readonly kind: 'single'; readonly row: OrgAppEntry }
+  | { readonly kind: 'group'; readonly appId: AppId; readonly rows: readonly OrgAppEntry[] };
+
+function groupByApp(rows: readonly OrgAppEntry[]): OrgAppsSection[] {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const used = new Set<string>();
+  const sections: OrgAppsSection[] = [];
+  for (const appId of APP_IDS) {
+    const appModules = modulesOfApp(appId);
+    const matched = appModules.flatMap((id) => {
+      const row = byId.get(id);
+      if (!row) return [];
+      used.add(id);
+      return [row];
+    });
+    if (matched.length === 0) continue;
+    if (appModules.length === 1 && matched[0]) {
+      sections.push({ kind: 'single', row: matched[0] });
+    } else {
+      sections.push({ kind: 'group', appId, rows: matched });
+    }
+  }
+  for (const row of rows) {
+    if (!used.has(row.id)) sections.push({ kind: 'single', row });
+  }
+  return sections;
+}
+
 export function OrgAppsCard() {
   const t = useTranslations('orgApps');
+  const tModules = useTranslations('modules');
+  const tNav = useTranslations('nav');
   const apps = useQuery(orpc.org.apps.queryOptions());
   const [asking, setAsking] = useState<string | null>(null);
   const set = useMutation(
@@ -32,18 +69,48 @@ export function OrgAppsCard() {
       onSettled: () => queryClient.invalidateQueries({ queryKey: orpc.org.apps.key() }),
     }),
   );
-  const nameOf = (id: string) => (isNamed(id) ? t(`names.${id}`) : id);
+  const nameOf = (id: string) => (isKnownModule(id) ? tModules(id) : id);
   if (apps.isLoading) return <RowsSkeleton />;
   if (!apps.data) return apps.isError ? <ErrorText>{errorMessage(apps.error)}</ErrorText> : null;
   const rows = apps.data.apps.filter((a) => a.deployment);
   if (rows.length === 0) return null;
   const canChange = apps.data.canChange;
+  const sections = groupByApp(rows);
   const change = (module: string, enabled: boolean) => {
     if (set.isPending) return;
     set.reset();
     set.mutate({ module, enabled });
   };
   const target = rows.find((a) => a.id === asking);
+  const renderRow = (row: OrgAppEntry, indented: boolean) => {
+    const status = !row.entitled ? 'notInPlan' : row.enabled ? 'on' : 'off';
+    const label = nameOf(row.id);
+    return (
+      <li
+        key={row.id}
+        className={`flex items-center justify-between gap-3 py-3 pr-3 text-sm ${indented ? 'pl-7' : 'pl-3'}`}
+        data-testid={`org-app-${row.id}`}
+      >
+        <label className="flex min-w-0 items-center gap-2 text-foreground">
+          <Checkbox
+            checked={row.enabled && row.entitled}
+            // Another row's change is under way: this one waits (its own stays enabled, so focus is not lost when the dialog closes).
+            disabled={!canChange || !row.entitled || (set.isPending && set.variables?.module !== row.id)}
+            aria-label={t('switchLabel', { app: label })}
+            aria-busy={set.isPending}
+            onCheckedChange={(checked) => {
+              // A change is under way: this row takes no second one (and opens no second confirmation).
+              if (set.isPending) return;
+              if (checked) change(row.id, true);
+              else setAsking(row.id);
+            }}
+          />
+          <span className={indented ? 'font-normal' : 'font-medium'}>{label}</span>
+        </label>
+        <Badge variant={status === 'on' ? 'default' : 'outline'}>{t(`status.${status}`)}</Badge>
+      </li>
+    );
+  };
   return (
     <Card className="block space-y-3 p-4" data-testid="org-apps">
       <div>
@@ -51,30 +118,20 @@ export function OrgAppsCard() {
         <p className="mt-1 text-sm text-subtle-foreground">{t('hint')}</p>
       </div>
       <ul className="divide-y rounded-lg border">
-        {rows.map((app) => {
-          const status = !app.entitled ? 'notInPlan' : app.enabled ? 'on' : 'off';
-          return (
-            <li key={app.id} className="flex items-center justify-between gap-3 p-3 text-sm" data-testid={`org-app-${app.id}`}>
-              <label className="flex min-w-0 items-center gap-2 text-foreground">
-                <Checkbox
-                  checked={app.enabled && app.entitled}
-                  // Another row's change is under way: this one waits (its own stays enabled, so focus is not lost when the dialog closes).
-                  disabled={!canChange || !app.entitled || (set.isPending && set.variables?.module !== app.id)}
-                  aria-label={t('switchLabel', { app: nameOf(app.id) })}
-                  aria-busy={set.isPending}
-                  onCheckedChange={(checked) => {
-                    // A change is under way: this row takes no second one (and opens no second confirmation).
-                    if (set.isPending) return;
-                    if (checked) change(app.id, true);
-                    else setAsking(app.id);
-                  }}
-                />
-                <span className="font-medium">{nameOf(app.id)}</span>
-              </label>
-              <Badge variant={status === 'on' ? 'default' : 'outline'}>{t(`status.${status}`)}</Badge>
-            </li>
-          );
-        })}
+        {sections.flatMap((section) =>
+          section.kind === 'single'
+            ? [renderRow(section.row, false)]
+            : [
+                <li
+                  key={`group:${section.appId}`}
+                  className="bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground"
+                  data-testid={`org-app-group-${section.appId}`}
+                >
+                  {tNav(`apps.${section.appId}`)}
+                </li>,
+                ...section.rows.map((row) => renderRow(row, true)),
+              ],
+        )}
       </ul>
       {!canChange && <p className="text-xs text-subtle-foreground">{t('readOnly')}</p>}
       {set.error && <ErrorText>{errorMessage(set.error)}</ErrorText>}

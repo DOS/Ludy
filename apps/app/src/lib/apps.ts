@@ -1,10 +1,9 @@
-// The apps of the shell (issue #1528; plan item 11: "App" in the product UI, with an app switcher in the shell). Each
-// app has its own short menu, in groups; the switcher lists the apps whose module this deployment runs (CROVE_MODULES,
-// ADR-0031), and an item of a module that is not installed is left out of its app. The org's own screens (the chart
-// and AI, Settings) belong to no app: they sit at the foot of the switcher. Modules contribute the apps, groups and
-// items through their manifests (MODULE_SCREENS, #1652); the shell keeps only how they look (the app icons, shorter
-// names inside the menu, which groups carry a heading), which typecheck and module-screens.test.ts hold to the list.
-import { MODULE_SCREENS, type ModuleScreens } from '@crove/kernel-contract';
+// The Apps of the shell (issue #1528; DESIGN.md 1.1: Suite -> App -> Feature Group -> Module). Each App has its own
+// menu of Feature Groups; the switcher lists Apps that have at least one active Module in the org (CROVE_MODULES,
+// ADR-0031, ADR-0053), and an item of an inactive Module is omitted. The org's own screens (Overview, Notifications,
+// Settings) belong to no App and sit on the shell rail. Modules declare screens and menu items through MODULE_SCREENS
+// (#1652); the shell keeps presentation details (icons, group headings, item order), pinned by module-screens.test.ts.
+import { APP_IDS, MODULE_SCREENS, type AppId as ContractAppId, type ModuleScreens } from '@crove/kernel-contract';
 import type { Messages } from '../i18n/messages/vi.ts';
 import { installedItems } from './modules.ts';
 
@@ -38,9 +37,9 @@ const item = (module: ModuleId, screens: ModuleScreens, nav: { path: string; lab
   return { to: `/o/$slug/${nav.path}` as NavItem['to'], label: nav.label as NavLabel, module, ...(modules ? { modules } : {}) };
 };
 
-// The apps in the order of the switcher (#3225): Cộng tác, Tài chính, Engage, Nhân sự, Ludy eSign, Ludy AI. The overview is not an app: it is the first entry of the switcher, the notifications are
+// The Apps in switcher order (#3225): Cộng tác, Tài chính, Engage, Nhân sự, Ludy eSign, Ludy AI. The overview is not an App: it is the first entry of the switcher, notifications are
 // the bell and Settings is at the foot.
-export const APP_ORDER: readonly AppId[] = ['teamwork', 'finance', 'engage', 'hr', 'sign', 'ai'];
+export const APP_ORDER: readonly AppId[] = APP_IDS satisfies readonly ContractAppId[];
 
 // The groups of an app whose modules do not give the order: the Engage app's four groups come from three modules (#2435), so by
 // the order their items first appear Marketing would come before CRM; Tài chính's groups come from the kernel and finance. Every other app keeps the order
