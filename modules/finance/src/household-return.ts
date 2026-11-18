@@ -208,11 +208,12 @@ export const householdCnkd = defineQuery({
     if (input.forExport && !year.block.payable) {
       // Revenue that no split can place (net returns, or an earlier profile with other trades) is the accountant's; the rest the household can finish.
       const accountants = money(beforeRevenue).lt(0) || (!quarterUnassigned.isZero() && money(revenue).lt(0)) || ambiguousBefore;
+      // The accountant's case comes first: a pick of the deduction trade cannot release revenue that has no trade.
       throw invalid(
-        year.block.deductionNeeded
-          ? 'Chưa chọn ngành nghề được trừ ngưỡng doanh thu nên chưa tính được thuế năm và chưa xuất được tờ khai'
-          : accountants
-            ? 'Doanh thu thuần âm hoặc hồ sơ đổi ngành nghề trong năm nên chưa gắn được ngành nghề cho doanh thu; nhờ kế toán lập tờ khai'
+        accountants
+          ? 'Doanh thu thuần âm hoặc hồ sơ đổi ngành nghề trong năm nên chưa gắn được ngành nghề cho doanh thu; nhờ kế toán lập tờ khai'
+          : year.block.deductionNeeded
+            ? 'Chưa chọn ngành nghề được trừ ngưỡng doanh thu nên chưa tính được thuế năm và chưa xuất được tờ khai'
             : 'Chưa chia hết doanh thu các kỳ trước trong năm theo ngành nghề nên chưa xuất được tờ khai',
       );
     }

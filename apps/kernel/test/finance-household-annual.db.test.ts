@@ -397,6 +397,13 @@ suite('the yearly rule of the household tax (#3710 slice 3)', () => {
       const q2 = await cnkd(returns, 2, { splitBefore: [{ trade: 'goods', revenue: String(1.2 * BILLION) }], deductionTrade: 'goods' });
       expect(q2.yearToDate).toMatchObject({ revenueToDate: '900000000', revenueBefore: '1200000000', payable: null });
       await expect(cnkd(returns, 2, { splitBefore: [{ trade: 'goods', revenue: String(1.2 * BILLION) }], deductionTrade: 'goods', forExport: true })).rejects.toMatchObject({ code: 'HOUSEHOLD_SPLIT_INVALID' });
+      // Net returns before the quarter with the quarter fully split: asking for the deduction trade would not release the hold, so the refusal sends the household to the accountant.
+      const before = await org();
+      await setProfile(before, {});
+      await entry(before, '2026-02-10', 'Hàng trả lại', [['511', 0.1 * BILLION, 0], ['111', 0, 0.1 * BILLION]]);
+      await revenue(before, '2026-08-12', 2 * BILLION);
+      const full = [{ trade: 'goods', revenue: String(1.4 * BILLION) }, { trade: 'services', revenue: String(0.6 * BILLION) }];
+      await expect(cnkd(before, 3, { split: full, forExport: true })).rejects.toMatchObject({ code: 'HOUSEHOLD_SPLIT_INVALID', message: expect.stringContaining('nhờ kế toán') });
       // One trade now, two before: the sales before the quarter were made under the old profile, so they are not put on the new sole trade.
       const changed = await org();
       await setProfile(changed, { effectiveFrom: '2026-01-01' });
