@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Link, useLocation } from '@tanstack/react-router';
+import { useEffect } from 'react';
 import { useTranslations } from 'use-intl';
 import { tabGroupOfPath, type NavItem } from '../lib/apps.ts';
 
@@ -9,6 +10,10 @@ import { tabGroupOfPath, type NavItem } from '../lib/apps.ts';
 export function ScreenTabs({ slug, installed, badges }: { slug: string; installed: readonly NavItem[]; badges: Partial<Record<string, string | number | null | undefined>> }) {
   const t = useTranslations('nav');
   const { pathname } = useLocation();
+  // On a phone the strip scrolls sideways: a screen opened by address brings its own tab into view.
+  useEffect(() => {
+    document.querySelector('ul[aria-label] a[aria-current="page"]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  }, [pathname]);
   const group = tabGroupOfPath(pathname);
   if (!group) return null;
   const tabs = group.tabs.filter((tab) => installed.some((item) => item.to === `/o/$slug/${tab.path}`));

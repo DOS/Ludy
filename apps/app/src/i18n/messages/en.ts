@@ -7842,6 +7842,7 @@ export const en = {
     title: 'Settings',
     edit: 'Edit',
     done: 'Done',
+    adminOnlyTab: 'Only owners and admins can change these settings.',
     taxProfile: 'Tax profile',
     taxCalendarNone: 'No obligations selected',
     dataRecords: 'Personal data and activity log',

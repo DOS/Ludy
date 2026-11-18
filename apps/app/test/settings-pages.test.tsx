@@ -121,6 +121,8 @@ describe('which cards each tab of Settings holds', () => {
   it('Bán hàng: the quotes and the deal board, for owners and admins', () => {
     expect(cardsOf(render('SettingsSalesPage'))).toEqual(['quote-settings', 'sales-process']);
     expect(cardsOf(render('SettingsSalesPage', 'member'))).toEqual([]);
+    // A member opens the tab and is told why it holds nothing for them, not an empty page.
+    expect(render('SettingsSalesPage', 'member')).toContain('Chỉ chủ sở hữu và quản trị viên thay đổi được các mục này.');
   });
 
   it('Kế toán và thuế: the master data of the books', () => {

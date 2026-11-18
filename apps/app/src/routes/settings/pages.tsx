@@ -151,10 +151,16 @@ export function SettingsBookingsPage() {
 
 // Bán hàng, with the crm module: the quotes' letterhead and the deal board's stages; owners and admins.
 export function SettingsSalesPage() {
+  const t = useTranslations('settings');
   return (
     <SettingsFrame>
       {({ org, canManage, modules }) => (
         <>
+          {!canManage && (
+            <Card className="block p-4">
+              <p className="text-sm text-muted-foreground">{t('adminOnlyTab')}</p>
+            </Card>
+          )}
           {/* The letterhead, bank note, defaults and logo of the org's quotes (#3645), with the crm module; owners and admins. */}
           {modules.includes('crm') && canManage && <QuoteSettingsCard key={`quote-settings:${org.slug}`} />}
           {/* The deal board's stages and the reminder for forgotten deals (#3647), with the crm module; owners and admins. */}

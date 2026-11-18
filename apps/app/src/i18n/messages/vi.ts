@@ -7838,6 +7838,7 @@ export const vi = {
     title: 'Cài đặt',
     edit: 'Sửa',
     done: 'Xong',
+    adminOnlyTab: 'Chỉ chủ sở hữu và quản trị viên thay đổi được các mục này.',
     taxProfile: 'Hồ sơ thuế',
     taxCalendarNone: 'Chưa chọn việc nào',
     dataRecords: 'Dữ liệu cá nhân và nhật ký',

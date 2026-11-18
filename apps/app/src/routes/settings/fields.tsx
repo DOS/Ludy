@@ -191,7 +191,7 @@ export function VatFilingPeriodField({ period, canManage }: { period: 'month' | 
         <dd className="flex flex-wrap items-center gap-2">
           <span className={period ? 'text-foreground' : 'text-subtle-foreground'}>{label(period)}</span>
           {canManage && (
-            <Button type="button" size="sm" variant="outline" onClick={() => setEditing(true)}>
+            <Button type="button" size="sm" variant="outline" aria-label={`${t('edit')}: ${t('vatFilingPeriod')}`} onClick={() => setEditing(true)}>
               {t('edit')}
             </Button>
           )}
@@ -322,7 +322,7 @@ export function TaxCalendarField({ canManage }: { canManage: boolean }) {
             {` · ${t('fiscalYearEnd')} ${t('fiscalYearEndMonth', { month: String(stored.fiscalYearEndMonth) })}`}
           </span>
           {canManage && (
-            <Button type="button" size="sm" variant="outline" onClick={() => setEditing(true)}>
+            <Button type="button" size="sm" variant="outline" aria-label={`${t('edit')}: ${t('taxCalendar')}`} onClick={() => setEditing(true)}>
               {t('edit')}
             </Button>
           )}
@@ -423,7 +423,7 @@ export function ProposalRemindersField({ canManage }: { canManage: boolean }) {
             ))}
           </span>
           {canManage && (
-            <Button type="button" size="sm" variant="outline" onClick={() => setEditing(true)}>
+            <Button type="button" size="sm" variant="outline" aria-label={`${t('edit')}: ${t('proposalReminders')}`} onClick={() => setEditing(true)}>
               {t('edit')}
             </Button>
           )}
