@@ -6,6 +6,37 @@ Sites that did not answer from the cloud network: thuvienphapluat.vn, luatvietna
 
 What changes in the plans is listed under each answer and gathered in the last section, with its build issue.
 
+## Cross-check against the earlier answers (the final confidence)
+
+The owner had put the same #2520 questions to ChatGPT and Gemini on 2026-11-15, and two Claude agents had drafted answers the same day (the "Đề xuất" of the owner's page); two AI readers had answered the e-invoice rows of #2506 on 2026-11-16 (einvoice-issue.md 3a). Those are independent of this page's three research passes, which read more primary text. An answer is **high confidence** when at least three of these independent sources agree and one of them is a primary text; otherwise it keeps the confidence written in its row.
+
+| Question | Sources that agree | Final confidence |
+|---|---|---|
+| 04/SS-HĐĐT still filed, not with an adjustment or replacement | 3a readers (both), this page (Circular 91 full text) | High; "no day-count deadline" medium-high |
+| Consumer ID on the invoice when given; passport with nationality | 3a readers, this page (Decree 254 signed scan) | High |
+| 8% invoice corrected in 2027 | 3a readers: keep the original rate; this page: keep 8% except a quantity error (Official Letter 2121 precedent) | **Medium, disagreement**: keep open |
+| Art. 15 and Art. 19 do not bind Ludy as the seller's provider client | 3a readers, this page (signed scan) | High |
+| A1 fees via 331 and 335, not 1388 | Gemini, two Claude agents, this page; ChatGPT: no 1388 by default | High |
+| A2 fee VAT 8% then 10%; offset as non-cash payment | Gemini, ChatGPT (with a basis for the offset), this page (Decree 181 Art. 26.2.a) | High, on the condition this page names: the platform's terms provide for the offset and the settlement is confirmed |
+| A3 never refuse a valid fee invoice; carry the 331 balance | Gemini, ChatGPT, two Claude agents, this page | High |
+| A4 separate VAT and PIT; withheld revenue counts toward the threshold and finalization | Gemini, ChatGPT (Tax Department page), this page (Decree 68 full text) | High |
+| A5 revenue on successful delivery, not settlement | Gemini, ChatGPT, two Claude agents, this page | High |
+| A6 correct by an adjusting voucher, Accounting Law Art. 27 | Gemini, ChatGPT (Art. 27 text), this page | High |
+| A7 per-period report and fee invoices; yearly certificate (Decree 252 Art. 46) | Gemini (Art. 46), this page | High on the documents, medium-high on the article |
+| B1 1 billion VND from 01/01/2026 | Gemini, ChatGPT (Government page), this page (full text) | High |
+| B2 rates; VAT on all revenue, PIT above 1 billion; 2026 reductions | Gemini, ChatGPT (Decree 398 signed PDF), this page (PIT Law full text) | High. F&B in the 3% and 1.5% group: Gemini and the Claude agents, not read in a primary text, medium-high |
+| B3 income-method rates and monthly filing above 50 billion | Gemini, ChatGPT, this page | High |
+| B4 01/TKN-CNKD under Circular 89 (with Decision 2551/QĐ-BTC), 01/CNKD under Circular 50 | Gemini, ChatGPT (consolidated text), this page | High |
+| B5 S2d periodic average; books by PIT method | Gemini, ChatGPT (Circular 152 signed PDF), this page | High |
+| B6 no digital signature required; the representative signs | Gemini, this page; ChatGPT: no rule found either way | High that a digital signature is not required; the signature itself is required |
+| C1 Art. 31 clause 3; tax notice; Circular 58 | Gemini, ChatGPT, this page (signed scans) | High |
+| C2 methods; Ludy's month-end average valid under both | Gemini, this page | High |
+| C3 entries; returns reduce revenue and VAT | Gemini, two Claude agents, this page | High. One detail differs: Gemini books returns to 5212 under Circular 99; this page found no 5212 in Circular 99 (secondary). Book to 521 and let a firm open its own detail account |
+| C4 Art. 40, no day count; Decree 181 Art. 23.1; S10 to S12-DN | Gemini, two Claude agents, this page | High |
+| D1 to D3 | This page only | Medium (not put to ChatGPT or Gemini) |
+
+What this changes: the rule rows of #3710 resting on B1 to B5 are confirmed (the VAT rate rows too, now that three sources agree), and #3711 can follow A1 to A7 as written. Only the 2027 correction rate (#3709) and D1 to D3 (#3711) still carry a provisional label or a person's check.
+
 ## The texts in force
 
 - **E-invoices:** Decree 254/2026/ND-CP (30/06/2026, in force 01/07/2026) replaces Decree 123/2020, Art. 1 of Decree 41/2022 and Decree 70/2025 (its Art. 43.2). Circular 91/2026/TT-BTC (in force 01/07/2026) replaces Circular 32/2025 (its Art. 25.2). Read from the signed Decree 254 scan; Circular 91 from a full-text copy. Any spec citing Decree 123 or Circular 78 article numbers is outdated.
@@ -66,4 +97,4 @@ What changes in the plans is listed under each answer and gathered in the last s
 3. **E-invoice issue (#2504, #3681):** nationality with a passport; "Bán cho người tiêu dùng" when the buyer gives nothing; the 2027 correction rate per Official Letter 2121; the 04/SS step says "before the VAT return" instead of a day count. Issue #3709.
 4. **Stock (#2512, #2513):** sales returns reduce revenue and output VAT (521 under Circular 99, 511 under Circular 133), not only cost; stocktake surplus to 3381 then 711; under Circular 99, a 1381 balance without evidence expensed at the reporting date. Issue #3712.
 
-Still open for a person: whether platform fee netting is a valid non-cash payment (A2, no ruling found); the exact Decree 252 article on the annual certificate (A7); whether Circular 89 also replaced 01/CNKD (B4); 2027 guidance on 8% corrections (#2506 question 7); and any extension of the 8% VAT rate decided in December 2026.
+Still open for a person (after the cross-check below): the 2027 rate of a correction to an 8% invoice (#2506 question 7: no 2027 guidance, and the earlier AI reading said the original rate is always kept); D1 to D3 (one research pass only, not in the questions put to ChatGPT and Gemini); any extension of the 8% VAT rate decided in December 2026.
