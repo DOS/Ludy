@@ -61,23 +61,26 @@ const POLICIES = [
   ["crove_kernel.member_vy_result", "member_only", "*", false],
   ["crove_notes.note", "note_read", "r", false],
 ];
-// The three read policies of Meetings that give the sealed company context of an MCP grant a way in (#3731, owner-approved change of this net, 2026-11-18). By exact name only, and only for the
-// ONE comparison of the sealed kind with 'mcp_company' (`(SELECT crove_kernel.ctx_verified() ->> 'kind') = 'mcp_company'`); the role list of the person branch holds the string 'member', which is
-// not a read of the sealed member. Anything else in these policies that reads the helper or the sealed context, or any other policy that does, still fails the net below.
-const COMPANY_READ_POLICIES = [
-  ["crove_meetings.action_item", "action_item_read"],
-  ["crove_meetings.meeting", "meeting_read"],
-  ["crove_meetings.meeting_result", "meeting_result_read"],
-] as const;
+// One named policy, `crove_meetings.meeting.meeting_read`, may read the sealed context once, to compare its kind with 'mcp_company' (#3731, owner-approved change of this net, 2026-11-18):
+// `(SELECT crove_kernel.ctx_verified() ->> 'kind') = 'mcp_company'`. That comparison and the role list of the person branch (`ARRAY['owner', 'admin', 'member']`, whose string 'member' the net
+// below would otherwise take for a read of the sealed member) are set aside for that policy only. The rendered text of the policy must hold exactly one `ctx_verified` and it must be that
+// comparison: any other read of the sealed context or of ctx_acting_user_id in it (a second comparison, another key, a path read, another kind), and the same text on any other policy, still
+// fails. What the net does not do, as before: a policy that reads `ctx_verified` and holds no 'member' string and no ctx_acting_user_id is not matched at all (a gap, filed separately).
+const COMPANY_READ_POLICIES = [["crove_meetings.meeting", "meeting_read"]] as const;
 const KIND_COMPARE = /\(\s*SELECT\s*\(crove_kernel\.ctx_verified\(\) ->> 'kind'::text\)\s*\)\s*=\s*'mcp_company'::text/g;
 const ROLE_LIST = /ARRAY\['owner'::text, 'admin'::text, 'member'::text\]/g;
-// The policies of {t, n, text} that read the helper or the sealed member: the net's own match, after the allowed comparison and the role list of the three named policies are set aside.
+// The policies of {t, n, text} that the net flags: those that read the helper or the sealed member, after the allowance above is applied to the named policy.
 function readsSealedMember(policies: ReadonlyArray<{ t: string; n: string; text: string }>): Array<{ t: string; n: string }> {
   return policies
     .filter((p) => {
       const named = COMPANY_READ_POLICIES.some(([t, n]) => t === p.t && n === p.n);
-      const text = named ? p.text.replace(KIND_COMPARE, "").replace(ROLE_LIST, "") : p.text;
-      return /(ctx_acting_user_id|ctx_verified)/i.test(text) && /ctx_acting_user_id|'member'/i.test(text);
+      if (named) {
+        // Exactly one read of the sealed context in the whole text, and it is the allowed comparison; nothing else of the net's match survives once the allowance is set aside.
+        if ((p.text.match(/ctx_verified/gi) ?? []).length !== 1 || (p.text.match(KIND_COMPARE) ?? []).length !== 1) return true;
+        const rest = p.text.replace(KIND_COMPARE, "").replace(ROLE_LIST, "");
+        return /ctx_acting_user_id|ctx_verified|'member'/i.test(rest);
+      }
+      return /(ctx_acting_user_id|ctx_verified)/i.test(p.text) && /ctx_acting_user_id|'member'/i.test(p.text);
     })
     .map(({ t, n }) => ({ t, n }));
 }
@@ -597,20 +600,31 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     ).toEqual(POLICIES);
   });
 
-  it("sets aside only the three named Meetings read policies and only their one comparison of the sealed kind, and flags every other match (planted texts)", () => {
+  it("sets aside only the one comparison of the sealed kind in meeting_read, and flags every other match (planted texts)", () => {
     const compare = "(( SELECT (crove_kernel.ctx_verified() ->> 'kind'::text)) = 'mcp_company'::text)";
     const roles = "m.role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])";
     const meeting = { t: "crove_meetings.meeting", n: "meeting_read" };
     // The real shape is set aside.
     expect(readsSealedMember([{ ...meeting, text: `(${roles}) OR ${compare}` }])).toEqual([]);
-    // The same text on any other policy, table or name is flagged.
+    // The same text on any other policy, table or name is flagged (so are the other two Meetings read policies, should they ever hold the role list).
     expect(readsSealedMember([{ t: "crove_meetings.meeting", n: "other_read", text: `(${roles}) OR ${compare}` }])).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_meetings.meeting_result", n: "meeting_result_read", text: `(${roles}) OR ${compare}` }])).toHaveLength(1);
     expect(readsSealedMember([{ t: "crove_notes.note", n: "meeting_read", text: `(${roles}) OR ${compare}` }])).toHaveLength(1);
-    // A named policy that also reads the helper, or the sealed member by key, is flagged.
-    expect(readsSealedMember([{ ...meeting, text: `${compare} OR (crove_kernel.ctx_acting_user_id() IS NOT NULL)` }])).toHaveLength(1);
-    expect(readsSealedMember([{ ...meeting, text: `${compare} OR ((crove_kernel.ctx_verified() ->> 'member'::text) IS NOT NULL)` }])).toHaveLength(1);
-    // A second string 'member' beyond the role list (a different list, a literal) is flagged.
-    expect(readsSealedMember([{ ...meeting, text: `${compare} OR (m.role = 'member'::text AND crove_kernel.ctx_verified() IS NOT NULL)` }])).toHaveLength(1);
+    // Another policy holding the comparison beside any 'member' string is flagged.
+    expect(readsSealedMember([{ t: "crove_meetings.meeting_result", n: "meeting_result_read", text: `${compare} OR (x = 'member'::text)` }])).toHaveLength(1);
+    // meeting_read with any other read of the sealed context or of the helper is flagged, whatever the key or kind it names.
+    const extras = [
+      "(crove_kernel.ctx_acting_user_id() IS NOT NULL)",
+      "((SELECT (crove_kernel.ctx_verified() ->> 'member_vy'::text)) = 'x'::text)",
+      "((SELECT (crove_kernel.ctx_verified() ->> 'kind'::text)) = 'mcp_member'::text)",
+      "((SELECT (crove_kernel.ctx_verified() #>> '{member}'::text[])) IS NOT NULL)",
+      "((SELECT (crove_kernel.ctx_verified() ->> 'member'::text)) IS NOT NULL)",
+      `${compare}`,
+    ];
+    for (const extra of extras) expect(readsSealedMember([{ ...meeting, text: `(${roles}) OR ${compare} OR ${extra}` }]), extra).toHaveLength(1);
+    // meeting_read without the comparison, or with a different one, is flagged too.
+    expect(readsSealedMember([{ ...meeting, text: `(${roles})` }])).toHaveLength(1);
+    expect(readsSealedMember([{ ...meeting, text: `(${roles}) OR ((SELECT (crove_kernel.ctx_verified() ->> 'kind'::text)) = 'mcp_member'::text)` }])).toHaveLength(1);
   });
 
   // ---- The catalog -----------------------------------------------------------------------------------------------------------
