@@ -77,6 +77,7 @@ import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
 import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
+import { misaCheck } from './misa-check.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -2908,6 +2909,10 @@ export function createRpcHandler(
     vouchers: {
       list: os.vouchers.list.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.vouchers.list', input, { actor, orgId })),
+      ),
+      // What MISA's import will refuse or cut in one of the seven exports (#3848): a read over the rows the file is built from, in the caller's own context. The export is unchanged and never waits for it.
+      misaCheck: os.vouchers.misaCheck.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => misaCheck((name, query) => runtime.query(name, query, { actor, orgId }), input)),
       ),
     },
     openingBalance: {
