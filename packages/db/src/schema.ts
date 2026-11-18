@@ -524,7 +524,7 @@ export type HouseholdRuleStatus = (typeof HOUSEHOLD_RULE_STATUSES)[number];
 export type HouseholdExpenseGroup = (typeof HOUSEHOLD_EXPENSE_GROUPS)[number];
 export type HouseholdBook = (typeof HOUSEHOLD_BOOKS)[number];
 export type HouseholdReturnForm = (typeof HOUSEHOLD_RETURN_FORMS)[number];
-export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count', 'crm_order_line'] as const;
+export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count', 'crm_order_line', 'sale_return'] as const;
 export type StockMoveSource = (typeof STOCK_MOVE_SOURCES)[number];
 export type StockItemTable = Refine<
   G.FinanceStockItemTable,

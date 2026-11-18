@@ -1718,6 +1718,10 @@ export const vi = {
     moveQuantity: 'Số lượng',
     moveSource: 'Nguồn',
     reverse: 'Đảo phát sinh',
+    return: 'Hàng trả lại',
+    returnQuantity: 'Số lượng hàng trả lại (còn trả được {left})',
+    returnLeft: 'Còn {left}',
+    returnConfirm: 'Xác nhận trả lại',
     reverseConfirm: 'Xác nhận đảo',
     reversed: 'Đã đảo',
     close: 'Đóng',
@@ -1785,7 +1789,7 @@ export const vi = {
     balance: 'Tồn',
     cardValue: 'Giá trị nhập',
     directions: { purchase: 'Mua vào', sale: 'Bán ra' },
-    sources: { document_line: 'Từ hóa đơn', manual: 'Nhập tay', reversal: 'Đảo', order_line: 'Từ đơn hàng sàn', count: 'Kiểm kê', crm_order_line: 'Giao hàng của đơn bán' },
+    sources: { document_line: 'Từ hóa đơn', manual: 'Nhập tay', reversal: 'Đảo', order_line: 'Từ đơn hàng sàn', count: 'Kiểm kê', crm_order_line: 'Giao hàng của đơn bán', sale_return: 'Hàng khách trả lại' },
     trades: { goods: 'Hàng hóa', services: 'Dịch vụ', catering: 'Ăn uống', digital_content: 'Nội dung số', other: 'Khác' },
     // The finance coworker on stock (#2514): the item it suggests for an unassigned line.
     suggest: {

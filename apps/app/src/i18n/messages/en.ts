@@ -1720,6 +1720,10 @@ export const en = {
     moveQuantity: 'Quantity',
     moveSource: 'Source',
     reverse: 'Reverse move',
+    return: 'Goods returned',
+    returnQuantity: 'Quantity returned ({left} still returnable)',
+    returnLeft: '{left} left',
+    returnConfirm: 'Confirm return',
     reverseConfirm: 'Confirm reverse',
     reversed: 'Reversed',
     close: 'Close',
@@ -1787,7 +1791,7 @@ export const en = {
     balance: 'Balance',
     cardValue: 'Value in',
     directions: { purchase: 'Purchase', sale: 'Sale' },
-    sources: { document_line: 'From an invoice', manual: 'Entered by hand', reversal: 'Reversal', order_line: 'From a marketplace order', count: 'Stock count', crm_order_line: 'Delivery of a sales order' },
+    sources: { document_line: 'From an invoice', manual: 'Entered by hand', reversal: 'Reversal', order_line: 'From a marketplace order', count: 'Stock count', crm_order_line: 'Delivery of a sales order', sale_return: 'Goods returned by a customer' },
     trades: { goods: 'Goods', services: 'Services', catering: 'Catering', digital_content: 'Digital content', other: 'Other' },
     // The finance coworker on stock (#2514): the item it suggests for an unassigned line.
     suggest: {

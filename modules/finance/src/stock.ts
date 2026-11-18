@@ -9,13 +9,14 @@
 // - finance.stock_item.list / finance.stock_move.list: every member reads. On hand is the sum of an item's moves, computed here, never a column.
 // Quantities are decimal strings (numeric(20,6) in the database) and sums go through decimal.js; audit facts carry ids and counts, never a name.
 import { sql } from 'kysely';
+import { money } from '@crove/l10n-vn';
 import { z } from 'zod';
-import { zId, zStockAliasTeach, zStockItemInput, type StockItem, type StockMove } from '@crove/kernel-contract';
+import { zId, zStockAliasTeach, zStockItemInput, zStockMoveReturn, type StockItem, type StockMove } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { chartAccounts } from './accounts.ts';
 import { stockMoveLockKey } from './domain/stock-close.ts';
-import { normalizeAlias, oppositeQuantity, plainQuantity, sameUnit } from './domain/stock.ts';
+import { isSaleOut, normalizeAlias, oppositeQuantity, plainQuantity, returnableQuantity, sameUnit } from './domain/stock.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
 
@@ -42,7 +43,9 @@ export interface StockMoveWrite {
     // The adjustment of a count of stock (#2513), one per count line, with its value (whole dong, signed like the quantity).
     | { type: 'count'; countLineId: string; amount: string }
     // The delivery of a line of a CRM sales order (#2818, ADR-0050): one forward move per (order, line), a return is a reversal.
-    | { type: 'crm_order_line'; orderId: string; lineNo: number };
+    | { type: 'crm_order_line'; orderId: string; lineNo: number }
+    // A partial return of the goods of a sale (#3712): a stock-in of the same item that names the sale's stock-out it gives back; an undo is a reversal of it.
+    | { type: 'sale_return'; returnOfMoveId: string };
 }
 
 // The date a move is written with. A month the entity has closed takes no move (the database refuses one, 20261124020000), so a move whose own date falls in one is written on today, in the
@@ -99,6 +102,7 @@ export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite):
       crm_order_line_no: move.source.type === 'crm_order_line' ? move.source.lineNo : null,
       amount: move.source.type === 'count' ? move.source.amount : null,
       reverses_move_id: move.source.type === 'reversal' ? move.source.reversesMoveId : null,
+      return_of_move_id: move.source.type === 'sale_return' ? move.source.returnOfMoveId : null,
       created_by: userId,
     })
     .returning('id')
@@ -270,6 +274,8 @@ export const stockMoveReverse = defineCommand({
     if (move.source_type === 'order_line') throw new DomainError('STOCK_MOVE_ORDER_LINE', 409, 'Phát sinh này đến từ đơn hàng sàn nên không đảo riêng được; hãy bỏ gán dòng đơn hàng đó, hoặc kho tự hoàn lại khi đơn được báo hoàn trả hoặc hủy sau khi giao');
     const done = await ctx.trx.selectFrom('crove_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', move.id).executeTakeFirst();
     if (done) throw new DomainError('STOCK_MOVE_REVERSED', 409, 'Phát sinh kho này đã được đảo');
+    // The returns of a sale come back first (the database holds the same rule): reversing the sale under them would put the returned pieces back twice.
+    if ((await liveReturnsOf(ctx, move.id)).length > 0) throw new DomainError('STOCK_MOVE_HAS_RETURN', 409, 'Lần xuất này đã có hàng trả lại; hãy đảo các lần trả lại trước');
     // Two reversals at once: the second meets the unique index (a move is reversed once), and the move rows cannot be locked here (the tenant role only reads and inserts).
     try {
       const id = await writeStockMove(ctx, { itemId: move.item_id, date: await databaseToday(ctx.trx), quantity: oppositeQuantity(move.quantity), source: { type: 'reversal', reversesMoveId: move.id } });
@@ -324,6 +330,70 @@ export const stockItemList = defineQuery({
   },
 });
 
+// The returns of a sale move that are still live (not undone by a reversal): their ids and quantities, oldest first.
+export async function liveReturnsOf(ctx: Ctx, moveId: string): Promise<Array<{ id: string; itemId: string; quantity: string }>> {
+  const rows = await ctx.trx
+    .selectFrom('crove_finance.stock_move as q')
+    .select(['q.id', 'q.item_id', 'q.quantity'])
+    .where('q.org_id', '=', ctx.orgId)
+    .where('q.return_of_move_id', '=', moveId)
+    .where('q.source_type', '=', 'sale_return')
+    .where((eb) => eb.not(eb.exists(eb.selectFrom('crove_finance.stock_move as r').select('r.id').whereRef('r.org_id', '=', 'q.org_id').whereRef('r.reverses_move_id', '=', 'q.id'))))
+    .orderBy('q.id')
+    .execute();
+  return rows.map((r) => ({ id: r.id, itemId: r.item_id, quantity: plainQuantity(r.quantity) }));
+}
+
+// Undoes the live returns of a sale move, each by the reversal move of its own item, on `date`. The sale move itself cannot be reversed while a return of it is live (the database holds the rule),
+// so every flow that reverses a sale move (the void of its document, the return of a delivered CRM order line) calls this first. The goods that really came back are returned again by a person
+// against whatever replaces the sale.
+export async function reverseLiveReturns(ctx: CommandContext, moveId: string, date: string): Promise<number> {
+  const live = await liveReturnsOf(ctx, moveId);
+  for (const back of live) await writeStockMove(ctx, { itemId: back.itemId, date, quantity: oppositeQuantity(back.quantity), source: { type: 'reversal', reversesMoveId: back.id } });
+  return live.length;
+}
+
+// A partial return of the goods of a sale (#3712 slice 1, plan stock-and-marketplaces.md 8.2 and 8.3). A person says how many pieces of a sale's stock-out came back; the stock-in is of the same
+// item, dated today (a closed month takes it in the open one, like every move) and priced by the month close at the month's average, so the cost comes back in the close entry a person approves
+// (Dr 156 / Cr 632). No entry is posted here and revenue and output VAT are not touched: they follow the credit or adjustment invoice. The database holds the rules (the move is a sale's stock-out of
+// this item, is not reversed, and the live returns stay within what was sold) under a lock on the sale move; the checks here give the person the reason.
+export const stockMoveReturn = defineCommand({
+  name: 'finance.stock_move.return',
+  input: zStockMoveReturn,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: EDITORS,
+  target: (input) => ({ type: 'finance.stock_move', id: input.moveId }),
+  handler: async (ctx, input): Promise<{ id: string }> => {
+    const move = await ctx.trx
+      .selectFrom('crove_finance.stock_move')
+      .select(['id', 'item_id', 'quantity', 'source_type'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.moveId)
+      .executeTakeFirst();
+    if (!move) throw new DomainError('STOCK_MOVE_NOT_FOUND', 404, 'Không tìm thấy phát sinh kho này');
+    if (!isSaleOut({ source: move.source_type, quantity: move.quantity })) {
+      throw new DomainError('STOCK_RETURN_NOT_SALE', 409, 'Chỉ ghi nhận hàng trả lại cho một lần xuất bán hàng');
+    }
+    const reversed = await ctx.trx.selectFrom('crove_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', move.id).executeTakeFirst();
+    if (reversed) throw new DomainError('STOCK_RETURN_REVERSED', 409, 'Lần xuất này đã được đảo nên không ghi nhận hàng trả lại nữa');
+    const returned = (await liveReturnsOf(ctx, move.id)).reduce((sum, r) => sum.plus(r.quantity), money('0'));
+    const left = money(move.quantity).negated().minus(returned);
+    if (money(input.quantity).greaterThan(left)) {
+      throw new DomainError('STOCK_RETURN_EXCEEDS', 409, `Số lượng trả lại vượt quá số còn trả được (${plainQuantity(left.toFixed())})`, { returnable: plainQuantity(left.toFixed()) });
+    }
+    try {
+      const id = await writeStockMove(ctx, { itemId: move.item_id, date: await databaseToday(ctx.trx), quantity: plainQuantity(input.quantity), source: { type: 'sale_return', returnOfMoveId: move.id } });
+      ctx.audit({ moveId: move.id, returnId: id, quantity: plainQuantity(input.quantity) });
+      return { id };
+    } catch (error) {
+      // Two returns at once: the second meets the guard under the lock on the sale move.
+      if (pgCode(error) === '23514' && /STOCK_RETURN_EXCEEDS/.test(pgMessage(error))) throw new DomainError('STOCK_RETURN_EXCEEDS', 409, 'Số lượng trả lại vượt quá số còn trả được');
+      throw error;
+    }
+  },
+});
+
 export const stockMoveList = defineQuery({
   name: 'finance.stock_move.list',
   input: z.strictObject({ itemId: zId, limit: z.number().int().min(1).max(500).optional() }),
@@ -332,8 +402,13 @@ export const stockMoveList = defineQuery({
     await loadItem(ctx, input.itemId);
     const rows = await ctx.trx
       .selectFrom('crove_finance.stock_move as m')
-      .select(['m.id', 'm.item_id', 'm.legal_entity_id', 'm.move_date', 'm.quantity', 'm.source_type', 'm.document_id', 'm.line_no', 'm.reverses_move_id'])
+      .select(['m.id', 'm.item_id', 'm.legal_entity_id', 'm.move_date', 'm.quantity', 'm.source_type', 'm.document_id', 'm.line_no', 'm.reverses_move_id', 'm.return_of_move_id'])
       .select((eb) => eb.exists(eb.selectFrom('crove_finance.stock_move as r').select('r.id').whereRef('r.org_id', '=', 'm.org_id').whereRef('r.reverses_move_id', '=', 'm.id')).as('reversed'))
+      // What the live returns (not undone) of this move already took back; only a sale move has any.
+      .select(
+        sql<string>`(SELECT COALESCE(SUM(q.quantity), 0) FROM crove_finance.stock_move q WHERE q.org_id = m.org_id AND q.return_of_move_id = m.id AND q.source_type = 'sale_return'
+          AND NOT EXISTS (SELECT 1 FROM crove_finance.stock_move r WHERE r.org_id = q.org_id AND r.reverses_move_id = q.id))`.as('returned'),
+      )
       .where('m.org_id', '=', ctx.orgId)
       .where('m.item_id', '=', input.itemId)
       .orderBy('m.move_date', 'desc')
@@ -351,9 +426,11 @@ export const stockMoveList = defineQuery({
       lineNo: r.line_no,
       reversesMoveId: r.reverses_move_id,
       reversed: Boolean(r.reversed),
+      returnOfMoveId: r.return_of_move_id,
+      returnable: !r.reversed && isSaleOut({ source: r.source_type, quantity: r.quantity }) ? returnableQuantity(r.quantity, r.returned) : '0',
     }));
   },
 });
 
-export const stockCommands = [stockItemSave, stockItemSetActive, stockAliasTeach, stockAliasForget, stockMoveReverse];
+export const stockCommands = [stockItemSave, stockItemSetActive, stockAliasTeach, stockAliasForget, stockMoveReverse, stockMoveReturn];
 export const stockQueries = [stockItemList, stockMoveList];

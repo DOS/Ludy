@@ -31,7 +31,7 @@ import { moveQuantity, movableQuantity, oppositeQuantity } from './domain/stock.
 import { loadDraft, toDraftInput } from './einvoice-drafts.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
-import { loadItem, writeStockMove } from './stock.ts';
+import { loadItem, reverseLiveReturns, writeStockMove } from './stock.ts';
 import { matchLineItem } from './stock-lines.ts';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -237,6 +237,8 @@ export const stockMoveFromOrderLine = defineCommand({
       if (reversal) return { status: 'already_returned', moveId: reversal.id };
       const movedOn = typeof forward.move_date === 'string' ? forward.move_date : new Date(forward.move_date).toISOString().slice(0, 10);
       if (input.date < movedOn) throw new DomainError('ORDER_RETURN_BEFORE_DELIVERY', 422, 'Ngày hoàn hàng không được trước ngày giao hàng');
+      // A partial return of this delivery (#3712) is undone first: the whole line coming back takes the delivery with it, and the database does not reverse a sale move under a live return.
+      await reverseLiveReturns(ctx, forward.id, input.date);
       const id = await writeStockMove(ctx, { itemId: forward.item_id, date: input.date, quantity: oppositeQuantity(forward.quantity), source: { type: 'reversal', reversesMoveId: forward.id } });
       ctx.audit({ orderId: handoff.orderId, lineNo, action, moveId: id, reversesMoveId: forward.id });
       return { status: 'returned', moveId: id };

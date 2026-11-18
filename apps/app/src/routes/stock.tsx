@@ -119,6 +119,15 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
   const reverse = useMutation({ mutationFn: (moveId: string) => client.stock.moves.reverse({ moveId }), onSuccess: refresh });
   // A reversal cannot be taken back, so the button asks once.
   const [confirming, setConfirming] = useState<string | null>(null);
+  // A partial return of a sale's goods (#3712): the quantity is typed once on the row of the sale's stock-out; the cost comes back with the month close.
+  const [returning, setReturning] = useState<{ id: string; quantity: string } | null>(null);
+  const giveBack = useMutation({
+    mutationFn: (v: { moveId: string; quantity: string }) => client.stock.moves.return(v),
+    onSuccess: () => {
+      setReturning(null);
+      refresh();
+    },
+  });
   return (
     <Card className="mb-6 block p-4" data-testid="stock-moves">
       <div className="flex items-center justify-between gap-2">
@@ -141,6 +150,38 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
               <TableCell className={NUM}>{m.quantity}</TableCell>
               <TableCell className="px-4 py-3">{t(`sources.${m.source}`)}</TableCell>
               <TableCell className="px-4 py-3 text-right">
+                {canWrite && !m.reversed && m.returnable !== '0' && (
+                  returning?.id === m.id ? (
+                    <span className="mr-2 inline-flex items-center gap-2">
+                      <Input
+                        aria-label={t('returnQuantity', { left: m.returnable })}
+                        className="w-28"
+                        inputMode="decimal"
+                        placeholder={t('returnLeft', { left: m.returnable })}
+                        value={returning.quantity}
+                        onChange={(e) => setReturning({ id: m.id, quantity: e.target.value })}
+                        data-testid="stock-move-return-quantity"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={giveBack.isPending}
+                        disabled={!/^\d{1,14}(\.\d{1,6})?$/.test(returning.quantity.trim()) || Number(returning.quantity) <= 0}
+                        onClick={() => giveBack.mutate({ moveId: m.id, quantity: returning.quantity.trim() })}
+                        data-testid="stock-move-return-confirm"
+                      >
+                        {t('returnConfirm')}
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setReturning(null)}>
+                        {t('cancel')}
+                      </Button>
+                    </span>
+                  ) : (
+                    <Button variant="ghost" size="sm" className="mr-2" onClick={() => setReturning({ id: m.id, quantity: '' })} data-testid="stock-move-return">
+                      {t('return')}
+                    </Button>
+                  )
+                )}
                 {m.reversed ? (
                   <Badge variant="secondary">{t('reversed')}</Badge>
                 ) : (
@@ -175,6 +216,7 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
         </DataTable>
       )}
       {reverse.error && <ErrorText>{errorMessage(reverse.error)}</ErrorText>}
+      {giveBack.error && <ErrorText>{errorMessage(giveBack.error)}</ErrorText>}
     </Card>
   );
 }
