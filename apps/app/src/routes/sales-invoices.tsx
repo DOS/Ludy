@@ -1058,7 +1058,7 @@ export function SalesInvoicesPage() {
             {(providers.data?.length ?? 0) > 0 && (
               <>
                 {' '}
-                <Link to="/o/$slug/settings" params={{ slug }} hash="integrations" className="text-link underline underline-offset-2" data-testid="invoice-open-connections">
+                <Link to="/o/$slug/settings/connections" params={{ slug }} hash="integrations" className="text-link underline underline-offset-2" data-testid="invoice-open-connections">
                   {t('openConnections')}
                 </Link>
               </>

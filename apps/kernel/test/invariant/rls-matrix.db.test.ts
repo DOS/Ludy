@@ -94,6 +94,7 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_ads.ad_manage_change',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.stock_alias',
@@ -110,6 +111,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
+  'crove_meetings.meeting_chapter',
   'crove_meetings.meeting_link',
   'crove_notes.attachment',
   'crove_notes.link',
@@ -196,6 +198,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.live_chunk', () => 'false'], // The recorder's own live pieces, read by the recorder, a user (ADR-0052 L4a, #3109).
   ['crove_meetings.live_line', () => 'false'], // The live preview of a recording, read by the recorder, a user (ADR-0052 L4a, #3110).
   ['crove_meetings.meeting', () => 'false'], // As above.
+  ['crove_meetings.meeting_chapter', () => 'false'], // The chapters of a meeting, read by the recorder and, once published, the readers of the meeting, users (meetings chapters, #3844).
   ['crove_meetings.meeting_link', () => 'false'], // As above (a link is read through its meeting's readers, L1 #2587).
   ['crove_meetings.meeting_note', () => 'false'], // The recorder's own rough notes, read by the recorder, a user (meetings integrations A5, #3163).
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
@@ -293,6 +296,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.live_line', 'false'],
   // Meeting records (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting', 'false'],
+  // The chapters of a meeting (meetings chapters, #3844): the recorder reads every stage and the readers the published ones, users; worker system context reads and writes nothing.
+  ['crove_meetings.meeting_chapter', 'false'],
   // Meeting readers (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_link', 'false'],
   // The recorder's own rough notes (meetings integrations A5, #3163): the recorder's alone; worker system context reads and writes nothing.
@@ -885,6 +890,46 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           commit_until: '2031-01-10',
           created_by: o.owner,
         },
+      };
+    },
+  },
+  // The changes of a running ad (W4, #3835): one row per requested change of a live launch's campaign, ad set or ad (pause, resume, archive, a lower or raised daily budget,
+  // a shorter or longer schedule), with the values it moves from and to and its state. The entity is the account's (b_legal_entity, the composite foreign key). Tenant roles
+  // update its state columns only (a column grant; the guard holds who moves what), so the update probes assign the state to itself. A row is inserted by an owner or an admin
+  // for a change that cannot raise spend, or by the execution of the approved proposal of its own command, for a live launch with a recorded object, and nothing else.
+  'crove_ads.ad_manage_change': {
+    update: { set: 'state = state' },
+    noInsertControl: 'only an owner or an admin inserts a change, in a context of its org, for a live launch with a recorded object, and the ones that can raise spend only inside the execution of their approved proposal; every other context of the org is refused by its guard (ads.db.test.ts and ads-manage.db.test.ts test it)',
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      const draft = randomUUID();
+      const launch = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+          { table: 'crove_ads.ad_campaign_draft', values: { org_id: o.id, id: draft, ad_account_id: account, name: 'RLS matrix change', objective: 'traffic', created_by: o.owner } },
+          {
+            table: 'crove_ads.ad_launch',
+            values: {
+              org_id: o.id,
+              id: launch,
+              ad_account_id: account,
+              draft_id: draft,
+              proposal_id: randomUUID(),
+              plan_hash: `sha256:${hex64()}`,
+              currency: 'VND',
+              daily_budget: '100000',
+              start_on: '2031-01-01',
+              end_on: '2031-01-10',
+              amount: '1000000',
+              commit_until: '2031-01-10',
+              created_by: o.owner,
+            },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, launch_id: launch, kind: 'pause', slot: 'campaign', level: 'campaign', object_id: `rls-${randomUUID()}`, requested_by: o.owner },
       };
     },
   },
@@ -2862,6 +2907,17 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       setup: [{ table: 'crove_meetings.meeting', values: meetingsMeetingRow(o, 'org') }],
       row: meetingsMeetingRow(o, 'attendees'),
     }),
+  },
+  // #3844 (meetings chapters): one chapter of a meeting's table of contents, a title and the second of the transcript line it starts at; a draft (born tainted when it comes from a run of the recorder's
+  // Vy) that only the recorder reads, and a published row that the readers of the meeting read too. Lands before its table (PENDING_TABLES).
+  'crove_meetings.meeting_chapter': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, stage: 'draft', position: 1, title: 'RLS matrix chapter', start_seconds: 0, tainted: 'true' },
+      };
+    },
   },
   // #2587 (L1): a meeting's link to a deal (the CRM module is reached through ctx.query, so the deal id has no foreign key).
   'crove_meetings.meeting_link': {

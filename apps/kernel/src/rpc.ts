@@ -11,7 +11,7 @@ import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wa
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, EInvoiceReasonSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, EInvoiceReasonSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -77,6 +77,7 @@ import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSugg
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
+import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -420,6 +421,7 @@ export function createRpcHandler(
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
+  const financeSupplierPayableLineAi = supplierPayableLineAi(conversationReader?.supplierPayableLineSentence ? { supplierPayableLineSentence: conversationReader.supplierPayableLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker on payroll (#2534, #2815): the same reader and model, independent budgets per action so `Promise.all([prepare, flag])` in the UI does not self-contend on `running`.
   const payrollPrepareBudget = suggestionBudget();
   const payrollAi: PayrollAi = {
@@ -2973,6 +2975,13 @@ export function createRpcHandler(
     },
     supplierPayment: {
       payable: os.supplierPayment.payable.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_payment.payable', input, { actor, orgId }))),
+      // The facts are summed here from the list read in the caller's own transaction, so what the model is told comes from the books, never from the caller; the sentence is a read and asks for nothing.
+      payableLine: os.supplierPayment.payableLine.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const list = await runtime.query<SupplierPayableList>('finance.supplier_payment.payable', {}, { actor, orgId });
+          return explainSupplierPayableLine(financeSupplierPayableLineAi, orgId, actor.userId, list, input.lang ?? 'vi');
+        }),
+      ),
       list: os.supplierPayment.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_payment.list', input, { actor, orgId }))),
       confirmAccount: os.supplierPayment.confirmAccount.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.confirm_account', input, { actor, orgId }))),
       cancel: os.supplierPayment.cancel.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.cancel', input, { actor, orgId }))),

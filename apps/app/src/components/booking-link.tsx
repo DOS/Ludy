@@ -68,7 +68,7 @@ export function OpenBookingPageLink({ url, title, label }: { url: string; title?
 /** "Cài đặt lịch hẹn": the working hours card in Settings, with the event types right below; `anchor` "eventTypes" goes to the event types card itself. */
 export function BookingSettingsLink({ slug, children, className, anchor = 'hours' }: { slug: string; children: ReactNode; className?: string; anchor?: 'hours' | 'eventTypes' }) {
   return (
-    <Link to="/o/$slug/settings" params={{ slug }} hash={anchor === 'eventTypes' ? BOOKING_EVENT_TYPES_ID : BOOKING_SETTINGS_ID} className={className}>
+    <Link to="/o/$slug/settings/bookings" params={{ slug }} hash={anchor === 'eventTypes' ? BOOKING_EVENT_TYPES_ID : BOOKING_SETTINGS_ID} className={className}>
       {children}
     </Link>
   );

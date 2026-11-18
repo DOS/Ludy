@@ -5,6 +5,7 @@ import { expect, test, type APIRequestContext, type Download, type Page } from '
 import ExcelJS from 'exceljs';
 import { createOrg, newEmail, signInNewUser, storedSession } from '../lib/session.ts';
 import { nextTotp } from '../lib/totp.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 function vietnamDateParts(): {
   today: string;
@@ -327,6 +328,7 @@ test('Phase 7 non-admin salary isolation blocks a chief accountant member across
   const slug = await createOrg(page, 'Công ty Cách Ly Lương');
 
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await openSettingsTab(page, 'security');
   await enrollTotp(page);
   await expect(page.getByText('Đang bật')).toBeVisible();
 
@@ -372,7 +374,7 @@ test('Phase 7 non-admin salary isolation blocks a chief accountant member across
 
   // Invite a second user as org `member` and assign the built-in `Kế toán trưởng` role (`finance.chief_accountant`).
   const memberEmail = newEmail('hr-iso-member');
-  await page.goto(`/o/${slug}/settings`);
+  await page.goto(`/o/${slug}/settings/members`);
   await page.getByPlaceholder(/^email@/).fill(memberEmail);
   await page.getByLabel('Vai trò', { exact: true }).selectOption('member');
   await page.getByRole('button', { name: 'Mời', exact: true }).click();
@@ -398,7 +400,7 @@ test('Phase 7 non-admin salary isolation blocks a chief accountant member across
 
     // Verify on the member's own session: `member` + `Kế toán trưởng` can read accounting (`journal/list` 200),
     // and enable fresh TOTP 2FA so export/declaration rejections prove RBAC FORBIDDEN rather than missing step-up.
-    await memberPage.goto(`/o/${slug}/settings`);
+    await memberPage.goto(`/o/${slug}/settings/security`);
     await enrollTotp(memberPage);
     await expect(memberPage.getByText('Đang bật')).toBeVisible();
 

@@ -55,7 +55,7 @@ function harness(over: Partial<MeetingsImportDeps> = {}, executeError?: (name: s
       },
     },
     adapters: { sandbox: new SandboxMeetingPlatform() },
-    media: null,
+    extractor: null,
     ...over,
   } as unknown as MeetingsImportDeps;
   return { deps, calls };
@@ -74,7 +74,7 @@ describe('runMeetingsImport', () => {
     expect(calls.executed[0]?.input).toEqual({ recordingId: job().id, stagingKey: KEY });
   });
 
-  it('refuses a declared size over the cap before any network call, and a video-only recording while no audio extraction is wired', async () => {
+  it('refuses a declared size over the cap before any network call, and a video-only recording while no audio extraction is configured', async () => {
     const touched: string[] = [];
     const spy: MeetingPlatformAdapter = {
       provider: 'sandbox',

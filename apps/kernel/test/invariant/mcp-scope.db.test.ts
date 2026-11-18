@@ -47,6 +47,9 @@ const REACHABLE = [
   // The Meetings read of the open action items across those same meetings (#3804, step 3 of the two-step landing): published, unflagged items no task was made from, of org-visible meetings inside their
   // text period, for a company grant only. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
   'meetings.mcp.open_actions:ludy.read',
+  // The Meetings read of the open action items of one series of meetings (#3837, step 3 of the two-step landing): keyed on a meeting, never on a series id, over the same readable meetings as the two reads
+  // above, for a company grant only. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
+  'meetings.mcp.series_open_items:ludy.read',
 ];
 // The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the kernel rules and the line reads they
 // call (a query run inside a query keeps the caller's identity, so a rule over MCP needs every read it calls to declare the scope as well). They are optional here so each can land
