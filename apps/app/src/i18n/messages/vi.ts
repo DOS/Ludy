@@ -728,7 +728,6 @@ export const vi = {
       noAccount: 'Hãy thêm tài khoản ngân hàng của nhà cung cấp trước (mở nhà cung cấp).',
       manyAccounts: 'Nhà cung cấp này có nhiều tài khoản đang dùng: hãy ngừng các tài khoản cũ trước (mở nhà cung cấp).',
       more: 'Đang hiển thị {count} hóa đơn cũ nhất; chi hoặc xử lý bớt để thấy phần còn lại.',
-<<<<<<< HEAD
       first: 'Gợi ý chi trước',
       lineFacts: '{count} hóa đơn cần chi, tổng {total}, cũ nhất ngày {date}',
       lineChanged: '{count} hóa đơn của nhà cung cấp vừa đổi tài khoản ngân hàng',
@@ -737,8 +736,6 @@ export const vi = {
         budget: '{finance} đã dùng hết ngân sách AI tháng này: các con số ở trên đứng một mình.',
         failed: '{finance} chưa diễn đạt được lần này: các con số ở trên đứng một mình.',
       },
-=======
->>>>>>> origin/main
     },
     payments: {
       title: 'Khoản chi đã duyệt chờ chuyển khoản',

@@ -730,7 +730,6 @@ export const en = {
       noAccount: 'Add the supplier\'s bank account first (open the supplier).',
       manyAccounts: 'This supplier has several active accounts: retire the old ones first (open the supplier).',
       more: 'Showing the oldest {count}; pay or settle some to see the rest.',
-<<<<<<< HEAD
       first: 'Suggested first',
       lineFacts: 'Invoices to pay: {count}, {total} in all, the oldest dated {date}',
       lineChanged: 'Of a supplier whose bank account changed recently: {count}',
@@ -739,8 +738,6 @@ export const en = {
         budget: "{finance} has used this month's AI budget: the figures above stand alone.",
         failed: '{finance} could not word this one: the figures above stand alone.',
       },
-=======
->>>>>>> origin/main
     },
     payments: {
       title: 'Approved payments waiting for the bank',
