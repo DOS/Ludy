@@ -4157,7 +4157,7 @@ export const vi = {
     dealOffer: {
       title: 'Gợi ý của {sales} cho cơ hội',
       badge: '{sales} gợi ý · bạn bấm mới thực hiện',
-      quotedReason: 'Báo giá {number} đã gửi cho khách mà cơ hội chưa ở bước báo giá.',
+      quotedReason: 'Báo giá {number} đã được đánh dấu đã gửi mà cơ hội chưa ở bước báo giá.',
       wonReason: 'Khách đã đồng ý báo giá {number} mà cơ hội vẫn đang mở.',
       amountReason: 'Giá trị cơ hội đang là {amount}, còn tổng báo giá {number} là {total}.',
       moveTo: 'Chuyển sang {stage}',

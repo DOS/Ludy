@@ -493,7 +493,7 @@ function QuoteRow({
           onConfirm={() => remove.mutate({ quoteId: quote.id })}
         />
       </div>
-      {decision && <QuoteDecisionPanel quote={quote} mode={decision} onDone={() => setDecision(null)} />}
+      {decision && canDecide && <QuoteDecisionPanel quote={quote} mode={decision} onDone={() => setDecision(null)} />}
     </li>
   );
 }

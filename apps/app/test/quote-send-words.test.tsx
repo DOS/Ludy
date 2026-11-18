@@ -67,5 +67,8 @@ describe('the send step of a quote', () => {
     for (const words of [viMessages.quotes.send, en.quotes.send]) {
       for (const key of ['sendLink', 'linkMade', 'viaLink'] as const) expect(words[key]).not.toMatch(/^(Đã gửi|Gửi và|Sent\.|Send and)/);
     }
+    // The deal's offer after a link-only send: the quote is marked sent, not received.
+    expect(viMessages.quotes.dealOffer.quotedReason).not.toMatch(/gửi cho khách/);
+    expect(en.quotes.dealOffer.quotedReason).not.toMatch(/sent to the customer/);
   });
 });
