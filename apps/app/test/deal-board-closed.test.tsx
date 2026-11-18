@@ -113,9 +113,9 @@ describe('the closed columns of the deal board', () => {
 });
 
 describe('the layout and the empty state of the deal board (#3647)', () => {
-  it('fits the columns in the content width: a grid of at least 13rem, not 18rem columns that push Thắng and Thua off-screen', () => {
+  it('fits the columns in the content width: a grid of at least 10rem, so the six default stages fit, not 18rem columns that push Thắng and Thua off-screen', () => {
     const html = render(undefined);
-    expect(html).toContain('auto-cols-[minmax(13rem,1fr)]');
+    expect(html).toContain('auto-cols-[minmax(10rem,1fr)]');
     expect(html).not.toContain('w-72');
   });
 

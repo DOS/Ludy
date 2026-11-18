@@ -48,7 +48,7 @@ export function DealsEmpty({ title, hint, canEdit, onAdd }: { title: string; hin
 // The columns' places while the board loads (#3647): the same grid, so nothing jumps when the cards arrive.
 function BoardSkeleton({ label }: { label: string }) {
   return (
-    <div role="status" aria-busy="true" aria-label={label} className="grid auto-cols-[minmax(13rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-3">
+    <div role="status" aria-busy="true" aria-label={label} className="grid auto-cols-[minmax(10rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-3">
       {[0, 1, 2, 3, 4].map((i) => (
         <div key={i} className="space-y-2 rounded-lg bg-muted/40 p-2">
           <Skeleton className="h-5 w-24" />
@@ -282,7 +282,7 @@ export function DealBoard({
         </form>
       )}
       {failure !== null && <ErrorText>{errorMessage(failure)}</ErrorText>}
-      <div ref={scroller} className={`grid auto-cols-[minmax(13rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-3 ${dragging ? '' : 'snap-x'}`} data-testid="deal-board" onDragOver={(e) => scrollNearEdge(e.clientX)}>
+      <div ref={scroller} className={`grid auto-cols-[minmax(10rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-3 ${dragging ? '' : 'snap-x'}`} data-testid="deal-board" onDragOver={(e) => scrollNearEdge(e.clientX)}>
         {columns.map((column) => (
           <section
             key={column.stage.id}
