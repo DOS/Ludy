@@ -863,8 +863,8 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
       openingId: opening.openingId,
       displayName: 'Ngô Minh Quân',
       email: 'quan.ngo@example.com',
-      phone: '0938112233',
-      notes: 'Ứng viên kỹ thuật, liên hệ 0938112233.',
+      phone: '0100000001',
+      notes: 'Ứng viên kỹ thuật, liên hệ 0100000001.',
     });
     const booked = await o.exec<HrCandidateInterviewScheduled>(o.owner, 'hr.recruiting.candidate.schedule_interview', {
       candidateId: hiredWithInterview.candidateId,
@@ -882,7 +882,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
       openingId: opening.openingId,
       displayName: 'Bùi Thu Hà',
       email: 'ha.bui@example.com',
-      phone: '0977556677',
+      phone: '0100000002',
       notes: 'Hồ sơ lưu sau phỏng vấn.',
     });
     await o.exec(o.owner, 'hr.recruiting.candidate.move_stage', {
@@ -1019,7 +1019,7 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     expect(dbState.auditRow?.detail.cancelledInterviewEventId).toBe(booked.eventId);
     expect(dbState.auditRow?.row).not.toContain('Ngô Minh Quân');
     expect(dbState.auditRow?.row).not.toContain('quan.ngo@example.com');
-    expect(dbState.auditRow?.row).not.toContain('0938112233');
+    expect(dbState.auditRow?.row).not.toContain('0100000001');
 
     // Re-enabling HR restores reads and surfaces the erased view cleanly.
     await o.exec(o.owner, 'kernel.org.set_app', { module: 'hr', enabled: true });
