@@ -1,6 +1,6 @@
 // The audit log screen's filter (#672): the form's text fields as the query's filter, and the cursor of the next page;
 // and the commands' labels (#1654), on the screen and in the exported file.
-import { AUDIT_OUTCOMES, type AuditCursor, type AuditFilter, type AuditOutcome, type AuditPage } from '@crove/kernel-contract';
+import { AUDIT_OUTCOMES, type AuditCursor, type AuditEntry, type AuditFilter, type AuditOutcome, type AuditPage } from '@crove/kernel-contract';
 
 export interface AuditFilterForm {
   actor: string;
@@ -44,6 +44,8 @@ export interface AuditSearch {
   targetId?: string;
   from?: string;
   to?: string;
+  // "1" opens the log with the system's own rows shown (#3595): the screen starts without them.
+  system?: '1';
 }
 
 export function parseAuditSearch(search: Record<string, unknown>): AuditSearch {
@@ -51,6 +53,7 @@ export function parseAuditSearch(search: Record<string, unknown>): AuditSearch {
   const actor = typeof search.actor === 'string' && (search.actor === 'system' || UUID.test(search.actor)) ? search.actor.toLowerCase() : undefined;
   const outcome = typeof search.outcome === 'string' && (AUDIT_OUTCOMES as readonly string[]).includes(search.outcome) ? (search.outcome as AuditOutcome) : undefined;
   const found: Record<keyof AuditSearch, string | undefined> = {
+    system: search.system === '1' || search.system === 1 || search.system === true ? '1' : undefined,
     actor,
     command: text(search.command, COMMAND),
     outcome,
@@ -140,4 +143,43 @@ export function withCommandLabels(csv: string, label: (command: string) => strin
     return [...cells.slice(0, at + 1), extra, ...cells.slice(at + 1)].join(',');
   });
   return `${bom}${lines.join('\r\n')}\r\n`;
+}
+
+// The system's own rows (#3595): jobs, notifications and event dispatch that nobody did, which the log hides until asked.
+// An AI app's call over MCP is not one of them: it names the app that acted.
+export function isSystemRow(row: Pick<AuditEntry, 'actorType' | 'via'>): boolean {
+  return row.actorType === 'system' && row.via === null;
+}
+
+// A label's first letter in lower case, for a sentence that goes on after "Đã" or "Tried to"; a label that starts with a
+// name or an acronym ("Vy ...", "AI ...") keeps its capital.
+export function lowerFirst(label: string): string {
+  const word = /^\S+/u.exec(label)?.[0] ?? '';
+  const plain = word.length > 2 && word.slice(1) === word.slice(1).toLowerCase();
+  return plain ? label.charAt(0).toLowerCase() + label.slice(1) : label;
+}
+
+// What the screen's object search offers (#3595): a party, a document or a journal entry by its words, each with the id the
+// log filters by. A document filters by the proposal that made it when it has one, so the filter finds the decision and
+// the rows of what it ran, as a link from a proposal does (#1445).
+export interface AuditTargetChoice {
+  key: string;
+  kind: 'party' | 'document' | 'entry';
+  id: string;
+  label: string;
+  hint: string;
+}
+
+export interface AuditSearchFound {
+  parties: readonly { id: string; name: string; taxCode: string | null }[];
+  documents: readonly { id: string; series: string; number: string; partyName: string; proposalId: string | null }[];
+  entries: readonly { id: string; description: string; entryDate: string }[];
+}
+
+export function auditTargetChoices(found: AuditSearchFound): AuditTargetChoice[] {
+  return [
+    ...found.parties.map((p): AuditTargetChoice => ({ key: `party-${p.id}`, kind: 'party', id: p.id, label: p.name, hint: p.taxCode ?? '' })),
+    ...found.documents.map((d): AuditTargetChoice => ({ key: `document-${d.id}`, kind: 'document', id: d.proposalId ?? d.id, label: [d.series, d.number].filter(Boolean).join(' '), hint: d.partyName })),
+    ...found.entries.map((e): AuditTargetChoice => ({ key: `entry-${e.id}`, kind: 'entry', id: e.id, label: e.description, hint: e.entryDate })),
+  ];
 }
