@@ -3,6 +3,7 @@
 // post, an owner answers it (the worker sends the reply through the sandbox and the message settles), hides it, adds a note and
 // resolves it, and the comment inbox lists it as resolved. The comment itself is a demo one the owner asks the sandbox for, which
 // takes the intake a platform's notice takes. Each test has its own user and org.
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { exec, sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
@@ -27,7 +28,7 @@ async function publishOnSandbox(page: Page, channel: string, body: string): Prom
   await page.getByRole('button', { name: 'Lên lịch', exact: true }).click();
   const postId = new URL(page.url()).pathname.split('/').pop() ?? '';
   exec(`UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
-  await expect(page.locator('[data-slot="card"]').filter({ hasText: channel }).filter({ hasText: 'Viết riêng cho kênh này' }).getByText('Đã đăng', { exact: true })).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByTestId('channel-card').filter({ hasText: channel }).getByText('Đã đăng', { exact: true })).toBeVisible({ timeout: 45_000 });
   return postId;
 }
 
@@ -192,4 +193,26 @@ test('a saved reply with the contact-name placeholder shows the contact name in 
   await expect(page.getByText('Câu trả lời còn chỗ trống {tên} chưa điền')).toBeVisible();
   expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.conversation_message m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.direction = 'out'`, { slug })[0]?.n).toBe('0');
   await expect(box).toHaveValue('Chào {tên}, shop còn hàng ạ.');
+});
+
+test('an Inbox with no channel connected says so and offers to connect one, instead of "no new conversations" (#3638)', async ({ page }) => {
+  await signInNewUser(page, newEmail('inbox-no-channels'));
+  const slug = await createOrg(page, 'Công ty Chưa Kênh');
+  await page.goto(`/o/${slug}/social/inbox`);
+  const empty = page.getByTestId('inbox-no-channels');
+  await expect(empty).toBeVisible();
+  await expect(empty).toContainText('Chưa kết nối kênh nào');
+  await expect(page.getByTestId('inbox-list-empty')).toHaveCount(0);
+  // The Inbox passes axe (WCAG 2.2 AA, serious and critical) at desktop and phone width, and the action is a 44 px target on the phone.
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(empty).toBeVisible();
+    const scan = await new AxeBuilder({ page }).include('[data-testid="inbox"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
+    const bad = scan.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical').map((v) => `${width}: ${v.id} on ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(', ')}`);
+    expect(bad).toEqual([]);
+  }
+  const box = await page.getByTestId('inbox-connect-channel').boundingBox();
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  await page.getByTestId('inbox-connect-channel').click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/channels`));
 });

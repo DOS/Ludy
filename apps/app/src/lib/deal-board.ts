@@ -3,6 +3,28 @@
 import type { Board, Deal } from '@crove/kernel-contract';
 import { EMPTY_DEAL_FILTER, type DealFilterState } from './deal-filter.ts';
 
+// The three ways to look at the deals. `?tab=` of the screen keeps the one in use through a reload (#3647), and the Home list links to `?tab=next`.
+// It is read and written on the address directly: `tab` is a param of other screens too, with other values, which the router's typed search cannot hold at once.
+export const DEAL_VIEWS = ['board', 'list', 'next'] as const;
+export type DealView = (typeof DEAL_VIEWS)[number];
+export const isDealView = (value: unknown): value is DealView => DEAL_VIEWS.some((v) => v === value);
+
+// The view the address names, if it names one.
+export function readDealView(search: string): DealView | undefined {
+  const value = new URLSearchParams(search).get('tab');
+  return isDealView(value) ? value : undefined;
+}
+
+// The address with the view set, everything else of it kept.
+export function withDealView(search: string, view: DealView): string {
+  const params = new URLSearchParams(search);
+  params.set('tab', view);
+  return `?${params.toString()}`;
+}
+
+// No deal on the board and no filter in use: five empty columns, which the screen replaces with the one action (#3647). A deal closed more than 30 days ago is not on the board.
+export const isEmptyBoard = (board: Board | undefined): boolean => board !== undefined && board.columns.length > 0 && board.columns.every((c) => c.count === 0 && c.cards.length === 0);
+
 export interface Drop {
   stageId: string;
   // The card the dragged one lands before; null at the end of the column.

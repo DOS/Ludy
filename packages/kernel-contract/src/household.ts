@@ -169,6 +169,30 @@ export const zHouseholdS2a = z.strictObject({
 });
 export type HouseholdS2a = z.infer<typeof zHouseholdS2a>;
 
+// S2b-HKD, the revenue book of a household that pays PIT on income (Circular 152/2025/TT-BTC; plan 8.5 and 12 row 6, #2517 slice 2c): the same rows and the same split by business line as S2a (one row per entry that
+// touched account 511, so `total` is the ledger's own movement of 511), with the VAT of each line by the percentage in force on the period's last day, rounded to a whole dong. There is no PIT column: on the income
+// method the PIT comes from income (S2c), not from a percentage of revenue. Any `unassigned` part holds `totals` back (null) rather than guess a line. `commentary` is true while the book's form or a percentage in
+// use is not confirmed by the accountant (#2520): the screen and the Excel file then carry HOUSEHOLD_PROVISIONAL_LABEL, which goes on its own when later dated `confirmed` rows exist. Ludy files nothing.
+export const zHouseholdS2bGet = z.strictObject({ legalEntityId: zId, period: zLedgerPeriod });
+export type HouseholdS2bGet = z.infer<typeof zHouseholdS2bGet>;
+export const zHouseholdS2bLine = z.strictObject({ trade: zHouseholdTrade, revenue: zMoney, vatPercent: z.string(), vat: zMoney });
+export type HouseholdS2bLine = z.infer<typeof zHouseholdS2bLine>;
+export const zHouseholdS2b = z.strictObject({
+  period: z.strictObject({ period: zLedgerPeriod, from: zLocalDate, to: zLocalDate }),
+  household: z.strictObject({ name: z.string(), taxCode: z.string().nullable(), representativeName: z.string().nullable(), openedOn: zLocalDate }),
+  form: zHouseholdBookRule,
+  rows: z.array(zHouseholdS2aRow),
+  // The ledger's movement of 511 over the book's days: the sum of the rows, and of the lines plus `unassigned`.
+  total: zMoney,
+  lines: z.array(zHouseholdS2bLine),
+  unassigned: zMoney,
+  unassignedGross: zMoney,
+  totals: z.strictObject({ revenue: zMoney, vat: zMoney }).nullable(),
+  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate']), key: z.string(), effectiveFrom: zLocalDate })),
+  commentary: z.boolean(),
+});
+export type HouseholdS2b = z.infer<typeof zHouseholdS2b>;
+
 // S2c-HKD, the revenue and expense detail of a household that pays PIT on income (Circular 152/2025/TT-BTC; plan 8.5 and 12 row 6, #2517 slice 2b), a view of the ledger like S1a and S2a. A BOOK: Ludy never files
 // anything. Revenue is the same rows as S1a (one per entry that touched account 511, so `revenue` is the ledger's own movement of 511). Expenses are one row per journal line on an expense account (TT133 classes 6
 // and 8), with its document reference (the invoice number of the purchase document the entry was posted from; null for a voucher), its account, and its group read from the dated rows of

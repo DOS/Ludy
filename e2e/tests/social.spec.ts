@@ -55,7 +55,7 @@ test('composes, reviews and schedules a post on the sandbox channel', async ({ p
   await page.goto(postUrl);
   exec(`UPDATE crove_social.post_variant SET queue_slot_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postUrl.split('/').pop() ?? '' });
   await expect(page.getByText('Đã đăng', { exact: true }).first()).toBeVisible({ timeout: 45_000 });
-  await expect(page.getByText(/Đã đăng lúc/)).toBeVisible();
+  await expect(page.getByTestId('published-summary').getByText(/Đã đăng lúc/)).toBeVisible();
 });
 
 // A 1x1 PNG.

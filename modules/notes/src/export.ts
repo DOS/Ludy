@@ -8,9 +8,10 @@
 // answer never grows past what the server and the browser can hold).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { NOTES_EXPORT_LIMIT, NOTES_EXPORT_TEXT, parseTodoRecurrence, type NotesExport } from '@crove/kernel-contract';
+import { NOTES_EXPORT_LIMIT, NOTES_EXPORT_TEXT, parseTodoRecurrence, type NotesExport, type TodoPriority } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { listColorOf, parseSections } from './todos.ts';
 
 // Whoever has notes may take them: a member who became a viewer keeps what they wrote.
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -44,13 +45,39 @@ export const notesExportMine = defineQuery({
     const { rows: todoIds } = await sql<{ id: string; fits: boolean }>`
       SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT - used}) AS fits FROM (
         SELECT id, pg_catalog.row_number() OVER w AS n,
-               pg_catalog.sum(pg_catalog.length(title) + COALESCE(pg_catalog.length(details), 0) + pg_catalog.length(checklist::text)) OVER w AS running
+               pg_catalog.sum(
+                 pg_catalog.length(title)
+                 + COALESCE(pg_catalog.length(details), 0)
+                 + pg_catalog.length(checklist::text)
+                 + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))
+               ) OVER w AS running
           FROM crove_notes.todo
          WHERE org_id = ${ctx.orgId}::uuid AND owner_user_id = ${userId}::uuid
         WINDOW w AS (ORDER BY created_at DESC, id)) t
        ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
     const noteKeep = noteIds.filter((r) => r.fits).map((r) => r.id);
     const todoKeep = todoIds.filter((r) => r.fits).map((r) => r.id);
+    const todoUsed = Number(
+      (
+        await sql<{ used: string | null }>`
+          SELECT pg_catalog.sum(
+                   pg_catalog.length(title)
+                   + COALESCE(pg_catalog.length(details), 0)
+                   + pg_catalog.length(checklist::text)
+                   + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))
+                 ) AS used
+            FROM crove_notes.todo WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${todoKeep}::uuid[])`.execute(ctx.trx)
+      ).rows[0]?.used ?? 0,
+    );
+    const { rows: todoListIds } = await sql<{ id: string; fits: boolean }>`
+      SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT - used - todoUsed}) AS fits FROM (
+        SELECT id, pg_catalog.row_number() OVER w AS n,
+               pg_catalog.sum(pg_catalog.length(name) + pg_catalog.length(sections::text)) OVER w AS running
+          FROM crove_notes.todo_list
+         WHERE org_id = ${ctx.orgId}::uuid AND owner_user_id = ${userId}::uuid
+        WINDOW w AS (ORDER BY sort_key, id)) l
+       ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
+    const listKeep = todoListIds.filter((r) => r.fits).map((r) => r.id);
     const notes =
       noteKeep.length === 0
         ? []
@@ -74,6 +101,10 @@ export const notesExportMine = defineQuery({
               'details',
               'checklist',
               'status',
+              'priority',
+              'tags',
+              'list_id',
+              'section_id',
               'due_on',
               'due_at',
               'time_zone',
@@ -91,6 +122,18 @@ export const notesExportMine = defineQuery({
             .where('owner_user_id', '=', userId)
             .where('id', 'in', todoKeep)
             .orderBy('created_at', 'desc')
+            .orderBy('id')
+            .execute();
+    const todoLists =
+      listKeep.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('crove_notes.todo_list')
+            .select(['id', 'name', 'color', 'sections', 'sort_key', 'created_at', 'updated_at', 'deleted_at'])
+            .where('org_id', '=', ctx.orgId)
+            .where('owner_user_id', '=', userId)
+            .where('id', 'in', listKeep)
+            .orderBy('sort_key')
             .orderBy('id')
             .execute();
 
@@ -143,6 +186,10 @@ export const notesExportMine = defineQuery({
         details: t.details ?? '',
         checklist: (Array.isArray(t.checklist) ? (t.checklist as { text: string; done: boolean }[]) : []).map((s) => ({ text: s.text, done: s.done })),
         status: t.status,
+        priority: t.priority as TodoPriority,
+        tags: t.tags,
+        listId: t.list_id,
+        sectionId: t.section_id,
         dueOn: t.due_on,
         dueAt: iso(t.due_at),
         timeZone: t.time_zone,
@@ -157,7 +204,17 @@ export const notesExportMine = defineQuery({
         seriesId: t.series_id,
         links: todoLinksOf.get(t.id) ?? [],
       })),
-      truncated: noteKeep.length < noteIds.length || todoKeep.length < todoIds.length,
+      todoLists: todoLists.map((l) => ({
+        id: l.id,
+        name: l.name,
+        color: listColorOf(l.color),
+        sections: parseSections(l.sections),
+        sortKey: l.sort_key,
+        createdAt: new Date(l.created_at).toISOString(),
+        updatedAt: new Date(l.updated_at).toISOString(),
+        deletedAt: iso(l.deleted_at),
+      })),
+      truncated: noteKeep.length < noteIds.length || todoKeep.length < todoIds.length || listKeep.length < todoListIds.length,
     };
   },
 });

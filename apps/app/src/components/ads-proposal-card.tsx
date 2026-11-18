@@ -19,7 +19,9 @@ export function AdsProposalCard({ id, title, slug }: { id: string; title: string
   const view = useQuery(orpc.ads.proposal.queryOptions({ input: { id } }));
   const change = view.data?.change ?? null;
   const plan = useAdsPlanView(change);
-  const text = change ? adsChangeText(change, root, (amount, currency) => f.money(amount, currency), (day) => f.date(day)) : null;
+  // The server says when this deployment has no launch writer: the card then never promises a launch (#3675).
+  const noLauncher = change?.change === 'campaign_launch' && view.data?.canLaunch === false;
+  const text = change ? adsChangeText(change, root, (amount, currency) => f.money(amount, currency), (day) => f.date(day), view.data?.canLaunch ?? null) : null;
   return (
     <Card className="block space-y-3 p-4" data-testid="ads-change">
       <p className="text-sm font-medium text-muted-foreground">{t('adsChange')}</p>
@@ -39,6 +41,11 @@ export function AdsProposalCard({ id, title, slug }: { id: string; title: string
             <p className="break-words text-base font-semibold text-foreground">{text.title}</p>
             <p className="text-sm text-muted-foreground">{text.detail}</p>
           </div>
+          {noLauncher && (
+            <p role="note" data-testid="ads-no-launcher" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm font-medium text-foreground">
+              {t('adsNoLauncher')}
+            </p>
+          )}
           {plan && <AdsPlanPreview plan={plan} />}
         </div>
       ) : (

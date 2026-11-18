@@ -25,7 +25,8 @@ test('import contacts, find and save a view, add a deal, move it to Won, read th
     await expect(page.getByText('3 dòng mới')).toBeVisible();
     await page.getByRole('button', { name: 'Nhập 3 liên hệ mới' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Đã nhập 3 liên hệ mới' })).toBeVisible();
-    await page.getByRole('link', { name: 'Về danh sách liên hệ' }).first().click();
+    // #3650: back goes to the screen the import came from; a link when the page was opened directly, a button when it was reached in the app.
+    await page.getByRole('link', { name: 'Quay lại danh sách' }).or(page.getByRole('button', { name: 'Quay lại danh sách' })).first().click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/contacts$`));
     await expect(page.getByText('Trần Thị Bình')).toBeVisible();
   });

@@ -164,7 +164,7 @@ test('places a comment pin from the keyboard and moves it with the arrow keys be
   // Past the note of the pin (its Bỏ ghim) to the send button.
   await page.keyboard.press('Tab');
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: 'Bình luận', exact: true })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Gửi ghi chú', exact: true })).toBeFocused();
   await page.keyboard.press('Enter');
   const marker = page.getByTestId('pin-marker');
   await expect(marker).toHaveAttribute('aria-label', 'Ghim 1: Logo lệch sang phải');

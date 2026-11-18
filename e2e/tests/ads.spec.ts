@@ -90,7 +90,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
 
   await test.step('the worker reads the first figures within seconds and the screen follows by itself', async () => {
     // The platform's currency and time zone arrive with the first read, in place of "syncing for the first time".
-    await expect(page.getByText('Tiền tệ VND, múi giờ Asia/Ho_Chi_Minh')).toBeVisible({ timeout: 90_000 });
+    await expect(page.getByText('Tiền tệ VND, giờ Việt Nam (UTC+7)')).toBeVisible({ timeout: 90_000 });
     // The whole history the app keeps, so every slice of the first read counts, whatever day it is.
     await page.getByLabel('Khoảng thời gian').selectOption('last13Months');
     await expect(totals).toBeVisible();
@@ -162,7 +162,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await expect(books.getByRole('columnheader', { name: 'Chứng từ' })).toBeVisible();
     // The range is the last 13 months, so several months have spend and none has a document yet.
     await expect(books.getByRole('cell', { name: /Chưa có chứng từ/ }).first()).toBeVisible();
-    await expect(books.getByRole('link', { name: 'Tải lên ở Hộp thư' }).first()).toHaveAttribute('href', `/o/${slug}/inbox`);
+    await expect(books.getByRole('link', { name: 'Thêm chứng từ' }).first()).toHaveAttribute('href', `/o/${slug}/inbox`);
     await expect(books.getByText('chỉ đếm: không viết chứng từ và không ghi bút toán', { exact: false })).toBeVisible();
     await expect(books.getByRole('cell', { name: /^\d+ chứng từ$/ })).toHaveCount(0);
   });

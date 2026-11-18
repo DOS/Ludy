@@ -9,12 +9,15 @@ import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
-import { ErrorText, Spinner } from './ui.tsx';
+import { ErrorText } from './ui.tsx';
+import { PaneError, PanelSkeleton } from './conversation-states.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { channelKindLabel } from '../lib/conversation-labels.ts';
+import { dismissContactMatch, dismissedContactMatches } from '../lib/conversation-dismissed.ts';
 import { canInsertQuoteLink } from '../lib/quote-reply.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
+import { TOUCH_BUTTON } from '../lib/conversation-touch.ts';
 import { ConversationTasks } from './conversation-tasks.tsx';
 import { PersonalDataSection } from './conversation-erase.tsx';
 import { POLL_MS, useContactName, useMe } from './conversation-inbox.tsx';
@@ -32,7 +35,7 @@ const MATCHES_STALE_MS = 5 * 60_000;
 // The contacts the customer may be (CV3, #2306): the contact with the phone number the customer wrote first, then those with a similar name, ranked by the
 // AI coworker when it is on. They are suggestions, shown only while the thread is not linked; nothing is linked until a person clicks. With the model off,
 // spent or failing the names still come in their own order, with no error.
-function ContactSuggestions({ conversationId, lastSeq }: { conversationId: string; lastSeq: number }) {
+export function ContactSuggestions({ conversationId, lastSeq }: { conversationId: string; lastSeq: number }) {
   const t = useTranslations('conversations.contact');
   const matches = useQuery({
     queryKey: ['conversation-contact-matches', conversationId, lastSeq],
@@ -44,21 +47,68 @@ function ContactSuggestions({ conversationId, lastSeq }: { conversationId: strin
     refetchOnWindowFocus: false,
   });
   const link = useMutation({ mutationFn: (partyId: string) => client.conversations.linkContact({ conversationId, partyId }), onSuccess: refresh });
-  const candidates = matches.data?.candidates ?? [];
+  // The ones a person skipped for this thread stay skipped (#3637); a name-only match asks once more before it links, since a similar name is the weakest evidence.
+  const [skipped, setSkipped] = useState<string[]>(() => dismissedContactMatches(conversationId));
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const candidates = (matches.data?.candidates ?? []).filter((c) => !skipped.includes(c.partyId));
   if (candidates.length === 0) return null;
   return (
     <div className="space-y-1" data-testid="contact-suggestions">
-      <h3 className="text-sm font-semibold text-foreground">{t('suggested')}</h3>
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-sm font-semibold text-foreground">{t('suggested')}</h3>
+        {/* The coworker is named as the ranker only when a model did rank them: with AI off these are plain phone, email and name matches. */}
+        {matches.data?.ai === 'used' && (
+          <Badge variant="proposal" data-testid="contact-ranked-by">
+            {t('rankedBy')}
+          </Badge>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">{t('suggestedHint')}</p>
       <ul className="divide-y divide-border rounded-md border border-border">
         {candidates.map((c) => (
-          <li key={c.partyId} className="flex items-center justify-between gap-2 px-2 py-1.5">
-            <span className="min-w-0">
-              <span className="block truncate text-foreground">{c.name}</span>
-              <Badge variant="outline">{t(`reason.${c.reason}`)}</Badge>
-            </span>
-            <Button type="button" size="sm" variant="outline" loading={link.isPending && link.variables === c.partyId} onClick={() => link.mutate(c.partyId)}>
-              {t('linkThis')}
-            </Button>
+          <li key={c.partyId} className="space-y-1.5 px-2 py-1.5">
+            <div className="space-y-1.5">
+              <span className="block min-w-0">
+                <span className="block break-words text-foreground">{c.name}</span>
+                <Badge variant="outline">{t(`reason.${c.reason}`)}</Badge>
+              </span>
+              {/* On their own row, wrapping: the panel is 16rem wide and a long company name must not push the buttons out of it. */}
+              <span className="flex flex-wrap gap-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className={`h-auto min-h-8 max-w-full whitespace-normal break-words text-left ${TOUCH_BUTTON}`}
+                  loading={link.isPending && link.variables === c.partyId}
+                  data-testid="contact-suggestion-link"
+                  aria-describedby={confirming === c.partyId ? `name-only-${c.partyId}` : undefined}
+                  onClick={() => (c.reason === 'name' && confirming !== c.partyId ? setConfirming(c.partyId) : link.mutate(c.partyId))}
+                >
+                  {confirming === c.partyId ? t('nameOnlyConfirm', { name: c.name }) : t('linkThis', { name: c.name })}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className={TOUCH_BUTTON}
+                  variant="ghost"
+                  aria-label={t('dismissLabel', { name: c.name })}
+                  data-testid="contact-suggestion-dismiss"
+                  onClick={() => {
+                    // Added to what is on screen, not replaced by what storage returns: with storage blocked the earlier skips would come back.
+                    dismissContactMatch(conversationId, c.partyId);
+                    setSkipped((now) => [...new Set([...now, c.partyId])]);
+                    setConfirming(null);
+                  }}
+                >
+                  {t('dismiss')}
+                </Button>
+              </span>
+            </div>
+            {confirming === c.partyId && (
+              <p id={`name-only-${c.partyId}`} role="status" className="text-xs text-muted-foreground" data-testid="contact-name-only-warn">
+                {t('nameOnlyWarn', { name: c.name })}
+              </p>
+            )}
           </li>
         ))}
       </ul>
@@ -97,7 +147,7 @@ function LinkContact({ conversationId, defaultName, hasParty }: { conversationId
   return (
     <div className="space-y-2" data-testid="contact-link">
       {hasParty && (
-        <Button type="button" size="sm" variant="outline" loading={link.isPending} onClick={() => link.mutate(null)}>
+        <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" loading={link.isPending} onClick={() => link.mutate(null)}>
           {t('unlink')}
         </Button>
       )}
@@ -132,17 +182,17 @@ function LinkContact({ conversationId, defaultName, hasParty }: { conversationId
           </label>
           <Input id={`create-${conversationId}`} value={name} maxLength={200} onChange={(e) => setName(e.target.value)} />
           <div className="flex gap-2">
-            <Button type="submit" size="sm" loading={create.isPending} disabled={name.trim() === ''}>
+            <Button type="submit" size="sm" className={TOUCH_BUTTON} loading={create.isPending} disabled={name.trim() === ''}>
               {t('createSave')}
             </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setCreating(false)}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" onClick={() => setCreating(false)}>
               {t('cancel')}
             </Button>
           </div>
           {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
         </form>
       ) : (
-        <Button type="button" size="sm" variant="outline" onClick={() => setCreating(true)}>
+        <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" onClick={() => setCreating(true)}>
           {t('create')}
         </Button>
       )}
@@ -158,8 +208,8 @@ export function ContactPanel({ conversationId, onOpen, onErased }: { conversatio
   const contactName = useContactName();
   const { canWrite, isAdmin } = useMe();
   const detail = useQuery({ ...orpc.conversations.get.queryOptions({ input: { conversationId } }), refetchInterval: POLL_MS });
-  if (detail.isPending) return <Spinner />;
-  if (detail.error || !detail.data) return <ErrorText>{errorMessage(detail.error)}</ErrorText>;
+  if (detail.isPending) return <PanelSkeleton />;
+  if (detail.error || !detail.data) return <PaneError message={errorMessage(detail.error)} onRetry={() => void detail.refetch()} testId="panel-error" />;
   const { conversation: c, others } = detail.data;
   return (
     <aside aria-label={t('title')} className="space-y-4 text-sm" data-testid="contact-panel">

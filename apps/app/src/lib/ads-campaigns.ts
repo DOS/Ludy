@@ -20,6 +20,7 @@ import {
 } from '@crove/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
 import { adProviderName, isSandboxProvider } from './ads.ts';
+import { parseMoneyInput } from './money-input.ts';
 import { fromUnits, toUnits } from './decimal.ts';
 import { monthLabel } from './period-lock.ts';
 
@@ -141,6 +142,10 @@ const validLink = (text: string): boolean => {
 
 // The format problems a save would be refused for (the server's own input check), found before it so each sits under its field. They are not the
 // plan's rules: a budget over a cap or an end date before the start is the server's list of issues.
+// The daily budget as the server takes it: what was typed ("100.000", "100,000") as the canonical decimal string (#3641), or the text as it is when it is not an
+// amount, so the format check says so.
+export const budgetTextOf = (text: string): string => parseMoneyInput(text) ?? text.trim();
+
 export type FormProblem = 'nameNeeded' | 'budgetFormat' | 'locationNeeded' | 'countryFormat' | 'ageFormat' | 'interestsFormat' | 'linkFormat' | 'variantIncomplete';
 export type ProblemField = 'name' | 'dailyBudget' | 'locations' | 'age' | 'interests' | 'linkUrl' | 'variants';
 
@@ -156,7 +161,7 @@ export function badLocationIndex(form: Pick<CampaignForm, 'locations'>): number 
 export function formProblems(form: CampaignForm): Partial<Record<ProblemField, FormProblem>> {
   const out: Partial<Record<ProblemField, FormProblem>> = {};
   if (form.name.trim() === '') out.name = 'nameNeeded';
-  if (form.dailyBudget.trim() !== '' && !zAdsBudget.safeParse(form.dailyBudget.trim()).success) out.dailyBudget = 'budgetFormat';
+  if (form.dailyBudget.trim() !== '' && !zAdsBudget.safeParse(budgetTextOf(form.dailyBudget)).success) out.dailyBudget = 'budgetFormat';
   if (form.locations.every(blankLocation)) out.locations = 'locationNeeded';
   else if (form.locations.some((l) => !blankLocation(l) && !validLocation(l))) out.locations = 'countryFormat';
   if (!validAge(form.ageMin) || !validAge(form.ageMax)) out.age = 'ageFormat';
@@ -183,7 +188,7 @@ export function formToPlan(form: CampaignForm): AdsCampaignPlanDraft {
   return {
     name: form.name.trim(),
     objective: form.objective,
-    dailyBudget: form.dailyBudget.trim() === '' ? null : form.dailyBudget.trim(),
+    dailyBudget: form.dailyBudget.trim() === '' ? null : budgetTextOf(form.dailyBudget),
     startOn: form.startOn === '' ? null : form.startOn,
     endOn: form.endOn === '' ? null : form.endOn,
     targeting,
@@ -225,7 +230,7 @@ export function flightDays(startOn: string, endOn: string): number | null {
 
 // The daily budget times the days, exactly: the number the approver signs (the server works out the same one). Null while it cannot be told.
 export function maxSpendOf(form: Pick<CampaignForm, 'dailyBudget' | 'startOn' | 'endOn'>): { amount: string; days: number } | null {
-  const budget = form.dailyBudget.trim();
+  const budget = budgetTextOf(form.dailyBudget);
   const days = flightDays(form.startOn, form.endOn);
   if (days === null || days > ADS_PLAN_LIMITS.daysMax || !zAdsBudget.safeParse(budget).success) return null;
   return { amount: fromUnits(toUnits(budget) * BigInt(days)), days };
@@ -234,7 +239,7 @@ export function maxSpendOf(form: Pick<CampaignForm, 'dailyBudget' | 'startOn' | 
 // Why the largest amount cannot be told: the dates and the budget are all given but the flight is backwards or longer than the most ('dates'), or something
 // is still missing ('none').
 export function maxSpendHint(form: Pick<CampaignForm, 'dailyBudget' | 'startOn' | 'endOn'>): 'dates' | 'none' {
-  return form.startOn !== '' && form.endOn !== '' && zAdsBudget.safeParse(form.dailyBudget.trim()).success ? 'dates' : 'none';
+  return form.startOn !== '' && form.endOn !== '' && zAdsBudget.safeParse(budgetTextOf(form.dailyBudget)).success ? 'dates' : 'none';
 }
 
 // ---- Starting from a Social post ----

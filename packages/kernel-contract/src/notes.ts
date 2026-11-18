@@ -186,6 +186,96 @@ export const TODO_TITLE_MAX = 300;
 export const TODO_DETAILS_MAX = 10_000;
 export const TODO_STEPS_MAX = 50;
 export const TODO_STEP_MAX = 300;
+export const TODO_PRIORITIES = [1, 2, 3, 4] as const;
+export type TodoPriority = (typeof TODO_PRIORITIES)[number];
+export const zTodoPriority = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]);
+
+export const TODO_LIST_NAME_MAX = 120;
+export const TODO_LIST_SECTIONS_MAX = 50;
+export const TODO_LIST_SECTION_NAME_MAX = 100;
+export const TODO_LIST_SECTION_ID_MAX = 64;
+export const TODO_LISTS_MAX = 100;
+export const TODO_LIST_COLORS = ['slate', 'blue', 'emerald', 'amber', 'rose', 'violet'] as const;
+export type TodoListColor = (typeof TODO_LIST_COLORS)[number];
+export const TODO_LIST_SORTS = ['manual', 'priority'] as const;
+export type TodoListSort = (typeof TODO_LIST_SORTS)[number];
+
+export const zTodoSectionId = z
+  .string()
+  .trim()
+  .min(1)
+  .max(TODO_LIST_SECTION_ID_MAX)
+  .regex(/^[0-9A-Za-z_-]+$/);
+
+export const zTodoListSectionInput = z.strictObject({
+  id: zTodoSectionId.optional(),
+  name: z.string().trim().min(1).max(TODO_LIST_SECTION_NAME_MAX),
+});
+export type TodoListSectionInput = z.input<typeof zTodoListSectionInput>;
+
+export const zTodoListSection = z.strictObject({
+  id: zTodoSectionId,
+  name: z.string().trim().min(1).max(TODO_LIST_SECTION_NAME_MAX),
+});
+export type TodoListSection = z.infer<typeof zTodoListSection>;
+
+const uniqueSectionIds = (sections: ReadonlyArray<{ id?: string | undefined }>) => {
+  const ids = sections.map((s) => s.id).filter((id): id is string => id !== undefined);
+  return new Set(ids).size === ids.length;
+};
+const UNIQUE_SECTION_IDS = { message: 'Section ids must be unique', path: ['sections'] };
+
+const zTodoListSectionsInput = z.array(zTodoListSectionInput).max(TODO_LIST_SECTIONS_MAX).refine(uniqueSectionIds, UNIQUE_SECTION_IDS);
+
+export const zTodoListCreate = z.strictObject({
+  name: z.string().trim().min(1).max(TODO_LIST_NAME_MAX),
+  color: z.enum(TODO_LIST_COLORS).nullable().default(null),
+  sections: zTodoListSectionsInput.default([]),
+});
+export type TodoListCreateInput = z.input<typeof zTodoListCreate>;
+
+export const zTodoListUpdate = z.strictObject({
+  listId: zId,
+  revision: z.number().int().positive(),
+  name: z.string().trim().min(1).max(TODO_LIST_NAME_MAX),
+  color: z.enum(TODO_LIST_COLORS).nullable(),
+  sections: zTodoListSectionsInput,
+});
+export type TodoListUpdateInput = z.input<typeof zTodoListUpdate>;
+
+export const zTodoListRef = z.strictObject({ listId: zId });
+export const zTodoListWritten = z.object({ listId: z.string(), revision: z.number().int() });
+export type TodoListWritten = z.infer<typeof zTodoListWritten>;
+
+export const zTodoListView = z.object({
+  id: z.string(),
+  name: z.string(),
+  color: z.enum(TODO_LIST_COLORS).nullable(),
+  sections: z.array(zTodoListSection),
+  sortKey: z.string(),
+  openCount: z.number().int(),
+  revision: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type TodoListSummary = z.infer<typeof zTodoListView>;
+
+export const zTodoListsResponse = z.object({
+  lists: z.array(zTodoListView),
+  inboxCount: z.number().int(),
+});
+export type TodoListsResponse = z.infer<typeof zTodoListsResponse>;
+
+const zTodoTagFilter = z
+  .string()
+  .trim()
+  .min(1)
+  .max(NOTE_TAG_MAX)
+  .transform((t) => t.toLowerCase());
+
+const sectionNeedsList = (v: { listId?: string | null; sectionId?: string | null }) => v.sectionId == null || v.listId != null;
+const SECTION_NEEDS_LIST = { message: 'A section needs a list', path: ['sectionId'] };
+
 export const TODO_RECURRENCE_FREQS = ['daily', 'weekly', 'monthly'] as const;
 export type TodoRecurrenceFreq = (typeof TODO_RECURRENCE_FREQS)[number];
 export const TODO_RECURRENCE_INTERVAL_MAX = 365;
@@ -233,12 +323,16 @@ export const TODO_REMIND_BEFORE_MINUTES = 30;
 export const zTodoReminder = z.union([z.enum(['auto', 'off']), z.strictObject({ at: z.iso.datetime({ offset: true }) })]);
 export type TodoReminder = z.infer<typeof zTodoReminder>;
 
-// A new to-do: the title, and optionally its details, steps, due day and time, and source note, in the caller's time zone.
+// A new to-do: the title, and optionally its details, steps, priority, tags, personal list/section, due day and time, and source note, in the caller's time zone.
 export const zTodoCreate = z
   .strictObject({
     title: zTodoTitle,
     details: zTodoDetails.default(''),
     checklist: zChecklist.default([]),
+    priority: zTodoPriority.default(4),
+    tags: zTags.default([]),
+    listId: zId.nullable().default(null),
+    sectionId: zTodoSectionId.nullable().default(null),
     dueOn: zDay.nullable().default(null),
     dueTime: zTime.nullable().default(null),
     timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
@@ -247,7 +341,8 @@ export const zTodoCreate = z
     link: zNoteLinkTarget.optional(),
     sourceNoteId: zId.optional(),
   })
-  .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY);
+  .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY)
+  .refine(sectionNeedsList, SECTION_NEEDS_LIST);
 export type TodoCreateInput = z.input<typeof zTodoCreate>;
 // Extension Quick Capture to-do (#3560): always stored private to its owner and tainted on the server.
 export const zTodoQuickCapture = z
@@ -284,13 +379,18 @@ export const zTodoUpdate = z
     title: zTodoTitle,
     details: zTodoDetails,
     checklist: zChecklist,
+    priority: zTodoPriority.optional(),
+    tags: zTags.optional(),
+    listId: zId.nullable().optional(),
+    sectionId: zTodoSectionId.nullable().optional(),
     dueOn: zDay.nullable(),
     dueTime: zTime.nullable(),
     timeZone: zTimeZone,
     reminder: zTodoReminder.optional(),
     recurrence: zTodoRecurrence.nullable().optional(),
   })
-  .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY);
+  .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY)
+  .refine((v) => !(v.listId === null && v.sectionId != null), SECTION_NEEDS_LIST);
 export type TodoUpdateInput = z.input<typeof zTodoUpdate>;
 export const zTodoRef = z.strictObject({ todoId: zId });
 export const zTodoStoppedSibling = z.strictObject({
@@ -325,9 +425,13 @@ export const zTodoReorder = z
   .strictObject({ todoId: zId, place: z.enum(['before', 'after']), anchorId: zId })
   .refine((v) => v.todoId !== v.anchorId, { message: 'A to-do is not moved next to itself', path: ['anchorId'] });
 export type TodoReorderInput = z.input<typeof zTodoReorder>;
-// `q` keeps the to-dos whose title, details or steps hold every word, typed with or without Vietnamese marks.
+// `q` keeps the to-dos whose title, details, tags or steps hold every word, typed with or without Vietnamese marks.
 export const zTodoList = z.strictObject({
   view: z.enum(TODO_LIST_VIEWS),
+  listId: z.union([zId, z.literal('inbox')]).optional(),
+  tag: zTodoTagFilter.optional(),
+  priority: zTodoPriority.optional(),
+  sort: z.enum(TODO_LIST_SORTS).default('manual'),
   q: z.string().trim().min(1).max(200).optional(),
   limit: z.number().int().min(1).max(500).default(200),
 });
@@ -364,6 +468,10 @@ export const zTodoSummary = z.object({
   id: z.string(),
   title: z.string(),
   status: z.enum(TODO_STATUSES),
+  priority: zTodoPriority,
+  tags: z.array(z.string()),
+  listId: z.string().nullable(),
+  sectionId: z.string().nullable(),
   dueOn: z.string().nullable(),
   dueAt: z.string().nullable(),
   dueTime: z.string().nullable(),
@@ -429,6 +537,10 @@ export type TodoHandedOver = z.infer<typeof zTodoHandedOver>;
 export const zMyWorkInput = z.strictObject({
   timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
   projectId: z.union([zId, z.literal('none')]).optional(),
+  listId: z.union([zId, z.literal('inbox')]).optional(),
+  tag: zTodoTagFilter.optional(),
+  priority: zTodoPriority.optional(),
+  sort: z.enum(TODO_LIST_SORTS).default('manual'),
 });
 export type MyWorkInput = z.input<typeof zMyWorkInput>;
 export const zMyWorkTaskProject = z.object({
@@ -663,6 +775,10 @@ export const zNotesExport = z.object({
       details: z.string(),
       checklist: z.array(z.object({ text: z.string(), done: z.boolean() })),
       status: z.enum(TODO_STATUSES),
+      priority: zTodoPriority,
+      tags: z.array(z.string()),
+      listId: z.string().nullable(),
+      sectionId: z.string().nullable(),
       dueOn: z.string().nullable(),
       dueAt: z.string().nullable(),
       timeZone: z.string(),
@@ -677,6 +793,18 @@ export const zNotesExport = z.object({
       recurrence: zTodoRecurrence.nullable(),
       seriesId: z.string().nullable(),
       links: z.array(z.object({ targetType: z.string(), targetId: z.string() })),
+    }),
+  ),
+  todoLists: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      color: z.enum(TODO_LIST_COLORS).nullable(),
+      sections: z.array(zTodoListSection),
+      sortKey: z.string(),
+      createdAt: z.string(),
+      updatedAt: z.string(),
+      deletedAt: z.string().nullable(),
     }),
   ),
   truncated: z.boolean(),

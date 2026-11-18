@@ -66,6 +66,7 @@ import { disconnectConfirmText, hasOpenWriteConnection } from '../lib/ads-write.
 import { getConfig } from '../lib/auth.ts';
 import { monthLabel } from '../lib/period-lock.ts';
 import { toast } from '../lib/toast.ts';
+import { TOUCH_BUTTON } from '../lib/touch.ts';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 type SandboxCurrency = (typeof ADS_SANDBOX_CURRENCIES)[number];
@@ -325,7 +326,7 @@ function SyncStatus({ account }: { account: AdAccountView }) {
       ) : account.extraScopes.length > 0 ? (
         // The token can do more than read reports (the app was shared with another use that the person granted): say what.
         <p className="text-warning" role="status">
-          {t('extraScopes', { list: account.extraScopes.join(', ') })}
+          {t('extraScopes', { count: account.extraScopes.length })}
         </p>
       ) : account.provider === 'google_ads' ? (
         <p className="text-muted-foreground">{t('googleReadOnly')}</p>
@@ -344,7 +345,7 @@ function SyncStatus({ account }: { account: AdAccountView }) {
       )}
       {account.connectionStatus !== 'active' && (
         <p className={account.connectionStatus === 'revoked' ? 'text-muted-foreground' : 'text-warning'} role="status">
-          {account.pausedReason && account.pausedReason !== 'disconnected' && account.pausedSince ? t(`paused.${account.pausedReason}`, { since: f.date(account.pausedSince) }) : t(`connectionHint.${account.connectionStatus}`)}
+          {account.pausedReason && account.pausedReason !== 'disconnected' && account.pausedSince ? t(`paused.${account.pausedReason}`, { since: f.date(account.pausedSince), provider: adProviderName(account.provider) }) : t(`connectionHint.${account.connectionStatus}`)}
         </p>
       )}
       {active && account.lastErrorKind && (
@@ -409,7 +410,7 @@ export function AccountHeader({ account, canRefresh, onRequested }: { account: A
               // A disconnect the owner chose is a quiet state; an expired connection or one in trouble is a warning.
               <Badge variant={account.connectionStatus === 'revoked' ? 'secondary' : 'warning'}>{t(`connection.${account.connectionStatus}`)}</Badge>
             )}
-            {account.currency !== null && account.timeZone !== null && <span>{t('currencyAndZone', { currency: account.currency, zone: account.timeZone })}</span>}
+            {account.currency !== null && account.timeZone !== null && <span>{t('currencyAndZone', { currency: account.currency, zone: account.timeZone === 'Asia/Ho_Chi_Minh' ? t('zoneVietnam') : t('zoneNamed', { zone: account.timeZone }) })}</span>}
           </p>
         </div>
         {canRefresh && (
@@ -418,6 +419,7 @@ export function AccountHeader({ account, canRefresh, onRequested }: { account: A
               loading={refresh.isPending}
               variant="outline"
               size="lg"
+              className={TOUCH_BUTTON}
               disabled={!active || held}
               aria-describedby={held ? holdId : undefined}
               onClick={() => refresh.mutate({ adAccountId: account.id, idempotencyKey: crypto.randomUUID() })}
@@ -517,7 +519,8 @@ function Stat({ label, note, children }: { label: string; note?: string | undefi
 // The period's totals. With no result kind chosen there is nothing to call a result, so the two figures that depend on it
 // give way to a prompt: owners and admins are taken to the setting, the others are told who chooses.
 // `onChooseResult`: where the prompt takes an owner (the Ads settings, where the result kind is set); without it the field on this screen is focused.
-export function Totals({ summary, currency, canManage, onChooseResult }: { summary: AdsSummary; currency: string; canManage: boolean; onChooseResult?: () => void }) {
+// `period` names the figures' own period in the heading (#3641): the range, its dates and the currency, so no figure stands without them.
+export function Totals({ summary, currency, canManage, onChooseResult, period }: { summary: AdsSummary; currency: string; canManage: boolean; onChooseResult?: () => void; period?: { kind: AdsRangeKind; from: string; to: string } }) {
   const t = useTranslations('ads');
   const f = useFormat();
   const kindName = useKindName();
@@ -526,7 +529,7 @@ export function Totals({ summary, currency, canManage, onChooseResult }: { summa
   return (
     <section aria-labelledby={headingId} className="space-y-3">
       <h2 id={headingId} className={H2}>
-        {t('totalsTitle')}
+        {period ? t('totalsTitleFor', { range: t(`ranges.${period.kind}`), from: f.date(period.from), to: f.date(period.to), currency }) : t('totalsTitle')}
       </h2>
       <Card className="block p-4">
         <dl className="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-3 lg:grid-cols-5">
@@ -925,7 +928,7 @@ function AccountPanel({
             </div>
           ) : (
             <>
-              <Totals summary={summary.data} currency={currency} canManage={canManage} {...(onOpenSettings ? { onChooseResult: onOpenSettings } : {})} />
+              <Totals summary={summary.data} currency={currency} canManage={canManage} period={{ kind: range, from: days.from, to: days.to }} {...(onOpenSettings ? { onChooseResult: onOpenSettings } : {})} />
               {canManage && <AdsCommittedStrip account={account} month={todayIn(account.timeZone, now).slice(0, 7)} />}
               {summary.data.days.length === 0 ? (
                 <Empty title={t('noSpend')} hint={t('noSpendHint')} />

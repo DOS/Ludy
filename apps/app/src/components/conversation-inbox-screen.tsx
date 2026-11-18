@@ -10,7 +10,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { CONVERSATION_INTENTS } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
+import { Link, useParams } from '@tanstack/react-router';
+import { Button, buttonVariants } from '@crove/ui/components/button';
 import { Checkbox } from '@crove/ui/components/checkbox';
 import { NavIcon } from '@crove/ui/components/nav-icon';
 import { cn } from '@crove/ui/lib/utils';
@@ -19,10 +20,12 @@ import { NativeSelect } from '@crove/ui/components/native-select';
 import { Badge } from '@crove/ui/components/badge';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
+import { PaneError } from './conversation-states.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { inboxCountsInput, inboxListInput, type InboxSearch } from '../lib/conversation-inbox.ts';
 import { sortByIntent } from '../lib/conversation-intent.ts';
 import { INBOX_SPLIT_UP, useMediaQuery } from '../lib/media.ts';
+import { TOUCH_BUTTON, TOUCH_SELECT } from '../lib/conversation-touch.ts';
 import { withSearch } from '../lib/search.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { ConversationListItem, ConversationThread, LoadOlderConversations, POLL_MS, STATUSES, useConversationPages, useMe } from './conversation-inbox.tsx';
@@ -75,6 +78,31 @@ function PaneEmpty({ title, hint, testId }: { title: string; hint?: string | und
     <div className="flex min-h-48 flex-1 flex-col items-center justify-center gap-1 px-6 py-10 text-center" data-testid={testId}>
       <p className="text-sm font-medium text-foreground">{title}</p>
       {hint && <p className="max-w-xs text-xs text-subtle-foreground">{hint}</p>}
+    </div>
+  );
+}
+
+// An Inbox with no channel to receive from is not "all clear" (#3638): it says so, offers the one action (connect a channel), and, where the server receives mail, the
+// other way in: forward an email to the Inbox's own address.
+export function NoChannelsEmpty({ slug, address, canConnect = true }: { slug: string; address: string | null; canConnect?: boolean }) {
+  const t = useTranslations('conversations.inbox');
+  return (
+    <div className="flex min-h-48 flex-1 flex-col items-center justify-center gap-3 px-6 py-10 text-center" data-testid="inbox-no-channels">
+      <div className="space-y-1">
+        <p className="text-sm font-medium text-foreground">{t('noChannels')}</p>
+        <p className="max-w-xs text-xs text-subtle-foreground">{t('noChannelsHint')}</p>
+      </div>
+      {/* A viewer cannot connect a channel, so the button is for those who may answer; the others read the hint. */}
+      {canConnect && (
+        <Link to="/o/$slug/social/channels" params={{ slug }} className={cn(buttonVariants({ size: 'lg' }), TOUCH_BUTTON)} data-testid="inbox-connect-channel">
+          {t('connectChannel')}
+        </Link>
+      )}
+      {address && (
+        <p className="max-w-xs text-xs text-subtle-foreground" data-testid="inbox-forward-address">
+          {t('orForward')} <span className="font-mono break-all text-foreground">{address}</span>
+        </p>
+      )}
     </div>
   );
 }
@@ -150,6 +178,15 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
     if ((search.q ?? '') !== typed) change({ q: typed === '' ? undefined : typed });
   }, [typed]); // eslint-disable-line react-hooks/exhaustive-deps
   const channelList = (channels.data ?? []).filter((c) => c.status !== 'revoked');
+  // Nothing connected (the channel list has loaded and holds none): the empty New tab says so instead of "no new conversations".
+  // "Nothing connected" counts the Inbox's own email connection too (made by the first customer mail): an org that only receives forwarded email is not unconnected.
+  const everyChannel = useQuery(orpc.channels.list.queryOptions({ input: { includeMessaging: true, includeEmail: true } }));
+  const noChannels = everyChannel.data !== undefined && everyChannel.data.every((c) => c.status === 'revoked');
+  // Neither empty text is drawn until that list has answered (or failed, when the ordinary empty text stands): a list that finishes first must not say "all clear" to an org
+  // with no channel for a moment.
+  const emptyReady = list.loaded && (everyChannel.data !== undefined || everyChannel.isError);
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  const org = useQuery(orpc.org.get.queryOptions());
   const paneClass = 'min-h-0 min-w-0';
   return (
     <div className="space-y-3" data-testid="inbox" data-reading={reading}>
@@ -162,7 +199,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
         </div>
         <label className="min-w-[8.5rem] flex-1 text-xs font-medium text-muted-foreground">
           <span className="mb-1 block">{ti('filters.kind')}</span>
-          <NativeSelect className="w-full" value={search.kind ?? ''} onChange={(e) => change({ kind: e.target.value === '' ? undefined : (e.target.value as InboxSearch['kind']) })} data-testid="inbox-kind">
+          <NativeSelect className={cn('w-full', TOUCH_SELECT)} value={search.kind ?? ''} onChange={(e) => change({ kind: e.target.value === '' ? undefined : (e.target.value as InboxSearch['kind']) })} data-testid="inbox-kind">
             <option value="">{ti('filters.kindAll')}</option>
             <option value="comment_thread">{t('kind.comment_thread')}</option>
             <option value="direct">{t('kind.direct')}</option>
@@ -171,7 +208,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
         </label>
         <label className="min-w-[8.5rem] flex-1 text-xs font-medium text-muted-foreground">
           <span className="mb-1 block">{ti('filters.channel')}</span>
-          <NativeSelect className="w-full" value={search.channel ?? ''} onChange={(e) => change({ channel: e.target.value === '' ? undefined : e.target.value })} data-testid="inbox-channel">
+          <NativeSelect className={cn('w-full', TOUCH_SELECT)} value={search.channel ?? ''} onChange={(e) => change({ channel: e.target.value === '' ? undefined : e.target.value })} data-testid="inbox-channel">
             <option value="">{ti('filters.channelAll')}</option>
             {channelList.map((c) => (
               <option key={c.id} value={c.id}>
@@ -182,7 +219,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
         </label>
         <label className="min-w-[8.5rem] flex-1 text-xs font-medium text-muted-foreground">
           <span className="mb-1 block">{ti('filters.assignee')}</span>
-          <NativeSelect className="w-full" value={search.assignee ?? ''} onChange={(e) => change({ assignee: e.target.value === '' ? undefined : (e.target.value as InboxSearch['assignee']) })} data-testid="inbox-assignee">
+          <NativeSelect className={cn('w-full', TOUCH_SELECT)} value={search.assignee ?? ''} onChange={(e) => change({ assignee: e.target.value === '' ? undefined : (e.target.value as InboxSearch['assignee']) })} data-testid="inbox-assignee">
             <option value="">{ti('filters.assigneeAll')}</option>
             <option value="me">{ti('filters.assigneeMe')}</option>
             <option value="none">{ti('filters.assigneeNone')}</option>
@@ -190,7 +227,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
         </label>
         <label className="min-w-[8.5rem] flex-1 text-xs font-medium text-muted-foreground">
           <span className="mb-1 block">{ti('filters.intent')}</span>
-          <NativeSelect className="w-full" value={search.intent ?? ''} onChange={(e) => change({ intent: e.target.value === '' ? undefined : (e.target.value as InboxSearch['intent']) })} data-testid="inbox-intent">
+          <NativeSelect className={cn('w-full', TOUCH_SELECT)} value={search.intent ?? ''} onChange={(e) => change({ intent: e.target.value === '' ? undefined : (e.target.value as InboxSearch['intent']) })} data-testid="inbox-intent">
             <option value="">{ti('filters.intentAll')}</option>
             {CONVERSATION_INTENTS.map((intent) => (
               <option key={intent} value={intent}>
@@ -217,10 +254,15 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
               </TabsList>
             </Tabs>
             {canWrite && status === 'new' && (
-              <label className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground" title={tn('orderHint')}>
-                <input type="checkbox" checked={search.order === 'intent'} data-testid="inbox-order-intent" onChange={(e) => change({ order: e.target.checked ? 'intent' : undefined })} />
-                {tn('order')}
-              </label>
+              <div className="space-y-0.5">
+                <label className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground">
+                  <input type="checkbox" checked={search.order === 'intent'} aria-describedby="inbox-order-hint" data-testid="inbox-order-intent" onChange={(e) => change({ order: e.target.checked ? 'intent' : undefined })} />
+                  {tn('order')}
+                </label>
+                <p id="inbox-order-hint" className="text-xs text-subtle-foreground">
+                  {tn('orderHint')}
+                </p>
+              </div>
             )}
             {ai === 'budget' && status === 'new' && (
               <p className="text-xs text-muted-foreground" role="status">
@@ -236,10 +278,11 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
             )}
             {list.error && (
               <div className="p-3">
-                <ErrorText>{errorMessage(list.error)}</ErrorText>
+                <PaneError message={errorMessage(list.error)} onRetry={list.retry} testId="inbox-list-error" />
               </div>
             )}
-            {list.loaded && items.length === 0 && <PaneEmpty title={search.q ? ti('noMatch') : ti(`empty.${status}`)} hint={!search.q && status === 'new' ? ti('emptyNewHint') : undefined} testId="inbox-list-empty" />}
+            {emptyReady && items.length === 0 && noChannels && !search.q && status === 'new' && <NoChannelsEmpty slug={slug} address={org.data?.conversationAddress ?? null} canConnect={canWrite} />}
+            {emptyReady && items.length === 0 && !(noChannels && !search.q && status === 'new') && <PaneEmpty title={search.q ? ti('noMatch') : ti(`empty.${status}`)} hint={!search.q && status === 'new' ? ti('emptyNewHint') : undefined} testId="inbox-list-empty" />}
             {items.length > 0 && (
               <ul className="divide-y divide-border">
                 {items.map((c) => (

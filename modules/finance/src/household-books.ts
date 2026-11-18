@@ -39,7 +39,7 @@ export interface HouseholdBookWindow {
   representativeName: string | null;
 }
 
-export async function householdBookWindow(ctx: QueryContext, legalEntityId: string, period: string, book: 'S1a' | 'S2a' | 'S2c'): Promise<HouseholdBookWindow> {
+export async function householdBookWindow(ctx: QueryContext, legalEntityId: string, period: string, book: 'S1a' | 'S2a' | 'S2b' | 'S2c'): Promise<HouseholdBookWindow> {
   const entity = await resolveLegalEntity(ctx, legalEntityId);
   const ledger = await accountLedgerOf(ctx, period, entity, SALES_ACCOUNT);
   const { to } = ledger.period;

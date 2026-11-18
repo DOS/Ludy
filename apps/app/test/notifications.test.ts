@@ -12,7 +12,7 @@ describe('notificationKinds', () => {
     expect(notificationKinds(['notes'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'notes.todo_due']);
     expect(notificationKinds(['projects'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'projects.weekly_status']);
     // The series nudge is a kind of the Meetings module (#3542).
-    expect(notificationKinds(['meetings']).slice(-1)).toEqual(['meetings.series_open_items']);
+    expect(notificationKinds(['meetings']).slice(-2)).toEqual(['meetings.series_open_items', 'meetings.summary_ready']);
     expect(notificationKinds(['finance'])).not.toContain('meetings.series_open_items');
     // An ad account's paused connection is a kind of the Ads module (#2219).
     expect(notificationKinds(['ads'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'kernel.channel_expired']);
@@ -41,6 +41,9 @@ describe('notificationTarget', () => {
     // The series nudge opens the previous meeting, and nothing without one (#3542).
     expect(notificationTarget({ kind: 'meetings.series_open_items', subjectId: id, detail: { count: '2' } })).toEqual({ to: 'meeting', id });
     expect(notificationTarget({ kind: 'meetings.series_open_items', subjectId: null, detail: {} })).toBeNull();
+    // The "minutes draft ready" notice opens its meeting, and nothing without one (#3730).
+    expect(notificationTarget({ kind: 'meetings.summary_ready', subjectId: id, detail: {} })).toEqual({ to: 'meeting', id });
+    expect(notificationTarget({ kind: 'meetings.summary_ready', subjectId: null, detail: {} })).toBeNull();
     expect(notificationTarget({ kind: 'kernel.original_flagged', subjectId: id, detail: { differs: 'true', signature: 'none' } })).toEqual({ to: 'proposal', id });
     expect(notificationTarget({ kind: 'finance.bank_attention', subjectId: id, detail: { bankAccount: '1121' } })).toEqual({ to: 'bank', account: '1121' });
     expect(notificationTarget({ kind: 'finance.portal_attention', subjectId: id, detail: {} })).toEqual({ to: 'portal' });

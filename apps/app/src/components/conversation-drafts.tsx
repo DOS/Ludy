@@ -25,6 +25,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { ErrorText, Spinner } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
+import { TOUCH_BUTTON } from '../lib/conversation-touch.ts';
 
 // The name a saved reply's `{tên}` is filled with (#3102): the linked contact's name when a person linked one, else the name the platform gave. Null when
 // the thread has neither (only a short tail of an id), and then the placeholder is dropped, never shown.
@@ -53,6 +54,12 @@ export function DraftPanel({ detail, onUse, onUseSaved }: { detail: Conversation
   if (!draft && !showAsk && detail.suggestions.length === 0) return null;
   return (
     <div className="space-y-2" data-testid="conversation-draft-panel">
+      {/* The first place the Inbox shows the sales coworker says what it is (DESIGN 1.1): a coworker that proposes, never one that sends. */}
+      {aiOn && (draft || showAsk) && (
+        <p className="text-xs text-muted-foreground" data-testid="conversation-dy-intro">
+          {t('draft.intro')}
+        </p>
+      )}
       {draft?.state === 'requested' && (
         <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="conversation-draft-writing">
           <Spinner /> {t('draft.writing')}
@@ -61,7 +68,7 @@ export function DraftPanel({ detail, onUse, onUseSaved }: { detail: Conversation
       {draft?.state === 'live' && draft.body !== null && (
         <section className="space-y-2 rounded-md border border-border bg-muted/50 p-3" aria-label={t('draft.title')} data-testid="conversation-draft">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline" data-testid="conversation-draft-tainted">
+            <Badge variant="proposal" data-testid="conversation-draft-tainted">
               {t('draft.badge')}
             </Badge>
             <span className="text-xs text-muted-foreground">{t('draft.hint')}</span>
@@ -70,10 +77,10 @@ export function DraftPanel({ detail, onUse, onUseSaved }: { detail: Conversation
             {draft.body}
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" size="sm" variant="outline" data-testid="conversation-draft-use" onClick={() => onUse(draft)}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" data-testid="conversation-draft-use" onClick={() => onUse(draft)}>
               {t('draft.use')}
             </Button>
-            <Button type="button" size="sm" variant="ghost" loading={discard.isPending} data-testid="conversation-draft-discard" onClick={() => discard.mutate(draft.id)}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" loading={discard.isPending} data-testid="conversation-draft-discard" onClick={() => discard.mutate(draft.id)}>
               {t('draft.discard')}
             </Button>
           </div>
@@ -82,7 +89,7 @@ export function DraftPanel({ detail, onUse, onUseSaved }: { detail: Conversation
       )}
       {showAsk && (
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" size="sm" variant="outline" loading={ask.isPending} data-testid="conversation-draft-ask" onClick={() => ask.mutate()}>
+          <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" loading={ask.isPending} data-testid="conversation-draft-ask" onClick={() => ask.mutate()}>
             {t('draft.ask')}
           </Button>
           {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
@@ -92,7 +99,7 @@ export function DraftPanel({ detail, onUse, onUseSaved }: { detail: Conversation
         <div className="flex flex-wrap items-center gap-2" aria-label={t('draft.suggestions')} data-testid="conversation-suggestions">
           <span className="text-xs text-muted-foreground">{t('draft.suggestions')}</span>
           {detail.suggestions.map((s) => (
-            <Button key={s.id} type="button" size="sm" variant="outline" title={s.body} data-testid="conversation-suggestion" onClick={() => onUseSaved(s)}>
+            <Button key={s.id} type="button" size="sm" className={TOUCH_BUTTON} variant="outline" title={s.body} data-testid="conversation-suggestion" onClick={() => onUseSaved(s)}>
               {s.title}
             </Button>
           ))}
@@ -148,10 +155,10 @@ export function SavedRepliesManager({ canWrite }: { canWrite: boolean }) {
             {r.keywords.length > 0 && <p className="text-xs text-subtle-foreground">{t('saved.keywordsLine', { keywords: r.keywords.join(', ') })}</p>}
             {canWrite && (
               <div className="flex gap-2">
-                <Button type="button" size="sm" variant="ghost" onClick={() => setEditing({ id: r.id, title: r.title, body: r.body, keywords: r.keywords.join(', ') })}>
+                <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" onClick={() => setEditing({ id: r.id, title: r.title, body: r.body, keywords: r.keywords.join(', ') })}>
                   {t('saved.edit')}
                 </Button>
-                <Button type="button" size="sm" variant="ghost" loading={remove.isPending && remove.variables === r.id} onClick={() => remove.mutate(r.id)}>
+                <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" loading={remove.isPending && remove.variables === r.id} onClick={() => remove.mutate(r.id)}>
                   {t('saved.delete')}
                 </Button>
               </div>
@@ -161,7 +168,7 @@ export function SavedRepliesManager({ canWrite }: { canWrite: boolean }) {
       </ul>
       {remove.error && <ErrorText>{errorMessage(remove.error)}</ErrorText>}
       {canWrite && !editing && (
-        <Button type="button" size="sm" variant="outline" data-testid="saved-reply-add" onClick={() => setEditing({ id: null, title: '', body: '', keywords: '' })}>
+        <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" data-testid="saved-reply-add" onClick={() => setEditing({ id: null, title: '', body: '', keywords: '' })}>
           {t('saved.add')}
         </Button>
       )}
@@ -175,10 +182,10 @@ export function SavedRepliesManager({ canWrite }: { canWrite: boolean }) {
           <Input id="saved-keywords" value={editing.keywords} placeholder={t('saved.keywordsPlaceholder')} onChange={(e) => setEditing({ ...editing, keywords: e.target.value })} />
           <p className="text-xs text-subtle-foreground">{t('saved.keywordsHint', { max: String(SAVED_REPLY_KEYWORDS_MAX) })}</p>
           <div className="flex gap-2">
-            <Button type="submit" size="sm" loading={save.isPending} disabled={editing.title.trim() === '' || editing.body.trim() === ''} data-testid="saved-reply-save">
+            <Button type="submit" size="sm" className={TOUCH_BUTTON} loading={save.isPending} disabled={editing.title.trim() === '' || editing.body.trim() === ''} data-testid="saved-reply-save">
               {t('saved.save')}
             </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(null)}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" onClick={() => setEditing(null)}>
               {t('cancel')}
             </Button>
           </div>

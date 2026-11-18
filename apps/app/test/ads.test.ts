@@ -451,8 +451,8 @@ describe('the words of the screen', () => {
     expect(vi.ads.oauth.backToAds).toBe('Về Quảng cáo');
     expect(en.ads.oauth.backToAds).toBe('Back to Ads');
     // They say it only reads, with the permission named, and that the connection lasts about 60 days.
-    expect(en.ads.connectMeta.note).toContain('ads_read');
-    expect(vi.ads.connectMeta.note).toContain('ads_read');
+    expect(en.ads.connectMeta.note).toContain('only asks for permission to read ad reports');
+    expect(vi.ads.connectMeta.note).toContain('chỉ xin quyền đọc báo cáo quảng cáo');
     expect(en.ads.connectMeta.expiry).toContain('60 days');
     expect(vi.ads.connectMeta.expiry).toContain('60 ngày');
     // The success text names the connected accounts in both languages.

@@ -59,7 +59,7 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     await form.getByLabel('Tên tài khoản quảng cáo').fill('Quảng cáo chiến dịch E2E');
     await form.getByLabel('Đơn vị tiền').selectOption('VND');
     await form.getByRole('button', { name: 'Kết nối tài khoản thử' }).click();
-    await expect(page.getByText('Tiền tệ VND, múi giờ Asia/Ho_Chi_Minh')).toBeVisible({ timeout: 90_000 });
+    await expect(page.getByText('Tiền tệ VND, giờ Việt Nam (UTC+7)')).toBeVisible({ timeout: 90_000 });
   });
 
   await test.step('the builder is there with the account, and without AI no request panel is offered', async () => {

@@ -56,7 +56,7 @@ const { AdsBooksStrip } = await import('../src/components/ads-books-strip.tsx');
 const { AdsCommittedStrip } = await import('../src/components/ads-committed.tsx');
 const { AccountHeader, AdsEmpty, AdsSettingsCard, Breakdowns, ConnectGoogle, ConnectMeta, Totals } = await import('../src/routes/ads.tsx');
 const { AdsWeeklyNoteCard } = await import('../src/components/ads-weekly-note.tsx');
-const { AdsWriteCard, CapForm, isCapAmount } = await import('../src/components/ads-write.tsx');
+const { AdsWriteCard, CapForm, capAmountOf, isCapAmount } = await import('../src/components/ads-write.tsx');
 const { AdsProposalCard } = await import('../src/components/ads-proposal-card.tsx');
 const { AdsRunStatus } = await import('../src/components/ads-run-status.tsx');
 const { AdsCardError } = await import('../src/components/ads-card-error.tsx');
@@ -210,8 +210,9 @@ describe('the empty Ads screen where Meta ads is offered', () => {
     expect(html).toContain(`>${en.ads.connectMeta.title}<`);
     expect(buttonBefore(html, en.ads.connectMeta.action)).toBeDefined();
     expect(buttonBefore(html, en.ads.connectMeta.action)).not.toContain('disabled=""');
-    expect(html).toContain('ads_read');
-    expect(html).toContain('never creates or changes a campaign');
+    expect(html).toContain('only asks for permission to read ad reports');
+    expect(html).toContain('creates or changes no campaign unless you turn on running ads');
+    expect(html).not.toContain('ads_read');
     expect(html).toContain(en.ads.connectMeta.expiry);
     // Meta alone is a platform: no "no platform" notice, and no test form without the sandbox.
     expect(html).not.toContain(en.ads.noPlatform);
@@ -251,7 +252,7 @@ describe('the empty Ads screen where Meta ads is offered', () => {
     const html = empty(true, false, true, 'vi');
     expect(buttonBefore(html, viMessages.ads.connectMeta.action)).toBeDefined();
     expect(html).toContain('Kết nối tài khoản quảng cáo Meta');
-    expect(html).toContain('ads_read');
+    expect(html).toContain('chỉ xin quyền đọc báo cáo quảng cáo');
     expect(html).toContain(viMessages.ads.connectMeta.expiry);
   });
 });
@@ -262,7 +263,7 @@ describe('the Meta connection button on its own', () => {
     expect(buttonBefore(html, en.ads.connectMeta.another)).toBeDefined();
     expect(html).not.toContain(`>${en.ads.connectMeta.title}<`);
     expect(html).not.toContain('<h2');
-    expect(html).toContain('ads_read');
+    expect(html).toContain('only asks for permission to read ad reports');
   });
 });
 
@@ -659,7 +660,19 @@ describe('running ads: the stops, the requests, the switches and the caps (#2294
 
   it('accepts as a cap a decimal above zero with at most two decimals, as the server does', () => {
     for (const text of ['1', '5000000', '1.5', '20.50', ' 12 ', '0.01', '999999999999999']) expect(isCapAmount(text), text).toBe(true);
-    for (const text of ['', '0', '0.00', '00', '-1', '1.234', '1,5', '1e6', 'abc', '1.', '.5', '1000000000000000']) expect(isCapAmount(text), text).toBe(false);
+    for (const text of ['', '0', '0.00', '00', '-1', '1.2345', '1e6', 'abc', '1.', '.5', '1000000000000000']) expect(isCapAmount(text), text).toBe(false);
+  });
+
+  // #3641: a person types money the Vietnamese way, and the English one, and the cap is judged and sent as the canonical decimal string.
+  it('accepts "5.000.000" and "5,000,000" as well as "5000000", and says what to type when it is not an amount', () => {
+    for (const text of ['5.000.000', '5,000,000', '5 000 000', '1.234', '1,5', '5.000.000,50', '5,000,000.5', '20,5']) expect(isCapAmount(text), text).toBe(true);
+    for (const text of ['5.00.000', '1.234,567', '1,234.567', '5..000', '12abc', '0.000', '0,00']) expect(isCapAmount(text), text).toBe(false);
+    expect(capAmountOf('5.000.000')).toBe('5000000');
+    expect(capAmountOf('5,000,000')).toBe('5000000');
+    expect(capAmountOf('5.000.000,5')).toBe('5000000.5');
+    expect(capAmountOf('20,50')).toBe('20.50');
+    expect(en.ads.write.capAmountInvalid).toContain('5000000 or 5.000.000');
+    expect(viMessages.ads.write.capAmountInvalid).toContain('Nhập số tiền, ví dụ 5000000 hoặc 5.000.000');
   });
 
   describe('the connection that can run ads (W0b)', () => {
@@ -1080,6 +1093,44 @@ describe('the Inbox card of a campaign launch (#3296)', () => {
     expect(html).toContain(viMessages.ads.change.plan.placementsAutomatic);
   });
 
+  // #3675: a deployment with no launch writer (ADS_LIVE_LAUNCH off) holds the amount and creates nothing, so the card must not promise a launch.
+  describe('on a server that cannot launch (#3675)', () => {
+    const asked = (canLaunch: boolean | null, locale: 'en' | 'vi' = 'en') => {
+      client.current.setQueryData(['ads', 'proposal', { id: 'p1' }], { change: change(), canLaunch });
+      return render(<AdsProposalCard id="p1" title="t" slug="shop" />, locale);
+    };
+
+    it('says plainly that approving holds the amount and does not create the campaign, and promises no launch', () => {
+      const html = asked(false);
+      expect(html).toContain('data-testid="ads-no-launcher"');
+      expect(html).toContain(en.inboxDetail.adsNoLauncher);
+      expect(html).toContain('This server has not turned on running real ads, so the campaign is not created');
+      expect(html).not.toContain('Ludy holds');
+      expect(html).not.toContain('creates the campaign at the ad platform paused');
+      expect(html).toContain('If this server turns on running real ads later');
+      const vi = asked(false, 'vi');
+      expect(vi).toContain(viMessages.inboxDetail.adsNoLauncher);
+      expect(vi).toContain('chưa tạo chiến dịch');
+      expect(vi).not.toContain('tạo chiến dịch trên nền tảng quảng cáo ở trạng thái tạm dừng');
+    });
+
+    it('keeps the promise of a launch where the server can launch, and where it does not say', () => {
+      for (const answer of [true, null]) {
+        const html = asked(answer);
+        expect(html).not.toContain('data-testid="ads-no-launcher"');
+        expect(html).toContain('switches it on by itself from the start date');
+      }
+      // An older answer without the field reads as unknown, never as "cannot".
+      client.current.setQueryData(['ads', 'proposal', { id: 'p1' }], { change: change() });
+      expect(render(<AdsProposalCard id="p1" title="t" slug="shop" />)).not.toContain('data-testid="ads-no-launcher"');
+    });
+
+    it('says nothing about launching on a request that launches nothing', () => {
+      client.current.setQueryData(['ads', 'proposal', { id: 'p1' }], { change: { change: 'write_enable' }, canLaunch: null });
+      expect(render(<AdsProposalCard id="p1" title="t" slug="shop" />)).not.toContain('data-testid="ads-no-launcher"');
+    });
+  });
+
   it('adds no plan to a change that has none', () => {
     const html = card({ change: 'write_enable' });
     expect(html).not.toContain('data-testid="ads-plan"');
@@ -1098,8 +1149,10 @@ describe('the header of an ad account', () => {
     expect(quiet).toContain(filled(en.ads.readOnly));
     expect(quiet).not.toContain(en.ads.canRunAds);
     const html = header(account({ provider: 'meta_ads', extraScopes: ['pages_manage_posts', 'pages_show_list'] }));
-    expect(html).toContain('can do more than read ad reports');
-    expect(html).toContain('pages_manage_posts, pages_show_list');
+    expect(html).toContain('beyond reading ad reports');
+    // The raw permission names are not shown to the owner (#3641); how many there are is.
+    expect(html).toContain('2 permissions');
+    expect(html).not.toContain('pages_manage_posts');
     // The note about extra permissions takes the place of the read-only line, not its company.
     expect(html).not.toContain(filled(en.ads.readOnly));
   });
@@ -1137,7 +1190,7 @@ describe('the header of an ad account', () => {
     const html = header(account({ provider: 'meta_ads', name: 'Meta cửa hàng' }));
     expect(html).toContain('>Meta<');
     expect(html).not.toContain(en.ads.sandboxBadge);
-    expect(html).toContain('Currency VND, time zone Asia/Ho_Chi_Minh');
+    expect(html).toContain('Currency VND, Vietnam time (UTC+7)');
   });
 
   it('shows no platform badge for the sandbox other than its own', () => {
@@ -1199,6 +1252,17 @@ describe('the header of an ad account', () => {
 
 describe('the totals of a period', () => {
   const totals = (s: AdsSummary, canManage = true) => render(<Totals summary={s} currency="VND" canManage={canManage} />);
+
+  // #3641 (AD-6): the figures say their own period and currency.
+  it('is headed with its own period, its dates and its currency', () => {
+    const html = render(<Totals summary={summary()} currency="VND" canManage period={{ kind: 'last3Months', from: '2026-08-01', to: '2026-10-31' }} />);
+    expect(html).toMatch(/Totals, [^<(]*\([^)]*to[^)]*\), VND/);
+    expect(html).toContain('VND');
+    const vi = render(<Totals summary={summary()} currency="VND" canManage period={{ kind: 'last3Months', from: '2026-08-01', to: '2026-10-31' }} />, 'vi');
+    expect(vi).toMatch(/Tổng cộng, [^<(]*\([^)]*đến[^)]*\), VND/);
+    // Without a period it is headed as before.
+    expect(totals(summary())).toContain('>Totals<');
+  });
 
   it('shows spend, impressions, clicks, the results of the chosen kind and the cost per result', () => {
     const html = totals(summary());
@@ -1588,9 +1652,8 @@ describe('Google Ads connection, short refresh-token warning, and 7-day comparis
     const withGoogle = render(<AdsEmpty canManage sandbox={false} google={{ slug: 'acme' }} entities={one} onConnected={() => undefined} />);
     expect(withGoogle).toContain(en.ads.connectGoogle.title);
     expect(withGoogle).toContain(en.ads.connectGoogle.action);
-    expect(withGoogle).toContain('https://www.googleapis.com/auth/adwords');
-    expect(withGoogle).toContain('customers:listAccessibleCustomers');
-    expect(withGoogle).toContain('googleAds:searchStream');
+    expect(withGoogle).toContain('single permission that covers both reading and writing');
+    expect(withGoogle).not.toMatch(/googleapis|adwords|customers:|googleAds:/);
 
     const reconnect = render(<ConnectGoogle slug="acme" another reconnect />, 'vi');
     expect(reconnect).toContain(viMessages.ads.connectGoogle.reconnect);
@@ -1599,8 +1662,9 @@ describe('Google Ads connection, short refresh-token warning, and 7-day comparis
   it('states Google’s read-only usage on the account header and warns when a Testing consent screen refresh token has an expiry date', () => {
     const active = render(<AccountHeader account={account({ provider: 'google_ads', connectionExpiresAt: '2026-11-09T00:00:00.000Z' })} canRefresh onRequested={() => undefined} />);
     expect(active).toContain('Google Ads');
-    expect(active).toContain('customers:listAccessibleCustomers');
-    expect(active).toContain('Testing mode issues 7-day tokens');
+    expect(active).toContain(filled(en.ads.googleReadOnly));
+    expect(active).toContain('This connection expires on');
+    expect(active).not.toMatch(/Testing|Production|Console|customers:/);
     expect(active).toContain('09/11/2026');
 
     const metaWithExpiry = render(<AccountHeader account={account({ provider: 'meta_ads', connectionExpiresAt: '2026-12-31T00:00:00.000Z' })} canRefresh onRequested={() => undefined} />);
@@ -1617,7 +1681,7 @@ describe('Google Ads connection, short refresh-token warning, and 7-day comparis
     expect(render(<AccountHeader account={account({ provider: 'meta_ads', connectionExpiresAt: null })} canRefresh onRequested={() => undefined} />)).not.toContain('The connection to the ad platform ends on');
     // Google keeps its own words, and a paused account says its own state instead.
     const google = render(<AccountHeader account={account({ provider: 'google_ads', connectionExpiresAt: inDays(5) })} canRefresh onRequested={() => undefined} />);
-    expect(google).toContain('Testing mode issues 7-day tokens');
+    expect(google).toContain('This connection expires on');
     expect(google).not.toContain('The connection to the ad platform ends on');
     expect(render(<AccountHeader account={account({ provider: 'meta_ads', connectionStatus: 'expired', connectionExpiresAt: inDays(5) })} canRefresh onRequested={() => undefined} />)).not.toContain('The connection to the ad platform ends on');
     // The same words in Vietnamese.
@@ -1684,7 +1748,7 @@ describe('Google Ads connection, short refresh-token warning, and 7-day comparis
       ],
     );
     const html = render(<AdsWeeklyNoteCard />, 'vi');
-    expect(html).toContain('Ghi chú so sánh 7 ngày của Uy');
+    expect(html).toContain('So sánh 7 ngày gần nhất, mọi tài khoản');
     expect(html).toContain('Meta');
     expect(html).toContain('Google Ads');
     expect(html).toContain('Brand Search VN');
@@ -1707,8 +1771,7 @@ describe('the committed spend of the month next to the actual spend (#3297)', ()
 
   it('shows what is committed, the monthly cap and what is left, exactly, with the month', () => {
     const html = strip(data({ account: line({ cap: '1000000', left: '300000' }), org: line() }));
-    expect(html).toContain(en.ads.committed.title);
-    expect(html).toContain('11/2026');
+    expect(html).toContain('Committed for 11/2026');
     expect(html).toContain(en.ads.committed.committed);
     expect(html).toContain(en.ads.committed.cap);
     expect(html).toContain(en.ads.committed.left);
@@ -1743,7 +1806,7 @@ describe('the committed spend of the month next to the actual spend (#3297)', ()
     const vn = strip(none, true, 'vi');
     expect(vn).toContain(viMessages.ads.committed.noCap);
     expect(viMessages.ads.committed.noCap).toContain('Chưa đặt hạn mức');
-    expect(viMessages.ads.committed.title).toBe('Đã cam kết tháng này');
+    expect(viMessages.ads.committed.title).toBe('Đã cam kết tháng {month}');
   });
 
   it('says a cap in another currency blocks launches, in both languages, instead of a missing cap', () => {
