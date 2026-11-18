@@ -98,6 +98,11 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // frozen view of @crove/ad-platform with `activate` and `readStatus` and nothing else (it cannot create, pause or revoke), apart from the writers so the creating view
   // cannot activate. Each is bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the activation job reaches the field.
   'channels.adActivators': ['provider:ad_platform'],
+  // The managers of the ad platforms (#3835 W4): what the manage job may call to change a live launch's objects, a frozen view of @crove/ad-platform with a status change (pause,
+  // archive and, for an approved resume, the switch-on), the ad set's daily budget and end date, and a read of an object's status, budget and end date, and nothing else (it
+  // cannot create, find by a tag or revoke). Each is bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the manage job reaches the field.
+  // Classified before the field exists (#3835, step one): the base copy of this suite must know it when the field lands.
+  'channels.adManagers': ['provider:ad_platform'],
   // The state readers of the ad platforms (#3301): what the account's sync job may call to read the status of the objects of a launch (`GET` of one object, with the review feedback);
   // a frozen view with that one call, never the writer. Each is bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the sync job reaches the field.
   // Classified before the field exists (#3301, step 0): the base copy of this suite must know it when the field lands.

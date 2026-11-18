@@ -265,7 +265,7 @@ export function OverviewPage() {
   const noFilingPeriod = overview.data !== undefined && overview.data.vatFilingPeriod === null;
   // The choice is a button where the gap is (#3591), not a link in a sentence.
   const chooseVat = canChooseVat ? (
-    <Link to="/o/$slug/settings" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+    <Link to="/o/$slug/settings" params={{ slug }} hash="tax-profile" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
       {tcl('chooseFilingPeriod')}
     </Link>
   ) : undefined;

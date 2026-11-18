@@ -8,6 +8,7 @@ import { sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
 import { confirmUnverifiedSignature } from '../lib/inbox.ts';
 import { nextTotp } from '../lib/totp.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 const FIXTURE = readFileSync(fileURLToPath(new URL('../../apps/extract/test/fixtures/einvoice-basic.xml', import.meta.url)), 'utf8');
 const SELLER = 'CÔNG TY TNHH DỊCH VỤ MẪU';
@@ -56,6 +57,7 @@ test('an approver teaches a line rule, Settings lists and removes rules, and the
 
   await test.step('Settings lists the learned rule with its provenance', async () => {
     await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+    await openSettingsTab(page, 'accounting');
     const rule = card.getByRole('listitem').filter({ hasText: 'Cước dịch vụ internet tháng 9/2026' });
     await expect(rule).toBeVisible();
     await expect(rule.getByText('Cùng mặt hàng')).toBeVisible();

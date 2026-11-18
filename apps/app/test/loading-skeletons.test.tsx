@@ -40,7 +40,7 @@ const SMALL_REGIONS: Readonly<Record<string, number>> = {
   // Checking whether the reset needs a code, under the form's title.
   'routes/reset-password.tsx': 1,
   // A tax deadline's date in the calendar's definition list.
-  'routes/settings.tsx': 1,
+  'routes/settings/fields.tsx': 1,
   // The portal's captcha image, in its box.
   'components/portal-sync.tsx': 1,
   // A draft request the AI coworker has not answered yet, in its row beside the words that say so.

@@ -8,6 +8,7 @@ import { sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser, signUp } from '../lib/session.ts';
 import { tabTo } from '../lib/inbox.ts';
 import { nextTotp } from '../lib/totp.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 const INVOICE = fileURLToPath(new URL('../../apps/extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SELLER = 'CÔNG TY TNHH DỊCH VỤ MẪU';
@@ -245,6 +246,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   await test.step('add a sub-account in Settings and make it the vendor default (#319)', async () => {
     const nav = page.getByRole('navigation');
     await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await openSettingsTab(page, 'accounting');
     const add = page.getByRole('form', { name: 'Thêm tài khoản con' });
     await add.getByLabel('Tài khoản cha').selectOption('6422');
     await expect(add.getByLabel('Mã tài khoản con')).toHaveValue('6422');
@@ -261,6 +263,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
     // While it is a vendor's default, the sub-account stays in use, and the refusal names the vendor.
     await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await openSettingsTab(page, 'accounting');
     await page.getByRole('button', { name: 'Ngừng dùng tài khoản 6422.VP · Văn phòng Hà Nội' }).click();
     await expect(page.getByText(`Tài khoản 6422.VP đang là tài khoản mặc định của ${SELLER}`, { exact: false })).toBeVisible();
   });

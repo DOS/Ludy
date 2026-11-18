@@ -560,6 +560,12 @@ export function VouchersPage() {
       )}
       {entering && <VoucherFormPanel slug={slug} onClose={() => setEntering(false)} />}
       <MisaCheckPanel formats={['misa_sme_cash_receipts', 'misa_sme_cash_payments', 'misa_sme_bank_credits', 'misa_sme_bank_debits']} from={from} to={to} legalEntityId={entity.legalEntityId} />
+      {/* The accounts a voucher is entered against are the chart of accounts of Settings (#3589). */}
+      <p className="mb-3 text-sm">
+        <Link to="/o/$slug/settings/accounting" params={{ slug }} hash="chart-of-accounts" className="text-link hover:underline">
+          {t('accountsLink')}
+        </Link>
+      </p>
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <label className="text-xs">
           <span className="text-subtle-foreground">{t('filterType')}</span>
