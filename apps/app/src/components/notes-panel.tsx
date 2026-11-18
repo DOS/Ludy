@@ -290,11 +290,13 @@ function PanelBody({
 
 // The org overview's panel: the org itself is the record, so its pinned notes, then its latest shared ones.
 export function OrgNotesPanel({ slug }: { slug: string }) {
+  const t = useTranslations('notes');
   const pinned = useQuery(orpc.notes.list.queryOptions({ input: { view: 'pinned', limit: 20 } }));
   // The list puts pinned notes first, so it reads as many as it may and keeps the unpinned ones.
   const shared = useQuery(orpc.notes.list.queryOptions({ input: { view: 'shared', limit: 200 } }));
   const notes = pinned.data && shared.data ? [...pinned.data, ...shared.data.filter((n) => !n.pinned).slice(0, LATEST)] : null;
-  return <PanelBody slug={slug} target={undefined} headingId="overview-notes" className="mt-8" notes={notes} error={pinned.error ?? shared.error} />;
+  // The empty line is neutral (#3591): the org's own notes are not always about a customer.
+  return <PanelBody slug={slug} target={undefined} headingId="overview-notes" className="mt-8" notes={notes} error={pinned.error ?? shared.error} empty={t('panel.emptyOrg')} />;
 }
 
 // A record's panel (a party, a document, a voucher, a booking, a task, a project): the notes and private to-dos linked to it.

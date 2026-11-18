@@ -124,8 +124,24 @@ describe('the cache', () => {
 });
 
 describe('weeklyTiles', () => {
+  const ZERO_BALANCE = { amount: '0', previous: '0.00' };
   it('lists the figures in order and leaves out an open count that was cut', () => {
     expect(weeklyTiles(FIGURES).map((t) => t.key)).toEqual(['dealsWon', 'dealsOpen', 'cash', 'receivables', 'payables', 'tasksLate']);
-    expect(weeklyTiles({ ...FIGURES, deals: { won: { count: 0, amount: '0' }, open: null } }).map((t) => t.key)).toEqual(['dealsWon', 'cash', 'receivables', 'payables', 'tasksLate']);
+    // Nothing won and the open count cut: a deals tile would only say 0, so there is none (#3591).
+    expect(weeklyTiles({ ...FIGURES, deals: { won: { count: 0, amount: '0' }, open: null } }).map((t) => t.key)).toEqual(['cash', 'receivables', 'payables', 'tasksLate']);
+    // Deals still open show with 0 won.
+    expect(weeklyTiles({ ...FIGURES, deals: { won: { count: 0, amount: '0' }, open: 4 } }).map((t) => t.key)).toEqual(['dealsWon', 'dealsOpen', 'cash', 'receivables', 'payables', 'tasksLate']);
+  });
+
+  it('shows no zeros for an org that does not use the app: no deal, an empty ledger, no late task (#3591)', () => {
+    const empty: Weekly['figures'] = {
+      ...FIGURES,
+      deals: { won: { count: 0, amount: '0' }, open: 0 },
+      money: { cash: ZERO_BALANCE, receivables: ZERO_BALANCE, payables: ZERO_BALANCE },
+      tasks: { late: 0 },
+    };
+    expect(weeklyTiles(empty)).toEqual([]);
+    // One balance that moved brings the three money tiles back, so the card does not show a lone figure.
+    expect(weeklyTiles({ ...empty, money: { ...empty.money!, cash: { amount: '0', previous: '500000' } } }).map((t) => t.key)).toEqual(['cash', 'receivables', 'payables']);
   });
 });

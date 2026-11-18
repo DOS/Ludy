@@ -15,7 +15,9 @@ test('the Kế toán app opens on Tổng quan, with no cards for a new org and t
   await test.step('opening the app lands on Tổng quan, the first item of its menu', async () => {
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/accounting$`));
-    await expect(page.getByRole('heading', { name: 'Tổng quan', exact: true })).toBeVisible();
+    // Not the same name as Home's "Tổng quan" (#3591): the heading and the tab title tell them apart.
+    await expect(page.getByRole('heading', { name: 'Tổng quan tài chính', exact: true })).toBeVisible();
+    await expect(page).toHaveTitle(/^Tổng quan tài chính · /);
     await expect(nav.getByRole('link', { name: 'Tổng quan tài chính', exact: true })).toBeVisible();
     await expect(nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ })).toBeVisible();
   });

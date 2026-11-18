@@ -177,8 +177,11 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
           `SELECT count(*) FILTER (WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(p.payload -> 'checks') k WHERE k ->> 'status' = 'fail'))::text AS failed,
                   count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(p.payload -> 'checks') k WHERE k ->> 'status' = 'fail')
                                     AND EXISTS (SELECT 1 FROM jsonb_array_elements(p.payload -> 'checks') k WHERE k ->> 'status' = 'warn'))::text AS warned
-           FROM crove_kernel.proposal p WHERE p.org_id = $1 AND p.status = 'pending'`,
-          [orgId],
+           FROM crove_kernel.proposal p
+           WHERE p.org_id = $1 AND p.status = 'pending' AND p.command LIKE 'finance.%'
+             -- Only the proposals waiting for the owner, as the groups count them (#3591): the flags are about those, not about ones another approver decides.
+             AND p.eligible_approvers @> ARRAY[$2::uuid] AND NOT p.authors @> jsonb_build_array(jsonb_build_object('type', 'user', 'id', $2::text))`,
+          [orgId, users.owner],
         )
       ).rows[0],
     );
@@ -189,6 +192,8 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     expect(warned?.count ?? 0).toBe(Number(counts?.warned));
     expect(Number(counts?.failed) + Number(counts?.warned)).toBeGreaterThan(0);
     if (failed) expect(failed).toMatchObject({ severity: 'block', href: expect.stringMatching(/^\/inbox\?entity=/) });
+    // They are the proposals the waiting groups count, so they annotate those and add nothing to the count of what needs the member (#3591).
+    for (const f of [failed, warned]) if (f) expect(f.annotates).toBe('proposal');
     // A flag shows no money.
     for (const f of flags) expect(f.amount).toBeUndefined();
   });

@@ -16,19 +16,24 @@ import { weeklyAutoShown, weeklyCacheKey } from '../lib/today-weekly.ts';
 
 type Tile = { key: 'dealsWon' | 'dealsOpen' | 'cash' | 'receivables' | 'payables' | 'tasksLate'; value: string; kind: 'money' | 'number'; hint?: string };
 
-// The figures the card shows as numbers, in order; a group the member cannot open adds none.
+// A decimal string that reads zero ("0", "0.00", "-0").
+const zeroMoney = (amount: string) => /^-?0+(\.0+)?$/.test(amount);
+
+// The figures the card shows as numbers, in order; a group the member cannot open adds none, and so does a group that reads zero throughout
+// (no deal, an empty ledger, no late task): an org that does not use that app sees no zeros of it (#3591).
 export function weeklyTiles(figures: WeeklyFigures): Tile[] {
   const tiles: Tile[] = [];
-  if (figures.deals) {
-    tiles.push({ key: 'dealsWon', value: String(figures.deals.won.count), kind: 'number', hint: figures.deals.won.amount });
-    if (figures.deals.open !== null) tiles.push({ key: 'dealsOpen', value: String(figures.deals.open), kind: 'number' });
+  const { deals, money, tasks } = figures;
+  if (deals && (deals.won.count > 0 || (deals.open ?? 0) > 0)) {
+    tiles.push({ key: 'dealsWon', value: String(deals.won.count), kind: 'number', hint: deals.won.amount });
+    if (deals.open !== null) tiles.push({ key: 'dealsOpen', value: String(deals.open), kind: 'number' });
   }
-  if (figures.money) {
-    tiles.push({ key: 'cash', value: figures.money.cash.amount, kind: 'money' });
-    tiles.push({ key: 'receivables', value: figures.money.receivables.amount, kind: 'money' });
-    tiles.push({ key: 'payables', value: figures.money.payables.amount, kind: 'money' });
+  if (money && ![money.cash, money.receivables, money.payables].every((b) => zeroMoney(b.amount) && zeroMoney(b.previous))) {
+    tiles.push({ key: 'cash', value: money.cash.amount, kind: 'money' });
+    tiles.push({ key: 'receivables', value: money.receivables.amount, kind: 'money' });
+    tiles.push({ key: 'payables', value: money.payables.amount, kind: 'money' });
   }
-  if (figures.tasks) tiles.push({ key: 'tasksLate', value: String(figures.tasks.late), kind: 'number' });
+  if (tasks && tasks.late > 0) tiles.push({ key: 'tasksLate', value: String(tasks.late), kind: 'number' });
   return tiles;
 }
 

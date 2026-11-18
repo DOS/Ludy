@@ -16,7 +16,7 @@ import { ALL_NAV, appOfPath, installedApps, type AppId, type NavItem } from '../
 import { getConfig } from '../lib/auth.ts';
 import { effectiveModules, installedItems } from '../lib/modules.ts';
 import { installedModules, setOrgModules, useModulesVersion } from '../lib/org-modules.ts';
-import { shellBadges } from '../lib/overview.ts';
+import { shellBadges, unreadNotices } from '../lib/overview.ts';
 import { isPaletteShortcut, searchTerm } from '../lib/palette.ts';
 import { documentNumber } from '../lib/search.ts';
 import { proposalName } from '../lib/review.ts';
@@ -122,7 +122,8 @@ export function OrgLayout() {
   const unread = unreadLabel(notifications.data?.unread ?? 0);
   // The kernel's and finance's (#671).
   const work = useWorkNotifications();
-  const workUnread = unreadLabel(work.data?.unread ?? 0);
+  // The bell counts what Home counts (#3591): a notice that a proposal waits is that proposal, already on the Inbox badge and in Home's list.
+  const workUnread = unreadLabel(unreadNotices(work.data) ?? 0);
   const org = me.data?.orgs.find((o) => o.slug === slug);
   const tp = useTranslations('palette');
   const f = useFormat();
