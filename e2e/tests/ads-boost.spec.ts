@@ -157,7 +157,9 @@ test('an owner boosts a published post: no action while running ads is off, then
   });
 
   await test.step('the post shows the boost waiting, with its amount and the way to the request, and offers no second boost', async () => {
-    await page.getByRole('dialog', { name: 'Đẩy bài này' }).getByRole('button', { name: 'Đóng', exact: true }).first().click();
+    // After the draft the panel is titled by its result ("Bản nháp đẩy bài"), not by the form's title, so the dialog is found as the one open dialog; its footer has the
+    // close button (the corner one has the same name). A bounded wait: a locator that matches nothing fails here, not at the test's own limit.
+    await page.getByRole('dialog').getByRole('button', { name: 'Đóng', exact: true }).first().click({ timeout: 15_000 });
     await expect(page.getByRole('dialog')).toHaveCount(0);
     const state = page.getByTestId('boost-state');
     await expect(state).toHaveAttribute('data-state', 'waiting_approval');

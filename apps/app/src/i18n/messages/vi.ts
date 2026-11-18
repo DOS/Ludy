@@ -5408,7 +5408,7 @@ export const vi = {
       capLoweredToast: 'Đã giảm hạn mức. Hạn mức mới áp dụng ngay.',
     },
     // Màn dựng chiến dịch (W1c, #2295): bản nháp, bản nháp do đồng nghiệp AI soạn và đề nghị duyệt. Trước khi duyệt chưa gửi gì lên nền tảng. Duyệt xong (#3639): Ludy giữ số tiền trong hạn mức, tạo chiến dịch ở trạng thái tạm dừng trên nền tảng rồi tự bật từ ngày bắt đầu, không hỏi lại.
-    // Đẩy một bài đã đăng (W3, #3834): thẻ trên bài, bảng hỏi đẩy bài và những bài trợ lý AI gợi ý.
+    // Đẩy một bài đã đăng (W3, #3834): thẻ trên bài, bảng hỏi đẩy bài và những bài đồng nghiệp AI gợi ý.
     boost: {
       cardTitle: 'Đẩy bài này',
       cardHint: 'Cho nhiều người thấy bài này hơn bằng quảng cáo. Bạn chọn mục tiêu, ngân sách và số ngày; chủ sở hữu hoặc quản trị viên duyệt số tiền tối đa trước khi gửi gì tới nền tảng quảng cáo.',

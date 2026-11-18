@@ -252,8 +252,15 @@ async function refuseUnknownReferences(ctx: Db, plan: AdsCampaignPlanDraft): Pro
 // Saves a draft: a new one for an account, or an edit of one that is still a draft with no request waiting. The plan may be incomplete; what is
 // missing comes back as issues. The database stamps the revision and who changed it, and the largest amount is worked out here, in decimal. The save is one
 // function so that the boost of a post (W3, boost.ts) writes the very same draft the builder does, through the same checks: there is no second way to make one.
-// `audit` adds ids to the audit row (never text).
-export async function saveCampaignDraft(ctx: CommandContext, input: AdsCampaignDraftSave, audit: Record<string, unknown> = {}): Promise<AdsCampaignDraftView> {
+// `boost` names the boost the draft is for (ids and numbers only, never text), which the audit row then carries.
+export interface BoostFacts {
+  postId: string;
+  goal: string;
+  audience: string;
+  days: number;
+  budget: string;
+}
+export async function saveCampaignDraft(ctx: CommandContext, input: AdsCampaignDraftSave, boost: BoostFacts | null = null): Promise<AdsCampaignDraftView> {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới lưu được bản nháp chiến dịch');
   const userId = ctx.actor.userId;
   const adAccountId = input.adAccountId.toLowerCase();
@@ -292,7 +299,15 @@ export async function saveCampaignDraft(ctx: CommandContext, input: AdsCampaignD
   const [saved] = await rows(ctx, { id: draftId }).execute();
   if (!saved) throw draftMissing();
   // The audit row has the ids, the amounts and the state, never the creative text (plan section 3.5).
-  ctx.audit({ draftId, adAccountId, objective: saved.objective, revision: saved.revision, maxSpend: saved.max_spend, edited: input.draftId !== undefined, ...audit });
+  ctx.audit({
+    draftId,
+    adAccountId,
+    objective: saved.objective,
+    revision: saved.revision,
+    maxSpend: saved.max_spend,
+    edited: input.draftId !== undefined,
+    ...(boost === null ? {} : { boost: true, postId: boost.postId, goal: boost.goal, audience: boost.audience, days: boost.days, budget: boost.budget }),
+  });
   return viewOf(ctx, saved, ctx.now);
 }
 

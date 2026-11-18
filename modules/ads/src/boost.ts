@@ -123,7 +123,7 @@ export const adsBoostDraft = defineCommand({
     if ('refusal' in made) throw refused(made.refusal);
     // The very same save as the builder's, so the draft is checked by the same rules and the database holds it the same way. The audit row names the boost
     // by ids and numbers, never the post's words.
-    const draft = await saveCampaignDraft(ctx, { adAccountId, plan: made.plan, ...(open ? { draftId: open.row.id } : {}) }, { boost: true, postId, goal: input.goal, audience: input.audience, days: input.days, budget: input.budget });
+    const draft = await saveCampaignDraft(ctx, { adAccountId, plan: made.plan, ...(open ? { draftId: open.row.id } : {}) }, { postId, goal: input.goal, audience: input.audience, days: input.days, budget: input.budget });
     return { draft, edited: open !== undefined };
   },
 });
