@@ -62,13 +62,30 @@ export const zTodayItemBase = z.strictObject({
   severity: z.enum(TODAY_SEVERITIES).optional(),
   // The screen where it is acted on. Batch approval stays there: the list approves nothing itself.
   href: zTodayHref,
+  // A flag about things another item of the list already counts: "7 proposals have a failed check" is the same seven proposals the
+  // waiting-proposals item counts. Home shows it as a chip on those items and the summary leaves it out (todayCount), so one thing is
+  // counted once. Only a flag can annotate.
+  annotates: z.literal('proposal').optional(),
 });
 
-export const zTodayItem = zTodayItemBase.refine((item) => item.currency === undefined || item.amount !== undefined, {
-  message: 'currency needs an amount',
-  path: ['currency'],
-});
+export const zTodayItem = zTodayItemBase
+  .refine((item) => item.currency === undefined || item.amount !== undefined, {
+    message: 'currency needs an amount',
+    path: ['currency'],
+  })
+  .refine((item) => item.annotates === undefined || item.kind === 'flag', { message: 'only a flag annotates', path: ['annotates'] });
 export type TodayItem = z.infer<typeof zTodayItem>;
+
+/** Whether the item only annotates items the list already counts (it is a chip on them, never a count of its own). */
+export const isTodayAnnotation = (item: Pick<TodayItem, 'annotates'>): boolean => item.annotates !== undefined;
+
+/**
+ * How many things need the member: an item counts as what it groups (`count`, else one), and an annotation counts nothing, so an invoice
+ * that waits for approval and carries a warning is one thing. The summary, the brief and the heading of Home all read this one number.
+ */
+export function todayCount(items: readonly Pick<TodayItem, 'annotates' | 'count'>[]): number {
+  return items.reduce((sum, item) => (isTodayAnnotation(item) ? sum : sum + (item.count ?? 1)), 0);
+}
 
 // The most items a line's read returns, and Home's list holds (a read groups before it lists, so a long list is a sign it did not).
 export const TODAY_ITEMS_MAX = 200;

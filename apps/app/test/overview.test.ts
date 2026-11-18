@@ -2,23 +2,66 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { WAITING_LINKS, allCounted, gapsFromYear, shellBadges, waitingItems } from '../src/lib/overview.ts';
+import { WAITING_LINKS, allCounted, appsLayout, gapsFromYear, shellBadges, tasksNotListed, unreadNotices, waitingItems } from '../src/lib/overview.ts';
 
 describe('org overview', () => {
-  it('lists what waits, the books first, and leaves out counts of 0', () => {
-    expect(waitingItems({ tasks: 2, bankLines: 0, proposals: 3, failedFiles: 1, notifications: 0 })).toEqual([
-      { key: 'proposals', count: 3 },
+  it('lists what waits that the "Hôm nay cần bạn" list does not count, and leaves out counts of 0', () => {
+    expect(waitingItems({ tasks: 2, failedFiles: 1, notifications: 0 })).toEqual([
       { key: 'failedFiles', count: 1 },
       { key: 'tasks', count: 2 },
     ]);
     expect(waitingItems({})).toEqual([]);
+    // The proposals, posts to review and statement lines are counted once, in that list (#3591).
+    expect(Object.keys(WAITING_LINKS)).toEqual(['failedFiles', 'notifications', 'tasks']);
   });
 
   it('says nothing waits only once every asked figure is read', () => {
-    expect(allCounted({ proposals: 0, failedFiles: 0 }, ['proposals', 'failedFiles'])).toBe(true);
-    expect(allCounted({ proposals: 0 }, ['proposals', 'failedFiles'])).toBe(false);
-    // A figure the deployment does not run (no finance: no bank lines) is not asked for.
-    expect(allCounted({ proposals: 0, tasks: 0 }, ['proposals', 'tasks'])).toBe(true);
+    expect(allCounted({ failedFiles: 0, tasks: 0 }, ['failedFiles', 'tasks'])).toBe(true);
+    expect(allCounted({ failedFiles: 0 }, ['failedFiles', 'tasks'])).toBe(false);
+  });
+
+  it('counts the bell and the notices without the approvals, which are the proposals already counted (#3591)', () => {
+    // Seven invoices wait: seven "approval waiting" notices are unread, and the member also has two other notices; the server counts the two.
+    expect(unreadNotices({ unreadWork: 2 })).toBe(2);
+    expect(unreadNotices({ unreadWork: 0 })).toBe(0);
+    expect(unreadNotices(undefined)).toBeUndefined();
+  });
+
+  it('counts a task once: the ones the today list already carries are not counted again (#3591)', () => {
+    const tasks = [{ id: 't1' }, { id: 't2' }, { id: 't3' }];
+    const today = [
+      { app: 'projects', id: 'overdue:t1' },
+      { app: 'projects', id: 'due:t2' },
+      // Another app's item whose id merely looks alike is not a task.
+      { app: 'finance', id: 'vat:t3' },
+    ];
+    expect(tasksNotListed(tasks, today)).toBe(1);
+    expect(tasksNotListed(tasks, [])).toBe(3);
+    // Not read yet: no figure, so the screen never says one number and then another.
+    expect(tasksNotListed(tasks, undefined)).toBeUndefined();
+    expect(tasksNotListed(undefined, today)).toBeUndefined();
+  });
+
+  it('draws a card only for an app with a figure to read, and puts the others on one line (#3591)', () => {
+    const none = { zero: true, pending: false, failed: false };
+    const some = { zero: false, pending: false, failed: false };
+    expect(
+      appsLayout([
+        { id: 'finance', figures: [some] },
+        // Engage with 0 posts and 0 bookings: nothing to read.
+        { id: 'engage', figures: [none, none] },
+        // An app that only links.
+        { id: 'teamwork', figures: [] },
+        // One of Engage's two figures has a number, so the card shows.
+        { id: 'sales', figures: [none, some] },
+        // A figure that failed to load keeps its card, with its retry.
+        { id: 'social', figures: [{ zero: false, pending: false, failed: true }] },
+        // Still loading: neither a card nor the line until it is known.
+        { id: 'ai', figures: [{ zero: false, pending: true, failed: false }] },
+      ]),
+    ).toEqual({ cards: ['finance', 'sales', 'social'], line: ['engage', 'teamwork'], pending: true });
+    // A new org: no card at all.
+    expect(appsLayout([{ id: 'finance', figures: [none] }, { id: 'hr', figures: [] }]).cards).toEqual([]);
   });
 
   it('reads sales invoice number gaps from this year on, and from last year through March (#2140)', () => {
@@ -26,13 +69,6 @@ describe('org overview', () => {
     expect(gapsFromYear(new Date(2026, 2, 31))).toBe(2025);
     expect(gapsFromYear(new Date(2026, 3, 1))).toBe(2026);
     expect(gapsFromYear(new Date(2026, 9, 31))).toBe(2026);
-  });
-
-  it("opens the card for posts to review on Social's review tab, not on an accounting screen (#2234)", () => {
-    expect(WAITING_LINKS.socialReviews).toEqual({ to: '/o/$slug/social', search: { tab: 'review' } });
-    // Every other card keeps its own screen.
-    expect(WAITING_LINKS.proposals.to).toBe('/o/$slug/inbox');
-    expect(WAITING_LINKS.bankLines.to).toBe('/o/$slug/bank');
   });
 
   it("counts posts to review on Social's menu item and never on the Inbox's (#2234)", () => {

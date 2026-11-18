@@ -2,7 +2,7 @@
 // The "Hôm nay cần bạn" item shape (#2383) every line's read returns.
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { TODAY_APPS, TODAY_KINDS, sortTodayItems, todayCoworkerKey, todayCurrency, weeklyShownByDefault, zTodayItem, zTodayItemBase, zTodayCoworkers, zTodayItems, zTodayList, zTodayWeekly, zWeeklyFigures, type TodayItem } from '../src/today.ts';
+import { TODAY_APPS, TODAY_KINDS, isTodayAnnotation, sortTodayItems, todayCount, todayCoworkerKey, todayCurrency, weeklyShownByDefault, zTodayItem, zTodayItemBase, zTodayCoworkers, zTodayItems, zTodayList, zTodayWeekly, zWeeklyFigures, type TodayItem } from '../src/today.ts';
 
 const item = (over: Record<string, unknown> = {}) => ({
   kind: 'proposal',
@@ -189,5 +189,30 @@ describe('"Tuần này" (#3257)', () => {
     expect(zWeeklyFigures.safeParse({ ...figures, money: { ...figures.money, cash: { amount: 1.5, previous: '0' } } }).success).toBe(false);
     expect(zWeeklyFigures.safeParse({ ...figures, title: 'x' }).success).toBe(false);
     expect(zTodayWeekly.safeParse({ figures, writtenBy: 'template', sentences: ['a'], budgetSpent: false, final: true }).success).toBe(true);
+  });
+});
+
+describe('todayCount (#3591)', () => {
+  // What finance.today answers for seven pending invoices of two vendors, each with a warning: the two groups, and the flag over the same seven.
+  const seven = [
+    zTodayItem.parse(item({ id: 'proposals:a', count: 4 })),
+    zTodayItem.parse(item({ id: 'proposals:b', count: 3 })),
+    zTodayItem.parse(item({ id: 'checks-warn:e', kind: 'flag', severity: 'warn', count: 7, annotates: 'proposal', href: '/inbox' })),
+  ];
+
+  it('counts seven things for seven invoices, with or without the flag that annotates them', () => {
+    expect(todayCount(seven)).toBe(7);
+    expect(todayCount(seven.filter((i) => !isTodayAnnotation(i)))).toBe(7);
+    expect(todayCount([])).toBe(0);
+  });
+
+  it('counts an item as what it groups, one when it has no count, and every other flag as its own', () => {
+    expect(todayCount([zTodayItem.parse(item({ id: 'a' })), zTodayItem.parse(item({ id: 'b', count: 4 })), zTodayItem.parse(item({ id: 'f', kind: 'flag', severity: 'warn', count: 2 }))])).toBe(7);
+  });
+
+  it('lets only a flag annotate', () => {
+    expect(zTodayItem.safeParse(item({ kind: 'flag', annotates: 'proposal', severity: 'warn' })).success).toBe(true);
+    expect(zTodayItem.safeParse(item({ kind: 'message', annotates: 'proposal' })).success).toBe(false);
+    expect(zTodayItem.safeParse(item({ kind: 'flag', annotates: 'invoice' })).success).toBe(false);
   });
 });

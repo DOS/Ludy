@@ -25,7 +25,7 @@ export const HOUSEHOLD_S1A_ROW_LIMIT = 20_000;
 const notRequired = (book: string) =>
   new DomainError('HOUSEHOLD_BOOK_NOT_REQUIRED', 422, `Hồ sơ hộ kinh doanh của pháp nhân này không yêu cầu sổ ${book} trong kỳ đã chọn`);
 
-// The days a household book covers and who it is for, shared by the books that are views of account 511 (S1a, S2a): the book starts the day the household's first profile took effect (days before
+// The days a household book covers and who it is for, shared by the books that are views of account 511 (S1a, S2a, S2c): the book starts the day the household's first profile took effect (days before
 // it are outside it, so a household that sets its profile today still gets this month's book from today), and every profile in force inside its days must require the book: the one at its first day
 // and each one that starts after it, so a change of method inside the period is asked for in shorter parts. Refused (HOUSEHOLD_BOOK_NOT_REQUIRED) otherwise.
 export interface HouseholdBookWindow {
@@ -39,7 +39,7 @@ export interface HouseholdBookWindow {
   representativeName: string | null;
 }
 
-export async function householdBookWindow(ctx: QueryContext, legalEntityId: string, period: string, book: 'S1a' | 'S2a'): Promise<HouseholdBookWindow> {
+export async function householdBookWindow(ctx: QueryContext, legalEntityId: string, period: string, book: 'S1a' | 'S2a' | 'S2c'): Promise<HouseholdBookWindow> {
   const entity = await resolveLegalEntity(ctx, legalEntityId);
   const ledger = await accountLedgerOf(ctx, period, entity, SALES_ACCOUNT);
   const { to } = ledger.period;
@@ -126,7 +126,7 @@ export const householdS1a = defineQuery({
 // Records one Excel download of a household book after the workbook is built: no row, no download. It changes nothing; the audit row names the entity, the book, the period and the count.
 export const householdExport = defineCommand({
   name: 'finance.household.export',
-  input: z.object({ legalEntityId: zId, book: z.union([zHouseholdBook, zHouseholdReturnForm]), period: zLedgerPeriod, rows: z.number().int().min(0).max(HOUSEHOLD_S1A_ROW_LIMIT) }),
+  input: z.object({ legalEntityId: zId, book: z.union([zHouseholdBook, zHouseholdReturnForm]), period: zLedgerPeriod, rows: z.number().int().min(0).max(HOUSEHOLD_S1A_ROW_LIMIT * 2) }),
   risk: 'R0',
   sideEffect: 'none',
   access: ALL,

@@ -32,6 +32,7 @@ import { MemberPrivateNotes, usePrivateNotes } from '../components/notes-panel.t
 import { CardSkeleton, ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, isEmailAddress, PageHeader, PageSkeleton, RowsSkeleton, Spinner, useFieldErrors } from '../components/ui.tsx';
 import { apiFetch, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { BOOKING_EVENT_TYPES_ID, BOOKING_SETTINGS_ID } from '../lib/booking.ts';
+import { QUOTE_SETTINGS_ID, QuoteSettingsCard } from '../components/quote-settings-card.tsx';
 import { getConfig } from '../lib/auth.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../lib/members.ts';
@@ -1116,7 +1117,7 @@ export function SettingsPage() {
   // wheel or key of the person, or after five seconds.
   const bookingAnchorReady = org.data !== undefined && me.data !== undefined;
   useEffect(() => {
-    const id = [BOOKING_SETTINGS_ID, BOOKING_EVENT_TYPES_ID].find((candidate) => window.location.hash === `#${candidate}`);
+    const id = [BOOKING_SETTINGS_ID, BOOKING_EVENT_TYPES_ID, QUOTE_SETTINGS_ID].find((candidate) => window.location.hash === `#${candidate}`);
     const first = id ? document.getElementById(id) : null;
     if (!bookingAnchorReady || !id || !first) return;
     const align = () => document.getElementById(id)?.scrollIntoView({ block: 'start' });
@@ -1269,6 +1270,8 @@ export function SettingsPage() {
         {installedModules().includes('crm') && org.data && me.data && (
           <EventTypesCard key={`event-types:${org.data.slug}`} slug={org.data.slug} members={org.data.members} me={me.data.userId} role={org.data.role} />
         )}
+        {/* The letterhead, bank note, defaults and logo of the org's quotes (#3645), with the crm module; owners and admins. */}
+        {installedModules().includes('crm') && canManage && org.data && <QuoteSettingsCard key={`quote-settings:${org.data.slug}`} />}
         {/* The legal entities the books are kept for (#1278), with the finance module; owners and admins only. */}
         {installedModules().includes('finance') && canManage && <LegalEntitiesCard key={`legal-entities:${org.data?.slug}`} />}
         {/* The numbers of the bank accounts (#2183): how a statement file finds its account without a bank feed; owners and admins. */}

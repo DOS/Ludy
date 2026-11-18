@@ -8,8 +8,9 @@ import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
+import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -291,6 +292,8 @@ export interface RpcChannels {
   marketplaceProviders?: Readonly<Record<string, MarketplaceProvider>>;
   // The ad platforms this deployment offers, by provider id (ADR-0040, #2217): the offline sandbox when ADS_SANDBOX is on.
   adsPlatforms?: Readonly<Record<string, AdPlatform>>;
+  // The deployment can confirm who sent an email (INBOUND_AUTHSERV_ID, #3636): only then do conversations carry the "sender not confirmed" mark. Left out: it cannot.
+  emailSenderCheck?: boolean;
   // The write Meta app is the read ads app or the Pages app (metaWriteAppShared of the config): switching running ads off then closes every
   // Meta reading connection (ADR-0043 point 4). Left out, it is taken as shared, the safe side.
   adsWriteAppShared?: boolean;
@@ -2767,10 +2770,10 @@ export function createRpcHandler(
       mute: os.notifications.mute.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.mute', input, { actor, orgId }))),
     },
     conversations: {
-      list: os.conversations.list.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.list', input, { actor, orgId }))),
+      list: os.conversations.list.handler(({ context, input }) => inOrg(context, async (orgId, actor) => markableListed((await runtime.query('kernel.conversation.list', input, { actor, orgId })) as ConversationListed, channels?.emailSenderCheck === true))),
       counts: os.conversations.counts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.counts', input, { actor, orgId }))),
       postCounts: os.conversations.postCounts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.post_counts', input, { actor, orgId }))),
-      get: os.conversations.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.get', input, { actor, orgId }))),
+      get: os.conversations.get.handler(({ context, input }) => inOrg(context, async (orgId, actor) => markableDetail((await runtime.query('kernel.conversation.get', input, { actor, orgId })) as ConversationDetail, channels?.emailSenderCheck === true))),
       reply: os.conversations.reply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply', input, { actor, orgId }))),
       replyPrivately: os.conversations.replyPrivately.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply_privately', input, { actor, orgId })),
@@ -2968,6 +2971,7 @@ export function createRpcHandler(
       s1a: os.household.s1a.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s1a', input, { actor, orgId }))),
       cnkd: os.household.cnkd.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.cnkd', input, { actor, orgId }))),
       s2a: os.household.s2a.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2a', input, { actor, orgId }))),
+      s2c: os.household.s2c.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2c', input, { actor, orgId }))),
     },
     einvoice: {
       status: os.einvoice.status.handler(async () => ({ sandbox: Boolean(einvoiceProviderOf('sandbox')) })),
@@ -3077,6 +3081,9 @@ export function createRpcHandler(
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
         startCorrection: os.einvoice.drafts.startCorrection.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.start_correction', input, { actor, orgId }))),
         correctionOptions: os.einvoice.drafts.correctionOptions.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.correction_options', input, { actor, orgId }))),
+        noticeOpen: os.einvoice.drafts.noticeOpen.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.notice_open', input, { actor, orgId }))),
+        noticeStep: os.einvoice.drafts.noticeStep.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.notice_step', input, { actor, orgId }))),
+        noticeList: os.einvoice.drafts.noticeList.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.notice_list', input, { actor, orgId }))),
         issueRequest: os.einvoice.drafts.issueRequest.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.issue_request', input, { actor, orgId }))),
         // The coworker's proposal for the form (#2505): the model is asked outside any transaction, from what the member's own read said it may see.
         previousInvoice: os.einvoice.drafts.previousInvoice.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.previous_invoice', input, { actor, orgId }))),

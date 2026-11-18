@@ -46,7 +46,7 @@ export function BookingSuggestCard({ slug, dealId, startOpen = false, onClose }:
   function draftOf(s: BookingSuggestion): string {
     const link = bookingLinkOf(window.location.origin, slug, s.eventType.slug, dealId);
     if (s.slots.length === 0) return t('replyNone', { title: s.eventType.title, link });
-    const lines = s.slots.map((x) => `- ${whenOf(x, s.timeZone, locale)}`).join('\n');
+    const lines = s.slots.map((x) => `- ${whenOf(x, s.timeZone, locale, { named: true })}`).join('\n');
     return t('reply', { title: s.eventType.title, slots: lines, link });
   }
 

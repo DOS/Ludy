@@ -222,7 +222,7 @@ test('the agents screen with its legal-entity pickers passes the 360px and axe w
   expect(await phoneWidthProblems(page, [`/o/${slug}/agents`])).toEqual([]);
 });
 
-// The Social home's nine tabs at phone width (#1043): they wrap inside the screen, and the page never scrolls sideways.
+// The Social home's tabs at phone width (#1043): they wrap inside the screen, and the page never scrolls sideways.
 // Its own user, created confirmed without the sign-up form, so it draws nothing from the sign-up budget.
 test.describe('at phone width', () => {
   test.use({ viewport: { width: 360, height: 780 } });
@@ -231,9 +231,14 @@ test.describe('at phone width', () => {
     await signInNewUser(page, newEmail('layout-social'));
     const slug = await createOrg(page, 'Công ty Màn hình hẹp');
     await page.goto(`/o/${slug}/social`);
+    // Six status tabs and three views, not ten tabs (#3655); the photo library and the figures are in the tools menu.
     const tabs = page.getByRole('tab');
-    await expect(tabs).toHaveCount(10);
-    await expect(page.getByRole('tab', { name: 'Thư viện ảnh' })).toBeVisible();
+    await expect(tabs).toHaveCount(6);
+    await expect(page.getByRole('button', { name: 'Công cụ' })).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Cách xem bài' }).getByRole('button')).toHaveCount(3);
+    // The header is the tools menu and "Soạn bài", on one row at this width (#3655: no more than two rows on a phone).
+    const header = await Promise.all([page.getByRole('button', { name: 'Công cụ' }), page.getByRole('button', { name: 'Soạn bài' })].map((b) => b.evaluate((el) => el.getBoundingClientRect().top)));
+    expect(Math.abs((header[0] ?? 0) - (header[1] ?? 0))).toBeLessThan(8);
     // Every tab lies inside the screen, without scrolling the page or the tab row.
     for (const box of await tabs.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().toJSON() as { left: number; right: number }))) {
       expect(box.left).toBeGreaterThanOrEqual(0);

@@ -1007,6 +1007,9 @@ export const zNotifications = z.object({
     }),
   ),
   unread: z.number().int().nonnegative(),
+  // `unread` without the notices that a finance proposal waits for the viewer's approval: Home's list counts those proposals, so the bell and
+  // Home's own notice row show this number and one thing is not counted by two. Counted on its own, with the same cap as `unread`.
+  unreadWork: z.number().int().nonnegative(),
   muted: z.array(zNotificationKind),
 });
 export type Notifications = z.infer<typeof zNotifications>;

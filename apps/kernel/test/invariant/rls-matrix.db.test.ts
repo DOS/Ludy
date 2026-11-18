@@ -96,7 +96,6 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
-  'crove_finance.einvoice_notice',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -104,6 +103,8 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_finance.supplier_bank_account',
+  'crove_finance.supplier_bank_account_change',
   'crove_kernel.agent_grant',
   'crove_kernel.agent_wake_delivery',
   'crove_kernel.agent_wake_signal_seen',
@@ -251,6 +252,7 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
   ['crove_finance.stock_count', ['update']],
   ['crove_finance.stock_count_line', ['update']],
   ['crove_finance.stock_item', ['update']],
+  ['crove_finance.supplier_bank_account', ['update']],
   ['crove_kernel.channel_access', ['delete']],
   ['crove_kernel.conversation_setting', ['update', 'delete']],
   ['crove_kernel.member_availability', ['update', 'delete']],
@@ -373,6 +375,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_finance.channel_settlement_line',
   // The household profile of an entity (#2517): a change of tax group, method or trades is a new row from its effective date, never an edit of an earlier one.
   'crove_finance.household_profile',
+  // #3113 S1: a change of a supplier's bank account is a new row; the history is never edited or deleted.
+  'crove_finance.supplier_bank_account_change',
   // #3330 / #3323 (eSign): hash-chained signing ledger per envelope (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
   'crove_sign.signing_event',
 ]);
@@ -1742,6 +1746,41 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_finance.stock_period', values: { org_id: o.id, id: period, period_month: stockMonth() } },
         ],
         row: { org_id: o.id, id: randomUUID(), period_id: period, item_id: item },
+      };
+    },
+  },
+  // #3113 S1: a supplier's bank account (a party's): the number is sealed ciphertext plus a keyed hash and the last four digits. Owners and admins insert and retire it (a column grant on the
+  // status), so the update probes assign the status to itself; there is no delete grant.
+  'crove_finance.supplier_bank_account': {
+    update: { set: 'status = status' },
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        party_id: o.party,
+        bank_name: 'RLS matrix bank',
+        account_holder_sealed: 'crove:s1:rls-matrix-holder',
+        number_sealed: 'crove:s1:rls-matrix',
+        number_hash: randomUUID().replaceAll('-', '').repeat(2),
+        hash_key_id: 'k1',
+        last4: '1234',
+        created_by: o.owner,
+      },
+    }),
+  },
+  // #3113 S1: the append-only history of a supplier's bank account changes (APPEND_ONLY); it names the account row it added, so each row seeds one.
+  'crove_finance.supplier_bank_account_change': {
+    make: (o) => {
+      const account = randomUUID();
+      const hash = randomUUID().replaceAll('-', '').repeat(2);
+      return {
+        setup: [
+          {
+            table: 'crove_finance.supplier_bank_account',
+            values: { org_id: o.id, id: account, party_id: o.party, bank_name: 'RLS matrix bank', account_holder_sealed: 'crove:s1:rls-matrix-holder', number_sealed: 'crove:s1:rls-matrix', number_hash: hash, hash_key_id: 'k1', last4: '1234', created_by: o.owner },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), party_id: o.party, account_id: account, kind: 'added', new_number_hash: hash, changed_by: o.owner, step_up_at: '2026-11-18T00:00:00Z' },
       };
     },
   },

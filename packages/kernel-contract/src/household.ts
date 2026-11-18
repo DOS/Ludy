@@ -168,3 +168,42 @@ export const zHouseholdS2a = z.strictObject({
   commentary: z.boolean(),
 });
 export type HouseholdS2a = z.infer<typeof zHouseholdS2a>;
+
+// S2c-HKD, the revenue and expense detail of a household that pays PIT on income (Circular 152/2025/TT-BTC; plan 8.5 and 12 row 6, #2517 slice 2b), a view of the ledger like S1a and S2a. A BOOK: Ludy never files
+// anything. Revenue is the same rows as S1a (one per entry that touched account 511, so `revenue` is the ledger's own movement of 511). Expenses are one row per journal line on an expense account (TT133 classes 6
+// and 8), with its document reference (the invoice number of the purchase document the entry was posted from; null for a voucher), its account, and its group read from the dated rows of
+// household_expense_group_map by the account's prefix. An expense account no row covers has `group` null: it is shown apart (`unmapped`) and never put in a guessed group, and it holds `income` back (null).
+// `amount` is debit less credit (a return or a reversal lowers it). The PIT itself is not computed: no income-method rate is in the data and which expenses are deductible is unconfirmed (#2520), so the book stops at
+// the income figure. `commentary` is true while the S2c layout row or a map row in use is not confirmed by the accountant: the screen and the Excel file then carry HOUSEHOLD_PROVISIONAL_LABEL on the expense and
+// income figures, which goes on its own when later dated `confirmed` rows exist.
+export const zHouseholdS2cGet = z.strictObject({ legalEntityId: zId, period: zLedgerPeriod });
+export type HouseholdS2cGet = z.infer<typeof zHouseholdS2cGet>;
+export const zHouseholdS2cExpenseRow = z.strictObject({
+  entryId: zId,
+  lineNo: z.number().int(),
+  date: zLocalDate,
+  reference: z.string().nullable(),
+  description: z.string(),
+  accountCode: z.string(),
+  group: z.enum(HOUSEHOLD_EXPENSE_GROUPS).nullable(),
+  amount: zMoney,
+  reversal: z.boolean(),
+});
+export type HouseholdS2cExpenseRow = z.infer<typeof zHouseholdS2cExpenseRow>;
+export const zHouseholdS2c = z.strictObject({
+  period: z.strictObject({ period: zLedgerPeriod, from: zLocalDate, to: zLocalDate }),
+  household: z.strictObject({ name: z.string(), taxCode: z.string().nullable(), representativeName: z.string().nullable(), openedOn: zLocalDate }),
+  form: zHouseholdBookRule,
+  revenueRows: z.array(zHouseholdS1aRow),
+  revenue: zMoney,
+  expenseRows: z.array(zHouseholdS2cExpenseRow),
+  // One total per group in the fixed order of HOUSEHOLD_EXPENSE_GROUPS (a group with no line has 0), then the expense no row covers and its gross (the sum of the absolute amounts of those lines).
+  groups: z.array(z.strictObject({ group: z.enum(HOUSEHOLD_EXPENSE_GROUPS), amount: zMoney })),
+  unmapped: zMoney,
+  unmappedGross: zMoney,
+  expenseTotal: zMoney,
+  income: zMoney.nullable(),
+  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'group']), key: z.string(), effectiveFrom: zLocalDate })),
+  commentary: z.boolean(),
+});
+export type HouseholdS2c = z.infer<typeof zHouseholdS2c>;
