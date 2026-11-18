@@ -7198,6 +7198,11 @@ export const en = {
       ACCOUNT_NOT_IN_CHART: 'This account is not in your chart of accounts, so MISA will not find it either. Add it to the chart or change the account on the voucher.',
       TOO_LONG: 'The text is longer than the {limit} characters MISA allows: it is cut in the file, and an invoice number is never cut, so MISA will flag it. Shorten it in Ludy.',
     },
+    lineAi: {
+      busy: '{finance} is busy, the list above stands alone for now.',
+      budget: "{finance} has used this month's AI budget: the list above stands alone.",
+      failed: '{finance} could not word this one: the list above stands alone.',
+    },
     warnOnly: 'These checks only warn. The download is not blocked.',
   },
   vouchers: {
@@ -8627,6 +8632,7 @@ export const en = {
       finance_vat_late_explain: 'One sentence naming the late sales invoices on the VAT working',
       finance_bank_match_explain: 'Explaining why a bank transaction may be a payroll payment',
       finance_marketplace_line: 'Wording what is waiting on the marketplace screen',
+      finance_misa_check_line: 'Wording what a MISA export check found',
       finance_supplier_payable_line: 'Wording the received invoices waiting to be paid',
       meetings_transcribe: 'Turning meeting audio into text',
       meetings_summary: 'Summarizing a meeting, its decisions and action items',

@@ -17,6 +17,7 @@ export * from './followup.ts';
 export * from './overview.ts';
 export * from './vat-late.ts';
 export * from './marketplace-line.ts';
+export * from './misa-check-line.ts';
 export * from './supplier-payable-line.ts';
 export * from './payroll-match.ts';
 export * from './payroll-coworker.ts';
