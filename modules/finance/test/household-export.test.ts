@@ -89,6 +89,7 @@ const sheetData = (over: Partial<HouseholdCnkd> = {}): HouseholdCnkd => ({
   ],
   unassigned: '0',
   totals: { revenue: '1600000', vat: '40000', pit: '17000', tax: '57000' },
+  vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [{ trade: 'goods', cut: '0', vatPayable: '10000' }, { trade: 'services', cut: '0', vatPayable: '30000' }], total: { cut: '0', vatPayable: '40000' }, ifEligible: null },
   withheld: { total: '4200', settlements: [{ id: '00000000-0000-4000-8000-0000000000a1', platform: 'shopee', periodStart: '2026-10-01', periodEnd: '2026-10-15', taxWithheld: '4200' }] },
   due: '52800',
   overpaid: '0',
@@ -186,3 +187,37 @@ describe('the 01/CNKD worksheet workbook', () => {
     expect(first.value).toBe('HỘ, CÁ NHÂN KINH DOANH: =HYPERLINK("http://evil")');
   });
 });
+
+describe('the 01/CNKD worksheet and the Decree 174 VAT cut (#3710)', () => {
+  const rowsOf = async (d: HouseholdCnkd) => {
+    const rows = new Map<string, ExcelJS.Row>();
+    (await cnkdSheet(d)).eachRow((row) => rows.set(String(row.getCell(1).value), row));
+    return rows;
+  };
+
+  it('writes the cut and the tax after it when the profile answered yes', async () => {
+    const rows = await rowsOf(
+      sheetData({
+        vatCut: { answer: 'yes', percent: '20.0000', applied: true, lines: [{ trade: 'goods', cut: '2000', vatPayable: '8000' }, { trade: 'services', cut: '6000', vatPayable: '24000' }], total: { cut: '8000', vatPayable: '32000' }, ifEligible: null },
+        due: '44800',
+      }),
+    );
+    expect(rows.get('Giảm thuế GTGT 20.0000% theo Nghị định 174')?.getCell(2).value).toBe(8000);
+    // VAT payable 32000 plus the PIT 17000.
+    expect(rows.get('Tổng thuế GTGT và TNCN sau giảm')?.getCell(2).value).toBe(49000);
+    expect(rows.get('Số thuế còn phải nộp')?.getCell(2).value).toBe(44800);
+  });
+
+  it('says what the VAT would be if eligible when the profile has no answer, and writes no cut row', async () => {
+    const d = sheetData({
+      vatCut: { answer: null, percent: '20.0000', applied: false, lines: [{ trade: 'goods', cut: '0', vatPayable: '10000' }, { trade: 'services', cut: '0', vatPayable: '30000' }], total: { cut: '0', vatPayable: '40000' }, ifEligible: { cut: '8000', vatPayable: '32000' } },
+    });
+    expect(texts(await cnkdSheet(d)).some((t) => t.includes('nếu thuộc diện được giảm, thuế GTGT sẽ là 32000 đồng (giảm 8000 đồng)'))).toBe(true);
+    expect((await rowsOf(d)).has('Tổng thuế GTGT và TNCN sau giảm')).toBe(false);
+  });
+
+  it('writes nothing about the cut when the answer is no', async () => {
+    expect(texts(await cnkdSheet(sheetData())).some((t) => t.includes('Nghị định 174'))).toBe(false);
+  });
+});
+

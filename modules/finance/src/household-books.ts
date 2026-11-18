@@ -65,6 +65,7 @@ export async function householdBookWindow(ctx: QueryContext, legalEntityId: stri
   let form: HouseholdBookRule | undefined;
   let profile: HouseholdProfile | null = null;
   let tradesOfFirstDay: string | null = null;
+  let vatAnswerOfFirstDay: string | null | undefined;
   for (const day of [from, ...changes.map((c) => c.effective_from)]) {
     const view = await householdProfileView(ctx, entity, day);
     form = view.books.find((b) => b.book === book);
@@ -77,6 +78,11 @@ export async function householdBookWindow(ctx: QueryContext, legalEntityId: stri
         throw new DomainError('HOUSEHOLD_TRADES_CHANGED', 422, `Ngành nghề của hộ kinh doanh đổi trong kỳ đã chọn nên sổ ${book} chưa chia được doanh thu; hãy chọn kỳ ngắn hơn, trước và sau ngày đổi`);
       }
       tradesOfFirstDay ??= trades;
+      // The VAT cut answer is one answer for the whole period too (#3710): a part before and a part after a change would need the cut on one and not the other, which the one set of lines cannot show.
+      if (vatAnswerOfFirstDay !== undefined && view.profile.vatCutEligible !== vatAnswerOfFirstDay) {
+        throw new DomainError('HOUSEHOLD_VAT_CUT_CHANGED', 422, `Câu trả lời về giảm thuế GTGT của hộ kinh doanh đổi trong kỳ đã chọn nên sổ ${book} chưa tính được; hãy chọn kỳ ngắn hơn, trước và sau ngày đổi`);
+      }
+      if (vatAnswerOfFirstDay === undefined) vatAnswerOfFirstDay = view.profile.vatCutEligible;
     }
     profile = view.profile;
   }

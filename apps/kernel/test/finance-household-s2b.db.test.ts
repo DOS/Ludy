@@ -374,4 +374,51 @@ suite('the S2b-HKD revenue book of a household business (#2517 slice 2c)', () =>
     await entry(reader, '2026-09-12', 'Bán', [['111', 100000, 0], ['511', 0, 100000]]);
     await expect(s2b(reader, '2026-09', reader.household, reader.viewer)).resolves.toMatchObject({ total: '100000' });
   });
+
+  describe('the Decree 174 VAT cut behind the profile answer (#3710 slice 2)', () => {
+    // Goods 600 000 (VAT 1% = 6 000) and services 400 000 (VAT 5% = 20 000): the cut of 20% takes 1 200 and 4 000.
+    async function sale(o: Org) {
+      const shirt = await item(o, 'AO', 'goods');
+      const repair = await item(o, 'SUA', 'services');
+      await entry(o, '2026-09-05', 'Bán hàng và sửa chữa', [['111', 1000000, 0], ['511', 0, 1000000]], { sale: [{ amount: 600000, item: shirt }, { amount: 400000, item: repair }] });
+    }
+
+    it('applies the cut by line when the profile answered yes, and leaves the VAT column as it was before the cut', async () => {
+      const o = await org();
+      await setProfile(o, { vatCutEligible: 'yes' });
+      await sale(o);
+      const book = await s2b(o, '2026-09');
+      expect(book.lines.map((l) => [l.trade, l.vat])).toEqual([['goods', '6000'], ['services', '20000']]);
+      expect(book.totals).toEqual({ revenue: '1000000', vat: '26000' });
+      expect(book.vatCut).toEqual({
+        answer: 'yes',
+        percent: '20',
+        applied: true,
+        lines: [{ trade: 'goods', cut: '1200', vatPayable: '4800' }, { trade: 'services', cut: '4000', vatPayable: '16000' }],
+        total: { cut: '5200', vatPayable: '20800' },
+        ifEligible: null,
+      });
+    });
+
+    it('applies no cut when the profile answered no, and computes without it but shows the VAT if eligible when there is no answer', async () => {
+      const no = await org();
+      await setProfile(no, { vatCutEligible: 'no' });
+      await sale(no);
+      expect((await s2b(no, '2026-09')).vatCut).toMatchObject({ answer: 'no', applied: false, total: { cut: '0', vatPayable: '26000' }, ifEligible: null });
+      const none = await org();
+      await setProfile(none);
+      await sale(none);
+      expect((await s2b(none, '2026-09')).vatCut).toMatchObject({ answer: null, applied: false, total: { cut: '0', vatPayable: '26000' }, ifEligible: { cut: '5200', vatPayable: '20800' } });
+    });
+
+    it('refuses a period whose profiles answer the question differently, and gives the parts on either side of the change', async () => {
+      const o = await org();
+      await setProfile(o, { vatCutEligible: 'yes' });
+      await sale(o);
+      await setProfile(o, { effectiveFrom: '2026-09-16', vatCutEligible: null });
+      await expect(s2b(o, '2026-09')).rejects.toMatchObject({ code: 'HOUSEHOLD_VAT_CUT_CHANGED' });
+      expect((await s2b(o, '2026-08')).vatCut.answer).toBe('yes');
+      expect((await s2b(o, '2026-10')).vatCut.answer).toBeNull();
+    });
+  });
 });

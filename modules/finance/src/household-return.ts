@@ -10,6 +10,8 @@
 //   reviews, #2520). It is still given, with `commentary` and the list of unconfirmed rows, so the screen and the Excel file label every figure "Số liệu tạm, kế toán chưa xác nhận tỷ lệ"; the label goes
 //   when the rows are confirmed, with no code change. `forExport` still refuses while revenue is unassigned. Refused too for an entity with no profile in the quarter, a household that files no
 //   return (group 1), the income method (a later slice), and a profile that changes inside the quarter (the quarter cannot be asked for in parts).
+// - The Decree 174 VAT cut is not applied to all revenue (#3710): the profile's answer decides. `vatCut` carries the cut by line, `totals.vat` stays the VAT before the cut, and `due` and `overpaid` follow the VAT
+//   payable (VAT less the cut) plus the PIT.
 // Amounts are decimal strings through decimal.js, never JS numbers.
 import type { HouseholdCnkd, HouseholdCnkdLine } from '@crove/kernel-contract';
 import { HOUSEHOLD_TRADES, zHouseholdCnkd, zHouseholdCnkdGet } from '@crove/kernel-contract';
@@ -19,6 +21,7 @@ import { money, sum, toMoney } from '@crove/l10n-vn';
 import { pickInForce } from './domain/household-rules.ts';
 import { taxOn } from './domain/household-tax.ts';
 import { householdProfileView } from './household.ts';
+import { vatCutBlock, vatCutInForce, vatCutUnconfirmed } from './household-vat-cut.ts';
 import { accountLedgerOf } from './ledger-reports.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 
@@ -145,7 +148,10 @@ export const householdCnkd = defineQuery({
     }
     const withheldRows = standing.map((s) => ({ id: s.id, platform: s.platform, periodStart: s.period_start, periodEnd: s.period_end, taxWithheld: toMoney(sum(taxBySettlement.get(s.id) ?? [])) }));
     const withheldTotal = sum(withheldRows.map((r) => r.taxWithheld));
-    const owed = totals ? money(totals.tax) : null;
+    // The Decree 174 VAT cut on the quarter's last day, applied only as the profile's answer says (#3710): the VAT payable is the VAT less the cut, and what is owed follows it.
+    const cutRow = await vatCutInForce(ctx, to);
+    const vatCut = vatCutBlock({ answer: profile.vatCutEligible, cut: cutRow, lines, complete });
+    const owed = vatCut.total ? money(vatCut.total.vatPayable).plus(totalPit) : null;
 
     const unconfirmed: HouseholdCnkd['unconfirmed'] = [];
     if (form.status !== 'confirmed') unconfirmed.push({ kind: 'form', key: `${FORM} ${form.version}`, effectiveFrom: form.effective_from });
@@ -153,6 +159,8 @@ export const householdCnkd = defineQuery({
       const rate = rates.get(t)!;
       if (rate.status !== 'confirmed') unconfirmed.push({ kind: 'rate', key: t, effectiveFrom: rate.effective_from });
     }
+    const cutUnconfirmed = vatCutUnconfirmed(vatCut, cutRow);
+    if (cutUnconfirmed) unconfirmed.push(cutUnconfirmed);
     const commentary = unconfirmed.length > 0;
     if (input.forExport && !totals) throw invalid('Chưa chia hết doanh thu theo ngành nghề nên chưa xuất được tờ khai');
 
@@ -165,6 +173,7 @@ export const householdCnkd = defineQuery({
       lines,
       unassigned,
       totals,
+      vatCut,
       withheld: { total: toMoney(withheldTotal), settlements: withheldRows },
       due: owed ? toMoney(nonNegative(owed.minus(withheldTotal))) : null,
       overpaid: owed ? toMoney(nonNegative(withheldTotal.minus(owed))) : null,

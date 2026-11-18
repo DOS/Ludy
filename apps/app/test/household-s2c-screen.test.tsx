@@ -35,13 +35,13 @@ const groups = (amounts: Partial<Record<(typeof GROUPS)[number], string>>) => GR
 
 const income = (): HouseholdProfileView => ({
   date: '2026-11-09',
-  profile: { effectiveFrom: '2026-01-01', taxGroup: 3, pitMethod: 'income', trades: ['goods'], einvoiceRegistered: true, representativeName: 'Nguyễn Văn A' },
+  profile: { effectiveFrom: '2026-01-01', taxGroup: 3, pitMethod: 'income', trades: ['goods'], einvoiceRegistered: true, representativeName: 'Nguyễn Văn A', vatCutEligible: null },
   books: [{ book: 'S2c', version: '2026.1', name: 'Sổ chi tiết doanh thu, chi phí (S2c-HKD)', status: 'commentary' }],
   commentary: true,
 });
 const percentage = (): HouseholdProfileView => ({
   date: '2026-11-09',
-  profile: { effectiveFrom: '2026-01-01', taxGroup: 2, pitMethod: 'percentage', trades: ['goods'], einvoiceRegistered: false, representativeName: null },
+  profile: { effectiveFrom: '2026-01-01', taxGroup: 2, pitMethod: 'percentage', trades: ['goods'], einvoiceRegistered: false, representativeName: null, vatCutEligible: null },
   books: [{ book: 'S2a', version: '2026.1', name: 'S2a', status: 'commentary' }],
   commentary: true,
 });

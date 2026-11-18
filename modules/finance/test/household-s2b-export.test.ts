@@ -26,6 +26,7 @@ const book = (over: Partial<HouseholdS2b> = {}): HouseholdS2b => ({
   unassigned: '0',
   unassignedGross: '0',
   totals: { revenue: '1500000', vat: '31000' },
+  vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [{ trade: 'goods', cut: '0', vatPayable: '11000' }, { trade: 'services', cut: '0', vatPayable: '20000' }], total: { cut: '0', vatPayable: '31000' }, ifEligible: null },
   unconfirmed: [
     { kind: 'form', key: 'S2b 2026.1', effectiveFrom: '2026-01-01' },
     { kind: 'rate', key: 'goods', effectiveFrom: '2026-01-01' },
@@ -129,5 +130,20 @@ describe('the S2b-HKD workbook', () => {
     let formula = false;
     sheet.eachRow((row) => row.eachCell((cell) => { if (typeof cell.value === 'object' && cell.value !== null && 'formula' in cell.value) formula = true; }));
     expect(formula).toBe(false);
+  });
+});
+
+describe('the S2b-HKD workbook and the Decree 174 VAT cut (#3710)', () => {
+  it('writes the cut and the VAT payable when the profile answered yes, and the total follows', async () => {
+    const { rows } = await rowsOf(book({ vatCut: { answer: 'yes', percent: '20.0000', applied: true, lines: [{ trade: 'goods', cut: '2200', vatPayable: '8800' }, { trade: 'services', cut: '4000', vatPayable: '16000' }], total: { cut: '6200', vatPayable: '24800' }, ifEligible: null } }));
+    expect(find(rows, 'Giảm thuế GTGT 20.0000% theo Nghị định 174')).toContain('6200');
+    expect(find(rows, 'Thuế GTGT phải nộp sau giảm')).toContain('24800');
+    expect(find(rows, 'Tổng thuế GTGT sau giảm')).toContain('24800');
+  });
+
+  it('says what the VAT would be if eligible when the profile has no answer', async () => {
+    const { rows } = await rowsOf(book({ vatCut: { answer: null, percent: '20.0000', applied: false, lines: [{ trade: 'goods', cut: '0', vatPayable: '11000' }, { trade: 'services', cut: '0', vatPayable: '20000' }], total: { cut: '0', vatPayable: '31000' }, ifEligible: { cut: '6200', vatPayable: '24800' } } }));
+    expect(rows.flat().some((t) => t.includes('nếu thuộc diện được giảm, thuế GTGT sẽ là 24800 đồng'))).toBe(true);
+    expect(find(rows, 'Tổng thuế GTGT')).toContain('31000');
   });
 });

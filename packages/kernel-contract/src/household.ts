@@ -11,6 +11,8 @@ import { STOCK_TRADES } from './stock.ts';
 // The fixed sets the database keeps as CHECK constraints (packages/db/src/schema.ts holds the same lists for its test).
 export const HOUSEHOLD_TRADES = STOCK_TRADES;
 export const HOUSEHOLD_PIT_METHODS = ['percentage', 'income'] as const;
+// The household's own answer on the Decree 174 VAT cut (#3710): yes, no, or not answered (null). The cut is never applied to all revenue by default.
+export const HOUSEHOLD_VAT_CUT_ANSWERS = ['yes', 'no'] as const;
 export const HOUSEHOLD_RULE_STATUSES = ['commentary', 'confirmed'] as const;
 export const HOUSEHOLD_EXPENSE_GROUPS = ['materials_goods', 'wages_insurance', 'depreciation', 'outside_services', 'interest', 'other'] as const;
 export const HOUSEHOLD_BOOKS = ['S1a', 'S2a', 'S2b', 'S2c', 'S2d', 'S2e', 'S3a'] as const;
@@ -22,6 +24,8 @@ export const HOUSEHOLD_TAX_GROUPS = [1, 2, 3] as const;
 export const zHouseholdTrade = z.enum(HOUSEHOLD_TRADES);
 export type HouseholdTrade = z.infer<typeof zHouseholdTrade>;
 export const zHouseholdBook = z.enum(HOUSEHOLD_BOOKS);
+export const zHouseholdVatCutAnswer = z.enum(HOUSEHOLD_VAT_CUT_ANSWERS);
+export type HouseholdVatCutAnswer = z.infer<typeof zHouseholdVatCutAnswer>;
 export const zHouseholdRuleStatus = z.enum(HOUSEHOLD_RULE_STATUSES);
 
 // A new row from `effectiveFrom`. The pair of group and method is checked by the command: group 1 keeps no method, group 2 names `percentage` or `income`, group 3 names `income`.
@@ -33,6 +37,8 @@ export const zHouseholdProfileSet = z.strictObject({
   trades: z.array(zHouseholdTrade).min(1).max(HOUSEHOLD_TRADES.length).refine((list) => new Set(list).size === list.length, 'each trade once'),
   einvoiceRegistered: z.boolean(),
   representativeName: z.string().trim().min(1).max(200).nullable(),
+  // Whether the household's goods and services get the Decree 174 VAT cut: yes applies it, no applies none, absent or null is not answered (#3710).
+  vatCutEligible: zHouseholdVatCutAnswer.nullable().optional(),
 });
 export type HouseholdProfileSet = z.infer<typeof zHouseholdProfileSet>;
 
@@ -46,6 +52,7 @@ export const zHouseholdProfile = z.strictObject({
   trades: z.array(zHouseholdTrade),
   einvoiceRegistered: z.boolean(),
   representativeName: z.string().nullable(),
+  vatCutEligible: zHouseholdVatCutAnswer.nullable(),
 });
 export type HouseholdProfile = z.infer<typeof zHouseholdProfile>;
 
@@ -92,6 +99,22 @@ export const zHouseholdS1a = z.strictObject({
 });
 export type HouseholdS1a = z.infer<typeof zHouseholdS1a>;
 
+// The Decree 174 VAT cut as a book shows it (#3710 slice 2). `answer` is the household's own answer in its profile; `percent` is the cut in force on the period's last day (household_tax_reduction, a dated row; 0 when
+// none). The cut is `applied` only when the answer is yes and a cut is in force: then each line's VAT payable is its VAT less `cut` (the cut of the line's rounded VAT, to a whole dong). With the answer no, or not answered,
+// nothing is cut and `vatPayable` is the VAT; when the answer is missing and a cut is in force, `ifEligible` carries the totals the books would show if the household were eligible, so the household sees what the
+// answer is worth. `total` and `ifEligible` wait for every part to have a trade, like `totals` (null while any part is unassigned).
+export const zHouseholdVatCutLine = z.strictObject({ trade: zHouseholdTrade, cut: zMoney, vatPayable: zMoney });
+export type HouseholdVatCutLine = z.infer<typeof zHouseholdVatCutLine>;
+export const zHouseholdVatCut = z.strictObject({
+  answer: zHouseholdVatCutAnswer.nullable(),
+  percent: z.string(),
+  applied: z.boolean(),
+  lines: z.array(zHouseholdVatCutLine),
+  total: z.strictObject({ cut: zMoney, vatPayable: zMoney }).nullable(),
+  ifEligible: z.strictObject({ cut: zMoney, vatPayable: zMoney }).nullable(),
+});
+export type HouseholdVatCut = z.infer<typeof zHouseholdVatCut>;
+
 // The quarterly return worksheet 01/CNKD of a household that pays by a percentage of revenue (#2518, plan 8.5 and 12 row 7). A WORKSHEET: Ludy never files and never calls the tax authority; the household
 // or its accountant files through the tax portal or eTax Mobile. Revenue is the ledger's own movement of account 511 over the quarter (so it ties to S1a and to the settlements of #2516), split by
 // the trades of the profile: a household with one trade has it all on that trade; with several, the household enters the split (`split`, per ask, nothing stored) and what is not yet given a trade is
@@ -120,13 +143,14 @@ export const zHouseholdCnkd = z.strictObject({
   lines: z.array(zHouseholdCnkdLine),
   unassigned: zMoney,
   totals: z.strictObject({ revenue: zMoney, vat: zMoney, pit: zMoney, tax: zMoney }).nullable(),
+  vatCut: zHouseholdVatCut,
   withheld: z.strictObject({
     total: zMoney,
     settlements: z.array(z.strictObject({ id: zId, platform: z.string(), periodStart: zLocalDate, periodEnd: zLocalDate, taxWithheld: zMoney })),
   }),
   due: zMoney.nullable(),
   overpaid: zMoney.nullable(),
-  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate']), key: z.string(), effectiveFrom: zLocalDate })),
+  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate', 'reduction']), key: z.string(), effectiveFrom: zLocalDate })),
   commentary: z.boolean(),
 });
 export type HouseholdCnkd = z.infer<typeof zHouseholdCnkd>;
@@ -166,7 +190,8 @@ export const zHouseholdS2a = z.strictObject({
   unassigned: zMoney,
   unassignedGross: zMoney,
   totals: z.strictObject({ revenue: zMoney, vat: zMoney, pit: zMoney, tax: zMoney }).nullable(),
-  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate']), key: z.string(), effectiveFrom: zLocalDate })),
+  vatCut: zHouseholdVatCut,
+  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate', 'reduction']), key: z.string(), effectiveFrom: zLocalDate })),
   commentary: z.boolean(),
 });
 export type HouseholdS2a = z.infer<typeof zHouseholdS2a>;
@@ -190,7 +215,8 @@ export const zHouseholdS2b = z.strictObject({
   unassigned: zMoney,
   unassignedGross: zMoney,
   totals: z.strictObject({ revenue: zMoney, vat: zMoney }).nullable(),
-  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate']), key: z.string(), effectiveFrom: zLocalDate })),
+  vatCut: zHouseholdVatCut,
+  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate', 'reduction']), key: z.string(), effectiveFrom: zLocalDate })),
   commentary: z.boolean(),
 });
 export type HouseholdS2b = z.infer<typeof zHouseholdS2b>;
