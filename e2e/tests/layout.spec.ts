@@ -31,6 +31,10 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   const signOut = sidebar.getByRole('button', { name: 'Đăng xuất', exact: true });
   await expect(signOut).toBeInViewport();
   await expect(sidebar.getByRole('link', { name: 'Cài đặt' })).toBeInViewport();
+  // A new org opens on the overview, which belongs to no app: the rail shows, and no app menu, not even the Cộng tác one (#3588).
+  await expect(sidebar.getByRole('list', { name: 'Ứng dụng' })).toBeVisible();
+  await expect(sidebar.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
+  await expect(sidebar.getByRole('list', { name: 'Ứng dụng' }).locator('[aria-current="true"]')).toHaveCount(0);
 
   // A deep link opens with its app selected, and only that app's menu shows.
   const apps = sidebar.getByRole('list', { name: 'Ứng dụng' });
@@ -255,12 +259,31 @@ test.describe('at phone width', () => {
     await signInNewUser(page, newEmail('layout-drawer'));
     await createOrg(page, 'Công ty Menu điện thoại');
     const open = page.getByRole('button', { name: 'Mở menu' });
+    // The header (#3588): the menu button and the search are 44px, the search is an icon, and the org's name has room.
+    for (const control of [open, page.getByTestId('phone-search')]) expect((await control.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    await expect(page.getByTestId('phone-search')).toHaveText('');
     await open.click();
     const drawer = page.getByRole('dialog', { name: 'Menu chính' });
+    // The overview shows the rail and no app menu (#3588); the app's menu comes with the app.
+    await expect(drawer.getByRole('link', { name: 'Tài chính', exact: true })).toBeVisible();
+    await expect(drawer.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
+    await drawer.getByRole('link', { name: 'Cộng tác', exact: true }).click();
     await expect(drawer.getByRole('region', { name: 'Ludy Cộng tác' }).getByRole('link', { name: 'Việc nhóm' })).toBeVisible();
     await drawer.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await expect(page).toHaveURL(/\/accounting$/);
     await expect(drawer.getByRole('region', { name: 'Sổ sách & Thuế' }).getByRole('link', { name: 'Sổ sách' })).toBeVisible();
+    // The drawer scrolls as one column (#3588): the last group of Tài chính is reachable, and nothing scrolls inside the nav but the nav.
+    const tax = drawer.getByRole('region', { name: 'Sổ sách & Thuế' }).getByRole('link', { name: 'Thuế', exact: true });
+    await tax.scrollIntoViewIfNeeded();
+    await expect(tax).toBeInViewport();
+    const nestedScrollers = await drawer.evaluate(
+      (root) =>
+        [...root.querySelectorAll('*')].filter((el) => {
+          const overflow = getComputedStyle(el).overflowY;
+          return (overflow === 'auto' || overflow === 'scroll') && el.scrollHeight > el.clientHeight + 1;
+        }).length,
+    );
+    expect(nestedScrollers).toBeLessThanOrEqual(1);
     await expect(drawer.getByRole('button', { name: 'Đăng xuất', exact: true })).toBeVisible();
     await drawer.getByRole('link', { name: 'Sổ sách' }).click();
     await expect(page).toHaveURL(/\/ledger$/);

@@ -14409,6 +14409,7 @@ export const vi = {
         connect: 'Kết nối nền tảng họp',
         connections: 'Xem các nền tảng họp của tôi',
         credential: 'Đọc thông tin đăng nhập đã niêm phong của nền tảng họp',
+        credential_refresh: 'Gia hạn mã truy cập của nền tảng họp trước khi hết hạn',
         disconnect: 'Ngắt kết nối nền tảng họp',
         import: {
           claim: 'Nhận bản ghi đã tải về từ nền tảng họp',

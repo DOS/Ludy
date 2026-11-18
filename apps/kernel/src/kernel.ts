@@ -383,6 +383,14 @@ export function channelConversationAdapters(config: WhatsAppConfig): Record<stri
   return whatsapp ? { whatsapp: new WhatsAppConversations(new Graph(whatsapp.appSecret, whatsapp.graphVersion)) } : {};
 }
 
+// The meeting platforms a deployment has (Meetings C1 and C3): the offline sandbox when the channel sandbox is on, and Zoom only when the deployment has its own Zoom OAuth app (off by default).
+export function meetingPlatformsOf(config: Pick<Config, 'CHANNEL_SANDBOX' | 'ZOOM_OAUTH_CLIENT_ID' | 'ZOOM_OAUTH_CLIENT_SECRET'>) {
+  return meetingPlatformAdapters({
+    sandbox: config.CHANNEL_SANDBOX === 'true',
+    ...(config.ZOOM_OAUTH_CLIENT_ID && config.ZOOM_OAUTH_CLIENT_SECRET ? { zoom: { clientId: config.ZOOM_OAUTH_CLIENT_ID, clientSecret: config.ZOOM_OAUTH_CLIENT_SECRET } } : {}),
+  });
+}
+
 // The outside calendar providers this deployment has an OAuth app for (#2123), by OAuth provider id; one without
 // credentials is not offered, and with none the connect buttons are hidden.
 export function calendarAdapters(config: Pick<Config, 'CALENDAR_GOOGLE_CLIENT_ID' | 'CALENDAR_GOOGLE_CLIENT_SECRET' | 'CALENDAR_MICROSOFT_CLIENT_ID' | 'CALENDAR_MICROSOFT_CLIENT_SECRET' | 'CALENDAR_MICROSOFT_TENANT'>): Partial<Record<string, CalendarAdapter>> {
@@ -833,7 +841,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
             // The audio of a video-only platform recording (C2a, #3306): crove-media extracts it; without MEDIA_URL the extractor is not configured and such a recording fails `no_audio`.
             meetingsImportExtractor: mediaAudioExtractorFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS),
-            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformAdapters({ sandbox: config.CHANNEL_SANDBOX === 'true' }), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config), adStateReaders: adStateReadersOf(config) },
+            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config), adStateReaders: adStateReadersOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,

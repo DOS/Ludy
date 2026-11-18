@@ -2,18 +2,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Outlet, useLocation, useNavigate, useParams, useRouter } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { NavIcon } from '@crove/ui/components/nav-icon';
 import { NavDrawer, ShellNav } from '../components/app-nav.tsx';
+import { PhoneHeader } from '../components/phone-header.tsx';
 import { CommandPalette, type PaletteEntry } from '../components/command-palette.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { ScreenTabs } from '../components/screen-tabs.tsx';
 import { Toaster } from '../components/toaster.tsx';
 import { QuickCaptureDialog } from '../components/todo-quick-add.tsx';
-import { Logo, OrgLeftNotice } from '../components/ui.tsx';
+import { OrgLeftNotice } from '../components/ui.tsx';
 import { LOCALE_NAMES, LOCALES } from '../i18n/locale.ts';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { orpc } from '../lib/api.ts';
-import { ALL_NAV, appOfPath, installedApps, type AppId, type NavItem } from '../lib/apps.ts';
+import { ALL_NAV, NAV_KEYWORDS, appOfPath, installedApps, type NavItem } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
 import { effectiveModules, installedItems } from '../lib/modules.ts';
 import { installedModules, setOrgModules, useModulesVersion } from '../lib/org-modules.ts';
@@ -53,13 +53,11 @@ export function OrgLayout() {
   const modulesVersion = useModulesVersion();
   const allNav = useMemo(() => installedItems(installedModules(), ALL_NAV), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
   const allApps = useMemo(() => installedApps(installedModules()), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
-  // The app of the screen (#1528), from the URL so a deep link opens in its app; on the org's own screens (Settings,
-  // the chart) the menu keeps the app last used.
+  // The app of the screen (#1528), from the URL so a deep link opens in its app. The org's own screens (Overview, Notifications,
+  // Settings, the activity log, Personal data) belong to no app: the shell shows the rail and no app menu there (#3588), never the
+  // menu of an app the owner did not open.
   const { pathname } = useLocation();
   const screenApp = appOfPath(pathname);
-  // State set during render (not a ref), so a render React discards cannot leave a menu whose route never committed.
-  const [lastApp, setLastApp] = useState<AppId>('teamwork');
-  if (screenApp && screenApp !== lastApp) setLastApp(screenApp);
   const [menuOpen, setMenuOpen] = useState(false);
   // The phone's header sticks to the top: a control the keyboard focuses stops below it, never under it (#1575).
   const phoneHeader = useRef<HTMLElement>(null);
@@ -200,6 +198,7 @@ export function OrgLayout() {
         id: `go:${item.to}`,
         group: 'go' as const,
         label: t(item.label),
+        ...(NAV_KEYWORDS[item.label] ? { keywords: NAV_KEYWORDS[item.label] } : {}),
         run: () => void navigate({ to: item.to, params: { slug } }),
       })),
       ...((socialOn ? reviews.data?.items : undefined) ?? []).map((item) => ({
@@ -312,8 +311,7 @@ export function OrgLayout() {
     <ShellNav
       slug={slug}
       apps={apps}
-      app={screenApp ?? lastApp}
-      inApp={screenApp !== null}
+      app={screenApp}
       // The pending count sits on the Documents item, whose first tab is "Chờ duyệt" (#3225).
       badges={{ documents: menuBadges.inbox, social: menuBadges.social, alerts: workUnread, socialNotifications: unread }}
       orgs={me.data?.orgs ?? []}
@@ -354,22 +352,7 @@ export function OrgLayout() {
       </div>
       <aside className="sticky top-0 hidden h-screen w-72 shrink-0 border-r bg-sidebar md:flex">{shellNav()}</aside>
       <div className="min-w-0 flex-1">
-        {/* The phone's header (issue #1245): the menu button, the org's name and the palette; the rest is in the drawer. */}
-        <header ref={phoneHeader} className="sticky top-0 z-10 flex items-center gap-2 border-b bg-sidebar px-3 py-2 md:hidden">
-          <button
-            type="button"
-            onClick={() => setMenuOpen(true)}
-            aria-label={t('openMenu')}
-            className="relative grid size-11 place-items-center rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-          >
-            <NavIcon name="menu" className="size-5" />
-            {menuBadges.inbox !== null && <span className="absolute top-2 right-2 size-2 rounded-full bg-primary" aria-hidden="true" />}
-          </button>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{org?.name ?? <Logo />}</span>
-          <button type="button" onClick={() => setPaletteOpen(true)} className="min-h-11 rounded-lg border px-2 text-xs text-subtle-foreground">
-            {tp('open')}
-          </button>
-        </header>
+        <PhoneHeader headerRef={phoneHeader} orgName={org?.name} attention={menuBadges.inbox !== null} onOpenMenu={() => setMenuOpen(true)} onOpenPalette={() => setPaletteOpen(true)} />
         <NavDrawer open={menuOpen} onOpenChange={setMenuOpen}>
           {shellNav(() => setMenuOpen(false))}
         </NavDrawer>
