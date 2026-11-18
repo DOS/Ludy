@@ -15,6 +15,7 @@ import { ErrorText, ListSkeleton } from '../components/ui.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { buildMinutes, type MinutesModel } from '../lib/minutes.ts';
 import { usePrintInLight } from '../lib/print.ts';
+import { useScreenTitle } from '../lib/screen-title.ts';
 
 // Reading the results is a sensitive read that leaves an audit row: no refetch on focus or remount.
 const READ_ONCE = { staleTime: 5 * 60_000, refetchOnWindowFocus: false } as const;
@@ -104,10 +105,10 @@ export function MinutesSheet({ model, company, title, place, template }: { model
               <table className="w-full border-collapse border border-foreground">
                 <thead>
                   <tr>
-                    <th className="w-12 border border-foreground px-2 py-1 text-center">{t('minutes.colNo')}</th>
-                    <th className="border border-foreground px-2 py-1 text-left">{t('minutes.colTask')}</th>
-                    <th className="w-40 border border-foreground px-2 py-1 text-left">{t('minutes.colOwner')}</th>
-                    <th className="w-32 border border-foreground px-2 py-1 text-left">{t('minutes.colDue')}</th>
+                    <th scope="col" className="w-12 border border-foreground px-2 py-1 text-center">{t('minutes.colNo')}</th>
+                    <th scope="col" className="border border-foreground px-2 py-1 text-left">{t('minutes.colTask')}</th>
+                    <th scope="col" className="w-40 border border-foreground px-2 py-1 text-left">{t('minutes.colOwner')}</th>
+                    <th scope="col" className="w-32 border border-foreground px-2 py-1 text-left">{t('minutes.colDue')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -149,16 +150,18 @@ export function MeetingMinutesPage() {
   const [place, setPlace] = useState('');
   // Paper gets the light theme while printing, whatever the screen uses.
   usePrintInLight();
+  // Outside the shell nothing else names the tab (WCAG 2.4.2, DESIGN.md section 7).
+  useScreenTitle(t('minutes.pageTitle'));
   const meeting = useQuery(orpc.meetings.get.queryOptions({ input: { meetingId: id } }));
   const results = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId: id } }), ...READ_ONCE });
   const org = useQuery(orpc.org.get.queryOptions());
   const back = (
     <Link to="/o/$slug/meetings/$id" params={{ slug, id }} className="text-sm text-link underline">
-      &larr; {t('minutes.back')}
+      <span aria-hidden="true">&larr;</span> {t('minutes.back')}
     </Link>
   );
-  // Outside the org's frame: the page lays out its own margins, and the toolbar leaves the paper.
-  const frame = (body: ReactNode) => <div className="min-h-screen bg-background px-4 py-6 text-foreground print:p-0">{body}</div>;
+  // Outside the org's frame: the page lays out its own margins, and the toolbar leaves the paper. It is its own <main>, the one landmark of a page the shell does not wrap.
+  const frame = (body: ReactNode) => <main className="min-h-screen bg-background px-4 py-6 text-foreground print:p-0">{body}</main>;
   if (meeting.isPending || results.isPending || org.isPending) return frame(<ListSkeleton />);
   const failure = meeting.error ?? results.error ?? org.error;
   if (failure || !meeting.data || !results.data || !org.data) {

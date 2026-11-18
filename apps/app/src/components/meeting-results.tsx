@@ -4,7 +4,7 @@
 // date and the seat. Nothing here needs AI; the work Vy does for this screen arrives in a later step and lands in these same drafts.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type MeetingSummaryTemplate, type MeetingVisibility, type MinutesTemplateCopy } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -328,7 +328,7 @@ export function SpeakerSuggestions({ meetingId, runId }: { meetingId: string; ru
           </li>
         ))}
       </ul>
-      {name.isSuccess && <p role="status">{t('vy.speakers.done', { name: name.data.name, count: String(name.data.lines) })}</p>}
+      <p role="status">{name.isSuccess ? t('vy.speakers.done', { name: name.data.name, count: String(name.data.lines) }) : null}</p>
       {name.error && <ErrorText>{errorMessage(name.error)}</ErrorText>}
     </div>
   );
@@ -362,12 +362,15 @@ function VySummary({ meetingId, hasModelDraft }: { meetingId: string; hasModelDr
     <div className="space-y-2 rounded-lg border p-3" data-testid="vy-summary">
       <p className="text-sm font-medium">{t('vy.title')}</p>
       <p className="text-xs text-muted-foreground">{t('vy.desc')}</p>
-      {ask.isPending && <p role="status">{t('vy.running')}</p>}
-      {copy.isSuccess && <p role="status">{t('vy.copied')}</p>}
+      {/* One live region that is always in the page, so the changes are announced (a region added together with its text often is not): the run's progress, the draft that is ready, the copy that was made. */}
+      <div role="status" aria-live="polite" className="space-y-2" data-testid="vy-live">
+        {ask.isPending && <p>{t('vy.running')}</p>}
+        {answer?.state === 'ready' && !copy.isSuccess && <p data-testid="vy-ready">{t('vy.ready')}</p>}
+        {copy.isSuccess && <p>{t('vy.copied')}</p>}
+      </div>
       {suggestRun !== null && <SpeakerSuggestions meetingId={meetingId} runId={suggestRun} />}
       {answer?.state === 'ready' && !copy.isSuccess && (
         <div className="space-y-2">
-          <p>{t('vy.ready')}</p>
           {hasModelDraft && <p className="text-xs text-muted-foreground">{t('vy.copyReplaces')}</p>}
           <Button size="sm" loading={copy.isPending} onClick={() => copy.mutate(answer.runId)}>
             {t('vy.copy')}
@@ -479,7 +482,23 @@ export function MeetingResults({
 }) {
   const t = useTranslations('meetings.results');
   const query = useQuery({ ...orpc.meetings.results.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
-  const publish = useMutation({ mutationFn: () => orpc.meetings.results.publish.call({ meetingId, confirmed: true }), onSuccess: refresh });
+  // Publishing removes the button that held the focus (the draft is gone): the focus goes to the heading of what was shared, which a screen reader reads out as the result (WCAG 2.4.3, 4.1.3).
+  const [focusPublished, setFocusPublished] = useState(false);
+  const publishedHeading = useRef<HTMLHeadingElement | null>(null);
+  const hasPublished = query.data?.published != null;
+  useEffect(() => {
+    if (focusPublished && hasPublished && publishedHeading.current) {
+      publishedHeading.current.focus();
+      setFocusPublished(false);
+    }
+  }, [focusPublished, hasPublished]);
+  const publish = useMutation({
+    mutationFn: () => orpc.meetings.results.publish.call({ meetingId, confirmed: true }),
+    onSuccess: () => {
+      refresh();
+      setFocusPublished(true);
+    },
+  });
   const review = useMutation({ mutationFn: (ids: string[]) => orpc.meetings.results.review.call({ meetingId, confirmed: true, ids }), onSuccess: refresh });
   const acceptClean = useMutation({ mutationFn: () => orpc.meetings.actionItems.acceptClean.call({ meetingId, confirmed: true }), onSuccess: refresh });
   if (query.isPending) return null;
@@ -507,7 +526,7 @@ export function MeetingResults({
     <Card data-testid="meeting-results">
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-base font-medium">{t('title')}</CardTitle>
+          <CardTitle role="heading" aria-level={2} className="text-base font-medium">{t('title')}</CardTitle>
           {minutesLink}
         </div>
         <CardDescription className="text-xs text-muted-foreground">{isRecorder ? t('recorderNote') : t('readerNote')}</CardDescription>
@@ -515,7 +534,11 @@ export function MeetingResults({
       <CardContent className="space-y-4">
         {published && (
           <section className="space-y-1">
-            {isRecorder && <h3 className="text-xs font-medium text-muted-foreground">{t('publishedTitle')}</h3>}
+            {isRecorder && (
+              <h3 ref={publishedHeading} tabIndex={-1} className="text-xs font-medium text-muted-foreground">
+                {t('publishedTitle')}
+              </h3>
+            )}
             <SummaryText summary={published.summary} decisions={published.decisions} template={template} copy={minutesTemplate} />
             <MeetingTranslation meetingId={meetingId} stage="published" original={{ summary: published.summary, decisions: published.decisions, items: items.filter((i) => i.stage === 'published') }} />
           </section>

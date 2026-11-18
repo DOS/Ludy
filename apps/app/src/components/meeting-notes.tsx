@@ -98,7 +98,7 @@ export function MeetingNotes({ meetingId, minutesTemplate = null }: { meetingId:
   return (
     <Card data-testid="meeting-notes">
       <CardHeader>
-        <CardTitle className="text-base font-medium">{t('notes.title')}</CardTitle>
+        <CardTitle role="heading" aria-level={2} className="text-base font-medium">{t('notes.title')}</CardTitle>
         <CardDescription className="text-xs text-muted-foreground">{t('notes.private')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

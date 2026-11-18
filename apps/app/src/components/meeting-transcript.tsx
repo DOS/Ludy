@@ -161,7 +161,7 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
   return (
     <Card data-testid="vy-transcribe">
       <CardHeader>
-        <CardTitle className="text-base font-medium">{t('vy.title')}</CardTitle>
+        <CardTitle role="heading" aria-level={2} className="text-base font-medium">{t('vy.title')}</CardTitle>
         <CardDescription className="text-xs text-muted-foreground">{t('vy.desc')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
@@ -232,7 +232,7 @@ export function MeetingTranscript({ meetingId, focusSegmentId }: { meetingId: st
       <TranscriptTranslationPanel meetingId={meetingId} />
       <Card>
       <CardHeader>
-        <CardTitle className="text-base font-medium">{draft ? t('draftTitle') : t('title')}</CardTitle>
+        <CardTitle role="heading" aria-level={2} className="text-base font-medium">{draft ? t('draftTitle') : t('title')}</CardTitle>
         <CardDescription className="text-xs text-muted-foreground">{draft ? t('draftNote') : t('publishedNote')}</CardDescription>
       </CardHeader>
       <CardContent>
