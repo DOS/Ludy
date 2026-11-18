@@ -6,7 +6,7 @@
 // answer is not lost. The caller keeps its own state and mutation; this only decides where the form lives.
 // Two habits live here so every form in a panel has them (#3606): Cmd or Ctrl plus Enter saves from any field, and a form
 // that holds input (`dirty`) asks before Escape or the close button throws it away.
-import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { Button } from '@crove/ui/components/button';
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@crove/ui/components/sheet';
@@ -14,6 +14,17 @@ import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHea
 // Cmd or Ctrl plus Enter, not in the middle of an IME composition (a Vietnamese Telex or VNI word being typed).
 export function isSaveShortcut(event: { key: string; metaKey: boolean; ctrlKey: boolean; isComposing: boolean }): boolean {
   return event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.isComposing;
+}
+
+// The element that had focus when a panel was opened. A panel that swaps one FormPanel for another (a loading state, then the form)
+// mounts the second while focus sits inside the first, and that must not become the element to return to.
+let lastOpener: Element | null = null;
+function currentOpener(): Element | null {
+  if (typeof document === 'undefined') return null;
+  const active = document.activeElement;
+  if (lastOpener?.isConnected && active?.closest('[data-slot="sheet-content"]')) return lastOpener;
+  lastOpener = active;
+  return active;
 }
 
 export function FormPanel({
@@ -47,6 +58,19 @@ export function FormPanel({
 }) {
   const root = useTranslations();
   const formRef = useRef<HTMLFormElement>(null);
+  // The panel is mounted when its button is pressed and unmounted when it closes, so the dialog does not know what opened it: the
+  // element that had focus at that moment is remembered and gets focus back when the panel goes away (keyboard users land where they were).
+  const [opener] = useState(currentOpener);
+  useEffect(
+    () => () => {
+      window.setTimeout(() => {
+        // Not while a panel is open again (React's strict mode runs this cleanup once at the start).
+        if (document.querySelector('[data-slot="sheet-content"]')) return;
+        if (opener instanceof HTMLElement && opener !== document.body && opener.isConnected) opener.focus();
+      }, 0);
+    },
+    [opener],
+  );
   const [asking, setAsking] = useState(false);
   // Escape, the close button and the cancel buttons all end here; a click on the dimmed page never does (see below).
   const requestClose = () => {

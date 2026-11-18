@@ -34,6 +34,10 @@ describe('FormPanel closing', () => {
   it('leaves Cmd+Enter to a field that already took the key', () => {
     expect(source).toContain('event.defaultPrevented ||');
   });
+  it('gives focus back to the element that opened it when it goes away', () => {
+    expect(source).toContain('document.activeElement');
+    expect(source).toContain('opener.focus()');
+  });
   it('puts focus on "keep editing" and back on the first field afterwards', () => {
     expect(source).toMatch(/<Button type="button" autoFocus onClick=\{keepEditing\}>/);
     expect(source).toContain("querySelector<HTMLElement>('input:not([type=hidden]), textarea, select')?.focus()");
