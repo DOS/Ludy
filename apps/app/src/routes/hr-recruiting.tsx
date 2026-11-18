@@ -2,10 +2,11 @@
 // "Tuyển dụng", the lightweight recruiting screen of the HR app (#3425, Part of #3403 Stage 3 slice 3b-2):
 // job openings, candidate pipeline, calendar interview scheduling without candidate PII in calendar titles,
 // 1-click hire to payroll employee + initial employment, R3 candidate erasure, and Ly pseudonymized screening brief.
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import {
+  HR_CANDIDATE_PAGE_MAX,
   HR_CANDIDATE_STAGES,
   HR_CANDIDATE_TRANSITION_STAGES,
   HR_CONTRACT_TYPES,
@@ -40,8 +41,31 @@ import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../li
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
 const NUM = 'px-4 py-3 text-right tabular-nums';
 const WAGE_RE = /^\d{1,16}(\.\d{1,2})?$/;
+export const CANDIDATE_PAGE_SIZE = HR_CANDIDATE_PAGE_MAX;
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.hr.key() });
+
+export function flattenCandidatePages(pages: ReadonlyArray<readonly HrCandidateView[]> | undefined): HrCandidateView[] {
+  if (!pages || pages.length === 0) return [];
+  const seen = new Set<string>();
+  const out: HrCandidateView[] = [];
+  for (const page of pages) {
+    for (const row of page) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      out.push(row);
+    }
+  }
+  return out;
+}
+
+export function nextCandidateCursor(
+  page: readonly HrCandidateView[],
+  pageSize = CANDIDATE_PAGE_SIZE,
+): string | undefined {
+  if (page.length < pageSize) return undefined;
+  return page.at(-1)?.id;
+}
 
 export function parseSkillsInput(raw: string): string[] {
   const seen = new Set<string>();
@@ -459,23 +483,24 @@ export function RecruitingBriefPanel({
   const t = useTranslations('hrRecruiting');
   const locale = useLocale();
   const lang = locale === 'en' ? 'en' : 'vi';
-  const versionKey = `${candidateId}:${lang}:${candidateVersion}`;
+  const [includeNotes, setIncludeNotes] = useState(false);
+  const versionKey = `${candidateId}:${lang}:${includeNotes ? 'notes' : 'no-notes'}:${candidateVersion}`;
   const currentVersionRef = useRef(versionKey);
   currentVersionRef.current = versionKey;
   const [briefState, setBriefState] = useState<{ key: string; result: HrRecruitingBriefResult } | null>(null);
   const [errorKey, setErrorKey] = useState<string | null>(null);
 
   const ask = useMutation({
-    mutationFn: async (requestedKey: string) => {
-      const result = await client.hr.recruiting.brief({ candidateId, lang });
-      return { requestedKey, result };
+    mutationFn: async (args: { requestedKey: string; sendNotes: boolean }) => {
+      const result = await client.hr.recruiting.brief({ candidateId, lang, includeNotes: args.sendNotes });
+      return { requestedKey: args.requestedKey, result };
     },
     onSuccess: ({ requestedKey, result }) => {
       if (requestedKey !== currentVersionRef.current) return;
       setErrorKey(null);
       setBriefState({ key: requestedKey, result });
     },
-    onError: (_err, requestedKey) => {
+    onError: (_err, { requestedKey }) => {
       if (requestedKey === currentVersionRef.current) setErrorKey(requestedKey);
     },
   });
@@ -490,10 +515,25 @@ export function RecruitingBriefPanel({
           <h3 className="text-sm font-medium text-foreground">{t('ly.title')}</h3>
           <p className="text-xs text-subtle-foreground">{t('ly.subtitle')}</p>
         </div>
-        <Button size="sm" variant="outline" loading={ask.isPending} onClick={() => ask.mutate(versionKey)} data-testid="hr-recruiting-ly-brief">
+        <Button
+          size="sm"
+          variant="outline"
+          loading={ask.isPending}
+          onClick={() => ask.mutate({ requestedKey: versionKey, sendNotes: includeNotes })}
+          data-testid="hr-recruiting-ly-brief"
+        >
           {t('ly.run')}
         </Button>
       </div>
+      <label className="mt-2 flex items-center gap-2 text-xs text-subtle-foreground" data-testid="hr-recruiting-ly-include-notes-label">
+        <input
+          type="checkbox"
+          checked={includeNotes}
+          onChange={(e) => setIncludeNotes(e.target.checked)}
+          data-testid="hr-recruiting-ly-include-notes"
+        />
+        <span>{t('ly.includeNotes')}</span>
+      </label>
       {showError && ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
       {brief && (
         <div className="mt-3 space-y-2 rounded-md border bg-muted/20 p-3 text-sm" data-testid="hr-recruiting-ly-result">
@@ -1086,13 +1126,20 @@ export function HrRecruitingPage() {
     ...orpc.hr.recruiting.openings.list.queryOptions({ input: { status: 'all', limit: 200 } }),
     ...ONCE,
   });
-  const candidatesQuery = useQuery({
-    ...orpc.hr.recruiting.candidates.list.queryOptions({
-      input: {
+  const openings = openingsQuery.data ?? [];
+  const selectedOpening = selectedOpeningId ? openings.find((o) => o.id === selectedOpeningId) ?? null : null;
+  const knownTotalCandidates = selectedOpening && !selectedStage ? selectedOpening.candidateCount : undefined;
+  const candidatesQuery = useInfiniteQuery({
+    ...orpc.hr.recruiting.candidates.list.infiniteOptions({
+      input: (cursor: string | undefined) => ({
         ...(selectedOpeningId ? { openingId: selectedOpeningId } : {}),
         ...(selectedStage ? { stage: selectedStage } : {}),
-        limit: 200,
-      },
+        ...(cursor ? { cursor } : {}),
+        limit: CANDIDATE_PAGE_SIZE,
+      }),
+      initialPageParam: undefined as string | undefined,
+      // Determine pagination continuation strictly from the candidate page itself, never from cached opening counts (`staleTime: Infinity`).
+      getNextPageParam: (lastPage: HrCandidateView[]) => nextCandidateCursor(lastPage, CANDIDATE_PAGE_SIZE),
     }),
     ...ONCE,
   });
@@ -1106,10 +1153,19 @@ export function HrRecruitingPage() {
 
   const entities = entitiesQuery.data ?? [];
   const departments = deptQuery.data ?? [];
-  const openings = openingsQuery.data ?? [];
   const visibleOpenings = showClosed ? openings : openings.filter((o) => o.status === 'open');
-  const candidates = candidatesQuery.data ?? [];
+  const candidates = flattenCandidatePages(candidatesQuery.data?.pages);
   const selectedCandidate = openCandidateId ? candidates.find((c) => c.id === openCandidateId) ?? null : null;
+  const trustworthyTotal =
+    knownTotalCandidates !== undefined &&
+    knownTotalCandidates >= candidates.length &&
+    (!candidatesQuery.hasNextPage || knownTotalCandidates > candidates.length)
+      ? knownTotalCandidates
+      : undefined;
+  const showPaginationStatus =
+    candidatesQuery.hasNextPage ||
+    (trustworthyTotal !== undefined && trustworthyTotal > CANDIDATE_PAGE_SIZE) ||
+    (candidatesQuery.data?.pages.length ?? 0) > 1;
 
   return (
     <>
@@ -1219,29 +1275,58 @@ export function HrRecruitingPage() {
         </div>
         {candidatesQuery.isPending ? (
           <TableSkeleton columns={6} />
-        ) : candidatesQuery.error ? (
+        ) : candidatesQuery.error && candidates.length === 0 ? (
           <ErrorText>{errorMessage(candidatesQuery.error)}</ErrorText>
         ) : candidates.length === 0 ? (
           <Empty title={t('emptyCandidates')} hint={t('emptyCandidatesHint')} />
         ) : (
-          <DataTable head={[t('fields.candidateName'), t('fields.opening'), t('fields.stage'), t('fields.expectedWage'), t('fields.interview'), '']} numeric={[3]}>
-            {candidates.map((c) => (
-              <TableRow key={c.id} data-testid="hr-candidate-row">
-                <TableCell className="px-4 py-3 font-medium">{c.displayName}</TableCell>
-                <TableCell className="px-4 py-3">{c.openingTitle ?? '-'}</TableCell>
-                <TableCell className="px-4 py-3">
-                  <Badge variant="outline">{t(`stages.${c.stage}`)}</Badge>
-                </TableCell>
-                <TableCell className={NUM}>{c.agreedWage ? f.money(c.agreedWage, 'VND') : c.expectedWage ? f.money(c.expectedWage, 'VND') : '-'}</TableCell>
-                <TableCell className="px-4 py-3">{c.interviewStartsAt ? f.dateTime(c.interviewStartsAt) : '-'}</TableCell>
-                <TableCell className="px-4 py-3 text-right">
-                  <Button variant="ghost" size="sm" onClick={() => setOpenCandidateId(c.id)} data-testid="hr-candidate-open">
-                    {t('open')}
+          <>
+            <DataTable head={[t('fields.candidateName'), t('fields.opening'), t('fields.stage'), t('fields.expectedWage'), t('fields.interview'), '']} numeric={[3]}>
+              {candidates.map((c) => (
+                <TableRow key={c.id} data-testid="hr-candidate-row">
+                  <TableCell className="px-4 py-3 font-medium">{c.displayName}</TableCell>
+                  <TableCell className="px-4 py-3">{c.openingTitle ?? '-'}</TableCell>
+                  <TableCell className="px-4 py-3">
+                    <Badge variant="outline">{t(`stages.${c.stage}`)}</Badge>
+                  </TableCell>
+                  <TableCell className={NUM}>{c.agreedWage ? f.money(c.agreedWage, 'VND') : c.expectedWage ? f.money(c.expectedWage, 'VND') : '-'}</TableCell>
+                  <TableCell className="px-4 py-3">{c.interviewStartsAt ? f.dateTime(c.interviewStartsAt) : '-'}</TableCell>
+                  <TableCell className="px-4 py-3 text-right">
+                    <Button variant="ghost" size="sm" onClick={() => setOpenCandidateId(c.id)} data-testid="hr-candidate-open">
+                      {t('open')}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </DataTable>
+            {candidatesQuery.error && (
+              <div className="mt-3">
+                <ErrorText>{errorMessage(candidatesQuery.error)}</ErrorText>
+              </div>
+            )}
+            {showPaginationStatus && (
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3" data-testid="hr-candidate-pagination">
+                <p className="text-xs text-muted-foreground" data-testid="hr-candidate-loaded-count">
+                  {trustworthyTotal !== undefined
+                    ? t('pagination.loadedOfTotal', { loaded: String(candidates.length), total: String(trustworthyTotal) })
+                    : candidatesQuery.hasNextPage
+                      ? t('pagination.loadedMoreAvailable', { loaded: String(candidates.length) })
+                      : t('pagination.loadedAll', { loaded: String(candidates.length) })}
+                </p>
+                {candidatesQuery.hasNextPage && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    loading={candidatesQuery.isFetchingNextPage}
+                    onClick={() => void candidatesQuery.fetchNextPage()}
+                    data-testid="hr-candidate-load-more"
+                  >
+                    {t('pagination.loadMore')}
                   </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </DataTable>
+                )}
+              </div>
+            )}
+          </>
         )}
       </section>
     </>

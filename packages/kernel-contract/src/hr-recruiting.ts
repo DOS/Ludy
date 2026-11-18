@@ -58,8 +58,10 @@ export const HR_INTERVIEW_FOCUS_CODES = [
 ] as const;
 export type HrInterviewFocusCode = (typeof HR_INTERVIEW_FOCUS_CODES)[number];
 
-export const HR_RECRUITING_BRIEF_REASONS = ['ok', 'off', 'budget', 'unavailable', 'refused'] as const;
+export const HR_RECRUITING_BRIEF_REASONS = ['ok', 'off', 'budget', 'rate_limited', 'unavailable', 'refused'] as const;
 export type HrRecruitingBriefReason = (typeof HR_RECRUITING_BRIEF_REASONS)[number];
+
+export const HR_CANDIDATE_PAGE_MAX = 200;
 
 // Compare non-negative decimal wage strings (up to 2 decimal places) cleanly without JS float precision loss.
 function wageToCents(raw: string): bigint {
@@ -181,7 +183,8 @@ export type HrCandidateView = z.infer<typeof zHrCandidateView>;
 export const zHrCandidateList = z.strictObject({
   openingId: zId.optional(),
   stage: z.enum(HR_CANDIDATE_STAGES).optional(),
-  limit: z.number().int().min(1).max(200).default(100),
+  cursor: zId.optional(),
+  limit: z.number().int().min(1).max(HR_CANDIDATE_PAGE_MAX).default(HR_CANDIDATE_PAGE_MAX),
 });
 export type HrCandidateList = z.input<typeof zHrCandidateList>;
 
@@ -324,14 +327,16 @@ export type HrCandidateEraseResult = z.infer<typeof zHrCandidateEraseResult>;
 export const zHrRecruitingBriefAsk = z.strictObject({
   candidateId: zId,
   lang: z.enum(['vi', 'en']).default('vi'),
+  includeNotes: z.boolean().optional(),
 });
 export type HrRecruitingBriefAsk = z.input<typeof zHrRecruitingBriefAsk>;
 
 export const zHrRecruitingBriefAudit = z.strictObject({
   candidateId: zId,
   aiReason: z.enum(HR_RECRUITING_BRIEF_REASONS),
+  includeNotes: z.boolean().optional(),
 });
-export type HrRecruitingBriefAudit = z.infer<typeof zHrRecruitingBriefAudit>;
+export type HrRecruitingBriefAudit = z.input<typeof zHrRecruitingBriefAudit>;
 
 export const zHrRecruitingFocusQuestion = z.strictObject({
   code: z.enum(HR_INTERVIEW_FOCUS_CODES),

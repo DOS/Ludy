@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { AiBudgetExhaustedError, PayrollPromptLeakError } from '@crove/agent';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { acquireAdvisoryXactLock, advisoryLockKey, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import {
   HR_ERASED_NAME,
   type HrCandidateEraseResult,
@@ -489,12 +489,15 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     });
     expect(offOwner.body.interviewQuestions.length).toBeGreaterThan(0);
 
-    // 2. AI ON: verify forbidden candidate PII list is passed to InboxReader.recruitingBrief and no PII reaches audit_event.
+    // 2. AI ON: verify notes are excluded by default (`includeNotes` omitted/false), included only when `includeNotes: true`,
+    // forbidden candidate PII list is passed to InboxReader.recruitingBrief, and `include_notes` reaches audit_event without PII.
+    const seenNotesByCall: Array<readonly string[]> = [];
     const recruitingBriefSpy = vi.fn(async (input: { openingTitle: string; notes?: readonly string[] }, opts?: { forbidden?: readonly string[] }) => {
       expect(input.openingTitle).toBe('Chuyên viên Nhân sự');
       expect(opts?.forbidden).toEqual(expect.arrayContaining(['Đỗ Ngọc Lan', 'lan.do@example.com', '0901234567']));
+      seenNotesByCall.push([...(input.notes ?? [])]);
       return {
-        readiness: offOwner.body.readiness,
+        readiness: { ...offOwner.body.readiness, hasNotes: (input.notes ?? []).length > 0 },
         summary: 'Ứng viên C1 phù hợp 2/3 kỹ năng và mức lương kỳ vọng trong khung dự kiến.',
         strengths: ['Kinh nghiệm 3 năm về BHXH và chấm công.'],
         risks: ['Cần kiểm tra thêm kỹ năng soạn hợp đồng lao động.'],
@@ -511,19 +514,44 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const aiOk = await postOn(o.admin, { candidateId: cand.candidateId, lang: 'vi' });
     expect(aiOk.status).toBe(200);
     expect(aiOk.body.ai).toEqual({ ok: true, reason: 'ok' });
-    expect(recruitingBriefSpy).toHaveBeenCalledTimes(1);
+    expect(aiOk.body.readiness.hasNotes).toBe(false);
+    expect(seenNotesByCall[0]).toEqual([]);
 
-    // Audit rows for brief read and brief audit contain zero candidate PII.
+    const aiWithNotes = await postOn(o.admin, { candidateId: cand.candidateId, lang: 'vi', includeNotes: true });
+    expect(aiWithNotes.status).toBe(200);
+    expect(aiWithNotes.body.ai).toEqual({ ok: true, reason: 'ok' });
+    expect(aiWithNotes.body.readiness.hasNotes).toBe(true);
+    expect(seenNotesByCall[1]).toEqual(['Liên hệ lại Đỗ Ngọc Lan qua lan.do@example.com hoặc 0901234567; có kinh nghiệm tính lương.']);
+    expect(recruitingBriefSpy).toHaveBeenCalledTimes(2);
+
+    // Per-minute DraftBudget rate-limit exhaustion (12 calls/min per user on `suggestionBudget`): calls 3..12 run AI, call 13 returns 200 deterministic fallback (`rate_limited`), never 429.
+    for (let i = 0; i < 10; i++) {
+      const withinLimit = await postOn(o.admin, { candidateId: cand.candidateId, lang: 'vi' });
+      expect(withinLimit.status).toBe(200);
+      expect(withinLimit.body.ai).toEqual({ ok: true, reason: 'ok' });
+    }
+    expect(recruitingBriefSpy).toHaveBeenCalledTimes(12);
+
+    const rateLimitedRes = await postOn(o.admin, { candidateId: cand.candidateId, lang: 'vi' });
+    expect(rateLimitedRes.status).toBe(200);
+    expect(rateLimitedRes.body.ai).toEqual({ ok: false, reason: 'rate_limited' });
+    expect(rateLimitedRes.body.readiness.skillsMatchedCount).toBe(2);
+    expect(recruitingBriefSpy).toHaveBeenCalledTimes(12);
+
+    // Audit rows for brief read and brief audit record include_notes & rate_limited and contain zero candidate PII.
     const auditRows = await withAdmin(async (c) =>
       (
-        await c.query<{ command: string; row: string }>(
-          `SELECT command, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'hr.recruiting.%' ORDER BY id`,
+        await c.query<{ command: string; detail: Record<string, unknown>; row: string }>(
+          `SELECT command, detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'hr.recruiting.%' ORDER BY id`,
           [o.orgId],
         )
       ).rows,
     );
-    expect(auditRows.some((r) => r.command === 'hr.recruiting.brief.read')).toBe(true);
-    expect(auditRows.some((r) => r.command === 'hr.recruiting.brief.audit')).toBe(true);
+    expect(auditRows.some((r) => r.command === 'hr.recruiting.brief.read' && r.detail?.include_notes === 'false')).toBe(true);
+    expect(auditRows.some((r) => r.command === 'hr.recruiting.brief.read' && r.detail?.include_notes === 'true')).toBe(true);
+    expect(auditRows.some((r) => r.command === 'hr.recruiting.brief.audit' && r.detail?.include_notes === false && r.detail?.aiReason === 'ok')).toBe(true);
+    expect(auditRows.some((r) => r.command === 'hr.recruiting.brief.audit' && r.detail?.include_notes === true && r.detail?.aiReason === 'ok')).toBe(true);
+    expect(auditRows.some((r) => r.command === 'hr.recruiting.brief.audit' && r.detail?.aiReason === 'rate_limited')).toBe(true);
     // Sensitive candidate reads leave before_read audit rows with zero PII.
     await o.query<HrCandidateView>(o.admin, 'hr.recruiting.candidate.get', { candidateId: cand.candidateId });
     const afterCandidateRead = await withAdmin(async (c) =>
@@ -565,5 +593,251 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     const leakRes = await postLeak(o.owner, { candidateId: cand.candidateId, lang: 'vi' });
     expect(leakRes.status).toBe(200);
     expect(leakRes.body.ai).toEqual({ ok: false, reason: 'refused' });
+  });
+
+  it('paginates >200 candidates deterministically without duplicates or gaps even across microsecond/same-timestamp ties (#3447 Item 1)', async () => {
+    const o = await org();
+    const opening = await o.exec<HrOpeningWritten>(o.owner, 'hr.recruiting.opening.add', {
+      title: 'Nhân viên Chăm sóc Khách hàng',
+    });
+
+    // Seed 205 candidates cleanly via SQL under admin connection (including microsecond & identical-timestamp clusters)
+    // so the test completes in milliseconds while stressing keyset cursor tie-breaking on `(updated_at, id)`.
+    const insertedIds = await withAdmin(async (c) => {
+      const entityRow = await c.query<{ legal_entity_id: string }>(
+        `SELECT legal_entity_id FROM crove_hr.job_opening WHERE org_id = $1 AND id = $2`,
+        [o.orgId, opening.openingId],
+      );
+      const legalEntityId = entityRow.rows[0]!.legal_entity_id;
+      const res = await c.query<{ id: string }>(
+        `INSERT INTO crove_hr.candidate (
+           org_id, legal_entity_id, opening_id, display_name, stage, created_by, created_at, updated_at
+         )
+         SELECT
+           $1::uuid,
+           $2::uuid,
+           $3::uuid,
+           'Ứng viên #' || g::text,
+           'applied',
+           $4::uuid,
+           '2026-11-17T08:00:00.000000Z'::timestamptz + ((g / 5) * interval '1 millisecond') + ((g % 5) * interval '200 microseconds'),
+           '2026-11-17T08:00:00.000000Z'::timestamptz + ((g / 5) * interval '1 millisecond') + ((g % 3) * interval '250 microseconds')
+         FROM pg_catalog.generate_series(1, 205) AS g
+         RETURNING id`,
+        [o.orgId, legalEntityId, opening.openingId, o.owner],
+      );
+      return res.rows.map((r) => r.id);
+    });
+    expect(insertedIds).toHaveLength(205);
+
+    // Default limit is 200: page 1 returns 200, page 2 via cursor returns remaining 5, page 3 via cursor returns [].
+    const defaultPage1 = await o.query<HrCandidateView[]>(o.owner, 'hr.recruiting.candidate.list', {
+      openingId: opening.openingId,
+    });
+    expect(defaultPage1).toHaveLength(200);
+    const defaultPage2 = await o.query<HrCandidateView[]>(o.owner, 'hr.recruiting.candidate.list', {
+      openingId: opening.openingId,
+      cursor: defaultPage1.at(-1)!.id,
+    });
+    expect(defaultPage2).toHaveLength(5);
+    const defaultPage3 = await o.query<HrCandidateView[]>(o.owner, 'hr.recruiting.candidate.list', {
+      openingId: opening.openingId,
+      cursor: defaultPage2.at(-1)!.id,
+    });
+    expect(defaultPage3).toEqual([]);
+
+    const allDefaultIds = [...defaultPage1, ...defaultPage2].map((r) => r.id);
+    expect(new Set(allDefaultIds).size).toBe(205);
+    expect(new Set(allDefaultIds)).toEqual(new Set(insertedIds));
+
+    // Also walk in smaller 50-row pages and verify identical deterministic ordering with zero duplicates or gaps.
+    const pagedIds: string[] = [];
+    let cursor: string | undefined;
+    for (let guard = 0; guard < 10; guard++) {
+      const page = await o.query<HrCandidateView[]>(o.admin, 'hr.recruiting.candidate.list', {
+        openingId: opening.openingId,
+        limit: 50,
+        ...(cursor ? { cursor } : {}),
+      });
+      pagedIds.push(...page.map((r) => r.id));
+      if (page.length < 50) break;
+      cursor = page.at(-1)!.id;
+    }
+    expect(pagedIds).toEqual(allDefaultIds);
+
+    // Unknown or cross-org cursor returns [] without leaking anything.
+    const other = await org();
+    const otherCand = await other.exec<HrCandidateWritten>(other.owner, 'hr.recruiting.candidate.add', { displayName: 'Ứng viên công ty khác' });
+    const crossCursorPage = await o.query<HrCandidateView[]>(o.owner, 'hr.recruiting.candidate.list', {
+      openingId: opening.openingId,
+      cursor: otherCand.candidateId,
+    });
+    expect(crossCursorPage).toEqual([]);
+  });
+
+  it('auto-cancels active calendar interviews on reject and erase, allows cross-manager reschedule/reject, and serializes advisory locks (#3447 Items 3, 4, 5)', async () => {
+    const o = await org();
+    const opening = await o.exec<HrOpeningWritten>(o.owner, 'hr.recruiting.opening.add', {
+      title: 'Kỹ sư Phần mềm',
+      contractType: 'indefinite',
+      region: 'I',
+    });
+
+    const fromIso = new Date(Date.now() + 2 * 86_400_000).toISOString();
+    const toIso = new Date(Date.now() + 14 * 86_400_000).toISOString();
+    const ownerSlots = await o.query<HrInterviewSlotsResult>(o.owner, 'hr.recruiting.interview_slots', {
+      from: fromIso,
+      to: toIso,
+      durationMinutes: 45,
+      maxSlots: 6,
+    });
+    expect(ownerSlots.slots.length).toBeGreaterThanOrEqual(4);
+
+    // Case A (Item 5): Owner schedules candidate #1's interview, then Admin reschedules onto Admin's calendar and later rejects.
+    const cand1 = await o.exec<HrCandidateWritten>(o.owner, 'hr.recruiting.candidate.add', {
+      openingId: opening.openingId,
+      displayName: 'Trần Quốc Bảo',
+    });
+    const ownerBooked1 = await o.exec<HrCandidateInterviewScheduled>(o.owner, 'hr.recruiting.candidate.schedule_interview', {
+      candidateId: cand1.candidateId,
+      startsAt: ownerSlots.slots[0]!.startIso,
+      endsAt: ownerSlots.slots[0]!.endIso,
+    });
+
+    // Personal calendar.event.cancel by Admin on Owner's personal event is 404 (not Admin's own calendar),
+    // whereas recruiting schedule_interview by Admin cleanly cancels Owner's linked recruiting invite and rebooks on Admin's calendar.
+    await expect(o.exec(o.admin, 'kernel.calendar.event.cancel', { eventId: ownerBooked1.eventId })).rejects.toMatchObject({ status: 404 });
+
+    const adminRescheduled1 = await o.exec<HrCandidateInterviewScheduled>(o.admin, 'hr.recruiting.candidate.schedule_interview', {
+      candidateId: cand1.candidateId,
+      startsAt: ownerSlots.slots[1]!.startIso,
+      endsAt: ownerSlots.slots[1]!.endIso,
+    });
+    expect(adminRescheduled1.eventId).not.toBe(ownerBooked1.eventId);
+
+    const oldOwnerEvent = await withAdmin(async (c) =>
+      (
+        await c.query<{ status: string; cancelled_by: string | null }>(
+          `SELECT status, cancelled_by FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          [o.orgId, ownerBooked1.eventId],
+        )
+      ).rows[0],
+    );
+    expect(oldOwnerEvent).toEqual({ status: 'cancelled', cancelled_by: o.admin });
+
+    // Case B (Item 3 & Item 5): Owner schedules candidate #2's interview, then Admin moves candidate #2 to 'rejected' -> Owner's invite auto-cancels!
+    const cand2 = await o.exec<HrCandidateWritten>(o.owner, 'hr.recruiting.candidate.add', {
+      openingId: opening.openingId,
+      displayName: 'Lê Minh Khôi',
+    });
+    const ownerBooked2 = await o.exec<HrCandidateInterviewScheduled>(o.owner, 'hr.recruiting.candidate.schedule_interview', {
+      candidateId: cand2.candidateId,
+      startsAt: ownerSlots.slots[2]!.startIso,
+      endsAt: ownerSlots.slots[2]!.endIso,
+    });
+
+    await o.exec(o.admin, 'hr.recruiting.candidate.move_stage', {
+      candidateId: cand2.candidateId,
+      toStage: 'rejected',
+    });
+
+    const rejectedEvent = await withAdmin(async (c) =>
+      (
+        await c.query<{ status: string; cancelled_by: string | null }>(
+          `SELECT status, cancelled_by FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          [o.orgId, ownerBooked2.eventId],
+        )
+      ).rows[0],
+    );
+    expect(rejectedEvent).toEqual({ status: 'cancelled', cancelled_by: o.admin });
+
+    const cand2AfterReject = await o.query<HrCandidateView>(o.owner, 'hr.recruiting.candidate.get', { candidateId: cand2.candidateId });
+    expect(cand2AfterReject.stage).toBe('rejected');
+    expect(cand2AfterReject.interviewEventId).toBeNull();
+    expect(cand2AfterReject.interviewStartsAt).toBeNull();
+    expect(cand2AfterReject.interviewEndsAt).toBeNull();
+
+    // Case C (Item 3): Candidate #3 has an active future interview, is direct-hired, and then erased -> active calendar event auto-cancels on erase!
+    const cand3 = await o.exec<HrCandidateWritten>(o.owner, 'hr.recruiting.candidate.add', {
+      openingId: opening.openingId,
+      displayName: 'Vũ Thị Mai',
+    });
+    const ownerBooked3 = await o.exec<HrCandidateInterviewScheduled>(o.owner, 'hr.recruiting.candidate.schedule_interview', {
+      candidateId: cand3.candidateId,
+      startsAt: ownerSlots.slots[3]!.startIso,
+      endsAt: ownerSlots.slots[3]!.endIso,
+    });
+    await o.exec<HrCandidateHireResult>(o.owner, 'hr.recruiting.candidate.hire', {
+      candidateId: cand3.candidateId,
+      effectiveFrom: '2026-12-01',
+      baseWage: '22000000',
+      allowDirectHire: true,
+    });
+    // Before erase, the interview event on a hired candidate was still active.
+    const beforeEraseStatus = await withAdmin(async (c) =>
+      (await c.query<{ status: string }>(`SELECT status FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`, [o.orgId, ownerBooked3.eventId])).rows[0]?.status,
+    );
+    expect(beforeEraseStatus).toBe('active');
+
+    await o.exec<HrCandidateEraseResult>(o.owner, 'hr.recruiting.candidate.erase', { candidateId: cand3.candidateId }, asMfa(o.owner));
+    const afterEraseEvent = await withAdmin(async (c) =>
+      (
+        await c.query<{ status: string; cancelled_by: string | null }>(
+          `SELECT status, cancelled_by FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          [o.orgId, ownerBooked3.eventId],
+        )
+      ).rows[0],
+    );
+    expect(afterEraseEvent).toEqual({ status: 'cancelled', cancelled_by: o.owner });
+
+    const eraseAuditDetail = await withAdmin(async (c) =>
+      (
+        await c.query<{ detail: { cancelledInterviewEventId?: string | null } }>(
+          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.recruiting.candidate.erase' AND target_id = $2 ORDER BY id DESC LIMIT 1`,
+          [o.orgId, cand3.candidateId],
+        )
+      ).rows[0]?.detail,
+    );
+    expect(eraseAuditDetail?.cancelledInterviewEventId).toBe(ownerBooked3.eventId);
+
+    // Case D (Item 4): Shared `acquireAdvisoryXactLock` serializes two concurrent transactions on the same key while allowing distinct keys concurrently.
+    const db = createDb(pool);
+    const sameKey = advisoryLockKey('crove_hr.interview', o.orgId, o.owner);
+    const otherKey = advisoryLockKey('crove_hr.interview', o.orgId, o.admin);
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstLocked!: () => void;
+    const firstAcquired = new Promise<void>((resolve) => {
+      firstLocked = resolve;
+    });
+
+    const tx1 = db.transaction().execute(async (trx) => {
+      await acquireAdvisoryXactLock(trx, sameKey);
+      order.push('tx1:acquired');
+      firstLocked();
+      await firstGate;
+      order.push('tx1:releasing');
+    });
+
+    await firstAcquired;
+
+    const tx2 = db.transaction().execute(async (trx) => {
+      await acquireAdvisoryXactLock(trx, sameKey);
+      order.push('tx2:acquired');
+    });
+
+    // Different key acquires and finishes while tx1 still holds `sameKey`.
+    await db.transaction().execute(async (trx) => {
+      await acquireAdvisoryXactLock(trx, otherKey);
+      order.push('tx3-other-key:acquired');
+    });
+    expect(order).toEqual(['tx1:acquired', 'tx3-other-key:acquired']);
+
+    releaseFirst();
+    await Promise.all([tx1, tx2]);
+    expect(order).toEqual(['tx1:acquired', 'tx3-other-key:acquired', 'tx1:releasing', 'tx2:acquired']);
   });
 });

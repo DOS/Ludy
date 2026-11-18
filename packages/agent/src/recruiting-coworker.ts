@@ -14,6 +14,7 @@ import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { evaluateCandidateReadiness, type CandidateReadinessResult, type RecruitingStage, type WageComparison } from '@crove/l10n-vn';
 import { draftLinksOutside } from './conversation.ts';
+import { classifyAiError } from './errors.ts';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { AiBudgetExhaustedError, metered } from './meter.ts';
 import { statedFiguresProblem } from './overview.ts';
@@ -21,7 +22,7 @@ import { PayrollPromptLeakError } from './payroll-coworker.ts';
 import { hasMarkdownNoise } from './project-weekly-status.ts';
 import { hasAddress } from './reminder.ts';
 
-export type RecruitingBriefAiReason = 'ok' | 'off' | 'budget' | 'unavailable' | 'refused';
+export type RecruitingBriefAiReason = 'ok' | 'off' | 'budget' | 'rate_limited' | 'unavailable' | 'refused';
 
 export const RECRUITING_ALIAS = 'C1';
 export const RECRUITING_NOTE_MAX_CHARS = 500;
@@ -861,6 +862,16 @@ export async function reviewCandidateProfile(
     if (error instanceof PayrollPromptLeakError) throw error;
     if (error instanceof AiBudgetExhaustedError) {
       return { readiness, ...fallback, ai: { ok: false, reason: 'budget' } };
+    }
+    if (
+      classifyAiError(error).kind === 'rate_limit' ||
+      (typeof error === 'object' &&
+        error !== null &&
+        ((error as { status?: unknown }).status === 429 ||
+          (error as { statusCode?: unknown }).statusCode === 429 ||
+          (error as { code?: unknown }).code === 'RATE_LIMITED'))
+    ) {
+      return { readiness, ...fallback, ai: { ok: false, reason: 'rate_limited' } };
     }
     return { readiness, ...fallback, ai: { ok: false, reason: 'unavailable' } };
   }

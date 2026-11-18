@@ -610,8 +610,10 @@ export function createRpcHandler(
     record: (kind, checked) => runtime.execute('hr.payroll.labor_check.audit', { kind, checked }, { actor, orgId }),
   });
   const recruitingBriefPorts = (orgId: string, actor: UserActor): RecruitingBriefPorts => ({
-    read: (candidateId, lang) => runtime.query<HrRecruitingBriefSnapshot>('hr.recruiting.brief.read', { candidateId, lang }, { actor, orgId }),
-    record: (candidateId, aiReason) => runtime.execute('hr.recruiting.brief.audit', { candidateId, aiReason }, { actor, orgId }),
+    read: (candidateId, lang, includeNotes) =>
+      runtime.query<HrRecruitingBriefSnapshot>('hr.recruiting.brief.read', { candidateId, lang, includeNotes }, { actor, orgId }),
+    record: (candidateId, aiReason, includeNotes) =>
+      runtime.execute('hr.recruiting.brief.audit', { candidateId, aiReason, includeNotes }, { actor, orgId }),
   });
   const hrQuery =
     (name: string) =>
