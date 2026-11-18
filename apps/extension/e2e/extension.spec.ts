@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect, test, type BrowserContext, type Page } from '@playwright/test';
+import { snapshotDomPage } from '../src/page-capture.ts';
 import { startFakeLudy, type FakeLudy } from './fake-ludy.ts';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
@@ -63,7 +64,7 @@ test('the installed manifest asks for nothing beyond the list', async () => {
   const manifest = await context.serviceWorkers()[0]!.evaluate(() => chrome.runtime.getManifest());
   expect([...(manifest.permissions ?? [])].sort()).toEqual(['identity', 'storage']);
   expect(manifest.host_permissions).toEqual(['https://app.ludy.vn/*']);
-  expect([...(manifest.optional_permissions ?? [])].sort()).toEqual(['offscreen', 'tabCapture']);
+  expect([...(manifest.optional_permissions ?? [])].sort()).toEqual(['activeTab', 'offscreen', 'scripting', 'tabCapture']);
 });
 
 test('the installed manifest names its icons, and the package holds them', async () => {
@@ -501,4 +502,114 @@ test('the worker refuses a start request whose flags are not booleans, and creat
     { ok: false, reason: 'invalid' },
   ]);
   expect(fake.created).toEqual([]);
+});
+
+test('Notes Quick Capture saves private note and to-do with zero optional permissions, while Web Clipper requires opt-in toggle', async () => {
+  await seed({});
+  fake.scopes = ['notes'];
+  fake.features = { meetings: false, notes: true };
+  fake.clips.length = 0;
+  fake.todos.length = 0;
+  const page = await popup();
+  try {
+    await expect(page.locator('#notes-capture')).toBeVisible();
+    await expect(page.locator('#clipper-toggle')).not.toBeChecked();
+    await expect(page.locator('#clip-now')).toHaveCount(0);
+
+    // Quick Capture note works with zero extra browser permissions.
+    await page.locator('#capture-title').fill('Ghi chú nhanh e2e');
+    await page.locator('#capture-body').fill('Nội dung e2e');
+    await page.locator('#capture-tags').fill('e2e, nhanh');
+    await page.locator('#capture-save').click();
+    await expect.poll(() => fake.clips.length).toBe(1);
+    expect(fake.clips[0]).toEqual({ title: 'Ghi chú nhanh e2e', body: 'Nội dung e2e', tags: ['e2e', 'nhanh'] });
+    await expect(page.locator('#notes-status')).toContainText('Đã lưu ghi chú riêng tư');
+
+    // Switch to To-do Quick Capture and save.
+    await page.locator('#mode-todo').click();
+    await page.locator('#capture-title').fill('Việc nhanh e2e');
+    await page.locator('#capture-details').fill('Chi tiết việc');
+    await page.locator('#capture-save').click();
+    await expect.poll(() => fake.todos.length).toBe(1);
+    expect(fake.todos[0]).toEqual({ title: 'Việc nhanh e2e', details: 'Chi tiết việc' });
+    await expect(page.locator('#notes-status')).toContainText('Đã lưu việc cá nhân');
+
+    // Enabling Web Clipper explicitly requests activeTab + scripting and allows 1-click Clip; turning it OFF revokes them.
+    await page.evaluate(() => {
+      const held = new Set<string>();
+      const events: { requested: string[][]; removed: string[][] } = { requested: [], removed: [] };
+      (window as unknown as { clipperEvents: typeof events }).clipperEvents = events;
+      (chrome.permissions as { contains: unknown }).contains = async ({ permissions = [] }: { permissions?: string[] }) =>
+        permissions.every((p) => held.has(p));
+      (chrome.permissions as { request: unknown }).request = async ({ permissions = [] }: { permissions?: string[] }) => {
+        events.requested.push([...permissions]);
+        for (const p of permissions) held.add(p);
+        return true;
+      };
+      (chrome.permissions as { remove: unknown }).remove = async ({ permissions = [] }: { permissions?: string[] }) => {
+        events.removed.push([...permissions]);
+        for (const p of permissions) held.delete(p);
+        return true;
+      };
+      (chrome.tabs as { query: unknown }).query = async () => [{ id: 42, url: 'https://example.com/clip-target' }];
+      (chrome as unknown as { scripting: { executeScript: unknown } }).scripting = {
+        executeScript: async () => [
+          {
+            result: {
+              url: 'https://example.com/clip-target',
+              title: 'Trang tin mẫu',
+              selectedHtml: '',
+              selectedText: '',
+              contentHtml: '<h1>Tiêu đề bài viết</h1><p>Đoạn trích sạch</p>',
+              textFallback: 'Tiêu đề bài viết Đoạn trích sạch',
+            },
+          },
+        ],
+      };
+    });
+
+    await page.locator('#clipper-toggle').check();
+    await expect(page.locator('#clip-now')).toBeVisible();
+    await page.locator('#clip-now').click();
+    await expect.poll(() => fake.clips.length).toBe(2);
+    expect(fake.clips[1]).toEqual({
+      title: 'Trang tin mẫu',
+      body: '# Tiêu đề bài viết\n\nĐoạn trích sạch',
+      sourceUrl: 'https://example.com/clip-target',
+    });
+
+    await page.locator('#clipper-toggle').uncheck();
+    await expect(page.locator('#clip-now')).toHaveCount(0);
+    const permEvents = await page.evaluate(() => (window as unknown as { clipperEvents: { requested: string[][]; removed: string[][] } }).clipperEvents);
+    expect(permEvents.requested).toEqual([['activeTab', 'scripting']]);
+    expect(permEvents.removed).toEqual([['activeTab', 'scripting']]);
+
+    // Real-DOM snapshotDomPage sanity check: stripped form inputs, hidden nodes, scripts and nav never leak into textFallback.
+    const articlePage = await context.newPage();
+    try {
+      await articlePage.setContent(`
+        <nav>Menu Item</nav>
+        <div id="only-hidden">
+          <div hidden>HIDDEN_SECRET_TEXT</div>
+          <div style="display:none">STYLE_HIDDEN_TEXT</div>
+          <form><textarea>SECRET_TEXTAREA</textarea><input type="password" value="SECRET_PW" /></form>
+          <script>const secretVar = "SECRET_SCRIPT";</script>
+        </div>
+        <p id="real-text">Clean article body</p>
+      `);
+      const snap = await articlePage.evaluate(snapshotDomPage);
+      expect(snap.textFallback).toBe('Clean article body');
+      expect(snap.contentHtml).not.toContain('HIDDEN_SECRET_TEXT');
+      expect(snap.contentHtml).not.toContain('STYLE_HIDDEN_TEXT');
+      expect(snap.contentHtml).not.toContain('SECRET_TEXTAREA');
+      expect(snap.contentHtml).not.toContain('SECRET_SCRIPT');
+      expect(snap.contentHtml).not.toContain('Menu Item');
+    } finally {
+      await articlePage.close();
+    }
+  } finally {
+    fake.scopes = ['meetings'];
+    fake.features = { meetings: true, notes: false };
+    await page.close();
+  }
 });

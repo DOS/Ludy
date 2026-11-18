@@ -61,6 +61,8 @@ describe('the routes an extension token may reach', () => {
       'POST /api/files/uploads meetings',
       'POST /api/meetings/:id/media meetings',
       'POST /api/meetings/:id/live-chunk meetings',
+      'POST /api/rpc/notes/clip notes',
+      'POST /api/rpc/notes/todos/quickCapture notes',
     ]);
     expect(EXTENSION_ROUTES.every((r) => r.why.length > 20)).toBe(true);
   });
@@ -68,6 +70,13 @@ describe('the routes an extension token may reach', () => {
   it('matches a listed method and path exactly, with one UUID for an id', () => {
     expect(matchExtensionRoute('POST', `/api/meetings/${ID}/media`)?.scope).toBe('meetings');
     expect(matchExtensionRoute('POST', `/api/meetings/${ID}/live-chunk`)?.scope).toBe('meetings');
+    expect(matchExtensionRoute('POST', '/api/rpc/notes/clip')?.scope).toBe('notes');
+    expect(matchExtensionRoute('POST', '/api/rpc/notes/todos/quickCapture')?.scope).toBe('notes');
+    expect(matchExtensionRoute('GET', '/api/rpc/notes/clip')).toBeNull();
+    expect(matchExtensionRoute('POST', '/api/rpc/notes/list')).toBeNull();
+    expect(matchExtensionRoute('POST', '/api/rpc/notes/get')).toBeNull();
+    expect(matchExtensionRoute('POST', '/api/rpc/notes/todos/list')).toBeNull();
+    expect(matchExtensionRoute('POST', '/api/rpc/notes/todos/get')).toBeNull();
     expect(matchExtensionRoute('GET', `/api/meetings/${ID}/live-chunk`)).toBeNull();
     expect(matchExtensionRoute('POST', '/api/meetings/x/live-chunk')).toBeNull();
     expect(matchExtensionRoute('POST', '/api/meetings/x/media')).toBeNull();
@@ -89,6 +98,11 @@ describe('the routes an extension token may reach', () => {
     expect(refused).toBeInstanceOf(DomainError);
     expect(refused).toMatchObject({ code: 'FORBIDDEN', status: 403, details: { rule: 'extension_scope' } });
     expect(refuseOutsideScopes(['meetings'], 'POST', '/api/rpc/meetings/create')).toBeNull();
+    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/clip')).toBeNull();
+    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/todos/quickCapture')).toBeNull();
+    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/meetings/create')).toMatchObject({ status: 403 });
+    expect(refuseOutsideScopes(['meetings'], 'POST', '/api/rpc/notes/clip')).toMatchObject({ status: 403 });
+    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/list')).toMatchObject({ status: 403 });
     expect(refuseOutsideScopes(['other'], 'POST', '/api/rpc/meetings/create')).toMatchObject({ status: 403 });
     expect(refuseOutsideScopes([], 'POST', '/api/rpc/meetings/create')).toMatchObject({ status: 403 });
     // A route open to any token still needs a token that is valid, which authenticate() has settled before this runs.

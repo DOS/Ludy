@@ -7876,18 +7876,19 @@ export const vi = {
     approve: 'Cho phép',
     deny: 'Không cho phép',
     defaultDevice: 'Trình duyệt',
-    limits: 'Tiện ích chỉ làm được những việc trên, trong tổ chức này, với quyền của bạn; không đọc được nội dung cuộc họp hay dữ liệu khác.',
+    limits: 'Tiện ích chỉ làm được những việc trên, trong tổ chức này, với quyền của bạn; không đọc được ghi chú, việc cá nhân, nội dung cuộc họp hay dữ liệu khác.',
     revokeHint: 'Mã có hiệu lực 90 ngày. Bạn ngắt kết nối bất cứ lúc nào ở Cài đặt, mục thiết bị tiện ích.',
     scope: {
       meetings: 'Tạo cuộc họp có ghi nhận đồng ý, tải bản ghi âm (và hình nếu bạn chọn) lên cuộc họp đó và xem cuộc họp đã xử lý xong chưa.',
       agenda: 'Xem tên, giờ và nơi họp (Meet, Zoom hay Teams) của tối đa 5 cuộc họp sắp diễn ra trong 30 phút tới trong lịch của bạn, để gợi ý ghi âm. Cần bật "Cho Ludy đọc tên và giờ cuộc họp trong lịch" trong Cài đặt; không xem được địa chỉ vào họp, người được mời hay phần mô tả.',
+      notes: 'Lưu ghi chú nhanh, đoạn trích trang web (luôn đặt ở chế độ riêng tư của bạn) và việc cá nhân mới vào tổ chức này; không đọc được ghi chú hay việc đã có.',
     },
   },
   extensionDevices: {
     title: 'Thiết bị tiện ích {brand}',
     intro: 'Các trình duyệt đang dùng tiện ích {brand} với tài khoản của bạn trong tổ chức này. Ngắt kết nối một thiết bị thì tiện ích đó bị từ chối ngay từ yêu cầu tiếp theo.',
     none: 'Chưa có thiết bị nào kết nối.',
-    scope: { meetings: 'Ghi âm cuộc họp', agenda: 'Gợi ý cuộc họp sắp tới' },
+    scope: { meetings: 'Ghi âm cuộc họp', agenda: 'Gợi ý cuộc họp sắp tới', notes: 'Lưu nhanh ghi chú & việc' },
     lastUsed: 'Dùng gần nhất {at}',
     neverUsed: 'Chưa dùng lần nào',
     connectedAt: 'kết nối từ {at}',
@@ -8012,7 +8013,7 @@ export const vi = {
     title: 'Thiết bị tiện ích của các thành viên',
     intro: 'Các trình duyệt đang dùng tiện ích {brand} với tài khoản của một thành viên trong tổ chức này. Ngắt kết nối một thiết bị thì tiện ích đó bị từ chối ngay từ yêu cầu tiếp theo, và thay đổi được ghi vào nhật ký kiểm toán. Thiết bị của chính bạn nằm ở thẻ phía trên.',
     none: 'Chưa có thiết bị nào của thành viên khác đang kết nối.',
-    scope: { meetings: 'Ghi âm cuộc họp', agenda: 'Gợi ý cuộc họp sắp tới' },
+    scope: { meetings: 'Ghi âm cuộc họp', agenda: 'Gợi ý cuộc họp sắp tới', notes: 'Lưu nhanh ghi chú & việc' },
     lastUsed: 'Dùng gần nhất {at}',
     neverUsed: 'Chưa dùng lần nào',
     connectedAt: 'kết nối từ {at}',
@@ -14307,6 +14308,9 @@ export const vi = {
       },
     },
     notes: {
+      extension: {
+        exchanged: 'Ghi nhận lượt kết nối tiện ích dùng quyền Ghi chú',
+      },
       link: {
         add: 'Gắn ghi chú với bản ghi',
         remove: 'Gỡ ghi chú khỏi bản ghi',
@@ -14321,6 +14325,7 @@ export const vi = {
       note: {
         accept_summary: 'Chèn bản tóm tắt của Vy vào ghi chú của mình',
         archive: 'Lưu trữ ghi chú',
+        clip: 'Lưu nhanh ghi chú hoặc cắt trang web từ tiện ích trình duyệt',
         create: 'Viết ghi chú',
         delete: 'Chuyển ghi chú vào thùng rác',
         from_meeting_summary: 'Lưu tóm tắt cuộc họp thành ghi chú',
@@ -14348,6 +14353,7 @@ export const vi = {
         link_add: 'Gắn việc của mình với một bản ghi',
         link_remove: 'Gỡ liên kết bản ghi khỏi việc của mình',
         list: 'Xem danh sách việc của mình',
+        quick_capture: 'Lưu nhanh việc cá nhân từ tiện ích trình duyệt',
         remind: 'Nhắc một việc đến hạn',
         reopen: 'Mở lại việc của mình',
         reorder: 'Sắp xếp lại việc của mình',

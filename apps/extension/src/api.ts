@@ -41,6 +41,30 @@ export interface Uploaded {
   fileId: string;
 }
 
+export interface NoteClipInput {
+  title: string;
+  body?: string;
+  tags?: readonly string[];
+  sourceUrl?: string | null;
+}
+
+export interface NoteWritten {
+  noteId: string;
+  revision: number;
+}
+
+export interface TodoQuickCaptureInput {
+  title: string;
+  details?: string;
+  dueOn?: string | null;
+  sourceUrl?: string | null;
+}
+
+export interface TodoWritten {
+  todoId: string;
+  revision: number;
+}
+
 export interface MeetingCreate {
   title: string;
   keepVideo: boolean;
@@ -52,11 +76,13 @@ export interface MeetingCreate {
 }
 
 export interface Client {
-  config(): Promise<{ uploads: 'presigned' | 'direct' }>;
+  config(): Promise<{ uploads: 'presigned' | 'direct'; modules?: readonly string[] }>;
   exchangeCode(code: string, codeVerifier: string): Promise<{ token: string; orgId: string; scopes: string[]; expiresAt: string }>;
   me(): Promise<Me>;
   // The member's next calendar meetings (B2, the agenda scope): null when the answer is not the expected shape. Throws LudyError with the HTTP status (403 when the token lacks the scope).
   agendaNext(): Promise<AgendaNext | null>;
+  clipNote(input: NoteClipInput): Promise<NoteWritten>;
+  quickCaptureTodo(input: TodoQuickCaptureInput): Promise<TodoWritten>;
   createMeeting(input: MeetingCreate): Promise<{ meetingId: string }>;
   // One piece of the audio of a live-notes meeting; throws LudyError with the HTTP status (the live sender retries or gives up by it).
   sendLiveChunk(input: { meetingId: string; seq: number; lengthSeconds: number; blob: Blob }): Promise<void>;
@@ -94,8 +120,11 @@ export function createClient(address: string, token: string | null, fetchImpl: F
   };
   return {
     async config() {
-      const body = (await (await call('/api/config', {}, false)).json()) as { uploads?: unknown };
-      return { uploads: body.uploads === 'presigned' ? 'presigned' : 'direct' };
+      const body = (await (await call('/api/config', {}, false)).json()) as { uploads?: unknown; modules?: unknown };
+      const uploads = body.uploads === 'presigned' ? 'presigned' : 'direct';
+      return Array.isArray(body.modules)
+        ? { uploads, modules: body.modules.filter((m): m is string => typeof m === 'string') }
+        : { uploads };
     },
     async exchangeCode(code, codeVerifier) {
       return (await (await call('/api/extension/token', json({ code, codeVerifier }), false)).json()) as { token: string; orgId: string; scopes: string[]; expiresAt: string };
@@ -105,6 +134,36 @@ export function createClient(address: string, token: string | null, fetchImpl: F
     },
     async agendaNext() {
       return readAgendaNext(await (await call('/api/rpc/meetings/agenda/next', json({ json: {} }))).json());
+    },
+    async clipNote(input) {
+      const payload = {
+        json: {
+          title: input.title.trim(),
+          ...(input.body !== undefined ? { body: input.body } : {}),
+          ...(input.tags && input.tags.length > 0 ? { tags: [...input.tags] } : {}),
+          ...(input.sourceUrl ? { sourceUrl: input.sourceUrl } : {}),
+        },
+      };
+      const out = (await (await call('/api/rpc/notes/clip', json(payload))).json()) as { json?: { noteId?: unknown; revision?: unknown } };
+      if (typeof out.json?.noteId !== 'string' || typeof out.json?.revision !== 'number') {
+        throw new LudyError('BAD_RESPONSE', 502, 'Máy chủ trả lời không đúng dạng');
+      }
+      return { noteId: out.json.noteId, revision: out.json.revision };
+    },
+    async quickCaptureTodo(input) {
+      const payload = {
+        json: {
+          title: input.title.trim(),
+          ...(input.details !== undefined ? { details: input.details } : {}),
+          ...(input.dueOn ? { dueOn: input.dueOn } : {}),
+          ...(input.sourceUrl ? { sourceUrl: input.sourceUrl } : {}),
+        },
+      };
+      const out = (await (await call('/api/rpc/notes/todos/quickCapture', json(payload))).json()) as { json?: { todoId?: unknown; revision?: unknown } };
+      if (typeof out.json?.todoId !== 'string' || typeof out.json?.revision !== 'number') {
+        throw new LudyError('BAD_RESPONSE', 502, 'Máy chủ trả lời không đúng dạng');
+      }
+      return { todoId: out.json.todoId, revision: out.json.revision };
     },
     async createMeeting(input) {
       // oRPC's wire format: the input in `json`. Language and visibility take the server's defaults of the app's recorder.

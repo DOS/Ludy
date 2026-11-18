@@ -6,6 +6,9 @@
 export const BASE_PERMISSIONS = ['identity', 'storage'] as const;
 // Asked only when the member turns the meetings feature on, and given back when it is turned off.
 export const MEETINGS_OPTIONAL_PERMISSIONS = ['offscreen', 'tabCapture'] as const;
+// Asked only when the member enables the Web Clipper toggle inside Notes, and given back when turned off.
+export const WEB_CLIPPER_OPTIONAL_PERMISSIONS = ['activeTab', 'scripting'] as const;
+export const OPTIONAL_PERMISSIONS = [...MEETINGS_OPTIONAL_PERMISSIONS, ...WEB_CLIPPER_OPTIONAL_PERMISSIONS] as const;
 // The Ludy cloud address, granted at install.
 export const DEFAULT_HOST_PERMISSIONS = ['https://app.ludy.vn/*'] as const;
 // A self-hosted address the member types: asked for that one origin at setup, never granted by default. `localhost`
@@ -23,8 +26,8 @@ export function manifestViolations(manifest: Record<string, unknown>): string[] 
   const problems: string[] = [];
   if (manifest.manifest_version !== 3) problems.push('manifest_version must be 3');
   if (!sameSet(manifest.permissions, BASE_PERMISSIONS)) problems.push(`permissions must be exactly [${BASE_PERMISSIONS.join(', ')}], found ${JSON.stringify(manifest.permissions)}`);
-  if (!sameSet(manifest.optional_permissions, MEETINGS_OPTIONAL_PERMISSIONS)) {
-    problems.push(`optional_permissions must be exactly [${MEETINGS_OPTIONAL_PERMISSIONS.join(', ')}], found ${JSON.stringify(manifest.optional_permissions)}`);
+  if (!sameSet(manifest.optional_permissions, OPTIONAL_PERMISSIONS)) {
+    problems.push(`optional_permissions must be exactly [${OPTIONAL_PERMISSIONS.join(', ')}], found ${JSON.stringify(manifest.optional_permissions)}`);
   }
   if (!sameSet(manifest.host_permissions, DEFAULT_HOST_PERMISSIONS)) problems.push(`host_permissions must be exactly [${DEFAULT_HOST_PERMISSIONS.join(', ')}], found ${JSON.stringify(manifest.host_permissions)}`);
   if (!sameSet(manifest.optional_host_permissions, OPTIONAL_HOST_PERMISSIONS)) {

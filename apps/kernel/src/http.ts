@@ -1940,9 +1940,11 @@ export function createHttpApp(deps: HttpDeps) {
       const scopes = done.exchange.scopes.filter((s): s is ExtensionScope => (EXTENSION_SCOPES as readonly string[]).includes(s));
       // The client gets the token only once this row is written. When it fails, the token row already exists and nobody
       // holds it: void it (its own system audit row follows) before answering, so no usable row is left behind (#2740).
+      // Notes-only tokens audit through notes.extension.exchanged because kernel.extension.token.exchanged requires 'meetings' (#3560).
+      const exchangeAuditCommand = scopes.includes('meetings') ? 'kernel.extension.token.exchanged' : 'notes.extension.exchanged';
       try {
         await runtime.execute(
-          'kernel.extension.token.exchanged',
+          exchangeAuditCommand,
           { codeId: done.exchange.codeId },
           { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes } }, orgId: done.exchange.orgId },
         );
@@ -2090,9 +2092,11 @@ export function createHttpApp(deps: HttpDeps) {
       if (!allowedExtensionIds.includes(input.extensionId)) throw new DomainError('FORBIDDEN', 403, 'Tiện ích này không được phép kết nối với Ludy', { rule: 'extension_id' });
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      if (input.scopes.includes('notes') && !runtime.installed('notes')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
       const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
-      // An org that switched Meetings off, or does not hold it, is not offered its scope either (ADR-0053).
+      // An org that switched Meetings or Notes off, or does not hold it, is not offered that scope either (ADR-0053).
       if (input.scopes.includes('meetings') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      if (input.scopes.includes('notes') && !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
       const code = newExtensionCode();
       const issued = await runtime.execute<{ expiresInSeconds: number }>(
         'kernel.extension.code.issue',
@@ -2113,12 +2117,17 @@ export function createHttpApp(deps: HttpDeps) {
     const { extension } = c.get('user');
     if (!extension) return problem(c, new DomainError('FORBIDDEN', 403, 'Đường này chỉ dành cho tiện ích Ludy', { rule: 'extension_only' }));
     const meetingsOn = runtime.installed('meetings') && (await runtime.appOn(extension.orgId, 'meetings', { fresh: true }).catch(() => true));
+    const notesOn = runtime.installed('notes') && (await runtime.appOn(extension.orgId, 'notes', { fresh: true }).catch(() => true));
     return c.json({
       tokenId: extension.tokenId,
       orgId: extension.orgId,
       scopes: extension.scopes,
       expiresAt: extension.expiresAt,
-      features: { meetings: extension.scopes.includes('meetings') && meetingsOn, agenda: extension.scopes.includes('agenda') && meetingsOn },
+      features: {
+        meetings: extension.scopes.includes('meetings') && meetingsOn,
+        agenda: extension.scopes.includes('agenda') && meetingsOn,
+        notes: extension.scopes.includes('notes') && notesOn,
+      },
     });
   });
 

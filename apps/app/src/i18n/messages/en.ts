@@ -7879,18 +7879,19 @@ export const en = {
     approve: 'Allow',
     deny: 'Do not allow',
     defaultDevice: 'Browser',
-    limits: 'The extension can only do the above, in this organization, with your permissions; it cannot read the content of a meeting or any other data.',
+    limits: 'The extension can only do the above, in this organization, with your permissions; it cannot read your notes, personal to-dos, meeting content or any other data.',
     revokeHint: 'The access lasts 90 days. You can disconnect it any time in Settings, under extension devices.',
     scope: {
       meetings: 'Create a meeting with its consent record, upload its recording (and video if you choose) to that meeting and see whether it has finished processing.',
       agenda: 'See the title, time and meeting place (Meet, Zoom or Teams) of up to 5 meetings in your calendar starting within the next 30 minutes, to suggest recording them. Needs "Let Ludy read the names and times of meetings in my calendar" turned on in Settings; it cannot see the join address, invitees or description.',
+      notes: 'Save quick notes, web clips (always private to you) and new personal to-dos to this organization; it cannot read your existing notes or to-dos.',
     },
   },
   extensionDevices: {
     title: '{brand} extension devices',
     intro: 'The browsers that use the {brand} extension with your account in this organization. Disconnecting one refuses that extension from its next request.',
     none: 'No device is connected.',
-    scope: { meetings: 'Meeting recording', agenda: 'Upcoming meeting suggestions' },
+    scope: { meetings: 'Meeting recording', agenda: 'Upcoming meeting suggestions', notes: 'Quick Capture & Web Clipper' },
     lastUsed: 'Last used {at}',
     neverUsed: 'Never used',
     connectedAt: 'connected {at}',
@@ -8015,7 +8016,7 @@ export const en = {
     title: 'Extension devices of the members',
     intro: "The browsers that use the {brand} extension with a member's account in this organization. Disconnecting one refuses that extension from its next request, and the change is written to the audit log. Your own devices are in the card above.",
     none: "No other member's device is connected.",
-    scope: { meetings: 'Meeting recording', agenda: 'Upcoming meeting suggestions' },
+    scope: { meetings: 'Meeting recording', agenda: 'Upcoming meeting suggestions', notes: 'Quick Capture & Web Clipper' },
     lastUsed: 'Last used {at}',
     neverUsed: 'Never used',
     connectedAt: 'connected {at}',
@@ -14308,6 +14309,9 @@ export const en = {
       },
     },
     notes: {
+      extension: {
+        exchanged: 'Record a browser extension token exchange for Notes',
+      },
       link: {
         add: 'Link a note to a record',
         remove: 'Unlink a note from a record',
@@ -14322,6 +14326,7 @@ export const en = {
       note: {
         accept_summary: 'Apply a Vy summary into your note',
         archive: 'Archive a note',
+        clip: 'Quick-capture a note or web clip from the browser extension',
         create: 'Write a note',
         delete: 'Move a note to the trash',
         from_meeting_summary: 'Save meeting summary as a note',
@@ -14349,6 +14354,7 @@ export const en = {
         link_add: 'Link one of your to-dos to a record',
         link_remove: 'Remove a record link from one of your to-dos',
         list: 'List your to-dos',
+        quick_capture: 'Quick-capture a personal to-do from the browser extension',
         remind: 'Remind a member of a to-do that is due',
         reopen: 'Reopen one of your to-dos',
         reorder: 'Reorder your to-dos',

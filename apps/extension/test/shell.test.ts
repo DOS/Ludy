@@ -11,11 +11,14 @@ import { connectUrl, newPkce, parseConnectResult } from '../src/auth.ts';
 import { capturePage, type PageCaptureFeature } from '../src/page-capture.ts';
 
 describe('features by module and permission', () => {
-  it('shows meetings only when the org runs the module and the token holds the scope', () => {
+  it('shows meetings and notes only when the org runs the module and the token holds the scope', () => {
     expect(visibleFeatures({ scopes: ['meetings'], features: { meetings: true } }).map((f) => f.id)).toEqual(['meetings']);
+    expect(visibleFeatures({ scopes: ['notes'], features: { notes: true } }).map((f) => f.id)).toEqual(['notes']);
+    expect(visibleFeatures({ scopes: ['meetings', 'notes'], features: { meetings: true, notes: true } }).map((f) => f.id)).toEqual(['meetings', 'notes']);
+    expect(visibleFeatures({ scopes: ['notes'], features: { notes: false } })).toEqual([]);
     expect(visibleFeatures({ scopes: ['meetings'], features: { meetings: false } })).toEqual([]);
-    expect(visibleFeatures({ scopes: [], features: { meetings: true } })).toEqual([]);
-    expect(visibleFeatures({ scopes: ['meetings'], features: {} })).toEqual([]);
+    expect(visibleFeatures({ scopes: [], features: { meetings: true, notes: true } })).toEqual([]);
+    expect(visibleFeatures({ scopes: ['meetings', 'notes'], features: {} })).toEqual([]);
     expect(visibleFeatures(null)).toEqual([]);
   });
 
@@ -58,7 +61,7 @@ describe('sign-in', () => {
     const url = new URL(connectUrl('https://ludy.congty.vn', pkce, 'https://abcdefghijklmnopabcdefghijklmnop.chromiumapp.org/connect', 'Thiết bị'));
     expect(`${url.origin}${url.pathname}`).toBe('https://ludy.congty.vn/-/extension/connect');
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
-    expect(url.searchParams.get('scope')).toBe('meetings');
+    expect(url.searchParams.get('scope')).toBe('meetings notes');
   });
 
   it('takes the code only from this flow\'s own redirect and state', async () => {

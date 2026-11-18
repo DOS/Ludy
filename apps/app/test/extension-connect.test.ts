@@ -2,7 +2,7 @@
 // The Ludy extension's sign-in request: what the page accepts, where it sends the code, and how long it keeps a request
 // while the member signs in (#2582, ADR-0047 point 10).
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { PENDING_CONNECT_TTL_MS, connectRedirect, forgetConnect, parseConnectRequest, pendingConnect, rememberConnect } from '../src/lib/extension-connect.ts';
+import { PENDING_CONNECT_TTL_MS, connectRedirect, filterScopesForModules, forgetConnect, parseConnectRequest, pendingConnect, rememberConnect } from '../src/lib/extension-connect.ts';
 
 const EXTENSION = 'abcdefghijklmnopabcdefghijklmnop';
 const ALLOWED = [EXTENSION];
@@ -22,7 +22,14 @@ describe('parseConnectRequest', () => {
     expect(parseConnectRequest(query({ scope: undefined }), ALLOWED)?.scopes).toEqual(['meetings']);
     // The agenda scope (B2) rides with meetings: both is fine, agenda alone is not a request.
     expect(parseConnectRequest(query({ scope: 'meetings agenda' }), ALLOWED)?.scopes).toEqual(['agenda', 'meetings']);
+    expect(parseConnectRequest(query({ scope: 'notes' }), ALLOWED)?.scopes).toEqual(['notes']);
+    expect(parseConnectRequest(query({ scope: 'meetings agenda notes' }), ALLOWED)?.scopes).toEqual(['agenda', 'meetings', 'notes']);
+    expect(parseConnectRequest(query({ scope: 'notes agenda' }), ALLOWED)).toBeNull();
     expect(parseConnectRequest(query({ scope: 'agenda' }), ALLOWED)).toBeNull();
+    expect(filterScopesForModules(['agenda', 'meetings', 'notes'], ['notes'])).toEqual(['notes']);
+    expect(filterScopesForModules(['agenda', 'meetings', 'notes'], ['meetings'])).toEqual(['agenda', 'meetings']);
+    expect(filterScopesForModules(['agenda', 'meetings', 'notes'], ['crm'])).toEqual([]);
+    expect(filterScopesForModules(['agenda', 'notes'], ['notes'])).toEqual(['notes']);
     expect(parseConnectRequest(query({ device: undefined }), ALLOWED)?.deviceName).toBe('');
     expect(parseConnectRequest(query({ device: 'x'.repeat(200) }), ALLOWED)?.deviceName).toHaveLength(80);
   });
