@@ -3306,6 +3306,7 @@ export interface MeetingsTranscriptSegmentTable {
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
   search: ColumnType<string | null, never, NotGranted>;
+  source: ColumnType<string, string | undefined, NotGranted>;
 }
 
 /** crove_meetings.translation */

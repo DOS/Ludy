@@ -126,7 +126,7 @@ describe('formatMeetingTaskSource & formatConversationTaskSource (#2608)', () =>
       isRecorder: false,
       stage: 'published',
       segments: [
-        { id: 's1', startSeconds: 10, endSeconds: 20, speakerLabel: 'Lan', text: 'Gọi khách A ngày mai.', stage: 'published', corrected: false },
+        { id: 's1', startSeconds: 10, endSeconds: 20, speakerLabel: 'Lan', text: 'Gọi khách A ngày mai.', stage: 'published', corrected: false, source: 'ludy' },
       ],
     };
     const out = formatMeetingTaskSource({
