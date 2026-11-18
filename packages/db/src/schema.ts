@@ -1217,6 +1217,14 @@ export type MeetingsMeetingResultTable = Refine<
   }
 >;
 
+// The chapters (table of contents) of a meeting (#3844): a draft the recorder writes, published with the minutes.
+export type MeetingsMeetingChapterTable = Refine<
+  G.MeetingsMeetingChapterTable,
+  {
+    stage: Generated<MeetingResultStage>;
+  }
+>;
+
 // status is written only by crove_meetings.action_item_accept (the generated type keeps it NotGranted for update).
 export type MeetingsActionItemTable = Refine<
   G.MeetingsActionItemTable,
@@ -1360,6 +1368,7 @@ type Refined = Tables<{
   'crove_meetings.chat_channel': MeetingsChatChannelTable;
   'crove_meetings.chat_post': MeetingsChatPostTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
+  'crove_meetings.meeting_chapter': MeetingsMeetingChapterTable;
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'crove_meetings.translation': MeetingsTranslationTable;

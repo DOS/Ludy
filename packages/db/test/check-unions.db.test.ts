@@ -335,6 +335,7 @@ const UNIONS = unions({
   'crove_meetings.chat_post.state': MEETING_CHAT_POST_STATES,
   'crove_meetings.action_item.stage': MEETING_RESULT_STAGES,
   'crove_meetings.action_item.status': ACTION_ITEM_STATUSES,
+  'crove_meetings.meeting_chapter.stage': MEETING_RESULT_STAGES,
   'crove_meetings.meeting_result.feature': MEETING_RESULT_FEATURES,
   'crove_meetings.meeting_result.stage': MEETING_RESULT_STAGES,
   'crove_meetings.transcript_segment.stage': TRANSCRIPT_STAGES,

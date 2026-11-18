@@ -98,6 +98,8 @@ export const meetingsManifest = defineModule({
         ],
         { title: 'pii' },
       ),
+      // The chapters (table of contents) of a meeting (#3844): a title and the second of the transcript line it starts at; a draft the recorder reads, published for the readers. A title is plain text, personal data.
+      meeting_chapter: columns(['org_id', 'id', 'meeting_id', 'stage', 'position', 'start_seconds', 'tainted', 'source_run_id', 'created_at', 'updated_at'], { title: 'pii' }),
       // Links of a meeting to a party, a deal and a calendar event (L1, #2587): ids and a time, no text.
       meeting_link: columns(['org_id', 'id', 'meeting_id', 'party_id', 'deal_id', 'calendar_event_id', 'created_by', 'created_at']),
       // The recorder's own rough notes of a meeting (A5, #3163): read, written and deleted by the recorder alone. Free text, personal data.
