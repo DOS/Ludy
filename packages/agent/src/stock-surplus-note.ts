@@ -40,7 +40,14 @@ const cut = (value: string, max: number) => Array.from(value.trim()).slice(0, ma
 const oneLine = (value: string, max: number) => cut(value, max).replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' ')).replace(/\s+/g, ' ').trim();
 
 const dateText = (iso: string): string => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
-const plainDecimal = (value: string): string => (value.includes('.') ? value.replace(/0+$/, '').replace(/\.$/, '') : value);
+// A decimal without its trailing zeros ("2.50" is "2.5", "3.0" is "3"), by a scan from the end: no backtracking pattern on a value that came from the books.
+const plainDecimal = (value: string): string => {
+  if (!value.includes('.')) return value;
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '0') end -= 1;
+  if (end > 0 && value[end - 1] === '.') end -= 1;
+  return value.slice(0, end);
+};
 
 /** The facts as the prompt gives them; also the one text the answer's numbers are checked against. The three accounts the person may choose are part of the facts, so their numbers are allowed. */
 export function stockSurplusFactsText(facts: StockSurplusFacts): string {
