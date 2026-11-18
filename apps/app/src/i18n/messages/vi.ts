@@ -13290,6 +13290,11 @@ export const vi = {
         write_ready: 'Xem tài khoản quảng cáo nào đã đọc được số liệu để tạo kết nối chạy quảng cáo',
         write_target: 'Xem tài khoản quảng cáo cần tạo kết nối chạy quảng cáo',
       },
+      boost: {
+        draft: 'Tạo bản nháp để đẩy một bài đã đăng',
+        options: 'Xem một bài có đẩy được không và với tài khoản quảng cáo nào',
+        states: 'Xem các lượt đẩy của một số bài đang ở đâu',
+      },
       campaign: {
         draft: 'Xem một bản nháp chiến dịch',
         draft_discard: 'Bỏ một bản nháp chiến dịch',

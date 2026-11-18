@@ -30,7 +30,7 @@ function seedRunningAds(slug: string, writeOn: boolean): void {
 test('an owner boosts a published post: no action while running ads is off, then the panel, the draft with its largest amount, the request for approval and the state on the post', async ({ page }) => {
   test.setTimeout(480_000);
   await signInNewUser(page, newEmail('ads-boost'));
-  const slug = await createOrg(page, 'Công ty Đẩy bài');
+  const slug = await createOrg(page, 'Công ty Quảng bá');
   const nav = page.getByRole('navigation');
   const card = page.getByTestId('boost-card');
   let postUrl = '';
@@ -60,7 +60,7 @@ test('an owner boosts a published post: no action while running ads is off, then
 
   await test.step('with no ad account and running ads off, the published post has no boost action at all', async () => {
     await expect(card).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Đẩy bài' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Đẩy bài', exact: true })).toHaveCount(0);
   });
 
   await test.step('a test ad account in dong, read once (the plan needs its currency)', async () => {
@@ -76,7 +76,7 @@ test('an owner boosts a published post: no action while running ads is off, then
     await page.goto(postUrl);
     await expect(page.getByTestId('published-summary')).toBeVisible();
     await expect(card).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Đẩy bài' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Đẩy bài', exact: true })).toHaveCount(0);
   });
 
   await test.step('running ads on as its approvals leave it, with a daily cap and a Page an ad runs as', async () => {

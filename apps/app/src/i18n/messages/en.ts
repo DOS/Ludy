@@ -13291,6 +13291,11 @@ export const en = {
         write_ready: 'Read which ad accounts are linked for reading, to make a connection to run ads',
         write_target: 'Read the ad account a connection to run ads is made for',
       },
+      boost: {
+        draft: 'Make a draft to boost a published post',
+        options: 'Read whether a post can be boosted and with which ad accounts',
+        states: 'Read where the boosts of some posts stand',
+      },
       campaign: {
         draft: 'Read a campaign draft',
         draft_discard: 'Discard a campaign draft',
