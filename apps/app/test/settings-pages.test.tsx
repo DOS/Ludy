@@ -118,8 +118,13 @@ describe('which cards each tab of Settings holds', () => {
     expect(cardsOf(render('SettingsBookingsPage'))).toEqual(['working-hours', 'event-types']);
   });
 
-  it('Bán hàng: the quotes and the deal board, for owners and admins', () => {
-    expect(cardsOf(render('SettingsSalesPage'))).toEqual(['quote-settings', 'sales-process']);
+  it('Báo giá: the letterhead of the quotes, for owners and admins', () => {
+    expect(cardsOf(render('SettingsQuotesPage'))).toEqual(['quote-settings']);
+    expect(cardsOf(render('SettingsQuotesPage', 'member'))).toEqual([]);
+  });
+
+  it('Bán hàng: the deal board, for owners and admins', () => {
+    expect(cardsOf(render('SettingsSalesPage'))).toEqual(['sales-process']);
     expect(cardsOf(render('SettingsSalesPage', 'member'))).toEqual([]);
     // A member opens the tab and is told why it holds nothing for them, not an empty page.
     expect(render('SettingsSalesPage', 'member')).toContain('Chỉ chủ sở hữu và quản trị viên thay đổi được các mục này.');
@@ -129,14 +134,14 @@ describe('which cards each tab of Settings holds', () => {
     expect(cardsOf(render('SettingsAccountingPage'))).toEqual(['chart-of-accounts', 'misa-goods-codes', 'account-rules', 'bank-party-rules']);
   });
 
-  it('Kết nối: the integrations, the bank account numbers and the meeting platforms', () => {
-    expect(cardsOf(render('SettingsConnectionsPage'))).toEqual(['integrations', 'bank-account-numbers', 'meeting-platforms']);
-    expect(cardsOf(render('SettingsConnectionsPage', 'member'))).toEqual(['integrations', 'meeting-platforms']);
+  it('Kết nối: the integrations and the bank account numbers', () => {
+    expect(cardsOf(render('SettingsConnectionsPage'))).toEqual(['integrations', 'bank-account-numbers']);
+    expect(cardsOf(render('SettingsConnectionsPage', 'member'))).toEqual(['integrations']);
   });
 
   it('Bảo mật tài khoản: the person\'s own second factor and devices, and the team\'s devices for an admin', () => {
-    expect(cardsOf(render('SettingsSecurityPage'))).toEqual(['two-factor', 'my-sessions', 'extension-devices', 'org-extension-devices']);
-    expect(cardsOf(render('SettingsSecurityPage', 'member'))).toEqual(['two-factor', 'my-sessions', 'extension-devices']);
+    expect(cardsOf(render('SettingsSecurityPage'))).toEqual(['two-factor', 'my-sessions', 'meeting-platforms', 'extension-devices', 'org-extension-devices']);
+    expect(cardsOf(render('SettingsSecurityPage', 'member'))).toEqual(['two-factor', 'my-sessions', 'meeting-platforms', 'extension-devices']);
   });
 
   it('Dữ liệu và xóa tổ chức: the owner deletes the org, others are told who can', () => {
@@ -158,11 +163,10 @@ describe('which cards each tab of Settings holds', () => {
       expect(cardsOf(render('SettingsAppsPage'))).toEqual(['org-apps']);
       expect(cardsOf(render('SettingsBookingsPage'))).toEqual(['working-hours']);
       expect(cardsOf(render('SettingsSalesPage'))).toEqual([]);
+      expect(cardsOf(render('SettingsQuotesPage'))).toEqual([]);
       expect(cardsOf(render('SettingsOrgPage'))).toEqual([]);
       expect(cardsOf(render('SettingsSecurityPage'))).toEqual(['two-factor', 'my-sessions']);
-      // Meetings alone opens the connections tab, but the bank account numbers are finance's.
-      modules.current = ['kernel', 'meetings'];
-      expect(cardsOf(render('SettingsConnectionsPage'))).toEqual(['meeting-platforms']);
+      expect(cardsOf(render('SettingsConnectionsPage'))).toEqual([]);
     } finally {
       modules.current = ['kernel', 'finance', 'social', 'crm', 'meetings'];
     }
@@ -171,7 +175,7 @@ describe('which cards each tab of Settings holds', () => {
 
 describe('one column and one pattern for the fields (ST-6, ST-8)', () => {
   it('lists the cards of a tab in one column, never a two-column grid', () => {
-    for (const page of ['SettingsOrgPage', 'SettingsMembersPage', 'SettingsAppsPage', 'SettingsBookingsPage', 'SettingsAccountingPage', 'SettingsSecurityPage'] as const) {
+    for (const page of ['SettingsOrgPage', 'SettingsMembersPage', 'SettingsAppsPage', 'SettingsBookingsPage', 'SettingsQuotesPage', 'SettingsAccountingPage', 'SettingsSecurityPage'] as const) {
       const html = render(page);
       expect(html, page).toContain('class="grid max-w-4xl gap-6"');
       expect(html, page).not.toContain('lg:grid-cols-2');

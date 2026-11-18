@@ -145,6 +145,7 @@ export const vi = {
     settingsApps: 'Ứng dụng',
     settingsBookings: 'Lịch hẹn',
     settingsSales: 'Bán hàng',
+    settingsQuotes: 'Báo giá',
     settingsAccounting: 'Kế toán và thuế',
     settingsConnections: 'Kết nối',
     settingsSecurity: 'Bảo mật tài khoản',

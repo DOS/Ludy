@@ -34,15 +34,15 @@ beforeAll(async () => {
 const group = TAB_GROUPS.find((g) => g.menu === 'settings');
 
 describe('the tab strip of Settings', () => {
-  it('has the nine tabs, the first on the address Settings always had', () => {
+  it('has the ten tabs, the first on the address Settings always had', () => {
     expect(group?.tabs.map((tab) => tab.path)).toEqual(SETTINGS_TABS.map((tab) => SETTINGS_TAB_PATH[tab]));
     expect(group?.tabs[0]?.path).toBe('settings');
-    expect(group?.tabs.map((tab) => tab.label)).toEqual(['org', 'settingsMembers', 'settingsApps', 'settingsBookings', 'settingsSales', 'settingsAccounting', 'settingsConnections', 'settingsSecurity', 'settingsData']);
+    expect(group?.tabs.map((tab) => tab.label)).toEqual(['org', 'settingsMembers', 'settingsApps', 'settingsBookings', 'settingsSales', 'settingsQuotes', 'settingsAccounting', 'settingsConnections', 'settingsSecurity', 'settingsData']);
   });
 
   it('names every tab in both languages, with the words of the issue', () => {
-    expect(group?.tabs.map((tab) => viMessages.nav[tab.label])).toEqual(['Tổ chức', 'Thành viên và quyền', 'Ứng dụng', 'Lịch hẹn', 'Bán hàng', 'Kế toán và thuế', 'Kết nối', 'Bảo mật tài khoản', 'Dữ liệu và xóa tổ chức']);
-    expect(group?.tabs.map((tab) => en.nav[tab.label])).toEqual(['Organization', 'Members and roles', 'Apps', 'Bookings', 'Sales', 'Accounting and tax', 'Connections', 'Account security', 'Data and deleting the organization']);
+    expect(group?.tabs.map((tab) => viMessages.nav[tab.label])).toEqual(['Tổ chức', 'Thành viên và quyền', 'Ứng dụng', 'Lịch hẹn', 'Bán hàng', 'Báo giá', 'Kế toán và thuế', 'Kết nối', 'Bảo mật tài khoản', 'Dữ liệu và xóa tổ chức']);
+    expect(group?.tabs.map((tab) => en.nav[tab.label])).toEqual(['Organization', 'Members and roles', 'Apps', 'Bookings', 'Sales', 'Quotes', 'Accounting and tax', 'Connections', 'Account security', 'Data and deleting the organization']);
   });
 
   it('gives each tab its own address, and Settings stays the one menu item lit on all of them', () => {
@@ -55,14 +55,15 @@ describe('the tab strip of Settings', () => {
     }
   });
 
-  it('shows the accounting tab only where finance runs, the sales tab where crm runs, and the connections tab where finance or meetings run', () => {
+  it('shows the accounting tab only where finance runs, the sales and quotes tabs where crm runs, and the connections tab where finance runs', () => {
     const tabsFor = (modules: string[]) => installedItems(modules, ALL_NAV).filter((item) => group?.tabs.some((tab) => `/o/$slug/${tab.path}` === item.to)).map((item) => item.to.replace('/o/$slug/', ''));
     expect(tabsFor(['kernel'])).toEqual(['settings', 'settings/members', 'settings/apps', 'settings/bookings', 'settings/security', 'settings/data']);
     expect(tabsFor(['kernel', 'crm'])).toContain('settings/sales');
+    expect(tabsFor(['kernel', 'crm'])).toContain('settings/quotes');
     expect(tabsFor(['kernel', 'finance'])).not.toContain('settings/sales');
     expect(tabsFor(['kernel', 'finance'])).toContain('settings/accounting');
     expect(tabsFor(['kernel', 'finance'])).toContain('settings/connections');
-    expect(tabsFor(['kernel', 'meetings'])).toContain('settings/connections');
+    expect(tabsFor(['kernel', 'meetings'])).not.toContain('settings/connections');
     expect(tabsFor(['kernel', 'meetings'])).not.toContain('settings/accounting');
   });
 
@@ -85,7 +86,7 @@ describe('an old link to the single Settings page', () => {
     expect(legacySettingsTab('#settings-members', {})).toBe('members');
     expect(legacySettingsTab('booking-settings', {})).toBe('bookings');
     expect(legacySettingsTab('#booking-event-types', {})).toBe('bookings');
-    expect(legacySettingsTab('#quote-settings', {})).toBe('sales');
+    expect(legacySettingsTab('#quote-settings', {})).toBe('quotes');
     expect(legacySettingsTab('#sales-process', {})).toBe('sales');
     expect(legacySettingsTab('#bank-account-numbers', {})).toBe('connections');
     expect(legacySettingsTab('#integrations', {})).toBe('connections');
@@ -109,7 +110,7 @@ describe('an old link to the single Settings page', () => {
   it('is sent there by the router, keeping the fragment and the invited address', async () => {
     session.modules = ['kernel', 'finance', 'social', 'crm', 'meetings'];
     expect(await lands('/o/acme/settings')).toBe('/o/acme/settings');
-    expect(await lands('/o/acme/settings#quote-settings')).toBe('/o/acme/settings/sales#quote-settings');
+    expect(await lands('/o/acme/settings#quote-settings')).toBe('/o/acme/settings/quotes#quote-settings');
     expect(await lands('/o/acme/settings#booking-event-types')).toBe('/o/acme/settings/bookings#booking-event-types');
     expect(await lands('/o/acme/settings#integrations')).toBe('/o/acme/settings/connections#integrations');
     expect(await lands('/o/acme/settings#settings-members')).toBe('/o/acme/settings/members#settings-members');
@@ -122,9 +123,11 @@ describe('an old link to the single Settings page', () => {
     expect(await lands('/o/acme/settings/accounting')).toBe('/o/acme/overview');
     expect(await lands('/o/acme/settings/connections')).toBe('/o/acme/overview');
     expect(await lands('/o/acme/settings/sales')).toBe('/o/acme/settings/sales');
+    expect(await lands('/o/acme/settings/quotes')).toBe('/o/acme/settings/quotes');
     expect(await lands('/o/acme/settings/apps')).toBe('/o/acme/settings/apps');
     session.modules = ['kernel', 'finance'];
     expect(await lands('/o/acme/settings/sales')).toBe('/o/acme/overview');
+    expect(await lands('/o/acme/settings/quotes')).toBe('/o/acme/overview');
     expect(await lands('/o/acme/settings/accounting')).toBe('/o/acme/settings/accounting');
   });
 });

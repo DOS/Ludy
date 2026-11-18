@@ -15,8 +15,8 @@ const pages = source
 const keysOf = (text: string) => [...text.matchAll(/<[A-Z]\w+ key=\{(`[^`]*`|[^}]*)\}/g)].map((m) => m[1] as string);
 
 describe('Settings keys', () => {
-  it('has a page for each of the nine tabs', () => {
-    expect(pages.map(([name]) => name)).toEqual(['SettingsOrgPage', 'SettingsMembersPage', 'SettingsAppsPage', 'SettingsBookingsPage', 'SettingsSalesPage', 'SettingsAccountingPage', 'SettingsConnectionsPage', 'SettingsSecurityPage', 'SettingsDataPage']);
+  it('has a page for each of the ten tabs', () => {
+    expect(pages.map(([name]) => name)).toEqual(['SettingsOrgPage', 'SettingsMembersPage', 'SettingsAppsPage', 'SettingsBookingsPage', 'SettingsSalesPage', 'SettingsQuotesPage', 'SettingsAccountingPage', 'SettingsConnectionsPage', 'SettingsSecurityPage', 'SettingsDataPage']);
   });
 
   it.each(pages.filter(([, text]) => keysOf(text).length > 0))('gives each keyed element of %s its own key', (_name, text) => {

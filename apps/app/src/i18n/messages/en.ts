@@ -147,6 +147,7 @@ export const en = {
     settingsApps: 'Apps',
     settingsBookings: 'Bookings',
     settingsSales: 'Sales',
+    settingsQuotes: 'Quotes',
     settingsAccounting: 'Accounting and tax',
     settingsConnections: 'Connections',
     settingsSecurity: 'Account security',

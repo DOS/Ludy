@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The tabs of Settings (ST-1, #3589). Each tab is a screen with its own address, drawn as a strip by the shell (TAB_GROUPS in lib/apps.ts), so a card can be linked and a phone
 // does not scroll a 10000 px page. The first tab keeps the address `settings`, which every old link names; the others are `settings/<tab>`.
-// A tab holds what fits a screen: at 1440 wide each stays under 1200 px, which is why the booking cards and the quote and sales cards of Engage have tabs of their own, and the
-// tax profile sits with the org. Later issues drop their cards into a tab here (the wording of #3590, the notification preferences of #3592): a new card is one entry in that tab's page, nothing else.
-export const SETTINGS_TABS = ['org', 'members', 'apps', 'bookings', 'sales', 'accounting', 'connections', 'security', 'data'] as const;
+// A tab holds what fits a screen: at 1440 wide the title and the cards of each stay under 1200 px (e2e/tests/settings-tabs.spec.ts measures them), which is why the booking, quote and sales cards
+// of Engage have tabs of their own, the tax profile sits with the org and the meeting platforms with the person's own devices. Later issues drop their cards into a tab here (the wording of #3590, the notification preferences of #3592): a new card is one entry in that tab's page, nothing else.
+export const SETTINGS_TABS = ['org', 'members', 'apps', 'bookings', 'sales', 'quotes', 'accounting', 'connections', 'security', 'data'] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 // The screen of a tab, under /o/<slug>/.
@@ -13,6 +13,7 @@ export const SETTINGS_TAB_PATH = {
   apps: 'settings/apps',
   bookings: 'settings/bookings',
   sales: 'settings/sales',
+  quotes: 'settings/quotes',
   accounting: 'settings/accounting',
   connections: 'settings/connections',
   security: 'settings/security',
@@ -26,6 +27,7 @@ export const SETTINGS_TAB_TO = {
   apps: '/o/$slug/settings/apps',
   bookings: '/o/$slug/settings/bookings',
   sales: '/o/$slug/settings/sales',
+  quotes: '/o/$slug/settings/quotes',
   accounting: '/o/$slug/settings/accounting',
   connections: '/o/$slug/settings/connections',
   security: '/o/$slug/settings/security',
@@ -62,12 +64,12 @@ export const CARD_TAB: Readonly<Record<string, SettingsTab>> = {
   [SETTINGS_CARD.accountRules]: 'accounting',
   [SETTINGS_CARD.bankPartyRules]: 'accounting',
   [SETTINGS_CARD.integrations]: 'connections',
-  [SETTINGS_CARD.meetingPlatforms]: 'connections',
+  [SETTINGS_CARD.meetingPlatforms]: 'security',
   [SETTINGS_CARD.twoFactor]: 'security',
   [SETTINGS_CARD.sessions]: 'security',
   [SETTINGS_CARD.bookingSettings]: 'bookings',
   [SETTINGS_CARD.bookingEventTypes]: 'bookings',
-  [SETTINGS_CARD.quoteSettings]: 'sales',
+  [SETTINGS_CARD.quoteSettings]: 'quotes',
   [SETTINGS_CARD.salesProcess]: 'sales',
 };
 

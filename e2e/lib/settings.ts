@@ -8,6 +8,7 @@ export const SETTINGS_TAB = {
   apps: 'Ứng dụng',
   bookings: 'Lịch hẹn',
   sales: 'Bán hàng',
+  quotes: 'Báo giá',
   accounting: 'Kế toán và thuế',
   connections: 'Kết nối',
   security: 'Bảo mật tài khoản',

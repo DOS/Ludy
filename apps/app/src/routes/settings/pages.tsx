@@ -29,7 +29,7 @@ import { MembersCard } from './members-card.tsx';
 import { Offboarding } from './offboarding.tsx';
 import { SETTINGS_CARD } from './tabs.ts';
 
-// The nine tabs of Settings (ST-1, #3589), one screen each. A tab lists its cards in one column and stays under 1200 px at 1440 wide, which decides what sits together. The cards owned by another
+// The ten tabs of Settings (ST-1, #3589), one screen each. A tab lists its cards in one column and stays under 1200 px at 1440 wide, which decides what sits together. The cards owned by another
 // app (the booking and quote cards of Engage, the minutes templates of the meetings) have tabs of their own or sit under "Ứng dụng" until a later issue moves them into their own app's settings.
 // A new card is one line in the page of its tab.
 
@@ -149,8 +149,28 @@ export function SettingsBookingsPage() {
   );
 }
 
-// Bán hàng, with the crm module: the quotes' letterhead and the deal board's stages; owners and admins.
+// Bán hàng, with the crm module: the deal board's stages and the reminder for forgotten deals; owners and admins.
 export function SettingsSalesPage() {
+  const t = useTranslations('settings');
+  return (
+    <SettingsFrame>
+      {({ org, canManage, modules }) => (
+        <>
+          {!canManage && (
+            <Card className="block p-4">
+              <p className="text-sm text-muted-foreground">{t('adminOnlyTab')}</p>
+            </Card>
+          )}
+          {/* The deal board's stages and the reminder for forgotten deals (#3647), with the crm module; owners and admins. */}
+          {modules.includes('crm') && canManage && <SalesProcessCard key={`sales-process:${org.slug}`} />}
+        </>
+      )}
+    </SettingsFrame>
+  );
+}
+
+// Báo giá, with the crm module: the letterhead, bank note, defaults and logo of the org's quotes; owners and admins.
+export function SettingsQuotesPage() {
   const t = useTranslations('settings');
   return (
     <SettingsFrame>
@@ -163,8 +183,6 @@ export function SettingsSalesPage() {
           )}
           {/* The letterhead, bank note, defaults and logo of the org's quotes (#3645), with the crm module; owners and admins. */}
           {modules.includes('crm') && canManage && <QuoteSettingsCard key={`quote-settings:${org.slug}`} />}
-          {/* The deal board's stages and the reminder for forgotten deals (#3647), with the crm module; owners and admins. */}
-          {modules.includes('crm') && canManage && <SalesProcessCard key={`sales-process:${org.slug}`} />}
         </>
       )}
     </SettingsFrame>
@@ -198,7 +216,7 @@ export function SettingsAccountingPage() {
   );
 }
 
-// Kết nối: the bank feed, the e-invoice provider and the numbers of the bank accounts (finance), and the member's own meeting platforms (meetings).
+// Kết nối, with the finance module: the bank feed, the e-invoice provider and the numbers of the bank accounts.
 export function SettingsConnectionsPage() {
   return (
     <SettingsFrame>
@@ -212,19 +230,13 @@ export function SettingsConnectionsPage() {
               <BankAccountNumbersCard key={`bank-account-numbers:${org.slug}`} canManage={canManage} />
             </Anchor>
           )}
-          {/* The member's own meeting platform connections (C1, #3173): the recordings they hold are suggested on the Meetings tab. */}
-          {modules.includes('meetings') && (
-            <Anchor id={SETTINGS_CARD.meetingPlatforms}>
-              <MeetingPlatforms canConnect={org.role !== 'viewer'} />
-            </Anchor>
-          )}
         </>
       )}
     </SettingsFrame>
   );
 }
 
-// Bảo mật tài khoản: the person's own second factor and devices; the team's extension devices for owners and admins.
+// Bảo mật tài khoản: the person's own second factor, devices and meeting platform connections; the team's extension devices for owners and admins.
 export function SettingsSecurityPage() {
   return (
     <SettingsFrame>
@@ -236,6 +248,12 @@ export function SettingsSecurityPage() {
           {me && (
             <Anchor id={SETTINGS_CARD.sessions}>
               <MySessions userId={me.userId} />
+            </Anchor>
+          )}
+          {/* The member's own meeting platform connections (C1, #3173): the recordings they hold are suggested on the Meetings tab. */}
+          {modules.includes('meetings') && (
+            <Anchor id={SETTINGS_CARD.meetingPlatforms}>
+              <MeetingPlatforms canConnect={org.role !== 'viewer'} />
             </Anchor>
           )}
           {modules.includes('meetings') && <ExtensionDevices />}

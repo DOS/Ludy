@@ -237,7 +237,7 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
           {row.status === 'failed' && (
             <>
               {row.errorCode === 'connection_expired' && (
-                <Link to="/o/$slug/settings/connections" params={{ slug }} hash="meeting-platforms" className="text-xs font-medium underline">
+                <Link to="/o/$slug/settings/security" params={{ slug }} hash="meeting-platforms" className="text-xs font-medium underline">
                   {tp('settings.title')}
                 </Link>
               )}

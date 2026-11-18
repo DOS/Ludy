@@ -109,7 +109,7 @@ export const TAB_GROUPS: readonly TabGroup[] = [
   { menu: 'vat', tabs: [{ path: 'vat', label: 'vat' }, { path: 'portal-invoices', label: 'portalList' }] },
   { menu: 'hr/payroll', tabs: [{ path: 'hr/payroll', label: 'payroll' }, { path: 'hr/bank-templates', label: 'bankTemplates' }] },
   { menu: 'ads', tabs: [{ path: 'ads', label: 'adsFigures' }, { path: 'ads/campaigns', label: 'adsCampaigns' }] },
-  // Settings (#3589): one tab for each kind of setting, each with its own address; the tabs of an app that is off (accounting, connections, sales) are left out.
+  // Settings (#3589): one tab for each kind of setting, each with its own address; the tabs of an app that is off (accounting, connections, sales, quotes) are left out.
   {
     menu: 'settings',
     tabs: [
@@ -118,6 +118,7 @@ export const TAB_GROUPS: readonly TabGroup[] = [
       { path: 'settings/apps', label: 'settingsApps' },
       { path: 'settings/bookings', label: 'settingsBookings' },
       { path: 'settings/sales', label: 'settingsSales' },
+      { path: 'settings/quotes', label: 'settingsQuotes' },
       { path: 'settings/accounting', label: 'settingsAccounting' },
       { path: 'settings/connections', label: 'settingsConnections' },
       { path: 'settings/security', label: 'settingsSecurity' },

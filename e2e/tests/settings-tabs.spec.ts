@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Settings in tabs (ST-1, ST-8, #3589): nine tabs, each with its own address and under 1200 px at 1440 wide, one kind of setting each; an old link to the single page still lands on its
+// Settings in tabs (ST-1, ST-8, #3589): ten tabs, each with its own address and under 1200 px at 1440 wide, one kind of setting each; an old link to the single page still lands on its
 // card; and a phone gets a strip that scrolls sideways, not a 10000 px page. The AI coworker here: none acts, this is a layout of settings a person changes.
 import { expect, test } from '@playwright/test';
 import { openSettingsTab, SETTINGS_TAB } from '../lib/settings.ts';
 import { createOrg, newEmail, signUp } from '../lib/session.ts';
 
-const TAB_PATHS = { org: '', members: '/members', apps: '/apps', bookings: '/bookings', sales: '/sales', accounting: '/accounting', connections: '/connections', security: '/security', data: '/data' } as const;
+const TAB_PATHS = { org: '', members: '/members', apps: '/apps', bookings: '/bookings', sales: '/sales', quotes: '/quotes', accounting: '/accounting', connections: '/connections', security: '/security', data: '/data' } as const;
 
 test('every tab of Settings has its own address, shows one kind of setting and stays under 1200 px at 1440', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -25,9 +25,11 @@ test('every tab of Settings has its own address, shows one kind of setting and s
     // One column of cards: the heading of the screen, then the cards, no two-column grid.
     await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toHaveText('Cài đặt');
     await page.waitForLoadState('networkidle');
-    const height = await page.getByRole('main').evaluate((main) => main.scrollHeight);
-    const cards = await page.getByRole('main').locator('div.grid.max-w-4xl > *').evaluateAll((nodes) => nodes.map((n) => Math.round(n.getBoundingClientRect().height)));
-    console.log(`settings tab ${tab}: ${height} px in all, cards ${cards.join(' + ')}`);
+    // The height of the tab itself, from its title to its last card: the page's own frame (the padding of <main>, the strip) is the same on every screen and not a setting.
+    const grid = page.getByRole('main').locator('div.grid.max-w-4xl');
+    const height = await grid.evaluate((el) => Math.round(el.getBoundingClientRect().bottom - (document.querySelector('main h1')?.getBoundingClientRect().top ?? 0)));
+    const cards = await grid.locator('> *').evaluateAll((nodes) => nodes.map((n) => Math.round(n.getBoundingClientRect().height)));
+    console.log(`settings tab ${tab}: ${height} px from title to last card, cards ${cards.join(' + ')}`);
     // Soft, so one run reports the height of every tab, not only the first that is too tall.
     expect.soft(height, `${tab} tab is ${height} px tall`).toBeLessThan(1200);
   }

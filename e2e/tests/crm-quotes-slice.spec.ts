@@ -174,7 +174,7 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
     await expect(page.getByTestId('quote-settings')).toHaveCount(0);
     await expect(page.getByTestId('quote-letterhead-hint')).toContainText('Chưa có logo và thông tin liên hệ trên báo giá.');
     await page.getByTestId('quote-letterhead-hint').getByRole('link', { name: 'Thiết lập' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/settings/sales#quote-settings$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/settings/quotes#quote-settings$`));
     const settings = page.getByTestId('quote-settings');
     await expect(settings).toBeVisible();
     await settings.getByLabel('Điện thoại in trên báo giá').fill('0901 234 567');
