@@ -11,6 +11,20 @@ export const MISA_INVOICE_NUMBER_LIMIT = 25;
 // The columns that hold a MISA catalog code of a party or an item. Crove cannot know the firm's codes, so the service, sales and cash templates leave them blank; the goods template takes them from Settings.
 const CODE_COLUMN = /^Mã (?:nhà cung cấp|khách hàng|đối tượng|NCC|hàng|dịch vụ)(?:\s|$)/u;
 // The columns that hold an account of the chart (not a bank account number: "TK ngân hàng").
+// One supplier or party code per template: some templates repeat it further along (the services file has "Mã NCC" after "Mã nhà cung cấp", the cash payment has "Mã nhà cung cấp" in its tax block after
+// "Mã đối tượng", the bank debit has "Mã đối tượng (Chi tiết)"), and a person should not read the same missing code twice.
+function codeColumns(headers: readonly string[]): ReadonlySet<string> {
+  const has = (h: string) => headers.includes(h);
+  return new Set(
+    headers.filter((h) => {
+      if (!CODE_COLUMN.test(h)) return false;
+      if (h === 'Mã đối tượng (Chi tiết)') return false;
+      if (h === 'Mã NCC' && (has('Mã nhà cung cấp') || has('Mã đối tượng'))) return false;
+      if (h === 'Mã nhà cung cấp' && has('Mã đối tượng')) return false;
+      return true;
+    }),
+  );
+}
 const ACCOUNT_COLUMN = /^TK(?!\s*ngân hàng)/u;
 const VAT_RATE_COLUMN = '% thuế GTGT';
 const VAT_AMOUNT_COLUMN = 'Tiền thuế GTGT';
@@ -56,6 +70,7 @@ export function checkMisaRows<Row>(input: MisaCheckInput<Row>): MisaCheck {
       entry.group.examples.push({ voucherNo: id.voucherNo, lineNo: id.lineNo });
     }
   };
+  const codes = codeColumns(template.columns.map((c) => c.header));
   const vatAmountIndex = template.columns.findIndex((c) => c.header === VAT_AMOUNT_COLUMN);
   for (const row of rows) {
     const id = input.rowId(row);
@@ -65,7 +80,7 @@ export function checkMisaRows<Row>(input: MisaCheckInput<Row>): MisaCheck {
       const value = values[i] as MisaValue;
       const header = column.header;
       if (CODE_COLUMN.test(header)) {
-        if (isBlank(value)) add('MISSING_CODE', header, null, id);
+        if (codes.has(header) && isBlank(value)) add('MISSING_CODE', header, null, id);
       } else if (header.includes('(*)') && isBlank(value)) {
         add('MISSING_REQUIRED', header, null, id);
       }

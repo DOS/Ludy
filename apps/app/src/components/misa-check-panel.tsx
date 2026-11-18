@@ -3,7 +3,7 @@
 // examples, before the download. The check is a read (vouchers.misaCheck) over the very rows the file is built from; it only warns, and the export buttons beside it are not held back by it. Nothing here
 // names a supplier, an invoice or an amount: a row is told by Crove's voucher number and the line.
 import { useMutation } from '@tanstack/react-query';
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { MisaCheck, MisaCheckFormat } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -25,6 +25,11 @@ export function MisaCheckPanel({ formats, from, to, legalEntityId }: { formats: 
   });
   const asked = `${format}|${from}|${to}|${legalEntityId ?? ''}`;
   const [answeredFor, setAnsweredFor] = useState<string | null>(null);
+  // A new file kind or new dates clear the answer and any error of the old ask.
+  const { reset } = check;
+  useEffect(() => {
+    reset();
+  }, [asked, reset]);
   const result = check.data && answeredFor === asked ? check.data : null;
   return (
     <details className="mb-4 rounded-md border border-border p-3 text-sm print:hidden" data-testid="misa-check">
@@ -80,7 +85,7 @@ export function MisaCheckResult({ result }: { result: MisaCheck }) {
     );
   }
   return (
-    <div className="mt-3" data-testid="misa-check-result">
+    <div className="mt-3" role="status" data-testid="misa-check-result">
       <p className="mb-2 text-foreground" data-testid="misa-check-summary">
         {t('summary', { findings: String(result.findings), rows: String(result.rows) })}
       </p>

@@ -90,9 +90,10 @@ describe('the check before a MISA export (#3848)', () => {
     // The codes are the accountant's to fill (MISA catalog), so each blank column is one group counting the rows, not one line per row.
     expect(group(result, 'MISSING_CODE', 'Mã dịch vụ (*)')).toMatchObject({ count: 2, limit: null });
     expect(group(result, 'MISSING_CODE', 'Mã nhà cung cấp')?.count).toBe(2);
-    expect(group(result, 'MISSING_CODE', 'Mã NCC')?.count).toBe(2);
+    // "Mã NCC" repeats the supplier code further along the template: it is not read twice.
+    expect(group(result, 'MISSING_CODE', 'Mã NCC')).toBeUndefined();
     expect(result.groups.every((g) => g.kind === 'MISSING_CODE')).toBe(true);
-    expect(result.findings).toBe(6);
+    expect(result.findings).toBe(4);
     // Examples name the voucher and the line, nothing of the vendor.
     expect(group(result, 'MISSING_CODE', 'Mã dịch vụ (*)')?.examples).toEqual([
       { voucherNo: expect.stringMatching(/^CRMDV/), lineNo: 1 },
@@ -175,6 +176,13 @@ describe('the check before a MISA export (#3848)', () => {
     // The sales template's item code is the accountant's to fill: blank, so a finding; and a sale's accounts are in the chart.
     expect(results[0]?.groups.some((g) => g.kind === 'MISSING_CODE' && g.column === 'Mã hàng (*)')).toBe(true);
     expect(results[0]?.groups.some((g) => g.kind === 'ACCOUNT_NOT_IN_CHART')).toBe(false);
+  });
+
+  it('reads one party code per cash or bank template, not the repeats of the tax and detail blocks', () => {
+    const payment = checkMisaRows({ format: 'misa_sme_cash_payments', template: MISA_SME_CASH_PAYMENT, rows: cashRows(cash()), chart: CHART, rowId });
+    expect(payment.groups.filter((g) => g.kind === 'MISSING_CODE').map((g) => g.column)).toEqual(['Mã đối tượng']);
+    const debit = checkMisaRows({ format: 'misa_sme_bank_debits', template: MISA_SME_BANK_DEBIT, rows: cashRows(cash({ type: 'bank_debit' })), chart: CHART, rowId });
+    expect(debit.groups.filter((g) => g.kind === 'MISSING_CODE').map((g) => g.column)).toEqual(['Mã đối tượng']);
   });
 
   it('does not treat a bank account number column as an account of the chart', () => {
