@@ -157,7 +157,7 @@ describe('brand name (#1040)', () => {
     expect(catalog('vi').auth.tagline).toBe(`Chứng từ chờ duyệt: chuyển tiếp hóa đơn, đồng nghiệp AI ${COWORKERS.finance} đề xuất hạch toán, bạn duyệt.`);
     expect(catalog('en').auth.tagline).toBe(`Document inbox: forward invoices; ${COWORKERS.finance}, your AI coworker, proposes the entries; you approve.`);
     expect(catalog('en').bookings.suggest.ai.noWindows).toMatch(new RegExp(`^${COWORKERS.sales} `));
-    expect(catalog('en').conversations.draft.ask).toBe(`Ask ${COWORKERS.sales}`);
+    expect(catalog('en').conversations.draft.ask).toBe(`Ask ${COWORKERS.sales} to draft a reply`);
     expect(withBrand('{finance} của {brand}')).toBe(`${COWORKERS.finance} của Tên Mới`);
   });
 

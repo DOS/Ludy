@@ -217,10 +217,15 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
               </TabsList>
             </Tabs>
             {canWrite && status === 'new' && (
-              <label className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground" title={tn('orderHint')}>
-                <input type="checkbox" checked={search.order === 'intent'} data-testid="inbox-order-intent" onChange={(e) => change({ order: e.target.checked ? 'intent' : undefined })} />
-                {tn('order')}
-              </label>
+              <div className="space-y-0.5">
+                <label className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground">
+                  <input type="checkbox" checked={search.order === 'intent'} aria-describedby="inbox-order-hint" data-testid="inbox-order-intent" onChange={(e) => change({ order: e.target.checked ? 'intent' : undefined })} />
+                  {tn('order')}
+                </label>
+                <p id="inbox-order-hint" className="text-xs text-subtle-foreground">
+                  {tn('orderHint')}
+                </p>
+              </div>
             )}
             {ai === 'budget' && status === 'new' && (
               <p className="text-xs text-muted-foreground" role="status">

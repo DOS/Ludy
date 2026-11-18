@@ -314,7 +314,8 @@ export function ConversationThread({ conversationId, onGone, onOpenConversation,
           <Badge variant={c.status === 'new' ? 'default' : 'outline'} data-testid="conversation-status">
             {t(`status.${c.status}`)}
           </Badge>
-          {canWrite && <AssignSelect conversation={c} members={members} />}
+          {/* A one-person org has no one else to hand a thread to (#3637), so the control appears with two members or more. */}
+          {canWrite && members.length >= 2 && <AssignSelect conversation={c} members={members} />}
           {canWrite && <ResolveButton conversation={c} />}
         </div>
       </header>
@@ -382,7 +383,7 @@ function ResolveButton({ conversation }: { conversation: ConversationSummary }) 
   const failure = resolved ? reopen.error : resolve.error;
   return (
     <>
-    <Button type="button" size="sm" variant={resolved ? 'outline' : 'default'} loading={pending} data-testid={resolved ? 'conversation-reopen' : 'conversation-resolve'} onClick={() => (resolved ? reopen.mutate() : resolve.mutate())}>
+    <Button type="button" size="sm" variant="outline" loading={pending} data-testid={resolved ? 'conversation-reopen' : 'conversation-resolve'} onClick={() => (resolved ? reopen.mutate() : resolve.mutate())}>
       {resolved ? t('reopen') : t('resolve')}
     </Button>
     {failure && <ErrorText>{errorMessage(failure)}</ErrorText>}
@@ -690,6 +691,9 @@ export function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail
         }}
         data-testid="conversation-reply-text"
       />
+      <p className="text-xs text-muted-foreground" data-testid="conversation-reply-count">
+        {t('replyCount', { left: String(Math.max(0, replyMax - text.length)), max: String(replyMax) })}
+      </p>
       {insertTooLong && <ErrorText>{t('quoteTooLong', { max: String(replyMax) })}</ErrorText>}
       {movedNote && <p role="status" className="text-sm text-muted-foreground">{t('movedAfterSend')}</p>}
       {send.error && !movedNote && <ErrorText>{errorMessage(send.error)}</ErrorText>}
