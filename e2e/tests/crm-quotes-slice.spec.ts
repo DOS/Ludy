@@ -169,7 +169,7 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
 
   await test.step('the quote details are set once in Settings, not in each deal (#3645)', async () => {
     await page.goto(`/o/${slug}/deals`);
-    await dealCard().getByRole('button', { name: 'Báo giá' }).click();
+    await dealCard().getByTestId('deal-card-open').click();
     await expect(page.getByTestId('deal-quotes').getByRole('button', { name: 'Thông tin trên báo giá' })).toHaveCount(0);
     await expect(page.getByTestId('quote-settings')).toHaveCount(0);
     await expect(page.getByTestId('quote-letterhead-hint')).toContainText('Chưa có logo và thông tin liên hệ trên báo giá.');
@@ -182,7 +182,7 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
     await expect(settings.getByText('Đã lưu.')).toBeVisible();
     // With a phone on the letterhead the hint is gone from the deal.
     await page.goto(`/o/${slug}/deals`);
-    await dealCard().getByRole('button', { name: 'Báo giá' }).click();
+    await dealCard().getByTestId('deal-card-open').click();
     await expect(page.getByTestId('deal-quotes')).toBeVisible();
     await expect(page.getByTestId('quote-letterhead-hint')).toHaveCount(0);
   });
