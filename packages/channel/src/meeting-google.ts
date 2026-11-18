@@ -24,6 +24,8 @@ const LOOKUP_PARALLEL = 4;
 export const GOOGLE_MEET_TRANSCRIPT_MAX_ENTRIES = 5000;
 const ENTRY_TEXT_MAX = 4000;
 const NAME_MAX = 100;
+// Meet limits a conference to 24 hours: a line stamped later than that is bad data and is clamped, so no number downstream is enormous.
+const SECONDS_MAX = 24 * 3600;
 const TRANSCRIPT_NAME = /^conferenceRecords\/([A-Za-z0-9_-]{1,128})\/transcripts\/([A-Za-z0-9_-]{1,128})$/;
 // oxlint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
@@ -50,7 +52,8 @@ const instant = (value: unknown): number | null => {
 };
 
 function failure(status: number): MeetingPlatformError {
-  if (status === 401) return new MeetingPlatformError('connection_expired', 'Google refused the token');
+  // 401: the token is bad. 403: this grant cannot read Meet (the scope was not granted or unticked, or the Meet API is off for the project), which only connecting again can fix.
+  if (status === 401 || status === 403) return new MeetingPlatformError('connection_expired', `Google refused the grant (${status})`);
   if (status === 404) return new MeetingPlatformError('recording_gone', 'Google has no such conference or transcript');
   if (status === 429 || status >= 500) return new MeetingPlatformError('platform_unavailable', `Google answered ${status}`);
   return new MeetingPlatformError('platform_refused', `Google answered ${status}`);
@@ -67,7 +70,12 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter {
     this.refresher = options.refresher;
   }
 
-  private async get(path: string, params: Record<string, string>, credential: MeetingPlatformCredential, signal?: AbortSignal): Promise<Json> {
+  // `skipMissing`: a 403 or 404 on this one resource answers null (one conference's transcripts are gone or not the member's) instead of failing the whole call.
+  private async must(path: string, params: Record<string, string>, credential: MeetingPlatformCredential, signal?: AbortSignal): Promise<Json> {
+    return (await this.get(path, params, credential, signal)) as Json;
+  }
+
+  private async get(path: string, params: Record<string, string>, credential: MeetingPlatformCredential, signal?: AbortSignal, skipMissing = false): Promise<Json | null> {
     const url = new URL(`${API}/${path}`);
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
     let response: Response;
@@ -76,7 +84,12 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter {
     } catch {
       throw new MeetingPlatformError('platform_unavailable', 'Google did not answer');
     }
-    if (!response.ok) throw failure(response.status);
+    if (!response.ok) {
+      // The body is never read, but the connection must not wait for the garbage collector.
+      await response.body?.cancel().catch(() => undefined);
+      if (skipMissing && (response.status === 403 || response.status === 404)) return null;
+      throw failure(response.status);
+    }
     const body = object(await response.json().catch(() => null));
     if (!body) throw new MeetingPlatformError('platform_unavailable', 'Google answered with something unreadable');
     return body;
@@ -89,7 +102,7 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter {
     for (let page = 0; page < RECORD_PAGES; page += 1) {
       const params: Record<string, string> = { pageSize: String(PAGE_SIZE), filter: `start_time>="${since.toISOString()}"` };
       if (pageToken) params.pageToken = pageToken;
-      const body = await this.get('conferenceRecords', params, credential, signal);
+      const body = await this.must('conferenceRecords', params, credential, signal);
       for (const item of Array.isArray(body.conferenceRecords) ? body.conferenceRecords : []) {
         const record = object(item);
         const name = text(record?.name);
@@ -110,8 +123,10 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter {
         const index = next++;
         const record = records[index];
         if (record === undefined) return;
-        const body = await this.get(`${record.name}/transcripts`, { pageSize: '10' }, credential, signal);
-        const done = (Array.isArray(body.transcripts) ? body.transcripts : []).map(object).find((t) => t !== null && t.state === 'FILE_GENERATED' && TRANSCRIPT_NAME.test(text(t.name) ?? ''));
+        // One conference that Google no longer shows must not hide the others.
+        const body = await this.get(`${record.name}/transcripts`, { pageSize: '10' }, credential, signal, true);
+        if (body === null) continue;
+        const done = (Array.isArray(body.transcripts) ? body.transcripts : []).map(object).find((t) => t !== null && t.state === 'FILE_GENERATED' && TRANSCRIPT_NAME.test(text(t.name) ?? '') && (text(t.name) ?? '').startsWith(`${record.name}/transcripts/`));
         const name = text(done?.name);
         if (name === null) continue;
         found[index] = {
@@ -140,7 +155,7 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter {
     const match = TRANSCRIPT_NAME.exec(recordingId);
     if (!match) throw new MeetingPlatformError('recording_gone', 'not a transcript of Google Meet');
     const record = `conferenceRecords/${match[1]}`;
-    const conference = await this.get(record, {}, credential, signal);
+    const conference = await this.must(record, {}, credential, signal);
     const origin = instant(conference.startTime);
     if (origin === null) throw new MeetingPlatformError('platform_unavailable', 'Google gave no start time');
 
@@ -148,7 +163,7 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter {
     const names = new Map<string, string>();
     let token: string | null = null;
     for (let page = 0; page < 4; page += 1) {
-      const body = await this.get(`${record}/participants`, { pageSize: '250', ...(token ? { pageToken: token } : {}) }, credential, signal);
+      const body = await this.must(`${record}/participants`, { pageSize: '250', ...(token ? { pageToken: token } : {}) }, credential, signal);
       for (const item of Array.isArray(body.participants) ? body.participants : []) {
         const p = object(item);
         const key = text(p?.name);
@@ -165,7 +180,7 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter {
     let truncated = false;
     token = null;
     for (let page = 0; page < Math.ceil(GOOGLE_MEET_TRANSCRIPT_MAX_ENTRIES / PAGE_SIZE) + 1; page += 1) {
-      const body = await this.get(`${recordingId}/entries`, { pageSize: String(PAGE_SIZE), ...(token ? { pageToken: token } : {}) }, credential, signal);
+      const body = await this.must(`${recordingId}/entries`, { pageSize: String(PAGE_SIZE), ...(token ? { pageToken: token } : {}) }, credential, signal);
       for (const item of Array.isArray(body.transcriptEntries) ? body.transcriptEntries : []) {
         const entry = object(item);
         const said = cleaned(text(entry?.text) ?? '', ENTRY_TEXT_MAX);
@@ -176,17 +191,15 @@ export class GoogleMeetAdapter implements MeetingPlatformAdapter {
           break;
         }
         const end = instant(entry?.endTime) ?? start;
-        const startSeconds = Math.max(0, Math.round((start - origin) / 1000));
+        const startSeconds = Math.min(SECONDS_MAX, Math.max(0, Math.round((start - origin) / 1000)));
         language ??= text(entry?.languageCode)?.slice(0, 35) ?? null;
-        entries.push({ startSeconds, endSeconds: Math.max(startSeconds, Math.round((end - origin) / 1000)), speaker: names.get(text(entry?.participant) ?? '') ?? null, text: said });
+        entries.push({ startSeconds, endSeconds: Math.min(SECONDS_MAX, Math.max(startSeconds, Math.round((end - origin) / 1000))), speaker: names.get(text(entry?.participant) ?? '') ?? null, text: said });
       }
       token = text(body.nextPageToken);
-      if (truncated || !token) break;
-      if (entries.length >= GOOGLE_MEET_TRANSCRIPT_MAX_ENTRIES) {
-        truncated = true;
-        break;
-      }
+      if (truncated || !token || entries.length >= GOOGLE_MEET_TRANSCRIPT_MAX_ENTRIES) break;
     }
+    // Whatever stopped the loop (the cap, or the page budget when many lines were blank), a page token left over means Google has more lines than were read.
+    if (token) truncated = true;
     return { source: 'google_meet', language, truncated, entries };
   }
 

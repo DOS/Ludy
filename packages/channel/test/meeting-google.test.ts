@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Google Meet adapter, transcript only (meetings integrations C2, #3174). No Google call is ever made: a fake fetch answers with JSON in the shapes of Google's Meet REST API v2 reference
 // (conferenceRecords, transcripts, participants, transcriptEntries), and the test fails on any other host, any other method and any request without the bearer token.
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   GOOGLE_MEET_HOSTS,
   GOOGLE_MEET_SPACE_READ_SCOPE,
@@ -19,18 +19,29 @@ interface Route {
   status?: number;
   body: unknown;
 }
+// What the fake saw that Google would refuse (another host, another method, no bearer token, a path it has no route for). An assertion inside the fake would be caught by the adapter's own try/catch and
+// look like a platform error, so a wrong request is recorded here and every test fails on it afterwards.
+const violations: string[] = [];
+afterEach(() => {
+  const found = violations.splice(0);
+  expect(found).toEqual([]);
+});
+
 // A fake Google: routes by path (the part after /v2/), recording every request it sees.
 function google(routes: Record<string, Route | ((url: URL) => Route)>) {
   const seen: { url: URL; init: RequestInit | undefined }[] = [];
   const fetch = async (input: string, init?: RequestInit): Promise<Response> => {
     const url = new URL(input);
     seen.push({ url, init });
-    expect(url.hostname).toBe('meet.googleapis.com');
-    expect(init?.method ?? 'GET').toBe('GET');
-    expect((init?.headers as Record<string, string> | undefined)?.authorization).toBe(`Bearer ${CREDENTIAL.accessToken}`);
+    if (url.hostname !== 'meet.googleapis.com') violations.push(`host ${url.hostname}`);
+    if ((init?.method ?? 'GET') !== 'GET') violations.push(`method ${init?.method}`);
+    if ((init?.headers as Record<string, string> | undefined)?.authorization !== `Bearer ${CREDENTIAL.accessToken}`) violations.push('no bearer token');
     const key = url.pathname.replace(/^\/v2\//, '');
     const route = routes[key];
-    if (route === undefined) throw new Error(`the fake Google has no route for ${key}`);
+    if (route === undefined) {
+      violations.push(`no route for ${key}`);
+      return new Response('{}', { status: 500 });
+    }
     const { status = 200, body } = typeof route === 'function' ? route(url) : route;
     return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
   };
@@ -91,6 +102,71 @@ describe('GoogleMeetAdapter list', () => {
     const listed = await adapter.list(CREDENTIAL, SINCE);
     expect(listed.map((r) => r.id)).toEqual(['conferenceRecords/aaa111/transcripts/t1', 'conferenceRecords/bbb222/transcripts/t2']);
     expect(seen.filter((s) => s.url.pathname === '/v2/conferenceRecords')).toHaveLength(2);
+  });
+
+  it('skips one conference whose transcripts Google no longer shows (404 or 403) and still lists the others; a 5xx or 429 on a lookup fails the listing for a later retry', async () => {
+    const both = {
+      conferenceRecords: {
+        body: {
+          conferenceRecords: [
+            { name: 'conferenceRecords/aaa111', startTime: T(0), endTime: T(30) },
+            { name: 'conferenceRecords/bbb222', startTime: T(-120), endTime: T(-90) },
+            { name: 'conferenceRecords/ddd444', startTime: T(-240), endTime: T(-200) },
+          ],
+        },
+      },
+      'conferenceRecords/aaa111/transcripts': { body: { transcripts: [{ name: 'conferenceRecords/aaa111/transcripts/t1', state: 'FILE_GENERATED' }] } },
+      'conferenceRecords/bbb222/transcripts': { status: 404, body: { error: { status: 'NOT_FOUND' } } },
+      'conferenceRecords/ddd444/transcripts': { status: 403, body: { error: { status: 'PERMISSION_DENIED' } } },
+    };
+    expect((await adapterOver(both).adapter.list(CREDENTIAL, SINCE)).map((r) => r.id)).toEqual(['conferenceRecords/aaa111/transcripts/t1']);
+    for (const status of [429, 500]) {
+      const down = adapterOver({ ...both, 'conferenceRecords/bbb222/transcripts': { status, body: {} } });
+      await expect(down.adapter.list(CREDENTIAL, SINCE)).rejects.toMatchObject({ code: 'platform_unavailable' });
+    }
+  });
+
+  it('does not list a transcript whose name belongs to another conference', async () => {
+    const { adapter } = adapterOver({
+      conferenceRecords: { body: { conferenceRecords: [{ name: 'conferenceRecords/aaa111', startTime: T(0), endTime: T(30) }] } },
+      'conferenceRecords/aaa111/transcripts': { body: { transcripts: [{ name: 'conferenceRecords/zzz999/transcripts/t1', state: 'FILE_GENERATED' }] } },
+    });
+    expect(await adapter.list(CREDENTIAL, SINCE)).toEqual([]);
+  });
+
+  it('looks at no more than three pages of conferences and lists no more than 100 recordings, with at most four lookups at once', async () => {
+    let active = 0;
+    let peak = 0;
+    const lookups: Record<string, Route | ((url: URL) => Route)> = {};
+    const names = Array.from({ length: 300 }, (_, i) => `conferenceRecords/r${i}`);
+    for (const name of names) lookups[`${name}/transcripts`] = { body: { transcripts: [{ name: `${name}/transcripts/t`, state: 'FILE_GENERATED' }] } };
+    const fake = google({
+      conferenceRecords: (url) => {
+        const page = Number(url.searchParams.get('pageToken') ?? '0');
+        // A fourth page would be offered, and must never be asked for.
+        return { body: { conferenceRecords: names.slice(page * 100, page * 100 + 100).map((name, i) => ({ name, startTime: T(-(page * 100 + i)), endTime: T(-(page * 100 + i) + 10) })), nextPageToken: String(page + 1) } };
+      },
+      ...lookups,
+    });
+    const adapter = new GoogleMeetAdapter({
+      refresher,
+      fetch: async (input, init) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        try {
+          return await fake.fetch(input, init);
+        } finally {
+          active -= 1;
+        }
+      },
+    });
+    const listed = await adapter.list(CREDENTIAL, SINCE);
+    expect(listed).toHaveLength(100);
+    expect(fake.seen.filter((s) => s.url.pathname === '/v2/conferenceRecords')).toHaveLength(3);
+    expect(peak).toBeLessThanOrEqual(4);
+    // Newest first.
+    expect(listed[0]!.id).toBe('conferenceRecords/r0/transcripts/t');
   });
 
   it('lists nothing for an account with no conferences, and never offers audio or video', async () => {
@@ -168,6 +244,26 @@ describe('GoogleMeetAdapter transcript', () => {
     expect(transcript.entries[0]!.text).toBe('line 0');
   });
 
+  it('says truncated when blank lines used up the page budget before the line cap, and bounds a time stamped absurdly late', async () => {
+    const { adapter } = adapterOver(
+      routes((url) => {
+        const page = Number(url.searchParams.get('pageToken') ?? '0');
+        // 6 of every 100 lines are blank, so the line cap is never reached inside the page budget.
+        return {
+          body: {
+            transcriptEntries: Array.from({ length: 100 }, (_, i) => ({ text: i < 6 ? ' ' : `line ${page}-${i}`, startTime: page === 0 && i === 6 ? '9999-12-31T23:59:59Z' : T(1), endTime: T(1) })),
+            nextPageToken: String(page + 1),
+          },
+        };
+      }),
+    );
+    const transcript = await adapter.transcript(CREDENTIAL, NAME);
+    expect(transcript.entries.length).toBeLessThan(GOOGLE_MEET_TRANSCRIPT_MAX_ENTRIES);
+    expect(transcript.truncated).toBe(true);
+    // Meet stops a conference at 24 hours: a later stamp is clamped to it.
+    expect(transcript.entries[0]).toMatchObject({ startSeconds: 86_400, endSeconds: 86_400 });
+  });
+
   it('refuses a name that is not a Google Meet transcript before any call', async () => {
     const { adapter, seen } = adapterOver({});
     for (const bad of ['', 'conferenceRecords/aaa111', 'conferenceRecords/aaa111/transcripts/', '../conferenceRecords/a/transcripts/b', 'conferenceRecords/a/b/transcripts/c', 'conferenceRecords/a/transcripts/b/entries']) {
@@ -180,7 +276,7 @@ describe('GoogleMeetAdapter transcript', () => {
 describe('GoogleMeetAdapter errors and refresh', () => {
   it.each([
     [401, 'connection_expired'],
-    [403, 'platform_refused'],
+    [403, 'connection_expired'],
     [404, 'recording_gone'],
     [400, 'platform_refused'],
     [429, 'platform_unavailable'],
@@ -204,7 +300,7 @@ describe('GoogleMeetAdapter errors and refresh', () => {
     await expect(garbled.list(CREDENTIAL, SINCE)).rejects.toMatchObject({ code: 'platform_unavailable' });
   });
 
-  it('calls no host but meet.googleapis.com: another host, a plain http address and a redirect are refused or not followed', async () => {
+  it('is bound to meet.googleapis.com and asks the fetch never to follow a redirect', async () => {
     expect([...GOOGLE_MEET_HOSTS]).toEqual(['meet.googleapis.com']);
     expect(new GoogleMeetAdapter({ refresher }).hosts).toEqual(['meet.googleapis.com']);
     expect(GOOGLE_MEET_SPACE_READ_SCOPE).toBe('https://www.googleapis.com/auth/meetings.space.readonly');
