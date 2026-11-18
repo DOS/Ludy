@@ -4,11 +4,11 @@
 // The legal entity is not chosen by the caller; the answer exists only when the grant sees the whole org (a partial view is refused with SIGNAL_PARTIAL_VIEW,
 // as the signals are), because a total of part of the books would read as the total of all. The screen's figures are those of ONE legal entity, so an org with more than
 // one entity is refused the same way: one entity's cash must never read as the org's. Read only; money stays a decimal string in VND.
-import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
-import { SIGNAL_PARTIAL_VIEW_CODE, zOverviewRange, type FinanceOverview, type OverviewFigure } from '@crove/kernel-contract';
+import { zOverviewRange, type FinanceOverview, type OverviewFigure } from '@crove/kernel-contract';
 import { z } from 'zod';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { defineQuery } from '@crove/kernel-runtime';
+import { wholeOrgEntity } from './mcp-whole-org.ts';
 import { financeOverview } from './overview.ts';
 
 const GRANTORS: readonly MemberRole[] = ['owner', 'admin'];
@@ -38,12 +38,7 @@ export const mcpOverview = defineQuery({
   access: GRANTORS,
   mcp: { scope: 'ludy.read' },
   handler: async (ctx, input): Promise<McpOverview> => {
-    if (ctx.actor.type !== 'user' || !ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP mới dùng được truy vấn này');
-    const { rows: scope } = await sql<{ whole: boolean }>`SELECT coalesce('*' = ANY (crove_kernel.ctx_le_scope()::text[]), false) AS whole`.execute(ctx.trx);
-    if (scope[0]?.whole !== true) throw new DomainError(SIGNAL_PARTIAL_VIEW_CODE, 403, 'Bạn chỉ xem được một phần sổ sách nên chưa đọc được tổng quan tài chính');
-    // One entity's books are the whole org's only when the org has no other: a second entity (a branch) makes the figures a part, so nothing is answered.
-    const { rows: entities } = await sql<{ n: string }>`SELECT count(*)::text AS n FROM crove_kernel.legal_entity WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
-    if (Number(entities[0]?.n ?? 0) > 1) throw new DomainError(SIGNAL_PARTIAL_VIEW_CODE, 403, 'Tổ chức có nhiều pháp nhân nên tổng quan của một pháp nhân không phải của cả tổ chức');
+    await wholeOrgEntity(ctx);
     const o = await financeOverview(ctx, { range: input.range });
     // Projected: the monthly series and the expense mix stay on the screen.
     return { range: o.range, from: o.from, to: o.to, previousFrom: o.previousFrom, previousTo: o.previousTo, empty: o.empty, cash: o.cash, profit: o.profit, receivables: o.receivables, payables: o.payables, unmapped: o.unmapped };
