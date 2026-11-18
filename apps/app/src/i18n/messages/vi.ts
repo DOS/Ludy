@@ -3291,6 +3291,32 @@ export const vi = {
       dropped: '{count} dòng của Vy bị bỏ vì không có trong bản ghi hoặc có số liệu không ai nói.',
       copyReplaces: 'Chép vào bản nháp sẽ thay phần Vy đã viết trước đó. Phần bạn tự gõ được giữ nguyên.',
     },
+    // Mục lục của cuộc họp (#3844): tiêu đề và dòng của bản ghi lời nói mà mỗi mục bắt đầu.
+    chapters: {
+      title: 'Mục lục',
+      readerNote: 'Các phần của cuộc họp, mỗi phần có giờ trong bản ghi lời nói. Bấm vào một phần để đến dòng đó.',
+      jump: 'Đến dòng này trong bản ghi lời nói',
+      draftTitle: 'Bản nháp của bạn',
+      draftNote: 'Chỉ bạn đọc được bản nháp này. Mục lục được chia sẻ cùng biên bản: bấm Công bố ở phần biên bản.',
+      publishedTitle: 'Mục lục đã công bố',
+      none: 'Chưa có mục nào. Thêm các phần của cuộc họp, mỗi phần ở một dòng của bản ghi lời nói.',
+      noTranscript: 'Chưa có bản ghi lời nói nên chưa thêm được mục.',
+      add: 'Thêm một mục',
+      remove: 'Xóa mục này',
+      titleLabel: 'Tiêu đề mục',
+      titlePlaceholder: 'Ví dụ: Báo giá cho khách A',
+      lineLabel: 'Bắt đầu ở dòng',
+      save: 'Lưu bản nháp',
+      saved: 'Đã lưu bản nháp. Công bố cùng biên bản để mọi người đọc.',
+      errors: {
+        CHAPTER_NOT_ANCHORED: 'Mỗi mục phải bắt đầu ở một dòng của bản ghi lời nói.',
+        CHAPTER_DUPLICATE_SECOND: 'Hai mục bắt đầu ở cùng một dòng.',
+        CHAPTER_TITLE_EMPTY: 'Mỗi mục cần có tiêu đề.',
+        CHAPTER_TITLE_TOO_LONG: 'Tiêu đề mục dài tối đa 80 ký tự.',
+        CHAPTER_TITLE_MULTILINE: 'Tiêu đề mục chỉ một dòng.',
+        CHAPTER_TITLE_CONTACT: 'Tiêu đề mục không chứa địa chỉ email hay số điện thoại.',
+      },
+    },
     // Minutes templates and the biên bản page (Meetings A4, #3162).
     templates: {
       label: 'Loại cuộc họp',
