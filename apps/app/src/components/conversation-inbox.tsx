@@ -443,7 +443,9 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
   // grant allows it now (a YouTube channel without the comment scope shows no button, #3808); an older answer without the field keeps the provider's rule.
   const canHide = canWrite && detail.conversation.kind === 'comment_thread' && !mine && !m.removed && Boolean(conversationRules(detail.conversation.channel.provider)?.canHide) && detail.hideAllowed !== false;
   // Dy's suggestion that this thread is spam (read from the header's cache, no new model call): only a hint beside the button, a person clicks.
-  const spamSuggested = useSpamSuggested(detail.conversation);
+  // The suggestion is read for the thread's last customer message, so only that comment carries the hint.
+  const lastCustomer = [...detail.messages].reverse().find((x) => x.direction === 'in' && !x.removed);
+  const spamSuggested = useSpamSuggested(detail.conversation) && (lastCustomer?.id ?? m.id) === m.id;
   const supportsPrivateReply =
     detail.conversation.kind === 'comment_thread' &&
     !mine &&
