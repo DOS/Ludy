@@ -18,7 +18,7 @@ import {
   type DirectTransfers,
 } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
+import { meetingsCommands, meetingsQueries, setMeetingVideoImport } from '@crove/mod-meetings';
 import { createAuthenticator } from '../src/auth.ts';
 import { resealCredentials } from '../src/credential-reseal.ts';
 import { loadConfig } from '../src/config.ts';
@@ -1464,7 +1464,7 @@ suite('meetings module database integration tests (#2576)', () => {
   const refusedWith = (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => (error as { code?: string }).code ?? 'ERR');
   const meetingExists = (id: string) => admin(async (c) => (await c.query('SELECT 1 FROM crove_meetings.meeting WHERE id = $1', [id])).rowCount === 1);
   // A suggested recording of a member's own connection, as the sweep leaves it (the table owner writes it: the sweep's definer needs the worker login).
-  async function suggest(who: string, over: { title?: string; startedAt?: string; sizeBytes?: number | null } = {}) {
+  async function suggest(who: string, over: { title?: string; startedAt?: string; sizeBytes?: number | null; hasAudio?: boolean; hasVideo?: boolean } = {}) {
     const recordingId = randomUUID();
     await admin(async (c) => {
       const connection = await c.query<{ id: string }>(
@@ -1472,9 +1472,9 @@ suite('meetings module database integration tests (#2576)', () => {
         [orgId, userIds.get(who), `${who}-${randomUUID()}@sandbox.test`],
       );
       await c.query(
-        `INSERT INTO crove_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, title, started_at, size_bytes, has_audio)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)`,
-        [orgId, recordingId, connection.rows[0]!.id, userIds.get(who), randomUUID(), over.title ?? 'Họp khách hàng', over.startedAt ?? new Date(Date.now() - 90 * 86_400_000).toISOString(), over.sizeBytes === undefined ? 4096 : over.sizeBytes],
+        `INSERT INTO crove_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, title, started_at, size_bytes, has_audio, has_video)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [orgId, recordingId, connection.rows[0]!.id, userIds.get(who), randomUUID(), over.title ?? 'Họp khách hàng', over.startedAt ?? new Date(Date.now() - 90 * 86_400_000).toISOString(), over.sizeBytes === undefined ? 4096 : over.sizeBytes, over.hasAudio ?? true, over.hasVideo ?? false],
       );
     });
     return recordingId;
@@ -1829,6 +1829,25 @@ suite('meetings module database integration tests (#2576)', () => {
       expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'standard' })).status).toBe(200);
     }
   });
+  it('34b. C2a: a recording with only a video file is refused NO_AUDIO unless this deployment can take its audio out, and one with neither file is always refused', async () => {
+    const videoOnly = await suggest('recorder', { hasAudio: false, hasVideo: true });
+    const neither = await suggest('recorder', { hasAudio: false, hasVideo: false });
+    // Off (the default, no MEDIA_URL): refused before a meeting is made, and the row stays suggested.
+    expect(await refusedWith(startImport('recorder', { recordingId: videoOnly, language: 'vi', visibility: 'attendees' }))).toBe('MEETING_PLATFORM_NO_AUDIO');
+    expect((await recordingRow(videoOnly)).meeting_id).toBeNull();
+    expect((await recordingRow(videoOnly)).status).toBe('suggested');
+    setMeetingVideoImport(true);
+    try {
+      // On: the definer lets the video-only row begin and the import starts; neither file is still refused.
+      const { meetingId } = await startImport('recorder', { recordingId: videoOnly, language: 'vi', visibility: 'attendees' });
+      expect(await recordingRow(videoOnly)).toMatchObject({ status: 'importing', meeting_id: meetingId });
+      expect(await refusedWith(startImport('recorder', { recordingId: neither, language: 'vi', visibility: 'attendees' }))).toBe('MEETING_PLATFORM_NO_AUDIO');
+      expect((await recordingRow(neither)).status).toBe('suggested');
+    } finally {
+      setMeetingVideoImport(false);
+    }
+  });
+
   it('35. #3337: a video uploaded with extract=audio keeps only the extracted Opus, whatever the shape of the upload', async () => {
     const mp4 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypmp42'), Buffer.from('video frames '.repeat(300))]);
     const opus = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('extracted opus '.repeat(20))]);

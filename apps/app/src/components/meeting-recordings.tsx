@@ -194,7 +194,7 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
           <p className="text-xs text-muted-foreground">
             {[f.dateTime(row.startedAt), lengthText, row.sizeBytes === null ? null : formatBytes(row.sizeBytes, f.number)].filter((x) => x !== null).join(' · ')}
           </p>
-          {!row.hasAudio && row.hasVideo && row.videoImport && (
+          {!row.hasAudio && row.hasVideo && row.videoImportMaxBytes !== null && (
             <p className="text-xs text-subtle-foreground" data-testid="meeting-recording-video-note">
               {t('videoKeepsAudio')}
             </p>

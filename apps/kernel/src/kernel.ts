@@ -59,7 +59,7 @@ import {
   type Refresher,
 } from '@crove/channel';
 import { createExtractClient } from '@crove/extract-contract';
-import type { ModuleManifest } from '@crove/kernel-contract';
+import { MEETING_PLATFORM_VIDEO_MAX_BYTES, type ModuleManifest } from '@crove/kernel-contract';
 import { assertRlsEnforced, assertSystemContextAccess, createDb, createPool, singleCell, type CellResolver, type Db } from '@crove/db';
 import { buildKernelCommands, kernelManifest, kernelQueries, setMeetingPlatformVideoImport, setMessageIdDomain, type OverviewContribution } from '@crove/kernel';
 import {
@@ -258,7 +258,7 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
   setSummaryEnabled(summaryEnabled(config));
   // A platform's video-only recording can be imported only where crove-media can take its audio out (C2a, #3306): MEDIA_URL.
   setMeetingVideoImport(Boolean(config.MEDIA_URL));
-  setMeetingPlatformVideoImport(Boolean(config.MEDIA_URL));
+  setMeetingPlatformVideoImport(config.MEDIA_URL ? Math.min(MEETING_PLATFORM_VIDEO_MAX_BYTES, config.MEDIA_MAX_INPUT_BYTES ?? Number.POSITIVE_INFINITY) : null);
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
       commands: buildKernelCommands({

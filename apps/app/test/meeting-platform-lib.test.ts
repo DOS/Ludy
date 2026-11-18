@@ -18,7 +18,7 @@ const row = (over: Partial<MeetingPlatformRecordingView> = {}): MeetingPlatformR
   hasAudio: true,
   hasVideo: false,
   hasTranscript: false,
-  videoImport: false,
+  videoImportMaxBytes: null,
   status: 'suggested',
   meetingId: null,
   errorCode: null,
@@ -32,11 +32,14 @@ describe('importBlock', () => {
     expect(importBlock(row({ lengthSeconds: null, sizeBytes: null }))).toBeNull();
     expect(importBlock(row({ hasAudio: false, hasVideo: true }))).toBe('video_only');
     // Where the deployment can take the audio out of a video file (C2a), a video-only recording is importable, under the video's own size cap; with nothing at all it still is not.
-    expect(importBlock(row({ hasAudio: false, hasVideo: true, videoImport: true }))).toBeNull();
-    expect(importBlock(row({ hasAudio: false, hasVideo: true, videoImport: true, sizeBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES + 1 }))).toBeNull();
-    expect(importBlock(row({ hasAudio: false, hasVideo: true, videoImport: true, sizeBytes: MEETING_PLATFORM_VIDEO_MAX_BYTES + 1 }))).toBe('too_large');
-    expect(importBlock(row({ hasAudio: false, hasVideo: false, videoImport: true }))).toBe('video_only');
-    expect(importBlock(row({ hasAudio: true, hasVideo: true, videoImport: true, sizeBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES + 1 }))).toBe('too_large');
+    expect(importBlock(row({ hasAudio: false, hasVideo: true, videoImportMaxBytes: MEETING_PLATFORM_VIDEO_MAX_BYTES }))).toBeNull();
+    expect(importBlock(row({ hasAudio: false, hasVideo: true, videoImportMaxBytes: MEETING_PLATFORM_VIDEO_MAX_BYTES, sizeBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES + 1 }))).toBeNull();
+    expect(importBlock(row({ hasAudio: false, hasVideo: true, videoImportMaxBytes: MEETING_PLATFORM_VIDEO_MAX_BYTES, sizeBytes: MEETING_PLATFORM_VIDEO_MAX_BYTES + 1 }))).toBe('too_large');
+    // A deployment whose media sandbox takes less than the product cap lowers it: 1 GiB here.
+    expect(importBlock(row({ hasAudio: false, hasVideo: true, videoImportMaxBytes: 1024 ** 3, sizeBytes: 1024 ** 3 + 1 }))).toBe('too_large');
+    expect(importBlock(row({ hasAudio: false, hasVideo: true, videoImportMaxBytes: 1024 ** 3, sizeBytes: 1024 ** 3 }))).toBeNull();
+    expect(importBlock(row({ hasAudio: false, hasVideo: false, videoImportMaxBytes: MEETING_PLATFORM_VIDEO_MAX_BYTES }))).toBe('video_only');
+    expect(importBlock(row({ hasAudio: true, hasVideo: true, videoImportMaxBytes: MEETING_PLATFORM_VIDEO_MAX_BYTES, sizeBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES + 1 }))).toBe('too_large');
     expect(importBlock(row({ lengthSeconds: IMPORT_MAX_SECONDS + 1 }))).toBe('too_long');
     expect(importBlock(row({ sizeBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES + 1 }))).toBe('too_large');
   });

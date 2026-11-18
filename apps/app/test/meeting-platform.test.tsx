@@ -63,7 +63,7 @@ const recording = (over: Partial<MeetingPlatformRecordingView> = {}): MeetingPla
   hasAudio: true,
   hasVideo: false,
   hasTranscript: false,
-  videoImport: false,
+  videoImportMaxBytes: null,
   status: 'suggested',
   meetingId: null,
   errorCode: null,
@@ -189,12 +189,12 @@ describe('PlatformRecordings (Meetings tab)', () => {
   it('offers "Nhập" for a video-only recording where the server can take the audio out of it, says only the audio is kept, and blocks it where it cannot (C2a)', () => {
     reset();
     client.current.setQueryData(KEYS.connections, [connection()]);
-    client.current.setQueryData(KEYS.recordings, [recording({ hasAudio: false, hasVideo: true, videoImport: true })]);
+    client.current.setQueryData(KEYS.recordings, [recording({ hasAudio: false, hasVideo: true, videoImportMaxBytes: 2 * 1024 ** 3 })]);
     const on = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />));
     expect(count(on, 'data-testid="meeting-recording-import"')).toBe(1);
     expect(count(on, 'data-testid="meeting-recording-blocked"')).toBe(0);
     expect(on).toContain(en.meetings.platform.recordings.videoKeepsAudio);
-    client.current.setQueryData(KEYS.recordings, [recording({ hasAudio: false, hasVideo: true, videoImport: false })]);
+    client.current.setQueryData(KEYS.recordings, [recording({ hasAudio: false, hasVideo: true, videoImportMaxBytes: null })]);
     const off = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />));
     expect(count(off, 'data-testid="meeting-recording-import"')).toBe(0);
     expect(off).toContain(en.meetings.platform.recordings.videoOnly);
