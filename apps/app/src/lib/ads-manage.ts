@@ -362,6 +362,8 @@ export function manageErrorText(error: unknown, t: Translate, fmt: ManageFormat,
       return t('ads.manage.error.ADS_LAUNCHES_BLOCKED');
     case 'ADS_CHANGE_OPEN':
       return t('ads.manage.error.ADS_CHANGE_OPEN');
+    case 'ADS_CHANGE_UNCLEAR':
+      return t('ads.manage.error.ADS_CHANGE_UNCLEAR');
     case 'ADS_MANAGE_NOT_LIVE':
       return t('ads.manage.error.ADS_MANAGE_NOT_LIVE');
     case 'ADS_FLIGHT_OVER':

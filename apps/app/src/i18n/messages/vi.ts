@@ -5952,6 +5952,7 @@ export const vi = {
         ADS_WRITE_OFF: 'Việc chạy quảng cáo đang tắt cho tổ chức hoặc cho tài khoản quảng cáo này, nên chỉ tạm dừng được.',
         ADS_LAUNCHES_BLOCKED: 'Các lần chạy đang bị chặn, nên chưa xin được gì có thể làm tăng chi tiêu. Vẫn tạm dừng được.',
         ADS_CHANGE_OPEN: 'Đã có một thay đổi cùng loại đang chờ nền tảng. Hãy đợi nó xong, hoặc hủy nó.',
+        ADS_CHANGE_UNCLEAR: 'Nền tảng chưa xác nhận một thay đổi trước cùng loại, nên chưa biết ngân sách hoặc ngày kết thúc thật. Chưa giảm hay rút ngắn tiếp được cho đến khi một thay đổi được xác nhận.',
         ADS_MANAGE_NOT_LIVE: 'Lần chạy này không còn chạy nên không đổi được quảng cáo của nó nữa. Kế hoạch mới cần bản nháp mới và một lần duyệt mới.',
         ADS_FLIGHT_OVER: 'Lịch chạy của lần chạy này đã kết thúc nên không làm được việc này nữa.',
         ADS_ZONE_UNKNOWN: 'Chưa biết múi giờ của tài khoản quảng cáo này. Hãy cập nhật tài khoản ở màn Quảng cáo trước.',

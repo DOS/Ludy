@@ -19,7 +19,8 @@ import {
   sameInstant,
   scheduleProblem,
   statusProblem,
-  commitmentsBefore,
+  ownAround,
+  unclearOpen,
   judgedFrom,
   stopsChange,
   suggestionFor,
@@ -378,22 +379,33 @@ describe('judging a change from the day before today', () => {
     expect(judgedFrom('2026-12-01', '2026-11-16')).toBe('2026-11-30');
   });
 
-  it('keeps what the launch committed before that day, cuts what runs past it and drops what starts on or after it', () => {
+  it('keeps what the launch committed before that day and counts the higher budget once on the days where history and plan overlap', () => {
     const row = (startOn: string, endOn: string, dailyBudget = '100000') => ({ adAccountId: 'a', currency: 'VND', dailyBudget, startOn, endOn });
-    expect(commitmentsBefore([row('2026-11-16', '2026-11-28'), row('2026-11-29', '2026-11-29', '60000'), row('2026-11-30', '2026-12-05')], '2026-11-29')).toEqual([row('2026-11-16', '2026-11-28')]);
-    expect(commitmentsBefore([row('2026-11-16', '2026-12-05')], '2026-11-29')).toEqual([row('2026-11-16', '2026-11-28')]);
+    // Before the day: kept as is. From it on: the plan carries 60 000, and a day that already holds 100 000 carries the 40 000 difference in an extra row.
+    expect(ownAround([row('2026-11-16', '2026-11-30')], '2026-11-29', '2026-12-05', '60000')).toEqual([row('2026-11-16', '2026-11-28'), row('2026-11-29', '2026-11-29', '40000'), row('2026-11-30', '2026-11-30', '40000')]);
+    // A plan at or above the history adds nothing.
+    expect(ownAround([row('2026-11-16', '2026-11-30')], '2026-11-29', '2026-12-05', '140000')).toEqual([row('2026-11-16', '2026-11-28')]);
   });
 
-  it('counts the month end: a raise approved on the last day of the month is judged against the days that already ran at the old budget, which a plan judged from tomorrow forgets', () => {
-    const cap = [{ scope: 'org' as const, adAccountId: null, period: 'monthly' as const, amount: '1900000', currency: 'VND' }];
-    const history = [{ adAccountId: 'a', currency: 'VND', dailyBudget: '100000', startOn: '2026-11-16', endOn: '2026-11-30' }];
-    const other = [{ adAccountId: 'b', currency: 'VND', dailyBudget: '20000', startOn: '2026-11-01', endOn: '2026-11-30' }];
-    // Judged from the day before today (29 November): 13 days at 100 000, then 2 days at 140 000, and the other launch's 600 000 of November: 2 180 000, over the cap.
-    const from = judgedFrom('2026-11-30', '2026-11-16');
-    const problems = committedProblems({ adAccountId: 'a', currency: 'VND', dailyBudget: '140000', startOn: from, endOn: '2026-12-10' }, [...other, ...commitmentsBefore(history, from)], cap);
+  it('never replaces history with the plan: a lower budget then an extension is judged at the higher of the two on the days they share (the monthly cap example: 1 125 000, not 975 000)', () => {
+    const cap = [{ scope: 'org' as const, adAccountId: null, period: 'monthly' as const, amount: '1000000', currency: 'VND' }];
+    // Days 1 to 10 at 100 000; on day 5 a lower budget to 25 000 was confirmed: per day, days 1 to 5 stay at 100 000 and days 6 to 10 are at 25 000.
+    const history = [
+      { adAccountId: 'a', currency: 'VND', dailyBudget: '100000', startOn: '2026-11-01', endOn: '2026-11-05' },
+      { adAccountId: 'a', currency: 'VND', dailyBudget: '25000', startOn: '2026-11-06', endOn: '2026-11-10' },
+    ];
+    const from = judgedFrom('2026-11-05', '2026-11-01');
+    const own = ownAround(history, from, '2026-11-30', '25000');
+    const problems = committedProblems({ adAccountId: 'a', currency: 'VND', dailyBudget: '25000', startOn: from, endOn: '2026-11-30' }, own, cap);
     expect(problems.map((p) => p.code)).toEqual(['monthly_cap_exceeded']);
-    expect(problems[0]).toMatchObject({ month: '2026-11', committed: '1900000' });
-    // Judged only from the first day of the next month, the same raise passes: the month's 15 days at 100 000 are not counted against what remains.
-    expect(committedProblems({ adAccountId: 'a', currency: 'VND', dailyBudget: '140000', startOn: '2026-12-01', endOn: '2026-12-10' }, other, cap)).toEqual([]);
+    // 3 days at 100 000 before the judged day, the 2 days after it at 100 000 (25 000 plan + 75 000 extra), then 25 days at 25 000.
+    expect(Number(problems[0]?.committed) + Number(problems[0]?.plan)).toBe(1125000);
+  });
+
+  it('knows a change of a family that is unclear and not yet replaced by a confirmed one', () => {
+    expect(unclearOpen([budget(1, 'budget_raise', 'unclear', '150000')], ['budget_lower', 'budget_raise'])).toBe(true);
+    expect(unclearOpen([budget(1, 'budget_raise', 'unclear', '150000'), budget(2, 'budget_lower', 'applied', '120000')], ['budget_lower', 'budget_raise'])).toBe(false);
+    expect(unclearOpen([budget(1, 'budget_raise', 'applied', '150000'), budget(2, 'budget_lower', 'unclear', '120000')], ['budget_lower', 'budget_raise'])).toBe(true);
+    expect(unclearOpen([schedule(1, 'schedule_extend', 'unclear', '2026-11-20')], ['budget_lower', 'budget_raise'])).toBe(false);
   });
 });

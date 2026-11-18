@@ -3446,7 +3446,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(await hold(launch.id)).toMatchObject({ daily_budget: '75000' });
             });
 
-            it('gives up on an answer it cannot tell: the change is unclear, a raise stays held against the caps, and nothing is called again', async () => {
+            it('gives up on an answer it cannot tell: the change is unclear, a raise stays held against the caps, nothing is called again, and a lower budget is refused behind it', async () => {
               const w = new SandboxAdWriter();
               const rig = rigOf(w);
               const { launch, account } = await live('Không rõ kết quả', w);
@@ -3469,18 +3469,14 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(w.objects.get(adSet)?.dailyBudget).toBe('100000');
               expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
               expect(await commit(account)).toMatchObject({ daily_budget: '150000' });
-              // It is not cancellable (it may have landed), and it is not an OPEN change: only a queued one blocks another change of its family, so a person is never stuck behind an unclear
-              // one (the hold keeps its amount against the caps until a later confirmed change replaces it).
+              // It is not cancellable (it may have landed), and it is not an OPEN change (only a queued one blocks a request of its family), but what the platform runs is not known:
+              // a lower budget, which needs no approval, could really be a raise (the budget may already be 150 000), so it is refused until a confirmed change settles it.
               expect(await cancel(owner, raise.id)).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_SETTLED' } });
               expect((await callAs(member, 'ads/manageState', { launchId: launch.id })).body).toMatchObject({ dailyBudget: '100000', heldDailyBudget: '150000', changes: [{ id: raise.id, state: 'unclear' }] });
-              // A lower budget is accepted behind it (pinned), goes from what is held, and releases nothing until the platform confirms it.
-              const lowerAsked = await lower(owner, launch.id, '120000');
-              expect(lowerAsked.status, JSON.stringify(lowerAsked.body)).toBe(200);
-              const id = changeId(lowerAsked);
-              expect((await changesOf(launch.id)).at(-1)).toMatchObject({ from_budget: '150000', to_budget: '120000' });
+              expect(await lower(owner, launch.id, '120000')).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_UNCLEAR' } });
+              expect(await lower(owner, launch.id, '90000')).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_UNCLEAR' } });
+              expect(await changesOf(launch.id)).toHaveLength(1);
               expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
-              expect(await manage(rig, id)).toEqual({ steps: 1, ended: 'applied' });
-              expect(await hold(launch.id)).toMatchObject({ daily_budget: '120000' });
             });
 
             it('lets a pause through whatever is switched off, and refuses every other change then (ADS_WRITE_OFF); a queued raise is cancelled by begin once writing went off', async () => {

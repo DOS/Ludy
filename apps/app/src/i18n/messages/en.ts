@@ -5956,6 +5956,7 @@ export const en = {
         ADS_WRITE_OFF: 'Running ads is turned off for the org or for this ad account, so only Pause is available.',
         ADS_LAUNCHES_BLOCKED: 'Launches are blocked at the moment, so nothing that could raise spend can be asked for. Pause is still available.',
         ADS_CHANGE_OPEN: 'A change of the same kind is already waiting for the platform. Wait for it to settle, or cancel it.',
+        ADS_CHANGE_UNCLEAR: 'The platform has not confirmed an earlier change of the same kind, so its real budget or end date is not known. Lowering or shortening waits until a confirmed change settles it.',
         ADS_MANAGE_NOT_LIVE: 'This launch is not running, so its ads can no longer be changed. A new plan needs a new draft and a new approval.',
         ADS_FLIGHT_OVER: 'The schedule of this launch is over, so this cannot be done any more.',
         ADS_ZONE_UNKNOWN: 'The time zone of this ad account is not known yet. Refresh the account on the Ads screen first.',

@@ -156,13 +156,34 @@ export const judgedFrom = (today: string, startOn: string): string => {
   return day < startOn ? startOn : day;
 };
 
-// A launch's own commitment before the day a change is judged from: the rows that end before it stay as they are, the ones that run past it are cut to end the day before, and the
-// ones that start on or after it are dropped (the change replaces them: the plan is judged from that day on, so nothing is counted twice and what ran earlier is never released).
-export function commitmentsBefore(own: readonly Commitment[], from: string): Commitment[] {
+// A launch's own commitment around the day a change is judged from, as what the caps are judged with. Before that day the rows stay as they are (what ran is never released and
+// never replaced). From that day on the plan is the launch's budget, but on a day where the commitment already holds a HIGHER budget (a lower budget confirmed today, a raise that
+// may already be running) the higher one still counts: the plan carries `budget` for every day and an extra row carries the difference on those days, so the day counts at the
+// higher of the two, once.
+export function ownAround(own: readonly Commitment[], from: string, to: string, budget: string): Commitment[] {
   const out: Commitment[] = [];
+  const perDay = new Map<string, Decimal>();
   for (const row of own) {
-    if (row.startOn >= from) continue;
-    out.push(row.endOn >= from ? { ...row, endOn: addDays(from, -1) } : row);
+    if (row.startOn < from) out.push(row.endOn >= from ? { ...row, endOn: addDays(from, -1) } : row);
+    for (let day = row.startOn < from ? from : row.startOn; day <= row.endOn && day <= to; day = addDays(day, 1)) {
+      const held = new Decimal(row.dailyBudget);
+      const seen = perDay.get(day);
+      if (!seen || held.gt(seen)) perDay.set(day, held);
+    }
+  }
+  for (const [day, held] of perDay) {
+    if (held.gt(budget)) {
+      const base = own[0];
+      if (base) out.push({ adAccountId: base.adAccountId, currency: base.currency, dailyBudget: held.minus(budget).toFixed(), startOn: day, endOn: day });
+    }
   }
   return out;
+}
+
+// Whether a change of a family (the budget, the schedule) is unclear and no later change of it was confirmed: what the platform runs is not known, so a lower budget or a shorter
+// schedule (which needs no approval) could really be a raise, and is refused until the unclear change is settled by a confirmed one.
+export function unclearOpen(changes: readonly ChangeRow[], kinds: readonly AdsManageKind[]): boolean {
+  const mine = changes.filter((c) => kinds.includes(c.kind));
+  const applied = mine.filter((c) => c.state === 'applied').reduce((max, c) => Math.max(max, c.seq), 0);
+  return mine.some((c) => c.state === 'unclear' && c.seq > applied);
 }

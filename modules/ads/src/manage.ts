@@ -51,7 +51,10 @@ import { STARTED_STALE_SECONDS, UNCLEAR_GIVE_UP_SECONDS, UNCLEAR_MAX_CALLS, dayA
 import {
   OPENING_KINDS,
   budgetProblem,
-  commitmentsBefore,
+  ownAround,
+  unclearOpen,
+  BUDGET_KINDS,
+  SCHEDULE_KINDS,
   judgedFrom,
   heldValues,
   largestAmount,
@@ -121,6 +124,7 @@ function gate(control: Control, kind: AdsManageKind): void {
 
 const openFamily = (control: Control, family: 'budget' | 'schedule' | AdsManageSlot): boolean =>
   control.changes.some((c) => c.state === 'queued' && (family === 'budget' ? c.kind.startsWith('budget_') : family === 'schedule' ? c.kind.startsWith('schedule_') : !c.kind.startsWith('budget_') && !c.kind.startsWith('schedule_') && c.slot === family));
+const unclearBlocks = () => refuse('ADS_CHANGE_UNCLEAR', 409, 'Có một thay đổi cùng loại chưa xác nhận được với nền tảng; chưa giảm hay rút ngắn tiếp được cho đến khi nó được xác nhận');
 const changeOpen = () => refuse('ADS_CHANGE_OPEN', 409, 'Đã có một thay đổi cùng loại đang chờ nền tảng xác nhận; hãy đợi xong rồi thử tiếp');
 
 function requireZone(control: Control): string {
@@ -139,7 +143,7 @@ export async function manageCapsProblems(ctx: Db & Pick<CommandContext, 'now'>, 
   const from = judgedFrom(todayIn(zoneKnown(account.time_zone) ? (account.time_zone as string) : 'UTC', ctx.now), launch.start_text);
   const window = endOn > from ? endOn : from;
   const others = await committedLaunches(ctx, launch.currency, launch.start_text, window, launch.id);
-  const history = commitmentsBefore(await ownCommitments(ctx, launch.id, launch.currency, launch.start_text, window), from);
+  const history = ownAround(await ownCommitments(ctx, launch.id, launch.currency, launch.start_text, window), from, window, budget);
   return committedProblems({ adAccountId: launch.ad_account_id, currency: launch.currency, dailyBudget: budget, startOn: from, endOn: window }, [...others, ...history], base.caps);
 }
 
@@ -271,6 +275,7 @@ export const adsBudgetLower = defineCommand({
     const control = await controlOf(ctx, input.launchId);
     gate(control, 'budget_lower');
     if (openFamily(control, 'budget')) throw changeOpen();
+    if (unclearOpen(control.changes, BUDGET_KINDS)) throw unclearBlocks();
     const problem = budgetProblem('budget_lower', control.held.dailyBudget, input.dailyBudget, control.launch.currency);
     if (problem) throw refuse('ADS_BUDGET_INVALID', 422, problem === 'not_lower' ? 'Ngân sách mới phải thấp hơn ngân sách đang giữ chỗ; muốn tăng thì cần đề xuất được duyệt' : 'Ngân sách mới không hợp lệ', { problem });
     const toBudget = new Decimal(input.dailyBudget).toFixed();
@@ -292,6 +297,7 @@ export const adsScheduleShorten = defineCommand({
     const control = await controlOf(ctx, input.launchId);
     gate(control, 'schedule_shorten');
     if (openFamily(control, 'schedule')) throw changeOpen();
+    if (unclearOpen(control.changes, SCHEDULE_KINDS)) throw unclearBlocks();
     const zone = requireZone(control);
     const problem = scheduleProblem('schedule_shorten', { startOn: control.launch.start_text, heldEndOn: control.held.endOn, endOn: input.endOn, today: todayIn(zone, ctx.now) });
     if (problem) throw refuse('ADS_SCHEDULE_INVALID', 422, problem === 'not_earlier' ? 'Ngày kết thúc mới phải sớm hơn ngày đang giữ chỗ; muốn kéo dài thì cần đề xuất được duyệt' : 'Ngày kết thúc mới không hợp lệ', { problem });
