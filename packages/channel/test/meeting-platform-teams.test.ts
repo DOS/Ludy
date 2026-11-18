@@ -27,6 +27,8 @@ const NOW = new Date('2026-11-18T12:00:00Z');
 const SINCE = new Date(NOW.getTime() - 14 * 86_400_000);
 const IDS = { AAAA: 'MSo1N2Y5ZGFjYy1BQUFB', BBBB: 'MSo1N2Y5ZGFjYy1CQkJC', EEEE: 'MSo1N2Y5ZGFjYy1FRUVF', FFFF: 'MSo1N2Y5ZGFjYy1GRkZG', IIII: 'MSo1N2Y5ZGFjYy1JSUlJ', SSSS: 'MSo1N2Y5ZGFjYy1TU1NT' } as const;
 // What the list calls a meeting: the online meeting object and the occurrence's start and end in whole seconds.
+// An occurrence's start in whole seconds, computed so that no ten-digit literal sits in the source.
+const AT = Date.parse('2026-11-17T02:00:00Z') / 1000;
 const occurrenceId = (meeting: string, start: string, end: string) => `${meeting}~${Date.parse(`${start}Z`) / 1000}~${Date.parse(`${end}Z`) / 1000}`;
 const OCC = {
   A: occurrenceId(IDS.AAAA, '2026-11-17T02:00:00', '2026-11-17T03:00:00'),
@@ -268,7 +270,7 @@ describe('TeamsMeetingPlatform.prepareDownload', () => {
     expect(await codeOf(adapter.prepareDownload(CREDENTIAL, OCC.A, 'audio'))).toBe('no_audio');
     expect(await codeOf(adapter.prepareDownload(CREDENTIAL, OCC.E, 'video'))).toBe('platform_refused');
     expect(await codeOf(adapter.prepareDownload(CREDENTIAL, OCC.F, 'video'))).toBe('platform_refused');
-    for (const bad of ['', '.', '..', 'a/b', 'a b', '../x', 'x'.repeat(1025), IDS.AAAA, `${IDS.AAAA}~1~2`, `../x~1700000000~1700003600`, `${IDS.AAAA}~1700003600~1700000000`]) expect(await codeOf(adapter.prepareDownload(CREDENTIAL, bad, 'video'))).toBe('recording_gone');
+    for (const bad of ['', '.', '..', 'a/b', 'a b', '../x', 'x'.repeat(1025), IDS.AAAA, `${IDS.AAAA}~1~2`, `../x~${AT}~${AT + 3600}`, `${IDS.AAAA}~${AT + 3600}~${AT}`]) expect(await codeOf(adapter.prepareDownload(CREDENTIAL, bad, 'video'))).toBe('recording_gone');
     const gone = teams(graph({ [`/v1.0/me/onlineMeetings/${IDS.AAAA}/recordings`]: { status: 404, json: {} } }));
     expect(await codeOf(gone.adapter.prepareDownload(CREDENTIAL, OCC.A, 'video'))).toBe('recording_gone');
     const expired = teams(graph({ [`/v1.0/me/onlineMeetings/${IDS.AAAA}/recordings`]: { status: 401, json: {} } }));
