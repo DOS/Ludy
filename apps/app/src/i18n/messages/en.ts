@@ -14813,8 +14813,11 @@ export const en = {
         publish: 'Share the summary and the action items with the meeting\'s attendees',
       },
       chapters: {
+        copy_result: 'Copy the chapters Vy finished for a meeting into the draft',
         get: 'Read the chapters (table of contents) of a meeting',
         save: 'Save the recorder\'s draft chapters of a meeting',
+        start: 'Ask Vy to write the chapters of a meeting',
+        status: 'See whether Vy can write the chapters of a meeting',
       },
       notes: {
         get: 'Read the recorder\'s own notes of a meeting',

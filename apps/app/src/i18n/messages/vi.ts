@@ -14812,8 +14812,11 @@ export const vi = {
         publish: 'Chia sẻ tóm tắt và việc cần làm với người dự họp',
       },
       chapters: {
+        copy_result: 'Chép mục lục Vy đã lập cho cuộc họp vào bản nháp',
         get: 'Xem mục lục của một cuộc họp',
         save: 'Lưu bản nháp mục lục của người ghi cuộc họp',
+        start: 'Nhờ Vy lập mục lục cho một cuộc họp',
+        status: 'Xem Vy có lập được mục lục cuộc họp không',
       },
       notes: {
         get: 'Xem ghi chú riêng của người ghi về cuộc họp',

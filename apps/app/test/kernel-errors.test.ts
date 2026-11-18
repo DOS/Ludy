@@ -27,6 +27,9 @@ const NOT_SHOWN: Record<string, string> = {
   // The chapters card (#3844) words the refusals of its own editor itself (the anchor and the repeated second, beside the title ones it maps by code), so these stay the kernel's own text elsewhere.
   CHAPTER_NOT_ANCHORED: 'meetings chapters',
   CHAPTER_DUPLICATE_SECOND: 'meetings chapters',
+  CHAPTERS_ALREADY_COPIED: 'meetings chapters',
+  CHAPTERS_STALE: 'meetings chapters',
+  DRAFT_CHAPTERS_EXIST: 'meetings chapters',
   // AI agents: codes only the worker and agent runs get; the agents screens (issue #258) word the others.
   AGENT_PROGRAM_MISSING: 'agents',
   AGENT_RUN_NOT_LIVE: 'agents',
