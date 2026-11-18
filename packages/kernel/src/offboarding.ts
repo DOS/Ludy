@@ -177,6 +177,7 @@ export const EXPORT_TABLES = {
   // snapshot read, without their folded search words; private notes stay out, and private_count records how many
   // each author had (crove_notes.private_counts(), a definer that answers counts only).
   'notes.note': { from: 'crove_notes.note', omit: ['search'] },
+  'notes.attachment': { from: 'crove_notes.attachment', omit: [] },
   'notes.link': { from: 'crove_notes.link', omit: [] },
   'notes.private_count': { from: 'crove_notes.private_counts()', omit: [] },
   // Members' own to-dos (#1673) are private by nature, so none is exported; todo_count records how many each member

@@ -13,7 +13,7 @@ import { z } from 'zod';
 // number above the lines and the lines come back read, cells as text, and the worker checks them again.
 // marketplace_orders: a Shopee, TikTok Shop or Lazada order report as .xlsx or CSV (#2515); only an allow-list of columns comes back (order, line, dates, status, SKU, product, quantity,
 // amounts): the buyer's columns are never read, so they never leave the sandbox.
-export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'pdf_inspect', 'pdf_seal', 'pdf_embed_cms', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement', 'marketplace_orders', 'marketplace_income'] as const;
+export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'docx_text', 'pdf_inspect', 'pdf_seal', 'pdf_embed_cms', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement', 'marketplace_orders', 'marketplace_income'] as const;
 export type ExtractKind = (typeof EXTRACT_KINDS)[number];
 export const zExtractKind = z.enum(EXTRACT_KINDS);
 
@@ -834,6 +834,11 @@ export const zExtractSuccess = z.discriminatedUnion('kind', [
     kind: z.literal('pdf_text'),
     text: z.string().max(EXTRACT_LIMITS.maxTextChars),
     pages: z.number().int().min(0).max(EXTRACT_LIMITS.maxPages),
+  }),
+  z.strictObject({
+    ok: z.literal(true),
+    kind: z.literal('docx_text'),
+    text: z.string().max(EXTRACT_LIMITS.maxTextChars),
   }),
   zPdfInspectResult,
   zPdfSealResult,

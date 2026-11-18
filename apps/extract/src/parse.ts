@@ -6,6 +6,7 @@ import type { Address } from 'postal-mime';
 import { EXTRACT_LIMITS, PdfEmbedCmsInputError, PdfSealInputError, zExtractSuccess, type ExtractFailure, type ExtractKind, type ExtractResponse, type ExtractSuccess } from '@crove/extract-contract';
 import { embedPdfCms } from './cms.ts';
 import { DsnError, readDsn } from './dsn.ts';
+import { DocxError, readDocxText } from './docx-text.ts';
 import { EInvoiceParseError, parseEInvoiceXml } from './einvoice-xml.ts';
 import { HtmlMetaError, htmlText, readHtmlMeta } from './html-meta.ts';
 import { FeedError, readFeed } from './feed.ts';
@@ -180,6 +181,8 @@ async function parseKind(kind: ExtractKind, bytes: Uint8Array): Promise<ExtractS
       return { ok: true, kind, invoice: { ...parseEInvoiceXml(bytes), source: 'einvoice_xml' } };
     case 'pdf_text':
       return pdfText(bytes);
+    case 'docx_text':
+      return { ok: true, kind, text: readDocxText(bytes) };
     case 'pdf_inspect':
       return inspectPdf(bytes);
     case 'pdf_seal':
@@ -217,6 +220,7 @@ async function parseKind(kind: ExtractKind, bytes: Uint8Array): Promise<ExtractS
 const UNREADABLE: Record<ExtractKind, string> = {
   einvoice_xml: 'Không đọc được XML hóa đơn điện tử',
   pdf_text: 'Không đọc được tệp PDF',
+  docx_text: 'Không đọc được tệp Word (.docx)',
   pdf_inspect: 'Không kiểm tra được tệp PDF',
   pdf_seal: 'Không đóng dấu được tệp PDF',
   pdf_embed_cms: 'Không nhúng được chữ ký số CMS vào tệp PDF',
@@ -239,6 +243,7 @@ export async function parse(kind: ExtractKind, bytes: Uint8Array): Promise<Extra
     // The e-invoice parser, eSign PDF handlers and ZIP reader explain what is wrong; other parser errors are not passed on.
     if (
       error instanceof EInvoiceParseError ||
+      error instanceof DocxError ||
       error instanceof ArchiveError ||
       error instanceof PortalListError ||
       error instanceof DsnError ||

@@ -991,8 +991,11 @@ export type CrmBookingTable = Refine<
 // party, a file, a purchase document, a journal entry, a booking, a task, a project or a meeting (#1672, #2595, #1679).
 export const NOTE_VISIBILITIES = ['private', 'org'] as const;
 export const NOTE_LINK_TARGET_TYPES = ['kernel.party', 'kernel.file', 'kernel.task', 'finance.purchase_document', 'finance.journal_entry', 'crm.booking', 'projects.project', 'meetings.meeting'] as const;
+export const NOTE_ATTACHMENT_EXTRACT_STATUSES = ['pending', 'done', 'skipped', 'failed'] as const;
+export type NoteAttachmentExtractStatus = (typeof NOTE_ATTACHMENT_EXTRACT_STATUSES)[number];
 export type NotesNoteTable = Refine<G.NotesNoteTable, { visibility: Generated<(typeof NOTE_VISIBILITIES)[number]> }>;
 export type NotesLinkTable = Refine<G.NotesLinkTable, { target_type: (typeof NOTE_LINK_TARGET_TYPES)[number] }>;
+export type NotesAttachmentTable = Refine<G.NotesAttachmentTable, { extract_status: Generated<NoteAttachmentExtractStatus> }>;
 // A member's own to-do (#1673): open, done, handed over to a position (N5) or cancelled.
 export const TODO_STATUSES = ['open', 'done', 'handed_over', 'cancelled'] as const;
 export type TodoStatus = (typeof TODO_STATUSES)[number];
@@ -1357,6 +1360,7 @@ type Refined = Tables<{
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'crove_meetings.translation': MeetingsTranslationTable;
+  'crove_notes.attachment': NotesAttachmentTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;

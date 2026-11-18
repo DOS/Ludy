@@ -36,6 +36,7 @@ import {
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { loadNoteAttachments } from './attachments.ts';
 import { insertRecordLink, loadEnrichedLinks, NOTE_TARGET_QUERIES } from './links.ts';
 import { notesManifest } from './manifest.ts';
 import { TODO_SUMMARY_COLUMNS, loadSourceNotes, todoSummaryRow } from './todos.ts';
@@ -474,8 +475,11 @@ export const noteGet = defineQuery({
       .where('id', '=', input.noteId)
       .executeTakeFirst();
     if (!row) throw notFound();
-    const shown = await loadEnrichedLinks(ctx, { kind: 'note', id: input.noteId });
-    return { ...summary(row, userId), body: row.body, links: shown };
+    const [shown, attachments] = await Promise.all([
+      loadEnrichedLinks(ctx, { kind: 'note', id: input.noteId }),
+      loadNoteAttachments(ctx, input.noteId),
+    ]);
+    return { ...summary(row, userId), body: row.body, links: shown, attachments };
   },
 });
 
