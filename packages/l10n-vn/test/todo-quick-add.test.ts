@@ -1346,6 +1346,27 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-17',
       dueTime: '15:00',
     });
+
+    // Spaced short VN clock minutes ("9h 30") vs trailing count/duration quantities ("9h 30 cái", "9h 10 ngày nữa")
+    expect(parseTodoQuickAdd('Họp ngày mai 9h 30', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-18',
+      dueTime: '09:30',
+    });
+    expect(parseTodoQuickAdd('Họp 9h 30 ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-18',
+      dueTime: '09:30',
+    });
+    expect(parseTodoQuickAdd('Mua 9h 30 cái', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Mua 30 cái',
+      dueTime: '09:00',
+    });
+    expect(parseTodoQuickAdd('Họp 9h 10 ngày nữa', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-27',
+      dueTime: '09:00',
+    });
   });
 
   it('stays linear on 50k-character adversarial --, %, and tab inputs without ReDoS', () => {

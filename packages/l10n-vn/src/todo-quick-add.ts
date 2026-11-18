@@ -211,7 +211,7 @@ const CLOCK_VN_GIO_RE = new RegExp(
   'giu',
 );
 const CLOCK_VN_SHORT_RE = new RegExp(
-  `(?<![\\p{L}\\p{N}\\p{M}_:.])(\\d{1,2})\\s*([hg])(?:([0-5]?\\d)(?!\\d|\\/|\\.[0-9]|-[0-9])(?:\\s*${VN_PHUT_WORD})?|\\s+([0-5]?\\d)(?!\\d|\\/|\\.[0-9]|-[0-9])\\s*${VN_PHUT_WORD}|\\s*(${VN_RUOI_WORD}))?(?![\\p{L}\\p{N}\\p{M}])`,
+  `(?<![\\p{L}\\p{N}\\p{M}_:.])((\\d{1,2})\\s*([hg]))(?:([0-5]?\\d)(?!\\d|\\/|\\.[0-9]|-[0-9])(?:\\s*${VN_PHUT_WORD})?|[ \\t]+(?:([0-5]?\\d)(?!\\d|\\/|\\.[0-9]|-[0-9])[ \\t]*${VN_PHUT_WORD}|([0-5]\\d)(?!\\d|\\/|\\.[0-9]|-[0-9]))|\\s*(${VN_RUOI_WORD}))?(?![\\p{L}\\p{N}\\p{M}])`,
   'giu',
 );
 
@@ -916,6 +916,15 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const converted = ampm.startsWith('a') ? (hour === 12 ? 0 : hour) : hour === 12 ? 12 : hour + 12;
     timeCandidates.push({ start: m.index, end: m.index + m[0].length, hour: converted, minute, hasAmPm: true });
   }
+  const isTrailingCountOrTemporalUnit = (endPos: number): boolean => {
+    const after = input.slice(endPos).match(/^[ \t]*([\p{L}\p{N}\p{M}]+)(?:[ \t]+([\p{L}\p{N}\p{M}]+))?/u);
+    if (!after) return false;
+    const next1 = foldVn(after[1] ?? '');
+    const next2 = after[2] ? foldVn(after[2]) : '';
+    if (VN_COUNT_NOUNS_AFTER_CLOCK.has(next1) || TEMPORAL_UNITS_AFTER_CLOCK.has(next1)) return true;
+    return next1 === 'ngay' && (next2 === 'nua' || next2 === 'toi');
+  };
+
   for (const m of input.matchAll(CLOCK_VN_GIO_RE)) {
     const hour = Number(m[2]);
     if (hour < 0 || hour > 23) continue;
@@ -930,8 +939,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     } else if (withUnitMinutes !== undefined) {
       minute = Number(withUnitMinutes);
     } else if (bareTwoDigitMinutes !== undefined) {
-      const after = input.slice(end).match(/^\s*([\p{L}\p{N}\p{M}]+)/u);
-      if (after && VN_COUNT_NOUNS_AFTER_CLOCK.has(foldVn(after[1] ?? ''))) {
+      if (isTrailingCountOrTemporalUnit(end)) {
         end = gioEnd;
         minute = 0;
       } else {
@@ -942,21 +950,38 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     timeCandidates.push({ start: m.index, end, hour, minute, hasAmPm: false });
   }
   for (const m of input.matchAll(CLOCK_VN_SHORT_RE)) {
-    const hour = Number(m[1]);
+    const hour = Number(m[2]);
     if (hour < 0 || hour > 23) continue;
-    const unit = (m[2] ?? '').toLowerCase();
-    const minuteDigits = m[3] ?? m[4];
-    const half = m[5] !== undefined;
-    const minute = half ? 30 : minuteDigits ? Number(minuteDigits) : 0;
+    const shortEnd = m.index + (m[1] ?? '').length;
+    const unit = (m[3] ?? '').toLowerCase();
+    const tightOrUnitDigits = m[4] ?? m[5];
+    const bareSpacedMinutes = m[6];
+    const half = m[7] !== undefined;
+    let end = m.index + m[0].length;
+    let minute = 0;
+    let hasMinutesOrHalf = tightOrUnitDigits !== undefined || half;
+    if (half) {
+      minute = 30;
+    } else if (tightOrUnitDigits !== undefined) {
+      minute = Number(tightOrUnitDigits);
+    } else if (bareSpacedMinutes !== undefined) {
+      if (isTrailingCountOrTemporalUnit(end)) {
+        end = shortEnd;
+        minute = 0;
+      } else {
+        minute = Number(bareSpacedMinutes);
+        hasMinutesOrHalf = true;
+      }
+    }
     if (minute < 0 || minute > 59) continue;
     timeCandidates.push({
       start: m.index,
-      end: m.index + m[0].length,
+      end,
       hour,
       minute,
       hasAmPm: false,
       usesShortG: unit === 'g',
-      hasMinutesOrHalf: minuteDigits !== undefined || half,
+      hasMinutesOrHalf,
     });
   }
 

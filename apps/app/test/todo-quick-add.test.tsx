@@ -99,6 +99,7 @@ describe('Alt+Q global Quick Capture shortcut guard (#3556)', () => {
     expect(isQuickCaptureShortcut(altQ(), { notesEnabled: false, authenticated: true })).toBe(false);
     expect(isQuickCaptureShortcut(altQ(), { notesEnabled: true, authenticated: false })).toBe(false);
     expect(isQuickCaptureShortcut(altQ(), { notesEnabled: true, authenticated: true, canWrite: false })).toBe(false);
+    expect(isQuickCaptureShortcut(altQ(), { notesEnabled: true, authenticated: true, modalOpen: true })).toBe(false);
 
     expect(isQuickCaptureShortcut(altQ({ altKey: false }), { notesEnabled: true, authenticated: true })).toBe(false);
     expect(isQuickCaptureShortcut(altQ({ ctrlKey: true }), { notesEnabled: true, authenticated: true })).toBe(false);

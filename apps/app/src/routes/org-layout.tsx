@@ -179,6 +179,8 @@ export function OrgLayout() {
           notesEnabled: notesOn,
           authenticated: me.isSuccess && Boolean(org),
           canWrite: roleHere !== 'viewer',
+          modalOpen:
+            typeof document !== 'undefined' && document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]') !== null,
           activeElement: typeof document !== 'undefined' ? document.activeElement : null,
         })
       ) {

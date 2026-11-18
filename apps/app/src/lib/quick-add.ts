@@ -55,10 +55,11 @@ export function isQuickCaptureShortcut(
     notesEnabled: boolean;
     authenticated: boolean;
     canWrite?: boolean | undefined;
+    modalOpen?: boolean | undefined;
     activeElement?: unknown;
   },
 ): boolean {
-  if (!opts.notesEnabled || !opts.authenticated || opts.canWrite === false) return false;
+  if (!opts.notesEnabled || !opts.authenticated || opts.canWrite === false || opts.modalOpen) return false;
   if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat) return false;
   if (event.defaultPrevented || event.isComposing) return false;
   const isQ = event.code === 'KeyQ' || event.key.toLowerCase() === 'q';
