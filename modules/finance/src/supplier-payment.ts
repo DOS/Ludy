@@ -13,7 +13,6 @@
 // - finance.supplier_payment.list: the payments of the org or of one supplier (never a number). finance.signals.supplier_payments_waiting: rule 3's second read, ids and days only.
 // Agents never run any of these.
 import {
-  SIGNALS_MAX_CRM,
   SIGNAL_PARTIAL_VIEW_CODE,
   SUPPLIER_PAYMENT_COMMAND,
   SUPPLIER_PAYMENT_KIND,
@@ -23,13 +22,13 @@ import {
   zSupplierPaymentPayload,
   zSupplierPaymentPrepare,
   zSupplierPaymentRecord,
-  zSupplierPaymentsWaiting,
+  zFinanceSalesSignalsInput,
+  zFinanceSupplierPaymentsWaitingSignals,
+  type FinanceSupplierPaymentsWaitingSignal,
   type SupplierPayment,
-  type SupplierPaymentWaiting,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { sql } from 'kysely';
-import { z } from 'zod';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { money } from '@crove/l10n-vn';
 
@@ -300,28 +299,46 @@ export const supplierPaymentList = defineQuery({
   },
 });
 
-// Rule 3's second read (V5, #3113): the suppliers with a payment waiting, as ids and days. A request not decided yet (`pending`) and a payment waiting to be paid (`approved`) both count. Complete
-// or refused: more suppliers than SIGNALS_MAX_CRM are not cut to a part, the read refuses with SIGNAL_PARTIAL_VIEW. An owner, an admin, a member or a viewer who can open the org sees every row.
+// Rule 3's second read (V5, #3113; contract in packages/kernel-contract/src/signals.ts): asked with the suppliers whose account changed recently, it answers for each asked supplier with a payment
+// waiting how many and their total. Waiting is a payment approved and not yet paid (a payment on hold included) or one asked for and not yet approved (a pending finance.supplier_payment.record
+// proposal). A party and the parties marked as its duplicates are one supplier, counted under the asked id. The total adds the payments in dong: a payment in another currency counts in `count`
+// but not in `amount`, since two currencies are never added. Ids, a count and an amount only.
+//
+// The honesty rule: a supplier that is not listed has nothing waiting, so the read REFUSES a caller who cannot see every legal entity (SIGNAL_PARTIAL_VIEW), never the part they can see; a
+// caller that is not a user gets FORBIDDEN.
 export const financeSupplierPaymentsWaitingSignals = defineQuery({
   name: 'finance.signals.supplier_payments_waiting',
-  input: z.strictObject({}),
+  input: zFinanceSalesSignalsInput,
   access: ALL,
-  // An AI app the owner or an admin connected may run this read (ADR-0051): ids and days only, never a number.
+  // An AI app the owner or an admin connected may run this read (ADR-0051): ids, a count and an amount only, never a number or a name.
   mcp: { scope: 'ludy.read' },
-  handler: async (ctx): Promise<SupplierPaymentWaiting[]> => {
+  handler: async (ctx, input): Promise<FinanceSupplierPaymentsWaitingSignal[]> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
-    const { rows } = await sql<{ party_id: string; state: 'pending' | 'approved'; since: Date | string }>`
-      SELECT party_id, state, since FROM (
-        SELECT p.party_id, 'approved'::text AS state, p.approved_at AS since
-          FROM crove_finance.supplier_payment p WHERE p.org_id = ${ctx.orgId}::uuid AND p.status = 'approved'
+    const { rows: scope } = await sql<{ whole: boolean }>`SELECT coalesce('*' = ANY (crove_kernel.ctx_le_scope()::text[]), false) AS whole`.execute(ctx.trx);
+    if (scope[0]?.whole !== true) throw new DomainError(SIGNAL_PARTIAL_VIEW_CODE, 403, 'Bạn chỉ xem được một phần sổ sách nên chưa kiểm tra được khoản chi nhà cung cấp đang chờ');
+    const asked = input.partyIds.map((id) => sql`${id}::uuid`);
+    const { rows } = await sql<{ party_id: string; count: number; amount: string }>`
+      WITH asked AS (
+        SELECT a.id, coalesce(a.duplicate_of, a.id) AS kept
+          FROM crove_kernel.party a
+         WHERE a.org_id = ${ctx.orgId}::uuid AND a.id IN (${sql.join(asked)})
+      ), waiting AS (
+        SELECT coalesce(pa.duplicate_of, pa.id) AS kept, p.amount, p.currency
+          FROM crove_finance.supplier_payment p
+          JOIN crove_kernel.party pa ON pa.org_id = p.org_id AND pa.id = p.party_id
+         WHERE p.org_id = ${ctx.orgId}::uuid AND p.status = 'approved'
         UNION ALL
-        SELECT (q.payload->>'partyId')::uuid AS party_id, 'pending'::text AS state, q.created_at AS since
-          FROM crove_kernel.proposal q WHERE q.org_id = ${ctx.orgId}::uuid AND q.command = ${SUPPLIER_PAYMENT_COMMAND} AND q.status = 'pending'
-      ) w
-      ORDER BY party_id, state, since
-      LIMIT ${SIGNALS_MAX_CRM + 1}`.execute(ctx.trx);
-    if (rows.length > SIGNALS_MAX_CRM) throw new DomainError(SIGNAL_PARTIAL_VIEW_CODE, 403, 'Quá nhiều khoản chi đang chờ để kiểm tra hết một lượt');
-    return zSupplierPaymentsWaiting.parse(rows.map((r) => ({ partyId: r.party_id, state: r.state, since: day(r.since) })));
+        SELECT coalesce(pa.duplicate_of, pa.id) AS kept, (q.payload ->> 'amount')::numeric AS amount, q.payload ->> 'currency' AS currency
+          FROM crove_kernel.proposal q
+          JOIN crove_kernel.party pa ON pa.org_id = q.org_id AND pa.id::text = pg_catalog.lower(q.payload ->> 'partyId')
+         WHERE q.org_id = ${ctx.orgId}::uuid AND q.command = ${SUPPLIER_PAYMENT_COMMAND} AND q.status = 'pending'
+      )
+      SELECT asked.id AS party_id, count(*)::int AS count, coalesce(sum(w.amount) FILTER (WHERE w.currency = 'VND'), 0)::text AS amount
+        FROM asked
+        JOIN waiting w ON w.kept = asked.kept
+       GROUP BY asked.id
+       ORDER BY asked.id`.execute(ctx.trx);
+    return zFinanceSupplierPaymentsWaitingSignals.parse(rows.map((r) => ({ partyId: r.party_id, count: r.count, amount: money(r.amount).toFixed() })));
   },
 });
 

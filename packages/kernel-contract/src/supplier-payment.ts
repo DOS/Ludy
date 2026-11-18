@@ -60,11 +60,6 @@ export const zSupplierPayment = z.strictObject({
 export type SupplierPayment = z.infer<typeof zSupplierPayment>;
 export const zSupplierPaymentList = z.array(zSupplierPayment);
 
-// Rule 3's second read (V5, #3113): the suppliers with a payment waiting, ids and days only. `pending` is a request not decided yet, `approved` a payment waiting to be paid.
-export const zSupplierPaymentWaiting = z.strictObject({ partyId: z.uuid(), state: z.enum(['pending', 'approved']), since: z.string().regex(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) });
-export type SupplierPaymentWaiting = z.infer<typeof zSupplierPaymentWaiting>;
-export const zSupplierPaymentsWaiting = z.array(zSupplierPaymentWaiting);
-
 // The bank file of approved supplier payments (#3113 S3, #3700). `finance.supplier_payment.bank_file.get` is a sensitive query in the requesting owner's or admin's own context: its audit row is
 // committed before it reads, it needs a second factor used in the last 5 minutes, and it opens the sealed holder and number of each payment's pinned account there and nowhere else. The answer is
 // returned to the caller and never stored. One file holds the payments the caller names, all in one currency; a payment the file cannot carry refuses the whole file, naming the payment (never a number).
