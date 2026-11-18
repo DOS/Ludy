@@ -74,7 +74,10 @@ test('Vy summarizes a stored transcript, the recorder reads, edits and shares it
   await test.step('the draft ready notice is in the notifications, and leads to the meeting', async () => {
     await page.goto(`/o/${slug}/notifications`);
     // The worker sends it after the run: poll until it is there.
-    await expect(page.getByText('Bản nháp biên bản của cuộc họp bạn ghi đã sẵn sàng')).toBeVisible({ timeout: 45_000 });
-    await expect(page.locator(`a[href$="/meetings/${meetingId}"]`).first()).toBeVisible();
+    const notice = page.getByText('Bản nháp biên bản của cuộc họp bạn ghi đã sẵn sàng');
+    await expect(notice).toBeVisible({ timeout: 45_000 });
+    // A notification is a button that opens what it is about.
+    await notice.click();
+    await expect(page).toHaveURL(new RegExp(`/meetings/${meetingId}$`));
   });
 });

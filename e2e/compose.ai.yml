@@ -7,6 +7,9 @@ services:
       AI_BASE_URL: http://fake-model:30001/v1
       AI_MODEL: fake-summary
       MEETINGS_SUMMARY: 'on'
+    # Joins the model's own network, on top of the networks it already has.
+    networks:
+      - model
   # A fixed answer to every chat completion (e2e/fake-model): it makes no request of its own and refuses any other host name.
   fake-model:
     image: node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0
@@ -19,3 +22,9 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
+    # Only the model's network, which is internal: the service is reachable from crove and from nothing else, and has no route out. "Reaches no other host" is enforced here, not only by its code.
+    networks:
+      - model
+networks:
+  model:
+    internal: true
