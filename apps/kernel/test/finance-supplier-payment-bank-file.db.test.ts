@@ -72,7 +72,6 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     return { orgId, owner, admin: adminUser, member, supplier };
   }
   const execute = <T>(o: Org, name: string, input: unknown, who = o.owner, fresh = true) => rt.execute<T>(name, input, { actor: user(who, fresh), orgId: o.orgId, idempotencyKey: randomUUID() });
-  const query = <T>(o: Org, name: string, input: unknown, who = o.owner) => rt.query<T>(name, input, { actor: user(who), orgId: o.orgId });
   const refusal = async (promise: Promise<unknown>) => promise.then(() => 'accepted', (error: { code?: string }) => error.code);
   const addAccount = (o: Org, number = NUMBER) =>
     execute<{ id: string; last4: string }>(o, 'finance.supplier_bank_account.add', { partyId: o.supplier, bankName: 'Vietcombank', accountHolder: HOLDER, accountNumber: number });
