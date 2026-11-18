@@ -566,7 +566,7 @@ import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoi
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsCommitted, zAdsCommittedInput, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
-import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
+import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -2353,6 +2353,8 @@ export const contract = {
     cnkd: oc.input(zHouseholdCnkdGet).output(zHouseholdCnkd),
     // S2a-HKD, the revenue book of a household that pays a percentage of revenue: S1a split by business line, with VAT and PIT per line (#2517 slice 2a); labelled provisional while its rows are unconfirmed.
     s2a: oc.input(zHouseholdS2aGet).output(zHouseholdS2a),
+    // S2b-HKD, the revenue book of a household that pays PIT on income: the S2a split by business line with the VAT per line and no PIT column (#2517 slice 2c);
+    s2b: oc.input(zHouseholdS2bGet).output(zHouseholdS2b),
     // S2c-HKD, the revenue and expense detail of a household that pays PIT on income: expenses by the dated account-to-group map, unmapped ones apart (#2517 slice 2b); labelled provisional while its rows are unconfirmed.
     s2c: oc.input(zHouseholdS2cGet).output(zHouseholdS2c),
   },

@@ -4,7 +4,7 @@
 // checks it against the appendix of the circular (#2520), and the file says so while the book's row is still `commentary`. Same cell rules as the other exports (export.ts): amounts exact,
 // text never read as a formula. Labels stay Vietnamese in every locale.
 import ExcelJS from 'exceljs';
-import { HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a, type HouseholdS2c } from '@crove/kernel-contract';
+import { HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a, type HouseholdS2b, type HouseholdS2c } from '@crove/kernel-contract';
 import { setMoneyCell, setTextCell } from './export.ts';
 
 const dateLabel = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}`;
@@ -168,11 +168,25 @@ export async function buildCnkdWorkbook(sheetData: HouseholdCnkd, brand = 'Ludy'
 // and the VAT and PIT it gives, the total tax, and a place for the representative's signature. While a row behind the figures is `commentary` the file says so on top, lists the rows, and puts
 // HOUSEHOLD_PROVISIONAL_LABEL in a note column on every figure that depends on them (the revenue and tax rows); the label is data and goes once the rows are confirmed. Ludy files nothing: the book is for
 // the household or its accountant. Same cell rules as the other exports (exact amounts, text never a formula).
+// What S2a and S2b share in the file: the rows by business line, the VAT per line, and for S2a the PIT per line and the tax total. S2b (the income method) has no PIT, so its lines carry none.
+type TradeBookView = Omit<HouseholdS2a, 'lines' | 'totals'> & {
+  lines: Array<{ trade: HouseholdS2a['lines'][number]['trade']; revenue: string; vatPercent: string; vat: string; pitPercent?: string; pit?: string }>;
+  totals: { revenue: string; vat: string; pit?: string; tax?: string } | null;
+};
+
 export async function buildS2aWorkbook(book: HouseholdS2a, brand = 'Ludy'): Promise<Uint8Array> {
+  return buildTradeWorkbook(book, brand, { sheet: 'S2a-HKD', pit: true });
+}
+
+export async function buildS2bWorkbook(book: HouseholdS2b, brand = 'Ludy'): Promise<Uint8Array> {
+  return buildTradeWorkbook({ ...book, lines: book.lines, totals: book.totals }, brand, { sheet: 'S2b-HKD', pit: false });
+}
+
+async function buildTradeWorkbook(book: TradeBookView, brand: string, opts: { sheet: string; pit: boolean }): Promise<Uint8Array> {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = brand;
   workbook.title = `${book.form.name} ${dateLabel(book.period.from)} - ${dateLabel(book.period.to)} ${book.household.name}`;
-  const sheet = workbook.addWorksheet('S2a-HKD');
+  const sheet = workbook.addWorksheet(opts.sheet);
   const lineKeys = book.lines.map((l) => l.trade);
   // The column exists whenever any entry has a part there (a sale and its void both unassigned net to zero, but each row still writes its part).
   const hasUnassigned = book.rows.some((r) => r.parts.some((p) => p.trade === 'unassigned'));
@@ -233,12 +247,14 @@ export async function buildS2aWorkbook(book: HouseholdS2a, brand = 'Ludy'): Prom
   };
   perLine('Tỷ lệ thuế GTGT (%)', (l) => l.vatPercent, undefined, 'text');
   perLine('Thuế GTGT', (l) => l.vat, book.totals?.vat, 'money');
-  perLine('Tỷ lệ thuế TNCN (%)', (l) => l.pitPercent, undefined, 'text');
-  perLine('Thuế TNCN', (l) => l.pit, book.totals?.pit, 'money');
+  if (opts.pit) {
+    perLine('Tỷ lệ thuế TNCN (%)', (l) => l.pitPercent ?? '', undefined, 'text');
+    perLine('Thuế TNCN', (l) => l.pit ?? '0', book.totals?.pit, 'money');
+  }
   const tax = sheet.addRow([]);
-  setTextCell(tax.getCell('description'), 'Tổng thuế GTGT và TNCN');
+  setTextCell(tax.getCell('description'), opts.pit ? 'Tổng thuế GTGT và TNCN' : 'Tổng thuế GTGT');
   // No total while revenue has no business line yet: the cell stays blank, never a 0 that does not exist.
-  if (book.totals) setMoneyCell(tax.getCell('total'), book.totals.tax);
+  if (book.totals) setMoneyCell(tax.getCell('total'), (opts.pit ? book.totals.tax : book.totals.vat) ?? '0');
   mark(tax);
   tax.font = { bold: true };
   if (!book.totals) {

@@ -43,6 +43,7 @@ import {
   type HouseholdCnkd,
   type HouseholdS1a,
   type HouseholdS2a,
+  type HouseholdS2b,
   type HouseholdS2c,
   type StockCard,
   type StockReportRow,
@@ -94,6 +95,7 @@ import {
   buildCnkdWorkbook,
   buildS1aWorkbook,
   buildS2aWorkbook,
+  buildS2bWorkbook,
   buildS2cWorkbook,
   buildMisaWorkbook,
   buildVat01Xml,
@@ -3793,6 +3795,32 @@ export function createHttpApp(deps: HttpDeps) {
           headers: {
             'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s2a-hkd', period, ORG_SLUG], 'xlsx'),
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // S2b-HKD, the revenue book of a household business on the income method (#2517 slice 2c), ?legalEntityId=<household>&period=2026-09 (a month, a quarter 2026-Q3 or a year). The query checks the period, the
+    // roles and that the entity's profile requires S2b (422 and 403 otherwise), so the file name only holds a valid period. The book is given while its rows are `commentary` (the file and the screen label
+    // every figure that depends on them); part of the revenue with no business line yet shows in its own column and holds the VAT total back. The audit row is recorded before the file is sent.
+    app.get('/api/export/household-s2b.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const period = c.req.query('period') ?? '';
+        const legalEntityId = c.req.query('legalEntityId') ?? '';
+        const book = await runtime.query<HouseholdS2b>('finance.household.s2b', { legalEntityId, period }, { actor, orgId });
+        const bytes = await buildS2bWorkbook(book, config.BRAND_NAME);
+        await runtime.execute('finance.household.export', { legalEntityId, book: 'S2b', period, rows: book.rows.length }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s2b-hkd', period, ORG_SLUG], 'xlsx'),
             'cache-control': 'private, no-store',
           },
         });

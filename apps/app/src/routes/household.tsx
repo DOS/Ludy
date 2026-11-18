@@ -7,7 +7,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { HOUSEHOLD_EXPENSE_GROUPS, HOUSEHOLD_TRADES, vietnamToday, type HouseholdProfileSet } from '@crove/kernel-contract';
+import { HOUSEHOLD_EXPENSE_GROUPS, HOUSEHOLD_TRADES, vietnamToday, type HouseholdProfileSet, type HouseholdS2a, type HouseholdS2b } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -130,7 +130,9 @@ function S1aBook({ entityId }: { entityId: string }) {
 // ledger (the total is account 511's movement) and downloaded as Excel. A trade comes from what each entry is built from (a sale document's items); an entry with no item is "chưa phân ngành" and holds the
 // tax total back, never guessed. While a row behind the figures is unconfirmed (#2520) every figure that depends on it carries "Số liệu tạm, kế toán chưa xác nhận tỷ lệ" and so does the Excel file; the
 // label goes when the rows are confirmed, with no code change. Ludy files nothing.
-function S2aBook({ entityId }: { entityId: string }) {
+function S2aBook({ entityId, variant = 'S2a' }: { entityId: string; variant?: 'S2a' | 'S2b' }) {
+  const p = variant === 'S2a' ? 's2a' : 's2b';
+  const withPit = variant === 'S2a';
   const t = useTranslations('household');
   const f = useFormat();
   const today = vietnamToday();
@@ -140,34 +142,37 @@ function S2aBook({ entityId }: { entityId: string }) {
   const [quarter, setQuarter] = useState(String(Math.floor((Number(today.slice(5, 7)) - 1) / 3) + 1));
   const period = periodOf(kind, month, quarter, year);
   const valid = /^20\d{2}(-(0[1-9]|1[0-2]|Q[1-4]))?$/.test(period);
-  const book = useQuery({ ...orpc.household.s2a.queryOptions({ input: { legalEntityId: entityId, period } }), enabled: valid, retry: false });
+  const s2aQuery = useQuery({ ...orpc.household.s2a.queryOptions({ input: { legalEntityId: entityId, period } }), enabled: valid && withPit, retry: false });
+  const s2bQuery = useQuery({ ...orpc.household.s2b.queryOptions({ input: { legalEntityId: entityId, period } }), enabled: valid && !withPit, retry: false });
+  const book = withPit ? s2aQuery : s2bQuery;
   const download = useMutation({
     mutationFn: async () => {
-      const response = await apiFetch(`/api/export/household-s2a.xlsx?legalEntityId=${encodeURIComponent(entityId)}&period=${encodeURIComponent(period)}`);
+      const response = await apiFetch(`/api/export/household-${p}.xlsx?legalEntityId=${encodeURIComponent(entityId)}&period=${encodeURIComponent(period)}`);
       const url = URL.createObjectURL(await response.blob());
       const a = document.createElement('a');
       a.href = url;
-      a.download = t('s2aFile', { period, org: getCurrentOrg() ?? 'org' });
+      a.download = t(withPit ? 's2aFile' : 's2bFile', { period, org: getCurrentOrg() ?? 'org' });
       a.click();
       URL.revokeObjectURL(url);
     },
   });
-  const data = book.data;
+  // S2b has no PIT: its lines carry none, so the PIT columns are read only on S2a.
+  const data = book.data as ((HouseholdS2a | HouseholdS2b) & { lines: Array<{ trade: string; revenue: string; vatPercent: string; vat: string; pitPercent?: string; pit?: string }>; totals: { revenue: string; vat: string; pit?: string; tax?: string } | null }) | undefined;
   const tradeName = (trade: string) => (trade === 'unassigned' ? t('unassignedName') : t(`tradeNames.${trade as (typeof HOUSEHOLD_TRADES)[number]}`));
   const provisional = data?.commentary ? (
-    <span className="block text-xs text-muted-foreground" data-testid="household-s2a-provisional">
+    <span className="block text-xs text-muted-foreground" data-testid={`household-${p}-provisional`}>
       {t('cnkdProvisional')}
     </span>
   ) : null;
   const provisionalForReader = data?.commentary ? <span className="sr-only">{t('cnkdProvisional')}</span> : null;
   return (
-    <Card className="mb-6 block p-4" data-testid="household-s2a">
-      <h2 className="text-sm font-semibold text-foreground">{t('s2aTitle')}</h2>
-      <p className="mb-3 text-sm text-muted-foreground">{t('s2aHint')}</p>
+    <Card className="mb-6 block p-4" data-testid={`household-${p}`}>
+      <h2 className="text-sm font-semibold text-foreground">{t(withPit ? 's2aTitle' : 's2bTitle')}</h2>
+      <p className="mb-3 text-sm text-muted-foreground">{t(withPit ? 's2aHint' : 's2bHint')}</p>
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <div className="space-y-1">
-          <Label htmlFor="s2a-kind">{t('periodKind')}</Label>
-          <NativeSelect id="s2a-kind" value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
+          <Label htmlFor={`${p}-kind`}>{t('periodKind')}</Label>
+          <NativeSelect id={`${p}-kind`} value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
             <NativeSelectOption value="month">{t('kinds.month')}</NativeSelectOption>
             <NativeSelectOption value="quarter">{t('kinds.quarter')}</NativeSelectOption>
             <NativeSelectOption value="year">{t('kinds.year')}</NativeSelectOption>
@@ -175,27 +180,27 @@ function S2aBook({ entityId }: { entityId: string }) {
         </div>
         {kind === 'month' && (
           <div className="space-y-1">
-            <Label htmlFor="s2a-month">{t('kinds.month')}</Label>
-            <DateInput id="s2a-month" kind="month" className="w-44" value={month} onChange={setMonth} />
+            <Label htmlFor={`${p}-month`}>{t('kinds.month')}</Label>
+            <DateInput id={`${p}-month`} kind="month" className="w-44" value={month} onChange={setMonth} />
           </div>
         )}
         {kind !== 'month' && (
           <div className="space-y-1">
-            <Label htmlFor="s2a-year">{t('kinds.year')}</Label>
-            <Input id="s2a-year" className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => setYear(e.target.value)} />
+            <Label htmlFor={`${p}-year`}>{t('kinds.year')}</Label>
+            <Input id={`${p}-year`} className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => setYear(e.target.value)} />
           </div>
         )}
         {kind === 'quarter' && (
           <div className="space-y-1">
-            <Label htmlFor="s2a-quarter">{t('kinds.quarter')}</Label>
-            <NativeSelect id="s2a-quarter" value={quarter} onChange={(e) => setQuarter(e.target.value)}>
+            <Label htmlFor={`${p}-quarter`}>{t('kinds.quarter')}</Label>
+            <NativeSelect id={`${p}-quarter`} value={quarter} onChange={(e) => setQuarter(e.target.value)}>
               {['1', '2', '3', '4'].map((q) => (
                 <NativeSelectOption key={q} value={q}>{`Q${q}`}</NativeSelectOption>
               ))}
             </NativeSelect>
           </div>
         )}
-        <Button variant="outline" loading={download.isPending} disabled={!data} onClick={() => download.mutate()} data-testid="household-s2a-download">
+        <Button variant="outline" loading={download.isPending} disabled={!data} onClick={() => download.mutate()} data-testid={`household-${p}-download`}>
           {t('download')}
         </Button>
       </div>
@@ -204,11 +209,11 @@ function S2aBook({ entityId }: { entityId: string }) {
       {download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
       {data && (
         <>
-          <Alert className="mb-3" data-testid="household-s2a-notice">
+          <Alert className="mb-3" data-testid={`household-${p}-notice`}>
             <AlertDescription>{t('s2aNotice')}</AlertDescription>
           </Alert>
           {data.commentary && (
-            <Alert className="mb-3" data-testid="household-s2a-draft">
+            <Alert className="mb-3" data-testid={`household-${p}-draft`}>
               <AlertDescription>
                 {t('s2aDraft')}
                 <ul className="mt-1 list-disc pl-5">
@@ -233,9 +238,9 @@ function S2aBook({ entityId }: { entityId: string }) {
                   )}
                 </TableCell>
                 <TableCell className="px-4 py-3 text-xs text-muted-foreground">
-                  {r.parts.map((p) => (
-                    <span key={p.trade} className="block whitespace-nowrap" data-testid={`household-s2a-part-${p.trade}`}>
-                      {tradeName(p.trade)}: {f.money(p.amount)}
+                  {r.parts.map((pt) => (
+                    <span key={pt.trade} className="block whitespace-nowrap" data-testid={`household-${p}-part-${pt.trade}`}>
+                      {tradeName(pt.trade)}: {f.money(pt.amount)}
                     </span>
                   ))}
                 </TableCell>
@@ -246,14 +251,14 @@ function S2aBook({ entityId }: { entityId: string }) {
               <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={4}>
                 {t('total')}
               </TableCell>
-              <TableCell className="px-4 py-3 text-right font-medium tabular-nums" data-testid="household-s2a-total">
+              <TableCell className="px-4 py-3 text-right font-medium tabular-nums" data-testid={`household-${p}-total`}>
                 {f.money(data.total)}
               </TableCell>
             </TableRow>
           </DataTable>
           {data.rows.length === 0 && <p className="mt-2 text-sm text-muted-foreground">{t('noRows')}</p>}
-          <h3 className="mb-1 mt-4 text-sm font-semibold text-foreground">{t('s2aLinesTitle')}</h3>
-          <DataTable numeric={[1, 2, 3, 4, 5]} head={[t('cnkdColumns.trade'), t('cnkdColumns.revenue'), t('cnkdColumns.vatPercent'), t('cnkdColumns.vat'), t('cnkdColumns.pitPercent'), t('cnkdColumns.pit')]}>
+          <h3 className="mb-1 mt-4 text-sm font-semibold text-foreground">{t(withPit ? 's2aLinesTitle' : 's2bLinesTitle')}</h3>
+          <DataTable numeric={withPit ? [1, 2, 3, 4, 5] : [1, 2, 3]} head={[t('cnkdColumns.trade'), t('cnkdColumns.revenue'), t('cnkdColumns.vatPercent'), t('cnkdColumns.vat'), ...(withPit ? [t('cnkdColumns.pitPercent'), t('cnkdColumns.pit')] : [])]}>
             {data.lines.map((l) => (
               <TableRow key={l.trade}>
                 <TableCell className="px-4 py-3 text-foreground">
@@ -266,23 +271,25 @@ function S2aBook({ entityId }: { entityId: string }) {
                   {f.money(l.vat)}
                   {provisionalForReader}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">{l.pitPercent}</TableCell>
-                <TableCell className="px-4 py-3 text-right tabular-nums">
-                  {f.money(l.pit)}
-                  {provisionalForReader}
-                </TableCell>
+                {withPit && <TableCell className="px-4 py-3 text-right tabular-nums">{l.pitPercent}</TableCell>}
+                {withPit && (
+                  <TableCell className="px-4 py-3 text-right tabular-nums">
+                    {f.money(l.pit ?? '0')}
+                    {provisionalForReader}
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </DataTable>
           {data.totals === null ? (
-            <Alert className="mt-3" data-testid="household-s2a-unassigned">
+            <Alert className="mt-3" data-testid={`household-${p}-unassigned`}>
               <AlertDescription>{t('s2aUnassigned', { amount: f.money(data.unassignedGross) })}</AlertDescription>
             </Alert>
           ) : (
-            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm" data-testid="household-s2a-totals">
-              <dt className="text-subtle-foreground">{t('cnkdTotalTax')}</dt>
+            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm" data-testid={`household-${p}-totals`}>
+              <dt className="text-subtle-foreground">{t(withPit ? 'cnkdTotalTax' : 's2bTotalVat')}</dt>
               <dd className="text-right font-medium tabular-nums">
-                {f.money(data.totals.tax)}
+                {f.money((withPit ? data.totals.tax : data.totals.vat) ?? '0')}
                 {provisional}
               </dd>
             </dl>
@@ -792,7 +799,7 @@ function ProfileCard({ entityId, canEdit }: { entityId: string; canEdit: boolean
             {view.data.books.map((b) => (
               <li key={b.book}>
                 {b.name}
-                {b.book !== 'S1a' && b.book !== 'S2a' && b.book !== 'S2c' && <span className="text-subtle-foreground"> {t('comingSoon')}</span>}
+                {b.book !== 'S1a' && b.book !== 'S2a' && b.book !== 'S2b' && b.book !== 'S2c' && <span className="text-subtle-foreground"> {t('comingSoon')}</span>}
               </li>
             ))}
           </ul>
@@ -819,6 +826,7 @@ export function HouseholdPage() {
   const view = useQuery({ ...orpc.household.profile.queryOptions({ input: { legalEntityId: entity?.id ?? '' } }), enabled: entity !== null });
   const hasS1a = view.data?.books.some((b) => b.book === 'S1a') ?? false;
   const hasS2a = view.data?.books.some((b) => b.book === 'S2a') ?? false;
+  const hasS2b = view.data?.books.some((b) => b.book === 'S2b') ?? false;
   const hasS2c = view.data?.books.some((b) => b.book === 'S2c') ?? false;
   // The quarterly worksheet is for the percentage method alone today (the income method and group 1 have no quarterly worksheet here).
   const cnkdTrades = view.data?.profile?.pitMethod === 'percentage' ? view.data.profile.trades : null;
@@ -848,6 +856,7 @@ export function HouseholdPage() {
           <ProfileCard key={entity.id} entityId={entity.id} canEdit={canEdit} />
           {hasS1a && <S1aBook key={entity.id} entityId={entity.id} />}
           {hasS2a && <S2aBook key={entity.id} entityId={entity.id} />}
+          {hasS2b && <S2aBook key={`${entity.id}-s2b`} entityId={entity.id} variant="S2b" />}
           {hasS2c && <S2cBook key={entity.id} entityId={entity.id} />}
           {cnkdTrades && <CnkdReturn key={entity.id} entityId={entity.id} trades={cnkdTrades} />}
         </>
