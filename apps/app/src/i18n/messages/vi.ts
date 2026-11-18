@@ -7189,6 +7189,11 @@ export const vi = {
       ACCOUNT_NOT_IN_CHART: 'Tài khoản này không có trong hệ thống tài khoản của bạn nên MISA cũng sẽ không tìm thấy. Hãy thêm vào hệ thống tài khoản hoặc đổi tài khoản trên chứng từ.',
       TOO_LONG: 'Văn bản dài hơn {limit} ký tự MISA cho phép: trong file nó bị cắt, còn số hóa đơn không bao giờ bị cắt nên MISA sẽ báo lỗi. Hãy rút gọn trong Ludy.',
     },
+    lineAi: {
+      busy: '{finance} đang bận, danh sách ở trên đứng một mình lúc này.',
+      budget: '{finance} đã dùng hết ngân sách AI tháng này: danh sách ở trên đứng một mình.',
+      failed: '{finance} chưa diễn đạt được lần này: danh sách ở trên đứng một mình.',
+    },
     warnOnly: 'Các kiểm tra này chỉ cảnh báo. Việc tải file không bị chặn.',
   },
   vouchers: {
@@ -8619,6 +8624,7 @@ export const vi = {
       finance_vat_late_explain: 'Viết một câu nêu các hóa đơn bán ra lập muộn trong bảng kê thuế GTGT',
       finance_bank_match_explain: 'Giải thích vì sao một giao dịch ngân hàng có thể là khoản trả lương',
       finance_marketplace_line: 'Diễn đạt điều đang chờ trên màn hình sàn thương mại điện tử',
+      finance_misa_check_line: 'Diễn đạt kết quả kiểm tra file xuất MISA',
       finance_supplier_payable_line: 'Diễn đạt các hóa đơn mua đang chờ chi',
       meetings_transcribe: 'Ghi lời cuộc họp thành văn bản',
       meetings_summary: 'Tóm tắt cuộc họp, các quyết định và việc cần làm',

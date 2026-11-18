@@ -4,7 +4,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MisaCheck } from '@crove/kernel-contract';
+import type { MisaCheck, MisaCheckLine } from '@crove/kernel-contract';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient, calls: [] as string[] }));
 
@@ -83,5 +83,33 @@ describe('the check before a MISA export on the screen (#3848)', () => {
     expect(vi).toContain('63 điểm cần xem trong 30 dòng');
     expect(vi).toContain('Các kiểm tra này chỉ cảnh báo');
     expect(vi).toContain('dài hơn 128 ký tự');
+  });
+
+  // The line of the finance coworker (slice B): shown beside the list it was written from, as its own state when it has no words.
+  const counts = { rows: 30, codes: 30, required: 0, vat: 0, accounts: 2, tooLong: 1 };
+  const line = (ai: MisaCheckLine['ai'], text: string | null): MisaCheckLine => ({ counts, ai, text });
+
+  it('shows the coworker\'s sentence above the list when there is one, and not otherwise', () => {
+    const used = wrap(<MisaCheckResult result={result} line={line('used', 'Có 30 ô mã cần điền trong file: hãy điền mã trước khi nhập.')} />, 'vi');
+    expect(used).toContain('data-testid="misa-check-line-text"');
+    expect(used).toContain('Có 30 ô mã cần điền');
+    expect(used.indexOf('misa-check-line-text')).toBeLessThan(used.indexOf('misa-check-group'));
+    const none = wrap(<MisaCheckResult result={result} />, 'en');
+    expect(none).not.toContain('misa-check-line-text');
+    expect(none).not.toContain('misa-check-line-ai-state');
+    // With AI off the list is unchanged.
+    const off = wrap(<MisaCheckResult result={result} line={line('off', null)} />, 'en');
+    expect(off).not.toContain('misa-check-line');
+    expect(off.match(/data-testid="misa-check-group"/g)).toHaveLength(3);
+  });
+
+  it('says why there is no sentence when the coworker is busy, out of budget or refused, with the list standing alone', () => {
+    for (const state of ['busy', 'budget', 'failed'] as const) {
+      const html = wrap(<MisaCheckResult result={result} line={line(state, null)} />, 'en');
+      expect(html).toContain('data-testid="misa-check-line-ai-state"');
+      expect(html).toContain('the list above stands alone');
+      expect(html).not.toContain('misa-check-line-text');
+      expect(html.match(/data-testid="misa-check-group"/g)).toHaveLength(3);
+    }
   });
 });
