@@ -48,7 +48,7 @@ const CRM_GUIDE: readonly CrmGuideStep[] = [
       'Kéo thẻ sang cột khác, hoặc kéo lên xuống trong cột để đổi thứ tự. Dùng bàn phím hoặc điện thoại thì chọn giai đoạn ở menu trên thẻ. Gần mép bảng, các cột tự cuộn khi bạn kéo.',
       `Chuyển sang ${q('Thắng')} là cơ hội đã chốt. Chuyển sang ${q('Thua')} thì có thể ghi lý do. Chuyển ngược lại sang giai đoạn đang mở thì cơ hội mở lại.`,
       'Hai người cùng sửa một cơ hội: người lưu sau được báo là cơ hội vừa được người khác sửa, và không ghi đè lên bản của người trước.',
-      `Chủ sở hữu và quản trị viên bấm ${q(vi.deals.view.settings)} để đổi tên, thêm, sắp xếp và xóa các giai đoạn đang mở (tối đa 12 giai đoạn; ${q('Thắng')} và ${q('Thua')} luôn ở cuối). Giai đoạn còn cơ hội thì chưa xóa được.`,
+      `Chủ sở hữu và quản trị viên bấm ${q(vi.deals.editStages)} (hoặc mở Cài đặt, thẻ ${q(vi.deals.process.title)}) để đổi tên, thêm, sắp xếp và xóa các giai đoạn đang mở (tối đa 12 giai đoạn; ${q('Thắng')} và ${q('Thua')} luôn ở cuối). Giai đoạn còn cơ hội thì chưa xóa được.`,
       'Mỗi lần tạo, chuyển giai đoạn hay xóa cơ hội đều ghi vào dòng thời gian của liên hệ, không kèm tên cơ hội hay số tiền.',
     ],
   },

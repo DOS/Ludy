@@ -96,7 +96,10 @@ test('stale deals show a badge and a next steps list, done and snooze are one cl
   });
 
   await test.step('the owner sets the days, within 7 to 60', async () => {
-    await page.getByRole('button', { name: 'Giai đoạn' }).click();
+    // The setting sits in Settings, "Quy trình bán hàng" (#3647), a link from the Deals screen.
+    await page.getByRole('tab', { name: 'Bảng' }).click();
+    await page.getByRole('link', { name: 'Sửa giai đoạn' }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/settings#sales-process$`));
     const setting = page.getByTestId('stale-setting');
     await expect(setting.getByLabel('Số ngày')).toHaveValue('14');
     await setting.getByLabel('Số ngày').fill('5');

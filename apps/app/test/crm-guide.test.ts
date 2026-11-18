@@ -50,7 +50,7 @@ describe('crmGuide', () => {
       vi.quotes.orders.delivery.stockRecord,
       vi.quotes.orders.delivery.stockRetry,
       vi.quotes.orders.delivery.stockTeach,
-      vi.quotes.create, vi.quotes.editor.addItem, vi.quotes.editor.copyFrom, vi.quotes.editor.save, vi.reports.title, vi.reports.tabs.quotes, vi.nav.apps.engage, vi.nav.contacts, vi.nav.deals, vi.contacts.add, vi.contacts.importFile, vi.savedViews.save, vi.deals.add, vi.deals.view.settings, vi.contactImport.steps.preview]) {
+      vi.quotes.create, vi.quotes.editor.addItem, vi.quotes.editor.copyFrom, vi.quotes.editor.save, vi.reports.title, vi.reports.tabs.quotes, vi.nav.apps.engage, vi.nav.contacts, vi.nav.deals, vi.contacts.add, vi.contacts.importFile, vi.savedViews.save, vi.deals.add, vi.deals.editStages, vi.deals.process.title, vi.contactImport.steps.preview]) {
       expect(text, label).toContain(`"${label}"`);
     }
   });

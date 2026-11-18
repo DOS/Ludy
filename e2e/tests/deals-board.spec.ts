@@ -43,8 +43,20 @@ test('a member adds deals, moves them between stages and the board keeps its ord
   await page.getByRole('navigation').getByRole('link', { name: 'Cơ hội' }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/deals$`));
   const board = page.getByTestId('deal-board');
-  await expect(board.getByRole('region', { name: 'Mới' })).toBeVisible();
-  await expect(board.getByRole('region', { name: 'Thắng' })).toBeVisible();
+
+  await test.step('an org with no deal sees one action and the customer import, not five empty columns (#3647)', async () => {
+    await expect(page.getByText('Bảng chưa có cơ hội nào.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Thêm cơ hội' })).toHaveCount(1);
+    await expect(page.getByRole('link', { name: 'Nhập khách hàng từ tệp' })).toBeVisible();
+    await expect(board).toHaveCount(0);
+    // The header holds the view tabs and nothing else to press; the stage editor is in Settings, a link away.
+    await expect(page.getByRole('button', { name: 'Giai đoạn' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Sửa giai đoạn' })).toBeVisible();
+    // Search and the owner are always there; the rest are folded.
+    await expect(page.getByRole('searchbox', { name: 'Tìm kiếm' })).toBeVisible();
+    await expect(page.getByLabel('Phụ trách')).toBeVisible();
+    await expect(page.getByLabel('Từ số tiền')).toHaveCount(0);
+  });
 
   const column = (name: string) => board.getByRole('region', { name });
   const titles = (name: string) => column(name).getByTestId('deal-card').locator('p.font-medium').allTextContents();
@@ -62,6 +74,14 @@ test('a member adds deals, moves them between stages and the board keeps its ord
     }
     expect(await titles('Mới')).toEqual(['Gói kế toán năm', 'Tư vấn thuế', 'Báo cáo tài chính']);
     await expect(column('Mới')).toContainText('3');
+  });
+
+  await test.step('at 1440 wide every column, Thắng and Thua included, is on screen with no sideways scroll (#3647)', async () => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    for (const name of ['Mới', 'Báo giá', 'Thắng', 'Thua']) await expect(column(name)).toBeInViewport({ ratio: 1 });
+    expect(await board.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    await expect(page.getByRole('heading', { level: 2, name: 'Thua' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Bộ lọc khác' })).toHaveAttribute('aria-expanded', 'false');
   });
 
   await test.step('the stage menu moves a card to another column', async () => {

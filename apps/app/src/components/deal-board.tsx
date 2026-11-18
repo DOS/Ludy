@@ -5,21 +5,61 @@
 // the card moves at once and goes back, with the reason, when the server refuses (a stale version, a removed stage).
 // Dropping on a lost stage asks for an optional reason first. Won and Lost show the deals closed in the last 30 days.
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
 import { useRef, useState, type DragEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { BOARD_CLOSED_DAYS, DEAL_LOST_REASON_MAX, type Board, type BoardColumn, type Deal, type FilterAst } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
+import { Button, buttonVariants } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
+import { Skeleton } from '@crove/ui/components/skeleton';
 import { DealForm, DealPartyDuplicate, refreshDeals, type Member } from './deal-form.tsx';
 import { DealBookings } from './booking-deal.tsx';
 import { DealQuotes } from './deal-quotes.tsx';
 import { Empty, ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { moveCard, type Drop } from '../lib/deal-board.ts';
+import { isEmptyBoard, moveCard, type Drop } from '../lib/deal-board.ts';
 import { formatMoney } from '../lib/format.ts';
+
+// What an empty Deals screen offers (#3647): the one action, and the way to bring customers in first. There is no deal import; the deal needs a customer, so the file is of customers.
+export function DealsEmpty({ title, hint, canEdit, onAdd }: { title: string; hint?: string | undefined; canEdit: boolean; onAdd: () => void }) {
+  const t = useTranslations('deals');
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  return (
+    <Empty
+      title={title}
+      hint={hint}
+      action={
+        canEdit ? (
+          <div className="flex flex-wrap justify-center gap-2">
+            <Button onClick={onAdd}>{t('add')}</Button>
+            <Link to="/o/$slug/contacts/import" params={{ slug }} className={buttonVariants({ variant: 'outline' })}>
+              {t('importFile')}
+            </Link>
+          </div>
+        ) : undefined
+      }
+    />
+  );
+}
+
+// The columns' places while the board loads (#3647): the same grid, so nothing jumps when the cards arrive.
+function BoardSkeleton({ label }: { label: string }) {
+  return (
+    <div role="status" aria-busy="true" aria-label={label} className="grid auto-cols-[minmax(13rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-3">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <div key={i} className="space-y-2 rounded-lg bg-muted/40 p-2">
+          <Skeleton className="h-5 w-24" />
+          <Skeleton className="h-4 w-16" />
+          <Skeleton className="h-20 w-full" />
+          {i < 2 && <Skeleton className="h-20 w-full" />}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 interface MoveInput {
   dealId: string;
@@ -119,9 +159,12 @@ export function DealBoard({
   canEdit,
   filters,
   onShowAll,
+  onAdd,
 }: {
   members: readonly Member[];
   canEdit: boolean;
+  // Opens the screen's "Thêm cơ hội"; the empty board offers it.
+  onAdd: () => void;
   filters?: FilterAst | undefined;
   // Opens the list of every won or lost deal, not only the last days the board shows (the closed columns' "Xem tất cả").
   onShowAll?: ((kind: 'won' | 'lost') => void) | undefined;
@@ -199,8 +242,10 @@ export function DealBoard({
   };
 
   if (board.error) return <ErrorText>{errorMessage(board.error)}</ErrorText>;
-  if (board.isPending) return <p className="text-sm text-muted-foreground">{t('board.loading')}</p>;
+  if (board.isPending) return <BoardSkeleton label={t('board.loading')} />;
   if (columns.length === 0) return <Empty title={t('empty')} hint={canEdit ? t('emptyHint') : undefined} />;
+  // No deal at all, no filter on: five empty columns say nothing, so the screen says what to do. A deal closed more than 30 days ago is not on the board, so the words are about the board.
+  if (!filters && isEmptyBoard(board.data)) return <DealsEmpty title={t('board.emptyTitle')} hint={canEdit ? t('board.emptyHint') : undefined} canEdit={canEdit} onAdd={onAdd} />;
 
   return (
     <div className="space-y-3">
@@ -237,14 +282,14 @@ export function DealBoard({
         </form>
       )}
       {failure !== null && <ErrorText>{errorMessage(failure)}</ErrorText>}
-      <div ref={scroller} className={`flex gap-3 overflow-x-auto pb-3 ${dragging ? '' : 'snap-x'}`} data-testid="deal-board" onDragOver={(e) => scrollNearEdge(e.clientX)}>
+      <div ref={scroller} className={`grid auto-cols-[minmax(13rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-3 ${dragging ? '' : 'snap-x'}`} data-testid="deal-board" onDragOver={(e) => scrollNearEdge(e.clientX)}>
         {columns.map((column) => (
           <section
             key={column.stage.id}
             aria-label={column.stage.name}
             data-testid="deal-column"
             data-stage-id={column.stage.id}
-            className={`w-72 shrink-0 snap-start rounded-lg bg-muted/40 p-2 ${over?.stageId === column.stage.id && over.beforeDealId === null ? 'ring-2 ring-primary/50' : ''}`}
+            className={`min-w-0 snap-start rounded-lg bg-muted/40 p-2 ${over?.stageId === column.stage.id && over.beforeDealId === null ? 'ring-2 ring-primary/50' : ''}`}
             onDragOver={(e) => {
               if (!dragging) return;
               e.preventDefault();
@@ -260,7 +305,7 @@ export function DealBoard({
             }}
           >
             <header className="mb-2 flex items-baseline justify-between gap-2 px-1">
-              <h3 className="text-sm font-semibold text-foreground">{column.stage.name}</h3>
+              <h2 className="text-sm font-semibold text-foreground">{column.stage.name}</h2>
               <Badge variant="outline">{column.count}</Badge>
             </header>
             <p className="mb-2 px-1 text-xs tabular-nums text-muted-foreground">{formatMoney(column.total, locale)}</p>
@@ -274,7 +319,7 @@ export function DealBoard({
                 )}
               </p>
             )}
-            <ul className="space-y-2" aria-label={column.stage.name}>
+            <ul className="space-y-2">
               {column.cards.map((deal) => (
                 <Card
                   key={deal.id}

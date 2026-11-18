@@ -6,7 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { Board, PipelineStage } from '@crove/kernel-contract';
+import type { Board, Deal, PipelineStage } from '@crove/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 
@@ -35,21 +35,43 @@ vi.mock('../src/lib/api.ts', async () => {
 const { DealBoard } = await import('../src/components/deal-board.tsx');
 
 const stage = (id: string, name: string, kind: PipelineStage['kind'], position: number): PipelineStage => ({ id, name, kind, position });
+const card: Deal = {
+  id: '00000000-0000-4000-8000-000000000001',
+  partyId: '00000000-0000-4000-8000-000000000010',
+  partyName: 'Công ty ABC',
+  title: 'Gói kế toán năm',
+  amount: '15000000.00',
+  currency: 'VND',
+  stageId: 'new',
+  stageKind: 'open',
+  expectedClose: null,
+  ownerUserId: null,
+  lostReason: null,
+  closedAt: null,
+  version: 1,
+  canDelete: true,
+  followUp: null,
+  partyDuplicateOf: null,
+  createdAt: '2026-11-01T00:00:00.000Z',
+  updatedAt: '2026-11-01T00:00:00.000Z',
+};
 const board: Board = {
   columns: [
-    { stage: stage('new', 'Mới', 'open', 1), count: 0, total: '0', truncated: false, cards: [] },
+    { stage: stage('new', 'Mới', 'open', 1), count: 1, total: '15000000.00', truncated: false, cards: [card] },
     { stage: stage('won', 'Thắng', 'won', 2), count: 0, total: '0', truncated: false, cards: [] },
     { stage: stage('lost', 'Thua', 'lost', 3), count: 0, total: '0', truncated: false, cards: [] },
   ],
 };
 
-function render(onShowAll: ((kind: 'won' | 'lost') => void) | undefined, locale: 'vi' | 'en' = 'vi'): string {
-  client.current.setQueryData(['crm', 'deals', 'board', {}], board);
+const emptyBoard: Board = { columns: board.columns.map((c) => ({ ...c, count: 0, total: '0', cards: [] })) };
+
+function render(onShowAll: ((kind: 'won' | 'lost') => void) | undefined, locale: 'vi' | 'en' = 'vi', shown: Board = board, canEdit = true): string {
+  client.current.setQueryData(['crm', 'deals', 'board', {}], shown);
   return renderToStaticMarkup(
     <I18nProvider>
       <QueryClientProvider client={client.current}>
         <IntlProvider locale={locale} messages={catalog(locale)}>
-          <DealBoard members={[]} canEdit onShowAll={onShowAll} />
+          <DealBoard members={[]} canEdit={canEdit} onAdd={() => undefined} onShowAll={onShowAll} />
         </IntlProvider>
       </QueryClientProvider>
     </I18nProvider>,
@@ -87,5 +109,42 @@ describe('the closed columns of the deal board', () => {
     const html = render(undefined);
     expect(html).not.toContain('Xem tất cả');
     expect(html).toContain('Các cơ hội đóng trong 30 ngày qua');
+  });
+});
+
+describe('the layout and the empty state of the deal board (#3647)', () => {
+  it('fits the columns in the content width: a grid of at least 13rem, not 18rem columns that push Thắng and Thua off-screen', () => {
+    const html = render(undefined);
+    expect(html).toContain('auto-cols-[minmax(13rem,1fr)]');
+    expect(html).not.toContain('w-72');
+  });
+
+  it('names each column by its heading, under the screen title, and does not repeat the name on its list', () => {
+    const html = render(undefined);
+    expect(html).toContain('<h2 class="text-sm font-semibold text-foreground">Thắng</h2>');
+    expect(html).not.toContain('<h3');
+    expect(column(html, 'Mới')).not.toMatch(/<ul[^>]*aria-label/);
+  });
+
+  it('with no deal and no filter says so and offers the one action and the customer import, instead of empty columns', () => {
+    const html = render(undefined, 'vi', emptyBoard);
+    expect(html).toContain('Bảng chưa có cơ hội nào.');
+    expect(html).toContain('>Thêm cơ hội<');
+    expect(html).toContain('>Nhập khách hàng từ tệp<');
+    expect(html).not.toContain('data-testid="deal-board"');
+  });
+
+  it('says the same in English', () => {
+    const html = render(undefined, 'en', emptyBoard);
+    expect(html).toContain('The board has no deals yet.');
+    expect(html).toContain('>Add deal<');
+    expect(html).toContain('>Import customers from a file<');
+  });
+
+  it('offers a viewer no action', () => {
+    const html = render(undefined, 'vi', emptyBoard, false);
+    expect(html).toContain('Bảng chưa có cơ hội nào.');
+    expect(html).not.toContain('Thêm cơ hội');
+    expect(html).not.toContain('Nhập khách hàng');
   });
 });

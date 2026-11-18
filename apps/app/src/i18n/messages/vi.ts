@@ -4257,6 +4257,8 @@ export const vi = {
     empty: 'Chưa có cơ hội nào.',
     emptyHint: 'Thêm cơ hội đầu tiên: chọn khách hàng, nhập số tiền và ngày dự kiến chốt.',
     loadMore: 'Xem thêm',
+    importFile: 'Nhập khách hàng từ tệp',
+    editStages: 'Sửa giai đoạn',
     edit: 'Sửa',
     delete: 'Xóa',
     deleteTitle: 'Xóa cơ hội này?',
@@ -4271,6 +4273,8 @@ export const vi = {
       search: 'Tìm kiếm',
       searchPlaceholder: 'Tên cơ hội hoặc khách hàng',
       any: 'Tất cả',
+      more: 'Bộ lọc khác',
+      moreCount: '{count} điều kiện đang dùng',
       status: 'Trạng thái',
       statusOpen: 'Đang mở',
       statusWon: 'Thắng',
@@ -4305,6 +4309,8 @@ export const vi = {
     },
     board: {
       loading: 'Đang tải bảng cơ hội...',
+      emptyTitle: 'Bảng chưa có cơ hội nào.',
+      emptyHint: 'Thêm cơ hội đầu tiên, hoặc nhập khách hàng từ tệp trước. Cơ hội đã đóng hơn 30 ngày trước xem ở dạng Danh sách.',
       closeOn: 'Dự kiến chốt {date}',
       lostFor: 'Lý do thua của "{title}" (không bắt buộc)',
       lastDays: 'Các cơ hội đóng trong {days} ngày qua',
@@ -4318,7 +4324,10 @@ export const vi = {
       list: 'Danh sách',
       next: 'Việc tiếp theo',
       nextCount: 'Việc tiếp theo ({count})',
-      settings: 'Giai đoạn',
+    },
+    process: {
+      title: 'Quy trình bán hàng',
+      intro: 'Các giai đoạn của bảng cơ hội và lúc nào một cơ hội bị bỏ quên thì hiện ở "Việc tiếp theo". Chủ sở hữu và quản trị viên sửa được.',
     },
     followUp: 'Cần theo dõi',
     duplicate: {

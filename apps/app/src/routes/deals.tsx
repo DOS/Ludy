@@ -4,11 +4,12 @@
 // moves and deletes deals; owners and admins edit the stages; a viewer reads. The board is the default on a wide screen,
 // the list on a phone. Amounts are decimal strings and are shown as the reader's language groups them.
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { DEAL_LOST_REASON_MAX, type Deal, type DealCursor, type FilterAst, type PipelineStage, type SavedViewSort } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
+import { Button, buttonVariants } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
@@ -16,19 +17,18 @@ import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { DealBookings } from '../components/booking-deal.tsx';
 import { LinkedMeetings, meetingsInstalled } from '../components/linked-meetings.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
-import { DealBoard } from '../components/deal-board.tsx';
+import { DealBoard, DealsEmpty } from '../components/deal-board.tsx';
 import { DealFilterBar } from '../components/deal-filter-bar.tsx';
 import { DealForm, DealPartyDuplicate, refreshDeals, type Member } from '../components/deal-form.tsx';
 import { DealQuotes } from '../components/deal-quotes.tsx';
 import { DealNextSteps, useNextStepCount } from '../components/deal-next-steps.tsx';
-import { DealStaleSetting } from '../components/deal-stale-setting.tsx';
-import { PipelineSettings } from '../components/pipeline-settings.tsx';
+import { SALES_PROCESS_ID } from '../components/sales-process-card.tsx';
 import { DataTable, Empty, ErrorText, Field, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { EMPTY_DEAL_FILTER, astToDealFilter, dealFilterToAst, type DealFilterState } from '../lib/deal-filter.ts';
-import { showAllClosed } from '../lib/deal-board.ts';
+import { isEmptyBoard, readDealView, showAllClosed, withDealView, type DealView } from '../lib/deal-board.ts';
 import { formatMoney } from '../lib/format.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 
@@ -200,22 +200,14 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
   );
 }
 
-type View = 'board' | 'list' | 'next';
-// The board is the default where there is room for columns; on a phone the list is. A link to `?tab=next` (the Home list) opens the next steps.
+type View = DealView;
+// The board is the default where there is room for columns; on a phone the list is. The view in use is in the address (`?tab=`), so a reload keeps it, and the Home list links to `?tab=next`.
 const wideScreen = (): boolean => {
   try {
     return window.matchMedia('(min-width: 640px)').matches;
   } catch {
     return true;
   }
-};
-const firstView = (): View => {
-  try {
-    if (new URLSearchParams(window.location.search).get('tab') === 'next') return 'next';
-  } catch {
-    // No address to read: the default view.
-  }
-  return wideScreen() ? 'board' : 'list';
 };
 
 export function DealsPage() {
@@ -226,8 +218,22 @@ export function DealsPage() {
   const members = org.data?.members ?? [];
   const canManage = role === 'owner' || role === 'admin';
   const [adding, setAdding] = useState(false);
-  const [settings, setSettings] = useState(false);
-  const [view, setView] = useState<View>(firstView);
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  const [view, setViewState] = useState<View>(() => {
+    try {
+      return readDealView(window.location.search) ?? (wideScreen() ? 'board' : 'list');
+    } catch {
+      return 'board';
+    }
+  });
+  const setView = (next: View) => {
+    setViewState(next);
+    try {
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}${withDealView(window.location.search, next)}${window.location.hash}`);
+    } catch {
+      // No address to write: the view is kept in this page only.
+    }
+  };
   const nextCount = useNextStepCount();
   const stages = useQuery(orpc.crm.pipeline.stages.queryOptions({ input: {} }));
   // The first member to open the screen in an org with no pipeline gets the default stages.
@@ -266,6 +272,9 @@ export function DealsPage() {
     }),
   });
   const rows = deals.data?.pages.flatMap((p) => p.items) ?? [];
+  // An org with no deal sees one action, the empty state's: the header's "Thêm cơ hội" waits until there is a deal (#3647). The board's answer is the one DealBoard reads.
+  const plainBoard = useQuery({ ...orpc.crm.deals.board.queryOptions({ input: {} }), enabled: view === 'board' });
+  const noDeals = view === 'board' ? applied.all.length === 0 && isEmptyBoard(plainBoard.data) : view === 'list' && !filtered && !deals.isPending && !stages.isPending && !deals.error && rows.length === 0;
   const head = [t('columns.title'), t('columns.party'), t('columns.stage'), t('columns.amount'), t('columns.expectedClose'), t('columns.owner'), ...(canEdit ? [''] : [])];
   const stageList = stages.data ?? [];
 
@@ -285,12 +294,7 @@ export function DealsPage() {
                 </TabsTrigger>
               </TabsList>
             </Tabs>
-            {canManage && (
-              <Button variant="outline" onClick={() => setSettings((s) => !s)} aria-expanded={settings}>
-                {t('view.settings')}
-              </Button>
-            )}
-            {canEdit && (
+            {canEdit && !noDeals && (
               <Button onClick={() => setAdding((a) => !a)} aria-expanded={adding}>
                 {t('add')}
               </Button>
@@ -298,12 +302,6 @@ export function DealsPage() {
           </div>
         }
       />
-      {settings && canManage && (
-        <div className="mb-4 space-y-4">
-          <PipelineSettings />
-          <DealStaleSetting />
-        </div>
-      )}
       {adding && (
         <div className="mb-4">
           <DealForm deal={null} members={members} onDone={() => setAdding(false)} />
@@ -314,11 +312,27 @@ export function DealsPage() {
       ) : (
         <>
       <ViewTabs scope={SCOPE} filters={filters} sort={sort} onApply={applyView} />
-      <DealFilterBar bar={bar} setBar={setBar} sort={sort} setSort={setSort} stages={stageList} members={members} />
+      <DealFilterBar
+        bar={bar}
+        setBar={setBar}
+        sort={sort}
+        setSort={setSort}
+        stages={stageList}
+        members={members}
+        view={view === 'board' ? 'board' : 'list'}
+        extra={
+          view === 'board' && canManage ? (
+            <Link to="/o/$slug/settings" params={{ slug }} hash={SALES_PROCESS_ID} className={buttonVariants({ variant: 'link', size: 'sm' })}>
+              {t('editStages')}
+            </Link>
+          ) : undefined
+        }
+      />
       {view === 'board' ? (
         <DealBoard
           members={members}
           canEdit={canEdit}
+          onAdd={() => setAdding(true)}
           filters={applied.all.length > 0 ? applied : undefined}
           onShowAll={(kind) => {
             setBar(showAllClosed(kind));
@@ -331,7 +345,7 @@ export function DealsPage() {
       ) : (deals.error || stages.error) && rows.length === 0 ? (
         <ErrorText>{errorMessage(deals.error ?? stages.error)}</ErrorText>
       ) : rows.length === 0 ? (
-        <Empty title={filtered ? t('filters.noMatch') : t('empty')} hint={filtered ? undefined : canEdit ? t('emptyHint') : undefined} />
+        filtered ? <Empty title={t('filters.noMatch')} /> : <DealsEmpty title={t('empty')} hint={canEdit ? t('emptyHint') : undefined} canEdit={canEdit} onAdd={() => setAdding(true)} />
       ) : (
         <>
           <DataTable head={head} numeric={[3]}>
