@@ -16,6 +16,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { cn } from '@crove/ui/lib/utils';
 import { BankMatchGroups } from '../components/bank-match-groups.tsx';
 import { BankPayrollLine } from '../components/bank-payroll-line.tsx';
+import { BankSupplierLine } from '../components/bank-supplier-line.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, Notice, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
@@ -411,6 +412,7 @@ export function BankPage() {
                       </Badge>
                     )}
                     {payrollLines.has(line.id) && <BankPayrollLine slug={slug} line={line} bankAccount={account} />}
+                    {payrollLines.has(line.id) && <BankSupplierLine slug={slug} line={line} />}
                   </TableCell>
                   <TableCell className={NUM}>{line.amount.startsWith('-') ? '' : f.money(line.amount)}</TableCell>
                   <TableCell className={NUM}>{line.amount.startsWith('-') ? f.money(line.amount.slice(1)) : ''}</TableCell>

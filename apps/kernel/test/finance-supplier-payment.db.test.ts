@@ -192,11 +192,11 @@ suite('payments to a supplier (#3113 S2)', () => {
     expect(heldFor).toBe(24 * 3_600_000);
     // Not payable before payable_after: the database refuses the move whatever the clock of the application says.
     await expect(rows("UPDATE crove_finance.supplier_payment SET status = 'paid' WHERE org_id = $1 AND id = $2", [o.orgId, first.id])).rejects.toThrow(/SUPPLIER_PAYMENT_HELD/);
-    // The hold passes (the time of the row arranged as only the database owner can): the move to paid then holds, and stamps its own time.
+    // The hold passes (the time of the row arranged as only the database owner can): the move to paid still needs the file handed over and the voucher of the settlement (S3c, finance-supplier-payment-settle
+    // tests the paid move and its stamp), so it is refused until then.
     await unguarded((c) => c.query("UPDATE crove_finance.supplier_payment SET payable_after = now() - interval '1 hour' WHERE org_id = $1 AND id = $2", [o.orgId, first.id]));
-    await rows("UPDATE crove_finance.supplier_payment SET status = 'paid' WHERE org_id = $1 AND id = $2", [o.orgId, first.id]);
-    expect((await payments(o))[0]).toMatchObject({ status: 'paid' });
-    expect((await payments(o))[0]?.paid_at).not.toBeNull();
+    await expect(rows("UPDATE crove_finance.supplier_payment SET status = 'paid' WHERE org_id = $1 AND id = $2", [o.orgId, first.id])).rejects.toThrow(/SUPPLIER_PAYMENT_NOT_EXPORTED/);
+    expect((await payments(o))[0]).toMatchObject({ status: 'approved', paid_at: null });
     // An account older than 30 days: no hold. A second org's invoice, the account's creation time set back as only the database owner can.
     const o2 = await org(false);
     await addAccount(o2);

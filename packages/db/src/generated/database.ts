@@ -935,6 +935,7 @@ export interface FinanceCashVoucherTable {
   number_allocation_id: ColumnType<string | null, string | null, NotGranted>;
   payroll_run_id: ColumnType<string | null, string | null, NotGranted>;
   payroll_payment_kind: ColumnType<string | null, string | null, NotGranted>;
+  supplier_payment_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.categorization_rule */

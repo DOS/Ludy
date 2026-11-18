@@ -20,6 +20,7 @@ import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-r
 import { OPENING_BALANCE_SOURCE } from './domain/opening-balance.ts';
 import { postNewEntry } from './ledger.ts';
 import { marketplaceReversalNotes } from './marketplace-reversal-guard.ts';
+import { refuseSupplierPaymentReversal } from './supplier-payment-settle.ts';
 import { reverseDocumentStock } from './stock-lines.ts';
 
 export { zJournalReversal, type JournalReversal };
@@ -148,6 +149,8 @@ export const prepareReversal = defineCommand({
     const entry = await reversibleEntry(ctx, request);
     // A marketplace settlement's or payout's entry: refused while the payout stands or the period is closed, and noted in the title for the approver (#3329).
     const notes = await marketplaceReversalNotes(ctx, entry, request.entryDate);
+    // The voucher of a settled supplier payment is not reversed while the payment is paid (#3700 S3c).
+    await refuseSupplierPaymentReversal(ctx, entry);
     // The proposal belongs to the entry's legal entity (#1538), which the payload does not name.
     return {
       kind: REVERSAL_KIND,
@@ -172,6 +175,7 @@ export const reverseEntry = defineCommand({
     const entry = await reversibleEntry(ctx, payload);
     // Checked again at the approval: a payout posted after the request must not be left without its settlement (#3329).
     await marketplaceReversalNotes(ctx, entry, payload.entryDate);
+    await refuseSupplierPaymentReversal(ctx, entry);
     return postReversal(ctx, entry, payload.entryDate, payload.reason);
   },
 });
