@@ -19,7 +19,7 @@ function longText(): string {
 }
 
 function channelCard(page: Page, name: string): Locator {
-  return page.locator('[data-slot="card"]').filter({ hasText: name }).filter({ hasText: 'Viết riêng cho kênh này' });
+  return page.getByTestId('channel-card').filter({ hasText: name });
 }
 
 test('splits a 1,200-character text into a thread and posts it on the sandbox (#1222)', async ({ page }) => {

@@ -18,7 +18,7 @@ import { DataTable, ErrorText, PageHeader, Spinner } from '../components/ui.tsx'
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { MAX_STATEMENT_BYTES, readStatementFile } from '../lib/bank-statement.ts';
-import { draftIssues, providerName } from '../lib/social.ts';
+import { draftIssues, lastSocialList, providerName } from '../lib/social.ts';
 import type { SheetRows } from '../lib/xlsx.ts';
 import { IMPORT_TEMPLATE, importRows, lookupKey, MAX_IMPORT_ROWS, newLabels, pendingRefs, withMedia, type ImportRow, type MediaLookup } from '../lib/social-import.ts';
 
@@ -182,7 +182,7 @@ export function SocialImportPage() {
         title={t('import.title')}
         subtitle={t('import.subtitle')}
         actions={
-          <Link to="/o/$slug/social" params={{ slug }} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
+          <Link to="/o/$slug/social" params={{ slug }} search={lastSocialList()} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
             {t('back')}
           </Link>
         }

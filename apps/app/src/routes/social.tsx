@@ -48,7 +48,7 @@ import { StoryLine, StoryTotals } from '../components/social-story-metrics.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient, uploadFiles } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
-import { dayKey, dayRange, defaultSocialTab, isSocialScreen, providerName, SOCIAL_STATUS_TABS, SOCIAL_VIEWS, tabOfView, variantStatusKey, variantTone, viewOfTab, type SocialSearch, type SocialTab, type SocialView } from '../lib/social.ts';
+import { dayKey, dayRange, defaultSocialTab, isSocialScreen, providerName, rememberSocialList, SOCIAL_STATUS_TABS, SOCIAL_VIEWS, tabOfView, variantStatusKey, variantTone, viewOfTab, type SocialSearch, type SocialTab, type SocialView } from '../lib/social.ts';
 import { pollEvery, SAFETY_POLL_MS, useStreamLive } from '../lib/stream-hook.ts';
 
 type Tab = SocialTab;
@@ -722,6 +722,11 @@ export function SocialPage() {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   useEffect(() => setPicked(new Set()), [tab, search.channel, search.label, search.q, search.from, search.to, search.assignee, search.author]);
   const canDecide = role === 'owner' || role === 'admin';
+  // Kept for the way back from a post (#3656): the tab and filters on screen, once the tab is settled.
+  const addressNow = JSON.stringify({ ...search, tab });
+  useEffect(() => {
+    if (!resolving) rememberSocialList(JSON.parse(addressNow) as SocialSearch);
+  }, [addressNow, resolving]);
   // The one action of an empty list (#3654): write a post (the first one, or another), or connect the first channel; none for
   // a viewer, who can do neither.
   const postAction = (first: boolean): ReactNode =>
