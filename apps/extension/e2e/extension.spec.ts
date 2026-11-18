@@ -63,7 +63,7 @@ test('the installed manifest asks for nothing beyond the list', async () => {
   const manifest = await context.serviceWorkers()[0]!.evaluate(() => chrome.runtime.getManifest());
   expect([...(manifest.permissions ?? [])].sort()).toEqual(['identity', 'storage']);
   expect(manifest.host_permissions).toEqual(['https://app.ludy.vn/*']);
-  expect([...(manifest.optional_permissions ?? [])].sort()).toEqual(['offscreen', 'tabCapture']);
+  expect([...(manifest.optional_permissions ?? [])].sort()).toEqual(['activeTab', 'offscreen', 'scripting', 'tabCapture']);
 });
 
 test('the installed manifest names its icons, and the package holds them', async () => {
@@ -501,4 +501,40 @@ test('the worker refuses a start request whose flags are not booleans, and creat
     { ok: false, reason: 'invalid' },
   ]);
   expect(fake.created).toEqual([]);
+});
+
+test('Notes Quick Capture saves private note and to-do with zero optional permissions, while Web Clipper requires opt-in toggle', async () => {
+  await seed({});
+  fake.scopes = ['notes'];
+  fake.features = { meetings: false, notes: true };
+  fake.clips.length = 0;
+  fake.todos.length = 0;
+  const page = await popup();
+  try {
+    await expect(page.locator('#notes-capture')).toBeVisible();
+    await expect(page.locator('#clipper-toggle')).not.toBeChecked();
+    await expect(page.locator('#clip-now')).toHaveCount(0);
+
+    // Quick Capture note works with zero extra browser permissions.
+    await page.locator('#capture-title').fill('Ghi chú nhanh e2e');
+    await page.locator('#capture-body').fill('Nội dung e2e');
+    await page.locator('#capture-tags').fill('e2e, nhanh');
+    await page.locator('#capture-save').click();
+    await expect.poll(() => fake.clips.length).toBe(1);
+    expect(fake.clips[0]).toEqual({ title: 'Ghi chú nhanh e2e', body: 'Nội dung e2e', tags: ['e2e', 'nhanh'] });
+    await expect(page.locator('#notes-status')).toContainText('Đã lưu ghi chú riêng tư');
+
+    // Switch to To-do Quick Capture and save.
+    await page.locator('#mode-todo').click();
+    await page.locator('#capture-title').fill('Việc nhanh e2e');
+    await page.locator('#capture-details').fill('Chi tiết việc');
+    await page.locator('#capture-save').click();
+    await expect.poll(() => fake.todos.length).toBe(1);
+    expect(fake.todos[0]).toEqual({ title: 'Việc nhanh e2e', details: 'Chi tiết việc' });
+    await expect(page.locator('#notes-status')).toContainText('Đã lưu việc cá nhân');
+  } finally {
+    fake.scopes = ['meetings'];
+    fake.features = { meetings: true, notes: false };
+    await page.close();
+  }
 });

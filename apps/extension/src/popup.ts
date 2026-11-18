@@ -11,6 +11,7 @@ import { connectUrl, deviceName, newPkce, parseConnectResult } from './auth.ts';
 import { createClient, LudyError } from './api.ts';
 import { CONSENT_METHODS, consentBlocker } from './consent.ts';
 import { LOST_KEY, readLost, RECORDING_KEY, type LostState, type RecordingState, type StartReply, type StopReply } from './messages.ts';
+import { captureActiveTab, CLIP_BODY_MAX, CLIP_TITLE_MAX, NOTES_SCOPE, parseTagsInput, WEB_CLIPPER_PERMISSIONS } from './page-capture.ts';
 import { formatClock, createIndexedDbChunkStore, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingMeta, type RecordingNoticeLanguage } from '@crove/meeting-recorder';
 import { reportEnded, uploadSaved } from './capture-run.ts';
 
@@ -41,8 +42,20 @@ let copyNote = '';
 // Shown under the "Sắp họp" cards after a title was filled in from one.
 let agendaNote = '';
 let agendaRead: { token: string; promise: Promise<AgendaNext | null> } | null = null;
+let serverModules: { address: string; promise: Promise<readonly string[] | null> } | null = null;
 // Set when the org refused the method as not written (A2, #3160): the unwritten choice is then not offered for the rest of this popup.
 let strictOrg = false;
+let captureDraft: {
+  kind: 'note' | 'todo';
+  title: string;
+  body: string;
+  tags: string;
+  details: string;
+  dueOn: string;
+  sourceUrl: string | null;
+} = { kind: 'note', title: '', body: '', tags: '', details: '', dueOn: '', sourceUrl: null };
+let notesStatus = '';
+let notesBusy = false;
 
 async function copyNotice(): Promise<void> {
   try {
@@ -116,9 +129,17 @@ async function signIn(state: State, withAgenda = false): Promise<void> {
   notice = T.signingIn;
   await render();
   try {
+    const config = await createClient(state.address, null).config().catch(() => null);
+    const available = config?.modules;
+    const featureScopes = available ? FEATURES.map((f) => f.scope).filter((s) => available.includes(s)) : FEATURES.map((f) => f.scope);
+    const scopesToAsk = featureScopes.length > 0 ? featureScopes : FEATURES.map((f) => f.scope);
+    const askAgenda = withAgenda && scopesToAsk.includes('meetings');
     const pkce = await newPkce();
     const redirect = chrome.identity.getRedirectURL('connect');
-    const returned = await chrome.identity.launchWebAuthFlow({ url: connectUrl(state.address, pkce, redirect, deviceName(navigator.userAgent), withAgenda), interactive: true });
+    const returned = await chrome.identity.launchWebAuthFlow({
+      url: connectUrl(state.address, pkce, redirect, deviceName(navigator.userAgent), askAgenda, scopesToAsk),
+      interactive: true,
+    });
     const result = returned ? parseConnectResult(returned, pkce, redirect) : { error: 'invalid' };
     if ('error' in result) {
       notice = result.error === 'access_denied' ? T.signInDenied : T.signInFailed;
@@ -162,14 +183,274 @@ async function signedInView(state: State): Promise<Node[]> {
     return out;
   }
   const features = visibleFeatures(me);
-  if (features.length === 0) out.push(h('p', {}, T.noFeatures));
-  for (const feature of features) if (feature.id === 'meetings') out.push(...(await meetingsView(state, me, account.token)));
+  let showNotesAsk = false;
+  if (!me.scopes.includes(NOTES_SCOPE)) {
+    if (serverModules?.address !== state.address) {
+      serverModules = { address: state.address, promise: createClient(state.address, null).config().then((c) => c.modules ?? null).catch(() => null) };
+    }
+    const installed = await serverModules.promise;
+    showNotesAsk = Boolean(installed?.includes(NOTES_SCOPE));
+  }
+  if (features.length === 0 && !showNotesAsk) out.push(h('p', {}, T.noFeatures));
+  if (showNotesAsk) {
+    out.push(
+      h('div', { class: 'capture-box', id: 'notes-ask' },
+        h('p', { class: 'note' }, T.notesAskNote),
+        h('button', { id: 'notes-reconnect', onclick: () => void signIn(state, me.scopes.includes(AGENDA_SCOPE)) }, T.notesReconnect)),
+    );
+  }
+  for (const feature of features) {
+    if (feature.id === 'meetings') out.push(...(await meetingsView(state, me, account.token)));
+    else if (feature.id === 'notes') out.push(...(await notesView(state, account.token)));
+  }
   out.push(...(await pendingView(state, account.orgId, account.token)));
   return out;
 }
 
+async function notesView(state: State, token: string): Promise<Node[]> {
+  const clipperGranted = await chrome.permissions.contains({ permissions: [...WEB_CLIPPER_PERMISSIONS] }).catch(() => false);
+  const clipperOn = clipperGranted && state.enabled.clipper === true;
+  const isNote = captureDraft.kind === 'note';
+
+  const modeNoteBtn = h('button', {
+    id: 'mode-note',
+    class: isNote ? 'active-tab' : undefined,
+    disabled: notesBusy,
+    onclick: () => void ((captureDraft.kind = 'note'), (notesStatus = ''), (notice = ''), render()),
+  }, T.captureModeNote);
+  const modeTodoBtn = h('button', {
+    id: 'mode-todo',
+    class: !isNote ? 'active-tab' : undefined,
+    disabled: notesBusy,
+    onclick: () => void ((captureDraft.kind = 'todo'), (notesStatus = ''), (notice = ''), render()),
+  }, T.captureModeTodo);
+
+  const titleInput = h('input', {
+    type: 'text',
+    id: 'capture-title',
+    value: captureDraft.title,
+    maxlength: isNote ? String(CLIP_TITLE_MAX) : '300',
+    placeholder: isNote ? T.captureTitleNotePlaceholder : T.captureTitleTodoPlaceholder,
+  });
+  titleInput.addEventListener('input', () => void (captureDraft.title = titleInput.value));
+
+  const bodyFields: Node[] = [];
+  if (isNote) {
+    const bodyInput = h('textarea', {
+      id: 'capture-body',
+      maxlength: String(CLIP_BODY_MAX),
+      placeholder: T.captureBodyPlaceholder,
+    }, captureDraft.body);
+    bodyInput.addEventListener('input', () => void (captureDraft.body = bodyInput.value));
+    const tagsInput = h('input', {
+      type: 'text',
+      id: 'capture-tags',
+      value: captureDraft.tags,
+      placeholder: T.captureTagsPlaceholder,
+    });
+    tagsInput.addEventListener('input', () => void (captureDraft.tags = tagsInput.value));
+    bodyFields.push(
+      h('label', { class: 'block', for: 'capture-body' }, T.captureBody),
+      bodyInput,
+      h('label', { class: 'block', for: 'capture-tags' }, T.captureTags),
+      tagsInput,
+    );
+  } else {
+    const detailsInput = h('textarea', {
+      id: 'capture-details',
+      maxlength: '10000',
+      placeholder: T.captureDetailsPlaceholder,
+    }, captureDraft.details);
+    detailsInput.addEventListener('input', () => void (captureDraft.details = detailsInput.value));
+    const dueInput = h('input', {
+      type: 'date',
+      id: 'capture-due',
+      value: captureDraft.dueOn,
+    });
+    dueInput.addEventListener('input', () => void (captureDraft.dueOn = dueInput.value));
+    bodyFields.push(
+      h('label', { class: 'block', for: 'capture-details' }, T.captureDetails),
+      detailsInput,
+      h('label', { class: 'block', for: 'capture-due' }, T.captureDueOn),
+      dueInput,
+    );
+  }
+
+  const sourceChip = captureDraft.sourceUrl
+    ? h('div', { class: 'source-chip', id: 'capture-source' },
+      h('span', {}, T.captureSourceLabel.replace('{url}', captureDraft.sourceUrl)),
+      h('button', {
+        id: 'capture-source-clear',
+        'aria-label': T.captureSourceClear,
+        onclick: () => void ((captureDraft.sourceUrl = null), render()),
+      }, 'x'))
+    : null;
+
+  const clipperToggle = h('input', {
+    type: 'checkbox',
+    id: 'clipper-toggle',
+    checked: clipperOn,
+    disabled: notesBusy,
+  });
+  clipperToggle.addEventListener('change', () => void toggleWebClipper(clipperToggle.checked));
+
+  const clipperControls: Node[] = [
+    h('div', { class: 'clipper-box', id: 'clipper-box' },
+      h('div', { class: 'row' }, clipperToggle, h('label', { for: 'clipper-toggle' }, T.clipperToggle)),
+      h('p', { class: 'note' }, T.clipperHint),
+      ...(clipperOn
+        ? [
+            h('div', { class: 'row' },
+              h('button', {
+                class: 'primary',
+                id: 'clip-now',
+                disabled: notesBusy,
+                onclick: () => void clipCurrentPage(state, token, 'save'),
+              }, T.clipNowButton),
+              h('button', {
+                id: 'clip-fill',
+                disabled: notesBusy,
+                onclick: () => void clipCurrentPage(state, token, 'fill'),
+              }, T.clipFillButton)),
+          ]
+        : [])),
+  ];
+
+  return [
+    h('h2', {}, T.notesTitle),
+    h('div', { class: 'capture-box', id: 'notes-capture' },
+      h('p', { class: 'note', id: 'notes-privacy-hint' }, T.notesPrivacyHint),
+      h('div', { class: 'tabs' }, modeNoteBtn, modeTodoBtn),
+      h('label', { class: 'block', for: 'capture-title' }, isNote ? T.captureTitleNote : T.captureTitleTodo),
+      titleInput,
+      ...bodyFields,
+      sourceChip,
+      h('div', { class: 'row' },
+        h('button', {
+          class: 'primary',
+          id: 'capture-save',
+          disabled: notesBusy,
+          onclick: () => void saveQuickCapture(state, token),
+        }, isNote ? T.captureSaveNote : T.captureSaveTodo)),
+      ...clipperControls,
+      notesStatus ? h('p', { class: 'note', id: 'notes-status', role: 'status' }, notesStatus) : null),
+  ];
+}
+
+async function toggleWebClipper(enable: boolean): Promise<void> {
+  notice = '';
+  notesStatus = '';
+  if (enable) {
+    // Only asks Chrome for activeTab + scripting on this explicit toggle click.
+    const granted = await chrome.permissions.request({ permissions: [...WEB_CLIPPER_PERMISSIONS] }).catch(() => false);
+    const latest = await loadState(area);
+    await saveState(area, withFeature(latest, 'clipper', granted));
+    if (!granted) notice = T.clipperPermissionDenied;
+  } else {
+    await chrome.permissions.remove({ permissions: [...WEB_CLIPPER_PERMISSIONS] }).catch(() => false);
+    captureDraft.sourceUrl = null;
+    const latest = await loadState(area);
+    await saveState(area, withFeature(latest, 'clipper', false));
+  }
+  await render();
+}
+
+async function clipCurrentPage(state: State, token: string, action: 'save' | 'fill'): Promise<void> {
+  notice = '';
+  notesStatus = T.clipping;
+  notesBusy = true;
+  await render();
+  try {
+    const captured = await captureActiveTab({
+      permissions: chrome.permissions,
+      tabs: chrome.tabs,
+      scripting: chrome.scripting,
+      clicked: true,
+    });
+    if (!captured.ok) {
+      notesStatus = '';
+      notice =
+        captured.reason === 'permission'
+          ? T.clipperPermissionDenied
+          : captured.reason === 'unsupportedUrl'
+            ? T.clipUnsupportedUrl
+            : T.clipFailed;
+      return;
+    }
+    if (action === 'fill') {
+      captureDraft.kind = 'note';
+      captureDraft.title = captured.clip.title;
+      captureDraft.body = captured.clip.body;
+      captureDraft.sourceUrl = captured.clip.sourceUrl;
+      notesStatus = T.clipFilled;
+      return;
+    }
+    const client = createClient(state.address, token);
+    await client.clipNote({
+      title: captured.clip.title,
+      body: captured.clip.body,
+      sourceUrl: captured.clip.sourceUrl,
+    });
+    notesStatus = T.captureSavedNote;
+  } catch (error) {
+    notesStatus = '';
+    notice = error instanceof LudyError ? error.message : T.captureSaveFailed;
+  } finally {
+    notesBusy = false;
+    await render();
+  }
+}
+
+async function saveQuickCapture(state: State, token: string): Promise<void> {
+  notice = '';
+  notesStatus = '';
+  const title = captureDraft.title.trim();
+  if (!title) {
+    notice = T.captureTitleRequired;
+    await render();
+    return;
+  }
+  notesBusy = true;
+  notesStatus = T.captureSaving;
+  await render();
+  try {
+    const client = createClient(state.address, token);
+    if (captureDraft.kind === 'note') {
+      await client.clipNote({
+        title,
+        body: captureDraft.body,
+        tags: parseTagsInput(captureDraft.tags),
+        sourceUrl: captureDraft.sourceUrl,
+      });
+      captureDraft.title = '';
+      captureDraft.body = '';
+      captureDraft.tags = '';
+      captureDraft.sourceUrl = null;
+      notesStatus = T.captureSavedNote;
+    } else {
+      await client.quickCaptureTodo({
+        title,
+        details: captureDraft.details,
+        dueOn: captureDraft.dueOn || null,
+        sourceUrl: captureDraft.sourceUrl,
+      });
+      captureDraft.title = '';
+      captureDraft.details = '';
+      captureDraft.dueOn = '';
+      captureDraft.sourceUrl = null;
+      notesStatus = T.captureSavedTodo;
+    }
+  } catch (error) {
+    notesStatus = '';
+    notice = error instanceof LudyError ? error.message : T.captureSaveFailed;
+  } finally {
+    notesBusy = false;
+    await render();
+  }
+}
+
 async function meetingsView(state: State, me: Me, token: string): Promise<Node[]> {
-  const feature = FEATURES[0]!;
+  const feature = FEATURES.find((f) => f.id === 'meetings')!;
   const out: Node[] = [h('h2', {}, T.meetings)];
   const granted = await chrome.permissions.contains({ permissions: [...feature.permissions] });
   if (!granted || state.enabled.meetings !== true) {
@@ -292,7 +573,7 @@ async function dismissLost(): Promise<void> {
 
 async function turnOn(state: State): Promise<void> {
   notice = '';
-  const feature = FEATURES[0]!;
+  const feature = FEATURES.find((f) => f.id === 'meetings')!;
   // The browser asks for tab capture and the offscreen document on this click, and nothing is asked before it.
   if (!(await chrome.permissions.request({ permissions: [...feature.permissions] }))) {
     notice = T.permissionDenied;
@@ -306,7 +587,8 @@ async function turnOn(state: State): Promise<void> {
 }
 
 async function turnOff(state: State): Promise<void> {
-  await chrome.permissions.remove({ permissions: [...FEATURES[0]!.permissions] });
+  const feature = FEATURES.find((f) => f.id === 'meetings')!;
+  await chrome.permissions.remove({ permissions: [...feature.permissions] });
   await saveState(area, withFeature(state, 'meetings', false));
   await render();
 }

@@ -6,7 +6,7 @@ import { zId } from './schemas.ts';
 
 // The scopes an extension token may hold, one per feature of the extension. @crove/kernel-runtime keeps the list the
 // runtime enforces (EXTENSION_SCOPES) and crove_kernel.extension_token's CHECK the same one; a test pins the two lists.
-export const EXTENSION_SCOPE_IDS = ['meetings', 'agenda'] as const;
+export const EXTENSION_SCOPE_IDS = ['meetings', 'agenda', 'notes'] as const;
 export type ExtensionScopeId = (typeof EXTENSION_SCOPE_IDS)[number];
 export const zExtensionScope = z.enum(EXTENSION_SCOPE_IDS);
 

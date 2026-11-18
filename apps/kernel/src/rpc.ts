@@ -1064,6 +1064,7 @@ export function createRpcHandler(
       search: os.notes.search.handler(notesQuery('notes.note.search')),
       panel: os.notes.panel.handler(notesQuery('notes.record.panel')),
       create: os.notes.create.handler(notesCommand('notes.note.create')),
+      clip: os.notes.clip.handler(notesCommand('notes.note.clip')),
       fromMeetingSummary: os.notes.fromMeetingSummary.handler(({ context, input }) =>
         inNotes(context, (orgId, actor) => saveMeetingSummaryAsNote(runtime, orgId, actor, input)),
       ),
@@ -1100,6 +1101,7 @@ export function createRpcHandler(
         list: os.notes.todos.list.handler(notesQuery('notes.todo.list')),
         get: os.notes.todos.get.handler(notesQuery('notes.todo.get')),
         create: os.notes.todos.create.handler(notesCommand('notes.todo.create')),
+        quickCapture: os.notes.todos.quickCapture.handler(notesCommand('notes.todo.quick_capture')),
         acceptSuggestions: os.notes.todos.acceptSuggestions.handler(notesCommand('notes.todo.accept_suggestions')),
         update: os.notes.todos.update.handler(notesCommand('notes.todo.update')),
         complete: os.notes.todos.complete.handler(notesCommand('notes.todo.complete')),

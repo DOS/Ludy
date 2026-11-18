@@ -22,6 +22,9 @@ describe('parseConnectRequest', () => {
     expect(parseConnectRequest(query({ scope: undefined }), ALLOWED)?.scopes).toEqual(['meetings']);
     // The agenda scope (B2) rides with meetings: both is fine, agenda alone is not a request.
     expect(parseConnectRequest(query({ scope: 'meetings agenda' }), ALLOWED)?.scopes).toEqual(['agenda', 'meetings']);
+    expect(parseConnectRequest(query({ scope: 'notes' }), ALLOWED)?.scopes).toEqual(['notes']);
+    expect(parseConnectRequest(query({ scope: 'meetings agenda notes' }), ALLOWED)?.scopes).toEqual(['agenda', 'meetings', 'notes']);
+    expect(parseConnectRequest(query({ scope: 'notes agenda' }), ALLOWED)).toBeNull();
     expect(parseConnectRequest(query({ scope: 'agenda' }), ALLOWED)).toBeNull();
     expect(parseConnectRequest(query({ device: undefined }), ALLOWED)?.deviceName).toBe('');
     expect(parseConnectRequest(query({ device: 'x'.repeat(200) }), ALLOWED)?.deviceName).toHaveLength(80);

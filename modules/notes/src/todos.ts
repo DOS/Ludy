@@ -12,6 +12,7 @@ import {
   PROJECT_TASK_MAP_LIMIT,
   auditValue,
   countTaskChecklistSteps,
+  formatQuickCaptureDetails,
   nextTodoOccurrenceDate,
   normalizeTodoRecurrence,
   parseTodoRecurrence,
@@ -24,6 +25,7 @@ import {
   zMyWorkInput,
   zTodoComplete,
   zTodoCreate,
+  zTodoQuickCapture,
   REBALANCE_AT,
   keyBetween,
   spreadKeys,
@@ -357,6 +359,58 @@ export const todoCreate = defineCommand({
       ...(input.sourceNoteId !== undefined ? { sourceNoteId: input.sourceNoteId } : {}),
       ...(sourceTainted ? { tainted: true } : {}),
       ...(input.link ? { target: 'private' as const } : {}),
+    });
+    return written(row);
+  },
+});
+
+// Extension Quick Capture to-do (#3560, Notes v2 E4): creates a private (owner_user_id-only) and tainted to-do
+// for the caller. Never accepts a link or recurrence from the extension surface, and never leaks sourceUrl in audit.
+export const todoQuickCapture = defineCommand({
+  name: 'notes.todo.quick_capture',
+  input: zTodoQuickCapture,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  extension: { scope: 'notes' },
+  handler: async (ctx, input): Promise<TodoWritten> => {
+    const userId = userOf(ctx.actor);
+    const rows = await ownKeys(ctx, null);
+    const sortKey = await placeBetween(ctx, rows, -1, 0);
+    const when = due(input);
+    const remind = remindAt(input.reminder, when, ctx.now);
+    const combinedDetails = formatQuickCaptureDetails(input.details, input.sourceUrl ?? null);
+    const storedDetails = detailsOf(combinedDetails);
+    const row = await ctx.trx
+      .insertInto('crove_notes.todo')
+      .values({
+        org_id: ctx.orgId,
+        owner_user_id: userId,
+        title: input.title,
+        details: storedDetails,
+        checklist: checklistOf([]),
+        ...when,
+        remind_at: remind.at,
+        reminded_at: remind.passed ? ctx.now : null,
+        sort_key: sortKey,
+        source_note_id: null,
+        recurrence: null,
+        tainted: true,
+        created_at: ctx.now,
+        updated_at: ctx.now,
+      })
+      .returning(['id', 'revision'])
+      .executeTakeFirstOrThrow();
+    ctx.audit({
+      todoId: row.id,
+      title: auditValue(TODO, 'title', input.title),
+      details: auditValue(TODO, 'details', storedDetails),
+      dueOn: input.dueOn,
+      dueTime: input.dueTime !== null,
+      timeZone: input.timeZone,
+      reminder: reminderKind(input.reminder),
+      remindAt: remind.at?.toISOString() ?? null,
+      tainted: true,
     });
     return written(row);
   },
@@ -1133,7 +1187,7 @@ export const todoCounts = defineQuery({
   },
 });
 
-export const todoCommands = [todoCreate, todoUpdate, todoComplete, todoReopen, todoReorder, todoReschedule, todoDelete, todoRestore, todoHandOver, todoLinkAdd, todoLinkRemove];
+export const todoCommands = [todoCreate, todoQuickCapture, todoUpdate, todoComplete, todoReopen, todoReorder, todoReschedule, todoDelete, todoRestore, todoHandOver, todoLinkAdd, todoLinkRemove];
 export const todoQueries = [todoList, todoGet, todoCounts];
 // My work reads to-dos and the kernel's tasks, so it is the module's, not the to-do list's.
 export const myWorkQueries = [myWork];

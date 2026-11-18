@@ -36,7 +36,7 @@ export type Aal = 'aal1' | 'aal2';
 // command or query is reachable with an extension token only when it declares one of the token's scopes
 // (CommandDef.extension, QueryDef.extension): every other command, query and org-less call refuses the token.
 // crove_kernel.extension_token's CHECK lists the same scopes; a new one is a migration and an entry here.
-export const EXTENSION_SCOPES = Object.freeze(['meetings', 'agenda'] as const);
+export const EXTENSION_SCOPES = Object.freeze(['meetings', 'agenda', 'notes'] as const);
 export type ExtensionScope = (typeof EXTENSION_SCOPES)[number];
 
 // What an extension token proved at the HTTP edge: its id and the scopes it holds. It lives only on a user actor made

@@ -17,6 +17,7 @@ export type NoteListView = (typeof NOTE_LIST_VIEWS)[number];
 
 export const NOTE_TITLE_MAX = 200;
 export const NOTE_BODY_MAX = 100_000;
+export const NOTE_CLIP_SOURCE_URL_MAX = 2048;
 export const NOTE_TAGS_MAX = 20;
 export const NOTE_TAG_MAX = 40;
 // Links one note keeps: each read of the note checks every link through its module (#1672).
@@ -32,6 +33,63 @@ const zTags = z
   .array(z.string().trim().toLowerCase().min(1).max(NOTE_TAG_MAX))
   .max(NOTE_TAGS_MAX)
   .transform((tags) => [...new Set(tags)]);
+
+function hasControlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/** Validates and normalizes an http/https source URL for extension clips, returning null for unsafe or invalid values. */
+export function sanitizeClipSourceUrl(raw: string): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || trimmed.length > NOTE_CLIP_SOURCE_URL_MAX) return null;
+  if (hasControlChar(trimmed)) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.hostname.length === 0) return null;
+  if (parsed.username !== '' || parsed.password !== '') return null;
+  return parsed.toString();
+}
+
+export const zClipSourceUrl = z
+  .string()
+  .trim()
+  .min(1)
+  .max(NOTE_CLIP_SOURCE_URL_MAX)
+  .transform((raw, ctx) => {
+    const safe = sanitizeClipSourceUrl(raw);
+    if (!safe) {
+      ctx.addIssue({ code: 'custom', message: 'sourceUrl must be a valid http or https URL' });
+      return z.NEVER;
+    }
+    return safe;
+  });
+
+/** Builds a bounded Markdown body for an extension clip, safely escaping the validated source link. */
+export function formatClippedNoteBody(body: string, sourceUrl: string | null): string {
+  const cleanBody = body.replace(/\r\n?/g, '\n').replaceAll('\u0000', '').trim();
+  if (sourceUrl === null) {
+    return cleanBody.length > NOTE_BODY_MAX ? `${cleanBody.slice(0, NOTE_BODY_MAX - 3)}...` : cleanBody;
+  }
+  const safeLabel = sourceUrl.replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+  const safeHref = sourceUrl.replace(/\(/g, '%28').replace(/\)/g, '%29');
+  const sourceHeader = `[${safeLabel}](${safeHref})`;
+  if (cleanBody === '') return sourceHeader.slice(0, NOTE_BODY_MAX);
+  const prefix = `${sourceHeader}\n\n`;
+  const maxRest = NOTE_BODY_MAX - prefix.length;
+  if (maxRest <= 0) return sourceHeader.slice(0, NOTE_BODY_MAX);
+  const bounded = cleanBody.length > maxRest ? `${cleanBody.slice(0, Math.max(0, maxRest - 3))}...` : cleanBody;
+  return `${prefix}${bounded}`;
+}
+
 export const zNoteLinkTarget = z.strictObject({ targetType: z.enum(NOTE_LINK_TARGETS), targetId: zId });
 export type NoteLinkTargetInput = z.infer<typeof zNoteLinkTarget>;
 
@@ -46,6 +104,14 @@ export const zNoteCreate = z.strictObject({
   link: zNoteLinkTarget.optional(),
 });
 export type NoteCreateInput = z.input<typeof zNoteCreate>;
+// Extension Quick Capture / Web Clipper (#3560): always stored private and tainted on the server.
+export const zNoteClip = z.strictObject({
+  title: zTitle,
+  body: zBody.default(''),
+  tags: zTags.default([]),
+  sourceUrl: zClipSourceUrl.nullable().optional(),
+});
+export type NoteClipInput = z.input<typeof zNoteClip>;
 // The author's edit of the text, against the revision they read (NOTES.REVISION_CONFLICT when it moved on).
 export const zNoteUpdate = z.strictObject({ noteId: zId, revision: z.number().int().positive(), title: zTitle, body: zBody, tags: zTags });
 export type NoteUpdateInput = z.input<typeof zNoteUpdate>;
@@ -183,6 +249,31 @@ export const zTodoCreate = z
   })
   .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY);
 export type TodoCreateInput = z.input<typeof zTodoCreate>;
+// Extension Quick Capture to-do (#3560): always stored private to its owner and tainted on the server.
+export const zTodoQuickCapture = z
+  .strictObject({
+    title: zTodoTitle,
+    details: zTodoDetails.default(''),
+    dueOn: zDay.nullable().default(null),
+    dueTime: zTime.nullable().default(null),
+    timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+    reminder: zTodoReminder.default('auto'),
+    sourceUrl: zClipSourceUrl.nullable().optional(),
+  })
+  .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY);
+export type TodoQuickCaptureInput = z.input<typeof zTodoQuickCapture>;
+
+/** Builds bounded details for an extension quick-captured to-do, prepending a validated source URL if present. */
+export function formatQuickCaptureDetails(details: string, sourceUrl: string | null): string {
+  const clean = details.replace(/\r\n?/g, '\n').replaceAll('\u0000', '').trim();
+  if (sourceUrl === null) return clean.slice(0, TODO_DETAILS_MAX);
+  if (clean === '') return sourceUrl.slice(0, TODO_DETAILS_MAX);
+  const prefix = `${sourceUrl}\n\n`;
+  const maxRest = TODO_DETAILS_MAX - prefix.length;
+  if (maxRest <= 0) return sourceUrl.slice(0, TODO_DETAILS_MAX);
+  const bounded = clean.length > maxRest ? `${clean.slice(0, Math.max(0, maxRest - 3))}...` : clean;
+  return `${prefix}${bounded}`;
+}
 // The owner's edit, against the revision they read (TODO_REVISION_CONFLICT when it moved on). Without `reminder` the
 // reminder stays as it was, unless it was the automatic one, or there was none for want of a due day, and the due day
 // or time moved: it then follows them.

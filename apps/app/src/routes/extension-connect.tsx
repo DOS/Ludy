@@ -5,6 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
+import type { ExtensionScopeId } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { ErrorText, ScreenTitle, Spinner } from '../components/ui.tsx';
@@ -14,6 +15,7 @@ import { connectRedirect, forgetConnect, pendingConnect, type ConnectRequest } f
 
 // Which roles may connect a device: a viewer holds no feature's permission (the kernel refuses them as well).
 const CONNECTORS = new Set(['owner', 'admin', 'member']);
+const SCOPE_MODULE: Record<ExtensionScopeId, string> = { meetings: 'meetings', agenda: 'meetings', notes: 'notes' };
 
 export function ExtensionConnectPage() {
   const t = useTranslations('extensionConnect');
@@ -25,8 +27,8 @@ export function ExtensionConnectPage() {
   const [chosen, setChosen] = useState<string | null>(null);
   const orgs = (me.data?.orgs ?? []).filter((org) => CONNECTORS.has(org.role));
   const org = orgs.find((o) => o.slug === chosen) ?? (orgs.length === 1 ? orgs[0] : undefined);
-  // Both scopes belong to the meetings module (the agenda scope reads the calendar cache the module keeps).
-  const needsModule = request !== null && request.scopes.length > 0 && !getConfig().modules.includes('meetings');
+  const modules = getConfig().modules;
+  const needsModule = request !== null && request.scopes.some((s) => !modules.includes(SCOPE_MODULE[s]));
 
   const approve = useMutation({
     mutationFn: async () => {
