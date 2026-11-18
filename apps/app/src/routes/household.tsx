@@ -153,7 +153,7 @@ function S2aBook({ entityId, variant = 'S2a', trades = [] }: { entityId: string;
   const book = withPit ? s2aQuery : s2bQuery;
   const download = useMutation({
     mutationFn: async () => {
-      const response = await apiFetch(`/api/export/household-${p}.xlsx?legalEntityId=${encodeURIComponent(entityId)}&period=${encodeURIComponent(period)}`);
+      const response = await apiFetch(`/api/export/household-${p}.xlsx?legalEntityId=${encodeURIComponent(entityId)}&period=${encodeURIComponent(period)}${withPit && deductionTrade !== '' ? `&deductionTrade=${encodeURIComponent(deductionTrade)}` : ''}`);
       const url = URL.createObjectURL(await response.blob());
       const a = document.createElement('a');
       a.href = url;
@@ -532,6 +532,9 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
     mutationFn: async () => {
       const query = new URLSearchParams({ legalEntityId: entityId, year, quarter: String(quarter) });
       if (parts.length > 0) query.set('split', parts.map((x) => `${x.trade}:${x.revenue}`).join(','));
+      // The yearly rule's inputs travel with the file, as with the screen: the split before the quarter and the trade that takes the threshold deduction.
+      if (partsBefore.length > 0) query.set('splitBefore', partsBefore.map((x) => `${x.trade}:${x.revenue}`).join(','));
+      if (deductionTrade !== '') query.set('deductionTrade', deductionTrade);
       const response = await apiFetch(`/api/export/household-cnkd.xlsx?${query.toString()}`);
       const url = URL.createObjectURL(await response.blob());
       const a = document.createElement('a');
