@@ -496,4 +496,33 @@ describe('TasksPage P3 SSR (#2593)', () => {
     expect(tasksFilterHtml).toContain('data-testid="task-filter-sort"');
     expect(tasksFilterHtml).toContain(catalog('vi').savedViews.all);
   });
+  it('shows the list first: no form above it, an Add task button for a member who can give work, an edit button on each row (#3606)', () => {
+    authState.modules = ['notes'];
+    routerState.search = {};
+    seedTasksBase();
+    const html = renderToStaticMarkup(wrap('vi', <TasksPage />));
+    expect(html).not.toContain('<form');
+    expect(html).not.toContain('Giao việc mới');
+    expect(html).toContain('data-testid="task-add"');
+    expect(html).toContain('>Thêm việc<');
+    expect(html).toContain('aria-label="Sửa việc: Kiểm tra sổ sách"');
+    expect(html).toContain('aria-label="Sửa việc: Việc độc lập"');
+    // The English screen says the same.
+    const en = renderToStaticMarkup(wrap('en', <TasksPage />));
+    expect(en).toContain('>Add task<');
+    expect(en).toContain('aria-label="Edit task: Kiểm tra sổ sách"');
+  });
+
+  it('offers a viewer neither the Add task button nor the row edit buttons (#3606)', () => {
+    authState.modules = ['notes'];
+    routerState.search = {};
+    seedTasksBase();
+    const org = queryClientState.current.getQueryData<Record<string, unknown>>(['org', 'get', {}]);
+    queryClientState.current.setQueryData(['org', 'get', {}], { ...org, role: 'viewer' });
+    const html = renderToStaticMarkup(wrap('vi', <TasksPage />));
+    expect(html).toContain('Kiểm tra sổ sách');
+    expect(html).not.toContain('data-testid="task-add"');
+    expect(html).not.toContain('Sửa việc:');
+    expect(html).not.toContain('Thao tác');
+  });
 });
