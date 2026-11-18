@@ -1759,9 +1759,10 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         id: randomUUID(),
         party_id: o.party,
         bank_name: 'RLS matrix bank',
-        account_holder: 'RLS matrix holder',
+        account_holder_sealed: 'crove:s1:rls-matrix-holder',
         number_sealed: 'crove:s1:rls-matrix',
         number_hash: randomUUID().replaceAll('-', '').repeat(2),
+        hash_key_id: 'k1',
         last4: '1234',
         created_by: o.owner,
       },
@@ -1776,7 +1777,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         setup: [
           {
             table: 'crove_finance.supplier_bank_account',
-            values: { org_id: o.id, id: account, party_id: o.party, bank_name: 'RLS matrix bank', account_holder: 'RLS matrix holder', number_sealed: 'crove:s1:rls-matrix', number_hash: hash, last4: '1234', created_by: o.owner },
+            values: { org_id: o.id, id: account, party_id: o.party, bank_name: 'RLS matrix bank', account_holder_sealed: 'crove:s1:rls-matrix-holder', number_sealed: 'crove:s1:rls-matrix', number_hash: hash, hash_key_id: 'k1', last4: '1234', created_by: o.owner },
           },
         ],
         row: { org_id: o.id, id: randomUUID(), party_id: o.party, account_id: account, kind: 'added', new_number_hash: hash, changed_by: o.owner, step_up_at: '2026-11-18T00:00:00Z' },
