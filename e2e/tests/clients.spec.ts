@@ -22,8 +22,8 @@ test('an accountant sees every company on one screen and opens one with a click'
     // The period shows its value with a "Sửa" button; the select appears after it, saves on change and closes.
     const vat = page.locator('dt', { hasText: 'Kỳ khai thuế GTGT' }).locator('..');
     await vat.getByRole('button', { name: 'Sửa' }).click();
-    await page.getByLabel('Kỳ khai thuế GTGT').selectOption({ label: 'Theo quý' });
-    await expect(page.getByLabel('Kỳ khai thuế GTGT')).toHaveCount(0);
+    await page.getByRole('combobox', { name: 'Kỳ khai thuế GTGT' }).selectOption({ label: 'Theo quý' });
+    await expect(page.getByRole('combobox', { name: 'Kỳ khai thuế GTGT' })).toHaveCount(0);
     await expect(vat.getByText('Theo quý', { exact: true })).toBeVisible();
     await expect(vat.getByRole('button', { name: 'Sửa' })).toBeEnabled();
   });

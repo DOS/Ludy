@@ -26,7 +26,8 @@ test('every tab of Settings has its own address, shows one kind of setting and s
     await expect(page.getByRole('main').getByRole('heading', { level: 1 })).toHaveText('Cài đặt');
     await page.waitForLoadState('networkidle');
     const height = await page.getByRole('main').evaluate((main) => main.scrollHeight);
-    expect(height, `${tab} tab is ${height} px tall`).toBeLessThan(1200);
+    // Soft, so one run reports the height of every tab, not only the first that is too tall.
+    expect.soft(height, `${tab} tab is ${height} px tall`).toBeLessThan(1200);
   }
 
   // One column: the cards of the bookings tab sit under each other, not beside.
