@@ -36,6 +36,8 @@ const REACHABLE = [
   'kernel.mcp.about:ludy.read',
   'kernel.mcp.parties:ludy.read',
   'finance.mcp.invoices:ludy.read',
+  // Tool 1 of #3849 (`ludy_finance_overview`): four money figures of a period; pinned in test/invariant/mcp-overview-projection.db.test.ts.
+  'finance.mcp.overview:ludy.read',
   // The two Social reads (#3227, plan section 3.8: `ludy_social_posts_list` and `ludy_social_review_queue`). Their privacy review is the comment at the top of modules/social/src/mcp.ts; neither is
   // sensitive, and the checks below apply to them as to every query.
   'social.mcp.posts:ludy.read',
@@ -76,7 +78,6 @@ const SIGNALS = [
 // does not require it). A name outside this list still fails, and so do the checks below on every query that carries `mcp`: never sensitive, streamed, role-less or open to member mode or an extension token.
 // Never returned by any of them: a customer's email or phone, the org's bank account numbers or holders (the reminder read leaves out `payTo`), the lines of an invoice, anything from a query that is `sensitive`.
 const FINANCE_READS = [
-  'finance.mcp.overview:ludy.read',
   'finance.mcp.open_balances:ludy.read',
   'finance.mcp.payment_reminder:ludy.read',
 ];
