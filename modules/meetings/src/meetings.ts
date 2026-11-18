@@ -8,6 +8,7 @@ import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transc
 import { transcribeCommandList } from './transcribe.ts';
 import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
 import { chaptersCommands, chaptersQueries } from './chapters.ts';
+import { chaptersRunCommands, chaptersRunQueries } from './chapters-run.ts';
 import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
 import { minutesTemplateCommands, minutesTemplateQueries } from './minutes-templates.ts';
@@ -1006,6 +1007,7 @@ export const meetingsCommands = [
   ...resultCommands,
   ...notesCommands,
   ...chaptersCommands,
+  ...chaptersRunCommands,
   ...summaryCommands,
   ...speakerCommands,
   ...seriesCommands,
@@ -1045,6 +1047,7 @@ export const meetingsQueries = [
   ...resultQueries,
   ...notesQueries,
   ...chaptersQueries,
+  ...chaptersRunQueries,
   ...summaryQueries,
   ...seriesQueries,
   ...minutesTemplateQueries,
