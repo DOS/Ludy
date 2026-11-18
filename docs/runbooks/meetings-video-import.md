@@ -11,7 +11,7 @@ A meeting platform (Google Meet, Teams) hands over a **video** file. The import 
 | Blob store | The sealed video under `tmp/<org>/`, until the call ends | Up to `MEETING_PLATFORM_VIDEO_MAX_BYTES` (2 GiB) per import, plus the encryption overhead (under 1 percent). Deleted on success and on every failure; a crash leaves ciphertext whose key was only in memory, which the daily retention job deletes. |
 | crove-media (memory) | The decrypted video spooled to its scratch tmpfs (`/data/scratch`, `MEDIA_SCRATCH_SIZE`, 2304m by default), then ffmpeg | Up to `MEDIA_MAX_INPUT_BYTES` (2 GiB) in the tmpfs, which counts against `MEDIA_MEM_LIMIT` (4g by default), plus ffmpeg's own working memory. |
 | crove-media (time) | One slot, for the extraction only | Up to `MEDIA_TIMEOUT_MS` (5 minutes). The slot is not held while the platform's file downloads. |
-| Worker (time) | The download, then the extraction | The download is limited to 20 minutes; with the extraction it stays inside the job's 30-minute expiry. |
+| Worker (time) | The download, then the extraction | The download is limited to 20 minutes (2 GiB needs at least 1.7 MB/s; a try that times out downloads again on the retry); with the extraction it stays inside the job's 30-minute expiry. |
 
 ## Settings that matter
 

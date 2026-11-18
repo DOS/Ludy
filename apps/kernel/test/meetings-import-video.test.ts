@@ -5,10 +5,10 @@
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { minimalMp4, type MeetingPlatformAdapter, type MeetingPlatformDownload } from '@crove/channel';
 import { MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_VIDEO_MAX_BYTES } from '@crove/kernel-contract';
-import { LocalDiskStore, type EgressStream } from '@crove/kernel-runtime';
+import { EgressError, LocalDiskStore, type EgressStream } from '@crove/kernel-runtime';
 import { MediaClientError, type MediaExtractClient } from '@crove/media-contract/extract';
 import { createMediaAudioExtractor } from '../src/meetings-extract.ts';
 import { runMeetingsImport, type MeetingsImportDeps, type MeetingsImportJob } from '../src/meetings-import.ts';
@@ -34,6 +34,10 @@ let store: LocalDiskStore;
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'crove-import-video-'));
   store = new LocalDiskStore(dir);
+});
+// Each test starts with nothing staged and no throwaway copy of a video on disk, whatever an earlier one left.
+afterEach(async () => {
+  await store.delete(KEY);
 });
 afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
@@ -171,11 +175,44 @@ describe('a video-only recording', () => {
     expect(run.opened.iterated).toBe(0);
   });
 
-  it('refuses a download that declares no length, which cannot be sealed (the platform\'s answer, no retry)', async () => {
-    const run = setup({ download: {}, body: [video(2000)], declared: undefined });
+  it('uses the size the platform listed when the answer declares no length (a chunked answer), and refuses the recording when it has neither', async () => {
+    const mp4 = video(4000);
+    const listed = setup({ download: {}, body: [mp4.slice(0, 1500), mp4.slice(1500)], declared: undefined });
+    expect(await runMeetingsImport(listed.deps, job({ sizeBytes: mp4.byteLength }), attempt)).toBe('staged');
+    expect(Buffer.concat(listed.drained)).toEqual(Buffer.from(mp4));
+    // A listed size that is wrong is caught by the seal (the body ends longer than declared): retried, never staged.
+    const wrong = setup({ download: {}, body: [mp4], declared: undefined });
+    await expect(runMeetingsImport(wrong.deps, job({ sizeBytes: mp4.byteLength - 10 }), { retryCount: 0, retryLimit: 3 })).rejects.toThrow(/not staged/);
+    const neither = setup({ download: {}, body: [mp4], declared: undefined });
+    expect(await runMeetingsImport(neither.deps, job({ sizeBytes: null }), attempt)).toBe('failed');
+    expect(neither.executed).toEqual([failedWith('platform_refused')]);
+    expect(neither.drained).toEqual([]);
+  });
+
+  it('records the platform\'s connection breaking mid-stream, and keeps no copy of the video', async () => {
+    const mp4 = video(4000);
+    const run = setup({ download: {}, body: [mp4.slice(0, 1000)], declared: mp4.byteLength });
+    // The body fails after its first piece, as a connection over the byte cap or past the deadline does.
+    const original = run.deps.stream as () => Promise<EgressStream>;
+    (run.deps as { stream: () => Promise<EgressStream> }).stream = async () => {
+      const response = await original();
+      return {
+        ...response,
+        body: (async function* () {
+          yield mp4.slice(0, 1000);
+          throw new EgressError('too_large', 'over the cap');
+        })(),
+      };
+    };
     expect(await runMeetingsImport(run.deps, job(), attempt)).toBe('failed');
-    expect(run.executed).toEqual([failedWith('platform_refused')]);
-    expect(run.drained).toEqual([]);
+    expect(run.executed).toEqual([failedWith('too_large')]);
+    expect(await files(dir)).toEqual([]);
+  });
+
+  it('keeps the order of the checks of the audio path: a listed size over the cap is refused before a recording with nothing to take', async () => {
+    const run = setup({ download: {}, extractor: false });
+    expect(await runMeetingsImport(run.deps, job({ sizeBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES + 1 }), attempt)).toBe('failed');
+    expect(run.executed).toEqual([failedWith('too_large')]);
   });
 
   it('retries a body that ends short of what it declared, deletes the throwaway copy, and records download_failed on the last try', async () => {

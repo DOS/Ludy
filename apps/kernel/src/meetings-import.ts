@@ -228,11 +228,14 @@ async function audioOfVideo(deps: MeetingsImportDeps, job: MeetingsImportJob, do
   } else {
     const opened = await openDownload(deps, download, MEETING_PLATFORM_VIDEO_MAX_BYTES, signal);
     release = opened.release;
-    if (opened.declared === null) {
+    // The length the response declares, else the size the platform listed for the recording (a chunked answer declares none). A listed size that is wrong makes the seal refuse the body (it ends longer or shorter than
+    // declared) and the job try again; with neither, the seal cannot be made and the recording fails as the platform's answer.
+    const known = opened.declared ?? job.sizeBytes;
+    if (known === null) {
       release();
       throw new MeetingPlatformError('platform_refused');
     }
-    length = opened.declared;
+    length = known;
     const body = opened.response.body;
     source = (async function* () {
       for await (const chunk of body) {
@@ -268,10 +271,10 @@ export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsI
   try {
     const adapter = deps.adapters[job.provider];
     if (!adapter) return await fail('platform_unavailable');
-    // A size the platform declared over the cap of the file it will be fetched as, or no audio file to take and no way to extract one: refused before any network call.
+    // A size the platform declared over the cap of the file it will be fetched as (the audio cap when there is nothing to fetch), then no audio file to take and no way to extract one: refused before any network call.
     const format = job.hasAudio ? 'audio' : job.hasVideo && deps.extractor?.configured ? 'video' : null;
-    if (format === null) return await fail('no_audio');
     if (job.sizeBytes !== null && job.sizeBytes > (format === 'video' ? MEETING_PLATFORM_VIDEO_MAX_BYTES : MEETING_PLATFORM_IMPORT_MAX_BYTES)) return await fail('too_large');
+    if (format === null) return await fail('no_audio');
     const credential = await openCredential(deps, job);
     const download = await adapter.prepareDownload(credential, job.externalId, format, attempt.signal);
     const bytes = download.format === 'video' ? await audioOfVideo(deps, job, download, attempt.signal) : await fetchBytes(deps, download, attempt.signal);
