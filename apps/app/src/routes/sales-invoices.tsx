@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useDeferredValue, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { BUYER_IDENTITY_KINDS, BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerIdentityKind, type BuyerKind, type DraftIssueCode, type EInvoiceCorrection, type EInvoiceCorrectionKind, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@crove/kernel-contract';
+import { BUYER_IDENTITY_KINDS, BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, EINVOICE_SUGGEST_TEXT_MAX, vietnamToday, type BuyerIdentityKind, type BuyerKind, type DraftIssueCode, EINVOICE_NOTICE_FIELDS, einvoiceNoticeText, type EInvoiceCorrection, type EInvoiceCorrectionKind, type EInvoiceNotice, type EInvoiceNoticeField, type EInvoiceNoticeList, type EInvoiceNoticeStep, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary, type EInvoicePrevious, type EInvoiceSuggested } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -660,6 +660,133 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
   );
 }
 
+const NOTICE_FIELD_KEY = { buyer_name: 'notice.fieldBuyerName', buyer_address: 'notice.fieldBuyerAddress', amount_in_words: 'notice.fieldAmountInWords' } as const;
+
+// One recorded error: the text of the notice to the buyer (built by code, read and sent by the person) and the two steps, each ticked once (#2504).
+function NoticeCard({ notice, reference, draftId }: { notice: EInvoiceNotice; reference: EInvoiceNoticeList['reference']; draftId: string }) {
+  const t = useTranslations('salesInvoices');
+  const [copied, setCopied] = useState(false);
+  const text = einvoiceNoticeText({ ...reference, field: notice.field, correctText: notice.correctText });
+  const tick = useMutation({
+    mutationFn: (step: EInvoiceNoticeStep) => client.einvoice.drafts.noticeStep({ noticeId: notice.id, step }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: orpc.einvoice.drafts.noticeList.key({ input: { draftId } }) }),
+  });
+  const copy = () => {
+    // The clipboard can be refused (an older app view); the text stays selectable in the box.
+    void navigator.clipboard.writeText(text).then(
+      () => setCopied(true),
+      () => setCopied(false),
+    );
+  };
+  return (
+    <div className="mt-2 rounded-md border border-border p-3" data-testid="invoice-notice">
+      <p className="text-sm font-medium">
+        {t(NOTICE_FIELD_KEY[notice.field])}: {notice.correctText}
+      </p>
+      <Label htmlFor={`notice-${notice.id}`} className="mt-2 block text-xs">
+        {t('notice.textLabel')}
+      </Label>
+      <Textarea id={`notice-${notice.id}`} readOnly rows={7} value={text} data-testid="invoice-notice-text" />
+      <p className="mt-1 text-xs text-subtle-foreground">{reference.buyerEmail ? t('notice.buyerEmail', { email: reference.buyerEmail }) : t('notice.noEmail')}</p>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="outline" onClick={copy}>
+          {copied ? t('notice.copied') : t('notice.copy')}
+        </Button>
+        <span className="text-xs text-subtle-foreground">{t('notice.notSent')}</span>
+      </div>
+      <ul className="mt-3 space-y-2">
+        <li className="flex flex-wrap items-center gap-2" data-testid="invoice-notice-step-buyer">
+          {notice.buyerNoticeState === 'sent' ? (
+            <span className="text-sm">{t('notice.stepBuyerDone')}</span>
+          ) : (
+            <>
+              <span className="text-sm">{t('notice.stepBuyer')}</span>
+              <Button size="sm" loading={tick.isPending} onClick={() => tick.mutate('buyer_notice')}>
+                {t('notice.stepBuyerTick')}
+              </Button>
+            </>
+          )}
+        </li>
+        <li className="flex flex-wrap items-center gap-2" data-testid="invoice-notice-step-form">
+          {notice.formState === 'filed' ? (
+            <span className="text-sm">{t('notice.stepFormDone')}</span>
+          ) : (
+            <>
+              <span className="text-sm">{t('notice.stepForm')}</span>
+              <Button size="sm" loading={tick.isPending} onClick={() => tick.mutate('tax_form')}>
+                {t('notice.stepFormTick')}
+              </Button>
+            </>
+          )}
+        </li>
+      </ul>
+      <p className="mt-2 text-xs text-subtle-foreground">{t('notice.formNote')}</p>
+      {tick.error && <ErrorText>{errorMessage(tick.error)}</ErrorText>}
+    </div>
+  );
+}
+
+// "Sai sót không cần hóa đơn mới" on an issued invoice (#2504): an error only in the buyer's name or address or in the amount in words. No new invoice, no cancel: the person records the
+// error and the text that is right, reads the notice the code built, sends it to the buyer themselves and ticks it, and ticks the form 04/SS-HĐĐT when it is filed.
+export function NoticeAction({ draft, openWith = false }: { draft: EInvoiceDraftSummary; openWith?: boolean }) {
+  const t = useTranslations('salesInvoices');
+  const id = useId();
+  const [open, setOpen] = useState(openWith);
+  const [field, setField] = useState<EInvoiceNoticeField>('buyer_name');
+  const [correctText, setCorrectText] = useState('');
+  const list = useQuery({ ...orpc.einvoice.drafts.noticeList.queryOptions({ input: { draftId: draft.id } }), enabled: open });
+  const record = useMutation({
+    mutationFn: (sent: string) => client.einvoice.drafts.noticeOpen({ draftId: draft.id, field, correctText: sent }),
+    onSuccess: async (_data, sent) => {
+      // Clear the box only when it still holds what was sent: text typed while the request ran stays.
+      setCorrectText((now) => (now.trim() === sent ? '' : now));
+      await queryClient.invalidateQueries({ queryKey: orpc.einvoice.drafts.noticeList.key({ input: { draftId: draft.id } }) });
+    },
+  });
+  if (!open) {
+    return (
+      <div className="mt-2">
+        <Button size="sm" variant="ghost" onClick={() => setOpen(true)} data-testid="invoice-notice-open">
+          {t('notice.open')}
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <Card className="mt-2 block p-3" data-testid="invoice-notice-panel">
+      <p className="text-sm font-medium">{t('notice.title', { number: draft.issuedNumber ?? '-' })}</p>
+      <p className="mt-1 text-xs text-subtle-foreground">{t('notice.intro')}</p>
+      {list.error && <ErrorText>{errorMessage(list.error)}</ErrorText>}
+      {list.data && (list.data.notices.length === 0 ? <p className="mt-2 text-xs text-subtle-foreground">{t('notice.none')}</p> : list.data.notices.map((n) => <NoticeCard key={n.id} notice={n} reference={list.data.reference} draftId={draft.id} />))}
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-field`}>{t('notice.field')}</Label>
+          <NativeSelect id={`${id}-field`} value={field} onChange={(e) => setField(e.target.value as EInvoiceNoticeField)} data-testid="invoice-notice-field">
+            {EINVOICE_NOTICE_FIELDS.map((f) => (
+              <NativeSelectOption key={f} value={f}>
+                {t(NOTICE_FIELD_KEY[f])}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-text`}>{t('notice.correctText')}</Label>
+          <Input id={`${id}-text`} value={correctText} maxLength={500} onChange={(e) => setCorrectText(e.target.value)} data-testid="invoice-notice-text-input" />
+        </div>
+      </div>
+      {record.error && <ErrorText>{errorMessage(record.error)}</ErrorText>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button size="sm" loading={record.isPending} disabled={correctText.trim() === ''} onClick={() => record.mutate(correctText.trim())} data-testid="invoice-notice-record">
+          {t('notice.record')}
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+          {t('notice.close')}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 // The codes the draft's `errorCode` can hold, in words (never a provider's own text).
 const DRAFT_ERRORS = [
   'PROVIDER_NOT_READY',
@@ -841,6 +968,7 @@ export function SalesInvoicesPage() {
                 )}
                 {d.replaced && <span className="ml-2 text-xs text-subtle-foreground" data-testid="invoice-replaced">{t('correction.replacedNote')}</span>}
                 <DraftNote draft={d} />
+                {canWrite && d.state === 'issued' && d.evidenceStored && editing === null && !d.replaced && <NoticeAction key={`notice-${d.id}`} draft={d} />}
                 {canWrite && d.state === 'issued' && d.evidenceStored && editing === null && <CorrectionAction key={`${d.id}:${d.updatedAt}`} draft={d} onStarted={(draftId) => void open(draftId)} />}
                 {/* Issuing needs a provider this deployment has switched on: with none, the request would be approved and nothing would send it. */}
                 {canWrite && d.state === 'draft' && d.issueCount === 0 && status.data?.sandbox && <IssueAction key={`${d.id}:${d.updatedAt}`} draft={d} canApprove={canApprove} />}

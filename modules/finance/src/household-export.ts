@@ -4,7 +4,7 @@
 // checks it against the appendix of the circular (#2520), and the file says so while the book's row is still `commentary`. Same cell rules as the other exports (export.ts): amounts exact,
 // text never read as a formula. Labels stay Vietnamese in every locale.
 import ExcelJS from 'exceljs';
-import { HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a } from '@crove/kernel-contract';
+import { HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a, type HouseholdS2c } from '@crove/kernel-contract';
 import { setMoneyCell, setTextCell } from './export.ts';
 
 const dateLabel = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}`;
@@ -244,6 +244,136 @@ export async function buildS2aWorkbook(book: HouseholdS2a, brand = 'Ludy'): Prom
   if (!book.totals) {
     sheet.addRow([]);
     line('Ghi chú: còn doanh thu chưa phân ngành nên chưa tính tổng thuế; gán ngành cho mặt hàng đã bán rồi lập lại sổ.');
+  }
+  sheet.addRow([]);
+  line('Người đại diện hộ kinh doanh', true);
+  line('(Ký, họ tên)');
+  sheet.addRow([]);
+  line(book.household.representativeName ?? '');
+  if (book.form.status !== 'confirmed') {
+    sheet.addRow([]);
+    line('Ghi chú: bố cục sổ đang chờ kế toán đối chiếu với phụ lục của Thông tư 152/2025/TT-BTC.');
+  }
+  return new Uint8Array(await workbook.xlsx.writeBuffer());
+}
+
+// The expense groups of Circular 152's S2c as the book names them; Vietnamese in every locale.
+const GROUP_LABEL: Readonly<Record<string, string>> = {
+  materials_goods: 'Nguyên liệu, vật liệu, hàng hóa',
+  wages_insurance: 'Tiền lương, tiền công, bảo hiểm',
+  depreciation: 'Khấu hao tài sản cố định',
+  outside_services: 'Dịch vụ thuê ngoài',
+  interest: 'Lãi vay',
+  other: 'Chi phí khác',
+};
+
+// Excel export of S2c-HKD (#2517 slice 2b, Circular 152/2025/TT-BTC), the revenue and expense detail of a household that pays PIT on income: the household's name and tax code, the title and the period, the day the
+// books were opened, the revenue rows and their total, the expense rows (date, document, description, account, group, amount) with a total per group, the expense no map row covers (own line, no guessed group), the
+// total expense, the income (revenue less expense, blank with its reason while an expense line has no group), and a place for the representative's signature. While a row behind the figures is `commentary` the file says
+// so on top, lists the rows, and puts HOUSEHOLD_PROVISIONAL_LABEL in a note column on every expense and income figure; the label is data and goes once the rows are confirmed. The PIT is not computed. Ludy files
+// nothing. Same cell rules as the other exports (exact amounts, text never a formula).
+export async function buildS2cWorkbook(book: HouseholdS2c, brand = 'Ludy'): Promise<Uint8Array> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = brand;
+  workbook.title = `${book.form.name} ${dateLabel(book.period.from)} - ${dateLabel(book.period.to)} ${book.household.name}`;
+  const sheet = workbook.addWorksheet('S2c-HKD');
+  sheet.columns = [
+    { key: 'date', width: 16 },
+    { key: 'reference', width: 22 },
+    { key: 'description', width: 48 },
+    { key: 'account', width: 12 },
+    { key: 'group', width: 34 },
+    { key: 'amount', width: 22 },
+    { key: 'note', width: 46 },
+  ];
+  const provisional = book.commentary;
+  const mark = (row: ExcelJS.Row) => {
+    if (provisional) setTextCell(row.getCell('note'), HOUSEHOLD_PROVISIONAL_LABEL);
+  };
+  const line = (text: string, bold = false) => {
+    const row = sheet.addRow([]);
+    setTextCell(row.getCell(1), text);
+    if (bold) row.font = { bold: true };
+    return row;
+  };
+  line(`HỘ, CÁ NHÂN KINH DOANH: ${book.household.name}`, true);
+  line(`Mã số thuế: ${book.household.taxCode ?? ''}`);
+  line(book.form.name.toUpperCase(), true);
+  line(`Kỳ: từ ${dateLabel(book.period.from)} đến ${dateLabel(book.period.to)}`);
+  line(`Ngày mở sổ: ${dateLabel(book.household.openedOn)}`);
+  line('Đây là sổ kế toán của hộ kinh doanh. Ludy không nộp tờ khai, không gửi dữ liệu cho cơ quan thuế và chưa tính thuế thu nhập cá nhân.');
+  if (provisional) {
+    line(HOUSEHOLD_PROVISIONAL_LABEL.toUpperCase(), true);
+    for (const u of book.unconfirmed) line(u.kind === 'form' ? `  Chưa xác nhận: mẫu ${u.key}, hiệu lực từ ${dateLabel(u.effectiveFrom)}` : `  Chưa xác nhận: nhóm chi phí của tài khoản ${u.key}, từ ${dateLabel(u.effectiveFrom)}`);
+  }
+  sheet.addRow([]);
+  line('I. DOANH THU', true);
+  const revenueHead = sheet.addRow([]);
+  setTextCell(revenueHead.getCell('date'), 'Ngày tháng ghi sổ');
+  setTextCell(revenueHead.getCell('reference'), 'Chứng từ (số hiệu)');
+  setTextCell(revenueHead.getCell('description'), 'Diễn giải');
+  setTextCell(revenueHead.getCell('amount'), 'Số tiền');
+  revenueHead.font = { bold: true };
+  for (const r of book.revenueRows) {
+    const row = sheet.addRow([]);
+    setTextCell(row.getCell('date'), dateLabel(r.date));
+    setTextCell(row.getCell('reference'), r.reference);
+    setTextCell(row.getCell('description'), r.reversal ? `${r.description} (bút toán đảo)` : r.description);
+    setMoneyCell(row.getCell('amount'), r.amount);
+  }
+  const revenueTotal = sheet.addRow([]);
+  setTextCell(revenueTotal.getCell('description'), 'Cộng doanh thu');
+  setMoneyCell(revenueTotal.getCell('amount'), book.revenue);
+  revenueTotal.font = { bold: true };
+  sheet.addRow([]);
+  line('II. CHI PHÍ', true);
+  const head = sheet.addRow([]);
+  setTextCell(head.getCell('date'), 'Ngày tháng ghi sổ');
+  setTextCell(head.getCell('reference'), 'Chứng từ (số hiệu)');
+  setTextCell(head.getCell('description'), 'Diễn giải');
+  setTextCell(head.getCell('account'), 'Tài khoản');
+  setTextCell(head.getCell('group'), 'Nhóm chi phí');
+  setTextCell(head.getCell('amount'), 'Số tiền');
+  if (provisional) setTextCell(head.getCell('note'), 'Ghi chú');
+  head.font = { bold: true };
+  for (const r of book.expenseRows) {
+    const row = sheet.addRow([]);
+    setTextCell(row.getCell('date'), dateLabel(r.date));
+    setTextCell(row.getCell('reference'), r.reference);
+    setTextCell(row.getCell('description'), r.reversal ? `${r.description} (bút toán đảo)` : r.description);
+    setTextCell(row.getCell('account'), r.accountCode);
+    setTextCell(row.getCell('group'), r.group === null ? 'Chưa xếp nhóm' : (GROUP_LABEL[r.group] ?? r.group));
+    setMoneyCell(row.getCell('amount'), r.amount);
+    // A line's group rests on a map row: labelled while that row is unconfirmed (the list on top says which); an unmapped line rests on no row.
+    if (r.group !== null) mark(row);
+  }
+  sheet.addRow([]);
+  line('Cộng chi phí theo nhóm', true);
+  for (const g of book.groups) {
+    const row = sheet.addRow([]);
+    setTextCell(row.getCell('group'), GROUP_LABEL[g.group] ?? g.group);
+    setMoneyCell(row.getCell('amount'), g.amount);
+    mark(row);
+  }
+  if (!/^-?0+(\.0+)?$/.test(book.unmappedGross)) {
+    const row = sheet.addRow([]);
+    setTextCell(row.getCell('group'), 'Chưa xếp nhóm');
+    setMoneyCell(row.getCell('amount'), book.unmapped);
+  }
+  const expenseTotal = sheet.addRow([]);
+  setTextCell(expenseTotal.getCell('description'), 'Cộng chi phí');
+  setMoneyCell(expenseTotal.getCell('amount'), book.expenseTotal);
+  mark(expenseTotal);
+  expenseTotal.font = { bold: true };
+  const income = sheet.addRow([]);
+  setTextCell(income.getCell('description'), 'Thu nhập (doanh thu trừ chi phí)');
+  // Blank while an expense line has no group, never a figure built on a guess.
+  if (book.income !== null) setMoneyCell(income.getCell('amount'), book.income);
+  mark(income);
+  income.font = { bold: true };
+  if (book.income === null) {
+    sheet.addRow([]);
+    line('Ghi chú: còn chi phí chưa xếp nhóm (tài khoản chưa có dòng quy tắc nhóm) nên chưa tính thu nhập; kế toán bổ sung quy tắc rồi lập lại sổ.');
   }
   sheet.addRow([]);
   line('Người đại diện hộ kinh doanh', true);

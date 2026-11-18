@@ -36,6 +36,7 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_minutes_templates.sql',
       'crove_meetings_member_private_counts.sql',
       'crove_kernel_member_vy_live_line_purge.sql',
+      'crove_kernel_org_purge_einvoice_notice.sql',
       'crove_kernel_org_purge_todo_list.sql',
     ]);
   });

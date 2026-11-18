@@ -66,6 +66,7 @@ export interface CroveFinanceSchema {
   'crove_finance.einvoice_connection': FinanceEinvoiceConnectionTable;
   'crove_finance.einvoice_draft': FinanceEinvoiceDraftTable;
   'crove_finance.einvoice_draft_line': FinanceEinvoiceDraftLineTable;
+  'crove_finance.einvoice_notice': FinanceEinvoiceNoticeTable;
   'crove_finance.einvoice_series': FinanceEinvoiceSeriesTable;
   'crove_finance.fixed_asset': FinanceFixedAssetTable;
   'crove_finance.household_expense_group_map': FinanceHouseholdExpenseGroupMapTable;
@@ -1144,6 +1145,22 @@ export interface FinanceEinvoiceDraftTable {
   original_draft_id: string | null;
   reason_code: string | null;
   agreement_file_id: string | null;
+}
+
+/** crove_finance.einvoice_notice */
+export interface FinanceEinvoiceNoticeTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  draft_id: ColumnType<string, string, NotGranted>;
+  field: ColumnType<string, string, NotGranted>;
+  correct_text: ColumnType<string, string, NotGranted>;
+  buyer_notice_state: Generated<string>;
+  buyer_notified_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  form_state: Generated<string>;
+  form_filed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_finance.einvoice_series */

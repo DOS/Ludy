@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Org purge order for crove_notes.todo_list (#3558): children (crove_notes.todo) before parent (crove_notes.todo_list).
+-- Org purge order for crove_notes.todo_list (#3558): restated from 20270111110000 (the newest restatement, einvoice_notice)
+-- with ONE change: 'crove_notes.todo_list' joins v_kernel_first immediately after 'crove_notes.todo' (children before parent).
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -90,6 +91,9 @@ BEGIN
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_sign.signing_event', v_n);
   v_keep_signed_file := ARRAY(SELECT d.signed_file_id FROM crove_finance.einvoice_draft d WHERE d.org_id = v_org AND d.signed_file_id IS NOT NULL);
+  DELETE FROM crove_finance.einvoice_notice n WHERE n.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_finance.einvoice_notice', v_n);
   DELETE FROM crove_finance.einvoice_draft_line l WHERE l.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_finance.einvoice_draft_line', v_n);
