@@ -6,7 +6,7 @@
 // the browser never sends: the page reads the booking with it and lets the visitor cancel it or move it to another
 // free slot, then follows the ask until the worker answers. A cancel or a move ends the link.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { zonedDate, type BookingManage, type BookingPage as Page, type BookingStatus } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
@@ -21,7 +21,7 @@ import type { Locale } from '../i18n/locale.ts';
 import { apiUrl } from '../lib/api-base.ts';
 import { getConfig } from '../lib/auth.ts';
 import { errorMessage } from '../lib/api.ts';
-import { dayLabel, manageTokenOf, slotsByDay, timeIn, visitorTimeZone, weekRange, type Slot } from '../lib/booking.ts';
+import { dayLabel, isVietnamZone, manageTokenOf, slotsByDay, timeIn, visitorTimeZone, weekRange, zoneOffset, weekOffset, zonePlace, type Slot } from '../lib/booking.ts';
 import { apiErrorFromResponse } from '../lib/errors.ts';
 import { loadTurnstile } from '../lib/turnstile.ts';
 
@@ -37,9 +37,36 @@ async function call<T>(path: string, init?: RequestInit): Promise<T | null> {
 }
 const post = <T,>(path: string, body: unknown) => call<T>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
-// "Thứ Hai, 02/11/2026, 09:00 - 09:30 (Asia/Ho_Chi_Minh)" in the visitor's zone.
-export const whenOf = (s: Slot, zone: string, locale: Locale) =>
-  `${dayLabel(zonedDate(zone, Date.parse(s.start)), locale)}, ${timeIn(s.start, zone, locale)} - ${timeIn(s.end, zone, locale)} (${zone})`;
+// "Thứ Hai, 02/11/2026, 09:00 - 09:30" in the visitor's zone; a visitor outside Vietnam is told the offset, "(GMT+9)", never the zone's IANA name (#3646).
+// `named: true` is for text that leaves the screen (a reply the host sends to a customer, whose own zone is not known): the offset is always said, "(GMT+7)".
+export const whenOf = (s: Slot, zone: string, locale: Locale, { named = false }: { named?: boolean } = {}) => {
+  const base = `${dayLabel(zonedDate(zone, Date.parse(s.start)), locale)}, ${timeIn(s.start, zone, locale)} - ${timeIn(s.end, zone, locale)}`;
+  const offset = isVietnamZone(zone) && !named ? '' : zoneOffset(zone, Date.parse(s.start));
+  return offset ? `${base} (${offset})` : base;
+};
+
+// An error in the page's own frame (#3646): what went wrong in the page's words and a "Tải lại" that asks again, not a bare red box.
+function RetryError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  const t = useTranslations('booking');
+  return (
+    <div className="space-y-2">
+      <ErrorText>{errorMessage(error)}</ErrorText>
+      <Button type="button" variant="outline" onClick={onRetry}>
+        {t('reload')}
+      </Button>
+    </div>
+  );
+}
+
+// A page-level error or "not found": the frame and the logo of the other states of the page.
+function PublicMessage({ children }: { children: ReactNode }) {
+  return (
+    <main className="mx-auto max-w-2xl space-y-4 p-4 sm:p-6">
+      <Logo />
+      {children}
+    </main>
+  );
+}
 
 // While the week's free times load (DESIGN.md §5.3, #2005): a few days, each with a row of time buttons.
 function SlotsSkeleton() {
@@ -50,9 +77,9 @@ function SlotsSkeleton() {
       {[0, 1, 2].map((d) => (
         <div key={d} className="space-y-1.5">
           <Skeleton className="h-4 w-32" />
-          <div className="flex flex-wrap gap-1">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
             {[0, 1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-8 w-16 rounded-md" />
+              <Skeleton key={i} className="h-11 rounded-md" />
             ))}
           </div>
         </div>
@@ -89,17 +116,18 @@ export function SlotPicker({ path, zone, onPick }: { path: string; zone: string;
     queryFn: () => call<Page>(`${path}?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`),
   });
   if (page.isLoading) return <SlotsSkeleton />;
-  if (page.error) return <ErrorText>{errorMessage(page.error)}</ErrorText>;
+  if (page.error) return <RetryError error={page.error} onRetry={() => void page.refetch()} />;
   const days = slotsByDay(page.data?.slots ?? [], zone);
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">{t('zone', { zone })}</p>
-        <div className="flex gap-1">
-          <Button type="button" variant="ghost" size="sm" disabled={week === 0} onClick={() => setWeek((w) => w - 1)}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* The zone is named only to a visitor outside Vietnam, whose times differ from the host's; by place and offset, never by IANA name (#3646). */}
+        {isVietnamZone(zone) ? <span /> : <p className="text-sm text-muted-foreground">{t('zone', { place: zonePlace(zone), offset: weekOffset(zone, range) })}</p>}
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" className="h-11 px-4" disabled={week === 0} onClick={() => setWeek((w) => w - 1)}>
             {t('previousWeek')}
           </Button>
-          <Button type="button" variant="ghost" size="sm" disabled={week >= 8} onClick={() => setWeek((w) => w + 1)}>
+          <Button type="button" variant="outline" className="h-11 px-4" disabled={week >= 8} onClick={() => setWeek((w) => w + 1)}>
             {t('nextWeek')}
           </Button>
         </div>
@@ -111,9 +139,9 @@ export function SlotPicker({ path, zone, onPick }: { path: string; zone: string;
           {days.map((d) => (
             <li key={d.date}>
               <p className="text-sm font-medium text-foreground">{dayLabel(d.date, locale)}</p>
-              <div className="mt-1 flex flex-wrap gap-1">
+              <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4">
                 {d.slots.map((s) => (
-                  <Button key={s.start} type="button" variant="outline" size="sm" onClick={() => onPick(s)}>
+                  <Button key={s.start} type="button" variant="outline" className="h-11 w-full" aria-label={`${timeIn(s.start, zone, locale)}, ${dayLabel(d.date, locale)}`} onClick={() => onPick(s)}>
                     {timeIn(s.start, zone, locale)}
                   </Button>
                 ))}
@@ -135,7 +163,7 @@ function Followed({ path, token, when, onAgain }: { path: string; token: string;
     refetchInterval: (q) => (q.state.data?.status === 'pending' && Date.now() - since < POLL_FOR_MS ? POLL_MS : false),
   });
   const s = status.data;
-  if (status.error) return <ErrorText>{errorMessage(status.error)}</ErrorText>;
+  if (status.error) return <RetryError error={status.error} onRetry={() => void status.refetch()} />;
   // The API no longer knows the request (another page's token, or data erased): say so rather than wait.
   if (s === null) return <ErrorText>{t('requestNotFound')}</ErrorText>;
   if (!s || s.status === 'pending') {
@@ -190,14 +218,19 @@ function Manage({ path, token, zone }: { path: string; token: string; zone: stri
   }, [view.data, t]);
 
   if (view.isLoading) return <PublicPageSkeleton />;
-  if (view.error) return <ErrorText>{errorMessage(view.error)}</ErrorText>;
+  if (view.error) {
+    return (
+      <PublicMessage>
+        <RetryError error={view.error} onRetry={() => void view.refetch()} />
+      </PublicMessage>
+    );
+  }
   const b = view.data;
   if (!b) {
     return (
-      <main className="mx-auto max-w-xl p-6">
-        <Logo />
-        <p className="mt-6 text-sm text-muted-foreground">{t('manage.notFound')}</p>
-      </main>
+      <PublicMessage>
+        <p className="text-sm text-muted-foreground">{t('manage.notFound')}</p>
+      </PublicMessage>
     );
   }
   const when = whenOf({ start: b.startsAt, end: b.endsAt }, zone, locale);
@@ -408,13 +441,18 @@ function Book({ path, zone }: { path: string; zone: string }) {
   };
 
   if (page.isLoading) return <PublicPageSkeleton />;
-  if (page.error) return <ErrorText>{errorMessage(page.error)}</ErrorText>;
+  if (page.error) {
+    return (
+      <PublicMessage>
+        <RetryError error={page.error} onRetry={() => void page.refetch()} />
+      </PublicMessage>
+    );
+  }
   if (!page.data) {
     return (
-      <main className="mx-auto max-w-xl p-6">
-        <Logo />
-        <p className="mt-6 text-sm text-muted-foreground">{t('notFound')}</p>
-      </main>
+      <PublicMessage>
+        <p className="text-sm text-muted-foreground">{t('notFound')}</p>
+      </PublicMessage>
     );
   }
   const { eventType, orgName } = page.data;

@@ -41,13 +41,22 @@ export interface PostRef {
 const codeOf = (error: unknown): string | null => ((error as { code?: unknown } | null)?.code as string | undefined) ?? null;
 
 // The codes a failed or unclear send is worded for; any other is shown as it is.
-// The mark of an email whose sender the receiving server did not vouch for (#2439): the name and address in From may be anyone's.
-function UnverifiedMark() {
+// The mark of an email whose sender the receiving server did not vouch for (#2439): the name and address in From may be anyone's. The server sends `senderUnverified`
+// only where the deployment can check senders at all (INBOUND_AUTHSERV_ID): without it every mail is unconfirmed, the mark would sit on all of them and mean nothing (#3636).
+// The explanation is a visible line under the address (`explain`), not a hover title that touch and keyboard readers never get.
+export function UnverifiedMark({ explain = false }: { explain?: boolean }) {
   const t = useTranslations('conversations');
   return (
-    <span className="shrink-0 rounded border border-border px-1 text-[10px] leading-4 text-muted-foreground" data-testid="unverified-sender" title={t('unverifiedHint')}>
-      {t('unverified')}
-    </span>
+    <>
+      <span className="shrink-0 rounded border border-border px-1 text-xs leading-4 text-muted-foreground" data-testid="unverified-sender">
+        {t('unverified')}
+      </span>
+      {explain && (
+        <span className="basis-full text-xs text-muted-foreground" data-testid="unverified-explain">
+          {t('unverifiedHint')}
+        </span>
+      )}
+    </>
   );
 }
 
@@ -286,9 +295,9 @@ export function ConversationThread({ conversationId, onGone, onOpenConversation,
         <div className="min-w-0">
           <h2 className="truncate text-base font-semibold text-foreground">{contactName(c.contact)}</h2>
           {c.kind === 'email' && (
-            <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground" data-testid="conversation-address">
+            <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground" data-testid="conversation-address">
               <span className="truncate">{c.contact.address}</span>
-              {c.senderUnverified && <UnverifiedMark />}
+              {c.senderUnverified && <UnverifiedMark explain />}
             </p>
           )}
           {c.kind === 'email' && c.subject && (
@@ -463,7 +472,7 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
             </Badge>
           )}
           {m.sendErrorCode && (m.sendState === 'failed' || m.sendState === 'unknown') && (
-            <span className="text-muted-foreground">{isKnownSendError(m.sendErrorCode) ? t(`sendError.${m.sendErrorCode}`) : m.sendErrorCode}</span>
+            <span className="text-muted-foreground">{isKnownSendError(m.sendErrorCode) ? t(`sendError.${m.sendErrorCode}`) : t(m.sendState === 'unknown' ? 'sendErrorUnknownGeneric' : 'sendErrorGeneric')}</span>
           )}
           {canWrite && (m.sendState === 'failed' || m.sendState === 'unknown') && (
             <>
@@ -482,7 +491,7 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
           )}
           {m.hidden && <Badge variant="outline">{t('hidden')}</Badge>}
           {m.hideRequest && <Badge variant="outline">{t(m.hideRequest === 'hide' ? 'hiding' : 'unhiding')}</Badge>}
-          {m.hideErrorCode && !m.hideRequest && <span className="text-destructive">{t('hideFailed', { code: m.hideErrorCode })}</span>}
+          {m.hideErrorCode && !m.hideRequest && <span className="text-destructive">{t('hideFailed')}</span>}
           {canHide && m.hideRequest && m.hideErrorCode && (
             <Button type="button" size="sm" variant="outline" loading={hide.isPending} onClick={() => hide.mutate(m.hideRequest === 'hide')}>
               {t('hideAgain')}
@@ -639,8 +648,17 @@ export function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail
   return (
     <form onSubmit={submit} className="space-y-2" aria-label={t('replyLabel')}>
       <p className="text-xs text-muted-foreground">
-        {detail.conversation.kind === 'email' ? t('replyEmail') : t(detail.conversation.kind === 'direct' ? 'replyPrivate' : 'replyPublic', { channel: detail.conversation.channel.displayName })}
+        {detail.conversation.kind === 'email'
+          ? detail.conversation.contact.address
+            ? t('replyEmailTo', { address: detail.conversation.contact.address })
+            : t('replyEmail')
+          : t(detail.conversation.kind === 'direct' ? 'replyPrivate' : 'replyPublic', { channel: detail.conversation.channel.displayName })}
       </p>
+      {detail.conversation.kind === 'email' && detail.conversation.senderUnverified && (
+        <p className="text-xs text-muted-foreground" data-testid="reply-unverified-note">
+          {t('replyEmailUnverified')}
+        </p>
+      )}
       <DraftPanel
         detail={detail}
         onUse={(draft) => {
@@ -676,7 +694,7 @@ export function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail
       {movedNote && <p role="status" className="text-sm text-muted-foreground">{t('movedAfterSend')}</p>}
       {send.error && !movedNote && <ErrorText>{errorMessage(send.error)}</ErrorText>}
       <Button type="submit" size="sm" loading={send.isPending} disabled={text.trim() === ''} data-testid="conversation-send">
-        {t('send')}
+        {t(detail.conversation.kind === 'email' ? 'sendEmail' : detail.conversation.kind === 'direct' ? 'sendPrivate' : 'sendPublic')}
       </Button>
     </form>
   );
