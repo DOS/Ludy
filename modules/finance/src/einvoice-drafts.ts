@@ -19,8 +19,9 @@ import { SANDBOX_EINVOICE_SECRET, createSandboxEInvoiceProvider } from '@crove/e
 import { zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceSeriesSync, zId, type EInvoiceDraft, type EInvoiceDraftCheck, type EInvoiceDraftLine, type EInvoiceDraftSummary, type EInvoiceSeries, type EInvoiceSeriesSynced } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { money, parseTaxCode } from '@crove/l10n-vn';
-import { checkDraft, computeDraft, isLateSale, maskBuyerIdentity, type ComputedDraft, type DraftInput } from './domain/einvoice-draft.ts';
+import { buyerNameOnInvoice, money, parseTaxCode } from '@crove/l10n-vn';
+import { checkDraft, computeDraft, isLateSale, isNationalityCode, maskBuyerIdentity, type ComputedDraft, type DraftInput } from './domain/einvoice-draft.ts';
+import { correctionRateDate } from './domain/einvoice-correction-rate.ts';
 import { einvoiceDraftSuggestSource, einvoicePreviousInvoice } from './einvoice-suggest.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
@@ -111,10 +112,15 @@ type DraftRow = Awaited<ReturnType<ReturnType<typeof selectDrafts>['execute']>>[
 type LineRow = Awaited<ReturnType<ReturnType<typeof selectLines>['execute']>>[number];
 
 // The identity an individual buyer gave, from a draft's row (both columns or neither).
-const identityOf = (row: Pick<DraftRow, 'buyer_identity_kind' | 'buyer_identity'>) => (row.buyer_identity_kind && row.buyer_identity ? { kind: row.buyer_identity_kind, value: row.buyer_identity } : null);
+// A passport's nationality (#3709) comes with it.
+const identityOf = (row: Pick<DraftRow, 'buyer_identity_kind' | 'buyer_identity' | 'buyer_nationality'>) =>
+  row.buyer_identity_kind && row.buyer_identity ? { kind: row.buyer_identity_kind, value: row.buyer_identity, nationality: row.buyer_nationality } : null;
+
+// The day the 8% of a correcting draft's lines is judged on (#2504, #3709): the original's date, unless the person confirmed that the rate follows the correction's own date.
+const rateDateOf = (row: Pick<DraftRow, 'correction_rate_basis'>, originalDate: string | null): string | null => correctionRateDate(row.correction_rate_basis, originalDate);
 
 // A draft as the API gives it, from its row and its line rows: the amounts as the API writes them, and the checks run on what is stored.
-// `rateDate` is the invoice date of the original a correcting draft corrects (#2504): an adjustment or a replacement keeps the VAT rate of the invoice it corrects, judged on its date.
+// `rateDate` is the invoice date of the original a correcting draft corrects (#2504), or null when the rate follows the correction's own date (#3709, `rateDateOf`).
 function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string, rateDate: string | null = null): EInvoiceDraft {
   const lines: EInvoiceDraftLine[] = [...lineRows]
     .sort((x, y) => x.line_no - y.line_no)
@@ -162,7 +168,7 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string, 
     errorCode: row.error_code,
     correction:
       row.correction_kind === 'adjustment' || row.correction_kind === 'replacement'
-        ? { kind: row.correction_kind, originalDraftId: row.original_draft_id as string, reasonCode: row.reason_code as string, agreementFileId: row.agreement_file_id }
+        ? { kind: row.correction_kind, originalDraftId: row.original_draft_id as string, reasonCode: row.reason_code as string, agreementFileId: row.agreement_file_id, rateBasis: row.correction_rate_basis }
         : null,
   };
 }
@@ -171,7 +177,7 @@ export async function loadDraft(ctx: Ctx, id: string, today: string): Promise<EI
   const row = await selectDrafts(ctx).where('id', '=', id).executeTakeFirst();
   if (!row) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy bản nháp hóa đơn');
   const original = row.original_draft_id ? await selectDrafts(ctx).select('invoice_date').where('id', '=', row.original_draft_id).executeTakeFirst() : undefined;
-  return buildDraft(row, await selectLines(ctx).where('draft_id', '=', id).execute(), today, original?.invoice_date ?? null);
+  return buildDraft(row, await selectLines(ctx).where('draft_id', '=', id).execute(), today, rateDateOf(row, original?.invoice_date ?? null));
 }
 
 export const einvoiceDraftList = defineQuery({
@@ -213,12 +219,13 @@ export const einvoiceDraftList = defineQuery({
       if (c.correction_kind === 'replacement') replaced.add(c.original_draft_id);
     }
     return rows.map((row) => {
-      const draft = buildDraft(row, lines.filter((l) => l.draft_id === row.id), today, row.original_draft_id ? (originals.get(row.original_draft_id) ?? null) : null);
+      const draft = buildDraft(row, lines.filter((l) => l.draft_id === row.id), today, rateDateOf(row, row.original_draft_id ? (originals.get(row.original_draft_id) ?? null) : null));
       return {
         id: row.id,
         state: row.state,
         date: row.invoice_date,
-        buyerName: row.buyer_name,
+        // A consumer gave no name: the list says what the invoice will say (#3709).
+        buyerName: buyerNameOnInvoice(row.buyer_kind, row.buyer_name),
         buyerIdentity: ((identity) => (identity ? { kind: identity.kind, masked: maskBuyerIdentity(identity.value) } : null))(identityOf(row)),
         total: plain(row.total),
         issueCount: draft.issues.length,
@@ -255,7 +262,7 @@ export const einvoiceDraftCheck = defineQuery({
     if (input.correction) {
       draft.adjustment = input.correction.kind === 'adjustment';
       const original = await selectDrafts(ctx).select('invoice_date').where('id', '=', input.correction.originalDraftId).executeTakeFirst();
-      draft.rateDate = original?.invoice_date ?? null;
+      draft.rateDate = correctionRateDate(input.correction.rateBasis, original?.invoice_date ?? null);
     }
     const computed = computeDraft(draft.lines);
     return {
@@ -281,7 +288,9 @@ export function toDraftInput(input: Pick<z.infer<typeof zEInvoiceDraftSave>, 'da
   // An identity belongs to an individual: a business keeps a tax code, so what the form still held from before the kind was changed is dropped. A passport is written in capitals and without spaces.
   const given = input.buyer.identity ?? null;
   const written = given ? (given.kind === 'passport' ? given.value.replace(/\s+/g, '').toUpperCase() : given.value.replace(/\s+/g, '')) : '';
-  const identity = input.buyer.kind === 'individual' && given && written !== '' ? { kind: given.kind, value: written } : null;
+  // A passport carries the nationality in capitals; no other identity does (#3709).
+  const nationality = given?.kind === 'passport' ? (given.nationality ?? '').replace(/\s+/g, '').toUpperCase() : '';
+  const identity = input.buyer.kind === 'individual' && given && written !== '' ? { kind: given.kind, value: written, nationality: nationality === '' ? null : nationality } : null;
   // A sale date equal to the invoice's day is no sale date of its own; the reason belongs only to a late sale.
   const saleDate = input.saleDate && input.saleDate !== input.date ? input.saleDate : null;
   return {
@@ -313,6 +322,12 @@ export const einvoiceDraftSave = defineCommand({
     // The amounts the database can hold (20 digits with 4 decimals): a sum above 15 digits is refused here with its own words, it is no draft.
     if ([computed.subtotal, computed.vatAmount, computed.total, ...computed.lines.flatMap((l) => [l.amount, l.vatAmount])].some((v) => money(v).abs().toFixed(0).length > 15)) {
       throw new DomainError('EINVOICE_TOTAL_TOO_LARGE', 422, 'Số tiền của hóa đơn quá lớn');
+    }
+    // A passport comes with the buyer's nationality (Decree 254 Appendix point 4.b, #3709): a draft with one and not the other is no draft, so it is refused here with its own words (the form's
+    // check shows the same as an issue while the person types). Drafts saved before this rule are shown with the issue and cannot be issued until it is filled.
+    if (draft.buyer.identity?.kind === 'passport') {
+      if (!draft.buyer.identity.nationality) throw new DomainError('EINVOICE_BUYER_NATIONALITY_REQUIRED', 422, 'Người mua dùng hộ chiếu thì phải ghi quốc tịch');
+      if (!isNationalityCode(draft.buyer.identity.nationality)) throw new DomainError('EINVOICE_BUYER_NATIONALITY_INVALID', 422, 'Quốc tịch ghi bằng mã hai chữ cái, ví dụ US, KR, JP');
     }
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
 
@@ -366,6 +381,7 @@ export const einvoiceDraftSave = defineCommand({
       buyer_email: draft.buyer.email,
       buyer_identity_kind: draft.buyer.identity?.kind ?? null,
       buyer_identity: draft.buyer.identity?.value ?? null,
+      buyer_nationality: draft.buyer.identity?.nationality ?? null,
       subtotal: computed.subtotal,
       vat_amount: computed.vatAmount,
       total: computed.total,

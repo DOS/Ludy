@@ -57,7 +57,8 @@ export interface EInvoiceBuyer {
   address: string | null;
   email: string | null;
   // An individual's CCCD, passport number or budget-relation unit code (#3678); personal data, never in a log or an audit fact.
-  identity?: { kind: BuyerIdentityKind; value: string } | null;
+  // A passport carries the buyer's nationality (ISO 3166-1 alpha-2, Decree 254 Appendix point 4.b, #3709) and nothing else does.
+  identity?: { kind: BuyerIdentityKind; value: string; nationality?: string | null | undefined } | null;
 }
 
 // Amounts are decimal strings, computed by the caller's code; an adapter never recomputes them.
