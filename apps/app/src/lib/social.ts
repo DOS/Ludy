@@ -4,6 +4,7 @@ import { CAPABILITIES, SENT_TO_APP, WORDPRESS_DRAFT, WORDPRESS_PENDING, countTex
 import { videoTitleRule } from '@crove/mod-social/contract';
 import { SOCIAL_VIEW_TABS } from '@crove/kernel-contract';
 import { getConfig } from './auth.ts';
+import { translator } from '../i18n/runtime.ts';
 
 export type VariantStatus =
   | 'draft'
@@ -63,9 +64,9 @@ export function variantTone(v: { status: VariantStatus; error?: { code: string |
   return notPublicKey(v) ? 'warning' : VARIANT_TONE[v.status];
 }
 
-// Short names of the providers, the same in every language.
-export const PROVIDER_NAMES: Record<Provider, string> = {
-  sandbox: 'Sandbox',
+// Short names of the providers, the same in every language: product names. The test channel is the one exception, it
+// has no product name and is read from the catalog (SO-27, #3659).
+export const PROVIDER_NAMES: Record<Exclude<Provider, 'sandbox'>, string> = {
   facebook_page: 'Facebook',
   instagram: 'Instagram',
   zalo_oa: 'Zalo OA',
@@ -90,7 +91,8 @@ const MESSAGING_PROVIDER_NAMES: Readonly<Record<string, string>> = { whatsapp: '
 export const isMessagingOnly = (provider: string): boolean => Object.hasOwn(MESSAGING_PROVIDER_NAMES, provider);
 
 export function providerName(provider: string): string {
-  return isProvider(provider) ? PROVIDER_NAMES[provider] : (MESSAGING_PROVIDER_NAMES[provider] ?? provider);
+  if (provider === 'sandbox') return translator()('social.providerSandbox');
+  return isProvider(provider) && provider !== 'sandbox' ? PROVIDER_NAMES[provider] : (MESSAGING_PROVIDER_NAMES[provider] ?? provider);
 }
 
 // The platforms the channels screen lists to connect, in the order Crove adds them (Social plan §6). A platform the

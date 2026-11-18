@@ -70,7 +70,7 @@ export function SocialMetrics({ slug, names, labelId, action }: { slug: string; 
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         {[7, 30, 90].map((d) => (
-          <Button key={d} variant={d === days ? 'secondary' : 'ghost'} size="sm" onClick={() => setDays(d)}>
+          <Button key={d} variant={d === days ? 'secondary' : 'ghost'} size="sm" aria-pressed={d === days} onClick={() => setDays(d)}>
             {t('metricsDays', { days: String(d) })}
           </Button>
         ))}

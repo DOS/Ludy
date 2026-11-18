@@ -211,7 +211,7 @@ export function SocialLabelsPage() {
       />
       {canWrite && (
         <Card className="block p-4">
-          <h3 className="mb-3 text-sm font-medium text-foreground">{t('new')}</h3>
+          <h2 className="mb-3 text-sm font-medium text-foreground">{t('new')}</h2>
           <LabelForm key={formKey} id="label-new" initial={EMPTY} campaign={canManage} onSave={(d) => create.mutate(d)} pending={create.isPending} error={create.error} />
         </Card>
       )}
