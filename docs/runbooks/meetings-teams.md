@@ -13,7 +13,7 @@ A member connects their own Microsoft 365 work or school account and Ludy then l
 ## What the operator does (once per deployment)
 
 1. In the Microsoft Entra admin center create an **App registration**: supported account types "Accounts in any organizational directory" (multi-tenant, work and school only, so the tenant is `organizations`; personal Microsoft accounts have no Teams meeting recordings through Graph).
-2. Add a **Web** redirect URI `APP_URL/meetings/oauth/teams/callback`, exactly, with no trailing slash. `APP_URL` is the address of the web app, not the API's ([split-app-api.md](split-app-api.md)).
+2. Add a **Web** redirect URI `APP_URL/meetings/oauth/microsoft_teams/callback`, exactly, with no trailing slash. `APP_URL` is the address of the web app, not the API's ([split-app-api.md](split-app-api.md)).
 3. Under API permissions add these **delegated** Microsoft Graph permissions, and no other: `openid`, `profile`, `offline_access`, `Calendars.ReadBasic`, `OnlineMeetings.Read`, `OnlineMeetingRecording.Read.All` and `OnlineMeetingTranscript.Read.All`. Nothing that writes, no mail, no files or sites scope, no `User.Read`, and none of the application-only `getAll` permissions (those would read every user's meetings; a recording in Ludy belongs to the member who imported it). The last two permissions need **administrator consent** in every tenant (their names end in `.All` but they still read only what the signed-in member may read).
 4. Create a client secret. Put the Application (client) ID and the secret in the settings of the API **and** the worker (the worker renews tokens): `TEAMS_OAUTH_CLIENT_ID` and `TEAMS_OAUTH_CLIENT_SECRET`. Set both or neither; the server refuses to start with one, or with an id that is not a UUID. `CREDENTIAL_KEY` must be set too ([credential-key.md](credential-key.md)). A client secret expires (24 months at most): write the date down.
 5. Publisher verification is not required for the app to work, but a tenant that only lets members consent to verified apps will ask for administrator consent for everything.
@@ -50,7 +50,7 @@ A one-person company is its own administrator: this is three steps in its own ad
 | "Connection expired: connect again" | Microsoft would not renew the grant or answered 401 | The member connects again; it is the same row |
 | A meeting is missing from the list | No recording and no transcript, the member's calendar has more than 200 events in the 14 days (the read stops there), not scheduled, someone else organized it and it has no transcript, older than 14 days, or the recording was deleted | Nothing in Ludy to fix; the list cannot tell which |
 | Import fails with "no audio" | A Teams recording is video and the media sandbox is not running | Run `crove-media` |
-| Redirect URI mismatch (`AADSTS50011`) | The redirect URI of the app registration is not exactly `APP_URL/meetings/oauth/teams/callback` | Fix it in Entra |
+| Redirect URI mismatch (`AADSTS50011`) | The redirect URI of the app registration is not exactly `APP_URL/meetings/oauth/microsoft_teams/callback` | Fix it in Entra |
 
 ## What is not built yet
 
