@@ -119,6 +119,18 @@ describe('the layout and the empty state of the deal board (#3647)', () => {
     expect(html).not.toContain('w-72');
   });
 
+  it('stacks Thắng and Thua in one cell, so six stages take five columns and fit a 1280 px laptop', () => {
+    const html = render(undefined);
+    expect(html.match(/data-testid="deal-closed-cell"/g)).toHaveLength(1);
+    const cell = html.split('data-testid="deal-closed-cell"')[1] as string;
+    expect(cell).toContain('aria-label="Thắng"');
+    expect(cell).toContain('aria-label="Thua"');
+    // The open stage is a cell of its own, before the closed one.
+    expect(html.indexOf('aria-label="Mới"')).toBeLessThan(html.indexOf('data-testid="deal-closed-cell"'));
+    // Each closed stage keeps its own "Xem tất cả".
+    expect(render(() => undefined).match(/>Xem tất cả</g)).toHaveLength(2);
+  });
+
   it('names each column by its heading, under the screen title, and does not repeat the name on its list', () => {
     const html = render(undefined);
     expect(html).toContain('<h2 class="text-sm font-semibold text-foreground">Thắng</h2>');

@@ -72,16 +72,18 @@ test('a member adds deals, moves them between stages and the board keeps its ord
     await expect(column('Mới')).toContainText('3');
   });
 
-  await test.step('at 1440 wide every column, Thắng and Thua included, is on screen with no sideways scroll (#3647)', async () => {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    // Across the screen, not down it: a tall column may reach below the fold.
-    for (const name of ['Mới', 'Báo giá', 'Thắng', 'Thua']) {
-      const box = await column(name).boundingBox();
-      expect(box, name).not.toBeNull();
-      expect(box!.x, name).toBeGreaterThanOrEqual(0);
-      expect(box!.x + box!.width, name).toBeLessThanOrEqual(1440);
+  await test.step('from 1280 wide every stage, Thắng and Thua included, is on screen with no sideways scroll (#3647)', async () => {
+    // Thắng and Thua share one closed column, so the six stages take five; a 1280 px laptop (content about 930 px) and a 1440 one both hold them.
+    for (const width of [1280, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const name of ['Mới', 'Báo giá', 'Thắng', 'Thua']) {
+        const box = await column(name).boundingBox();
+        expect(box, `${name} at ${width}`).not.toBeNull();
+        expect(box!.x, `${name} at ${width}`).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width, `${name} at ${width}`).toBeLessThanOrEqual(width);
+      }
+      expect(await board.evaluate((el) => el.scrollWidth - el.clientWidth), `scroll at ${width}`).toBeLessThanOrEqual(1);
     }
-    expect(await board.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
     await expect(page.getByRole('heading', { level: 2, name: 'Thua' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Bộ lọc khác' })).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByLabel('Phụ trách')).toBeVisible();

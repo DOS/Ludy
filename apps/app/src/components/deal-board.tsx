@@ -247,6 +247,14 @@ export function DealBoard({
   // No deal at all, no filter on: five empty columns say nothing, so the screen says what to do. A deal closed more than 30 days ago is not on the board, so the words are about the board.
   if (!filters && isEmptyBoard(board.data)) return <DealsEmpty title={t('board.emptyTitle')} hint={canEdit ? t('board.emptyHint') : undefined} canEdit={canEdit} onAdd={onAdd} />;
 
+  // The columns as cells of the board: each open stage its own, Thắng and Thua (and any closed stage) stacked in one, so the six default stages take five columns and all of them fit a 1280 px laptop (#3647).
+  const cells = columns.reduce<BoardColumn[][]>((all, column) => {
+    const last = all[all.length - 1];
+    if (column.stage.kind !== 'open' && last && last[0]?.stage.kind !== 'open') last.push(column);
+    else all.push([column]);
+    return all;
+  }, []);
+
   return (
     <div className="space-y-3">
       {booking && <DealBookings key={booking.id} deal={booking} canEdit={canEdit} />}
@@ -283,7 +291,8 @@ export function DealBoard({
       )}
       {failure !== null && <ErrorText>{errorMessage(failure)}</ErrorText>}
       <div ref={scroller} className={`grid auto-cols-[minmax(10rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-3 ${dragging ? '' : 'snap-x'}`} data-testid="deal-board" onDragOver={(e) => scrollNearEdge(e.clientX)}>
-        {columns.map((column) => (
+        {cells.map((cell) => {
+          const sections = cell.map((column) => (
           <section
             key={column.stage.id}
             aria-label={column.stage.name}
@@ -344,7 +353,16 @@ export function DealBoard({
             </ul>
             {column.truncated && <p className="mt-2 px-1 text-xs text-muted-foreground">{t('board.truncated')}</p>}
           </section>
-        ))}
+          ));
+          const first = cell[0]!;
+          return first.stage.kind === 'open' ? (
+            sections[0]
+          ) : (
+            <div key={first.stage.id} data-testid="deal-closed-cell" className="min-w-0 snap-start space-y-3">
+              {sections}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
