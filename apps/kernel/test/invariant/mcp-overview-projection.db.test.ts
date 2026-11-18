@@ -53,7 +53,7 @@ suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
       await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, branchAdmin, branch, owner]);
     }
     // Planted on purpose: what a grant must never read.
-    const planted = (await rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email, phone) VALUES ($1, 'Khách bí mật', 'organization', 'secret-customer@example.test', '0909000111') RETURNING id", [orgId]))[0]?.id as string;
+    const planted = (await rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email, phone) VALUES ($1, 'Khách bí mật', 'organization', 'secret-customer@example.test', '0900000000') RETURNING id", [orgId]))[0]?.id as string;
     expect(planted).toBeTruthy();
     const grant = async (userId: string) => {
       const id = randomUUID();
@@ -125,16 +125,16 @@ suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
     expect(seen.payables).toMatchObject({ amount: '800000' });
     expect(seen.cash).toMatchObject({ amount: '5000000' });
     const wire = JSON.stringify(seen);
-    for (const secret of ['secret text', 'secret-customer@example.test', '0909000111', 'Khách bí mật']) expect(wire, secret).not.toContain(secret);
+    for (const secret of ['secret text', 'secret-customer@example.test', '0900000000', 'Khách bí mật']) expect(wire, secret).not.toContain(secret);
     for (const key of ['cash', 'profit', 'receivables', 'payables']) expect(Object.keys(seen[key] as object).sort(), key).toEqual(FIGURE_KEYS);
     expect(seen).not.toHaveProperty('months');
     expect(seen).not.toHaveProperty('expenses');
   });
 
-  it('refuses a grant that sees only part of the books, and an org with more than one legal entity, and never answers the part it sees', async () => {
+  it('refuses an org with more than one legal entity, for the branch-scoped admin and for the owner alike, and never answers the part it sees', async () => {
     const o = await org(true);
     await o.post('2026-11-10', '111', '511', '5000000');
-    // The branch admin sees the branch only: refused. The owner sees every entity, but the figures are the default entity's alone: refused too.
+    // Both are refused by the entity count (the figures are one entity's, so with a second entity they are a part of the books); the scope check of wholeOrg is the guard for a grant that cannot see every entity.
     await expect(o.read(o.branchAdmin)).rejects.toMatchObject({ code: SIGNAL_PARTIAL_VIEW_CODE, status: 403 });
     await expect(o.read(o.owner)).rejects.toMatchObject({ code: SIGNAL_PARTIAL_VIEW_CODE, status: 403 });
   });

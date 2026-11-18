@@ -123,10 +123,10 @@ suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
     expect(seen).not.toHaveProperty('expenses');
   });
 
-  it('refuses a grant that sees only part of the books, and an org with more than one legal entity, and never answers the part it sees', async () => {
+  it('refuses an org with more than one legal entity, for the branch-scoped admin and for the owner alike, and never answers the part it sees', async () => {
     const o = await org(true);
     await o.post('2026-11-10', '111', '511', '5000000');
-    // The branch admin sees the branch only: refused. The owner sees every entity, but the figures are the default entity's alone: refused too.
+    // Both are refused by the entity count (the figures are one entity's, so with a second entity they are a part of the books); the scope check of wholeOrg is the guard for a grant that cannot see every entity.
     await expect(o.read(o.branchAdmin)).rejects.toMatchObject({ code: SIGNAL_PARTIAL_VIEW_CODE, status: 403 });
     await expect(o.read(o.owner)).rejects.toMatchObject({ code: SIGNAL_PARTIAL_VIEW_CODE, status: 403 });
   });
