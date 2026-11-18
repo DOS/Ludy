@@ -223,6 +223,23 @@ suite('what a company MCP grant reads of Meetings (#3731, invariants first)', ()
     expect(idsOf(await visible(ctx, 'action_item'))).not.toEqual(expect.arrayContaining(flagged));
   });
 
+  it('answers the shared test of the policies only to an agent context of the same org with the whole-org scope, and says yes only for a published, in-period org meeting', async () => {
+    const ask = async (ctx: Sealed, org: string, meeting: string) =>
+      asSealed(ctx, async (c) => (await c.query<{ ok: boolean }>('SELECT crove_meetings.is_org_minutes_meeting($1, $2) AS ok', [org, meeting])).rows[0]?.ok);
+    const grantor = users.admin as string;
+    // The company context with the whole-org scope: yes for a published, in-period org meeting (a kept period too), no for the rest.
+    for (const yes of ['orgPublished', 'orgKept', 'orgFlagged']) expect(await ask(company(orgA, grantor), orgA, ids[yes] as string), yes).toBe(true);
+    for (const no of ['orgDraft', 'orgEnded', 'orgEndsToday', 'attendeesByAdmin', 'attendeesByMember']) expect(await ask(company(orgA, grantor), orgA, ids[no] as string), no).toBe(false);
+    // Not for a person (the policies' own branches serve a person), not for an entity-scoped company context, and not across orgs (either way round). The helper names no kind, so another agent context with
+    // the whole-org scope (a member grant's) gets the same answer: it learns only whether an org-visible, published, in-period meeting exists, which every member of the org already reads; the rows stay
+    // behind the policies, and the member context reads none (the test above).
+    expect(await ask(person(orgA, grantor), orgA, ids.orgPublished as string)).toBe(false);
+    expect(await ask(company(orgA, grantor, [randomUUID()]), orgA, ids.orgPublished as string)).toBe(false);
+    expect(await ask(company(orgB, users.foreign as string), orgA, ids.orgPublished as string)).toBe(false);
+    expect(await ask(company(orgA, grantor), orgB, ids.otherOrg as string)).toBe(false);
+    expect(await ask(company(orgB, users.foreign as string), orgB, ids.orgPublished as string)).toBe(false);
+  });
+
   it('moves with the text period: a meeting whose period ends today leaves the company context, and one set to a day ahead comes back', async () => {
     const ctx = company(orgA, users.admin as string);
     const vnToday = `(now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`;

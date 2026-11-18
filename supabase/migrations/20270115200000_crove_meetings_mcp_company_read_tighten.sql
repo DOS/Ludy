@@ -7,8 +7,9 @@
 --   action_item      a published item of such a meeting that no flag marks (`flags = '[]'`), as the query already leaves out a flagged item: a person reviews it in the app.
 -- One definer, crove_meetings.is_org_minutes_meeting(org, meeting), holds the shared test (org visibility, a published result, the text period). It is needed because the meeting policy reads the result and the
 -- result policy reads the meeting, which Postgres refuses as infinite recursion; the module's other definers (is_meeting_reader, is_meeting_recorder) break the same cycle the same way. It reads the context
--- only through its org and actor type (an agent actor; a person has the branches of the first migration), names no kind, and returns a boolean. The kind itself stays an inline comparison in the three policies
--- (`ctx_verified() ->> 'kind'`), the exact exception the invariants allow; nothing here adds one.
+-- only through its org, actor type and whole-org scope (an agent actor; a person has the branches of the first migration), names no kind, and returns a boolean. The kind itself stays an inline comparison in the three policies
+-- (`ctx_verified() ->> 'kind'`), the exact exception the invariants allow; nothing here adds one. Because the helper names no kind, any agent context of the org with the whole-org scope gets its answer; that
+-- is a yes or no on whether an org-visible, published, in-period meeting exists, which every member of the org already reads, and never a row (the policies still gate every row by kind).
 -- What stays readable, stated plainly: the company context still reads whole rows of a meeting it may read, so the columns of that row (the recorder's id, the consent columns, extension_token_id, the
 -- retention dates, the template name and the rest) are reachable at the database layer for those meetings; the query projection is what leaves them out (its keys are pinned in
 -- meetings-mcp-projection.db.test.ts). The consent records and the readers are other tables and have no branch. The earlier comment saying consent records are out of reach meant those tables, not the consent
@@ -28,6 +29,10 @@ BEGIN
   END IF;
   -- A person reads through the policies' own branches; only an agent context asks this.
   IF crove_kernel.ctx_actor_type() IS DISTINCT FROM 'agent' THEN
+    RETURN false;
+  END IF;
+  -- The whole-org scope, as the policies ask: an entity-scoped context learns nothing, not even that a meeting exists.
+  IF NOT ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])) THEN
     RETURN false;
   END IF;
   RETURN EXISTS (
