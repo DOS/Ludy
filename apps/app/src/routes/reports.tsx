@@ -37,7 +37,13 @@ export function ReportsPage() {
           {tab === 'conversations' && <ConversationsPanel slug={slug} />}
           {tab === 'sales' && <SalesPanel slug={slug} />}
           {tab === 'quotes' && <QuotesPanel slug={slug} />}
-          {tab === 'posts' && <PostsPanel slug={slug} />}
+          {tab === 'posts' && (
+            <PostsPanel
+              slug={slug}
+              labelId={search.label}
+              onLabel={(label) => void navigate({ to: '/o/$slug/reports', params: { slug }, search: label ? { area: 'posts' as const, label } : { area: 'posts' as const }, replace: true })}
+            />
+          )}
           {tab === 'ads' && <AdsPanel slug={slug} />}
         </div>
       )}

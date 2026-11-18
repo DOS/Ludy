@@ -22,12 +22,16 @@ export const REPORTS_ROUTE_MODULES: readonly string[] = MODULE_SCREENS.social.ro
 
 // ?area= is the tab shown (not ?tab=: the router types every route's search keys together, and the social screen's `tab` is another set of
 // values); a value that is not a tab is left out, so the screen opens on its first tab instead of an error page (#1513).
+// ?label= is a label's id, which the posts report is limited to (#3658): the old Số liệu link carried it, and a reload keeps it.
 export interface ReportsSearch {
   area?: ReportTab;
+  label?: string;
 }
+const LABEL_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function parseReportsSearch(search: Record<string, unknown>): ReportsSearch {
   const area = REPORT_TABS.find((candidate) => candidate === search.area);
-  return area ? { area } : {};
+  const label = typeof search.label === 'string' && LABEL_ID.test(search.label) ? search.label.toLowerCase() : undefined;
+  return { ...(area ? { area } : {}), ...(label && area === 'posts' ? { label } : {}) };
 }
 
 // The tab shown: the one asked for when it is among the tabs, else the first.

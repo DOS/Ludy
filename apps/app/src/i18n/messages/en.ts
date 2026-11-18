@@ -8851,7 +8851,7 @@ export const en = {
     compose: 'Compose',
     composeFirst: 'Write your first post',
     seeSchedule: 'See the schedule',
-    reportLine: 'In the last {days, number} days: {posts, number} posts, {reach, number} reach, {reactions, number} reactions.',
+    reportLine: 'In the last {days, number} days: {posts, plural, one {# post} other {# posts}}, {reach, number} reach, {reactions, number} reactions.',
     reportOpen: 'See the report',
     seePublished: 'See published posts',
     libraryAdd: 'Add images',

@@ -214,12 +214,12 @@ export function QuotesPanel({ slug }: { slug: string }) {
 // How the posts that went out did, and what goes with the figures (#3658): the one place for them. The window (7, 30 or 90 days),
 // the totals against the period before, the channels, the best posts and the CSV export; the monthly goals, the team report,
 // the links for clients and the e-mail schedules under them. The Posts screen keeps a line and a link here.
-export function PostsPanel({ slug }: { slug: string }) {
+// labelId and onLabel: the label the report is limited to, kept in the address by the screen.
+export function PostsPanel({ slug, labelId = '', onLabel = () => undefined }: { slug: string; labelId?: string | undefined; onLabel?: (label: string) => void }) {
   const t = useTranslations('reports.posts');
   const ts = useTranslations('social');
   const channels = useQuery(orpc.channels.list.queryOptions({ input: {} }));
   const labels = useLabels();
-  const [labelId, setLabelId] = useState('');
   // The empty report's one action is for whoever can use it (#3654): writing needs a role that writes and a channel; a viewer gets none.
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
@@ -254,7 +254,7 @@ export function PostsPanel({ slug }: { slug: string }) {
       {(labelList.length > 0 || labelId !== '') && (
         <label className="block text-xs">
           <span className="text-subtle-foreground">{ts('filters.label')}</span>
-          <NativeSelect className="mt-1 w-48" value={labelId} onChange={(e) => setLabelId(e.target.value)}>
+          <NativeSelect className="mt-1 w-48" value={labelId} onChange={(e) => onLabel(e.target.value)}>
             <option value="">{ts('filters.allLabels')}</option>
             {labelList.map((l) => (
               <option key={l.id} value={l.id}>
