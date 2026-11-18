@@ -384,7 +384,7 @@ export class S3BlobStore implements BlobStore {
   // s3:AbortMultipartUpload reaches: the bucket's AbortIncompleteMultipartUpload lifecycle rule on staging/ is required
   // (docs/runbooks/provision-pilot.md), and so is the s3:AbortMultipartUpload permission for the cleanup above.
   async beginStagedWrite(directory: string): Promise<StagedWrite> {
-    if (!/^(?:org|export|conversation)\/[0-9a-f-]{36}$/.test(directory)) throw new Error('invalid storage directory');
+    if (!/^(?:org|export|conversation|tmp)\/[0-9a-f-]{36}$/.test(directory)) throw new Error('invalid storage directory');
     const staging = newStagingKey();
     const created = await this.client.send(
       new CreateMultipartUploadCommand({ Bucket: this.bucket, Key: staging, ContentType: 'application/octet-stream', ChecksumAlgorithm: 'SHA256' }),
@@ -735,7 +735,7 @@ export class S3BlobStore implements BlobStore {
     }
   }
 
-  // Lists inbound/ or export/ in key order (ListObjectsV2 with StartAfter), page after page until `limit` keys were
+  // Lists inbound/, export/ or tmp/ in key order (ListObjectsV2 with StartAfter), page after page until `limit` keys were
   // looked at. Keys outside the prefix's pattern, or without a modification time, are skipped but still move the
   // cursor. Needs s3:ListBucket, which the store already requires. Lists current objects only: on a versioned bucket a
   // deleted object's noncurrent versions are the lifecycle rule's job.

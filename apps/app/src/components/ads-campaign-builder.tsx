@@ -2,7 +2,7 @@
 // The campaign builder (W1c, issue #2295, plan docs/plan/ads-write.md section 10): one campaign, one ad set and one ad with up to three texts, written by
 // a person or drafted by the AI coworker and edited here. A field the AI coworker drafted and nobody has changed since is marked as drafted. Saving checks
 // the plan on the server against the dates, the spend caps and the switches of running ads, and the list says what is still to fix; the largest amount the
-// plan can spend is one sentence under the form, the same one the approver signs. Owners and admins ask for approval; nothing is sent to an ad platform.
+// plan can spend is one sentence under the form, the same one the approver signs. Owners and admins ask for approval; until it is approved nothing is sent to an ad platform (an approved plan is launched paused and switched on from its first day, #3639).
 // The form is the person's own until they save: a draft someone else saved meanwhile never replaces their edits (the save is refused as stale instead).
 import { useMutation } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';

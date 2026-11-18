@@ -45,6 +45,9 @@ test('set an expiry, find an expired proposal with its reason and ask for it aga
     await form.getByLabel('Số tiền Có dòng 2').fill('1.500.000');
     await form.getByRole('button', { name: 'Gửi đề xuất' }).click();
     await expect(page.getByText('Đã tạo đề xuất phiếu kế toán.')).toBeVisible();
+    // The panel keeps its answer until it is closed (#3607).
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 
   await test.step('the proposal expires after 15 days of waiting', async () => {

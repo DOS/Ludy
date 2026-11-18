@@ -36,7 +36,7 @@ test('splits a 1,200-character text into a thread and posts it on the sandbox (#
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
   await expect(page.getByText(channel).first()).toBeVisible();
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill(text);
 
   // Too long for one post: the card says so and previews the thread, each post with its count.

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { z } from 'zod';
+import { zMinutesTemplateCopy } from './meeting-minutes-templates.ts';
 import { SECTIONS_MAX, zBuiltInSummaryTemplate, zMeetingSummaryTemplate, zSectionEntry } from './meeting-templates.ts';
 import { zId } from './schemas.ts';
 
@@ -105,6 +106,8 @@ export const zMeetingDetail = zMeetingSummary.extend({
   readers: z.array(zId),
   videoRetentionDate: z.string().nullable(),
   isRecorder: z.boolean(),
+  // The meeting's own copy of its org template (#3578), on a meeting whose template is 'custom'; null otherwise. Headings and the sections a run fills are read from it, never from the live template.
+  minutesTemplate: zMinutesTemplateCopy.nullable(),
 });
 export type MeetingDetail = z.infer<typeof zMeetingDetail>;
 
@@ -148,6 +151,15 @@ export const zMeetingImportStart = z.strictObject({
   consentConfirmed: z.literal(true),
 });
 export type MeetingImportStart = z.infer<typeof zMeetingImportStart>;
+
+// The clean-up after a failed import is dismissed, or before the platform connection that held it is disconnected (#3587): the empty meeting a failed try left in the member's list goes, by the same
+// rule as a retry (the importer's own, never edited, holding nothing). Exactly one of the two: one recording, or every failed or dismissed recording of one connection.
+export const zMeetingImportDiscardEmpty = z
+  .strictObject({ recordingId: zId.optional(), connectionId: zId.optional() })
+  .refine((v) => (v.recordingId === undefined) !== (v.connectionId === undefined), { message: 'Exactly one of recordingId and connectionId' });
+export type MeetingImportDiscardEmpty = z.infer<typeof zMeetingImportDiscardEmpty>;
+export const zMeetingImportDiscarded = z.strictObject({ removed: z.number().int().min(0) });
+export type MeetingImportDiscarded = z.infer<typeof zMeetingImportDiscarded>;
 
 export const zMeetingCreated = z.strictObject({
   meetingId: zId,
@@ -686,6 +698,8 @@ export const zSummaryResult = z.strictObject({
   enhanced: zEnhanced.optional(),
   // The template the run was asked for and the sections it filled (A4, #3162); a body stored before that has neither, which reads as the general summary.
   template: zMeetingSummaryTemplate.default('general'),
+  // On a custom template (#3578): the md5 of the copy of the sections the run was asked to fill. The save refuses a run whose hash is not the meeting's now (another template, or the same one edited and picked again).
+  templateHash: z.string().regex(/^[0-9a-f]{32}$/).optional(),
   sections: z.array(zSectionEntry).max(SECTIONS_MAX).default([]),
   summary: z.string().max(RESULT_SUMMARY_MAX),
   decisions: z.array(z.string().min(1).max(RESULT_DECISION_MAX)).max(RESULT_DECISIONS_MAX),

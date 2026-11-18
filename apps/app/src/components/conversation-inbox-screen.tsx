@@ -133,6 +133,11 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
   const first = items[0]?.id;
   // A thread the reader may no longer read has just gone: it is not opened again from the list that still holds it until the next poll.
   const gone = useRef<string | null>(null);
+  // The open thread is gone (the reader may not read it, or its customer was erased): leave it.
+  const leave = () => {
+    gone.current = openId;
+    change({});
+  };
   useEffect(() => {
     if (!search.c && first && first !== gone.current) {
       autoOpened.current = first;
@@ -273,15 +278,12 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
                 <ConversationThread
                   key={openId}
                   conversationId={openId}
-                  onGone={() => {
-                    gone.current = openId;
-                    change({});
-                  }}
+                  onGone={leave}
                   onOpenConversation={(id) => onSearch({ ...search, c: id })}
                 />
               </div>
               <div className="min-w-0 border-t border-border p-4 2xl:overflow-y-auto 2xl:border-t-0 2xl:border-l">
-                <ContactPanel key={openId} conversationId={openId} onOpen={(id) => onSearch({ ...search, c: id })} />
+                <ContactPanel key={openId} conversationId={openId} onOpen={(id) => onSearch({ ...search, c: id })} onErased={leave} />
               </div>
             </>
           ) : (

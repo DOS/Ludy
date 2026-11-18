@@ -59,8 +59,8 @@ test('import a bank statement, then an overlapping one, and find each line once'
     await page.getByRole('button', { name: /^Lập chứng từ cho dòng ngày 03\/09\/2026/ }).click();
     await expect(page.getByText(/Lập từ dòng sao kê ngày 03\/09\/2026: 11\.000/)).toBeVisible();
     // The type, date, bank account and amount follow the line.
-    await expect(page.getByLabel('Loại chứng từ').first()).toHaveValue('bank_debit');
-    await expect(page.getByLabel('Loại chứng từ').first()).toBeDisabled();
+    await expect(page.getByRole('dialog').getByLabel('Loại chứng từ')).toHaveValue('bank_debit');
+    await expect(page.getByRole('dialog').getByLabel('Loại chứng từ')).toBeDisabled();
     await expect(page.getByLabel('Ngày chứng từ')).toHaveValue('03/09/2026');
     // Amount fields show Vietnamese digit grouping when not being typed in (#1391).
     await expect(page.getByLabel('Số tiền dòng 1')).toHaveValue('11.000');
@@ -69,6 +69,9 @@ test('import a bank statement, then an overlapping one, and find each line once'
     await page.getByLabel('Tài khoản đối ứng dòng 1').selectOption('6422');
     await page.getByRole('button', { name: 'Gửi đề xuất' }).click();
     await expect(page.getByText('Đã tạo đề xuất Giấy báo Nợ.')).toBeVisible();
+    // The panel keeps its answer until it is closed; the screen behind it is not reachable while it is open (#3607).
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByRole('row').filter({ hasText: 'FT002' }).getByRole('link', { name: 'Chờ duyệt' })).toBeVisible();
     // Other lines can still get theirs.
     await expect(page.getByRole('button', { name: /^Lập chứng từ cho dòng ngày 05\/09\/2026/ })).toBeVisible();

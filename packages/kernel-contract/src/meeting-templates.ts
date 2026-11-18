@@ -66,8 +66,10 @@ export const zSectionEntry = z.strictObject({
 });
 export type SectionEntry = z.infer<typeof zSectionEntry>;
 
-export function templateSections(template: MeetingSummaryTemplate): readonly TemplateSection[] {
-  return template === CUSTOM_SUMMARY_TEMPLATE ? [] : SUMMARY_TEMPLATE_SECTIONS[template];
+// The sections a meeting is read against: a built-in template's are code's; a custom meeting's are its own copy (#3578), never the org's live template. A custom meeting handed no copy reads
+// as the general summary (no sections), so a helper never fails on one.
+export function templateSections(template: MeetingSummaryTemplate, copy: readonly TemplateSection[] | null = null): readonly TemplateSection[] {
+  return template === CUSTOM_SUMMARY_TEMPLATE ? (copy ?? []) : SUMMARY_TEMPLATE_SECTIONS[template];
 }
 
 // A line of a section's text that equals a heading of the template would read back as a new section: it is marked so it stays text.
@@ -84,8 +86,8 @@ function escapeLines(text: string, titles: ReadonlySet<string>): string {
  * The text a meeting's result keeps for the filled sections: each non-empty section as its heading on one line and its text below, in the template's order,
  * separated by a blank line. A key the template does not have is left out, a repeated key keeps the first. 'general' has no sections: the empty string.
  */
-export function sectionsToText(template: MeetingSummaryTemplate, entries: readonly SectionEntry[]): string {
-  const defs = templateSections(template);
+export function sectionsToText(template: MeetingSummaryTemplate, entries: readonly SectionEntry[], copy: readonly TemplateSection[] | null = null): string {
+  const defs = templateSections(template, copy);
   const titles = new Set(defs.map((d) => d.title));
   const byKey = new Map<string, string>();
   for (const e of entries) if (!byKey.has(e.key)) byKey.set(e.key, e.text);
@@ -102,8 +104,8 @@ export function sectionsToText(template: MeetingSummaryTemplate, entries: readon
  * it was not filled). Null when the text is not in this template's form (the template changed since, or the text was typed for another one): the caller then shows
  * the whole text as it is.
  */
-export function textToSections(template: MeetingSummaryTemplate, text: string): SectionEntry[] | null {
-  const defs = templateSections(template);
+export function textToSections(template: MeetingSummaryTemplate, text: string, copy: readonly TemplateSection[] | null = null): SectionEntry[] | null {
+  const defs = templateSections(template, copy);
   if (defs.length === 0) return null;
   const lines = text.split('\n');
   const found = new Map<string, string[]>();

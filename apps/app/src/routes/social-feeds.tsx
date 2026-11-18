@@ -147,7 +147,17 @@ export function SocialFeedsPage() {
       ) : feeds.error ? (
         <ErrorText>{errorMessage(feeds.error)}</ErrorText>
       ) : (feeds.data ?? []).length === 0 ? (
-        <Empty title={t('empty')} hint={t('emptyHint')} />
+        <Empty
+          title={t('empty')}
+          hint={t('emptyHint')}
+          action={
+            canManage ? (
+              <Button size="lg" onClick={() => document.getElementById('feed-url')?.focus()}>
+                {t('add')}
+              </Button>
+            ) : undefined
+          }
+        />
       ) : (
         <div className="space-y-3">
           {(feeds.data ?? []).map((feed) => (

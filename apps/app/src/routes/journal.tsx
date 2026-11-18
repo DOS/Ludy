@@ -20,7 +20,7 @@ import { OPENING_BALANCE_SOURCE, canImportOpeningBalance } from '../lib/opening-
 import { MAX_REASON_LENGTH, canAskReversal, defaultReversalDate, reversalErrorMessage, reversalFormError } from '../lib/reversal.ts';
 import { canEnterVoucher } from '../lib/vouchers.ts';
 import { InvoiceCorrections } from '../components/invoice-corrections.tsx';
-import { JournalVoucherFormCard } from './journal-voucher.tsx';
+import { JournalVoucherFormPanel } from './journal-voucher.tsx';
 import { YearClosingFormCard } from './year-closing.tsx';
 
 interface Entry {
@@ -260,7 +260,7 @@ export function JournalPage() {
                 </MenuContent>
               </Menu>
             )}
-            {canEnterVoucher(org.data?.role) && !entering && (
+            {canEnterVoucher(org.data?.role) && (
               <Button size="lg" onClick={() => setEntering(true)}>
                 {t('newJournalVoucher')}
               </Button>
@@ -268,7 +268,7 @@ export function JournalPage() {
           </div>
         }
       />
-      {entering && <JournalVoucherFormCard slug={slug} onClose={() => setEntering(false)} />}
+      {entering && <JournalVoucherFormPanel slug={slug} onClose={() => setEntering(false)} />}
       {closing && <YearClosingFormCard slug={slug} onClose={() => setClosing(false)} />}
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div className="flex flex-wrap items-end gap-3">

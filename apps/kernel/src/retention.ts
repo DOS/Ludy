@@ -109,6 +109,9 @@ const BLOB_DELETES_IN_FLIGHT = 10;
 // Export blobs younger than this are never deleted, recorded or not: an export being written has not been recorded
 // yet. Older ones go unless a record that has not expired lists them.
 const EXPORT_UNRECORDED_MAX_AGE_MS = 2 * 86_400_000;
+// The temporary sealed video of an upload read only for its audio (tmp/<org_id>/<sha256>, #3341) is deleted by the request that made it, in its `finally`. One left by a crash is swept once it is this old: the
+// longest request that can own one (an upload up to the video cap, then crove-media's extraction) is far shorter, so a younger object may still be in use. Nothing references a tmp/ object, so none is kept.
+export const TMP_BLOB_MAX_AGE_HOURS = 6;
 // The pg-boss queue of inbound mail (worker.ts QUEUES.inbound).
 const INBOUND_QUEUE = 'kernel-inbound-email';
 
@@ -197,6 +200,24 @@ export async function sweepInboundBlobs(
     label: 'inbound blobs',
     cutoff: new Date(now.getTime() - (limits.maxAgeDays ?? INBOUND_BLOB_MAX_AGE_DAYS) * 86_400_000),
     referenced: (blobs) => referencedInboundBlobs(workerDb, blobs.map((b) => b.key)),
+    log,
+    pageSize: limits.pageSize ?? BLOB_SWEEP_PAGE,
+    maxPages: limits.maxPages ?? BLOB_SWEEP_MAX_PAGES,
+  });
+}
+
+/** Deletes temporary sealed videos (tmp/<org_id>/...) older than TMP_BLOB_MAX_AGE_HOURS that a crashed request left behind (#3341). Nothing references them, so every old one goes; the live ones are younger. */
+export async function sweepTmpBlobs(
+  store: BlobStore,
+  now: Date = new Date(),
+  log: Pick<Console, 'log' | 'error'> = console,
+  limits: { pageSize?: number; maxPages?: number; maxAgeHours?: number } = {},
+): Promise<BlobSweep | null> {
+  return sweepPrefix(store, {
+    prefix: 'tmp/',
+    label: 'temporary video blobs',
+    cutoff: new Date(now.getTime() - (limits.maxAgeHours ?? TMP_BLOB_MAX_AGE_HOURS) * 3_600_000),
+    referenced: async () => new Set<string>(),
     log,
     pageSize: limits.pageSize ?? BLOB_SWEEP_PAGE,
     maxPages: limits.maxPages ?? BLOB_SWEEP_MAX_PAGES,

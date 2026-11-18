@@ -79,7 +79,7 @@ describe('suggestEInvoiceDraft', () => {
     expect(JSON.stringify(asked)).not.toContain('Lê Lợi');
     expect(JSON.stringify(asked)).not.toContain(VALID_TAX_CODE);
     expect(answer.ai).toBe('used');
-    expect(answer.buyer).toEqual({ kind: 'business', partyId: 'party-1', taxCode: VALID_TAX_CODE, name: 'Công ty Hoa Mai', address: '12 Lê Lợi, Quận 1', email: 'ketoan@hoamai.example' });
+    expect(answer.buyer).toEqual({ kind: 'business', partyId: 'party-1', taxCode: VALID_TAX_CODE, name: 'Công ty Hoa Mai', address: '12 Lê Lợi, Quận 1', email: 'ketoan@hoamai.example', identity: null });
     // The text states no rate: the customer's usual one fills it.
     expect(answer.lines).toEqual([{ description: 'Bánh A', unit: 'hộp', quantity: '10', unitPrice: '120000', vatRate: '8%', vatFrom: 'earlier' }]);
   });
@@ -100,7 +100,7 @@ describe('suggestEInvoiceDraft', () => {
     expect(await suggestEInvoiceDraft(person.ai, ORG, USER, SOURCE, INPUT)).toEqual({
       ai: 'used',
       lines: [],
-      buyer: { kind: 'individual', partyId: 'party-2', taxCode: null, name: 'Nguyễn Văn Nam', address: null, email: null },
+      buyer: { kind: 'individual', partyId: 'party-2', taxCode: null, name: 'Nguyễn Văn Nam', address: null, email: null, identity: null },
     });
   });
 

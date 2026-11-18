@@ -35,7 +35,7 @@ function aiFieldText(field: string, t: Translate): string {
   }
 }
 
-export function adsChangeText(change: AdsChange, t: Translate, money: (amount: string, currency: string) => string): AdsChangeText {
+export function adsChangeText(change: AdsChange, t: Translate, money: (amount: string, currency: string) => string, date: (day: string) => string = (day) => day): AdsChangeText {
   switch (change.change) {
     case 'write_enable':
       return { title: t('ads.change.writeEnable'), detail: t('ads.change.writeEnableDetail') };
@@ -54,7 +54,7 @@ export function adsChangeText(change: AdsChange, t: Translate, money: (amount: s
     case 'campaign_launch':
       // The plan's name and account, and what the approver signs: the largest amount, the days and the daily budget, in the account's currency.
       // A plan the AI coworker drafted says so, with the fields it drafted that nobody has changed since (AI output is tainted: DESIGN.md 2).
-      const spend = t('ads.change.campaignLaunchDetail', { amount: money(change.amount, change.currency), days: change.days, daily: money(change.plan.dailyBudget, change.currency) });
+      const spend = t('ads.change.campaignLaunchDetail', { amount: money(change.amount, change.currency), days: change.days, daily: money(change.plan.dailyBudget, change.currency), from: date(change.plan.startOn) });
       const drafted = change.aiFields.map((field) => aiFieldText(field, t));
       const ai = change.origin === 'ai' ? (drafted.length > 0 ? t('ads.change.campaignAi', { fields: drafted.join(', ') }) : t('ads.change.campaignAiEdited')) : '';
       return {
@@ -65,8 +65,8 @@ export function adsChangeText(change: AdsChange, t: Translate, money: (amount: s
 }
 
 // One line of the Ads screen's list of waiting requests: the sentence, and for a cap the amounts too.
-export function adsChangeLine(change: AdsChange, t: Translate, money: (amount: string, currency: string) => string): string {
-  const { title, detail } = adsChangeText(change, t, money);
+export function adsChangeLine(change: AdsChange, t: Translate, money: (amount: string, currency: string) => string, date?: (day: string) => string): string {
+  const { title, detail } = adsChangeText(change, t, money, date);
   return change.change === 'cap_set' || change.change === 'campaign_launch' ? `${title} ${detail}` : title;
 }
 

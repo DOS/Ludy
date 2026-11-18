@@ -8,6 +8,11 @@ import { zId, zLocalDate } from './schemas.ts';
 export const BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
 export type BuyerKind = (typeof BUYER_KINDS)[number];
 
+// What an individual buyer may give instead of a tax code (Decree 123/2020 as read in plan einvoice-issue.md section 3a, row 4): the personal ID number (CCCD, 12 digits), a passport
+// number or the code of a unit with a budget relation (7 digits), one at a time. Personal data (class `national_id` in the finance manifest); the shapes are checked, never the person.
+export const BUYER_IDENTITY_KINDS = ['cccd', 'passport', 'budget_code'] as const;
+export type BuyerIdentityKind = (typeof BUYER_IDENTITY_KINDS)[number];
+
 // The most lines a draft holds (the providers' own limits are 400 or fewer).
 export const EINVOICE_DRAFT_MAX_LINES = 200;
 
@@ -27,11 +32,14 @@ export const DRAFT_ISSUE_CODES = [
   'BUYER_NAME_REQUIRED',
   'BUYER_ADDRESS_REQUIRED',
   'BUYER_EMAIL_INVALID',
+  'BUYER_IDENTITY_INVALID',
   'LINES_REQUIRED',
   'LINE_DESCRIPTION_REQUIRED',
   'LINE_QUANTITY_INVALID',
   'LINE_PRICE_INVALID',
   'LINE_VAT_RATE_INVALID',
+  // 8% on a date outside the periods the reduced rate applied (REDUCED_RATE_PERIODS), judged on the sale date, or the invoice date when it has none; an adjustment or a replacement is judged on the original's.
+  'LINE_VAT_RATE_REDUCED_OUTSIDE_PERIOD',
   'TOTAL_TOO_LARGE',
 ] as const;
 export type DraftIssueCode = (typeof DRAFT_ISSUE_CODES)[number];
@@ -41,6 +49,11 @@ export type DraftIssue = z.infer<typeof zDraftIssue>;
 
 const zText = (max: number) => z.string().trim().max(max);
 const zDecimal = z.string().regex(/^\d{1,12}(\.\d{1,6})?$/);
+// A unit price may be signed: the difference of an adjusting invoice is a decrease with a minus (the checks refuse a minus on any other invoice).
+const zSignedDecimal = z.string().regex(/^-?\d{1,12}(\.\d{1,6})?$/);
+
+export const zEInvoiceBuyerIdentity = z.strictObject({ kind: z.enum(BUYER_IDENTITY_KINDS), value: zText(20) });
+export type EInvoiceBuyerIdentity = z.infer<typeof zEInvoiceBuyerIdentity>;
 
 export const zEInvoiceBuyerInput = z.strictObject({
   kind: z.enum(BUYER_KINDS),
@@ -50,13 +63,15 @@ export const zEInvoiceBuyerInput = z.strictObject({
   name: zText(400).nullable(),
   address: zText(500).nullable(),
   email: zText(254).nullable(),
+  // For an individual buyer only (the server clears it for any other kind): one of CCCD, passport or budget code. Optional.
+  identity: zEInvoiceBuyerIdentity.nullable().default(null),
 });
 
 export const zEInvoiceLineInput = z.strictObject({
   description: zText(500),
   unit: zText(50).nullable(),
   quantity: zDecimal,
-  unitPrice: zDecimal,
+  unitPrice: zSignedDecimal,
   vatRate: zText(20),
 });
 
@@ -77,6 +92,8 @@ export type EInvoiceDraftForm = z.infer<typeof zEInvoiceDraftForm>;
 // The live check takes what is typed so far: a quantity or a price that is not a number yet is answered with an issue on its field, not refused.
 export const zEInvoiceDraftCheckInput = zEInvoiceDraftForm.extend({
   lines: z.array(zEInvoiceLineInput.extend({ quantity: z.string().max(40), unitPrice: z.string().max(40) })).max(EINVOICE_DRAFT_MAX_LINES),
+  // The form of an adjusting or a replacing invoice (#2504): an adjustment may carry a negative price, and the VAT rate of a correction is judged on its original's date. Omitted for any other draft.
+  correction: z.strictObject({ kind: z.enum(['adjustment', 'replacement']), originalDraftId: zId }).nullable().default(null),
 });
 
 export const zEInvoiceDraftSave = zEInvoiceDraftForm.extend({
@@ -109,6 +126,36 @@ export const zEInvoiceDraftCheck = z.object({
 });
 export type EInvoiceDraftCheck = z.infer<typeof zEInvoiceDraftCheck>;
 
+export const EINVOICE_CORRECTION_KINDS = ['adjustment', 'replacement'] as const;
+export type EInvoiceCorrectionKind = (typeof EINVOICE_CORRECTION_KINDS)[number];
+
+export const zEInvoiceCorrection = z.object({
+  kind: z.enum(EINVOICE_CORRECTION_KINDS),
+  originalDraftId: zId,
+  reasonCode: z.string(),
+  agreementFileId: zId.nullable(),
+});
+export type EInvoiceCorrection = z.infer<typeof zEInvoiceCorrection>;
+
+// Starts a correcting draft from an issued invoice (#2504): "Điều chỉnh" or "Thay thế". The original's series, number and date are read from its stored row. The reason code is one of
+// Appendix XVII (refused while the list is empty); a buyer with a tax code needs the signed agreement file, an individual buyer none. EINVOICE_DRAFT_NOT_FOUND (404),
+// EINVOICE_ORIGINAL_NOT_ISSUED, EINVOICE_ORIGINAL_REPLACED, EINVOICE_CORRECTION_METHOD, EINVOICE_CORRECTION_OPEN (409), EINVOICE_REASON_CODE_INVALID, EINVOICE_AGREEMENT_REQUIRED (422),
+// EINVOICE_AGREEMENT_FILE_NOT_FOUND (404).
+export const zEInvoiceStartCorrection = z.strictObject({
+  originalDraftId: zId,
+  kind: z.enum(EINVOICE_CORRECTION_KINDS),
+  reasonCode: z.string().trim().min(1).max(50),
+  agreementFileId: zId.nullable().default(null),
+});
+export type EInvoiceStartCorrection = z.infer<typeof zEInvoiceStartCorrection>;
+
+// What the screen needs to start a correction (#2504): the reason codes of Appendix XVII, with their Vietnamese labels. Empty until the list is entered (reason-codes.ts), and the screen
+// then says why a correction cannot start.
+export const zEInvoiceCorrectionOptions = z.object({
+  reasonCodes: z.array(z.object({ code: z.string(), label: z.string() })),
+});
+export type EInvoiceCorrectionOptions = z.infer<typeof zEInvoiceCorrectionOptions>;
+
 export const zEInvoiceDraft = z.object({
   id: zId,
   legalEntityId: zId,
@@ -126,6 +173,7 @@ export const zEInvoiceDraft = z.object({
     name: z.string().nullable(),
     address: z.string().nullable(),
     email: z.string().nullable(),
+    identity: zEInvoiceBuyerIdentity.nullable(),
   }),
   lines: z.array(zEInvoiceDraftLine),
   subtotal: z.string(),
@@ -137,6 +185,8 @@ export const zEInvoiceDraft = z.object({
   // After it was sent (#2502): the number the provider gave, and the code of what stopped it (a rejection that sent it back to a draft, a failure), never a provider's text.
   issuedNumber: z.string().nullable(),
   errorCode: z.string().nullable(),
+  // Set on an adjusting or a replacing invoice (#2504): the issued draft it corrects, the method, the reason code and the agreement file; null on an ordinary invoice.
+  correction: zEInvoiceCorrection.nullable().default(null),
 });
 export type EInvoiceDraft = z.infer<typeof zEInvoiceDraft>;
 
@@ -145,6 +195,8 @@ export const zEInvoiceDraftSummary = z.object({
   state: z.string(),
   date: z.string(),
   buyerName: z.string().nullable(),
+  // The identity the buyer gave, masked (the kind and the last three characters): a list never shows the whole value.
+  buyerIdentity: z.strictObject({ kind: z.enum(BUYER_IDENTITY_KINDS), masked: z.string() }).nullable(),
   total: z.string(),
   issueCount: z.number().int(),
   issuedNumber: z.string().nullable(),
@@ -153,6 +205,14 @@ export const zEInvoiceDraftSummary = z.object({
   evidenceStored: z.boolean(),
   // When it last changed: a request made for an earlier state is not the one to approve.
   updatedAt: z.string(),
+  // The buyer's kind: a business buyer needs the signed agreement before a correction (#2504).
+  buyerKind: z.enum(BUYER_KINDS),
+  // Set on an adjusting or a replacing invoice (#2504): its method and the issued draft it corrects.
+  correction: z.strictObject({ kind: z.enum(EINVOICE_CORRECTION_KINDS), originalDraftId: zId }).nullable().default(null),
+  // On an issued invoice: the method of the first correction that was issued for it, so the screen offers only that one for the next (#2504); null when none was issued.
+  correctedBy: z.enum(EINVOICE_CORRECTION_KINDS).nullable().default(null),
+  // On an issued invoice: it was replaced, so it is no longer in force and nothing corrects it (#2504).
+  replaced: z.boolean().default(false),
 });
 export type EInvoiceDraftSummary = z.infer<typeof zEInvoiceDraftSummary>;
 
@@ -240,8 +300,8 @@ export const EINVOICE_ISSUE_KIND = 'finance.einvoice_issue';
 export const zEInvoiceIssuePayload = z.strictObject({
   draftId: zId,
   contentHash: z.string().regex(/^[0-9a-f]{64}$/),
-  // The draft's total, a decimal string: the database matches it against the draft's own at the approval.
-  amount: z.string().regex(/^(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,4})?$/),
+  // The draft's total, a decimal string: the database matches it against the draft's own at the approval. Negative for an adjusting invoice that lowers the original (#2504).
+  amount: z.string().regex(/^-?(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,4})?$/),
   currency: z.string().regex(/^[A-Z]{3}$/),
   lineCount: z.number().int().min(1).max(EINVOICE_DRAFT_MAX_LINES),
 });

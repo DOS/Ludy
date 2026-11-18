@@ -5,7 +5,7 @@
 // what each item says about who and when: the "who" is matched to an attendee only when exactly one attendee answers to that name, the "when" is parsed
 // against the meeting's own date, and a link, email address or phone number in a title is flagged. Nothing is shared by this; the recorder's publish does that.
 import { sql } from 'kysely';
-import { zSummaryCopy, zSummaryCopied, zSummaryResult, zSummaryRef, zNotesPreview, zNotesPreviewInput, zSpeakerSuggestions, zSpeakerSuggestionsInput, ITEMS_PER_MEETING_MAX, sectionsToText, templateSections, type Enhanced, type MeetingSummaryTemplate, type NotesPreview, type SpeakerSuggestions, type SummaryResult } from '@crove/kernel-contract';
+import { zSummaryCopy, zSummaryCopied, zSummaryResult, zSummaryRef, zNotesPreview, zNotesPreviewInput, zSpeakerSuggestions, zSpeakerSuggestionsInput, ITEMS_PER_MEETING_MAX, parseStoredSections, sectionsToText, templateSections, type Enhanced, type MeetingSummaryTemplate, type NotesPreview, type SpeakerSuggestions, type SummaryResult, type TemplateSection } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { itemFlags } from './results.ts';
 import { plainName } from './plain-name.ts';
@@ -114,11 +114,11 @@ async function readRunResult(ctx: CommandContext | QueryContext, meetingId: stri
 
 // The text an expansion of the recorder's notes becomes in the draft: the lines of each section, own and added, one to a line, under the template's headings (the general summary has one block).
 // Built by code from the checked lines, so the recorder's own lines are in it exactly as they wrote them.
-export function enhancedText(template: MeetingSummaryTemplate, enhanced: Enhanced): string {
-  const defs = templateSections(template);
+export function enhancedText(template: MeetingSummaryTemplate, enhanced: Enhanced, copy: readonly TemplateSection[] | null = null): string {
+  const defs = templateSections(template, copy);
   if (defs.length === 0) return enhanced.sections.flatMap((s) => s.lines.map((l) => l.text)).join('\n');
   const entries = enhanced.sections.flatMap((s) => (s.key !== null && defs.some((d) => d.key === s.key) ? [{ key: s.key, text: s.lines.map((l) => l.text).join('\n') }] : []));
-  return sectionsToText(template, entries);
+  return sectionsToText(template, entries, copy);
 }
 
 export const summaryCopyResult = defineCommand({
@@ -135,18 +135,22 @@ export const summaryCopyResult = defineCommand({
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can copy its summary');
     const body = await readRunResult(ctx, input.meetingId, input.runId, ctx.now);
     // The meeting's day and who may be named: the recorder and the attendees, by the names the org knows them by (member_profiles answers for members only).
-    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['started_at', 'summary_template']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
+    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['started_at', 'summary_template', 'minutes_template_sections', 'minutes_template_hash']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forUpdate().executeTakeFirstOrThrow();
     const meetingDay = vnDay(row.started_at ?? new Date());
     // A4 (#3162): a run was asked for one template; if the recorder picked another since, its sections would not fit the headings they now type under, so it is not copied.
-    if (body.template !== row.summary_template) throw new DomainError('SUMMARY_TEMPLATE_CHANGED', 409, 'The minutes template changed since Vy wrote this; ask Vy again');
+    // #3578: on a custom template the run is tied to the copy of the sections it was asked to fill (its hash), so another org template, or the same one edited and picked again, is refused too.
+    if (body.template !== row.summary_template || (row.summary_template === 'custom' && (body.templateHash ?? null) !== row.minutes_template_hash)) {
+      throw new DomainError('SUMMARY_TEMPLATE_CHANGED', 409, 'The minutes template changed since Vy wrote this; ask Vy again');
+    }
+    const copy = row.minutes_template_sections === null ? null : parseStoredSections(row.minutes_template_sections);
     // On a template the sections become the one summary text, by code (the headings are code's, the text is the model's, already checked); on the general template the summary is as it was.
-    const defs = templateSections(body.template);
+    const defs = templateSections(body.template, copy);
     // An expansion of the recorder's notes (A5, #3163) becomes the same one text, the recorder's own lines verbatim among Vy's, and brings no items or decisions of its own.
     const summaryText = body.enhanced
-      ? enhancedText(body.template, body.enhanced)
+      ? enhancedText(body.template, body.enhanced, copy)
       : defs.length === 0
         ? body.summary
-        : sectionsToText(body.template, body.sections.filter((x) => defs.some((d) => d.key === x.key)));
+        : sectionsToText(body.template, body.sections.filter((x) => defs.some((d) => d.key === x.key)), copy);
     if (body.enhanced && (summaryText === '' || summaryText.length > 8000)) throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The summary result cannot be read');
     const readers = await ctx.trx.selectFrom('crove_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
     const ids = [userId, ...readers.map((r) => r.user_id)];

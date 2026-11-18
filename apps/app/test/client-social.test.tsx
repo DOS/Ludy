@@ -36,7 +36,7 @@ describe('socialFigures', () => {
       { key: 'reconnect', count: 1, tone: 'urgent', link: { to: 'channels' } },
       { key: 'review', count: 3, tone: 'waiting', link: { to: 'social', tab: 'review' } },
       { key: 'waitingClient', count: 1, tone: 'waiting', link: { to: 'social', tab: 'review' } },
-      { key: 'upcoming', count: 5, tone: 'plain', link: { to: 'social' } },
+      { key: 'upcoming', count: 5, tone: 'plain', link: { to: 'social', tab: 'upcoming' } },
     ]);
   });
 
@@ -66,7 +66,7 @@ describe('ClientSocialFigures', () => {
       { to: '/o/an-binh/social/channels', tab: '', text: '1 kênh cần kết nối lại' },
       { to: '/o/an-binh/social', tab: 'review', text: '3 bài chờ duyệt' },
       { to: '/o/an-binh/social', tab: 'review', text: 'trong đó 1 bài chờ khách duyệt' },
-      { to: '/o/an-binh/social', tab: '', text: '5 bài sẽ đăng trong 7 ngày tới' },
+      { to: '/o/an-binh/social', tab: 'upcoming', text: '5 bài sẽ đăng trong 7 ngày tới' },
       { to: '/o/an-binh/social', tab: 'done', text: 'Bài gần nhất đăng 4 ngày trước' },
     ]);
     expect(html).toContain('text-destructive');

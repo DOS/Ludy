@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The database side of "a translation is never a source" (meetings integrations E1, #3184): the follow-up mail's facts, the search across meetings and every definer that reads
 // meeting text name the original rows only. The only migrations that name the translation table are the one that makes it (with the functions that delete from it), the org
-// purge's list in each restatement of it, and the one that gives it its second kind and its transcript triggers (E2, #3185, which names it to widen the kind and to delete from it); a later migration that names it is a visible change here, which only an owner decision moves. The latest entry is #3194's: the 30-day purge of a removed member's Vy rows deletes the member's translations (the follow-up the E1 plan line recorded, promoted by the Meetings PO on 2026-11-17 under the owner's core-first direction); it reads only org_id, member_user_id and created_at, never the body, so the table is still never a source. (The source side is modules/meetings/test/translation-isolation.test.ts.)
+// purge's list in each restatement of it, and the one that gives it its second kind and its transcript triggers (E2, #3185, which names it to widen the kind and to delete from it); a later migration that names it is a visible change here, which only an owner decision moves. The latest entry is #3194's: the 30-day purge of a removed member's Vy rows deletes the member's translations (the follow-up the E1 plan line recorded, promoted by the Meetings PO on 2026-11-17 under the owner's core-first direction); it reads only org_id, member_user_id and created_at, never the body, so the table is still never a source. The next two are #3584's, the follow-up of #3194 (promoted by the Meetings PO on 2026-11-17 under the owner's core-first direction): the owner's count of a member's translations and live preview lines, and the restatement of the purge and its due list that adds the preview lines; both read org_id, member_user_id and created_at plus a count, never the body. (The source side is modules/meetings/test/translation-isolation.test.ts.)
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +34,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_meetings_translation_member_idx.sql',
       'crove_kernel_member_vy_translation_purge.sql',
       'crove_kernel_org_purge_minutes_templates.sql',
+      'crove_meetings_member_private_counts.sql',
+      'crove_kernel_member_vy_live_line_purge.sql',
     ]);
   });
 });

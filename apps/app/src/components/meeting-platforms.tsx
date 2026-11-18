@@ -33,9 +33,14 @@ function ConnectionRow({ connection }: { connection: MeetingPlatformConnectionVi
   });
   // The server refuses while a download from this connection is in flight (MEETING_PLATFORM_BUSY); the error catalog words it.
   const disconnect = useMutation({
-    mutationFn: () => orpc.meetingPlatform.disconnect.call({ connectionId: connection.id }),
+    // The connection's recording rows go with it, so the empty meetings its failed tries left are cleaned first, by the same rule as a retry; that step is best effort and never blocks the disconnect.
+    mutationFn: async () => {
+      await orpc.meetings.importDiscardEmpty.call({ connectionId: connection.id }).catch(() => undefined);
+      return orpc.meetingPlatform.disconnect.call({ connectionId: connection.id });
+    },
     onSuccess: async () => {
       setConfirm(false);
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.list.key() });
       await refreshAll();
     },
   });

@@ -53,3 +53,18 @@ export function manageTokenOf(hash: string): string | null {
   const value = new URLSearchParams(hash.replace(/^#/, '')).get('m');
   return value && BOOKING_MANAGE_TOKEN.test(value) ? value : null;
 }
+
+/**
+ * The address of a type's public booking page. With a deal (#3103) the address names it, so the client's booking arrives linked to the deal; the server keeps the
+ * link only when it is a deal of the org, and the page shows the client nothing of it.
+ */
+export const bookingLinkOf = (origin: string, org: string, type: string, dealId?: string) =>
+  `${origin}/-/b/${encodeURIComponent(org)}/${encodeURIComponent(type)}${dealId ? `?deal=${encodeURIComponent(dealId)}` : ''}`;
+
+/** The app's own origin, where the public booking page lives; empty where there is no window (a server render in a test). */
+export const appOrigin = () => (typeof window === 'undefined' ? '' : window.location.origin);
+
+/** The id of the card in Settings that holds the working hours and the event types: "Cài đặt lịch hẹn" links to it. */
+export const BOOKING_SETTINGS_ID = 'booking-settings';
+/** The id of the event types card in Settings: "Tạo loại lịch hẹn" links to it. */
+export const BOOKING_EVENT_TYPES_ID = 'booking-event-types';

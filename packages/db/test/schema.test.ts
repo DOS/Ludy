@@ -79,7 +79,7 @@ describe('Database', () => {
     const invite: Updateable<Database['crove_kernel.member_invite']> = { email: 'a@b.c' };
     // A file row never changes (trigger file_guard): the refinement keeps the union and drops every update.
     expectTypeOf<Selectable<Database['crove_kernel.file']>['source']>().toEqualTypeOf<
-      'upload' | 'email' | 'social' | 'import' | 'meeting_audio' | 'meeting_video' | 'sign_document' | 'sign_sealed' | 'sign_certificate'
+      'upload' | 'email' | 'social' | 'import' | 'meeting_audio' | 'meeting_video' | 'sign_document' | 'sign_sealed' | 'sign_certificate' | 'agreement'
     >();
     // @ts-expect-error crove_tenant holds UPDATE on file only to lock the row
     const fileUpdate: Updateable<Database['crove_kernel.file']> = { filename: 'renamed.pdf' };

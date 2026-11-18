@@ -12,6 +12,7 @@ import { S3BlobStore, parseVaultKey, type S3Sender } from '@crove/kernel-runtime
 import { AVAILABLE_MODULES, SAMPLE_DB_PASSWORDS } from './config.ts';
 import { parseAllowedOrigins } from './cors.ts';
 import { parseExportKey } from './export-seal.ts';
+import { isPositivePrice } from './price.ts';
 import { loadProberConfig } from './prober.ts';
 import { parseAllowedEmails } from './auth-access.ts';
 
@@ -172,16 +173,17 @@ function modulesProblem(env: Env): string | null {
   return unknown.length > 0 ? `CROVE_MODULES names ${unknown.length} module(s) this build does not ship (available: ${AVAILABLE_MODULES.join(', ')}); the kernel refuses to start on it` : null;
 }
 
+// The prices are decimal strings and are compared as decimals (the money rule, #3481).
 // Speech to text for meetings is priced by the minute of audio: on with a zero price, the hard-stop budget never refuses a transcription (#2578).
 function transcribePriceProblem(env: Env): string | null {
   if (value(env, 'MEETINGS_TRANSCRIBE') !== 'on') return null;
-  return Number(value(env, 'AI_PRICE_AUDIO_PER_MIN') ?? '0') > 0 ? null : 'MEETINGS_TRANSCRIBE is on while AI_PRICE_AUDIO_PER_MIN is 0: a transcription then costs nothing to the AI budget and its hard stop never refuses one; set the price of a minute of audio';
+  return isPositivePrice(value(env, 'AI_PRICE_AUDIO_PER_MIN') ?? '0') ? null : 'MEETINGS_TRANSCRIBE is on while AI_PRICE_AUDIO_PER_MIN is 0: a transcription then costs nothing to the AI budget and its hard stop never refuses one; set the price of a minute of audio';
 }
 
 // The per-org AI cost limit counts tokens at AI_PRICE_*; with both at 0 every call costs nothing to the cap.
 function aiCostProblem(env: Env): string | null {
   if (value(env, 'AI_API_KEY') === undefined) return null;
-  const priced = ['AI_PRICE_INPUT_PER_MTOK', 'AI_PRICE_OUTPUT_PER_MTOK'].some((name) => Number(value(env, name) ?? '0') > 0);
+  const priced = ['AI_PRICE_INPUT_PER_MTOK', 'AI_PRICE_OUTPUT_PER_MTOK'].some((name) => isPositivePrice(value(env, name) ?? '0'));
   return priced ? null : 'AI_API_KEY is set while AI_PRICE_INPUT_PER_MTOK and AI_PRICE_OUTPUT_PER_MTOK are both 0: AI usage then costs nothing to ORG_LIMIT_AI_COST_PER_DAY and the cap does nothing; set the price of the model per million tokens';
 }
 

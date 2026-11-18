@@ -13,7 +13,7 @@ import {
   UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { describe, expect, it } from 'vitest';
-import { BlobConflictError, BlobNotFoundError, BlobTooLargeError, S3BlobStore, fileKey, newStagingKey, sha256Hex, type S3Sender } from '../src/index.ts';
+import { BlobConflictError, BlobNotFoundError, BlobTooLargeError, S3BlobStore, fileKey, newStagingKey, sha256Hex, tmpKey, type S3Sender } from '../src/index.ts';
 
 type Cmd =
   | CreateMultipartUploadCommand
@@ -116,6 +116,23 @@ describe('S3BlobStore streamed write', () => {
     expect(sent.at(-1)).toBe('DeleteObjectCommand');
     expect(sent).not.toContain('AbortMultipartUploadCommand');
     await write.abort();
+  });
+
+  it('writes a temporary video under tmp/<org_id>/, to its content address and nowhere else, and refuses a tmp/ directory that is not an org (#3341)', async () => {
+    const { store, objects } = fakeS3();
+    const bytes = randomBytes(12345);
+    const write = await store.beginStagedWrite(`tmp/${orgId}`);
+    await write.write(bytes);
+    const stored = await write.commit(({ sha256 }) => tmpKey(orgId, sha256), 'application/octet-stream');
+    expect(stored.key).toBe(tmpKey(orgId, sha256Hex(bytes)));
+    expect([...objects.keys()]).toEqual([stored.key]);
+    // A write begun for tmp/ cannot place an org/ key, and a directory that is not an org id is refused before anything is started.
+    const other = await store.beginStagedWrite(`tmp/${orgId}`);
+    await other.write(bytes);
+    await expect(other.commit(({ sha256 }) => fileKey(orgId, sha256), 'application/octet-stream')).rejects.toThrow(/outside the directory/);
+    await expect(store.beginStagedWrite('tmp/not-an-org')).rejects.toThrow(/invalid storage directory/);
+    await expect(store.beginStagedWrite('tmp')).rejects.toThrow(/invalid storage directory/);
+    await expect(store.beginStagedWrite('staging/x')).rejects.toThrow(/invalid storage directory/);
   });
 
   it('copies to the content address without the tags of the staging object, so an upload cannot carry the retention tag (#2789)', async () => {

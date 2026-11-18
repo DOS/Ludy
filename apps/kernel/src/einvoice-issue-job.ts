@@ -11,6 +11,14 @@ import { recordAfterCall } from './record-after-call.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.einvoice' };
 
+// The provider's call for a request: a correcting invoice (it names its original, #2504) goes through `adjust` or `replace`, any other through `issue`. The same idempotency key and
+// the same ledger step either way, so a lost answer is asked about by the key before anything is sent again.
+function send(provider: EInvoiceProvider, secret: string, request: EInvoiceRequest): Promise<EInvoiceOutcome> {
+  const original = request.original;
+  if (!original) return provider.issue(secret, request);
+  return original.kind === 'adjustment' ? provider.adjust(secret, { ...request, original }) : provider.replace(secret, { ...request, original });
+}
+
 export interface EInvoiceIssueJob {
   orgId: string;
   draftId: string;
@@ -118,7 +126,7 @@ export async function runEInvoiceIssue(deps: EInvoiceIssueDeps, job: EInvoiceIss
 
   try {
     if (action === 'issue') {
-      await settle('issue', fromOutcome(await provider.issue(secret, request)));
+      await settle('issue', fromOutcome(await send(provider, secret, request)));
     } else if (action === 'ask') {
       step = 'ask';
       // The send was started and never answered: the provider is asked for the key before anything is sent again.
@@ -129,7 +137,7 @@ export async function runEInvoiceIssue(deps: EInvoiceIssueDeps, job: EInvoiceIss
         // Nothing was ever made under the key: the same request goes out now, as a new call on the same key.
         if (done.resend) {
           step = 'issue';
-          await settle('issue', fromOutcome(await provider.issue(secret, done.resend)));
+          await settle('issue', fromOutcome(await send(provider, secret, done.resend)));
         }
       } else {
         await settle('ask', fromOutcome(answer));

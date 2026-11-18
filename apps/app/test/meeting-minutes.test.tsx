@@ -4,7 +4,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { MEETING_SUMMARY_TEMPLATES, SUMMARY_TEMPLATE_SECTIONS, sectionsToText, type ActionItemView, type MeetingResults } from '@crove/kernel-contract';
+import { MEETING_SUMMARY_TEMPLATES, SUMMARY_TEMPLATE_SECTIONS, sectionsToText, type ActionItemView, type MeetingResults, type MeetingSummaryTemplate, type MinutesTemplateCopy } from '@crove/kernel-contract';
 import { en as enMessages } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
@@ -26,6 +26,7 @@ const meeting: MinutesMeeting = {
   recorderUserId: REC,
   readers: [LAN, REC],
   summaryTemplate: 'briefing',
+  minutesTemplate: null,
 };
 const item = (over: Partial<ActionItemView>): ActionItemView => ({
   id: 'i1',
@@ -67,7 +68,7 @@ describe('the facts of the page', () => {
       { title: 'Gửi báo giá', owner: 'Chị Lan', due: '20/11/2026' },
       { title: 'Chốt giá', owner: null, due: null },
     ]);
-    expect(model.sections).toEqual([{ key: 'progress', text: 'Đã gửi hợp đồng.' }]);
+    expect(model.sections).toEqual([{ key: 'progress', title: null, text: 'Đã gửi hợp đồng.' }]);
     expect(model.conclusions).toEqual(['Giữ giá cũ']);
     expect(model.published).toBe(true);
   });
@@ -100,14 +101,14 @@ describe('the facts of the page', () => {
     expect(old.sections).toHaveLength(1);
     expect(old.sections[0]?.key).toBeNull();
     const general = buildMinutes({ ...meeting, summaryTemplate: 'general' }, results({ published: result('published', 'Họp báo giá.') }), nameOf);
-    expect(general.sections).toEqual([{ key: null, text: 'Họp báo giá.' }]);
+    expect(general.sections).toEqual([{ key: null, title: null, text: 'Họp báo giá.' }]);
   });
 });
 
-function sheet(model: ReturnType<typeof buildMinutes>, place = '') {
+function sheet(model: ReturnType<typeof buildMinutes>, place = '', template: MeetingSummaryTemplate = 'briefing') {
   return renderToStaticMarkup(
     <IntlProvider locale="vi" messages={catalog('vi')}>
-      <MinutesSheet model={model} company="Công ty TNHH Ánh Dương" title="Họp giao ban tuần" place={place} template="briefing" />
+      <MinutesSheet model={model} company="Công ty TNHH Ánh Dương" title="Họp giao ban tuần" place={place} template={template} />
     </IntlProvider>,
   );
 }
@@ -162,6 +163,46 @@ describe('the sheet', () => {
     expect(html).not.toContain('NỘI DUNG CUỘC HỌP');
     // The header facts and the blank signature block stay.
     expect(html).toContain('data-testid="minutes-signatures"');
+  });
+});
+
+// A template the org wrote (#3578): the headings come from the meeting's own copy and are shown as text. The title is whatever an admin typed, so it is tried with markup and markdown.
+describe('a meeting on an organization\'s template', () => {
+  const HOSTILE = '<img src=x onerror=alert(1)>';
+  const copy: MinutesTemplateCopy = {
+    name: 'Mẫu của công ty',
+    hash: 'a'.repeat(32),
+    sections: [
+      { key: 's1', title: HOSTILE, hint: 'gợi ý' },
+      { key: 's2', title: '**bold** và `mã`', hint: '' },
+      { key: 's3', title: 'Việc tiếp theo', hint: '' },
+    ],
+  };
+  const custom: MinutesMeeting = { ...meeting, summaryTemplate: 'custom', minutesTemplate: copy };
+  const published = result('published', sectionsToText('custom', [{ key: 's1', text: 'Nội dung một.' }, { key: 's2', text: 'Nội dung hai.' }], copy.sections));
+
+  it('takes the headings from the copy: the section keys it holds, their titles, the text the recorder shared; an empty section is left out', () => {
+    const model = buildMinutes(custom, results({ published }), nameOf);
+    expect(model.sections).toEqual([
+      { key: 's1', title: HOSTILE, text: 'Nội dung một.' },
+      { key: 's2', title: '**bold** và `mã`', text: 'Nội dung hai.' },
+    ]);
+  });
+
+  it('shows a title with markup or markdown as the text it is: escaped, no element made, the characters kept', () => {
+    const html = sheet(buildMinutes(custom, results({ published }), nameOf), '', 'custom');
+    expect(html).toContain('1. &lt;img src=x onerror=alert(1)&gt;');
+    expect(html).toContain('2. **bold** và `mã`');
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('<strong');
+    expect(html).not.toMatch(/<[a-z]+[^>]*onerror/i);
+    // The page's own headings and the signature block are still there.
+    expect(html).toContain('data-testid="minutes-signatures"');
+  });
+
+  it('shows text that is not in the copy\'s form whole (the copy was replaced since it was shared), never a wrong heading', () => {
+    const model = buildMinutes(custom, results({ published: result('published', sectionsToText('briefing', [{ key: 'plan', text: 'Kế hoạch cũ' }])) }), nameOf);
+    expect(model.sections).toEqual([{ key: null, title: null, text: expect.stringContaining('Kế hoạch cũ') }]);
   });
 });
 
