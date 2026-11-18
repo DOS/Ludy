@@ -1887,7 +1887,7 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(audit).toMatchObject({ meetingId, recordingId, stored: 2, source: 'google_meet' });
     expect(JSON.stringify(audit)).not.toContain('120 triệu');
     await expect(admin((c) => c.query(`UPDATE crove_meetings.transcript_segment SET source = 'ludy' WHERE meeting_id = $1`, [meetingId]))).rejects.toThrow(/MEETINGS_TAINT_FORBIDDEN/);
-    await expect(admin((c) => c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text, source) VALUES ($1, $2, 0, 1, 'x', 'someone_else')`, [orgId, meetingId]))).rejects.toThrow(/transcript_segment_source_check/);
+    await expect(admin((c) => c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text, source, tainted) VALUES ($1, $2, 0, 1, 'x', 'someone_else', true)`, [orgId, meetingId]))).rejects.toThrow(/transcript_segment_source_check/);
     // Taken once: the row is imported now, so the same call is refused.
     expect(await refusedWith(take('recorder', { meetingId, segments }))).toBe('IMPORT_NOT_CLAIMED');
   });
