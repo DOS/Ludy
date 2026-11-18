@@ -591,8 +591,9 @@ export const todoComplete = defineCommand({
   target,
   handler: async (ctx, input): Promise<TodoCompleteResult> => {
     const userId = userOf(ctx.actor);
+    const todoId = input.todoId.toLowerCase();
     // Global lock DAG: series advisory lock -> todo_list FOR SHARE -> todo FOR UPDATE (ordered by id ASC).
-    const seriesKey = await seriesLockKey(ctx, input.todoId);
+    const seriesKey = await seriesLockKey(ctx, todoId);
     await lockTodoSeries(ctx, seriesKey);
     const stopSeries = input.stopSeries === true;
     let lockedList: { id: string; sections: unknown } | undefined;
@@ -601,7 +602,7 @@ export const todoComplete = defineCommand({
         .selectFrom('crove_notes.todo')
         .select(['list_id', 'recurrence'])
         .where('org_id', '=', ctx.orgId)
-        .where('id', '=', input.todoId)
+        .where('id', '=', todoId)
         .executeTakeFirst();
       if (peek && peek.recurrence !== null && peek.list_id !== null) {
         lockedList = await ctx.trx
@@ -616,7 +617,7 @@ export const todoComplete = defineCommand({
     }
     let lockedOpenSiblings: Array<{ id: string; recurrence: unknown }> = [];
     if (stopSeries) {
-      // Pre-lock input.todoId plus all open recurring siblings in canonical id ASC order in one query so
+      // Pre-lock todoId plus all open recurring siblings in canonical id ASC order in one query so
       // concurrent multi-row operations (e.g. todoListDelete, todoListUpdate, todoReschedule) stay deadlock-free.
       const locked = await ctx.trx
         .selectFrom('crove_notes.todo')
@@ -624,7 +625,7 @@ export const todoComplete = defineCommand({
         .where('org_id', '=', ctx.orgId)
         .where((eb) =>
           eb.or([
-            eb('id', '=', input.todoId),
+            eb('id', '=', todoId),
             eb.and([
               eb('series_id', '=', seriesKey),
               eb('status', '=', 'open'),
@@ -639,7 +640,7 @@ export const todoComplete = defineCommand({
       lockedOpenSiblings = locked
         .filter(
           (r) =>
-            r.id !== input.todoId &&
+            r.id !== todoId &&
             r.series_id === seriesKey &&
             r.status === 'open' &&
             r.deleted_at === null &&
@@ -647,7 +648,7 @@ export const todoComplete = defineCommand({
         )
         .map((r) => ({ id: r.id, recurrence: r.recurrence }));
     }
-    const before = await load(ctx, input.todoId, !stopSeries);
+    const before = await load(ctx, todoId, !stopSeries);
     assertNotInTrash(before);
     if (before.status === 'done') return written(before);
     if (before.status !== 'open') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được giao hoặc đã hủy');
@@ -666,7 +667,7 @@ export const todoComplete = defineCommand({
         updated_at: ctx.now,
       })
       .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.todoId)
+      .where('id', '=', todoId)
       .returning(['id', 'revision'])
       .executeTakeFirstOrThrow();
 
@@ -831,12 +832,13 @@ export const todoReopen = defineCommand({
   target,
   handler: async (ctx, input): Promise<TodoWritten> => {
     userOf(ctx.actor);
-    const undoNextTodoId = input.undoNextTodoId;
-    if (undoNextTodoId !== undefined && undoNextTodoId === input.todoId) {
+    const todoId = input.todoId.toLowerCase();
+    const undoNextTodoId = input.undoNextTodoId?.toLowerCase();
+    if (undoNextTodoId !== undefined && undoNextTodoId === todoId) {
       throw new DomainError('TODO_UNDO_SERIES_ADVANCED', 409, 'Lượt kế tiếp đã được chỉnh sửa hoặc xử lý rồi');
     }
     // Acquire series advisory lock(s) in canonical order before taking FOR UPDATE row locks.
-    const primarySeriesKey = await seriesLockKey(ctx, input.todoId);
+    const primarySeriesKey = await seriesLockKey(ctx, todoId);
     const seriesKeys = [primarySeriesKey];
     if (undoNextTodoId !== undefined) {
       seriesKeys.push(await seriesLockKey(ctx, undoNextTodoId));
@@ -845,7 +847,7 @@ export const todoReopen = defineCommand({
       await lockTodoSeries(ctx, key);
     }
     const restoredRule = input.restoreRecurrence ? normalizeTodoRecurrence(input.restoreRecurrence) : null;
-    // When restoring recurrence, pre-lock input.todoId, optional undoNextTodoId, and candidate open siblings
+    // When restoring recurrence, pre-lock todoId, optional undoNextTodoId, and candidate open siblings
     // in one canonical ORDER BY id FOR UPDATE query so no subsequent FOR UPDATE scan can invert lock order.
     const prelockedRows =
       restoredRule !== null
@@ -855,7 +857,7 @@ export const todoReopen = defineCommand({
             .where('org_id', '=', ctx.orgId)
             .where((eb) => {
               const branches = [
-                eb('id', '=', input.todoId),
+                eb('id', '=', todoId),
                 eb.and([
                   eb('series_id', '=', primarySeriesKey),
                   eb('status', '=', 'open'),
@@ -874,13 +876,13 @@ export const todoReopen = defineCommand({
     let before: SummaryRow & { details: string | null };
     let nextRow: (SummaryRow & { details: string | null }) | undefined;
     if (restoredRule !== null) {
-      before = await load(ctx, input.todoId, false);
+      before = await load(ctx, todoId, false);
       if (undoNextTodoId !== undefined) nextRow = await load(ctx, undoNextTodoId, false);
-    } else if (undoNextTodoId !== undefined && undoNextTodoId < input.todoId) {
+    } else if (undoNextTodoId !== undefined && undoNextTodoId < todoId) {
       nextRow = await load(ctx, undoNextTodoId, true);
-      before = await load(ctx, input.todoId, true);
+      before = await load(ctx, todoId, true);
     } else {
-      before = await load(ctx, input.todoId, true);
+      before = await load(ctx, todoId, true);
       if (undoNextTodoId !== undefined) nextRow = await load(ctx, undoNextTodoId, true);
     }
 
@@ -935,14 +937,14 @@ export const todoReopen = defineCommand({
         updated_at: ctx.now,
       })
       .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.todoId)
+      .where('id', '=', todoId)
       .returning(['id', 'revision'])
       .executeTakeFirstOrThrow();
 
     let restoredSiblings = 0;
     if (restoredRule !== null && before.series_id !== null && before.recurrence === null) {
       // If stopSeries cleared an active open sibling in the same transaction, restore each untouched sibling's own rule.
-      const restoreById = new Map((input.restoreSiblings ?? []).map((entry) => [entry.todoId, normalizeTodoRecurrence(entry.recurrence)]));
+      const restoreById = new Map((input.restoreSiblings ?? []).map((entry) => [entry.todoId.toLowerCase(), normalizeTodoRecurrence(entry.recurrence)]));
       const beforeUpdatedMs = new Date(before.updated_at).getTime();
       const candidateSiblings = prelockedRows.filter(
         (r) =>

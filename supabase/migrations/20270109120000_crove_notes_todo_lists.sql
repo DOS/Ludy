@@ -161,6 +161,10 @@ CREATE POLICY todo_list_delete ON crove_notes.todo_list AS RESTRICTIVE FOR DELET
 DROP TRIGGER IF EXISTS stream_hint ON crove_notes.todo_list;
 CREATE TRIGGER stream_hint AFTER INSERT OR UPDATE ON crove_notes.todo_list
   FOR EACH ROW EXECUTE FUNCTION crove_kernel.stream_notify('todo', 'id');
+DROP TRIGGER IF EXISTS stream_hint_delete ON crove_notes.todo_list;
+CREATE TRIGGER stream_hint_delete AFTER DELETE ON crove_notes.todo_list
+  REFERENCING OLD TABLE AS gone
+  FOR EACH STATEMENT EXECUTE FUNCTION crove_notes.stream_notify_deleted('todo', 'id');
 
 -- ---------------------------------------------------------------------------
 -- crove_notes.todo: priority, tags, list_id, section_id

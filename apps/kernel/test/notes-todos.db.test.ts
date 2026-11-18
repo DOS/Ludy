@@ -488,20 +488,27 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
       status: 'open',
     });
 
-    // Multi-occurrence stopSeries concurrent with todo_list.delete locks rows in canonical id ASC order without deadlock.
+    // Multi-occurrence stopSeries concurrent with todo_list.delete locks rows in canonical id ASC order without deadlock,
+    // and uppercase UUID todoId still returns the single incremented revision cleanly.
     await o.exec(o.mine, 'notes.todo.reopen', { todoId: recTodo.todoId });
-    await Promise.all([
-      o.exec(o.mine, 'notes.todo.complete', { todoId: completedRec.nextTodoId!, stopSeries: true }),
+    const [stoppedRec] = await Promise.all([
+      o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', {
+        todoId: completedRec.nextTodoId!.toUpperCase(),
+        stopSeries: true,
+      }),
       o.exec(o.mine, 'notes.todo_list.delete', { listId: recList.listId }),
     ]);
-    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: recTodo.todoId })).toMatchObject({
-      status: 'open',
+    expect(stoppedRec.stoppedSiblings).toEqual([{ todoId: recTodo.todoId, recurrence: { freq: 'monthly', interval: 1 } }]);
+    const doneNext = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: completedRec.nextTodoId! });
+    expect(doneNext).toMatchObject({
+      status: 'done',
       recurrence: null,
       listId: null,
       sectionId: null,
+      revision: stoppedRec.revision,
     });
-    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: completedRec.nextTodoId! })).toMatchObject({
-      status: 'done',
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: recTodo.todoId })).toMatchObject({
+      status: 'open',
       recurrence: null,
       listId: null,
       sectionId: null,
