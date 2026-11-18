@@ -2966,6 +2966,7 @@ export function createRpcHandler(
       s1a: os.household.s1a.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s1a', input, { actor, orgId }))),
       cnkd: os.household.cnkd.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.cnkd', input, { actor, orgId }))),
       s2a: os.household.s2a.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2a', input, { actor, orgId }))),
+      s2c: os.household.s2c.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2c', input, { actor, orgId }))),
     },
     einvoice: {
       status: os.einvoice.status.handler(async () => ({ sandbox: Boolean(einvoiceProviderOf('sandbox')) })),
@@ -3075,6 +3076,9 @@ export function createRpcHandler(
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
         startCorrection: os.einvoice.drafts.startCorrection.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.start_correction', input, { actor, orgId }))),
         correctionOptions: os.einvoice.drafts.correctionOptions.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.correction_options', input, { actor, orgId }))),
+        noticeOpen: os.einvoice.drafts.noticeOpen.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.notice_open', input, { actor, orgId }))),
+        noticeStep: os.einvoice.drafts.noticeStep.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.notice_step', input, { actor, orgId }))),
+        noticeList: os.einvoice.drafts.noticeList.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.notice_list', input, { actor, orgId }))),
         issueRequest: os.einvoice.drafts.issueRequest.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.issue_request', input, { actor, orgId }))),
         // The coworker's proposal for the form (#2505): the model is asked outside any transaction, from what the member's own read said it may see.
         previousInvoice: os.einvoice.drafts.previousInvoice.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.previous_invoice', input, { actor, orgId }))),

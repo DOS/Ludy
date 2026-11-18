@@ -130,6 +130,7 @@ export const EXPORT_TABLES = {
   'finance.fixed_asset': { from: 'crove_finance.fixed_asset', omit: [] },
   'finance.depreciation_line': { from: 'crove_finance.depreciation_line', omit: [] },
   'finance.einvoice_connection': { from: 'crove_finance.einvoice_connection', omit: [] },
+  'finance.einvoice_notice': { from: 'crove_finance.einvoice_notice', omit: [] },
   'finance.einvoice_series': { from: 'crove_finance.einvoice_series', omit: [] },
   'finance.einvoice_draft': { from: 'crove_finance.einvoice_draft', omit: ['idempotency_key'] },
   'finance.einvoice_draft_line': { from: 'crove_finance.einvoice_draft_line', omit: [] },
