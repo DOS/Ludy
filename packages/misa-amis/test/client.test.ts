@@ -326,6 +326,14 @@ describe('what the caller changes while a call waits', () => {
     expect(sent[0]?.detail).toHaveLength(AMIS_MAX_VOUCHER_LINES);
   });
 
+  it('checks what it sends, not what an object says each time it is read: a getter that shows 500 lines to the checks (they read it four times) and 501 to the writer is refused', async () => {
+    const { fake, client } = held();
+    let reads = 0;
+    const tricky = { ...voucher(REF1, 1), get detail() { return Array.from({ length: ++reads <= 4 ? AMIS_MAX_VOUCHER_LINES : AMIS_MAX_VOUCHER_LINES + 1 }, (_, i) => line(i + 1)); } } as unknown as AmisVoucher;
+    expect(await fails(client.save(conn, [tricky]))).toMatchObject({ kind: 'invalid_request', reason: 'too_many_lines' });
+    expect(fake.calls).toHaveLength(0);
+  });
+
   it('holds a catalogue answer to the page size that was asked for, not to one changed while it waits', async () => {
     const { fake, client, release } = held();
     const query = { dataType: AMIS_DICTIONARIES.account, skip: 0, take: 10 };

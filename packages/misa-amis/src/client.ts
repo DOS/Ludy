@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { AmisError, amisErrorKind, safeAmisCode, type AmisErrorKind } from './errors.ts';
 import { toJsonText } from './json.ts';
 import { parseCallbackResults, type AmisCallbackResult } from './callback.ts';
-import { AMIS_SAVE_BATCH_MAX, checkVoucher, isKnownVoucherType, isOrgRefId, type AmisVoucher } from './vouchers.ts';
+import { AMIS_SAVE_BATCH_MAX, checkVoucher, checkVoucherShape, isKnownVoucherType, isOrgRefId, type AmisVoucher } from './vouchers.ts';
 
 export const AMIS_HOSTS = ['developer.misa.vn'] as const;
 // The document's base URL; the paths below follow it. Unconfirmed until the live sandbox check.
@@ -235,6 +235,8 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
       const rows = input.slice();
       if (rows.length === 0 || rows.length > AMIS_SAVE_BATCH_MAX) throw new AmisError('invalid_request', { reason: 'too_many_rows' });
       const text = toJsonText({ org_company_code: c.orgCompanyCode, data_type: dataType, dictionary: rows });
+      const written = (JSON.parse(text) as { dictionary: unknown[] }).dictionary;
+      if (written.length === 0 || written.length > AMIS_SAVE_BATCH_MAX) throw new AmisError('invalid_request', { reason: 'too_many_rows' });
       await authed(c, '/amiskt/v1/save_dictionary', 'POST', text);
     },
 
@@ -244,9 +246,13 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
       const vouchers = input.slice();
       if (vouchers.length === 0 || vouchers.length > AMIS_SAVE_BATCH_MAX) throw new AmisError('invalid_request', { reason: 'too_many_vouchers' });
       for (const voucher of vouchers) checkVoucher(voucher);
-      // One kind per call: the document does not say a mixed list is taken.
-      if (new Set(vouchers.map((v) => v.voucher_type)).size > 1) throw new AmisError('invalid_request', { reason: 'mixed_voucher_types' });
       const text = toJsonText({ org_company_code: c.orgCompanyCode, voucher: vouchers });
+      // The rules are applied once more to what the text says (a getter on a caller's object could answer differently each time it is read): the text is the only thing that is sent.
+      const written = (JSON.parse(text) as { voucher: { voucher_type?: unknown; org_refid?: unknown; detail?: unknown }[] }).voucher;
+      if (written.length === 0 || written.length > AMIS_SAVE_BATCH_MAX) throw new AmisError('invalid_request', { reason: 'too_many_vouchers' });
+      for (const voucher of written) checkVoucherShape(voucher);
+      // One kind per call: the document does not say a mixed list is taken.
+      if (new Set(written.map((v) => v.voucher_type)).size > 1) throw new AmisError('invalid_request', { reason: 'mixed_voucher_types' });
       await authed(c, '/amiskt/v1/save', 'POST', text);
     },
 
