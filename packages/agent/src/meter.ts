@@ -71,6 +71,9 @@ export const AI_FEATURES = {
   // The finance coworker's one line above the received invoices to pay (#3113 S4c): code read the facts (how many invoices wait, their total, the oldest date, how many are of a supplier whose bank account
   // changed recently), the model only words them; a line that states a figure it was not given, a link, advice, or says something was paid or sent is refused. A read, it asks for no payment.
   'finance.supplier_payable_line': 'finance',
+  // The finance coworker's one line above the MISA export check (#3848 slice B): code ran the deterministic check over the rows of the file and counted what it found per kind, the model only explains those
+  // counts (what each kind means in MISA and how to fix it in Ludy); a line that states a number it was not given, sets a count against the wrong kind, has a link or says something was fixed is refused. A read.
+  'finance.misa_check_line': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
   // The sales coworker's proposal for the lines of a quote (#2698): from the deal, what the customer wrote and the earlier quotes to them; a price no source holds stays empty, and a person applies each line.

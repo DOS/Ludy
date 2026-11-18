@@ -30,6 +30,7 @@ import {
   type RecruitingBriefResult,
   type ReviewCandidateProfileOptions,
 } from './recruiting-coworker.ts';
+import { checkMisaCheckLineSentence, misaCheckLineInstructions, misaCheckLinePrompt, type MisaCheckLineFacts, type MisaCheckLineResult } from './misa-check-line.ts';
 import { checkSupplierPayableLineSentence, supplierPayableLineInstructions, supplierPayableLinePrompt, type SupplierPayableLineFacts, type SupplierPayableLineResult } from './supplier-payable-line.ts';
 import { checkEInvoiceRate, einvoiceRateInstructions, einvoiceRatePrompt, type EInvoiceRateFacts, type EInvoiceRateResult } from './einvoice-rate.ts';
 import { checkMarketplaceLineSentence, marketplaceLineInstructions, marketplaceLinePrompt, type MarketplaceLineFacts, type MarketplaceLineResult } from './marketplace-line.ts';
@@ -151,6 +152,10 @@ const zMarketplaceLineOut = z.object({
 const zSupplierPayableLineOut = z.object({
   sentence: z.string().describe('One plain sentence on what is waiting above the list of received invoices to pay, citing only the figures given, each number and date written exactly as given'),
 });
+const zMisaCheckLineOut = z.object({
+  sentence: z.string().describe('One plain sentence on what the problems found in a MISA voucher file mean and how to fix them in Ludy, citing only the counts given, each number written exactly as given'),
+});
+export type MisaCheckLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMisaCheckLineOut> | null; usage?: AiUsage }>;
 export type SupplierPayableLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zSupplierPayableLineOut> | null; usage?: AiUsage }>;
 const zEInvoiceRateOut = z.object({
   sentence: z.string().describe('One or two plain Vietnamese sentences on why the correcting invoice keeps or changes the VAT rate, citing only the dates and rates given, each written exactly as given'),
@@ -262,6 +267,7 @@ export class InboxReader {
   private readonly generatePayrollMatch: PayrollMatchGenerator;
   private readonly generateMarketplaceLine: MarketplaceLineGenerator;
   private readonly generateSupplierPayableLine: SupplierPayableLineGenerator;
+  private readonly generateMisaCheckLine: MisaCheckLineGenerator;
   private readonly generateEInvoiceRate: EInvoiceRateGenerator;
   private readonly generateStockMatch: StockMatchGenerator;
   private readonly generateReorder: ReorderGenerator;
@@ -273,7 +279,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; misaCheckLine?: MisaCheckLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
@@ -363,6 +369,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.marketplace_line', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zMarketplaceLineOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateMisaCheckLine =
+      generators.misaCheckLine ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.misa_check_line', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zMisaCheckLineOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -561,6 +575,14 @@ export class InboxReader {
     const { output, usage } = await this.generateMarketplaceLine({ system: marketplaceLineInstructions(facts.language), prompt: marketplaceLinePrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkMarketplaceLineSentence(facts, output);
+  }
+
+  /** The finance coworker's one line above the MISA export check (#3848 slice B), from the count of findings per kind that code made and nothing else, or why there is none: the text is refused when it states a
+   * number the counts do not hold, sets a count against the wrong kind, has a link, or says something was fixed or imported (misa-check-line.ts). onUsage gets the tokens the call used. */
+  async misaCheckLineSentence(facts: MisaCheckLineFacts, onUsage?: (usage: AiUsage) => void): Promise<MisaCheckLineResult> {
+    const { output, usage } = await this.generateMisaCheckLine({ system: misaCheckLineInstructions(facts.language), prompt: misaCheckLinePrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkMisaCheckLineSentence(facts, output);
   }
 
   /** The finance coworker's one line above the received invoices to pay (#3113 S4c), from four facts code read from the books and nothing else, or why there is none: the text is refused when it states a

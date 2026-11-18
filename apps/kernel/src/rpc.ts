@@ -78,6 +78,7 @@ import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
 import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
 import { misaCheck } from './misa-check.ts';
+import { explainMisaCheckLine, misaCheckLineAi } from './finance-misa-check-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -422,6 +423,7 @@ export function createRpcHandler(
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeSupplierPayableLineAi = supplierPayableLineAi(conversationReader?.supplierPayableLineSentence ? { supplierPayableLineSentence: conversationReader.supplierPayableLineSentence.bind(conversationReader) } : null, suggestionBudget());
+  const financeMisaCheckLineAi = misaCheckLineAi(conversationReader?.misaCheckLineSentence ? { misaCheckLineSentence: conversationReader.misaCheckLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker on payroll (#2534, #2815): the same reader and model, independent budgets per action so `Promise.all([prepare, flag])` in the UI does not self-contend on `running`.
   const payrollPrepareBudget = suggestionBudget();
   const payrollAi: PayrollAi = {
@@ -2913,6 +2915,14 @@ export function createRpcHandler(
       // What MISA's import will refuse or cut in one of the seven exports (#3848): a read over the rows the file is built from, in the caller's own context. The export is unchanged and never waits for it.
       misaCheck: os.vouchers.misaCheck.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => misaCheck((name, query) => runtime.query(name, query, { actor, orgId }), input)),
+      ),
+      // The check is run again here, so what the model is told comes from the books, never from the caller; the sentence is a read and changes no voucher.
+      misaCheckLine: os.vouchers.misaCheckLine.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const check = await misaCheck((name, query) => runtime.query(name, query, { actor, orgId }), ask);
+          return explainMisaCheckLine(financeMisaCheckLineAi, orgId, actor.userId, check, lang ?? 'vi');
+        }),
       ),
     },
     openingBalance: {
