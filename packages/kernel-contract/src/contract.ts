@@ -194,6 +194,7 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
+import { zMisaCheck, zMisaCheckAsk } from './misa-check.ts';
 import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
 import { zMarketplaceSuggestInput, zMarketplaceSuggested, zMarketplaceFeeClearingRequest, zMarketplacePayoutRequest, zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
@@ -2319,6 +2320,8 @@ export const contract = {
         z.object({ from: zLocalDate.optional(), to: zLocalDate.optional(), type: zVoucherType.optional(), before: zVoucherCursor.optional(), legalEntityId: zId.optional() }),
       )
       .output(zCashVoucherPage),
+    // What MISA's import will refuse or cut in one of the seven MISA SME voucher exports (#3848), found by code over the rows the file is built from, before the download. A read; the export is unchanged and never blocked.
+    misaCheck: oc.input(zMisaCheckAsk).output(zMisaCheck),
   },
   // Opening balances from Excel (#320), owners and admins. preview checks a trial balance read from the template and
   // writes nothing; post checks it again and posts it as the org's one opening entry (R3: fresh MFA). A retry with the
