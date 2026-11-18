@@ -177,7 +177,7 @@ test('every sidebar screen and the detail pages pass the 360px and axe walk on a
     await page.getByLabel('Tên kênh thử').fill('Fanpage Kiểm tra');
     await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
     await expect(page.getByText('Fanpage Kiểm tra').first()).toBeVisible();
-    await page.getByRole('link', { name: 'Quay lại' }).click();
+    await page.getByRole('link', { name: 'Về Bài đăng' }).click();
     await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill('Khai trương chi nhánh mới, giảm 10% tuần đầu.');
     await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();

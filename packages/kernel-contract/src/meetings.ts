@@ -1124,6 +1124,23 @@ export type SeriesOpenItems = z.infer<typeof zSeriesOpenItems>;
 // What the worker's series nudge is told (the command checks it again before it writes anything): one member, the series, and the start of the next meeting of it.
 export const zSeriesNudge = z.strictObject({ userId: zId, seriesId: zId, startsAt: z.iso.datetime({ offset: true }) });
 
+// The inputs and limits of the two Meetings reads of an MCP company grant (#3731): the descriptions are what the client's model reads.
+export const MCP_MEETINGS_DEFAULT = 25;
+export const MCP_MEETINGS_MAX = 50;
+// The most plain lines of the minutes' text, of characters in each, decisions and action items a client gets; the Truncated flags say when more was left out.
+export const MCP_SUMMARY_LINES_MAX = 80;
+export const MCP_LINE_MAX = 2000;
+export const MCP_DECISIONS_MAX = 30;
+export const MCP_ACTIONS_MAX = 50;
+
+export const zMcpMeetingsInput = z.strictObject({
+  from: z.iso.datetime({ offset: true }).optional().describe('Only meetings that started at or after this time (ISO 8601 with an offset).'),
+  to: z.iso.datetime({ offset: true }).optional().describe('Only meetings that started before this time (ISO 8601 with an offset).'),
+  limit: z.number().int().min(1).max(MCP_MEETINGS_MAX).default(MCP_MEETINGS_DEFAULT).describe(`How many meetings to return (1 to ${MCP_MEETINGS_MAX}, default ${MCP_MEETINGS_DEFAULT}).`),
+});
+export const zMcpMinutesInput = z.strictObject({ meetingId: zId.describe('The id of a meeting from ludy_meetings_list.') });
+
+
 // The "minutes draft ready" notice of the recorder (#3730): kind, event and mail template. The notice holds no text of the draft and no title: the in-app line is a fixed text that opens the meeting through its
 // subject, and the mail holds a fixed line and the link, so no copy of the title or of the draft exists to erase.
 export const SUMMARY_READY_KIND = 'meetings.summary_ready';
