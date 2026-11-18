@@ -25,9 +25,9 @@ export const HOUSEHOLD_S1A_ROW_LIMIT = 20_000;
 const notRequired = (book: string) =>
   new DomainError('HOUSEHOLD_BOOK_NOT_REQUIRED', 422, `Hồ sơ hộ kinh doanh của pháp nhân này không yêu cầu sổ ${book} trong kỳ đã chọn`);
 
-// The days a household book covers and who it is for, shared by the books that are views of account 511 (S1a, S2a, S2c): the book starts the day the household's first profile took effect (days before
+// The days a household book covers and who it is for, shared by the books that are views of account 511 (S1a, S2a, S2b, S2c): the book starts the day the household's first profile took effect (days before
 // it are outside it, so a household that sets its profile today still gets this month's book from today), and every profile in force inside its days must require the book: the one at its first day
-// and each one that starts after it, so a change of method inside the period is asked for in shorter parts. Refused (HOUSEHOLD_BOOK_NOT_REQUIRED) otherwise.
+// and each one that starts after it, so a change of method inside the period is asked for in shorter parts. Refused (HOUSEHOLD_BOOK_NOT_REQUIRED) otherwise. S2a and S2b also refuse a period whose profiles name different trades (HOUSEHOLD_TRADES_CHANGED, #3714).
 export interface HouseholdBookWindow {
   entity: string;
   ledger: Awaited<ReturnType<typeof accountLedgerOf>>;
@@ -64,10 +64,20 @@ export async function householdBookWindow(ctx: QueryContext, legalEntityId: stri
     .execute();
   let form: HouseholdBookRule | undefined;
   let profile: HouseholdProfile | null = null;
+  let tradesOfFirstDay: string | null = null;
   for (const day of [from, ...changes.map((c) => c.effective_from)]) {
     const view = await householdProfileView(ctx, entity, day);
     form = view.books.find((b) => b.book === book);
     if (!view.profile || !form) throw notRequired(book);
+    // The books that split revenue by trade (S2a, S2b) read one trade list for the whole period, so every profile in it must name the same trades: a later profile that drops a trade would otherwise move
+    // the earlier sales to another line. The user asks for the parts on either side of the change instead (HOUSEHOLD_TRADES_CHANGED); no trade is guessed.
+    const trades = [...view.profile.trades].sort().join(',');
+    if (book === 'S2a' || book === 'S2b') {
+      if (tradesOfFirstDay !== null && trades !== tradesOfFirstDay) {
+        throw new DomainError('HOUSEHOLD_TRADES_CHANGED', 422, `Ngành nghề của hộ kinh doanh đổi trong kỳ đã chọn nên sổ ${book} chưa chia được doanh thu; hãy chọn kỳ ngắn hơn, trước và sau ngày đổi`);
+      }
+      tradesOfFirstDay ??= trades;
+    }
     profile = view.profile;
   }
   if (!form || !profile) throw notRequired(book);

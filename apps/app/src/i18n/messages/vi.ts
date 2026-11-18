@@ -12009,6 +12009,7 @@ export const vi = {
       HOUSEHOLD_PROFILE_ORDER: 'Hồ sơ mới phải có hiệu lực sau hồ sơ gần nhất; một thay đổi là một dòng mới từ ngày đó',
       HOUSEHOLD_PROFILE_LOCKED: 'Kỳ này đã khóa sổ; hồ sơ mới phải có hiệu lực sau kỳ đã khóa',
       HOUSEHOLD_BOOK_NOT_REQUIRED: 'Hồ sơ hộ kinh doanh của pháp nhân này không yêu cầu sổ S1a trong kỳ đã chọn',
+      HOUSEHOLD_TRADES_CHANGED: 'Ngành nghề của hộ kinh doanh đổi trong kỳ đã chọn nên sổ chưa chia được doanh thu theo ngành; hãy chọn kỳ ngắn hơn, trước và sau ngày đổi',
       HOUSEHOLD_RETURN_NOT_REQUIRED: 'Hộ này không phải kê khai tờ khai 01/CNKD theo quý trong kỳ đã chọn (chưa có hồ sơ, hoặc hồ sơ không theo phương pháp tỷ lệ)',
       HOUSEHOLD_RETURN_METHOD: 'Bảng tính cho phương pháp thu nhập chưa có; hộ nộp theo phương pháp này nhờ kế toán lập tờ khai',
       HOUSEHOLD_RETURN_PROFILE_CHANGED: 'Hồ sơ hộ kinh doanh đổi trong quý này nên chưa lập được bảng tính theo quý; hãy nhờ kế toán',

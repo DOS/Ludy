@@ -12010,6 +12010,7 @@ export const en = {
       HOUSEHOLD_PROFILE_ORDER: 'A new profile must take effect after the latest one; a change is a new row from its date',
       HOUSEHOLD_PROFILE_LOCKED: 'The period is locked; the new profile must take effect after the locked period',
       HOUSEHOLD_BOOK_NOT_REQUIRED: 'The household profile of this legal entity does not require the S1a book in the period chosen',
+      HOUSEHOLD_TRADES_CHANGED: 'The household trades change inside the period chosen, so the book cannot split revenue by trade; choose shorter periods, before and after the change date',
       HOUSEHOLD_RETURN_NOT_REQUIRED: 'This household does not file a quarterly 01/CNKD return in the period chosen (no profile yet, or no percentage-method profile)',
       HOUSEHOLD_RETURN_METHOD: 'The worksheet for the income method is not built yet; a household on that method has its accountant prepare the return',
       HOUSEHOLD_RETURN_PROFILE_CHANGED: 'The household profile changes inside this quarter, so the quarterly worksheet cannot be made; ask the accountant',
