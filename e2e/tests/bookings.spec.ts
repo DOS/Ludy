@@ -34,15 +34,22 @@ test('a visitor books on the public page, the host sees it in the app, cancels i
 
   let startsAt = '';
   await test.step('a visitor with no account books the first slot of the second day offered', async () => {
-    const visitor = await browser.newPage({ timezoneId: 'Asia/Ho_Chi_Minh' });
+    const visitor = await browser.newPage({ timezoneId: 'Asia/Ho_Chi_Minh', viewport: { width: 390, height: 844 } });
     await visitor.goto(`/-/b/${slug}/tu-van`);
     await expect(visitor.getByRole('heading', { name: 'Tư vấn thuế' })).toBeVisible();
+    // #3646: on a phone every time button is 44 px high, and a customer in Vietnam is told no zone, least of all its IANA name.
+    const firstSlot = visitor.locator('main li').nth(1).getByRole('button').first();
+    await expect(firstSlot).toBeVisible();
+    expect((await firstSlot.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    expect((await visitor.getByRole('button', { name: 'Tuần sau' }).boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    await expect(visitor.getByText('Asia/Ho_Chi_Minh')).toHaveCount(0);
     // Not today's first slot, which may start within the minute.
     await visitor.locator('main li').nth(1).getByRole('button').first().click();
     await visitor.getByLabel('Họ và tên').fill('Nguyễn Văn Khách');
     await visitor.getByLabel('Email').fill('khach-e2e@example.test');
     await visitor.getByRole('button', { name: 'Đặt lịch' }).click();
     await expect(visitor.getByText('Đã đặt lịch')).toBeVisible({ timeout: 30_000 });
+    await expect(visitor.getByText('Asia/Ho_Chi_Minh')).toHaveCount(0);
     await visitor.close();
     const [booking] = sql<{ starts_at: string }>(
       `SELECT to_char(b.starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS starts_at

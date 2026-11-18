@@ -1,7 +1,7 @@
 // The public booking page's helpers (issue #1318): slots grouped by the visitor's day, times in the visitor's zone, and
 // the week one page read covers.
 import { describe, expect, it } from 'vitest';
-import { dayLabel, manageTokenOf, slotsByDay, timeIn, weekRange } from '../src/lib/booking.ts';
+import { dayLabel, isVietnamZone, manageTokenOf, slotsByDay, timeIn, weekRange, zoneOffset, zonePlace } from '../src/lib/booking.ts';
 
 const slot = (start: string, end: string) => ({ start, end });
 
@@ -38,5 +38,30 @@ describe('booking page helpers', () => {
     expect(manageTokenOf('')).toBeNull();
     expect(manageTokenOf('#m=abc')).toBeNull();
     expect(manageTokenOf(`#m=${token}x`)).toBeNull();
+  });
+});
+
+describe('how a time zone is told to a customer (#3646)', () => {
+  const at = Date.parse('2026-11-02T02:00:00.000Z');
+
+  it('knows Vietnam, by either of its two IANA names', () => {
+    expect(isVietnamZone('Asia/Ho_Chi_Minh')).toBe(true);
+    expect(isVietnamZone('Asia/Saigon')).toBe(true);
+    expect(isVietnamZone('Asia/Tokyo')).toBe(false);
+  });
+
+  it('says the offset as people do, half hours and summer time included', () => {
+    expect(zoneOffset('Asia/Ho_Chi_Minh', at)).toBe('GMT+7');
+    expect(zoneOffset('Asia/Tokyo', at)).toBe('GMT+9');
+    expect(zoneOffset('Asia/Kolkata', at)).toBe('GMT+5:30');
+    expect(zoneOffset('America/New_York', at)).toBe('GMT-5');
+    expect(zoneOffset('America/New_York', Date.parse('2026-07-02T02:00:00.000Z'))).toBe('GMT-4');
+    expect(zoneOffset('Not/AZone', at)).toBe('GMT');
+  });
+
+  it('names the place without the region or the underscores of the IANA name', () => {
+    expect(zonePlace('America/New_York')).toBe('New York');
+    expect(zonePlace('Asia/Tokyo')).toBe('Tokyo');
+    expect(zonePlace('UTC')).toBe('UTC');
   });
 });
