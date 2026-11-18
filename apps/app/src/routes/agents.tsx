@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { defaultCoworkerName } from '@crove/kernel-contract';
+import { defaultCoworkerName, isKnownModule } from '@crove/kernel-contract';
 import { Alert, AlertDescription, AlertTitle } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -46,12 +46,10 @@ type Entity = { id: string; name: string; isDefault: boolean };
 
 const RISKS = ['R0', 'R1', 'R2'] as const;
 const AGENT_STATUSES = ['active', 'paused', 'retired'] as const;
-// A module by its name in the reader's language ("finance" reads "Kế toán"); a module this build does not know keeps its
-// id.
-const MODULE_IDS = ['kernel', 'finance', 'social'] as const;
+// A Module by its canonical name in the reader's language; an unknown id keeps its id.
 function useModuleName() {
   const t = useTranslations('modules');
-  return (id: string) => ((MODULE_IDS as readonly string[]).includes(id) ? t(id as (typeof MODULE_IDS)[number]) : id);
+  return (id: string) => (isKnownModule(id) ? t(id) : id);
 }
 
 const SCOPES = ['org', 'module', 'agent'] as const;
@@ -870,7 +868,7 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
 }
 
 // The features the app has a name for (aiMeter.features); the keys are the server's with the dot as an underscore.
-const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'crm_quote_suggest', 'crm_followup_draft', 'crm_meeting_brief', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_einvoice_draft', 'finance_payroll_prepare', 'finance_payroll_flag', 'finance_payroll_explain', 'finance_labor_check', 'hr_recruiting_brief', 'today_brief', 'today_weekly', 'ads_campaign_draft', 'finance_overview_explain', 'finance_vat_late_explain', 'finance_bank_match_explain', 'finance_marketplace_line', 'meetings_transcribe', 'meetings_summary', 'meetings_translate', 'meetings_ask', 'meetings_brief', 'meetings_followup_words', 'projects_weekly_status', 'projects_tasks_from_note', 'projects_tasks_from_source', 'notes_summary', 'notes_todo_suggest', 'sign_field_propose', 'sign_clause_summary', 'kernel_unattributed'] as const;
+const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'crm_quote_suggest', 'crm_followup_draft', 'crm_meeting_brief', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_einvoice_draft', 'finance_einvoice_rate_explain', 'finance_payroll_prepare', 'finance_payroll_flag', 'finance_payroll_explain', 'finance_labor_check', 'hr_recruiting_brief', 'today_brief', 'today_weekly', 'ads_campaign_draft', 'finance_overview_explain', 'finance_vat_late_explain', 'finance_bank_match_explain', 'finance_marketplace_line', 'meetings_transcribe', 'meetings_summary', 'meetings_translate', 'meetings_ask', 'meetings_brief', 'meetings_followup_words', 'projects_weekly_status', 'projects_tasks_from_note', 'projects_tasks_from_source', 'notes_summary', 'notes_todo_suggest', 'sign_field_propose', 'sign_clause_summary', 'kernel_unattributed'] as const;
 
 // This month's AI use by feature and by agent (#2382): the meter's ledger, numbers only. Owners and admins.
 export function AiUse({ agents }: { agents: Agent[] }) {

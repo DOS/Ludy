@@ -57,5 +57,6 @@ The owner decided on 2026-11-04 which products Ludy measures itself against.
   - Base.vn is an all-in-one suite for Vietnamese businesses (people, work, sales) without accounting.
 - **Secondary references: the large vendors.** SAP, Oracle, Workday and Microsoft Dynamics show how a full suite splits its areas. Xero and QuickBooks show small-business accounting; where they offer payroll, it sits inside the accounting app.
 - What the suites share: one sign-in, one people list and one database across apps. HR and payroll are an app of their own with their own roles, and post their totals to accounting.
+- Ludy formalizes this split as a four-tier hierarchy across code and UI (`packages/kernel-contract/src/apps.ts`, [DESIGN.md](../../DESIGN.md) section 1.1, [#3796](https://github.com/DOS/Ludy/issues/3796)): **Suite** (Ludy) -> **App** (user-facing workspaces: Teamwork, Finance, Engage, HR, eSign, Ludy AI) -> **Feature Group** (sidebar groups inside an App) -> **Module** (independently deployed via `CROVE_MODULES` and toggled per org in Settings).
 
 [ai-first-reference-study.md](../research/ai-first-reference-study.md) compares what these products do with AI.

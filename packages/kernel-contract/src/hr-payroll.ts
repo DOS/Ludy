@@ -202,8 +202,9 @@ export const zHrLineAdjust = z.strictObject({
   funds: z.array(z.strictObject({ fund: z.enum(HR_INSURANCE_FUNDS), employee: zHrSignedAmount, employer: zHrSignedAmount })).max(HR_INSURANCE_FUNDS.length).default([]),
 });
 export type HrLineAdjust = z.input<typeof zHrLineAdjust>;
-export const zHrRunList = z.strictObject({ limit: z.number().int().min(1).max(120).default(24) });
+export const zHrRunList = z.strictObject({ limit: z.number().int().min(1).max(120).default(24), legalEntityId: zId.optional() });
 export type HrRunList = z.input<typeof zHrRunList>;
+export const zHrCoworkerAccess = z.strictObject({});
 export const zHrPayslipRef = z.strictObject({ lineId: zId });
 export type HrPayslipRef = z.infer<typeof zHrPayslipRef>;
 
@@ -370,8 +371,8 @@ export const zHrCoworkerAsk = z.strictObject({ runId: zId, lang: z.enum(['vi', '
 export type HrCoworkerAsk = z.infer<typeof zHrCoworkerAsk>;
 export const zHrCoworkerPayslipAsk = z.strictObject({ lineId: zId, lang: z.enum(['vi', 'en']).optional() });
 export type HrCoworkerPayslipAsk = z.infer<typeof zHrCoworkerPayslipAsk>;
-// A finding is what code found (the facts, written by code with the people's names put back), with the model's sentence only when it passed the checks. The findings come back in every state
-// of `ai`, so with AI off, busy, out of budget or refused the owner still sees every anomaly and every signal.
+// A finding is what code found (the facts, written by code with the people's names put back), with the model's sentence only when it passed the checks. Once the sheet has been read (AI off,
+// out of budget, failed or refused), every anomaly and every signal still comes back; a rate-limited call (`busy`) stops before the sensitive reads and returns an empty list.
 const zCoworkerItem = z.object({ id: z.string(), kind: z.string(), employeeId: zId.nullable(), facts: z.string(), text: z.string().nullable() });
 export const zHrCoworkerPrepared = z.object({
   ai: z.enum(HR_COWORKER_STATES),

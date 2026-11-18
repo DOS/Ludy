@@ -87,7 +87,7 @@ function sandboxXml(request: EInvoiceRequest, number: string, signedAt: string, 
     '<?xml version="1.0" encoding="UTF-8"?>' +
     `<HDon><DLHDon><TTChung><THDon>Hóa đơn điện tử (thử nghiệm)</THDon><KHMSHDon>${xmlText(request.templateNo)}</KHMSHDon><KHHDon>${xmlText(request.symbol)}</KHHDon><SHDon>${number}</SHDon><NLap>${xmlText(request.date)}</NLap><DVTTe>${xmlText(request.currency)}</DVTTe>${related}</TTChung>` +
     `<NDHDon><NBan><Ten>${xmlText(request.seller.name)}</Ten><MST>${xmlText(request.seller.taxCode)}</MST></NBan>` +
-    `<NMua><Ten>${xmlText(buyer.name)}</Ten><MST>${xmlText(buyer.taxCode)}</MST><DChi>${xmlText(buyer.address)}</DChi><DCTDTu>${xmlText(buyer.email)}</DCTDTu>${buyer.identity ? `<DDanh Loai="${buyer.identity.kind}">${xmlText(buyer.identity.value)}</DDanh>` : ''}</NMua>` +
+    `<NMua><Ten>${xmlText(buyer.name)}</Ten><MST>${xmlText(buyer.taxCode)}</MST><DChi>${xmlText(buyer.address)}</DChi><DCTDTu>${xmlText(buyer.email)}</DCTDTu>${buyer.identity ? `<DDanh Loai="${buyer.identity.kind}"${buyer.identity.nationality ? ` QTich="${xmlText(buyer.identity.nationality)}"` : ''}>${xmlText(buyer.identity.value)}</DDanh>` : ''}</NMua>` +
     `<DSHHDVu>${lines}</DSHHDVu><TToan><THTTLTSuat>${rates}</THTTLTSuat><TgTCThue>${xmlText(request.subtotal)}</TgTCThue><TgTThue>${xmlText(request.vatAmount)}</TgTThue><TgTTTBSo>${xmlText(request.total)}</TgTTTBSo></TToan></NDHDon></DLHDon>` +
     `<MCCQT>${taxAuthorityCode}</MCCQT></HDon>`
   );

@@ -230,7 +230,7 @@ export function MeetingDetailPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <Link to="/o/$slug/meetings" params={{ slug }} className="text-sm text-link underline">
-          &larr; {t('detail.back')}
+          <span aria-hidden="true">&larr;</span> {t('detail.back')}
         </Link>
         {meeting.isRecorder ? (
           <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}>
@@ -259,10 +259,10 @@ export function MeetingDetailPage() {
 
       <PageHeader
         title={meeting.title}
-        subtitle={t('detail.recordedBy', { user: meeting.recorderUserId, date: f.date(meeting.createdAt) })}
+        subtitle={orgQuery.data ? t('detail.recordedBy', { user: memberLabel(orgMembers, meeting.recorderUserId, t('results.unknownMember')), date: f.date(meeting.createdAt) }) : undefined}
         actions={
           <div className="flex items-center gap-2">
-            <Badge variant={STATUS_VARIANTS[meeting.status] ?? 'outline'}>{meeting.status}</Badge>
+            <Badge variant={STATUS_VARIANTS[meeting.status] ?? 'outline'}>{t(`status.${meeting.status}`)}</Badge>
             <Badge variant="outline">
               {meeting.visibility === 'org' ? t('badgeOrg') : t('badgeAttendees')}
             </Badge>
@@ -276,7 +276,7 @@ export function MeetingDetailPage() {
       {!hasTranscript && (
         <Card className="border-primary/20 bg-primary/5">
           <CardHeader>
-            <CardTitle className="text-sm font-semibold text-primary">
+            <CardTitle role="heading" aria-level={2} className="text-sm font-semibold text-primary">
               {t('detail.aiOffCardTitle')}
             </CardTitle>
             <CardDescription className="text-xs text-muted-foreground">
@@ -291,12 +291,12 @@ export function MeetingDetailPage() {
         {meeting.hasAudio && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-base font-medium">{t('detail.audioPlayerTitle')}</CardTitle>
+              <CardTitle role="heading" aria-level={2} className="text-base font-medium">{t('detail.audioPlayerTitle')}</CardTitle>
             </CardHeader>
             <CardContent>
-              {audioLoading && <div className="text-xs text-muted-foreground">{t('detail.loadingMedia')}</div>}
+              {audioLoading && <div role="status" className="text-xs text-muted-foreground">{t('detail.loadingMedia')}</div>}
               {audioError && <ErrorText>{audioError}</ErrorText>}
-              {audioUrl && <audio controls className="w-full" src={audioUrl} />}
+              {audioUrl && <audio controls aria-label={t('detail.audioPlayerTitle')} className="w-full" src={audioUrl} />}
             </CardContent>
           </Card>
         )}
@@ -304,15 +304,16 @@ export function MeetingDetailPage() {
         {meeting.hasVideo && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-base font-medium">{t('detail.videoPlayerTitle')}</CardTitle>
+              <CardTitle role="heading" aria-level={2} className="text-base font-medium">{t('detail.videoPlayerTitle')}</CardTitle>
             </CardHeader>
             <CardContent>
-              {videoLoading && <div className="text-xs text-muted-foreground">{t('detail.loadingMedia')}</div>}
+              {videoLoading && <div role="status" className="text-xs text-muted-foreground">{t('detail.loadingMedia')}</div>}
               {videoError && <ErrorText>{videoError}</ErrorText>}
               {videoUrl && (
                 <video
                   ref={videoRef}
                   controls
+                  aria-label={t('detail.videoPlayerTitle')}
                   preload="metadata"
                   className="w-full max-h-96 rounded-lg bg-muted"
                   src={videoUrl}
@@ -373,7 +374,7 @@ export function MeetingDetailPage() {
         {/* Consent Record Card */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium">{t('detail.consentRecord')}</CardTitle>
+            <CardTitle role="heading" aria-level={2} className="text-sm font-medium">{t('detail.consentRecord')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-xs">
             <div>
@@ -405,7 +406,7 @@ export function MeetingDetailPage() {
         {meeting.visibility === 'attendees' && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">
+              <CardTitle role="heading" aria-level={2} className="text-sm font-medium">
                 {t('detail.readersTitle', { count: String(meeting.readers.length) })}
               </CardTitle>
             </CardHeader>
@@ -435,12 +436,13 @@ export function MeetingDetailPage() {
               <ul className="divide-y text-xs">
                 {meeting.readers.map((readerUserId) => (
                   <li key={readerUserId} className="flex items-center justify-between py-2">
-                    <span>{memberLabel(orgMembers, readerUserId, t('results.unknownMember'))}</span>
+                    <span id={`reader-name-${readerUserId}`}>{memberLabel(orgMembers, readerUserId, t('results.unknownMember'))}</span>
                     {meeting.isRecorder && (
                       <Button
                         variant="ghost"
                         size="sm"
                         className="text-destructive hover:bg-destructive/10"
+                        aria-describedby={`reader-name-${readerUserId}`}
                         loading={removeReaderMutation.isPending && removeReaderMutation.variables === readerUserId}
                         disabled={removeReaderMutation.isPending}
                         onClick={() => removeReaderMutation.mutate(readerUserId)}

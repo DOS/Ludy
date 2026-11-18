@@ -20,13 +20,13 @@ test('an owner switches Social off and on again from Settings', async ({ page })
   // Turning off asks first and says what is kept.
   await social.getByRole('checkbox').click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByText('Tắt ứng dụng Social?')).toBeVisible();
+  await expect(dialog.getByText('Tắt Hộp thư & Bài đăng?')).toBeVisible();
   await expect(dialog.getByText('Dữ liệu được giữ nguyên')).toBeVisible();
   await dialog.getByRole('button', { name: 'Giữ nguyên' }).click();
   await expect(social.getByRole('checkbox')).toBeChecked();
 
   await social.getByRole('checkbox').click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Tắt ứng dụng' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Xác nhận tắt' }).click();
   await expect(social.getByText('Đã tắt')).toBeVisible();
   await expect(social.getByRole('checkbox')).not.toBeChecked();
 
@@ -57,7 +57,7 @@ test('an open screen of an app goes to the overview when the owner switches the 
 
   await page.goto(`/o/${slug}/settings`);
   await page.getByTestId('org-app-social').getByRole('checkbox').click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Tắt ứng dụng' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Xác nhận tắt' }).click();
   await expect(page.getByTestId('org-app-social').getByText('Đã tắt')).toBeVisible();
 
   await expect(other).toHaveURL(new RegExp(`/o/${slug}/overview$`), { timeout: 15_000 });
@@ -77,7 +77,7 @@ test('the Settings of another open tab drops the cards of an app that was switch
 
   await page.goto(`/o/${slug}/settings`);
   await page.getByTestId('org-app-finance').getByRole('checkbox').click();
-  await page.getByRole('dialog').getByRole('button', { name: 'Tắt ứng dụng' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Xác nhận tắt' }).click();
   await expect(page.getByTestId('org-app-finance').getByText('Đã tắt')).toBeVisible();
 
   // Finance's cards are gone from the other tab, and the typed text is still there: the screen was rendered again, not rebuilt.

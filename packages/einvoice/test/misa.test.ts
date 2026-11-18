@@ -130,6 +130,23 @@ describe('MISA adapter: issue', () => {
     expect(data?.OriginalInvoiceDetail.map((l) => l.VATRateName)).toEqual(['KHAC:3.5%', 'KCT']);
   });
 
+  it('refuses before any call a passport\'s nationality while MISA\'s field name for it is unset, as it does for the identity (#3709)', async () => {
+    const { provider, calls } = make({});
+    const buyer = { kind: 'individual', taxCode: null, name: 'John Smith', address: null, email: null } as const;
+    expect(await provider.issue(SECRET, request({ buyer: { ...buyer, identity: { kind: 'passport', value: 'B1234567', nationality: 'US' } } }))).toEqual({ state: 'rejected', ref: null, code: 'invalid_data' });
+    // The identity alone is refused too while its own names are unset, so a nationality can never be sent without the passport it belongs to.
+    expect(await provider.issue(SECRET, request({ buyer: { ...buyer, identity: { kind: 'passport', value: 'B1234567' } } }))).toEqual({ state: 'rejected', ref: null, code: 'invalid_data' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('writes the consumer label a request carries as the buyer\'s name, and no business name (#3709)', async () => {
+    const { provider, calls } = make({ '/invoice/publishing': [answers.published()] });
+    await provider.issue(SECRET, request({ buyer: { kind: 'consumer', taxCode: null, name: 'Bán cho người tiêu dùng', address: null, email: null } }));
+    const data = (JSON.parse(publishing(calls)[0]?.body ?? '') as { InvoiceData: Array<Record<string, unknown>> }).InvoiceData[0];
+    expect(data?.BuyerFullName).toBe('Bán cho người tiêu dùng');
+    expect(data?.BuyerLegalName).toBeUndefined();
+  });
+
   it('refuses before sending what the document\'s limits or shapes forbid', async () => {
     const { provider, calls } = make({});
     const line = request().lines[0] as EInvoiceLineLike;

@@ -34,7 +34,7 @@ export function MeetingSeries({ meetingId, isRecorder, startedAt }: { meetingId:
       {data.previous && (
         <Card data-testid="series-open-items">
           <CardHeader>
-            <CardTitle className="text-base font-medium">{t('title')}</CardTitle>
+            <CardTitle role="heading" aria-level={2} className="text-base font-medium">{t('title')}</CardTitle>
             <CardDescription className="text-xs text-muted-foreground">{t('from', { title: data.previous.title, date: vnDateOf(data.previous.startedAt) })}</CardDescription>
           </CardHeader>
           <CardContent>
@@ -69,23 +69,31 @@ function OpenItem({ item, meetingId, isRecorder, who }: { item: SeriesOpenItem; 
       return orpc.meetings.results.notesSave.call({ meetingId, body: next });
     },
     onSuccess: (done) => {
-      if (done) void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.notesGet.key() });
+      if (!done) return;
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.notesGet.key() });
+      // The button that held the focus is gone: the focus goes to its result.
+      requestAnimationFrame(() => document.getElementById(`series-carried-${item.id}`)?.focus());
     },
   });
   return (
     <li className="flex flex-wrap items-center gap-2 text-sm" data-testid="series-item" data-assigned={item.assigned}>
-      <span className="font-medium">{item.title}</span>
+      <span id={`series-item-${item.id}`} className="font-medium">{item.title}</span>
       {who !== '' && <span className="text-muted-foreground">{who}</span>}
       {item.assigned ? item.taskStatus && <Badge variant="outline">{t(`status.${item.taskStatus}`)}</Badge> : <Badge variant="secondary">{t('unassigned')}</Badge>}
       {item.due && <span className="text-xs text-muted-foreground">{t('due', { date: vnDateOf(item.due) })}</span>}
-      {isRecorder &&
-        (carry.isSuccess && carry.data ? (
-          <span className="text-xs text-muted-foreground">{t('carried')}</span>
-        ) : (
-          <Button size="sm" variant="outline" loading={carry.isPending} onClick={() => carry.mutate()}>
-            {t('carry')}
-          </Button>
-        ))}
+      {/* The button is replaced by its result, so the result is a live region that was already there (the button's name gets the item's title as its description). */}
+      {isRecorder && (
+        <>
+          {!(carry.isSuccess && carry.data) && (
+            <Button size="sm" variant="outline" aria-describedby={`series-item-${item.id}`} loading={carry.isPending} onClick={() => carry.mutate()}>
+              {t('carry')}
+            </Button>
+          )}
+          <span id={`series-carried-${item.id}`} tabIndex={-1} role="status" className="text-xs text-muted-foreground">
+            {carry.isSuccess && carry.data ? t('carried') : null}
+          </span>
+        </>
+      )}
       {full && <ErrorText>{t('notesFull')}</ErrorText>}
       {carry.error && <ErrorText>{errorMessage(carry.error)}</ErrorText>}
     </li>

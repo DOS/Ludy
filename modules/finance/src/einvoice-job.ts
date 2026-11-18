@@ -19,7 +19,7 @@ import type { Db } from '@crove/db';
 import type { EInvoiceRequest } from '@crove/einvoice';
 import { zId } from '@crove/kernel-contract';
 import { defineCommand, type CommandContext } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+import { buyerNameOnInvoice, money } from '@crove/l10n-vn';
 import { AMBIGUOUS_RETRY_SECONDS, EINVOICE_ERROR_CODES, FILES_RETRY_SECONDS, IN_FLIGHT_SECONDS, nextCheckDelaySeconds, rejectionCode, statusDeadlinePassed } from './domain/einvoice-job.ts';
 import { computeDraft } from './domain/einvoice-draft.ts';
 
@@ -216,7 +216,8 @@ async function requestFor(ctx: CommandContext, draft: DraftRow, target: { seller
     date: typeof draft.invoice_date === 'string' ? draft.invoice_date : new Date(draft.invoice_date).toISOString().slice(0, 10),
     currency: draft.currency,
     seller: { taxCode: target.sellerTaxCode, name: target.sellerName },
-    buyer: { kind: draft.buyer_kind, taxCode: draft.buyer_tax_code, name: draft.buyer_name, address: draft.buyer_address, email: draft.buyer_email, identity: draft.buyer_identity_kind && draft.buyer_identity ? { kind: draft.buyer_identity_kind, value: draft.buyer_identity } : null },
+    // A consumer gave no name: the provider's document says "Bán cho người tiêu dùng" (#3709), set here once so the sandbox and every adapter carry the same words.
+    buyer: { kind: draft.buyer_kind, taxCode: draft.buyer_tax_code, name: buyerNameOnInvoice(draft.buyer_kind, draft.buyer_name), address: draft.buyer_address, email: draft.buyer_email, identity: draft.buyer_identity_kind && draft.buyer_identity ? { kind: draft.buyer_identity_kind, value: draft.buyer_identity, nationality: draft.buyer_nationality } : null },
     lines: stored,
     subtotal: plain(draft.subtotal),
     vatAmount: plain(draft.vat_amount),

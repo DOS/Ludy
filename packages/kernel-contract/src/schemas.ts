@@ -303,8 +303,10 @@ export const zMe = z.object({
   orgs: z.array(zOrgSummary),
 });
 
-// The apps an org may switch (ADR-0053, #3313): per app, whether the deployment runs it (CROVE_MODULES), the org holds
-// it (entitlements), the org did not switch it off, and all three (what its members get).
+// The per-org toggleable modules (ADR-0053, #3313; wire/table names keep `org.apps` / `apps_off` for compatibility):
+// `id` is a wire string (`ModuleId` names the canonical shipped set, not a closed schema constraint so custom or legacy
+// module IDs remain compatible). Each entry reports deployment availability (CROVE_MODULES), org entitlement,
+// org switch state, and effective availability. Settings groups canonical switchable modules under their parent Apps.
 export const zOrgApp = z.object({ id: z.string(), deployment: z.boolean(), entitled: z.boolean(), enabled: z.boolean(), effective: z.boolean() });
 export const zOrgApps = z.object({ apps: z.array(zOrgApp), version: z.number().int().positive(), canChange: z.boolean() });
 export const zOrgAppSet = z.object({ module: z.string().regex(/^[a-z][a-z0-9_]{0,49}$/), enabled: z.boolean() });
@@ -692,6 +694,9 @@ export const zJournalVoucherProposal = z.object({
   // The legal entity whose books the voucher is posted in (#1280), resolved when it was asked for. Absent on proposals
   // made before #1280: the entity resolved for the approver.
   legalEntityId: zId.optional(),
+  // The confirmed count of stock whose surplus (3381) this voucher resolves (#3712 slice 2a): written only by finance's own preparer, never by a requester, and
+  // checked again at approval (modules/finance/src/stock-surplus.ts).
+  surplusCountId: zId.optional(),
 });
 export type JournalVoucherProposal = z.infer<typeof zJournalVoucherProposal>;
 

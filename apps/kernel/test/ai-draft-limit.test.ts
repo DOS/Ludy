@@ -51,4 +51,24 @@ describe('DraftBudget', () => {
     }
     expect(budget.take('org', 'u').allowed).toBe(true);
   });
+
+  it('refunds a ticket once when no model call was needed, restoring both user and org rate tokens', () => {
+    const now = 0;
+    const budget = new DraftBudget({ perUserPerMinute: 1, perOrgPerMinute: 1, now: () => now });
+    const quietTicket = budget.take('org', 'u1');
+    expect(quietTicket.allowed).toBe(true);
+    // While still running, another call for the same user is busy even after refund.
+    if (quietTicket.allowed) {
+      quietTicket.refund?.();
+      quietTicket.refund?.();
+      expect(budget.take('org', 'u1')).toMatchObject({ allowed: false, reason: 'busy' });
+      quietTicket.release();
+    }
+    // Once released, both user and org still have their 1/minute token available.
+    const realTicket = budget.take('org', 'u1');
+    expect(realTicket.allowed).toBe(true);
+    if (realTicket.allowed) realTicket.release();
+    expect(budget.take('org', 'u1')).toMatchObject({ allowed: false, reason: 'user' });
+    expect(budget.take('org', 'u2')).toMatchObject({ allowed: false, reason: 'org' });
+  });
 });

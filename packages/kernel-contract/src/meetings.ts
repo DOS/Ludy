@@ -1140,6 +1140,14 @@ export const zMcpMeetingsInput = z.strictObject({
 });
 export const zMcpMinutesInput = z.strictObject({ meetingId: zId.describe('The id of a meeting from ludy_meetings_list.') });
 
+// The open action items across published org-visible meetings (#3804): at most MCP_OPEN_ACTIONS_MAX, the newest meeting first.
+export const MCP_OPEN_ACTIONS_DEFAULT = 50;
+export const MCP_OPEN_ACTIONS_MAX = 100;
+export const zMcpOpenActionsInput = z.strictObject({
+  dueBefore: z.iso.date().optional().describe('Only items with a due date before this day (an ISO day, YYYY-MM-DD). Items with no due date are left out when it is set.'),
+  limit: z.number().int().min(1).max(MCP_OPEN_ACTIONS_MAX).default(MCP_OPEN_ACTIONS_DEFAULT).describe(`How many items to return (1 to ${MCP_OPEN_ACTIONS_MAX}, default ${MCP_OPEN_ACTIONS_DEFAULT}).`),
+});
+
 
 // The "minutes draft ready" notice of the recorder (#3730): kind, event and mail template. The notice holds no text of the draft and no title: the in-app line is a fixed text that opens the meeting through its
 // subject, and the mail holds a fixed line and the link, so no copy of the title or of the draft exists to erase.

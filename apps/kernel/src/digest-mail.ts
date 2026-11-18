@@ -64,7 +64,7 @@ const TEXT = {
   review: 'Bài đang chờ bạn duyệt: {n}',
   open: 'Mở {brand}',
   openPost: 'Mở bài',
-  footer: 'Thư này được gửi từ {brand} cho {org}, mỗi sáng thứ Hai. Bạn có thể tắt bản tin hằng tuần trong mục Thông báo của Social.',
+  footer: 'Thư này được gửi từ {brand} cho {org}, mỗi sáng thứ Hai. Bạn có thể tắt bản tin hằng tuần trong mục Cập nhật bài đăng của Engage.',
   settings: 'Cài đặt thông báo',
 } as const;
 
