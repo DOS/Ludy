@@ -202,7 +202,7 @@ import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockClos
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
 import { zBankSupplierMatch, zSupplierPayableLine, zSupplierPayableLineAsk, zSupplierPayableList, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentPrepare, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
 import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep } from './einvoice-notice.ts';
-import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceCorrectionOptions, zEInvoiceCorrectionRateExplained, zEInvoiceCorrectionRateInput, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
+import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceCorrectionOptions, zEInvoiceCorrectionRateExplained, zEInvoiceCorrectionRateInput, zEInvoiceReasonInput, zEInvoiceReasonSuggested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
@@ -2490,6 +2490,9 @@ export const contract = {
       // The VAT rate a correction proposes for the nature a person picked (#3709): the basis and the rate by code, the fixed reason and the Official Letter 2121/TCT-CS note, and the accounting
       // coworker's plain explanation when the model is on and the AI budget allows (`ai` says why not). Read only; the person confirms by starting the correction. Owners, admins and members.
       correctionRate: oc.input(zEInvoiceCorrectionRateInput).output(zEInvoiceCorrectionRateExplained),
+      // The accounting coworker's proposal of the reason code of an adjusting or replacing invoice (#3690): a read that never stores; the code is one of the entered list, picked by number and checked in code,
+      // and the person confirms by starting the correction (`ai` says why there is none). The note typed is never stored or logged. Owners, admins and members.
+      suggestReason: oc.input(zEInvoiceReasonInput).output(zEInvoiceReasonSuggested),
       // An error only in the non-core content of an issued invoice (#2504): records it with the text that is right, and the two steps the seller does outside Ludy (tell the buyer; file the
       // form 04/SS-HĐĐT, a working answer of #2506 not confirmed by the accountant). Ludy sends nothing. Owners, admins and members.
       noticeOpen: oc.input(zEInvoiceNoticeOpen).output(zEInvoiceNotice),
