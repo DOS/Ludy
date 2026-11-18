@@ -172,6 +172,7 @@ export {
   type PurchaseVoucher,
   type SalesVoucher,
 } from './misa.ts';
+export { MISA_INVOICE_NUMBER_LIMIT, checkMisaRows, type MisaCheckInput, type MisaRowId } from './misa-check.ts';
 export { CHIEF_ACCOUNTANT_TEMPLATE, chiefAccountantReview, financeAgentPrograms, reviewText } from './agent.ts';
 export * from './domain/money.ts';
 export * from './domain/ledger.ts';

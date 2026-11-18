@@ -11,6 +11,7 @@ import { Menu, MenuChevron, MenuContent, MenuItem, MenuTrigger } from '@crove/ui
 import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
+import { MisaCheckPanel } from '../components/misa-check-panel.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { apiFetch, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { useFormat } from '../i18n/provider.tsx';
@@ -282,6 +283,7 @@ export function JournalPage() {
           </label>
         </div>
       </div>
+      <MisaCheckPanel formats={['misa_sme_purchases', 'misa_sme_goods_purchases', 'misa_sme_sales']} from={from} to={to} legalEntityId={entity.legalEntityId} />
       {(exportXlsx.error || exportMisa.error || exportMisaGoods.error || exportMisaSales.error) && (
         <div className="mb-4">
           <ErrorText>{errorMessage(exportXlsx.error ?? exportMisa.error ?? exportMisaGoods.error ?? exportMisaSales.error)}</ErrorText>
