@@ -95,8 +95,8 @@ describe('the recorder while it records', () => {
 
   it('gives Pause and Stop a 44px hit area on a phone, and the camera picture a name', () => {
     const html = render(<MeetingRecordPage />);
-    expect(tag(html, new RegExp(`<button[^>]*>${en.meetings.record.pause}</button>`))).toContain('min-h-11');
-    expect(tag(html, new RegExp(`<button[^>]*>${en.meetings.record.stop}</button>`))).toContain('min-h-11');
+    expect(tag(html, new RegExp(`<button[^>]*>${en.meetings.record.pause}</button>`))).toContain('max-sm:min-h-11');
+    expect(tag(html, new RegExp(`<button[^>]*>${en.meetings.record.stop}</button>`))).toContain('max-sm:min-h-11');
     expect(tag(html, /<video[^>]*>/)).toContain(`aria-label="${en.meetings.record.videoPreview}"`);
   });
 });

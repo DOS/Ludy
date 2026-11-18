@@ -22,6 +22,7 @@ import { useConsentPolicy } from '../components/consent-policy.tsx';
 import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { RecordingNotice } from '../components/recording-notice.tsx';
 import { ErrorText, PageHeader } from '../components/ui.tsx';
+import { TOUCH_BUTTON } from '../lib/touch.ts';
 import { createIndexedDbChunkStore, formatClock, startBlocker, type ChunkStore, type RecordingMeta } from '@crove/meeting-recorder';
 import {
   clearRecorderError,
@@ -260,10 +261,10 @@ export function MeetingRecordPage() {
             <p className="text-xs text-muted-foreground">{t('record.keepsGoing')}</p>
             {recording && (
               <div className="flex gap-2">
-                <Button variant="outline" className="min-h-11 sm:min-h-0" onClick={pauseOrResume}>
+                <Button variant="outline" className={TOUCH_BUTTON} onClick={pauseOrResume}>
                   {phase === 'paused' ? t('record.resume') : t('record.pause')}
                 </Button>
-                <Button variant="destructive" className="min-h-11 sm:min-h-0" onClick={stop}>
+                <Button variant="destructive" className={TOUCH_BUTTON} onClick={stop}>
                   {t('record.stop')}
                 </Button>
               </div>

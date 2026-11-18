@@ -189,8 +189,11 @@ test('the recorder works from the keyboard: Start, Pause, Resume and Stop keep t
   await test.step('the buttons are 44px high at phone width (DESIGN.md section 7)', async () => {
     await page.setViewportSize({ width: 360, height: 780 });
     for (const name of ['Tạm dừng', 'Dừng và tải lên']) {
-      const box = await page.getByRole('button', { name, exact: true }).boundingBox();
-      expect(box?.height ?? 0, name).toBeGreaterThanOrEqual(44);
+      const button = page.getByRole('button', { name, exact: true });
+      const box = await button.boundingBox();
+      // What the page says about itself, so a failure names the cause (the viewport the media queries see, the minimum height the button computed).
+      const seen = await button.evaluate((el) => ({ innerWidth: window.innerWidth, minHeight: getComputedStyle(el).minHeight, className: el.className.slice(-60) }));
+      expect(box?.height ?? 0, `${name} ${JSON.stringify(seen)}`).toBeGreaterThanOrEqual(44);
     }
     // The bar in the corner keeps its own Stop: smaller by design, never under the 24px of WCAG 2.5.8.
     const chipStop = await page.getByTestId('recording-chip-stop').boundingBox();
