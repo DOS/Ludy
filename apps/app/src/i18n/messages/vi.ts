@@ -13552,6 +13552,7 @@ export const vi = {
         orders: 'Xem các đơn hàng của sàn',
         staged: 'Xem các báo cáo đơn hàng chờ nhập',
         unassigned: 'Xem các dòng đơn hàng của sàn chưa gán mặt hàng',
+        suggest_source: 'Đọc tên sản phẩm và SKU của các dòng đơn sàn chưa gán để gợi ý mặt hàng',
       },
       marketplace_income: {
         confirm: 'Nhập báo cáo thu nhập của sàn',

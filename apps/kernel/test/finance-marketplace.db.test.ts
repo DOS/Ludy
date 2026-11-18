@@ -496,6 +496,48 @@ suite('marketplace order reports (#2515)', () => {
     expect(await onHand(o, item)).toBe('-3');
   });
 
+  it('reads for the coworker only the product name and the SKU of the unassigned lines of the entity, and the entity\'s active items (#2686)', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'QC-1');
+    const inactive = await makeItem(o, 'QC-OLD');
+    await execute(o, 'finance.stock_item.set_active', { itemId: inactive, active: false }, o.owner);
+    // S1 shipped and unnamed: unassigned. S2 shipped with a SKU that is an item code: moved by itself, not unassigned. S3 only placed, S4 cancelled: nothing to move.
+    await confirm(o, (await read(o, report(row('S1', 'Đang giao', 'LẠ-7', 3), row('S2', 'Hoàn thành', 'QC-1', 1), row('S3', 'Chờ xác nhận', 'LẠ-8', 1), row('S4', 'Đã hủy', 'LẠ-9', 1)))).fileId);
+    const lineIdOf = async (org: Org, orderNo: string) =>
+      (await rows<{ id: string }>('SELECT l.id FROM crove_finance.channel_order_line l JOIN crove_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 AND o.order_no = $2', [org.orgId, orderNo]))[0]?.id as string;
+    const [s1, s2, s3, s4] = [await lineIdOf(o, 'S1'), await lineIdOf(o, 'S2'), await lineIdOf(o, 'S3'), await lineIdOf(o, 'S4')];
+    const [entity] = await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]);
+    const ask = (lineIds: string[], user = o.member) => query<{ lines: Array<{ lineId: string; text: string }>; items: Array<{ id: string; code: string; name: string; unit: string }> }>(o, 'finance.marketplace.suggest_source', { legalEntityId: entity?.id, lineIds }, user);
+    // Only the unassigned line is read, with its product name and SKU as one text; the assigned, placed and cancelled ones are left out, never read.
+    const source = await ask([s1, s2, s3, s4]);
+    expect(source.lines).toEqual([{ lineId: s1, text: 'Sản phẩm LẠ-7 SKU LẠ-7' }]);
+    // The items are the entity's active ones.
+    expect(source.items.map((i) => i.id)).toContain(item);
+    expect(source.items.map((i) => i.id)).not.toContain(inactive);
+    // Nothing of the order or the buyer is in what the model may see: no order number, buyer, phone, address, email, date, price or amount.
+    const text = JSON.stringify(source);
+    for (const value of [...Object.values(BUYER), 'S1', 'S2', '2026-10-30']) expect(text).not.toContain(value);
+    expect(Object.keys(source).sort()).toEqual(['items', 'lines']);
+    expect(Object.keys(source.lines[0] ?? {}).sort()).toEqual(['lineId', 'text']);
+    // A line of another org is not found; one that was assigned meanwhile drops out.
+    const other = await org();
+    await confirm(other, (await read(other, report(row('X1', 'Đang giao', 'LẠ-7', 1)))).fileId);
+    const foreign = await lineIdOf(other, 'X1');
+    expect((await ask([foreign])).lines).toEqual([]);
+    await execute(o, 'finance.marketplace.assign', { lineId: s1, itemId: item, factor: '1' }, o.member);
+    expect((await ask([s1])).lines).toEqual([]);
+    // Another legal entity's lines are not read through this entity.
+    const second = (await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, created_by) VALUES ($1, 'Pháp nhân phụ', $2) RETURNING id", [o.orgId, o.owner]))[0]?.id;
+    await confirm(o, (await read(o, report(row('S5', 'Đang giao', 'LẠ-5', 1)))).fileId);
+    const s5 = await lineIdOf(o, 'S5');
+    const viaSecond = await query<{ lines: unknown[] }>(o, 'finance.marketplace.suggest_source', { legalEntityId: second, lineIds: [s5] }, o.member);
+    expect(viaSecond.lines).toEqual([]);
+    // A viewer may not ask; more than ten lines or none is refused by the input.
+    await expect(ask([s5], o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(ask([])).rejects.toBeDefined();
+    await expect(ask(Array.from({ length: 11 }, () => randomUUID()))).rejects.toBeDefined();
+  });
+
   it('applies the factor of a name taught for the platform, and reads a SKU as an item code without case', async () => {
     const o = await org();
     const item = await makeItem(o, 'Nuoc-Chai', { unit: 'chai' });
