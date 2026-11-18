@@ -7,7 +7,7 @@ import { zId, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
 export const STOCK_ITEM_KINDS = ['goods'] as const;
 export const STOCK_TRADES = ['goods', 'services', 'catering', 'digital_content', 'other'] as const;
 export type StockTradeKey = (typeof STOCK_TRADES)[number];
-export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count', 'crm_order_line'] as const;
+export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count', 'crm_order_line', 'sale_return'] as const;
 export type StockMoveSourceKey = (typeof STOCK_MOVE_SOURCES)[number];
 
 // A signed decimal quantity with at most six decimals, not zero.
@@ -72,8 +72,19 @@ export const zStockMove = z.object({
   reversesMoveId: zId.nullable(),
   // Reversed by another move already.
   reversed: z.boolean(),
+  // A return (source `sale_return`): the sale's stock-out it gave back (#3712).
+  returnOfMoveId: zId.nullable(),
+  // For a stock-out of a sale: how much of it can still be returned (what was sold less the returns not undone); '0' when it is not a sale move, is reversed, or is returned in full.
+  returnable: z.string(),
 });
 export type StockMove = z.infer<typeof zStockMove>;
+
+// The partial return of a sale's goods (#3712 slice 1): the sale's stock-out and a positive quantity, at most what is still returnable.
+export const zStockMoveReturn = z.strictObject({
+  moveId: zId,
+  quantity: zStockQuantity.refine((v) => !v.startsWith('-'), 'a return is a positive quantity'),
+});
+export type StockMoveReturn = z.infer<typeof zStockMoveReturn>;
 
 export const zStockUnassignedInput = z.strictObject({ legalEntityId: zId.optional(), limit: z.number().int().min(1).max(500).optional() });
 

@@ -479,6 +479,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_sign.signer.require_email_otp': { kind: 'other', handling: 'not_personal', reason: 'Boolean flag configuring whether email OTP is required to view and sign' },
   'crove_sign.field.signature_png_base64': { kind: 'other', handling: 'keep_record', reason: 'Handwritten signature bitmap embedded inside sealed e-signature document and evidence record' },
   'crove_sign.signing_otp.email': { kind: 'email', handling: 'erase', machinery: true, reason: 'Ephemeral email OTP target address; erased by crove_sign.personal_erase_otp and swept within 24 hours' },
+  'crove_sign.signing_otp.claim_sha256': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'SHA-256 hash of short-lived pre-envelope direct-link OTP verification claim token' },
   'crove_sign.signing_event.actor_label': { kind: 'other', handling: 'keep_record', reason: 'Append-only hash-chained signing_event actor label retained for statutory verification' },
   'crove_sign.signing_event.ip_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed SHA-256 hash of event actor IP address preserved in append-only hash-chained signing_event' },
   'crove_sign.signing_event.user_agent': { kind: 'other', handling: 'keep_record', reason: 'Event actor user-agent string preserved in append-only hash-chained signing_event for dispute resolution' },

@@ -13,3 +13,4 @@ export { matchAttendee, parseWhen, plainName } from './summary.ts';
 export { setSummaryEnabled } from './summary-run.ts';
 export { translateCommands } from './translate.ts';
 export { lineHash, translationHash } from './translate-run.ts';
+export type { McpMeetingRow, McpMeetings, McpMinutes } from './mcp.ts';

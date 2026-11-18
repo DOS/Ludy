@@ -345,6 +345,27 @@ suite('stock from document lines (#2512)', () => {
     ).rejects.toMatchObject({ code: '23514', message: expect.stringContaining('STOCK_LINE_VOIDED') });
   });
 
+  it('takes the returns of a sale back too when its document is voided: the return first, then the sale, and nothing is left on hand', async () => {
+    const o = await org({ sellerOf: true });
+    const item = await makeItem(o);
+    await teach(o, item, LINE_TWO);
+    const posted = await post(o, invoice('7031'), '511');
+    const sale = (await moves(o, item)).find((m) => m.source === 'document_line') as Move;
+    expect(sale.quantity).toBe('-2');
+    await execute(o, 'finance.stock_move.return', { moveId: sale.id, quantity: '1' });
+    expect(await onHand(o, item)).toBe('-1');
+    const request = await execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: posted.journalEntryId, entryDate: '2026-10-20', reason: 'Lập nhầm' } }, o.admin);
+    await rt.execute('kernel.proposal.approve', { id: request.proposalId, revision: 1 }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    const list = await moves(o, item);
+    expect(list.filter((m) => m.source === 'sale_return').every((m) => m.reversed)).toBe(true);
+    expect(list.find((m) => m.source === 'document_line')?.reversed).toBe(true);
+    // The void is dated 20 October, before the return was written (today): the undo of the return is never dated before the return itself.
+    const back = list.find((m) => m.source === 'sale_return') as Move;
+    const undo = list.find((m) => m.source === 'reversal' && m.quantity === '-1') as Move;
+    expect(undo.date >= back.date).toBe(true);
+    expect(await onHand(o, item)).toBe('0');
+  });
+
   it('writes the reversal of a void on today when its date is in a closed month, never back in it', async () => {
     const o = await org();
     const item = await makeItem(o);

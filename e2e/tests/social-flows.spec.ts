@@ -52,7 +52,7 @@ async function connectSandbox(page: Page, ...names: string[]): Promise<void> {
 // From the channels screen: opens the composer with the shared text filled in. With one channel it is chosen for
 // you; with several, each named one is picked.
 async function compose(page: Page, body: string, channels: string[] = []): Promise<void> {
-  await page.getByRole('link', { name: 'Quay lại' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill(body);
   for (const name of channels) {
@@ -350,7 +350,7 @@ test('keeps uploaded images in the library with the posts that use them', async 
   await page.getByRole('button', { name: 'Lưu nháp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
 
-  await page.getByRole('link', { name: 'Quay lại' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   await openTool(page, 'Thư viện ảnh');
   const item = page.getByRole('tabpanel').getByRole('button', { name: /thu-vien\.png/ });
   await expect(item).toContainText('Dùng trong 1 bài');
@@ -365,7 +365,7 @@ test('keeps uploaded images in the library with the posts that use them', async 
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
 
   // One file in the library, used by both posts, which its panel lists.
-  await page.getByRole('link', { name: 'Quay lại' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   await openTool(page, 'Thư viện ảnh');
   await expect(item).toHaveCount(1);
   await expect(item).toContainText('Dùng trong 2 bài');
@@ -413,7 +413,7 @@ test('imports a sheet with images, alt texts, labels and a first comment as draf
     `"Khai trương chi nhánh mới, giảm 20% ${run}",Trang Nhập Ảnh,"MAT-TIEN.png\nquay-pha-che.png","Mặt tiền chi nhánh\nQuầy pha chế",Xem thực đơn ở trang của quán,"Khai trương, Tháng 11"\r\n` +
     `Bài có ảnh nội bộ ${run},Trang Nhập Ảnh,https://127.0.0.1/anh.jpg,,,Tháng 11\r\n` +
     `Bài thiếu ảnh ${run},Trang Nhập Ảnh,khong-co.jpg,,,\r\n`;
-  await page.getByRole('link', { name: 'Quay lại' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   await openTool(page, 'Nhập từ tệp');
   await page.getByLabel('Chọn tệp CSV hoặc Excel').setInputFiles([{ name: 'ke-hoach.csv', mimeType: 'text/csv', buffer: Buffer.from(sheet) }]);
   await expect(page.getByText('1 trên 3 dòng sẵn sàng.')).toBeVisible({ timeout: 30_000 });
@@ -502,7 +502,7 @@ test('shows the latest metrics of a published channel on the post and in the rep
 
   // The report: the window's totals and the channel's row.
   // Posts keeps one line and a link; the figures and the report tools are in Reports > Bài đăng (#3658).
-  await page.getByRole('link', { name: 'Quay lại' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   await expect(page.getByTestId('report-line')).toContainText('1 bài');
   await page.getByRole('link', { name: 'Xem báo cáo' }).click();
   await expect(page).toHaveURL(/\/reports\?area=posts$/);
@@ -586,13 +586,13 @@ test('approves several posts at once from the review list (#635)', async ({ page
   await signInNewUser(page, newEmail('social-bulk'));
   await createOrg(page, 'Công ty Duyệt Nhiều');
   await connectSandbox(page, 'Trang Duyệt Nhiều');
-  await page.getByRole('link', { name: 'Quay lại' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   for (const body of ['Bài thứ nhất', 'Bài thứ hai']) {
     await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill(body);
     await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
     await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
-    await page.getByRole('link', { name: 'Quay lại' }).click();
+    await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   }
   await page.getByRole('tab', { name: /Cần duyệt/ }).click();
   await page.getByText('Chọn mọi bài đang hiện').click();
@@ -794,7 +794,7 @@ test('turns an idea on the board into a draft, which moves it to Drafted (#701)'
   await signInNewUser(page, newEmail('social-idea'));
   await createOrg(page, 'Công ty Ý Tưởng');
   await connectSandbox(page, 'Trang Ý Tưởng');
-  await page.getByRole('link', { name: 'Quay lại' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   await openTool(page, 'Ý tưởng');
   await page.getByRole('button', { name: 'Thêm ý tưởng' }).click();
   await page.getByLabel('Ý tưởng', { exact: true }).fill('Món mới mùa thu');
@@ -846,7 +846,7 @@ test('moves a draft to review on the board and approves it with four-eyes; an il
   page.on('request', (r) => {
     if (/\/api\/rpc\/social\/(posts\/submit|variants\/(decide|schedule|unschedule))/.test(r.url())) moves.push(r.url());
   });
-  await page.getByRole('link', { name: 'Quay lại' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   await page.getByRole('button', { name: 'Bảng', exact: true }).click();
   await expect(page).toHaveURL(/tab=board/);
   const column = (name: string) => page.getByRole('region', { name, exact: true });
@@ -1162,7 +1162,7 @@ test('draws a post on six channels as one chip, and "+9" opens every post of the
   await expect(dialog.getByTestId('day-post')).toHaveCount(12);
   for (const n of [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) await expect(dialog.getByRole('link', { name: `Bài số ${n}`, exact: true })).toBeVisible();
   const sixRow = dialog.getByTestId('day-post').filter({ hasText: 'Bài sáu kênh' });
-  for (const name of channels) await expect(sixRow.getByText(`Sandbox (${name}) · Nháp`)).toBeVisible();
+  for (const name of channels) await expect(sixRow.getByText(`Kênh thử (${name}) · Nháp`)).toBeVisible();
   // Tab walks the rows inside the dialog down to the last post's link, never leaving it.
   const focused = () => page.evaluate(() => ({ inDialog: document.activeElement?.closest('dialog') !== null, text: document.activeElement?.textContent ?? '' }));
   let reached = false;

@@ -84,9 +84,3 @@ export function dealSortOfValue(value: string): SavedViewSort | null {
   const [field, dir] = value.split(':');
   return field && (dir === 'asc' || dir === 'desc') && DEAL_SORT_OPTIONS.includes(value) ? { field, dir } : null;
 }
-
-// What a condition the bar cannot draw says, for its chip: the field's label from the registry and the operator's value.
-export function dealConditionLabel(c: FilterCondition): string {
-  const spec = (SAVED_VIEW_SCOPES['crm.deal'].fields as Record<string, { label: string }>)[c.field];
-  return `${spec?.label ?? c.field}: ${c.op}${c.value === undefined ? '' : ` ${String(c.value)}`}`;
-}

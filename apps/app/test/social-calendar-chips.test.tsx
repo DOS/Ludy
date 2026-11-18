@@ -98,7 +98,7 @@ describe('one calendar chip per post (#1220)', () => {
     expect(text(html)).toContain(`+9 bài nữa, xem cả ngày ${dayId(day).split('-').reverse().join('/')}`);
     expect(html).toContain('aria-haspopup="dialog"');
     // Every channel of the six with its status, for the pointer's tooltip.
-    expect(html).toContain('Sandbox (Trang 1): Đã lên lịch; Sandbox (Trang 2): Đã lên lịch');
+    expect(html).toContain('Kênh thử (Trang 1): Đã lên lịch; Kênh thử (Trang 2): Đã lên lịch');
   });
 
   it('draws a month day on a phone as dots and a button that opens the day, with chips from sm up (#3655)', () => {
@@ -126,7 +126,7 @@ describe('one calendar chip per post (#1220)', () => {
     const filtered = render(<SocialCalendar slug="hoa-mai" names={names} canDecide canWrite filters={{ connectionId: uuid(2) }} />);
     expect(count(filtered, 'data-testid="calendar-chip"')).toBe(1);
     // The one channel by its name too (#3655), so two Pages of one network are told apart without a tooltip.
-    expect(text(filtered)).toContain('Bài hai trạng thái Sandbox (Trang 2) · Đăng lỗi');
+    expect(text(filtered)).toContain('Bài hai trạng thái Kênh thử (Trang 2) · Đăng lỗi');
   });
 
   it('lists every post and channel of the day in a dialog named by its heading, with each row’s actions', () => {
@@ -142,8 +142,8 @@ describe('one calendar chip per post (#1220)', () => {
     expect(html).toContain(`id="${id}" tabindex="-1"`);
     expect(html.startsWith('<dialog')).toBe(true);
     for (const p of day12) expect(text(html)).toContain(`Đặt ngày cho bài: ${p.body}`);
-    expect(count(html, 'Sandbox (Trang 1) · Đã lên lịch')).toBe(12);
-    expect(text(html)).toContain('Sandbox (Trang 6) · Đã lên lịch');
+    expect(count(html, 'Kênh thử (Trang 1) · Đã lên lịch')).toBe(12);
+    expect(text(html)).toContain('Kênh thử (Trang 6) · Đã lên lịch');
     expect(text(html)).toContain('Đóng');
     // A day emptied meanwhile says so.
     const empty = render(
@@ -162,7 +162,7 @@ describe('the board under a channel filter (#1044)', () => {
     const both = post(400, 'Bài hai kênh', [channel(401, 'draft', null, 1), channel(402, 'draft', null, 2), channel(403, 'cancelled', null, 3)]);
     const board = (connectionId?: string) =>
       render(<SocialBoard posts={[both] as never} slug="hoa-mai" names={names} labels={[]} canWrite canDecide={false} connectionId={connectionId} />);
-    expect(text(board(uuid(1)))).toContain('Bài này còn đăng trên Sandbox (Trang 2); chuyển cột cũng áp dụng cho các kênh đó.');
+    expect(text(board(uuid(1)))).toContain('Bài này còn đăng trên Kênh thử (Trang 2); chuyển cột cũng áp dụng cho các kênh đó.');
     expect(text(board())).not.toContain('Bài này còn đăng trên');
   });
 });

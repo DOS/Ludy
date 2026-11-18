@@ -196,9 +196,9 @@ import {
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
 import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
 import { zMarketplaceFeeClearingRequest, zMarketplacePayoutRequest, zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
-import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
+import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
-import { zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput } from './supplier-payment.ts';
+import { zBankSupplierMatch, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
 import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep } from './einvoice-notice.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceCorrectionOptions, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
@@ -2149,6 +2149,9 @@ export const contract = {
           // The payment of a pay run's net pay or one remittance (#2532): the server builds the voucher from the frozen run; an owner or an admin approves. HR_RUN_NOT_FOUND (404),
           // HR_RUN_NOT_APPROVED, HR_PAYMENT_NOT_POSTED, HR_PAYMENT_POSTING_REVERSED, HR_PAYMENT_DONE, HR_PAYMENT_OPEN (409), HR_PAYMENT_NOTHING_DUE, HR_POSTING_MISMATCH, VOUCHER_INVALID (422).
           z.object({ command: z.literal('finance.payroll_payment.record'), input: zHrPaymentRequest, idempotencyKey: zId }),
+          // The settlement of an approved supplier payment by its bank line (#3700 S3c): the server builds the voucher (Dr 331 / Cr the bank) from the payment and the line; an owner or an admin (or the chief
+          // accountant) approves. SUPPLIER_PAYMENT_NOT_FOUND (404), SUPPLIER_PAYMENT_NOT_APPROVED, _HELD, _ACCOUNT_CHANGED, _DOCUMENT, _NOT_EXPORTED, _ACCOUNT_MISMATCH, _SETTLE_PENDING (409), _CURRENCY, _LINE_MISMATCH, _LINE_BEFORE_FILE (422).
+          z.object({ command: z.literal('finance.supplier_payment.settle.record'), input: zSupplierPaymentSettlePrepare, idempotencyKey: zId }),
           // The posting of a stored marketplace settlement (#2516): the server builds one journal voucher from its lines; an owner or an admin approves. Refused until the accountant has confirmed
           // the account map. MARKETPLACE_POSTING_MAP_UNCONFIRMED, MARKETPLACE_SETTLEMENT_POSTED, PERIOD_LOCKED (409), MARKETPLACE_SETTLEMENT_NOT_POSTABLE (422), MARKETPLACE_SETTLEMENT_NOT_FOUND (404).
           z.object({ command: z.literal('finance.marketplace_settlement.record'), input: zMarketplaceSettlementRequest, idempotencyKey: zId }),
@@ -2566,6 +2569,10 @@ export const contract = {
       list: oc.input(z.object({ itemId: zId, limit: z.number().int().min(1).max(500).optional() })).output(z.array(zStockMove)),
       // The correction of a move: a reversing move of the opposite quantity. STOCK_MOVE_NOT_FOUND (404), STOCK_MOVE_IS_REVERSAL and STOCK_MOVE_REVERSED (409).
       reverse: oc.input(z.object({ moveId: zId })).output(z.object({ id: zId })),
+      // A partial return of the goods of a sale (#3712, a document line or a delivered CRM order line; not a marketplace order line): a stock-in of the same item naming the sale's stock-out, today's date, priced by the month close like any return in; no entry is posted.
+      // STOCK_MOVE_NOT_FOUND (404), STOCK_RETURN_NOT_SALE, STOCK_RETURN_REVERSED, STOCK_RETURN_EXCEEDS (409).
+      // The key is the identity of the return: a retry with the same key (a lost response) returns the first result and writes no second move.
+      return: oc.input(zStockMoveReturn.extend({ idempotencyKey: zId })).output(z.object({ id: zId })),
     },
     // The stock of a delivered CRM order line (#2818, ADR-0050): the hand-off, the line number, the date and 'deliver' (default) or 'return' (a reversing move). Idempotent on (order, line): a retry answers
     // already_moved. A text line is a service and moves nothing. ORDER_PAYLOAD_MISMATCH, ORDER_DATE_FUTURE, STOCK_ORDER_LINE_NO_ITEM, STOCK_LINE_NO_QUANTITY, STOCK_ITEM_ENTITY_MISMATCH (422),
@@ -2756,6 +2763,8 @@ export const contract = {
     lineVoucher: oc.input(z.object({ bankLineId: zId })).output(zBankLineVoucher),
     // The payroll payments a money-out line may be, by amount (#2532); owners and admins.
     payrollMatch: oc.input(z.object({ bankLineId: zId })).output(zBankPayrollMatch),
+    // The approved supplier payments a money-out line may be, by amount and the rules of the payment (#3700 S3c); owners and admins. The settlement is asked for with inbox.request.
+    supplierMatch: oc.input(z.object({ bankLineId: zId })).output(zBankSupplierMatch),
     // The coworker's one line on why a line may be one of those payments (#2532): code decided, the model only words it; no text when AI is off, busy, over budget or refused.
     payrollExplain: oc.input(zBankPayrollExplainAsk).output(zBankPayrollExplanation),
     // The open lines of an account and period whose party is named by its tax code or an invoice of the amount, with

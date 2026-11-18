@@ -23,6 +23,7 @@ import {
   MAX_SOCIAL_VIDEO_MS,
   MAX_UPLOAD_BYTES,
   ORG_HEADER,
+  SIGN_DIRECT_PAGE_PATH,
   SIGN_PAGE_PATH,
   SOCIAL_IMAGE_TYPES,
   DEFAULT_EXTENSION_IDS,
@@ -38,6 +39,8 @@ import {
   type HrBankFile,
   type HrDeclarationDocument,
   zHrBankFileQuery,
+  zSupplierPaymentBankFileQuery,
+  type SupplierPaymentBankFile,
   zHrDeclarationDocument,
   type MisaGoodsCode,
   type HouseholdCnkd,
@@ -98,6 +101,7 @@ import {
   buildS2bWorkbook,
   buildS2cWorkbook,
   buildMisaWorkbook,
+  buildSupplierPaymentBankFileWorkbook,
   buildVat01Xml,
   buildVatWorkbook,
   xmlCarryForward,
@@ -175,6 +179,24 @@ import type { OauthServer } from './oauth-server.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
 import { quoteLogo, quoteView, readLogoFile, QUOTE_LOGO_READS_MAX, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
 import { reportView, REPORT_VIEWS_PER_MINUTE } from './report-link.ts';
+import {
+  SIGN_DIRECT_EMAIL_OTP_REQUESTS_PER_MINUTE,
+  SIGN_DIRECT_OTP_REQUESTS_PER_MINUTE,
+  SIGN_DIRECT_OTP_VERIFIES_PER_MINUTE,
+  SIGN_DIRECT_PDFS_PER_MINUTE,
+  SIGN_DIRECT_STARTS_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_OTP_REQUESTS_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_OTP_VERIFIES_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_PDFS_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_STARTS_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_VIEWS_PER_MINUTE,
+  SIGN_DIRECT_VIEWS_PER_MINUTE,
+  resolvePublicDirectPdf,
+  runSignDirectOtpRequest,
+  runSignDirectOtpVerify,
+  runSignDirectStart,
+  runSignDirectView,
+} from './sign-direct-link.ts';
 import {
   SIGN_OTP_REQUESTS_PER_MINUTE,
   SIGN_OTP_VERIFIES_PER_MINUTE,
@@ -349,6 +371,20 @@ export interface HttpDeps {
     submit: RateLimiter;
     tokenSubmit: RateLimiter;
     verify: RateLimiter;
+  }>;
+  // Per-client and per-token/email rate limiters for public direct signing routes (#3551).
+  signDirectLimits?: Partial<{
+    views: RateLimiter;
+    tokenViews: RateLimiter;
+    pdfs: RateLimiter;
+    tokenPdfs: RateLimiter;
+    otpRequest: RateLimiter;
+    tokenOtpRequest: RateLimiter;
+    emailOtpRequest: RateLimiter;
+    otpVerify: RateLimiter;
+    tokenOtpVerify: RateLimiter;
+    start: RateLimiter;
+    tokenStart: RateLimiter;
   }>;
   // The posting calendar feed's budget per client (#862). Unset: CALENDAR_FEED_HITS_PER_MINUTE.
   calendarFeedLimit?: RateLimiter;
@@ -1491,6 +1527,106 @@ export function createHttpApp(deps: HttpDeps) {
       try {
         const verified = await runSignVerify(runtime, signBilling, await c.req.json().catch(() => null));
         return verified ? c.json(verified) : signOpaqueNotFound(c);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    const signDirectViewLimit = deps.signDirectLimits?.views ?? new RateLimiter({ perMinute: SIGN_DIRECT_VIEWS_PER_MINUTE });
+    const signDirectTokenViewLimit = deps.signDirectLimits?.tokenViews ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_VIEWS_PER_MINUTE });
+    const signDirectPdfLimit = deps.signDirectLimits?.pdfs ?? new RateLimiter({ perMinute: SIGN_DIRECT_PDFS_PER_MINUTE });
+    const signDirectTokenPdfLimit = deps.signDirectLimits?.tokenPdfs ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_PDFS_PER_MINUTE });
+    const signDirectOtpReqLimit = deps.signDirectLimits?.otpRequest ?? new RateLimiter({ perMinute: SIGN_DIRECT_OTP_REQUESTS_PER_MINUTE });
+    const signDirectTokenOtpReqLimit = deps.signDirectLimits?.tokenOtpRequest ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_OTP_REQUESTS_PER_MINUTE });
+    const signDirectEmailOtpReqLimit = deps.signDirectLimits?.emailOtpRequest ?? new RateLimiter({ perMinute: SIGN_DIRECT_EMAIL_OTP_REQUESTS_PER_MINUTE });
+    const signDirectOtpVerifyLimit = deps.signDirectLimits?.otpVerify ?? new RateLimiter({ perMinute: SIGN_DIRECT_OTP_VERIFIES_PER_MINUTE });
+    const signDirectTokenOtpVerifyLimit = deps.signDirectLimits?.tokenOtpVerify ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_OTP_VERIFIES_PER_MINUTE });
+    const signDirectStartLimit = deps.signDirectLimits?.start ?? new RateLimiter({ perMinute: SIGN_DIRECT_STARTS_PER_MINUTE });
+    const signDirectTokenStartLimit = deps.signDirectLimits?.tokenStart ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_STARTS_PER_MINUTE });
+
+    app.post('/api/sign/direct/view', signEdgeGuard(signDirectViewLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignDirectView(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signDirectTokenViewLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        return c.json(res.view);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/direct/pdf', signEdgeGuard(signDirectPdfLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const lookup = await resolvePublicDirectPdf(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signDirectTokenPdfLimit.take(hash));
+        if (lookup.status === 'not_found') return signOpaqueNotFound(c);
+        if (lookup.status === 'rate_limited') return signRateLimited(c, lookup.retryAfterSeconds);
+        if (lookup.status === 'otp_required') {
+          return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
+        }
+        const release = signPdfReads.tryAcquire('sign-pdf');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
+        }
+        try {
+          const bytes = await readPublicPdfBytes(store, lookup.source);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'application/pdf',
+              'content-disposition': 'inline; filename="document.pdf"',
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/direct/otp/request', signEdgeGuard(signDirectOtpReqLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignDirectOtpRequest(
+          runtime,
+          signBilling,
+          await c.req.json().catch(() => null),
+          (hash) => signDirectTokenOtpReqLimit.take(hash),
+          (bucket) => signDirectEmailOtpReqLimit.take(bucket),
+        );
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/direct/otp/verify', signEdgeGuard(signDirectOtpVerifyLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignDirectOtpVerify(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signDirectTokenOtpVerifyLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        if (res.result.ok) return c.json(res.result, 200);
+        if (res.result.locked) return c.json(res.result, 423);
+        return c.json(res.result, 401);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/direct/start', signEdgeGuard(signDirectStartLimit), signBodyLimit(4096), async (c) => {
+      try {
+        const res = await runSignDirectStart(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signDirectTokenStartLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
       } catch (error) {
         return problem(c, error);
       }
@@ -4103,6 +4239,59 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
+  // The bank file of approved supplier payments (#3113 S3b-2, #3700): GET /api/supplier-payment-bank-file/payments.xlsx?ids=<payment ids, comma separated>[&reexport=1]. Ludy never initiates a payment: the file is for
+  // the accountant to upload to the bank. The same rules as the salary file above: built only in the requesting owner's or admin's own context by the sensitive query finance.supplier_payment.bank_file.get (its audit row is
+  // committed before the sealed holder and number are opened), a second factor used in the last 5 minutes, a slot of the export limiter, built whole, `private, no-store`, no HEAD, and no account number in the URL
+  // (only payment ids). Before the bytes are sent the command finance.supplier_payment.bank_file.export writes its audit row and marks each payment (exported_at, exported_by, export_count) in one transaction: no row and no
+  // marker, no download; a payment already marked is refused unless reexport=1 confirms a second file, which the row says. A refusal that belongs to one payment carries its paymentId (and, for a file handed over before, the
+  // time) so the page can say which payment and why; never a holder, a number or an amount.
+  if (runtime.installed('finance')) {
+    app.get('/api/supplier-payment-bank-file/:file', async (c) => {
+      if (c.req.method === 'HEAD') return c.body(null, 405, { allow: 'GET' });
+      try {
+        if (c.req.param('file') !== 'payments.xlsx') throw new DomainError('NOT_FOUND', 404, 'Không có file này');
+        const user = c.get('user');
+        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        if (!hasFreshMfa(actorOf(user))) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
+        const reexport = c.req.query('reexport') === '1';
+        const parsed = zSupplierPaymentBankFileQuery.safeParse({ paymentIds: (c.req.query('ids') ?? '').split(',').filter((id) => id !== ''), ...(reexport ? { reexport: true } : {}) });
+        if (!parsed.success) throw new DomainError('BAD_REQUEST', 400, 'Yêu cầu không hợp lệ: cần danh sách số hiệu khoản chi (ids), tối đa 200');
+        const release = exportSlots.tryAcquire(user.userId);
+        if (!release) {
+          c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
+          throw new DomainError('EXPORT_BUSY', 503, 'Đang có nhiều lượt xuất; hãy thử lại sau vài giây');
+        }
+        try {
+          const document = await runtime.query<SupplierPaymentBankFile>('finance.supplier_payment.bank_file.get', parsed.data, { actor: actorOf(user), orgId });
+          const bytes = await buildSupplierPaymentBankFileWorkbook(document, config.BRAND_NAME);
+          await runtime.execute(
+            'finance.supplier_payment.bank_file.export',
+            { paymentIds: parsed.data.paymentIds, rows: document.rows.length, currency: document.currency, ...(reexport ? { reexport: true } : {}) },
+            { actor: actorOf(user), orgId },
+          );
+          return new Response(held(new Uint8Array(bytes), release), {
+            headers: {
+              'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'chuyen-khoan-ncc', document.currency.toLowerCase(), ORG_SLUG], 'xlsx'),
+              'x-content-type-options': 'nosniff',
+              'cache-control': 'private, no-store',
+            },
+          });
+        } catch (error) {
+          release();
+          throw error;
+        }
+      } catch (error) {
+        if (error instanceof DomainError && typeof error.details?.paymentId === 'string') {
+          const at = error.details.exportedAt;
+          return c.json({ code: error.code, message: error.message, paymentId: error.details.paymentId, ...(typeof at === 'string' ? { exportedAt: at } : {}) }, error.status);
+        }
+        return problem(c, error);
+      }
+    });
+  }
+
   // The org export (issue #38, streamed since #212), owners only: GET /api/org-export/manifest (JSON) or
   // /api/org-export/<table> (NDJSON, one row per line), from the newest export kernel.org.export.get reports. Every key,
   // version and sha256 comes from that export's audit row, never from the request; each blob is read at its recorded
@@ -4222,10 +4411,16 @@ export function createHttpApp(deps: HttpDeps) {
     app.use('/favicon.svg', serveStatic({ root }));
     const indexPath = join(config.WEB_DIST, 'index.html');
     const csp = contentSecurityPolicy(publicAuthUrl(config), store.direct ? directTransferOrigin(config) : null, Boolean(config.TURNSTILE_SITE_KEY), null, hostedLoginTokenOrigin(config));
+    const signCsp = contentSecurityPolicy(publicAuthUrl(config), store.direct ? directTransferOrigin(config) : null, false, null, hostedLoginTokenOrigin(config));
     let indexHtml: string | null = null;
     app.get('*', async (c) => {
-      c.header('content-security-policy', csp);
-      if (c.req.path === SIGN_PAGE_PATH || c.req.path.startsWith(`${SIGN_PAGE_PATH}/`)) {
+      const isSignPage =
+        c.req.path === SIGN_PAGE_PATH ||
+        c.req.path.startsWith(`${SIGN_PAGE_PATH}/`) ||
+        c.req.path === SIGN_DIRECT_PAGE_PATH ||
+        c.req.path.startsWith(`${SIGN_DIRECT_PAGE_PATH}/`);
+      c.header('content-security-policy', isSignPage ? signCsp : csp);
+      if (isSignPage) {
         c.header('referrer-policy', 'no-referrer');
         c.header('cache-control', 'no-store');
         c.header('x-content-type-options', 'nosniff');
