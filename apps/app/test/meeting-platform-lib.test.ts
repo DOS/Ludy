@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The facts the Meetings screens read from a platform recording (C1, #3173): what blocks an import, how often to look again, the words of a failure, what is claimed and when the dialog may submit.
 import { describe, expect, it } from 'vitest';
-import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
+import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_VIDEO_MAX_BYTES, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
 import { IMPORT_NOTICE } from '@crove/meeting-recorder';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
@@ -18,6 +18,7 @@ const row = (over: Partial<MeetingPlatformRecordingView> = {}): MeetingPlatformR
   hasAudio: true,
   hasVideo: false,
   hasTranscript: false,
+  videoImport: false,
   status: 'suggested',
   meetingId: null,
   errorCode: null,
@@ -30,6 +31,12 @@ describe('importBlock', () => {
     expect(importBlock(row({ lengthSeconds: IMPORT_MAX_SECONDS, sizeBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES }))).toBeNull();
     expect(importBlock(row({ lengthSeconds: null, sizeBytes: null }))).toBeNull();
     expect(importBlock(row({ hasAudio: false, hasVideo: true }))).toBe('video_only');
+    // Where the deployment can take the audio out of a video file (C2a), a video-only recording is importable, under the video's own size cap; with nothing at all it still is not.
+    expect(importBlock(row({ hasAudio: false, hasVideo: true, videoImport: true }))).toBeNull();
+    expect(importBlock(row({ hasAudio: false, hasVideo: true, videoImport: true, sizeBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES + 1 }))).toBeNull();
+    expect(importBlock(row({ hasAudio: false, hasVideo: true, videoImport: true, sizeBytes: MEETING_PLATFORM_VIDEO_MAX_BYTES + 1 }))).toBe('too_large');
+    expect(importBlock(row({ hasAudio: false, hasVideo: false, videoImport: true }))).toBe('video_only');
+    expect(importBlock(row({ hasAudio: true, hasVideo: true, videoImport: true, sizeBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES + 1 }))).toBe('too_large');
     expect(importBlock(row({ lengthSeconds: IMPORT_MAX_SECONDS + 1 }))).toBe('too_long');
     expect(importBlock(row({ sizeBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES + 1 }))).toBe('too_large');
   });

@@ -175,7 +175,7 @@ suite('the sandbox meeting platform from the HTTP rpc to the staged bytes (meeti
     expect((parsed.accessToken as string).length).toBeGreaterThan(0);
   });
 
-  it('lists the two sandbox recordings through the sweep, refuses the video-only one, and stages the audio one through the job', async () => {
+  it('lists the two sandbox recordings through the sweep, lets the video-only one begin (its job fails it without an extractor), and stages the audio one through the job', async () => {
     const first = await sweep();
     expect(first.failures).toBe(0);
     expect(first.listed).toBeGreaterThanOrEqual(1);
@@ -184,19 +184,24 @@ suite('the sandbox meeting platform from the HTTP rpc to the staged bytes (meeti
     const idOf = async (externalId: string) => (await sqlAdmin<{ id: string }>('SELECT id FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1 AND external_id = $2', [connectionId, externalId])).rows[0]?.id as string;
     const key = `staging/${randomBytes(32).toString('hex')}`;
     const stageKey = (recordingId: string, meetingId: string, stagingKey: string) => clicker.execute('test.mp.begin', { recordingId, meetingId, stagingKey }, { actor: { type: 'user', userId: member.userId, aal: 'aal1' }, orgId: org.orgId });
-    // A video-only recording has no audio file for C1 to take: refused at the click, and nothing is queued for it.
-    await expect(stageKey(await idOf('sandbox-rec-video'), await meetingFor(), `staging/${randomBytes(32).toString('hex')}`)).rejects.toMatchObject({ code: 'MEETING_PLATFORM_NO_AUDIO' });
+    // A video-only recording begins since C2a (the module's command refuses it where no sandbox can take its audio out; this test begins at the definer): it is queued like any other row.
+    const videoId = await idOf('sandbox-rec-video');
+    await stageKey(videoId, await meetingFor(), `staging/${randomBytes(32).toString('hex')}`);
     const audioId = await idOf('sandbox-rec-audio');
     await stageKey(audioId, await meetingFor(), key);
     await sweep();
     const job = sent.find((j) => j.orgId === org.orgId);
     expect(job).toMatchObject({ id: audioId, connectionId, provider: 'sandbox', externalId: 'sandbox-rec-audio', hasAudio: true, stagingKey: key });
-    expect(sent.filter((j) => j.orgId === org.orgId && j.externalId === 'sandbox-rec-video')).toEqual([]);
+    expect(sent.find((j) => j.orgId === org.orgId && j.externalId === 'sandbox-rec-video')).toMatchObject({ id: videoId, hasAudio: false, hasVideo: true });
     // The job opens the token the rpc sealed (the step that failed with a non-JSON secret) and stages the sandbox file under the row's key.
-    expect(await runMeetingsImport({ runtime: worker, broker: vault, store, adapters: { sandbox }, media: null } as never, job as MeetingsImportJob, { retryCount: 0, retryLimit: 3 })).toBe('staged');
+    expect(await runMeetingsImport({ runtime: worker, broker: vault, store, adapters: { sandbox }, extractor: null } as never, job as MeetingsImportJob, { retryCount: 0, retryLimit: 3 })).toBe('staged');
     expect(store.stored.get(key)?.byteLength).toBeGreaterThan(44);
     const after = await recordings();
     expect(after.find((r) => r.id === audioId)?.status).toBe('staged');
-    expect(after.find((r) => r.id !== audioId)?.status).toBe('suggested');
+    // Without an extractor (no MEDIA_URL) the job fails the video-only row with a short code, as C1 did at the click.
+    const videoJob = sent.find((j) => j.orgId === org.orgId && j.externalId === 'sandbox-rec-video');
+    expect(await runMeetingsImport({ runtime: worker, broker: vault, store, adapters: { sandbox }, extractor: null } as never, videoJob as MeetingsImportJob, { retryCount: 0, retryLimit: 3 })).toBe('failed');
+    const failed = await recordings();
+    expect(failed.find((r) => r.id === videoId)).toMatchObject({ status: 'failed', errorCode: 'no_audio' });
   });
 });
