@@ -65,7 +65,7 @@ export function TodayAgenda({ slug }: { slug: string }) {
     return (
       <p className="text-xs text-muted-foreground" data-testid="meeting-agenda-off">
         {t('off')}{' '}
-        <Link to="/o/$slug/settings" params={{ slug }} className="font-medium text-foreground underline">
+        <Link to="/o/$slug/settings/bookings" params={{ slug }} hash="booking-settings" className="font-medium text-foreground underline">
           {t('offLink')}
         </Link>
       </p>
