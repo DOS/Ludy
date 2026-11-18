@@ -179,6 +179,23 @@ function escapeLinkHref(url: string): string {
   return url.replace(/\(/g, '%28').replace(/\)/g, '%29');
 }
 
+function stripDelimited(input: string, open: string, close: string): string {
+  let out = input;
+  let searchFrom = 0;
+  let start = out.indexOf(open, searchFrom);
+  while (start !== -1) {
+    const end = out.indexOf(close, start + open.length);
+    if (end === -1) {
+      out = out.slice(0, start);
+      break;
+    }
+    out = out.slice(0, start) + out.slice(end + close.length);
+    searchFrom = Math.max(0, start - (open.length - 1));
+    start = out.indexOf(open, searchFrom);
+  }
+  return out;
+}
+
 /** Converts untrusted HTML into bounded, readable Markdown with only http/https links retained. */
 export function htmlToMarkdown(html: string, baseUrl: string | null = null): string {
   if (typeof html !== 'string' || html.trim() === '') return '';
@@ -186,11 +203,7 @@ export function htmlToMarkdown(html: string, baseUrl: string | null = null): str
   let prev: string;
   do {
     prev = cleaned;
-    cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, '').replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
-  } while (cleaned !== prev);
-  do {
-    prev = cleaned;
-    cleaned = cleaned.replace(/<!--|<!\[CDATA\[/g, '');
+    cleaned = stripDelimited(stripDelimited(cleaned, '<!--', '-->'), '<![CDATA[', ']]>');
   } while (cleaned !== prev);
   const parts: string[] = [];
   const skipStack: string[] = [];

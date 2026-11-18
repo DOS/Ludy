@@ -160,22 +160,23 @@ describe('HTML to Markdown conversion and escaping', () => {
   });
 
   it('completely strips nested, overlapping, and unclosed HTML comment or CDATA openers', () => {
-    const cases = [
+    for (const html of ['<p>Start<<!--x-->!--y-->End</p>', '<p>Start<!--<!-- -->End</p>', '<p>Start<![CDATA[payload]]>End</p>']) {
+      const md = htmlToMarkdown(html, 'https://example.com/');
+      expect(md).not.toContain('<!--');
+      expect(md).not.toContain('<![CDATA[');
+      expect(md).toContain('StartEnd');
+    }
+    for (const html of [
       '<p>Start<!<!--->End</p>',
       '<p>Start<!--<!-->End</p>',
-      '<p>Start<<!--x-->!--y-->End</p>',
-      '<p>Start<!--<!-- -->End</p>',
       '<p>Start<!--<script>alert(1)</script>End',
-      '<p>Start<![CDATA[payload]]>End</p>',
       '<p>Start<!<![CDATA[openEnd</p>',
-    ];
-    for (const html of cases) {
+    ]) {
       const md = htmlToMarkdown(html, 'https://example.com/');
       expect(md).not.toContain('<!--');
       expect(md).not.toContain('<![CDATA[');
       expect(md).not.toContain('alert(1)');
       expect(md).toContain('Start');
-      expect(md).toContain('End');
     }
   });
 
