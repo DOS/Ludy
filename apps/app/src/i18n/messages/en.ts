@@ -12136,6 +12136,12 @@ export const en = {
       EINVOICE_DRAFT_NOT_FOUND: 'This invoice draft was not found.',
       EINVOICE_NOT_DRAFT: 'This invoice has already been sent and can no longer be edited or deleted.',
       EINVOICE_NOTICE_NOT_FOUND: 'This recorded error was not found.',
+      SUPPLIER_NOT_FOUND: 'This supplier was not found.',
+      SUPPLIER_BANK_ACCOUNT_NOT_FOUND: 'This bank account was not found.',
+      SUPPLIER_BANK_NUMBER_INVALID: 'The account number must have 6 to 20 digits.',
+      SUPPLIER_BANK_ACCOUNT_EXISTS: 'This supplier already has an account with that number.',
+      SUPPLIER_BANK_ACCOUNT_NOT_ACTIVE: 'This account is no longer in use.',
+      SUPPLIER_BANK_ACCOUNT_SAME: 'The new account number is the same as the current one.',
       EINVOICE_ORIGINAL_NOT_ISSUED: 'Only an issued invoice can be adjusted or replaced.',
       EINVOICE_ORIGINAL_IS_ADJUSTMENT: 'This is an adjusting invoice; adjust or replace the invoice it adjusts instead.',
       EINVOICE_ORIGINAL_REPLACED: 'This invoice has been replaced; adjust or replace the invoice that replaced it.',
@@ -12857,7 +12863,15 @@ export const en = {
       today: 'Read what needs you in accounting today',
       signals: {
         overdue_receivables: 'Read which customers owe past the due date, to check them against open deals',
+        supplier_bank_changes: 'Read which suppliers changed their bank account recently, to warn when a payment is waiting',
         sales: 'Read which customers have a sales invoice, to check them against won deals',
+      },
+      supplier_bank_account: {
+        add: "Add a supplier's bank account",
+        erase: "Erase a supplier's bank data (cannot be undone)",
+        list: "Read a supplier's bank accounts and the history of their changes",
+        replace: "Change a supplier's bank account",
+        retire: "Stop using a supplier's bank account",
       },
       account: {
         create: 'Add a ledger account',

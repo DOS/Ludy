@@ -12135,6 +12135,12 @@ export const vi = {
       EINVOICE_DRAFT_NOT_FOUND: 'Không tìm thấy bản nháp hóa đơn này.',
       EINVOICE_NOT_DRAFT: 'Hóa đơn này đã được gửi đi, không sửa hoặc xóa được nữa.',
       EINVOICE_NOTICE_NOT_FOUND: 'Không tìm thấy sai sót đã ghi nhận này.',
+      SUPPLIER_NOT_FOUND: 'Không tìm thấy nhà cung cấp này.',
+      SUPPLIER_BANK_ACCOUNT_NOT_FOUND: 'Không tìm thấy tài khoản ngân hàng này.',
+      SUPPLIER_BANK_NUMBER_INVALID: 'Số tài khoản phải gồm 6 đến 20 chữ số.',
+      SUPPLIER_BANK_ACCOUNT_EXISTS: 'Nhà cung cấp này đã có tài khoản với số đó.',
+      SUPPLIER_BANK_ACCOUNT_NOT_ACTIVE: 'Tài khoản này đã được ngừng dùng.',
+      SUPPLIER_BANK_ACCOUNT_SAME: 'Số tài khoản mới trùng với số hiện tại.',
       EINVOICE_ORIGINAL_NOT_ISSUED: 'Chỉ điều chỉnh hoặc thay thế được hóa đơn đã phát hành.',
       EINVOICE_ORIGINAL_IS_ADJUSTMENT: 'Đây là hóa đơn điều chỉnh; hãy điều chỉnh hoặc thay thế hóa đơn mà nó điều chỉnh.',
       EINVOICE_ORIGINAL_REPLACED: 'Hóa đơn này đã được thay thế; hãy điều chỉnh hoặc thay thế hóa đơn thay thế nó.',
@@ -12856,7 +12862,15 @@ export const vi = {
       today: 'Xem việc kế toán cần bạn hôm nay',
       signals: {
         overdue_receivables: 'Xem khách nào đang nợ quá hạn, để đối chiếu với deal đang mở',
+        supplier_bank_changes: 'Xem nhà cung cấp nào vừa đổi tài khoản ngân hàng, để cảnh báo khi có khoản chi đang chờ',
         sales: 'Xem khách nào đã có hóa đơn bán hàng, để đối chiếu với deal đã thắng',
+      },
+      supplier_bank_account: {
+        add: 'Thêm tài khoản ngân hàng của nhà cung cấp',
+        erase: 'Xóa dữ liệu ngân hàng của nhà cung cấp (không hoàn tác được)',
+        list: 'Xem tài khoản ngân hàng và lịch sử thay đổi của một nhà cung cấp',
+        replace: 'Đổi tài khoản ngân hàng của nhà cung cấp',
+        retire: 'Ngừng dùng một tài khoản ngân hàng của nhà cung cấp',
       },
       account: {
         create: 'Thêm tài khoản kế toán',
