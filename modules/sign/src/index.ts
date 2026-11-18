@@ -23,6 +23,7 @@ export {
 } from './events.ts';
 export { signManifest } from './manifest.ts';
 export { validateSignaturePngBase64, type ValidatedSignaturePng } from './png.ts';
+export { signDirectPublicCommands } from './direct-public.ts';
 export {
   cleanUserAgent as sanitizeSignUserAgent,
   normalizePageDimensions as normalizeSignPageDimensions,
@@ -51,6 +52,8 @@ export {
 export {
   SIGN_COMPLETED_MAIL_SOURCE,
   SIGN_COMPLETED_MAIL_TEMPLATE,
+  SIGN_DIRECT_OTP_MAIL_SOURCE,
+  SIGN_DIRECT_OTP_MAIL_TEMPLATE,
   SIGN_INVITE_MAIL_SOURCE,
   SIGN_INVITE_MAIL_TEMPLATE,
   SIGN_OTP_MAIL_SOURCE,
@@ -58,9 +61,11 @@ export {
   SIGN_REMIND_MAIL_SOURCE,
   SIGN_REMIND_MAIL_TEMPLATE,
   renderSignCompletedMail,
+  renderSignDirectOtpMail,
   renderSignInviteMail,
   renderSignOtpMail,
   zSignCompletedMailPayload,
+  zSignDirectOtpMailPayload,
   zSignInviteMailPayload,
   zSignOtpMailPayload,
   type RenderedSignMail,
