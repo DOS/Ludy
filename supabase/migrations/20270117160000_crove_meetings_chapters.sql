@@ -13,6 +13,7 @@
 --                                 erasure reach it anyway (last section), as they reach the title of a meeting.
 -- crove_meetings.meeting_chapter_taint()   the trigger function: the insert and update rules of meeting_result_taint (20261217100000), for this table.
 -- crove_meetings.personal_row_ids / personal_matches / personal_erase   restated so the personal-data finder and the erasure reach the chapter titles (last section), whatever the probes can match.
+-- crove_meetings.text_stamp / personal_notice_items   restated so the notice path reaches the chapter titles (end of the file).
 -- crove_meetings.meeting_drafts_due / meeting_draft_purge   restated from 20261230010000 (their newest bodies) with the draft chapters as a fifth source: a draft the recorder never published goes after 30
 --                                 days, as every other draft does. Same signatures, worker-only checks and grants.
 SET LOCAL lock_timeout = '2s';
@@ -433,3 +434,91 @@ REVOKE ALL ON FUNCTION crove_meetings.personal_erase(text, text) FROM PUBLIC, cr
 GRANT EXECUTE ON FUNCTION crove_meetings.personal_erase(text, text) TO crove_tenant;
 REVOKE ALL ON FUNCTION crove_meetings.personal_erase(text, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_meetings.personal_erase(text, text) TO crove_tenant;
+
+-- The notice path reaches the chapter titles too (#3844): without it a chapter the owner cannot read could never be named in a notice, and the erasure would keep it for ever.
+--   text_stamp           (20261205100000)  the chapters the owner cannot read are part of the stamp (kind 5), so a chapter edited after a notice moves the stamp and the notice no longer covers it.
+--   personal_notice_items (20261210300000)  a meeting whose mention is in a chapter title is listed, by the rule of the other rows.
+-- Each restated from its newest definition with only those lines added; same signatures, owners, search_path and grants.
+CREATE OR REPLACE FUNCTION crove_meetings.text_stamp(p_org uuid, p_meeting uuid, p_rec boolean, p_read boolean)
+RETURNS bigint LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_ipad bytea;
+  v_opad bytea;
+  v_text text;
+BEGIN
+  SELECT k.k_ipad, k.k_opad INTO v_ipad, v_opad FROM crove_kernel.mail_hash_key k WHERE k.id = 1;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'MAIL_HASH_KEY_MISSING' USING ERRCODE = '55000';
+  END IF;
+  SELECT COALESCE(pg_catalog.string_agg(t.v, pg_catalog.chr(31) ORDER BY t.k, t.id), '') INTO v_text
+    FROM (
+      SELECT 1 AS k, s.id::text AS id, s.stage || pg_catalog.chr(30) || s.speaker_label || pg_catalog.chr(30) || s.text AS v
+        FROM crove_meetings.transcript_segment s
+       WHERE s.org_id = p_org AND s.meeting_id = p_meeting AND NOT (p_rec OR (p_read AND s.stage <> 'draft'))
+      UNION ALL
+      SELECT 2, r.id::text, r.stage || pg_catalog.chr(30) || r.summary || pg_catalog.chr(30) || r.decisions::text
+        FROM crove_meetings.meeting_result r
+       WHERE r.org_id = p_org AND r.meeting_id = p_meeting AND NOT (p_rec OR (p_read AND r.stage <> 'draft'))
+      UNION ALL
+      SELECT 3, i.id::text, i.stage || pg_catalog.chr(30) || i.title || pg_catalog.chr(30) || i.who_drafted || pg_catalog.chr(30) || i.when_drafted
+        FROM crove_meetings.action_item i
+       WHERE i.org_id = p_org AND i.meeting_id = p_meeting AND NOT (p_rec OR (p_read AND i.stage <> 'draft'))
+      UNION ALL
+      SELECT 4, m.id::text, m.title FROM crove_meetings.meeting m WHERE m.org_id = p_org AND m.id = p_meeting AND NOT p_read
+      UNION ALL
+      -- The chapter titles (#3844), by the rule of the other rows: the ones the owner cannot read.
+      SELECT 5, c.id::text, c.stage || pg_catalog.chr(30) || c.title
+        FROM crove_meetings.meeting_chapter c
+       WHERE c.org_id = p_org AND c.meeting_id = p_meeting AND NOT (p_rec OR (p_read AND c.stage <> 'draft'))
+    ) t;
+  RETURN ('x' || pg_catalog.encode(pg_catalog.substr(
+    pg_catalog.sha256(v_opad || pg_catalog.sha256(v_ipad || pg_catalog.convert_to(
+      'crove.meetings.stamp.v1' || pg_catalog.chr(31) || p_org::text || pg_catalog.chr(31) || p_meeting::text || pg_catalog.chr(31) || v_text, 'UTF8'))), 1, 8), 'hex'))::bit(64)::bigint;
+END $$;
+REVOKE ALL ON FUNCTION crove_meetings.text_stamp(uuid, uuid, boolean, boolean) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+
+CREATE OR REPLACE FUNCTION crove_meetings.personal_notice_items(p_kind text, p_value text)
+RETURNS TABLE (meeting_id uuid, recorder_user_id uuid, stamp bigint, key bytea)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := crove_kernel.ctx_org_id();
+  v_key bytea;
+BEGIN
+  IF v_org IS NULL OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR NOT EXISTS (
+    SELECT 1 FROM crove_kernel.tenant_member m
+    WHERE m.org_id = v_org AND m.user_id = crove_kernel.ctx_user_id() AND m.role = 'owner'
+  ) THEN
+    RAISE EXCEPTION 'MEETINGS_FORBIDDEN' USING ERRCODE = '42501';
+  END IF;
+  PERFORM crove_kernel.text_mention_pattern(p_kind, p_value);
+  v_key := crove_meetings.notice_key_of(v_org, p_kind, p_value);
+  RETURN QUERY
+  WITH hits AS MATERIALIZED (
+    SELECT s.meeting_id, s.stage FROM crove_meetings.transcript_segment s
+     WHERE s.org_id = v_org AND (crove_kernel.text_mentions(s.text, p_kind, p_value) OR crove_kernel.text_mentions(s.speaker_label, p_kind, p_value))
+    UNION ALL
+    SELECT r.meeting_id, r.stage FROM crove_meetings.meeting_result r
+     WHERE r.org_id = v_org AND (crove_kernel.text_mentions(r.summary, p_kind, p_value)
+                                 OR EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(r.decisions) e(v) WHERE pg_catalog.jsonb_typeof(e.v) = 'string' AND crove_kernel.text_mentions(e.v #>> '{}', p_kind, p_value)))
+    UNION ALL
+    SELECT i.meeting_id, i.stage FROM crove_meetings.action_item i
+     WHERE i.org_id = v_org AND (crove_kernel.text_mentions(i.title, p_kind, p_value) OR crove_kernel.text_mentions(i.who_drafted, p_kind, p_value) OR crove_kernel.text_mentions(i.when_drafted, p_kind, p_value))
+    UNION ALL
+    SELECT m.id, NULL::text FROM crove_meetings.meeting m WHERE m.org_id = v_org AND crove_kernel.text_mentions(m.title, p_kind, p_value)
+    UNION ALL
+    -- The chapter titles (#3844): a meeting whose only mention is in a chapter the owner cannot read is listed too, so its recorder can be told.
+    SELECT c.meeting_id, c.stage FROM crove_meetings.meeting_chapter c WHERE c.org_id = v_org AND crove_kernel.text_mentions(c.title, p_kind, p_value)
+  ), unread AS (
+    -- Meetings with at least one hit the owner cannot read: not their own meeting, and not a published row (or a title) of a meeting they are a reader of.
+    SELECT DISTINCT h.meeting_id FROM hits h
+     WHERE NOT (crove_meetings.is_meeting_recorder(v_org, h.meeting_id)
+                OR (h.stage IS DISTINCT FROM 'draft' AND crove_meetings.is_meeting_reader(v_org, h.meeting_id)))
+  )
+  SELECT u.meeting_id, m.recorder_user_id,
+         crove_meetings.text_stamp(v_org, u.meeting_id, crove_meetings.is_meeting_recorder(v_org, u.meeting_id), crove_meetings.is_meeting_reader(v_org, u.meeting_id)), v_key
+    FROM unread u JOIN crove_meetings.meeting m ON m.org_id = v_org AND m.id = u.meeting_id
+   ORDER BY u.meeting_id
+   LIMIT 1001;
+END $$;
+REVOKE ALL ON FUNCTION crove_meetings.personal_notice_items(text, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_meetings.personal_notice_items(text, text) TO crove_tenant;

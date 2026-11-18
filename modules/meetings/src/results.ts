@@ -283,6 +283,9 @@ export const resultPublish = defineCommand({
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input) => {
     await recorderMeeting(ctx, input.meetingId, 'share its summary');
+    // The meeting row is held first, before any row of it is locked, in the order the personal-data erasure and a meeting's delete take (the meeting, then its rows), so a publish cannot deadlock with
+    // them; meetings.chapters.save holds it too, so a save and this publish are one after the other.
+    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forNoKeyUpdate().execute();
     // Text the model wrote is shared only after the recorder has read it (meetings.draft.review) or rewritten it; the database refuses it too.
     const unread = await ctx.trx
       .selectFrom('crove_meetings.meeting_result')
@@ -323,8 +326,7 @@ export const resultPublish = defineCommand({
       .where('status', '=', 'suggested')
       .returning(['id', 'title', 'who_drafted', 'when_parsed'])
       .execute();
-    // The draft chapters (#3844) replace the chapters published before them, as the summary does. The meeting row is held, as meetings.chapters.save holds it, so a save and this publish are one after the other.
-    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forNoKeyUpdate().execute();
+    // The draft chapters (#3844) replace the chapters published before them, as the summary does.
     const draftChapters = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().execute();
     let chapters = 0;
     if (draftChapters.length > 0) {

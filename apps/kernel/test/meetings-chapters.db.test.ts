@@ -298,6 +298,15 @@ suite('the chapters of a meeting (#3844)', () => {
     // The hidden one is counted for its recorder, as a title of a meeting that holds the value; never its text or meeting.
     expect(found.meetingText).toEqual([{ recorderUserId: users.recorder, meetings: 1, lines: 0, results: 0, items: 0, titles: 1 }]);
     expect(JSON.stringify(found)).not.toContain('Việc riêng');
+    // The notice path reaches it too: a meeting whose only mention is in a chapter the owner cannot read is listed for a notice, and an edit of that chapter moves the stamp the notice names.
+    const notice = (c: pg.Client) => c.query<{ meeting_id: string; stamp: string }>(`SELECT meeting_id, stamp::text AS stamp FROM crove_meetings.personal_notice_items('email', $1)`, [email]).then((r) => r.rows);
+    const before = await asMember('owner', notice);
+    expect(before.map((r) => r.meeting_id)).toEqual([hidden]);
+    await sqlAdmin(`UPDATE crove_meetings.meeting_chapter SET title = $2 WHERE meeting_id = $1`, [hidden, `Việc riêng đã sửa ${email}`]);
+    const after = await asMember('owner', notice);
+    expect(after.map((r) => r.meeting_id)).toEqual([hidden]);
+    expect(after[0]?.stamp).not.toBe(before[0]?.stamp);
+    await sqlAdmin(`UPDATE crove_meetings.meeting_chapter SET title = $2 WHERE meeting_id = $1`, [hidden, `Việc riêng ${email}`]);
     const mfa = { type: 'user' as const, userId: users.owner as string, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
     const erased = await runtime.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: mfa, orgId, idempotencyKey: randomUUID() });
     expect(JSON.stringify(erased)).not.toContain('Việc riêng');
