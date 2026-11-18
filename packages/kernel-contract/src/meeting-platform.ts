@@ -25,6 +25,9 @@ export const MEETING_PLATFORM_LIST_DAYS = 14;
 export const MEETING_PLATFORM_STAGING_MINUTES = 55;
 // The job buffers a download in memory (the blob store has no streaming write to a staging key), so the declared size and the counted stream stay under the audio cap of an upload (MAX_MEETING_AUDIO_BYTES).
 export const MEETING_PLATFORM_IMPORT_MAX_BYTES = 300 * 1024 * 1024;
+// The most a platform's video file may be when its audio is taken out of it (C2a, #3306): the product's video upload cap (plan section 10) and crove-media's own MEDIA_MAX_INPUT_BYTES default. The audio
+// cap above is unchanged and counts the audio that comes out. A video over this fails `too_large`.
+export const MEETING_PLATFORM_VIDEO_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 // The connection's list is refreshed at most this often by the sweep, unless the member asked (last_synced_at cleared).
 export const MEETING_PLATFORM_SYNC_MINUTES = 10;
 

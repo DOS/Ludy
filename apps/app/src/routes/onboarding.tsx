@@ -60,7 +60,7 @@ export function OnboardingPage() {
     onSuccess: async (org, input) => {
       await queryClient.invalidateQueries();
       // Inviting is R3 (a fresh second factor): the org's own invite form asks for it and shows the link.
-      if (input.contact) await navigate({ to: '/o/$slug/settings', params: { slug: org.slug }, search: { invite: input.contact } });
+      if (input.contact) await navigate({ to: '/o/$slug/settings/members', params: { slug: org.slug }, search: { invite: input.contact } });
       else await navigate({ to: '/o/$slug/overview', params: { slug: org.slug } });
     },
   });

@@ -6,19 +6,26 @@
 //
 // - Nothing is downloaded before the click: the job exists only for a row the member's command moved to `importing`.
 // - The platform's own copy is never touched; no participant list is read; the title is never read by the job.
-// - Audio first. A recording with an audio file is fetched as audio. One with only a video file needs the audio extracted by crove-media; the extraction is injected (`media`) and not wired in C1, so
-//   a video-only recording fails with `no_audio` until it is.
-// - The bytes are held in memory (the blob store has no streaming write to a staging key), under MEETING_PLATFORM_IMPORT_MAX_BYTES; a bigger file fails `too_large` before or while it is read.
+// - Audio first. A recording with an audio file is fetched as audio and held in memory (the blob store has no streaming write to a staging key), under MEETING_PLATFORM_IMPORT_MAX_BYTES; a bigger file
+//   fails `too_large` before or while it is read.
+// - A recording with only a video file (C2a, #3306) is streamed, never held: the download is sealed as it arrives under a throwaway key that exists only in this process (the same path an uploaded video
+//   takes, `extractAudioFromVideo`), crove-media reads it back at local speed and returns mono Opus, and only that audio is staged. The video has its own cap (MEETING_PLATFORM_VIDEO_MAX_BYTES),
+//   the audio cap is unchanged, and the sealed video is deleted when the call ends. It is not piped into crove-media straight from the platform, on purpose: crove-media takes its one slot before it reads the
+//   body and bounds the whole call by its process timeout (#2989), so a slow platform download would hold the slot and be cut off at 5 minutes. Without an extractor (no MEDIA_URL) a video-only recording
+//   still fails `no_audio`.
 // - A transient failure (the platform or the network) throws so the queue retries; the last try, and every permanent failure, is recorded on the row as a short code, never the platform's message.
 import {
   meetingPlatformBinding,
   MEETING_PLATFORM_IMPORT_MAX_BYTES,
+  MEETING_PLATFORM_VIDEO_MAX_BYTES,
   type MeetingPlatformErrorCode,
   type MeetingPlatformProvider,
 } from '@crove/kernel-contract';
 import type { MeetingPlatformAdapter, MeetingPlatformCredential, MeetingPlatformDownload } from '@crove/channel';
 import { MeetingPlatformError } from '@crove/channel';
-import { DomainError, EgressError, guardedStream, type BlobStore, type CredentialBroker, type EgressStreamOptions, type Runtime } from '@crove/kernel-runtime';
+import { DomainError, EgressError, guardedStream, type BlobStore, type CredentialBroker, type EgressStream, type EgressStreamOptions, type Runtime } from '@crove/kernel-runtime';
+import { extractAudioFromVideo, type MediaAudioExtractor } from './meetings-extract.ts';
+import { MEDIA_PROBE_FAILED, MEDIA_PROBE_UNAVAILABLE, MEDIA_TOO_LONG } from './meetings-measure.ts';
 
 const ACTOR = { type: 'system' as const, component: 'meetings.import' };
 const codeOf = (error: unknown) => (error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error');
@@ -27,8 +34,9 @@ const DOWNLOAD_TIMEOUT_MS = 20 * 60_000;
 // The queue tries a transient failure this many more times (a minute apart, doubling), and a job may run this long.
 export const MEETINGS_IMPORT_RETRY_LIMIT = 3;
 export const MEETINGS_IMPORT_EXPIRE_SECONDS = 30 * 60;
-// How many downloads one worker buffers at once. A download is held in memory (up to MEETING_PLATFORM_IMPORT_MAX_BYTES, 300 MB), so the peak of a worker is this many times 300 MB when the platform
-// declares the size (one buffer, filled as the stream arrives) and up to twice that per download when it does not (the pieces, then their join): 600 MB, at most 1.2 GB with two. Pinned by a test.
+// How many downloads one worker handles at once. An audio download is held in memory (up to MEETING_PLATFORM_IMPORT_MAX_BYTES, 300 MB), so the peak of a worker is this many times 300 MB when the platform
+// declares the size (one buffer, filled as the stream arrives) and up to twice that per download when it does not (the pieces, then their join): 600 MB, at most 1.2 GB with two. A video download holds no
+// more than a few chunks and the Opus it returns (about 11 MB an hour); its video sits sealed in the blob store (up to MEETING_PLATFORM_VIDEO_MAX_BYTES) until the call ends. Pinned by a test.
 export const MEETINGS_IMPORT_CONCURRENCY = 2;
 
 export interface MeetingsImportJob {
@@ -48,8 +56,8 @@ export interface MeetingsImportDeps {
   broker: CredentialBroker;
   store: BlobStore;
   adapters: Readonly<Partial<Record<string, MeetingPlatformAdapter>>>;
-  // The audio extraction of crove-media for a video-only recording (not wired in C1: null).
-  media?: { extractAudio(video: Uint8Array): Promise<Uint8Array> } | null;
+  // The audio extraction of crove-media for a video-only recording (C2a, #3306); null or not configured (no MEDIA_URL): a video-only recording fails `no_audio`.
+  extractor?: MediaAudioExtractor | null;
   // Tests only: the guarded transfer and its options.
   stream?: typeof guardedStream;
   // Tests only (timeouts, a local server): never the security fields, so no caller of the seam can undo the first-host list or the per-hop allowlist.
@@ -77,6 +85,15 @@ function classify(error: unknown): { code: MeetingPlatformErrorCode; retry: bool
     return { code: 'platform_unavailable', retry: true };
   }
   if (error instanceof DomainError) {
+    // The video path: what sealing the download and the sandbox's extraction say (apps/kernel/src/media-seal.ts, meetings-extract.ts). A file the sandbox cannot read, without audio or too long will not
+    // improve on a second try; a sandbox that is down or busy may, and a body that ended short is the platform's connection.
+    if (error.code === 'NO_AUDIO_TRACK') return { code: 'no_audio', retry: false };
+    if (error.code === 'FILE_TOO_LARGE') return { code: 'too_large', retry: false };
+    if (error.code === 'INVALID_MEDIA_CONTAINER' || error.code === MEDIA_PROBE_FAILED) return { code: 'invalid_media', retry: false };
+    if (error.code === MEDIA_TOO_LONG) return { code: 'too_long', retry: false };
+    if (error.code === 'MEDIA_EXTRACT_TIMEOUT') return { code: 'timeout', retry: false };
+    if (error.code === MEDIA_PROBE_UNAVAILABLE) return { code: 'normalize_failed', retry: true };
+    if (error.code === 'BAD_REQUEST' || error.code === 'NO_FILE') return { code: 'download_failed', retry: true };
     if (error.code === 'MEETING_PLATFORM_NOT_ACTIVE' || error.code === 'MEETING_PLATFORM_OWNER_LEFT' || error.code === 'MEETING_PLATFORM_NOT_FOUND') return { code: 'connection_expired', retry: false };
   }
   return { code: 'download_failed', retry: true };
@@ -94,12 +111,17 @@ async function openCredential(deps: MeetingsImportDeps, job: MeetingsImportJob):
   };
 }
 
-// The platform's file, in memory, counted against the cap as it arrives.
-async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDownload, signal?: AbortSignal): Promise<Uint8Array> {
-  if (download.inline) {
-    if (download.inline.bytes.byteLength > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
-    return download.inline.bytes;
-  }
+interface OpenDownload {
+  response: EgressStream;
+  // The length the platform declared, or null.
+  declared: number | null;
+  // Closes the connection and drops the abort listener; safe to call twice.
+  release(): void;
+}
+
+// The connection to the platform's file, checked: the first host is one of the adapter's exact hosts, the answer is a 2xx, and a declared length over the cap is refused before a byte is read. The
+// caller reads `response.body` and calls `release()`.
+async function openDownload(deps: MeetingsImportDeps, download: MeetingPlatformDownload, maxBytes: number, signal?: AbortSignal): Promise<OpenDownload> {
   const hosts = new Set(download.hosts);
   const suffixes = download.hostSuffixes;
   // The first request goes to one of the adapter's exact hosts; the CDN suffixes are for the hops a redirect leads to (the guard asks its allowlist for every hop, so the first host is checked here).
@@ -116,7 +138,7 @@ async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDow
     { headers: download.headers },
     {
       timeoutMs: DOWNLOAD_TIMEOUT_MS,
-      maxBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES,
+      maxBytes,
       httpsOnly: true,
       // The guard refuses a first request outside the adapter's exact hosts (the check above stays as the first line); the suffixes below are for redirect hops only.
       firstHosts: download.hosts,
@@ -128,6 +150,10 @@ async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDow
   // A job the queue gives up on (its expiry) or a worker that stops closes the connection at once.
   const stop = () => response.destroy();
   signal?.addEventListener('abort', stop, { once: true });
+  const release = () => {
+    signal?.removeEventListener('abort', stop);
+    response.destroy();
+  };
   try {
     if (signal?.aborted) throw new MeetingPlatformError('platform_unavailable');
     if (response.status === 401 || response.status === 403) throw new MeetingPlatformError('connection_expired');
@@ -135,9 +161,24 @@ async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDow
     if (response.status === 429 || response.status >= 500) throw new MeetingPlatformError('platform_unavailable');
     if (response.status < 200 || response.status >= 300) throw new MeetingPlatformError('platform_refused');
     const declared = Number(response.headers['content-length']);
-    if (Number.isFinite(declared) && declared > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
+    if (Number.isFinite(declared) && declared > maxBytes) throw new MeetingPlatformError('too_large');
+    return { response, declared: Number.isFinite(declared) && declared >= 0 ? declared : null, release };
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
+
+// The platform's file, in memory, counted against the cap as it arrives.
+async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDownload, signal?: AbortSignal): Promise<Uint8Array> {
+  if (download.inline) {
+    if (download.inline.bytes.byteLength > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
+    return download.inline.bytes;
+  }
+  const { response, declared, release } = await openDownload(deps, download, MEETING_PLATFORM_IMPORT_MAX_BYTES, signal);
+  try {
     // With the size declared, one buffer is filled as the pieces arrive (peak: the file); without it the pieces are joined at the end (peak: twice the file).
-    if (Number.isFinite(declared) && declared >= 0) {
+    if (declared !== null) {
       const whole = new Uint8Array(declared);
       let at = 0;
       for await (const chunk of response.body) {
@@ -165,8 +206,50 @@ async function fetchBytes(deps: MeetingsImportDeps, download: MeetingPlatformDow
     }
     return out;
   } finally {
-    signal?.removeEventListener('abort', stop);
-    response.destroy();
+    release();
+  }
+}
+
+// The audio of a platform's video file (C2a, #3306), with the video never held in memory: the download is sealed as it arrives, crove-media reads it back and returns mono Opus, and the sealed video is
+// deleted when the call ends. The platform must declare the length (the seal is made for a known size, and a body cut short is refused); a file that does not is refused as the platform's answer.
+async function audioOfVideo(deps: MeetingsImportDeps, job: MeetingsImportJob, download: MeetingPlatformDownload, signal?: AbortSignal): Promise<Uint8Array> {
+  const extractor = deps.extractor;
+  if (!extractor?.configured) throw new MeetingPlatformError('no_audio');
+  let source: AsyncIterable<Uint8Array>;
+  let length: number;
+  let release = () => {};
+  if (download.inline) {
+    const bytes = download.inline.bytes;
+    if (bytes.byteLength > MEETING_PLATFORM_VIDEO_MAX_BYTES) throw new MeetingPlatformError('too_large');
+    source = (async function* () {
+      yield bytes;
+    })();
+    length = bytes.byteLength;
+  } else {
+    const opened = await openDownload(deps, download, MEETING_PLATFORM_VIDEO_MAX_BYTES, signal);
+    release = opened.release;
+    // The length the response declares, else the size the platform listed for the recording (a chunked answer declares none). A listed size that is wrong makes the seal refuse the body (it ends longer or shorter than
+    // declared) and the job try again; with neither, the seal cannot be made and the recording fails as the platform's answer.
+    const known = opened.declared ?? job.sizeBytes;
+    if (known === null) {
+      release();
+      throw new MeetingPlatformError('platform_refused');
+    }
+    length = known;
+    const body = opened.response.body;
+    source = (async function* () {
+      for await (const chunk of body) {
+        if (signal?.aborted) throw new MeetingPlatformError('platform_unavailable');
+        yield chunk;
+      }
+    })();
+  }
+  try {
+    // The sealed video's binding names the recording: the key lives only in this call, and no meeting is made for it.
+    const out = await extractAudioFromVideo({ source, expectedLength: length, maxBytes: MEETING_PLATFORM_VIDEO_MAX_BYTES, store: deps.store, orgId: job.orgId, meetingId: job.id, extractor });
+    return out.audio;
+  } finally {
+    release();
   }
 }
 
@@ -188,20 +271,16 @@ export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsI
   try {
     const adapter = deps.adapters[job.provider];
     if (!adapter) return await fail('platform_unavailable');
-    // A size the platform declared over the cap, or no audio file to take: refused before any network call.
-    if (job.sizeBytes !== null && job.sizeBytes > MEETING_PLATFORM_IMPORT_MAX_BYTES) return await fail('too_large');
-    const format = job.hasAudio ? 'audio' : job.hasVideo && deps.media ? 'video' : null;
+    // A size the platform declared over the cap of the file it will be fetched as (the audio cap when there is nothing to fetch), then no audio file to take and no way to extract one: refused before any network call.
+    const format = job.hasAudio ? 'audio' : job.hasVideo && deps.extractor?.configured ? 'video' : null;
+    if (job.sizeBytes !== null && job.sizeBytes > (format === 'video' ? MEETING_PLATFORM_VIDEO_MAX_BYTES : MEETING_PLATFORM_IMPORT_MAX_BYTES)) return await fail('too_large');
     if (format === null) return await fail('no_audio');
     const credential = await openCredential(deps, job);
     const download = await adapter.prepareDownload(credential, job.externalId, format, attempt.signal);
-    let bytes = await fetchBytes(deps, download, attempt.signal);
+    const bytes = download.format === 'video' ? await audioOfVideo(deps, job, download, attempt.signal) : await fetchBytes(deps, download, attempt.signal);
     if (bytes.byteLength === 0) throw new MeetingPlatformError('download_failed');
-    if (download.format === 'video') {
-      if (!deps.media) return await fail('no_audio');
-      bytes = await deps.media.extractAudio(bytes).catch(() => {
-        throw new MeetingPlatformError('normalize_failed');
-      });
-    }
+    // The audio cap is the same whether the audio came as a file or out of a video.
+    if (bytes.byteLength > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
     await deps.store.put(job.stagingKey, bytes, 'application/octet-stream');
     wrote = true;
     const staged = await deps.runtime.execute<{ applied: number }>('kernel.meeting_platform.import_staged', { recordingId: job.id, stagingKey: job.stagingKey }, ctx);

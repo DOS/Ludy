@@ -94,6 +94,7 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_ads.ad_manage_change',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.stock_alias',
@@ -888,6 +889,46 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           commit_until: '2031-01-10',
           created_by: o.owner,
         },
+      };
+    },
+  },
+  // The changes of a running ad (W4, #3835): one row per requested change of a live launch's campaign, ad set or ad (pause, resume, archive, a lower or raised daily budget,
+  // a shorter or longer schedule), with the values it moves from and to and its state. The entity is the account's (b_legal_entity, the composite foreign key). Tenant roles
+  // update its state columns only (a column grant; the guard holds who moves what), so the update probes assign the state to itself. A row is inserted by an owner or an admin
+  // for a change that cannot raise spend, or by the execution of the approved proposal of its own command, for a live launch with a recorded object, and nothing else.
+  'crove_ads.ad_manage_change': {
+    update: { set: 'state = state' },
+    noInsertControl: 'only an owner or an admin inserts a change, in a context of its org, for a live launch with a recorded object, and the ones that can raise spend only inside the execution of their approved proposal; every other context of the org is refused by its guard (ads.db.test.ts and ads-manage.db.test.ts test it)',
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      const draft = randomUUID();
+      const launch = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+          { table: 'crove_ads.ad_campaign_draft', values: { org_id: o.id, id: draft, ad_account_id: account, name: 'RLS matrix change', objective: 'traffic', created_by: o.owner } },
+          {
+            table: 'crove_ads.ad_launch',
+            values: {
+              org_id: o.id,
+              id: launch,
+              ad_account_id: account,
+              draft_id: draft,
+              proposal_id: randomUUID(),
+              plan_hash: `sha256:${hex64()}`,
+              currency: 'VND',
+              daily_budget: '100000',
+              start_on: '2031-01-01',
+              end_on: '2031-01-10',
+              amount: '1000000',
+              commit_until: '2031-01-10',
+              created_by: o.owner,
+            },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, launch_id: launch, kind: 'pause', slot: 'campaign', level: 'campaign', object_id: `rls-${randomUUID()}`, requested_by: o.owner },
       };
     },
   },
