@@ -6,7 +6,7 @@ import { INVOICE_CHECK_CODES, type Check } from '@crove/kernel-contract';
 import { translatorFor } from '../src/i18n/runtime.ts';
 import { invoiceCheckMessage } from '../src/lib/invoice-checks.ts';
 
-const PARAMS = { currency: 'USD', rate: '25450', lines: '1800000', subtotal: '1900000', taxCode: '0101234564', date: '2026-10-13', invoice: 'C26TAB/1234', amount: '1000000.5', count: '2', difference: '1', line: '3', previous: '****1234', current: '****9876', total: '9000000', usual: '1500000', item: 'Cước internet', percent: '40', ratio: '6.0' };
+const PARAMS = { currency: 'USD', rate: '25450', lines: '1800000', subtotal: '1900000', taxCode: '0101234564', date: '2026-10-13', invoice: 'C26TAB/1234', amount: '1000000.5', count: '2', accounts: '334', difference: '1', line: '3', previous: '****1234', current: '****9876', total: '9000000', usual: '1500000', item: 'Cước internet', percent: '40', ratio: '6.0' };
 // (count, lines: the unclassified-lines check of #2091 names how many lines and which; `lines` is also the sum of the lines-sum check.)
 const check = (code: string | undefined, params: Record<string, string> | null = PARAMS): Check => ({
   id: code?.split('.')[0] ?? 'x',
@@ -66,6 +66,10 @@ describe('invoice check wording', () => {
     expect(invoiceCheckMessage(check('anomaly_amount.unusual', { ...PARAMS, subject: 'payment' }), en, format)).toContain('the payment of <9000000> is 6.0 times what this party is usually paid');
     expect(invoiceCheckMessage(check('anomaly_amount.unusual', { ...PARAMS, subject: 'payment', direction: 'low' }), vi, format)).toContain('số tiền chi <9000000> chỉ bằng 40% mức thường chi cho đối tượng này');
     expect(invoiceCheckMessage(check('anomaly_amount.unusual'), vi, format)).toContain('của nhà cung cấp này');
+    // #2793: a plain payment voucher debiting a payroll payable while a pay-run payment is active names the account(s).
+    expect(invoiceCheckMessage(check('anomaly_payroll.active_payment', { accounts: '334, 3383' }), vi, format)).toContain('tài khoản công nợ lương (334, 3383)');
+    expect(invoiceCheckMessage(check('anomaly_payroll.active_payment', { accounts: '334, 3383' }), en, format)).toContain('payroll payable account 334, 3383');
+    expect(invoiceCheckMessage(check('anomaly_payroll.active_payment', null), en, format)).toBe('STORED');
   });
 
   it('keeps the stored sentence without a code, for an unknown code and when a parameter is missing', () => {

@@ -11,12 +11,14 @@
 // Audit facts carry ids, counts and field names, never an amount, a name or the fingerprint: audit rows reach the WORM archive, and a plain hash over a small run's inputs and figures
 // could be confirmed by guessing after the person is erased. The fingerprint lives in the run's own approval record, which the org purge deletes.
 import { createHash } from 'node:crypto';
-import { money, ruleInForce, sum, toMoney, calculateLeaveBalance, calculatePayroll, calculateThirteenthMonthSalary, countCompletedCalendarMonths, listRulesUsed, PAYROLL_RULES, PayrollRefusedError, type LeaveEntry, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs, type RuleRef } from '@crove/l10n-vn';
+import { sql } from 'kysely';
+import { money, ruleInForce, sum, toMoney, calculatePayroll, calculateThirteenthMonthSalary, countCompletedCalendarMonths, listRulesUsed, PAYROLL_RULES, PayrollRefusedError, type LeaveEntry, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs, type RuleRef } from '@crove/l10n-vn';
 import type { MemberRole } from '@crove/db';
 import {
   HR_DEFAULT_WORKING_DAYS,
   HR_RECURRING_INPUTS,
   auditValue,
+  leaveBaselineMeetsCategoryFloor,
   tableWrite,
   zHrLineAdjust,
   zHrLineInputsSet,
@@ -44,6 +46,7 @@ import {
   type HrThirteenthMonthPreviewRow,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { computeAnnualLeaveBalance } from './leave.ts';
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso, monthEnd, monthStart, previousMonth, termsInForceForMonth } from './payroll-dates.ts';
 
@@ -256,7 +259,8 @@ function initialInputsFor(
   person: Person,
   previous?: { employment_id: string | null; inputs: unknown },
 ): HrPayrollInputs {
-  const inputs = previous === undefined ? parseInputs({}) : recurringOf(previous.inputs);
+  const base = previous === undefined ? parseInputs({}) : recurringOf(previous.inputs);
+  const inputs: HrPayrollInputs = { ...base, unpaidLeaveFromLedger: false };
   if (
     person.terms.termMonths !== null &&
     (previous === undefined || previous.employment_id !== person.terms.id || inputs.contractTermMonths === null)
@@ -269,7 +273,7 @@ function initialInputsFor(
 async function loadRun(ctx: Ctx, runId: string) {
   const run = await ctx.trx
     .selectFrom('crove_hr.payroll_run')
-    .select(['id', 'legal_entity_id', 'month', 'status', 'working_days'])
+    .select(['id', 'legal_entity_id', 'month', 'status', 'working_days', 'created_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', runId)
     .forUpdate()
@@ -469,7 +473,7 @@ export const lineInputsSet = defineCommand({
     const run = await loadRun(ctx, found.run_id);
     const line = await ctx.trx
       .selectFrom('crove_hr.payroll_line')
-      .select(['id', 'run_id', 'employee_id', 'kind'])
+      .select(['id', 'run_id', 'employee_id', 'kind', 'inputs'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.lineId)
       .forUpdate()
@@ -479,8 +483,34 @@ export const lineInputsSet = defineCommand({
     if (run.status !== 'draft') throw notDraft();
     const person = (await peopleOf(ctx, run.legal_entity_id, run.month)).find((p) => p.employeeId === line.employee_id);
     if (!person) throw new DomainError('HR_EMPLOYEE_NOT_PAID', 409, 'Nhân viên này không có lương trong tháng này');
-    const f = figuresOf(person, input.inputs, run.month, run.working_days);
-    await updatePayLine(ctx, line.id, person.terms.id, input.inputs, f);
+    const existing = parseInputs(line.inputs);
+    const leaveCategory = input.inputs.leaveCategory ?? existing.leaveCategory;
+    const standardAnnualDays =
+      input.inputs.standardAnnualDays === undefined ? existing.standardAnnualDays : input.inputs.standardAnnualDays;
+    if (standardAnnualDays !== null && !leaveBaselineMeetsCategoryFloor(leaveCategory, standardAnnualDays)) {
+      throw new DomainError(
+        'HR_LEAVE_BASELINE_INVALID',
+        422,
+        'Số ngày phép năm chuẩn không được thấp hơn mức tối thiểu theo Bộ luật Lao động 2019 cho nhóm công việc này',
+      );
+    }
+    const existingFromLedger =
+      existing.unpaidLeaveFromLedger !== null
+        ? existing.unpaidLeaveFromLedger
+        : existing.unpaidLeaveDays !== '0' &&
+          (await resolveLegacySyncedLineIds(ctx, run.id, run.month, run.created_at, [{ lineId: line.id, employeeId: line.employee_id }])).has(line.id);
+    const unpaidLeaveFromLedger =
+      input.inputs.unpaidLeaveDays === existing.unpaidLeaveDays
+        ? (input.inputs.unpaidLeaveFromLedger ?? existingFromLedger)
+        : false;
+    const nextInputs = zHrPayrollInputs.parse({
+      ...input.inputs,
+      leaveCategory,
+      standardAnnualDays,
+      unpaidLeaveFromLedger,
+    });
+    const f = figuresOf(person, nextInputs, run.month, run.working_days);
+    await updatePayLine(ctx, line.id, person.terms.id, nextInputs, f);
     ctx.audit({ runId: run.id, lineId: line.id, inputKeys: auditValue(LINE, 'inputs', Object.keys(input.inputs).length), refused: f.status === 'refused' });
     return { runId: run.id, lineId: line.id };
   },
@@ -551,6 +581,7 @@ export const runImportTimekeeping = defineCommand({
       const merged: HrPayrollInputs = {
         ...existing,
         unpaidLeaveDays: row.unpaidLeaveDays,
+        unpaidLeaveFromLedger: false,
         daysNotEmployed: row.daysNotEmployed,
         nightHours: row.nightHours,
         overtime: row.overtime,
@@ -607,6 +638,66 @@ function formatSyncUnpaidDays(raw: string): string {
   return normalized;
 }
 
+async function resolveLegacySyncedLineIds(
+  ctx: Ctx,
+  runId: string,
+  runMonth: string,
+  runCreatedAt: Date,
+  candidates: readonly { lineId: string; employeeId: string }[],
+): Promise<ReadonlySet<string>> {
+  if (candidates.length === 0) return new Set();
+  const since = new Date(runCreatedAt.getTime() - 60_000);
+  const lastSync = await ctx.trx
+    .selectFrom('crove_kernel.audit_event')
+    .select(['occurred_at'])
+    .where('org_id', '=', ctx.orgId)
+    .where('occurred_at', '>=', since)
+    .where('outcome', '=', 'ok')
+    .where('command', '=', 'hr.payroll.run.sync_leave')
+    .where('target_id', '=', runId)
+    .orderBy('occurred_at', 'desc')
+    .orderBy('id', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  if (!lastSync) return new Set();
+
+  const employeeIds = [...new Set(candidates.map((c) => c.employeeId))];
+  const lineIds = candidates.map((c) => c.lineId);
+  const leaveWritten = await ctx.trx
+    .selectFrom('crove_kernel.audit_event')
+    .select(['target_id'])
+    .where('org_id', '=', ctx.orgId)
+    .where('outcome', '=', 'ok')
+    .where('command', '=', 'hr.payroll.leave.set')
+    .where('target_id', 'in', employeeIds)
+    .where('occurred_at', '<=', lastSync.occurred_at)
+    .where(sql<boolean>`detail ->> 'month' = ${runMonth}`)
+    .where(sql<boolean>`detail ->> 'kind' = 'unpaid_leave'`)
+    .where(sql<boolean>`COALESCE(detail ->> 'cleared', 'false') <> 'true'`)
+    .execute();
+  const employeesWithPriorLeave = new Set(leaveWritten.flatMap((r) => (r.target_id ? [r.target_id] : [])));
+  if (employeesWithPriorLeave.size === 0) return new Set();
+
+  const editedAfterSync = await ctx.trx
+    .selectFrom('crove_kernel.audit_event')
+    .select(['target_id'])
+    .where('org_id', '=', ctx.orgId)
+    .where('occurred_at', '>', lastSync.occurred_at)
+    .where('outcome', '=', 'ok')
+    .where('command', '=', 'hr.payroll.line.inputs.set')
+    .where('target_id', 'in', lineIds)
+    .execute();
+  const editedLineIds = new Set(editedAfterSync.flatMap((r) => (r.target_id ? [r.target_id] : [])));
+
+  const syncedLineIds = new Set<string>();
+  for (const c of candidates) {
+    if (employeesWithPriorLeave.has(c.employeeId) && !editedLineIds.has(c.lineId)) {
+      syncedLineIds.add(c.lineId);
+    }
+  }
+  return syncedLineIds;
+}
+
 export const runSyncLeave = defineCommand({
   name: 'hr.payroll.run.sync_leave',
   input: zHrRunRef,
@@ -622,25 +713,73 @@ export const runSyncLeave = defineCommand({
   handler: async (ctx, input): Promise<HrRunWritten> => {
     userOf(ctx.actor);
     const { payRun, locked, byLineId, people } = await lockDraftLines(ctx, input.runId);
-    const employeeIds = [...new Set(locked.map((l) => l.employee_id))];
+    // Skip orphaned pay lines whose employee is no longer paid in this month (e.g. terminated before `payRun.month`
+    // after the draft run was opened); `runRecalculate` prunes them and `runApprove` guards them via `HR_RUN_STALE`.
+    const paidEmployeeIds = [...new Set(locked.filter((l) => people.has(l.employee_id)).map((l) => l.employee_id))];
     const entries =
-      employeeIds.length === 0
+      paidEmployeeIds.length === 0
         ? []
         : await ctx.trx
             .selectFrom('crove_hr.payroll_leave_entry')
             .select(['employee_id', 'days'])
             .where('org_id', '=', ctx.orgId)
-            .where('employee_id', 'in', employeeIds)
+            .where('employee_id', 'in', paidEmployeeIds)
             .where('month', '=', payRun.month)
             .where('kind', '=', 'unpaid_leave')
             .execute();
     const unpaidByEmployee = new Map(entries.map((e) => [e.employee_id, formatSyncUnpaidDays(e.days)]));
+    // Backward compatibility for pre-upgrade draft pay lines (`unpaidLeaveFromLedger === null`):
+    // resolve per-employee whether a prior `sync_leave` copied an `unpaid_leave` entry that has since been cleared/deleted.
+    const legacyCandidates = locked
+      .filter((r) => {
+        if (!people.has(r.employee_id) || unpaidByEmployee.has(r.employee_id)) return false;
+        const parsed = parseInputs(r.inputs);
+        return parsed.unpaidLeaveFromLedger === null && parsed.unpaidLeaveDays !== '0';
+      })
+      .map((r) => ({ lineId: r.id, employeeId: r.employee_id }));
+    const legacySyncedLineIds = await resolveLegacySyncedLineIds(
+      ctx,
+      payRun.id,
+      payRun.month,
+      payRun.created_at,
+      legacyCandidates,
+    );
     const updates: { lineId: string; employmentId: string; inputs: HrPayrollInputs; figures: LineFigures }[] = [];
     for (const row of locked) {
+      if (!people.has(row.employee_id)) continue;
       const { line, person, existing } = resolveDraftLineTarget(byLineId, people, row.id);
-      const nextUnpaidDays = unpaidByEmployee.get(line.employee_id) ?? '0';
-      if (existing.unpaidLeaveDays === nextUnpaidDays) continue;
-      const merged = zHrPayrollInputs.parse({ ...existing, unpaidLeaveDays: nextUnpaidDays });
+      const ledgerUnpaidDays = unpaidByEmployee.get(line.employee_id);
+      const cameFromLedger = existing.unpaidLeaveFromLedger === true || legacySyncedLineIds.has(line.id);
+      let nextUnpaidDays: string;
+      let nextFromLedger: boolean;
+      if (ledgerUnpaidDays !== undefined) {
+        nextUnpaidDays = ledgerUnpaidDays;
+        nextFromLedger = true;
+      } else if (cameFromLedger) {
+        // A previously synced unpaid_leave entry was cleared or deleted in the leave ledger: reset back to '0'.
+        nextUnpaidDays = '0';
+        nextFromLedger = false;
+      } else {
+        // No leave ledger entry exists for this employee in this month, and existing unpaidLeaveDays came from
+        // imported timekeeping or manual entry rather than a prior leave sync: preserve it untouched, and stamp
+        // `unpaidLeaveFromLedger: false` on pre-upgrade (`null`) rows so later syncs skip legacy resolution.
+        if (existing.unpaidLeaveFromLedger === null && existing.unpaidLeaveDays !== '0') {
+          const stamped = zHrPayrollInputs.parse({ ...existing, unpaidLeaveFromLedger: false });
+          await ctx.trx
+            .updateTable('crove_hr.payroll_line')
+            .set({ inputs: JSON.stringify(stamped), updated_at: ctx.now })
+            .where('org_id', '=', ctx.orgId)
+            .where('id', '=', line.id)
+            .execute();
+        }
+        continue;
+      }
+      if (existing.unpaidLeaveDays === nextUnpaidDays && existing.unpaidLeaveFromLedger === nextFromLedger) continue;
+      const merged = zHrPayrollInputs.parse({
+        ...existing,
+        unpaidLeaveDays: nextUnpaidDays,
+        unpaidLeaveFromLedger: nextFromLedger,
+      });
       updates.push({
         lineId: line.id,
         employmentId: person.terms.id,
@@ -1064,15 +1203,19 @@ export const runSheet = defineQuery({
         if (inMonth(employee?.ended_on) && first && employee?.ended_on && countCompletedCalendarMonths(iso(first.effective_from), iso(employee.ended_on)) >= 12) {
           flags.push('severance_check');
         }
-        if (used?.contract_type === 'fixed_term' && l.status === 'refused' && parseInputs(l.inputs).contractTermMonths === null) flags.push('fixed_term_months_missing');
+        const parsedLineInputs = parseInputs(l.inputs);
+        if (used?.contract_type === 'fixed_term' && l.status === 'refused' && parsedLineInputs.contractTermMonths === null) {
+          flags.push('fixed_term_months_missing');
+        }
         if (first) {
           try {
-            // Stage 1 (#3394) does not persist a per-employee hazardous work category on payroll_employee / payroll_employment,
-            // so the pay run sheet evaluates annual_leave_exceeded against the statutory 12-day standard entitlement.
-            const leaveBalance = calculateLeaveBalance(
+            const leaveBalance = computeAnnualLeaveBalance(
               {
                 year: leaveYear,
-                category: 'standard',
+                category: parsedLineInputs.leaveCategory,
+                ...(parsedLineInputs.standardAnnualDays !== null
+                  ? { standardAnnualDays: parsedLineInputs.standardAnnualDays }
+                  : {}),
                 hireDate: iso(first.effective_from),
                 endedOn: employee?.ended_on ? iso(employee.ended_on) : null,
                 asOfMonth: run.month,

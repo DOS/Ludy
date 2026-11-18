@@ -198,6 +198,7 @@ import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMark
 import { zMarketplaceFeeClearingRequest, zMarketplacePayoutRequest, zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
+import { zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput } from './supplier-payment.ts';
 import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep } from './einvoice-notice.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceCorrectionOptions, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
@@ -337,6 +338,7 @@ import {
 import {
   zNote,
   zNoteAcceptSummary,
+  zNoteClip,
   zNoteCreate,
   zNoteFromMeetingSummary,
   zNoteLinkAdd,
@@ -368,6 +370,7 @@ import {
   zTodoCompleteResult,
   zTodoCount,
   zTodoCreate,
+  zTodoQuickCapture,
   zTodoHandOver,
   zTodoHandedOver,
   zTodoLinkAdd,
@@ -1143,6 +1146,7 @@ export const contract = {
     search: oc.input(zNoteSearch).output(z.array(zNoteSummary)),
     panel: oc.input(zNoteLinkTarget).output(zNoteRecordPanelView),
     create: oc.input(zNoteCreate).output(zNoteWritten),
+    clip: oc.input(zNoteClip).output(zNoteWritten),
     fromMeetingSummary: oc.input(zNoteFromMeetingSummary).output(zNoteWritten),
     update: oc.input(zNoteUpdate).output(zNoteWritten),
     setVisibility: oc.input(zNoteSetVisibility).output(zNoteWritten),
@@ -1168,6 +1172,7 @@ export const contract = {
       list: oc.input(zTodoList).output(z.array(zTodoSummary)),
       get: oc.input(zTodoRef).output(zTodo),
       create: oc.input(zTodoCreate).output(zTodoWritten),
+      quickCapture: oc.input(zTodoQuickCapture).output(zTodoWritten),
       acceptSuggestions: oc.input(zTodoAcceptSuggestions).output(zTodoAcceptSuggestionsResult),
       update: oc.input(zTodoUpdate).output(zTodoWritten),
       complete: oc.input(zTodoComplete).output(zTodoCompleteResult),
@@ -2382,6 +2387,15 @@ export const contract = {
     retire: oc.input(zSupplierBankAccountRetire).output(zSupplierBankAccount),
     // The supplier's key is shredded, so the sealed number and holder can never be opened again: owners only.
     erase: oc.input(zSupplierBankAccountErase).output(zSupplierBankAccountErased),
+  },
+  // The payments to a supplier approved in Ludy (#3113 S2). Owners and admins only; the request for approval is a proposal (kernel.proposal.request with command finance.supplier_payment.record and
+  // `purchaseDocumentId`). Marking that the supplier confirmed the account needs a fresh second factor (STEP_UP_REQUIRED otherwise). SUPPLIER_PAYMENT_NOT_FOUND, SUPPLIER_PAYMENT_INVOICE_NOT_FOUND (404),
+  // SUPPLIER_PAYMENT_NO_ACCOUNT, SUPPLIER_PAYMENT_ACCOUNT_AMBIGUOUS, SUPPLIER_PAYMENT_EXISTS, SUPPLIER_PAYMENT_PENDING, SUPPLIER_PAYMENT_CHANGED, SUPPLIER_PAYMENT_NOT_APPROVED,
+  // SUPPLIER_PAYMENT_ALREADY_CONFIRMED (409).
+  supplierPayment: {
+    list: oc.input(zSupplierPaymentListInput).output(zSupplierPaymentList),
+    confirmAccount: oc.input(zSupplierPaymentConfirm).output(zSupplierPayment),
+    cancel: oc.input(zSupplierPaymentCancel).output(zSupplierPayment),
   },
   paymentReminders: {
     list: oc.input(z.object({ legalEntityId: zId.optional() }).optional()).output(zPaymentReminderList),

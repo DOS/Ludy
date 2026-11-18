@@ -7,7 +7,7 @@
 // - finance.household.rules (every role): the thresholds, the percentages by trade, the tax reductions, the expense groups and the forms in force on a date, each with its source and status.
 // No rate, threshold or group is a constant here: they are rows with an effective date (migration 20261231030035), a source and a status. A row is `commentary` until the accountant has checked
 // it against the primary text (#2520); the answers say so (`commentary`), and nothing that files or computes a tax may rely on one yet. The audit rows hold ids, the group, the method, the dates
-// and the trades, never the representative's name.
+// the trades and the VAT cut answer, never the representative's name.
 import { sql } from 'kysely';
 import {
   vietnamToday,
@@ -35,7 +35,7 @@ const notHousehold = () => new DomainError('HOUSEHOLD_NOT_HOUSEHOLD', 422, 'Chá»
 async function profileAt(ctx: Ctx, entity: string, date: string): Promise<HouseholdProfile | null> {
   const row = await ctx.trx
     .selectFrom('crove_finance.household_profile')
-    .select(['effective_from', 'tax_group', 'pit_method', 'trades', 'einvoice_registered', 'representative_name'])
+    .select(['effective_from', 'tax_group', 'pit_method', 'trades', 'einvoice_registered', 'representative_name', 'vat_cut_eligible'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)
     .where('effective_from', '<=', date)
@@ -50,6 +50,7 @@ async function profileAt(ctx: Ctx, entity: string, date: string): Promise<Househ
     trades: [...row.trades],
     einvoiceRegistered: row.einvoice_registered,
     representativeName: row.representative_name,
+    vatCutEligible: row.vat_cut_eligible,
   };
 }
 
@@ -139,10 +140,11 @@ export const householdProfileSet = defineCommand({
         trades: input.trades,
         einvoice_registered: input.einvoiceRegistered,
         representative_name: input.representativeName,
+        vat_cut_eligible: input.vatCutEligible ?? null,
         created_by: userId,
       })
       .execute();
-    ctx.audit({ legalEntityId: entity, effectiveFrom: input.effectiveFrom, taxGroup: input.taxGroup, pitMethod: input.pitMethod, trades: input.trades, einvoiceRegistered: input.einvoiceRegistered });
+    ctx.audit({ legalEntityId: entity, effectiveFrom: input.effectiveFrom, taxGroup: input.taxGroup, pitMethod: input.pitMethod, trades: input.trades, einvoiceRegistered: input.einvoiceRegistered, vatCutEligible: input.vatCutEligible ?? null });
     // The answer is stored with the request's idempotency key for a week, so it holds no name: the screen reads the profile again.
     const view = await householdProfileView(ctx, entity, input.effectiveFrom);
     return { ...view, profile: view.profile ? { ...view.profile, representativeName: null } : null };

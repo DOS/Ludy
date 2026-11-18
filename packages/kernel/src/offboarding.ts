@@ -133,6 +133,7 @@ export const EXPORT_TABLES = {
   'finance.einvoice_notice': { from: 'crove_finance.einvoice_notice', omit: [] },
   'finance.supplier_bank_account': { from: 'crove_finance.supplier_bank_account', omit: ['number_sealed', 'account_holder_sealed', 'number_hash'] },
   'finance.supplier_bank_account_change': { from: 'crove_finance.supplier_bank_account_change', omit: ['old_number_hash', 'new_number_hash'] },
+  'finance.supplier_payment': { from: 'crove_finance.supplier_payment', omit: ['number_hash'] },
   'finance.einvoice_series': { from: 'crove_finance.einvoice_series', omit: [] },
   'finance.einvoice_draft': { from: 'crove_finance.einvoice_draft', omit: ['idempotency_key'] },
   'finance.einvoice_draft_line': { from: 'crove_finance.einvoice_draft_line', omit: [] },

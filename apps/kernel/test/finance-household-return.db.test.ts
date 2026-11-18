@@ -74,10 +74,12 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
     await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
     // The seeded law rows are `confirmed` from #3710 (finance-household.db.test.ts checks that). This file exercises the provisional label, so it starts from the rows as they were before:
     // `commentary`, restored here as the database owner (the law tables are read-only to every tenant login).
+    // The yearly revenue threshold and the PIT cut are set to 0 here: these files test the books' rows, splits, labels and Excel with small revenues, so every revenue is above the threshold and the tax is the plain
+    // percentage of it, as before the yearly rule (#3710 slice 3). That rule has its own file, finance-household-annual.db.test.ts, on the real rows (1 billion VND, PIT cut 30%).
     const restore = new pg.Client({ connectionString: adminUrl });
     await restore.connect();
     await restore.query(
-      "UPDATE crove_finance.household_threshold SET status = 'commentary'; UPDATE crove_finance.household_trade_rate SET status = 'commentary'; UPDATE crove_finance.household_form_version SET status = 'commentary'; UPDATE crove_finance.household_return_form_version SET status = 'commentary'",
+      "UPDATE crove_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE crove_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE crove_finance.household_trade_rate SET status = 'commentary'; UPDATE crove_finance.household_form_version SET status = 'commentary'; UPDATE crove_finance.household_return_form_version SET status = 'commentary'",
     );
     await restore.end();
     const app = new URL(adminUrl);
@@ -298,7 +300,8 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
     await confirmFromQ4();
     await entry(o.household, o.orgId, '2026-11-12', 'Bán hàng và dịch vụ', [['111', 400000, 0], ['511', 0, 400000]]);
     await expect(cnkd(o, 4, { forExport: true })).rejects.toMatchObject({ code: 'HOUSEHOLD_SPLIT_INVALID' });
-    expect((await cnkd(o, 4, { forExport: true, split: [{ trade: 'goods', revenue: '400000' }] })).totals?.tax).toBe('6000');
+    // The August revenue is before this quarter in the same year, so the yearly rule (#3710 slice 3) also needs its split: all of it was goods.
+    expect((await cnkd(o, 4, { forExport: true, split: [{ trade: 'goods', revenue: '400000' }], splitBefore: [{ trade: 'goods', revenue: '1600000' }] })).totals?.tax).toBe('6000');
   });
 
   it('refuses the entities and profiles that file no quarterly worksheet', async () => {
@@ -372,5 +375,68 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
     await admin((a) => a.query("INSERT INTO crove_finance.household_return_form_version (form, version, effective_from, name, pit_methods, source, status) VALUES ('01/CNKD', '2027.1', DATE '2027-04-01', 'Tờ khai 01/CNKD', ARRAY[]::text[], 'test', 'commentary') ON CONFLICT DO NOTHING"));
     await expect(cnkd(o, 2, {}, o.household, o.owner, 2027)).rejects.toMatchObject({ code: 'HOUSEHOLD_RETURN_NOT_REQUIRED' });
     expect((await cnkd(o, 1, {}, o.household, o.owner, 2027)).form.version).toMatch(/^2026\.[12]$/);
+  });
+
+  describe('the Decree 174 VAT cut behind the profile answer (#3710 slice 2)', () => {
+    // A quarter of goods revenue 1 600 000: VAT 1% = 16 000, PIT 0.5% = 8 000, and the cut of 20% takes 3 200 of the VAT.
+    async function quarter(o: Org, over: Record<string, unknown> = {}) {
+      await percentage(o, over);
+      await entry(o.household, o.orgId, '2026-08-12', 'Bán hàng', [['111', 1600000, 0], ['511', 0, 1600000]]);
+    }
+
+    it('applies the cut when the profile answered yes: the VAT payable and what is left to pay follow it, and the VAT column stays the VAT before the cut', async () => {
+      const o = await org();
+      await quarter(o, { vatCutEligible: 'yes' });
+      await settlement(o, 'shopee', '2026-07-01', '2026-07-15', 4200);
+      const w = await cnkd(o, 3);
+      expect(w.totals).toEqual({ revenue: '1600000', vat: '16000', pit: '8000', tax: '24000' });
+      expect(w.vatCut).toEqual({
+        answer: 'yes',
+        percent: '20',
+        applied: true,
+        lines: [{ trade: 'goods', cut: '3200', vatPayable: '12800' }],
+        total: { cut: '3200', vatPayable: '12800' },
+        ifEligible: null,
+      });
+      // Owed: VAT payable 12 800 plus PIT 8 000 = 20 800; less the 4 200 the platform withheld.
+      expect(w.due).toBe('16600');
+      expect(w.overpaid).toBe('0');
+    });
+
+    it('applies no cut when the profile answered no', async () => {
+      const o = await org();
+      await quarter(o, { vatCutEligible: 'no' });
+      const w = await cnkd(o, 3);
+      expect(w.vatCut).toMatchObject({ answer: 'no', applied: false, total: { cut: '0', vatPayable: '16000' }, ifEligible: null });
+      expect(w.due).toBe('24000');
+    });
+
+    it('computes without the cut when the profile has no answer, and shows what the VAT would be if eligible', async () => {
+      const o = await org();
+      await quarter(o);
+      const w = await cnkd(o, 3);
+      expect(w.vatCut).toMatchObject({ answer: null, applied: false, total: { cut: '0', vatPayable: '16000' }, ifEligible: { cut: '3200', vatPayable: '12800' } });
+      expect(w.due).toBe('24000');
+    });
+
+    it('cuts nothing in a quarter after the cut ends, whatever the answer', async () => {
+      const o = await org();
+      await percentage(o, { vatCutEligible: 'yes' });
+      await entry(o.household, o.orgId, '2027-02-12', 'Bán hàng', [['111', 1600000, 0], ['511', 0, 1600000]]);
+      const w = await cnkd(o, 1, {}, o.household, o.owner, 2027);
+      // The VAT percentage of 2027 is whatever the dated rows say (an earlier test of this file adds a row), so the figures are compared with the book's own, not with a number.
+      expect(w.vatCut).toMatchObject({ answer: 'yes', percent: '0', applied: false, total: { cut: '0', vatPayable: w.totals?.vat }, ifEligible: null });
+      expect(w.due).toBe(w.totals?.tax);
+    });
+
+    it('holds the cut totals back while revenue has no trade, like the tax totals', async () => {
+      const o = await org();
+      await percentage(o, { vatCutEligible: 'yes', trades: ['goods', 'services'] });
+      await entry(o.household, o.orgId, '2026-08-12', 'Bán hàng', [['111', 1600000, 0], ['511', 0, 1600000]]);
+      const w = await cnkd(o, 3, { split: [{ trade: 'goods', revenue: '1000000' }] });
+      expect(w.totals).toBeNull();
+      expect(w.vatCut).toMatchObject({ applied: true, total: null, ifEligible: null });
+      expect(w.due).toBeNull();
+    });
   });
 });

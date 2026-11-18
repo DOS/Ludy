@@ -4,7 +4,13 @@
 // changes; an approved one never does (a correction is an adjustment line in a later run). Owners and admins only, and every read is a sensitive query.
 import { z } from 'zod';
 import { zAccountCode, zCashVoucherProposal, zId, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
-import { zHrLaborRuleRef, zHrWage } from './hr.ts';
+import {
+  HR_LEAVE_CATEGORIES,
+  leaveBaselineMeetsCategoryFloor,
+  zHrAnnualLeaveBaseline,
+  zHrLaborRuleRef,
+  zHrWage,
+} from './hr.ts';
 
 export const HR_RUN_STATUSES = ['draft', 'approved', 'paid', 'closed'] as const;
 export type HrRunStatus = (typeof HR_RUN_STATUSES)[number];
@@ -23,7 +29,17 @@ export type HrDeductionKind = (typeof HR_DEDUCTION_KINDS)[number];
 export const HR_DEFAULT_WORKING_DAYS = '26';
 
 // The inputs of a month's line that recur from one month to the next, copied when a month is opened; every other input starts empty.
-export const HR_RECURRING_INPUTS = ['allowances', 'otherRegularPay', 'voluntaryPension', 'commitment', 'insured', 'contractTermMonths', 'withholdingRequested'] as const;
+export const HR_RECURRING_INPUTS = [
+  'allowances',
+  'otherRegularPay',
+  'voluntaryPension',
+  'commitment',
+  'insured',
+  'contractTermMonths',
+  'withholdingRequested',
+  'leaveCategory',
+  'standardAnnualDays',
+] as const;
 
 export const zHrMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'YYYY-MM');
 // Days in whole or half units (unpaid leave, days not employed, the working days of the month) and hours of overtime: decimal strings, never JS numbers.
@@ -34,9 +50,10 @@ const zHrOvertimeEntry = z.strictObject({ dayKind: z.enum(HR_OVERTIME_DAY_KINDS)
 export const zHrSignedAmount = z.string().regex(/^-?\d{1,16}(\.\d{1,2})?$/, 'signed decimal string');
 const zLabel = z.string().trim().min(1).max(100);
 
-export const zHrPayrollInputs = z.strictObject({
+const zHrPayrollInputsObject = z.strictObject({
   // What recurs (copied from last month): the allowances with whether the contract names them with an amount, other regular pay, the voluntary pension, the commitment form,
-  // whether the person is insured (null: by the contract type), the term of a fixed-term contract in months, the person's request for withholding below the threshold.
+  // whether the person is insured (null: by the contract type), the term of a fixed-term contract in months, the person's request for withholding below the threshold,
+  // and the employee's statutory/contractual annual leave baseline for annual_leave_exceeded checks.
   allowances: z.array(z.strictObject({ label: zLabel, amount: zHrWage, type: z.enum(HR_ALLOWANCE_TYPES), namedInContract: z.boolean() })).max(20).default([]),
   otherRegularPay: zHrWage.default('0'),
   voluntaryPension: zHrWage.default('0'),
@@ -44,8 +61,12 @@ export const zHrPayrollInputs = z.strictObject({
   insured: z.boolean().nullable().default(null),
   contractTermMonths: z.number().int().min(1).max(36).nullable().default(null),
   withholdingRequested: z.boolean().default(false),
-  // What changed this month.
+  leaveCategory: z.enum(HR_LEAVE_CATEGORIES).default('standard'),
+  standardAnnualDays: zHrAnnualLeaveBaseline.nullable().default(null),
+  // What changed this month. `unpaidLeaveFromLedger` records whether `unpaidLeaveDays` was populated by `hr.payroll.run.sync_leave`
+  // (`true` = synced from ledger, `false` = manual/imported, `null` = pre-upgrade row whose provenance has not been stamped yet).
   unpaidLeaveDays: zHrDays.default('0'),
+  unpaidLeaveFromLedger: z.boolean().nullable().default(null),
   daysNotEmployed: zHrDays.default('0'),
   overtime: z.array(zHrOvertimeEntry).max(30).default([]),
   nightHours: zHrHours.default('0'),
@@ -53,8 +74,27 @@ export const zHrPayrollInputs = z.strictObject({
   advance: zHrWage.default('0'),
   deductions: z.array(z.strictObject({ label: zLabel, kind: z.enum(HR_DEDUCTION_KINDS), amount: zHrWage })).max(20).default([]),
 });
+
+export const zHrPayrollInputs = zHrPayrollInputsObject.refine(
+  (v) => v.standardAnnualDays === null || leaveBaselineMeetsCategoryFloor(v.leaveCategory, v.standardAnnualDays),
+  { message: 'standardAnnualDays cannot be below the statutory minimum for leaveCategory', path: ['standardAnnualDays'] },
+);
 export type HrPayrollInputs = z.output<typeof zHrPayrollInputs>;
 export type HrPayrollInputsInput = z.input<typeof zHrPayrollInputs>;
+
+const zHrLineInputsEdit = zHrPayrollInputsObject
+  .extend({
+    leaveCategory: z.enum(HR_LEAVE_CATEGORIES).optional(),
+    standardAnnualDays: zHrAnnualLeaveBaseline.nullable().optional(),
+    unpaidLeaveFromLedger: z.boolean().nullable().optional(),
+  })
+  .refine(
+    (v) =>
+      v.standardAnnualDays === null ||
+      v.standardAnnualDays === undefined ||
+      leaveBaselineMeetsCategoryFloor(v.leaveCategory ?? 'standard', v.standardAnnualDays),
+    { message: 'standardAnnualDays cannot be below the statutory minimum for leaveCategory', path: ['standardAnnualDays'] },
+  );
 
 export const zHrRunOpen = z.strictObject({ month: zHrMonth, workingDays: zHrDays.optional(), legalEntityId: zId.optional() });
 export type HrRunOpen = z.infer<typeof zHrRunOpen>;
@@ -63,7 +103,7 @@ export type HrRunRef = z.infer<typeof zHrRunRef>;
 // Recalculate every line of a draft from the employment terms and dependents as they are now (and add a person hired since); optionally with other working days.
 export const zHrRunRecalculate = z.strictObject({ runId: zId, workingDays: zHrDays.optional() });
 export type HrRunRecalculate = z.infer<typeof zHrRunRecalculate>;
-export const zHrLineInputsSet = z.strictObject({ lineId: zId, inputs: zHrPayrollInputs });
+export const zHrLineInputsSet = z.strictObject({ lineId: zId, inputs: zHrLineInputsEdit });
 export type HrLineInputsSet = z.input<typeof zHrLineInputsSet>;
 // Batch-update timekeeping fields on a draft run's pay lines while preserving allowances, bonuses, advances, deductions, and recurring terms.
 export const zHrRunImportTimekeeping = z.strictObject({
