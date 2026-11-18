@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
 -- Meetings L2 (#2589) and A3 (#3161): the search stops at the first page when a word is common, instead of reading every line that holds it (#3843).
 --   crove_meetings.search_segment_ids(q, limit, offset)   restated from 20261226000000 with the same signature, owner, search_path, grants, checks and answer; only how it finds the page changes.
 -- Why: the definer collected every line of the org that holds the typed words (a MATERIALIZED set), then asked which meetings the caller reads, then sorted all the readable hits by meeting date to
