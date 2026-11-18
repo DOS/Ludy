@@ -1303,6 +1303,9 @@ export function createRpcHandler(
         // The recorder's rough notes and Vy's expansion of them (A5, #3163): the same run family, budget and checks as the summary; see member-vy-ports.ts.
         notesGet: os.meetings.results.notesGet.handler(meetingsQuery('meetings.notes.get')),
         notesSave: os.meetings.results.notesSave.handler(meetingsCommand('meetings.notes.save')),
+        // The table of contents of a meeting (#3844).
+        chaptersGet: os.meetings.results.chaptersGet.handler(meetingsQuery('meetings.chapters.get')),
+        chaptersSave: os.meetings.results.chaptersSave.handler(meetingsCommand('meetings.chapters.save')),
         enhance: os.meetings.results.enhance.handler(({ context, input }) =>
           inOrg(context, (orgId, actor) => runNotesEnhance({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
         ),
