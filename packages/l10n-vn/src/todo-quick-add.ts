@@ -266,14 +266,13 @@ const TEMPORAL_UNITS_AFTER_CLOCK = new Set([
   'seconds',
 ]);
 
-const DMY_MEASUREMENT_UNITS = new Set([
+// Strictly unambiguous SI / weight / volume / length / currency units that never collide with Vietnamese words.
+const DMY_UNAMBIGUOUS_UNITS = new Set([
   'kg',
-  'g',
   'gr',
   'gram',
   'grams',
   'mg',
-  'l',
   'lit',
   'liter',
   'liters',
@@ -283,15 +282,25 @@ const DMY_MEASUREMENT_UNITS = new Set([
   'cl',
   'dl',
   'km',
-  'm',
   'cm',
   'mm',
   'm2',
   'm3',
-  'ha',
   'oz',
   'lb',
   'lbs',
+  'tbsp',
+  'tsp',
+  'vnd',
+  'usd',
+]);
+
+// Packaging, duration, and count nouns blocked only for proper fractions (day < month, e.g. "1/2 hộp", "3/4 trang").
+const DMY_FRACTION_NOUNS = new Set([
+  'g',
+  'l',
+  'm',
+  'ha',
   'tan',
   'ta',
   'yen',
@@ -316,8 +325,6 @@ const DMY_MEASUREMENT_UNITS = new Set([
   'suat',
   'cup',
   'cups',
-  'tbsp',
-  'tsp',
   'bottle',
   'bottles',
   'pack',
@@ -330,16 +337,11 @@ const DMY_MEASUREMENT_UNITS = new Set([
   'pieces',
   'slice',
   'slices',
-  'vnd',
-  'usd',
   'trieu',
   'nghin',
   'ngan',
   'dong',
   'tr',
-]);
-
-const DMY_FRACTION_NOUNS = new Set([
   'phan',
   'ban',
   'trang',
@@ -1133,6 +1135,109 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     }
   };
 
+  const extendMultiWeekdayEndIdx = (afterWdIdx: number, allowShortEn: boolean): number | null => {
+    let curEndIdx = afterWdIdx;
+    let foundMore = false;
+    while (curEndIdx + 1 < words.length) {
+      const curWord = words[curEndIdx];
+      const nextWord = words[curEndIdx + 1];
+      if (!curWord || !nextWord) break;
+      const gap = input.slice(curWord.end, nextWord.start);
+      let wdStartIdx = curEndIdx + 1;
+      if (!/^[ \t]*[,&/][ \t]*$/u.test(gap)) {
+        if (
+          /^[ \t]+$/u.test(gap) &&
+          (vnMatchAny(nextWord, ['và', 'với', 'cùng', 'hoặc']) ||
+            nextWord.nfcLower === 'and' ||
+            nextWord.nfcLower === 'or') &&
+          curEndIdx + 2 < words.length &&
+          spacesOnlyBetween(input, nextWord.end, (words[curEndIdx + 2] as WordToken).start)
+        ) {
+          wdStartIdx = curEndIdx + 2;
+        } else {
+          break;
+        }
+      }
+      const extraWd = matchWeekday(input, words, wdStartIdx, allowShortEn);
+      if (!extraWd) break;
+      const extraEndIdx = wdStartIdx + extraWd.consumed - 1;
+      const extraSpan = {
+        start: (words[wdStartIdx] as WordToken).start,
+        end: (words[extraEndIdx] as WordToken).end,
+      };
+      if (!isWordSpanAvailable(extraSpan)) break;
+      curEndIdx = extraEndIdx;
+      foundMore = true;
+    }
+    return foundMore ? curEndIdx : null;
+  };
+
+  const prependMultiWeekdayStart = (beforeStartIdx: number, allowShortEn: boolean): number | null => {
+    let curStartIdx = beforeStartIdx;
+    let foundMore = false;
+    while (curStartIdx >= 1) {
+      const prevWord = words[curStartIdx - 1];
+      const curStartWord = words[curStartIdx];
+      if (!prevWord || !curStartWord) break;
+      const gap = input.slice(prevWord.end, curStartWord.start);
+      let wdEndIdx = curStartIdx - 1;
+      if (!/^[ \t]*[,&/][ \t]*$/u.test(gap)) {
+        if (
+          /^[ \t]+$/u.test(gap) &&
+          (vnMatchAny(prevWord, ['và', 'với', 'cùng', 'hoặc']) ||
+            prevWord.nfcLower === 'and' ||
+            prevWord.nfcLower === 'or') &&
+          curStartIdx >= 2 &&
+          spacesOnlyBetween(input, (words[curStartIdx - 2] as WordToken).end, prevWord.start)
+        ) {
+          wdEndIdx = curStartIdx - 2;
+        } else {
+          break;
+        }
+      }
+      const twoWd = wdEndIdx >= 1 ? matchWeekday(input, words, wdEndIdx - 1, allowShortEn) : null;
+      const oneWd = matchWeekday(input, words, wdEndIdx, allowShortEn);
+      const wdStartIdx = twoWd && twoWd.consumed === 2 ? wdEndIdx - 1 : oneWd && oneWd.consumed === 1 ? wdEndIdx : -1;
+      if (wdStartIdx < 0) break;
+      const extraSpan = {
+        start: (words[wdStartIdx] as WordToken).start,
+        end: (words[wdEndIdx] as WordToken).end,
+      };
+      if (!isWordSpanAvailable(extraSpan)) break;
+      curStartIdx = wdStartIdx;
+      foundMore = true;
+    }
+    return foundMore ? (words[curStartIdx] as WordToken).start : null;
+  };
+
+  // Preserves multi-weekday lists ("every Monday and Wednesday") intact without saving a misleading single-weekday rule.
+  const claimWeeklyWeekdayPhrase = (
+    spanStart: number,
+    phraseEndIdx: number,
+    weekday: number,
+    allowShortEn: boolean,
+    checkLeadingStartIdx?: number,
+  ): number | null => {
+    const baseEnd = (words[phraseEndIdx] as WordToken).end;
+    if (!isWordSpanAvailable({ start: spanStart, end: baseEnd })) return null;
+    const multiEndIdx = extendMultiWeekdayEndIdx(phraseEndIdx, allowShortEn);
+    const multiStart =
+      checkLeadingStartIdx !== undefined ? prependMultiWeekdayStart(checkLeadingStartIdx, allowShortEn) : null;
+    if (multiEndIdx !== null || multiStart !== null) {
+      const start = multiStart ?? spanStart;
+      const finalEndIdx = multiEndIdx ?? phraseEndIdx;
+      occupied.push({ start, end: (words[finalEndIdx] as WordToken).end });
+      return finalEndIdx;
+    }
+    recordRecurrence(
+      { freq: 'weekly', interval: 1, byWeekday: weekday },
+      nextOccurrenceOfWeekday(today, weekday, true),
+      spanStart,
+      baseEnd,
+    );
+    return phraseEndIdx;
+  };
+
   for (let i = 0; i < words.length; i++) {
     const w0 = words[i];
     if (!w0 || !isWordSpanAvailable(w0)) continue;
@@ -1330,16 +1435,19 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       if (connWord && vnMatch(connWord, 'vào') && contiguous(i + 1, afterWeekIdx)) afterWeekIdx += 1;
       const wd = afterWeekIdx < words.length && contiguous(i + 1, afterWeekIdx) ? matchWeekday(input, words, afterWeekIdx, false) : null;
       const endIdx = wd ? afterWeekIdx + wd.consumed - 1 : i + 1;
-      const span = spanOf(endIdx);
-      if (isWordPhraseEndAvailable(span)) {
-        recordRecurrence(
-          wd ? { freq: 'weekly', interval: 1, byWeekday: wd.weekday } : { freq: 'weekly', interval: 1 },
-          wd ? nextOccurrenceOfWeekday(today, wd.weekday, true) : today,
-          span.start,
-          span.end,
-        );
-        i = endIdx;
-        continue;
+      if (wd) {
+        const consumedTo = claimWeeklyWeekdayPhrase(w0.start, endIdx, wd.weekday, false);
+        if (consumedTo !== null) {
+          i = consumedTo;
+          continue;
+        }
+      } else {
+        const span = spanOf(endIdx);
+        if (isWordPhraseEndAvailable(span)) {
+          recordRecurrence({ freq: 'weekly', interval: 1 }, today, span.start, span.end);
+          i = endIdx;
+          continue;
+        }
       }
     }
     if (w0.nfcLower === 'every' && w1 && contiguous(i, i + 1) && w1.nfcLower === 'week') {
@@ -1347,30 +1455,28 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       if (words[afterWeekIdx]?.nfcLower === 'on' && contiguous(i + 1, afterWeekIdx)) afterWeekIdx += 1;
       const wd = afterWeekIdx < words.length && contiguous(i + 1, afterWeekIdx) ? matchWeekday(input, words, afterWeekIdx, true) : null;
       const endIdx = wd ? afterWeekIdx + wd.consumed - 1 : i + 1;
-      const span = spanOf(endIdx);
-      if (isWordPhraseEndAvailable(span)) {
-        recordRecurrence(
-          wd ? { freq: 'weekly', interval: 1, byWeekday: wd.weekday } : { freq: 'weekly', interval: 1 },
-          wd ? nextOccurrenceOfWeekday(today, wd.weekday, true) : today,
-          span.start,
-          span.end,
-        );
-        i = endIdx;
-        continue;
+      if (wd) {
+        const consumedTo = claimWeeklyWeekdayPhrase(w0.start, endIdx, wd.weekday, true);
+        if (consumedTo !== null) {
+          i = consumedTo;
+          continue;
+        }
+      } else {
+        const span = spanOf(endIdx);
+        if (isWordPhraseEndAvailable(span)) {
+          recordRecurrence({ freq: 'weekly', interval: 1 }, today, span.start, span.end);
+          i = endIdx;
+          continue;
+        }
       }
     }
     if ((!isHangCargoWord(i) && vnMatchAny(w0, ['mỗi', 'hàng', 'hằng'])) || w0.nfcLower === 'every') {
-      const wd = w1 && contiguous(i, i + 1) ? matchWeekday(input, words, i + 1, w0.nfcLower === 'every') : null;
+      const allowShort = w0.nfcLower === 'every';
+      const wd = w1 && contiguous(i, i + 1) ? matchWeekday(input, words, i + 1, allowShort) : null;
       if (wd) {
-        const span = spanOf(i + wd.consumed);
-        if (isWordPhraseEndAvailable(span)) {
-          recordRecurrence(
-            { freq: 'weekly', interval: 1, byWeekday: wd.weekday },
-            nextOccurrenceOfWeekday(today, wd.weekday, true),
-            span.start,
-            span.end,
-          );
-          i += wd.consumed;
+        const consumedTo = claimWeeklyWeekdayPhrase(w0.start, i + wd.consumed, wd.weekday, allowShort);
+        if (consumedTo !== null) {
+          i = consumedTo;
           continue;
         }
       }
@@ -1388,15 +1494,15 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         contiguous(i, afterIdx + 1) &&
         ((vnMatchAny(a0, ['mỗi', 'hàng', 'hằng']) && vnMatch(a1, 'tuần')) || (a0.nfcLower === 'every' && a1.nfcLower === 'week'))
       ) {
-        const span = spanOf(afterIdx + 1);
-        if (isWordPhraseEndAvailable(span)) {
-          recordRecurrence(
-            { freq: 'weekly', interval: 1, byWeekday: leadingWd.weekday },
-            nextOccurrenceOfWeekday(today, leadingWd.weekday, true),
-            span.start,
-            span.end,
-          );
-          i = afterIdx + 1;
+        const consumedTo = claimWeeklyWeekdayPhrase(
+          w0.start,
+          afterIdx + 1,
+          leadingWd.weekday,
+          a0.nfcLower === 'every',
+          i,
+        );
+        if (consumedTo !== null) {
+          i = consumedTo;
           continue;
         }
       }
@@ -1456,15 +1562,9 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       const wd = matchWeekday(input, words, i + 2, true);
       if (wd) {
         const endIdx = i + 1 + wd.consumed;
-        const span = spanOf(endIdx);
-        if (isWordPhraseEndAvailable(span)) {
-          recordRecurrence(
-            { freq: 'weekly', interval: 1, byWeekday: wd.weekday },
-            nextOccurrenceOfWeekday(today, wd.weekday, true),
-            span.start,
-            span.end,
-          );
-          i = endIdx;
+        const consumedTo = claimWeeklyWeekdayPhrase(w0.start, endIdx, wd.weekday, true);
+        if (consumedTo !== null) {
+          i = consumedTo;
           continue;
         }
       }
@@ -1500,7 +1600,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       if (/^[ \t]*[%‰]/.test(input.slice(end))) continue;
       const nextWord = findAdjacentWordAfter(input, words, end, occupied);
       if (nextWord) {
-        if (DMY_MEASUREMENT_UNITS.has(nextWord.folded)) continue;
+        if (DMY_UNAMBIGUOUS_UNITS.has(nextWord.folded)) continue;
         if (day < month && DMY_FRACTION_NOUNS.has(nextWord.folded)) continue;
       }
     }
@@ -2426,10 +2526,16 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     // Time-only input without a date word: today unless that wall time has already passed today.
     const candidateMs = zonedInstant(opts.timeZone, today, parsedTime.hour * 60 + parsedTime.minute);
     dueOn = candidateMs <= nowMs ? addLocalDays(today, 1) : today;
-  } else if (parsedTime && !explicitTodaySpecified && explicitDueOn === null && recurrence?.freq === 'weekly' && recurrence.byWeekday !== undefined && dueOn === today) {
-    // Weekly recurrence matching today's weekday whose clock time already passed today advances 7 days.
+  } else if (parsedTime && !explicitTodaySpecified && explicitDueOn === null && recurrence !== null && dueOn === today) {
+    // Daily/weekly recurrence starting today whose clock time already passed advances to its next occurrence.
     const candidateMs = zonedInstant(opts.timeZone, today, parsedTime.hour * 60 + parsedTime.minute);
-    if (candidateMs <= nowMs) dueOn = addLocalDays(today, 7);
+    if (candidateMs <= nowMs) {
+      if (recurrence.freq === 'daily') {
+        dueOn = addLocalDays(today, recurrence.interval);
+      } else if (recurrence.freq === 'weekly') {
+        dueOn = addLocalDays(today, 7 * recurrence.interval);
+      }
+    }
   }
 
   let dueAt: string | null = null;

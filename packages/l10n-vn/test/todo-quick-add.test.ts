@@ -162,11 +162,16 @@ describe('parseTodoQuickAdd (#3556)', () => {
   });
 
   it('parses recurrence hints in Vietnamese and English', () => {
-    const dailyVn = parseTodoQuickAdd('Kiểm tra tồn kho mỗi ngày 8h', { now: TUE_MORNING, timeZone: VN_TZ });
+    const dailyVn = parseTodoQuickAdd('Kiểm tra tồn kho mỗi ngày 9h', { now: TUE_MORNING, timeZone: VN_TZ });
     expect(dailyVn.title).toBe('Kiểm tra tồn kho');
     expect(dailyVn.recurrence).toEqual({ freq: 'daily', interval: 1 });
-    expect(dailyVn.dueTime).toBe('08:00');
+    expect(dailyVn.dueTime).toBe('09:00');
     expect(dailyVn.dueOn).toBe('2026-11-17');
+
+    // Equal wall time (8h at 08:00) rolls forward to next day, matching time-only rollover
+    const dailyVnSameHour = parseTodoQuickAdd('Kiểm tra tồn kho mỗi ngày 8h', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(dailyVnSameHour.dueTime).toBe('08:00');
+    expect(dailyVnSameHour.dueOn).toBe('2026-11-18');
 
     expect(parseTodoQuickAdd('Check inbox hang ngay', { now: TUE_MORNING, timeZone: VN_TZ }).recurrence).toEqual({
       freq: 'daily',
@@ -1393,6 +1398,82 @@ describe('parseTodoQuickAdd (#3556)', () => {
       title: 'Họp',
       dueOn: '2027-02-01',
       dueTime: null,
+    });
+    // Real dd/mm dates followed by Vietnamese verbs sharing folded forms with packaging nouns still parse cleanly
+    expect(parseTodoQuickAdd('25/11 họp nhóm', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'họp nhóm',
+      dueOn: '2026-11-25',
+    });
+    expect(parseTodoQuickAdd('25/11 gọi anh Nam', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'gọi anh Nam',
+      dueOn: '2026-11-25',
+    });
+    expect(parseTodoQuickAdd('25/11 báo cáo thuế', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'báo cáo thuế',
+      dueOn: '2026-11-25',
+    });
+    expect(parseTodoQuickAdd('25/11 đóng sổ', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'đóng sổ',
+      dueOn: '2026-11-25',
+    });
+    expect(parseTodoQuickAdd('25/11 cần nộp tờ khai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'cần nộp tờ khai',
+      dueOn: '2026-11-25',
+    });
+    expect(parseTodoQuickAdd('25/11 bắt đầu dự án', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'bắt đầu dự án',
+      dueOn: '2026-11-25',
+    });
+    expect(parseTodoQuickAdd('25/11 gói quà cho khách', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'gói quà cho khách',
+      dueOn: '2026-11-25',
+    });
+
+    // Multi-weekday recurrence lists stay intact without saving a partial single-weekday rule
+    expect(parseTodoQuickAdd('Call every Monday and Wednesday 9am', { now: TUE_AFTERNOON, timeZone: VN_TZ })).toMatchObject({
+      title: 'Call every Monday and Wednesday',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+      recurrence: null,
+    });
+    expect(parseTodoQuickAdd('Call every Monday, Wednesday and Friday 9am', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Call every Monday, Wednesday and Friday',
+      dueOn: '2026-11-17',
+      dueTime: '09:00',
+      recurrence: null,
+    });
+    expect(parseTodoQuickAdd('Họp thứ hai và thứ tư hàng tuần 9h', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp thứ hai và thứ tư hàng tuần',
+      dueOn: '2026-11-17',
+      dueTime: '09:00',
+      recurrence: null,
+    });
+    expect(parseTodoQuickAdd('Họp hàng tuần thứ 2 và thứ 4 9h', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp hàng tuần thứ 2 và thứ 4',
+      dueOn: '2026-11-17',
+      dueTime: '09:00',
+      recurrence: null,
+    });
+
+    // Daily and bare weekly recurrences roll forward when their clock time has already passed today
+    expect(parseTodoQuickAdd('Gọi khách mỗi ngày 9h', { now: TUE_AFTERNOON, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+      dueAt: '2026-11-18T09:00:00+07:00',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    expect(parseTodoQuickAdd('Họp mỗi tuần 9h', { now: TUE_AFTERNOON, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-24',
+      dueTime: '09:00',
+      recurrence: { freq: 'weekly', interval: 1 },
+    });
+    expect(parseTodoQuickAdd('Gọi khách hôm nay mỗi ngày 9h', { now: TUE_AFTERNOON, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2026-11-17',
+      dueTime: '09:00',
+      recurrence: { freq: 'daily', interval: 1 },
     });
   });
 
