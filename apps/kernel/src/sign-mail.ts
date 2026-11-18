@@ -6,13 +6,16 @@ import { BlobIntegrityError, BlobTooLargeError, readVerified } from '@crove/kern
 import type { MailAttachment } from '@crove/mail';
 import {
   SIGN_COMPLETED_MAIL_TEMPLATE,
+  SIGN_DIRECT_OTP_MAIL_TEMPLATE,
   SIGN_INVITE_MAIL_TEMPLATE,
   SIGN_OTP_MAIL_TEMPLATE,
   SIGN_REMIND_MAIL_TEMPLATE,
   renderSignCompletedMail,
+  renderSignDirectOtpMail,
   renderSignInviteMail,
   renderSignOtpMail,
   zSignCompletedMailPayload,
+  zSignDirectOtpMailPayload,
   zSignInviteMailPayload,
   zSignOtpMailPayload,
 } from '@crove/mod-sign';
@@ -187,9 +190,31 @@ const signCompletedTemplate: MailTemplate = {
   },
 };
 
+const signDirectOtpTemplate: MailTemplate = {
+  async render(input) {
+    if (!input.subject) return null;
+    const parsed = zSignDirectOtpMailPayload.parse(input.payload);
+    const data = await input.execute<{
+      code: string;
+      docTitle: string;
+      expiresAt: string;
+    } | null>('sign.direct.otp_mail_data', {
+      directLinkId: parsed.directLinkId,
+      otpId: parsed.otpId,
+    });
+    if (!data) return null;
+    const rendered = renderSignDirectOtpMail(parsed, {
+      brand: input.brand,
+      code: data.code,
+    });
+    return { subject: input.subject, ...rendered };
+  },
+};
+
 export const signMailTemplates: MailTemplates = {
   [SIGN_INVITE_MAIL_TEMPLATE]: signInviteTemplate(false),
   [SIGN_REMIND_MAIL_TEMPLATE]: signInviteTemplate(true),
   [SIGN_OTP_MAIL_TEMPLATE]: signOtpTemplate,
+  [SIGN_DIRECT_OTP_MAIL_TEMPLATE]: signDirectOtpTemplate,
   [SIGN_COMPLETED_MAIL_TEMPLATE]: signCompletedTemplate,
 };

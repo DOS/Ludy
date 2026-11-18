@@ -15,6 +15,7 @@ export function readSignTokenFromHash(hash = typeof window !== 'undefined' ? win
 }
 
 const SIGN_TOKEN_SESSION_KEY = 'crove.sign.ceremony.token';
+const SIGN_DIRECT_TOKEN_SESSION_KEY = 'crove.sign.direct.token';
 const SIGN_TOKEN_SESSION_TTL_MS = 15 * 60 * 1000;
 
 interface StoredSignToken {
@@ -22,26 +23,20 @@ interface StoredSignToken {
   savedAt: number;
 }
 
-export function scrubSignTokenHash(): void {
-  if (typeof window === 'undefined' || !window.location.hash) return;
-  const cleanUrl = `${window.location.pathname}${window.location.search}`;
-  window.history.replaceState(window.history.state ?? null, '', cleanUrl);
-}
-
-export function rememberSignToken(token: string): void {
+function writeSessionSignToken(storageKey: string, token: string): void {
   if (typeof window === 'undefined' || !SIGN_TOKEN_PATTERN.test(token)) return;
   try {
     const payload: StoredSignToken = { token, savedAt: Date.now() };
-    window.sessionStorage.setItem(SIGN_TOKEN_SESSION_KEY, JSON.stringify(payload));
+    window.sessionStorage.setItem(storageKey, JSON.stringify(payload));
   } catch {
     // Ignore storage quota or private browsing restrictions.
   }
 }
 
-export function pendingSignToken(): string | null {
+function readSessionSignToken(storageKey: string): string | null {
   if (typeof window === 'undefined') return null;
   try {
-    const raw = window.sessionStorage.getItem(SIGN_TOKEN_SESSION_KEY);
+    const raw = window.sessionStorage.getItem(storageKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredSignToken> | null;
     if (
@@ -52,13 +47,13 @@ export function pendingSignToken(): string | null {
       !Number.isFinite(parsed.savedAt) ||
       Date.now() - parsed.savedAt > SIGN_TOKEN_SESSION_TTL_MS
     ) {
-      window.sessionStorage.removeItem(SIGN_TOKEN_SESSION_KEY);
+      window.sessionStorage.removeItem(storageKey);
       return null;
     }
     return parsed.token;
   } catch {
     try {
-      window.sessionStorage.removeItem(SIGN_TOKEN_SESSION_KEY);
+      window.sessionStorage.removeItem(storageKey);
     } catch {
       // Ignore storage access failures.
     }
@@ -66,13 +61,43 @@ export function pendingSignToken(): string | null {
   }
 }
 
-export function forgetSignToken(): void {
+function clearSessionSignToken(storageKey: string): void {
   if (typeof window === 'undefined') return;
   try {
-    window.sessionStorage.removeItem(SIGN_TOKEN_SESSION_KEY);
+    window.sessionStorage.removeItem(storageKey);
   } catch {
     // Ignore storage access failures.
   }
+}
+
+export function scrubSignTokenHash(): void {
+  if (typeof window === 'undefined' || !window.location.hash) return;
+  const cleanUrl = `${window.location.pathname}${window.location.search}`;
+  window.history.replaceState(window.history.state ?? null, '', cleanUrl);
+}
+
+export function rememberSignToken(token: string): void {
+  writeSessionSignToken(SIGN_TOKEN_SESSION_KEY, token);
+}
+
+export function pendingSignToken(): string | null {
+  return readSessionSignToken(SIGN_TOKEN_SESSION_KEY);
+}
+
+export function forgetSignToken(): void {
+  clearSessionSignToken(SIGN_TOKEN_SESSION_KEY);
+}
+
+export function rememberDirectSignToken(token: string): void {
+  writeSessionSignToken(SIGN_DIRECT_TOKEN_SESSION_KEY, token);
+}
+
+export function pendingDirectSignToken(): string | null {
+  return readSessionSignToken(SIGN_DIRECT_TOKEN_SESSION_KEY);
+}
+
+export function forgetDirectSignToken(): void {
+  clearSessionSignToken(SIGN_DIRECT_TOKEN_SESSION_KEY);
 }
 
 export function subscribeToHash(onStoreChange: () => void): () => void {

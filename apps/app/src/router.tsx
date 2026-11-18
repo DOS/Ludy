@@ -110,11 +110,12 @@ import { RecordingHost } from './components/recording-host.tsx';
 import { VersionBanner } from './components/version-banner.tsx';
 import { FixedAssetsPage } from './routes/fixed-assets.tsx';
 import { SignCeremonyPage } from './routes/sign-ceremony.tsx';
+import { SignDirectPage } from './routes/sign-direct.tsx';
 import { SignEnvelopeDetailPage } from './routes/sign-envelope-detail.tsx';
 import { SignEnvelopesPage } from './routes/sign-envelopes.tsx';
 import { SignTemplatesPage } from './routes/sign-templates.tsx';
 import { SignVerifyPage } from './routes/sign-verify.tsx';
-import { SIGN_PAGE_PATH } from './lib/sign-hash.ts';
+import { SIGN_DIRECT_PAGE_PATH, SIGN_PAGE_PATH } from './lib/sign-hash.ts';
 
 async function requireSession() {
   if (!(await accessToken())) throw redirect({ to: '/login' });
@@ -280,6 +281,14 @@ const signCeremonyRoute = createRoute({
   path: SIGN_PAGE_PATH,
   beforeLoad: ({ matches }) => requireInstalledOutside(matches),
   component: SignCeremonyPage,
+});
+
+// Public direct signing link ceremony (#3551): /-/sign/d#<token>, no account. Token stays strictly in the URL hash fragment.
+const signDirectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: SIGN_DIRECT_PAGE_PATH,
+  beforeLoad: ({ matches }) => requireInstalledOutside(matches),
+  component: SignDirectPage,
 });
 
 // Accept links are /-/invite#<token>. The token is moved from the address bar to storage before the sign-in
@@ -688,6 +697,7 @@ const routeTree = rootRoute.addChildren([
   reportRoute,
   quoteDocumentRoute,
   signCeremonyRoute,
+  signDirectRoute,
   shareRoute,
   socialPlanPrintRoute,
   meetingMinutesRoute,

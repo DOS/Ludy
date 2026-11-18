@@ -292,6 +292,116 @@ test('eSign workflow: upload, manual field placement, mobile 375px sequential si
     return { certificateCode, fileSha256: shaMatch![0] };
   });
 
+  const directToken = await test.step('enable a 1-signer Direct Signing Link and sign from /-/sign/d#<token> on 375px mobile', async () => {
+    const session = await storedSession(page);
+    const rpcHeaders = {
+      authorization: `Bearer ${session?.access_token ?? ''}`,
+      'x-crove-org': slug,
+    };
+
+    const createTplRes = await page.request.post('/api/rpc/sign/template/create', {
+      headers: rpcHeaders,
+      data: {
+        json: {
+          title: 'Mau NDA truc tiep E2E',
+          sourceEnvelopeId: envelopeId,
+          copyRolesAndFields: false,
+          status: 'active',
+        },
+      },
+    });
+    expect(createTplRes.status(), await createTplRes.text()).toBe(200);
+    const createdTpl = ((await createTplRes.json()) as { json: { templateId: string } }).json;
+
+    const rolesRes = await page.request.post('/api/rpc/sign/template/roles_set', {
+      headers: rpcHeaders,
+      data: {
+        json: {
+          templateId: createdTpl.templateId,
+          roles: [
+            {
+              roleKey: 'r1',
+              signerRole: 'signer',
+              roleLabel: 'Đối tác',
+              routingOrder: 1,
+              deliveryMode: 'link',
+              requireEmailOtp: false,
+            },
+          ],
+        },
+      },
+    });
+    expect(rolesRes.status(), await rolesRes.text()).toBe(200);
+
+    const fieldsRes = await page.request.post('/api/rpc/sign/template/fields_set', {
+      headers: rpcHeaders,
+      data: {
+        json: {
+          templateId: createdTpl.templateId,
+          fields: [
+            {
+              roleKey: 'r1',
+              fieldType: 'signature',
+              pageNumber: 1,
+              xNorm: 0.15,
+              yNorm: 0.72,
+              wNorm: 0.3,
+              hNorm: 0.08,
+              required: true,
+            },
+          ],
+        },
+      },
+    });
+    expect(fieldsRes.status(), await fieldsRes.text()).toBe(200);
+
+    const linkRes = await page.request.post('/api/rpc/sign/template/direct_link_set', {
+      headers: rpcHeaders,
+      data: {
+        json: {
+          templateId: createdTpl.templateId,
+          enabled: true,
+          requireEmailOtp: false,
+        },
+      },
+    });
+    expect(linkRes.status(), await linkRes.text()).toBe(200);
+    const minted = ((await linkRes.json()) as { json: { url: string | null; token: string | null } }).json;
+    expect(minted.url).toContain('/-/sign/d#');
+    expect(minted.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+
+    const baseOrigin = new URL(page.url()).origin;
+    const mobileContext = await browser.newContext({ viewport: { width: 375, height: 812 } });
+    const mobilePage = await mobileContext.newPage();
+    try {
+      await mobilePage.goto(`${baseOrigin}${minted.url!}`);
+      await expect(mobilePage.getByTestId('sign-direct-ready')).toBeVisible({ timeout: 20_000 });
+      expect(mobilePage.url()).not.toContain('#');
+      await assertNoHorizontalOverflow(mobilePage);
+
+      await mobilePage.getByTestId('direct-recipient-name-input').fill('Le Minh C');
+      await mobilePage.getByTestId('direct-start-btn').click();
+
+      await expect(mobilePage.getByTestId('sign-ceremony-ready')).toBeVisible({ timeout: 20_000 });
+      expect(mobilePage.url()).toMatch(/\/-\/sign$/);
+      expect(mobilePage.url()).not.toContain('#');
+      await assertNoHorizontalOverflow(mobilePage);
+
+      await mobilePage.locator('[data-testid^="ceremony-sign-btn-"]').first().click();
+      await mobilePage.getByRole('tab', { name: 'Gõ tên' }).click();
+      await mobilePage.locator('#typed-signature-input').fill('Le Minh C');
+      await mobilePage.getByTestId('signature-pad-apply').click();
+
+      await mobilePage.getByTestId('ceremony-consent-checkbox').check();
+      await mobilePage.getByTestId('ceremony-submit-btn').click();
+      await expect(mobilePage.getByTestId('sign-ceremony-completed')).toBeVisible({ timeout: 20_000 });
+    } finally {
+      await mobileContext.close();
+    }
+
+    return minted.token!;
+  });
+
   await test.step('disabling sign module per-org returns opaque 404 on public verify/view routes', async () => {
     const session = await storedSession(page);
     const toggleRes = await page.request.post('/api/rpc/org/setApp', {
@@ -308,6 +418,11 @@ test('eSign workflow: upload, manual field placement, mobile 375px sequential si
       data: { token: tokenFragment },
     });
     expect(viewAfterOff.status()).toBe(404);
+
+    const directAfterOff = await page.request.post('/api/sign/direct/view', {
+      data: { token: directToken },
+    });
+    expect(directAfterOff.status()).toBe(404);
 
     const verifyAfterOff = await page.request.post('/api/sign/verify', {
       data: {
