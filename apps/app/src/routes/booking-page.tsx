@@ -41,7 +41,8 @@ const post = <T,>(path: string, body: unknown) => call<T>(path, { method: 'POST'
 // `named: true` is for text that leaves the screen (a reply the host sends to a customer, whose own zone is not known): the offset is always said, "(GMT+7)".
 export const whenOf = (s: Slot, zone: string, locale: Locale, { named = false }: { named?: boolean } = {}) => {
   const base = `${dayLabel(zonedDate(zone, Date.parse(s.start)), locale)}, ${timeIn(s.start, zone, locale)} - ${timeIn(s.end, zone, locale)}`;
-  return isVietnamZone(zone) && !named ? base : `${base} (${zoneOffset(zone, Date.parse(s.start))})`;
+  const offset = isVietnamZone(zone) && !named ? '' : zoneOffset(zone, Date.parse(s.start));
+  return offset ? `${base} (${offset})` : base;
 };
 
 // An error in the page's own frame (#3646): what went wrong in the page's words and a "Tải lại" that asks again, not a bare red box.
@@ -140,7 +141,7 @@ export function SlotPicker({ path, zone, onPick }: { path: string; zone: string;
               <p className="text-sm font-medium text-foreground">{dayLabel(d.date, locale)}</p>
               <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-4">
                 {d.slots.map((s) => (
-                  <Button key={s.start} type="button" variant="outline" className="h-11 w-full" onClick={() => onPick(s)}>
+                  <Button key={s.start} type="button" variant="outline" className="h-11 w-full" aria-label={`${timeIn(s.start, zone, locale)}, ${dayLabel(d.date, locale)}`} onClick={() => onPick(s)}>
                     {timeIn(s.start, zone, locale)}
                   </Button>
                 ))}

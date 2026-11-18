@@ -56,7 +56,9 @@ describe('how a time zone is told to a customer (#3646)', () => {
     expect(zoneOffset('Asia/Kolkata', at)).toBe('GMT+5:30');
     expect(zoneOffset('America/New_York', at)).toBe('GMT-5');
     expect(zoneOffset('America/New_York', Date.parse('2026-07-02T02:00:00.000Z'))).toBe('GMT-4');
-    expect(zoneOffset('Not/AZone', at)).toBe('GMT');
+    expect(zoneOffset('UTC', at)).toBe('GMT');
+    expect(zoneOffset('Europe/London', at)).toBe('GMT');
+    expect(zoneOffset('Not/AZone', at)).toBe('');
   });
 
   it('names the place without the region or the underscores of the IANA name', () => {

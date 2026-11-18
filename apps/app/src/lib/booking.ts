@@ -19,13 +19,14 @@ export const VIETNAM_ZONE = 'Asia/Ho_Chi_Minh';
 const VIETNAM_ZONES: readonly string[] = [VIETNAM_ZONE, 'Asia/Saigon'];
 export const isVietnamZone = (zone: string): boolean => VIETNAM_ZONES.includes(zone);
 
-/** "GMT+9" or "GMT+5:30": a zone's offset from Greenwich at `at`, as people say it; "GMT" for UTC itself. */
+/** "GMT+9" or "GMT+5:30": a zone's offset from Greenwich at `at`, as people say it; "GMT" for UTC itself; empty where the browser cannot tell. */
 export function zoneOffset(zone: string, at: number): string {
   try {
     const part = new Intl.DateTimeFormat('en-GB', { timeZone: zone, timeZoneName: 'shortOffset' }).formatToParts(new Date(at)).find((p) => p.type === 'timeZoneName');
-    return part?.value ?? 'GMT';
+    const value = part?.value ?? '';
+    return value === 'GMT+0' || value === 'GMT-0' ? 'GMT' : value;
   } catch {
-    return 'GMT';
+    return '';
   }
 }
 
