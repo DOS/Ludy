@@ -190,7 +190,8 @@ suite('the sandbox meeting platform from the HTTP rpc to the staged bytes (meeti
     const audioId = await idOf('sandbox-rec-audio');
     await stageKey(audioId, await meetingFor(), key);
     await sweep();
-    const job = sent.find((j) => j.orgId === org.orgId);
+    // Both rows are queued now, in no fixed order: each job is found by the platform's id.
+    const job = sent.find((j) => j.orgId === org.orgId && j.externalId === 'sandbox-rec-audio');
     expect(job).toMatchObject({ id: audioId, connectionId, provider: 'sandbox', externalId: 'sandbox-rec-audio', hasAudio: true, stagingKey: key });
     expect(sent.find((j) => j.orgId === org.orgId && j.externalId === 'sandbox-rec-video')).toMatchObject({ id: videoId, hasAudio: false, hasVideo: true });
     // The job opens the token the rpc sealed (the step that failed with a non-JSON secret) and stages the sandbox file under the row's key.
