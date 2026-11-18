@@ -292,7 +292,8 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
     await received(o, b, party, '2026-09-12', '5', '000002');
     // A receipt after the count day says nothing about what was found on it.
     await received(o, b, other, '2026-10-15', '5', '000003');
-    const countId = await count(o, '2026-09-30', [{ itemId: b, countedQuantity: '3', unitCost: '50' }]);
+    // The books hold ten by the count day (two receipts of five, 100 each on the purchase lines, so 20 a unit), twenty are counted: a surplus of ten.
+    const countId = await count(o, '2026-09-30', [{ itemId: b, countedQuantity: '20', unitCost: '50' }]);
     await approve(o, (await askCount(o, countId)).proposalId);
     const facts = await source(o, countId);
     expect(facts.supplier).toEqual({ partyId: party, name: 'Công ty Cung ứng Mẫu', lastReceived: '2026-09-12' });

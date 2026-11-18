@@ -124,6 +124,15 @@ export async function checkSurplusVoucher(ctx: Ctx, payload: JournalVoucherPropo
 // A viewer is left out: the answer names a supplier and may spend from the AI budget.
 const SURPLUS_VIEW_ROLES: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
+// A quantity as the person reads it: the column's trailing zeros dropped ("3.000000" is "3", "2.500000" is "2.5"), by a scan from the end.
+function plainQuantity(value: string): string {
+  if (!value.includes('.')) return value;
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '0') end -= 1;
+  if (end > 0 && value[end - 1] === '.') end -= 1;
+  return value.slice(0, end);
+}
+
 export const surplusSource = defineQuery({
   name: 'finance.stock_count.surplus_source',
   input: zStockCountIdInput,
@@ -139,7 +148,7 @@ export const surplusSource = defineQuery({
       JOIN crove_finance.stock_item i ON i.org_id = m.org_id AND i.id = m.item_id
       WHERE m.org_id = ${ctx.orgId}::uuid AND l.count_id = ${countId}::uuid AND m.source_type = 'count' AND m.amount > 0
       ORDER BY m.amount DESC, i.name, m.id`.execute(ctx.trx);
-    const shown = moves.slice(0, STOCK_SURPLUS_NOTE_ITEMS).map((m) => ({ name: m.name, quantity: m.quantity, unit: m.unit, value: money(m.amount).toDecimalPlaces(0).toFixed() }));
+    const shown = moves.slice(0, STOCK_SURPLUS_NOTE_ITEMS).map((m) => ({ name: m.name, quantity: plainQuantity(m.quantity), unit: m.unit, value: money(m.amount).toDecimalPlaces(0).toFixed() }));
     // The party of the latest purchase that received any of these items, in the count's own entity, up to the count date; a voided document is none.
     const itemIds = [...new Set(moves.map((m) => m.item_id))];
     let supplier: StockSurplusSource['supplier'] = null;
