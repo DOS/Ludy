@@ -79,6 +79,7 @@ import { householdS2cQueries } from './household-s2c.ts';
 import { stockReportQueries } from './stock-report.ts';
 import { stockLowQueries } from './stock-low.ts';
 export type { ReorderSource, SuggestSource } from './stock-low.ts';
+export type { MarketplaceSuggestSource } from './marketplace-orders.ts';
 export type { EInvoiceSuggestSource, EInvoiceSuggestParty, RateCount } from './einvoice-suggest.ts';
 
 export { AI_BUDGET_MESSAGE, AI_BUDGET_RECHECK_MS, aiCost, extractAndPropose, recordExtractionFailure, type ExtractDeps } from './extract.ts';
@@ -172,6 +173,7 @@ export {
   type PurchaseVoucher,
   type SalesVoucher,
 } from './misa.ts';
+export { MISA_INVOICE_NUMBER_LIMIT, checkMisaRows, type MisaCheckInput, type MisaRowId } from './misa-check.ts';
 export { CHIEF_ACCOUNTANT_TEMPLATE, chiefAccountantReview, financeAgentPrograms, reviewText } from './agent.ts';
 export * from './domain/money.ts';
 export * from './domain/ledger.ts';

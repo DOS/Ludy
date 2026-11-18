@@ -113,9 +113,11 @@ An agent may write **drafts** (R1, reaching a human as a proposal); it never lau
 
 Spend reaches Kế toán through intake and the platform invoices (slice D). Ads shows the committed spend beside the actual one and posts nothing.
 
+**As built in W3 (2026-11-19, #3834): a boost is a draft, not a launch path.** The owner opened W3 and W4 on 2026-11-19 (build and test on the sandbox writer; the live check on the owner's own account after W2's). Boosting a published Social post adds `ads.boost.draft` (R1, drafters, no agent) and two reads; it writes the very draft the builder writes and asks for the very approval of point 1, so every rule of points 1, 2, 5 and 7 holds unchanged and **no second launch path exists** (a test pins that no `ads.boost.*` command but the draft exists). It is refused while writing is off, and the screens show no action then. The AI coworker may suggest a post and prefill the panel; that is a ranking of counts Social already reads, with no model call (so none through the AI budget meter), and a person submits while an approver approves. Details: [the plan, "W3 as built"](../plan/ads-write.md).
+
 ### 9. Slices
 
-W0 switch, access, caps, kill switch; W1 draft and validate (nothing leaves Ludy); W2 launch on Meta; W3 boost a published post; W4 manage; W5 ads on the Social calendar; W6 Automated Boost, and Google writing in its own ADR. Meta objectives first: Traffic, Engagement, Messages. No slice spends before an approved launch. **Approved to build now: W0, W1, W2, in that order**; W3 to W6 wait.
+W0 switch, access, caps, kill switch; W1 draft and validate (nothing leaves Ludy); W2 launch on Meta; W3 boost a published post; W4 manage; W5 ads on the Social calendar; W6 Automated Boost, and Google writing in its own ADR. Meta objectives first: Traffic, Engagement, Messages. No slice spends before an approved launch. **Approved to build now: W0, W1, W2, in that order**; W3 and W4 were opened on 2026-11-19; W5 and W6 wait.
 
 ## Decisions for the owner
 
