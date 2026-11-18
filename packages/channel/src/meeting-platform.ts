@@ -91,6 +91,36 @@ export interface MeetingPlatformAdapter {
   refresh?(credential: MeetingPlatformCredential, signal?: AbortSignal): Promise<MeetingPlatformCredential | { refused: true }>;
 }
 
+// The account a finished OAuth grant belongs to, as the kernel seals and stores it (the connect step; calendar-google.ts has the same shape for calendars).
+export interface MeetingPlatformAccount {
+  // A stable name of the account, lowercased (the connection's unique key per member and provider, and part of the binding its tokens are sealed for).
+  externalAccount: string;
+  displayName: string;
+  scopes: string[];
+  expiresAt: Date | null;
+  // The credential JSON the job and the sweep open (`accessToken`, `refreshToken`, `expiresAt`); sealed by the caller and dropped, never logged.
+  secret: string;
+}
+
+export interface MeetingPlatformAuthorizeInput {
+  state: string;
+  redirectUri: string;
+  codeChallenge: string | null;
+}
+
+// The connect dialog of a platform (C3 onwards). A separate interface, because the sandbox has none. `oauthProvider` is the name of the attempt in the shared oauth_state table.
+export interface MeetingPlatformOAuth {
+  readonly oauthProvider: 'google_recordings' | 'zoom_recordings' | 'teams_recordings';
+  readonly pkce: boolean;
+  authorizeUrl(input: MeetingPlatformAuthorizeInput): string;
+  // Throws MeetingPlatformError for a platform answer (a code the platform refused is `platform_refused`); never puts a token or the code in the error.
+  exchange(input: { code: string; redirectUri: string; codeVerifier: string | null }, signal?: AbortSignal): Promise<MeetingPlatformAccount>;
+}
+
+export function hasOAuth(adapter: MeetingPlatformAdapter | undefined): adapter is MeetingPlatformAdapter & MeetingPlatformOAuth {
+  return adapter !== undefined && typeof (adapter as Partial<MeetingPlatformOAuth>).authorizeUrl === 'function' && typeof (adapter as Partial<MeetingPlatformOAuth>).exchange === 'function';
+}
+
 /**
  * Why a platform call failed, as a short code: `platform_unavailable` (network or 5xx), `platform_refused` (4xx other than expiry), `connection_expired` (the token was refused, the job expires the
  * connection), `recording_gone` (404), `no_audio` (the recording has no such track). The message never contains a token or the platform's response body.
