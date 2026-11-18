@@ -15,15 +15,15 @@
 //   still fails `no_audio`.
 // - A transient failure (the platform or the network) throws so the queue retries; the last try, and every permanent failure, is recorded on the row as a short code, never the platform's message.
 import {
-  meetingPlatformBinding,
   MEETING_PLATFORM_IMPORT_MAX_BYTES,
   MEETING_PLATFORM_VIDEO_MAX_BYTES,
   type MeetingPlatformErrorCode,
   type MeetingPlatformProvider,
 } from '@crove/kernel-contract';
-import type { MeetingPlatformAdapter, MeetingPlatformCredential, MeetingPlatformDownload } from '@crove/channel';
+import type { MeetingPlatformAdapter, MeetingPlatformDownload } from '@crove/channel';
 import { MeetingPlatformError } from '@crove/channel';
 import { DomainError, EgressError, guardedStream, type BlobStore, type CredentialBroker, type EgressStream, type EgressStreamOptions, type Runtime } from '@crove/kernel-runtime';
+import { freshCredential } from './meeting-platform-credential.ts';
 import { extractAudioFromVideo, type MediaAudioExtractor } from './meetings-extract.ts';
 import { MEDIA_PROBE_FAILED, MEDIA_PROBE_UNAVAILABLE, MEDIA_TOO_LONG } from './meetings-measure.ts';
 
@@ -64,13 +64,6 @@ export interface MeetingsImportDeps {
   streamOptions?: Partial<Omit<EgressStreamOptions, 'firstHosts' | 'hostAllowed'>>;
 }
 
-interface SealedCredential {
-  keyId: string;
-  envelope: string;
-  provider: string;
-  externalAccount: string;
-}
-
 export type MeetingsImportResult = 'staged' | 'failed' | 'skipped';
 
 // How a failed step is told to the member and whether the queue should try again.
@@ -97,18 +90,6 @@ function classify(error: unknown): { code: MeetingPlatformErrorCode; retry: bool
     if (error.code === 'MEETING_PLATFORM_NOT_ACTIVE' || error.code === 'MEETING_PLATFORM_OWNER_LEFT' || error.code === 'MEETING_PLATFORM_NOT_FOUND') return { code: 'connection_expired', retry: false };
   }
   return { code: 'download_failed', retry: true };
-}
-
-async function openCredential(deps: MeetingsImportDeps, job: MeetingsImportJob): Promise<MeetingPlatformCredential> {
-  const sealed = await deps.runtime.query<SealedCredential>('kernel.meeting_platform.credential', { connectionId: job.connectionId }, { actor: ACTOR, orgId: job.orgId });
-  const secret = deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, meetingPlatformBinding(job.orgId, sealed.provider as MeetingPlatformProvider, sealed.externalAccount));
-  const parsed = JSON.parse(secret) as { accessToken?: unknown; refreshToken?: unknown; expiresAt?: unknown };
-  if (typeof parsed.accessToken !== 'string' || parsed.accessToken === '') throw new MeetingPlatformError('connection_expired');
-  return {
-    accessToken: parsed.accessToken,
-    ...(typeof parsed.refreshToken === 'string' ? { refreshToken: parsed.refreshToken } : {}),
-    ...(typeof parsed.expiresAt === 'string' ? { expiresAt: new Date(parsed.expiresAt) } : {}),
-  };
 }
 
 interface OpenDownload {
@@ -275,7 +256,8 @@ export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsI
     const format = job.hasAudio ? 'audio' : job.hasVideo && deps.extractor?.configured ? 'video' : null;
     if (job.sizeBytes !== null && job.sizeBytes > (format === 'video' ? MEETING_PLATFORM_VIDEO_MAX_BYTES : MEETING_PLATFORM_IMPORT_MAX_BYTES)) return await fail('too_large');
     if (format === null) return await fail('no_audio');
-    const credential = await openCredential(deps, job);
+    // The token in hand, renewed first when it is about to expire (a provider that rotates its refresh token: kernel.meeting_platform.credential_refresh, one transaction under the connection's lock).
+    const credential = await freshCredential(deps, job.orgId, job.connectionId, adapter);
     const download = await adapter.prepareDownload(credential, job.externalId, format, attempt.signal);
     const bytes = download.format === 'video' ? await audioOfVideo(deps, job, download, attempt.signal) : await fetchBytes(deps, download, attempt.signal);
     if (bytes.byteLength === 0) throw new MeetingPlatformError('download_failed');
