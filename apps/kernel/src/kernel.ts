@@ -93,6 +93,7 @@ import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type Marketplac
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
 import { createCredentialBroker, noCredentialBroker } from './credentials.ts';
+import { mediaAudioExtractorFor } from './meetings-extract.ts';
 import { mediaMeasurerFor } from './meetings-measure.ts';
 import { rebindExports as rebindOrgExports } from './export-rebind.ts';
 import { numberReseedCommand, runRestoreReport } from './restore-report.ts';
@@ -177,7 +178,7 @@ export interface KernelAdapters {
   summaryModel?: ModelPort | null;
   // Vy's eSign field placement and risky clause review (#3351); null runs manual signing without AI.
   signAi?: Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> | null;
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'einvoiceRateExplanation' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'supplierPayableLineSentence' | 'einvoiceRateExplanation' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -830,6 +831,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
+            // The audio of a video-only platform recording (C2a, #3306): crove-media extracts it; without MEDIA_URL the extractor is not configured and such a recording fails `no_audio`.
+            meetingsImportExtractor: mediaAudioExtractorFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS),
             channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformAdapters({ sandbox: config.CHANNEL_SANDBOX === 'true' }), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config), adStateReaders: adStateReadersOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),

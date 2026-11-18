@@ -2,7 +2,8 @@
 // The intent of a conversation in the Inbox (CV3, #2306, plan docs/plan/conversations.md section 13): the label a person applied, and the AI coworker's
 // suggestion beside it. A suggestion is read on the side (a model reads the customer's words, through the AI budget) and is never stored or applied: it has
 // the proposal hue and says it is a suggestion, and only a click turns it into the label. With the model off, spent or failing there is simply no
-// suggestion, and no error: the Inbox works as it did. Nothing is routed, assigned, resolved or hidden by an intent.
+// suggestion, and no error: the Inbox works as it did. Nothing is routed, assigned, resolved or hidden by an intent (a spam suggestion only shows a hint
+// beside the Hide button of a comment, #3808: a person clicks).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
@@ -61,16 +62,30 @@ export function IntentBadge({ intent, applied }: { intent: ConversationIntent; a
   );
 }
 
+// The one query of a thread's own suggestion, shared by the header (which enables it) and the hide hint (which never does), so both observe one cache entry
+// with one real function: a refetch of the whole cache (an invalidation) can never run a stand-in.
+const threadSuggestionOptions = (c: ConversationSummary) => ({
+  queryKey: ['conversation-intents', `${c.id}:${c.lastSeq}`],
+  queryFn: () => client.conversations.suggestIntents({ conversationIds: [c.id] }),
+  ...suggestOptions,
+});
+
+// Whether the AI coworker suggested "spam" for this thread (#3808), read from what the header's query already holds: this observer is never enabled, so a
+// hide hint costs no model call, and with the model off, spent or failing there is no suggestion and so no hint. Only a hint: a person clicks Hide.
+export function useSpamSuggested(c: ConversationSummary): boolean {
+  const cached = useQuery({ ...threadSuggestionOptions(c), enabled: false });
+  const data = cached.data as { suggestions: { conversationId: string; intent: ConversationIntent | null }[] } | undefined;
+  return c.intent === null && data?.suggestions.find((s) => s.conversationId === c.id)?.intent === 'spam';
+}
+
 // In the thread's header, for a member who may write it: the label a person applied (changed or cleared from the list), or the suggestion with one click
 // to apply it. The thread's own suggestion is read for this thread alone (the server answers from what it said a moment ago when the list asked).
 export function IntentBar({ conversation: c }: { conversation: ConversationSummary }) {
   const t = useTranslations('conversations.intent');
   const suggestion = useQuery({
-    queryKey: ['conversation-intents', `${c.id}:${c.lastSeq}`],
-    queryFn: () => client.conversations.suggestIntents({ conversationIds: [c.id] }),
+    ...threadSuggestionOptions(c),
     // Only a thread waiting for an answer (New) is read by the model: clicking through the other tabs costs nothing.
     enabled: c.intent === null && c.status === 'new',
-    ...suggestOptions,
   });
   const set = useMutation({ mutationFn: (intent: ConversationIntent | null) => client.conversations.setIntent({ conversationId: c.id, intent }), onSuccess: refresh });
   const suggested = suggestion.data?.suggestions.find((s) => s.conversationId === c.id)?.intent ?? null;
