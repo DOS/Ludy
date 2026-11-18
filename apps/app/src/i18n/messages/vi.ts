@@ -1749,7 +1749,7 @@ export const vi = {
     cardValue: 'Giá trị nhập',
     directions: { purchase: 'Mua vào', sale: 'Bán ra' },
     sources: { document_line: 'Từ hóa đơn', manual: 'Nhập tay', reversal: 'Đảo', order_line: 'Từ đơn hàng sàn', count: 'Kiểm kê', crm_order_line: 'Giao hàng của đơn bán' },
-    trades: { goods: 'Hàng hóa', services: 'Dịch vụ', catering: 'Ăn uống', other: 'Khác' },
+    trades: { goods: 'Hàng hóa', services: 'Dịch vụ', catering: 'Ăn uống', digital_content: 'Nội dung số', other: 'Khác' },
     // The finance coworker on stock (#2514): the item it suggests for an unassigned line.
     suggest: {
       button: 'Nhờ {finance} gợi ý mặt hàng',
@@ -4703,7 +4703,7 @@ export const vi = {
     pitMethod: 'Phương pháp tính thuế thu nhập cá nhân',
     methods: { percentage: 'Theo tỷ lệ trên doanh thu', income: 'Theo thu nhập' },
     trades: 'Ngành nghề',
-    tradeNames: { goods: 'Hàng hóa', services: 'Dịch vụ', catering: 'Ăn uống và xây dựng có bao thầu nguyên vật liệu', other: 'Khác' },
+    tradeNames: { goods: 'Hàng hóa', services: 'Dịch vụ', catering: 'Ăn uống và xây dựng có bao thầu nguyên vật liệu', digital_content: 'Nội dung số (trò chơi, phim, ảnh, nhạc, quảng cáo số)', other: 'Khác' },
     einvoice: 'Đã đăng ký hóa đơn điện tử',
     representative: 'Người đại diện (in cạnh chỗ ký)',
     yes: 'Có',

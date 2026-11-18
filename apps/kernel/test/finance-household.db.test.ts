@@ -113,11 +113,29 @@ suite('household business profile and rules (#2517)', () => {
     expect((await profileAt(o, '2027-07-01')).books.map((b) => b.book)).toEqual(['S2b', 'S2c', 'S2d', 'S2e']);
   });
 
-  it('says every book is commentary until the accountant confirms the row', async () => {
+  it('gives the book of the method as confirmed since #3710, and as commentary again when a later dated row says so', async () => {
     const o = await org();
     const view = await setProfile(o);
-    expect(view.commentary).toBe(true);
-    expect(view.books).toEqual([expect.objectContaining({ book: 'S1a', version: '2026.1', status: 'commentary' })]);
+    expect(view.commentary).toBe(false);
+    expect(view.books).toEqual([expect.objectContaining({ book: 'S1a', version: '2026.1', status: 'confirmed' })]);
+    // A later dated layout row that is still `commentary` brings the label back from its date, far in the future so no other test of this file reads it.
+    await admin((c) =>
+      c.query(
+        "INSERT INTO crove_finance.household_form_version (book, version, effective_from, name, pit_methods, source, status) VALUES ('S1a', '2035.1', DATE '2035-01-01', 'Sổ S1a (test)', ARRAY['none']::text[], 'a later dated row (test)', 'commentary')",
+      ),
+    );
+    expect(await profileAt(o, '2034-12-31')).toMatchObject({ commentary: false });
+    expect(await profileAt(o, '2035-01-02')).toMatchObject({ commentary: true, books: [expect.objectContaining({ book: 'S1a', version: '2035.1', status: 'commentary' })] });
+  });
+
+  it('takes the digital content trade in a profile, five trades at most, and refuses one the list does not have', async () => {
+    const o = await org();
+    const view = await setProfile(o, { trades: ['goods', 'digital_content'] });
+    expect(view.profile?.trades).toEqual(['goods', 'digital_content']);
+    const all = await org();
+    expect((await setProfile(all, { trades: ['goods', 'services', 'catering', 'digital_content', 'other'] })).profile?.trades).toEqual(['goods', 'services', 'catering', 'digital_content', 'other']);
+    const bad = await org();
+    await expect(setProfile(bad, { trades: ['goods', 'crypto'] })).rejects.toBeTruthy();
   });
 
   it('refuses a group and method that do not fit, and an entity that is not a household', async () => {
@@ -244,12 +262,13 @@ suite('household business profile and rules (#2517)', () => {
     expect(seen).toBe(0);
   });
 
-  it('seeds the law as dated rows, all still commentary, and reads the row in force on a date', async () => {
+  it('seeds the law as dated rows (confirmed from the research of 2026-11-18, but for the groups it left open), and reads the row in force on a date', async () => {
     const o = await org();
     const rules = await query<HouseholdRules>(o, 'finance.household.rules', { date: '2026-06-30' }, o.viewer);
+    // The expense groups, the catering rate and the digital content rate are still `commentary`, so the answer still says so.
     expect(rules.commentary).toBe(true);
     expect(rules.thresholds.map((t) => t.code).sort()).toEqual(['income_method_revenue', 'no_tax_revenue']);
-    expect(rules.thresholds.find((t) => t.code === 'no_tax_revenue')).toMatchObject({ amount: '1000000000.0000', status: 'commentary', effectiveFrom: '2026-01-01' });
+    expect(rules.thresholds.find((t) => t.code === 'no_tax_revenue')).toMatchObject({ amount: '1000000000.0000', status: 'confirmed', effectiveFrom: '2026-01-01' });
     // The e-invoice threshold starts on 2026-07-01.
     expect((await query<HouseholdRules>(o, 'finance.household.rules', { date: '2026-07-01' })).thresholds.map((t) => t.code)).toContain('einvoice_mandatory_revenue');
     expect(rules.tradeRates.map((r) => [r.trade, r.vatPercent, r.pitPercent])).toEqual(
@@ -259,10 +278,36 @@ suite('household business profile and rules (#2517)', () => {
       ]),
     );
     expect(rules.forms.map((f) => f.book).sort()).toEqual(['S1a', 'S2a', 'S2b', 'S2c', 'S2d', 'S2e']);
-    expect([...rules.thresholds, ...rules.tradeRates, ...rules.expenseGroups, ...rules.forms].every((r) => r.status === 'commentary' && r.source.length > 0)).toBe(true);
+    // What the research confirmed is `confirmed` and says whose confirmation it is; what it left open stays `commentary`.
+    expect(rules.thresholds.every((t) => t.status === 'confirmed' && t.source.includes('accountant delegated'))).toBe(true);
+    expect(rules.forms.every((f) => f.status === 'confirmed' && f.source.includes('accountant delegated'))).toBe(true);
+    expect(Object.fromEntries(rules.tradeRates.map((r) => [r.trade, r.status]))).toEqual({ goods: 'confirmed', services: 'confirmed', other: 'confirmed', catering: 'commentary', digital_content: 'commentary' });
+    expect(rules.tradeRates.find((r) => r.trade === 'digital_content')).toMatchObject({ vatPercent: '5.0000', pitPercent: '5.0000' });
+    expect(rules.expenseGroups.every((g) => g.status === 'commentary' && g.source.length > 0)).toBe(true);
     // Before the first row there is nothing in force.
     const early = await query<HouseholdRules>(o, 'finance.household.rules', { date: '2025-12-31' });
-    expect([early.thresholds, early.tradeRates, early.expenseGroups, early.forms].every((l) => l.length === 0)).toBe(true);
+    expect([early.thresholds, early.tradeRates, early.reductions, early.expenseGroups, early.forms].every((l) => l.length === 0)).toBe(true);
+  });
+
+  it('holds the 2026 reductions as dated rows: a fifth of the VAT and 30% of the PIT payable up to 10 billion, each ended by a later row of 0', async () => {
+    const o = await org();
+    const at = async (date: string) => (await query<HouseholdRules>(o, 'finance.household.rules', { date }, o.viewer)).reductions.map((r) => [r.kind, r.cutPercent, r.revenueCeiling, r.status, r.effectiveFrom]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    expect(await at('2026-06-30')).toEqual([
+      ['pit', '30.0000', '10000000000.0000', 'confirmed', '2026-01-01'],
+      ['vat', '20.0000', null, 'confirmed', '2026-01-01'],
+    ]);
+    // The VAT cut ended on 2026-12-31; the PIT cut covers the tax years 2026 and 2027.
+    expect(await at('2027-01-01')).toEqual([
+      ['pit', '30.0000', '10000000000.0000', 'confirmed', '2026-01-01'],
+      ['vat', '0.0000', null, 'confirmed', '2027-01-01'],
+    ]);
+    expect(await at('2028-01-01')).toEqual([
+      ['pit', '0.0000', null, 'confirmed', '2028-01-01'],
+      ['vat', '0.0000', null, 'confirmed', '2027-01-01'],
+    ]);
+    // Every row says where it comes from and whose confirmation it is.
+    const rules = await query<HouseholdRules>(o, 'finance.household.rules', { date: '2026-06-30' }, o.viewer);
+    expect(rules.reductions.every((r) => r.source.includes('accountant delegated'))).toBe(true);
   });
 
   it('changes a rate for the periods from a new dated row and for none before it', async () => {
@@ -273,7 +318,7 @@ suite('household business profile and rules (#2517)', () => {
       ),
     );
     const goods = async (date: string) => (await query<HouseholdRules>(o, 'finance.household.rules', { date })).tradeRates.find((r) => r.trade === 'goods');
-    expect(await goods('2026-12-31')).toMatchObject({ vatPercent: '1.0000', pitPercent: '0.5000', status: 'commentary' });
+    expect(await goods('2026-12-31')).toMatchObject({ vatPercent: '1.0000', pitPercent: '0.5000', status: 'confirmed' });
     expect(await goods('2027-01-01')).toMatchObject({ vatPercent: '2.0000', pitPercent: '1.0000', status: 'confirmed', effectiveFrom: '2027-01-01' });
     expect(await goods('2030-05-05')).toMatchObject({ vatPercent: '2.0000' });
   });

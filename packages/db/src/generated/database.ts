@@ -73,6 +73,7 @@ export interface CroveFinanceSchema {
   'crove_finance.household_form_version': FinanceHouseholdFormVersionTable;
   'crove_finance.household_profile': FinanceHouseholdProfileTable;
   'crove_finance.household_return_form_version': FinanceHouseholdReturnFormVersionTable;
+  'crove_finance.household_tax_reduction': FinanceHouseholdTaxReductionTable;
   'crove_finance.household_threshold': FinanceHouseholdThresholdTable;
   'crove_finance.household_trade_rate': FinanceHouseholdTradeRateTable;
   'crove_finance.input_vat_check': FinanceInputVatCheckTable;
@@ -1241,6 +1242,16 @@ export interface FinanceHouseholdReturnFormVersionTable {
   effective_from: ColumnType<string, NotGranted, NotGranted>;
   name: ColumnType<string, NotGranted, NotGranted>;
   pit_methods: ColumnType<string[], NotGranted, NotGranted>;
+  source: ColumnType<string, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** crove_finance.household_tax_reduction */
+export interface FinanceHouseholdTaxReductionTable {
+  kind: ColumnType<string, NotGranted, NotGranted>;
+  effective_from: ColumnType<string, NotGranted, NotGranted>;
+  cut_percent: ColumnType<string, NotGranted, NotGranted>;
+  revenue_ceiling: ColumnType<string | null, NotGranted, NotGranted>;
   source: ColumnType<string, NotGranted, NotGranted>;
   status: ColumnType<string, NotGranted, NotGranted>;
 }
