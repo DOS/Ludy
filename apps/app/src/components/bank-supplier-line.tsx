@@ -12,7 +12,7 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { ApiError } from '../lib/errors.ts';
+import { isServerRefusal } from '../lib/errors.ts';
 
 // What a request changes: the state of the line (proposed), the open-line counts, the candidates, the Inbox. Not the payroll matches, which it never touches.
 const refresh = () =>
@@ -38,7 +38,7 @@ function Candidate({ line, candidate, onAsked }: { line: BankLine; candidate: Ba
     },
     // A refusal the server made (a different account, a payment that moved) changes nothing, so nothing is refetched. A lost response may have created the proposal, so that case reconciles.
     onSettled: (_data, error) => {
-      if (!(error instanceof ApiError)) void refresh();
+      if (!isServerRefusal(error)) void refresh();
     },
   });
   return (
