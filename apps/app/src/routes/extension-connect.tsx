@@ -11,11 +11,10 @@ import { Card } from '@crove/ui/components/card';
 import { ErrorText, ScreenTitle, Spinner } from '../components/ui.tsx';
 import { apiFetch, errorMessage, orpc } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
-import { connectRedirect, forgetConnect, pendingConnect, type ConnectRequest } from '../lib/extension-connect.ts';
+import { connectRedirect, filterScopesForModules, forgetConnect, pendingConnect, type ConnectRequest } from '../lib/extension-connect.ts';
 
 // Which roles may connect a device: a viewer holds no feature's permission (the kernel refuses them as well).
 const CONNECTORS = new Set(['owner', 'admin', 'member']);
-const SCOPE_MODULE: Record<ExtensionScopeId, string> = { meetings: 'meetings', agenda: 'meetings', notes: 'notes' };
 
 export function ExtensionConnectPage() {
   const t = useTranslations('extensionConnect');
@@ -27,12 +26,32 @@ export function ExtensionConnectPage() {
   const [chosen, setChosen] = useState<string | null>(null);
   const orgs = (me.data?.orgs ?? []).filter((org) => CONNECTORS.has(org.role));
   const org = orgs.find((o) => o.slug === chosen) ?? (orgs.length === 1 ? orgs[0] : undefined);
-  const modules = getConfig().modules;
-  const needsModule = request !== null && request.scopes.some((s) => !modules.includes(SCOPE_MODULE[s]));
+  const serverScopes = request ? filterScopesForModules(request.scopes, getConfig().modules) : [];
+  const needsModule = request !== null && request.scopes.length > 0 && serverScopes.length === 0;
+
+  // Query the selected org's effective modules (ADR-0053) so disabling Meetings or Notes in one org narrows the grant
+  // cleanly instead of failing /api/extension/authorize with 404.
+  const orgApps = useQuery({
+    queryKey: ['extension-connect-org-apps', org?.slug],
+    enabled: Boolean(request && org && !needsModule),
+    queryFn: async () => {
+      const response = await apiFetch('/api/rpc/org/apps', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-crove-org': org!.slug },
+        body: JSON.stringify({ json: {} }),
+      });
+      const body = (await response.json()) as { json?: { apps?: Array<{ id: string; effective: boolean }> } };
+      return (body.json?.apps ?? []).filter((a) => a.effective).map((a) => a.id);
+    },
+  });
+
+  const effectiveScopes: ExtensionScopeId[] = orgApps.data
+    ? filterScopesForModules(serverScopes, orgApps.data)
+    : serverScopes;
 
   const approve = useMutation({
     mutationFn: async () => {
-      if (!request || !org) throw new Error('no request');
+      if (!request || !org || effectiveScopes.length === 0) throw new Error('no request');
       const response = await apiFetch('/api/extension/authorize', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-crove-org': org.slug },
@@ -40,7 +59,7 @@ export function ExtensionConnectPage() {
           extensionId: request.extensionId,
           codeChallenge: request.codeChallenge,
           codeChallengeMethod: 'S256',
-          scopes: request.scopes,
+          scopes: effectiveScopes,
           deviceName: request.deviceName || t('defaultDevice'),
         }),
       });
@@ -87,16 +106,21 @@ export function ExtensionConnectPage() {
             </fieldset>
             {org && <p className="text-sm font-medium text-foreground">{t('allow', { org: org.name })}</p>}
             <p className="break-all text-xs text-subtle-foreground">{t('extensionId', { id: request.extensionId })}</p>
-            <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-              {request.scopes.map((scope) => (
-                <li key={scope}>{t(`scope.${scope}`)}</li>
-              ))}
-              <li>{t('limits')}</li>
-              <li>{t('revokeHint')}</li>
-            </ul>
+            {org && orgApps.isSuccess && effectiveScopes.length === 0 ? (
+              <ErrorText>{t('noFeature')}</ErrorText>
+            ) : (
+              <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                {effectiveScopes.map((scope) => (
+                  <li key={scope}>{t(`scope.${scope}`)}</li>
+                ))}
+                <li>{t('limits')}</li>
+                <li>{t('revokeHint')}</li>
+              </ul>
+            )}
+            {orgApps.error && <ErrorText>{errorMessage(orgApps.error)}</ErrorText>}
             {approve.error && <ErrorText>{errorMessage(approve.error)}</ErrorText>}
             <div className="flex flex-wrap gap-2">
-              <Button size="lg" loading={approve.isPending} disabled={!org} onClick={() => approve.mutate()}>
+              <Button size="lg" loading={approve.isPending || (Boolean(org) && orgApps.isPending)} disabled={!org || orgApps.isPending || orgApps.isError || effectiveScopes.length === 0} onClick={() => approve.mutate()}>
                 {t('approve')}
               </Button>
               <Button size="lg" variant="outline" disabled={approve.isPending} onClick={deny}>

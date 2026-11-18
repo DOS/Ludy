@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect, test, type BrowserContext, type Page } from '@playwright/test';
+import { snapshotDomPage } from '../src/page-capture.ts';
 import { startFakeLudy, type FakeLudy } from './fake-ludy.ts';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
@@ -582,6 +583,30 @@ test('Notes Quick Capture saves private note and to-do with zero optional permis
     const permEvents = await page.evaluate(() => (window as unknown as { clipperEvents: { requested: string[][]; removed: string[][] } }).clipperEvents);
     expect(permEvents.requested).toEqual([['activeTab', 'scripting']]);
     expect(permEvents.removed).toEqual([['activeTab', 'scripting']]);
+
+    // Real-DOM snapshotDomPage sanity check: stripped form inputs, hidden nodes, scripts and nav never leak into textFallback.
+    const articlePage = await context.newPage();
+    try {
+      await articlePage.setContent(`
+        <nav>Menu Item</nav>
+        <div id="only-hidden">
+          <div hidden>HIDDEN_SECRET_TEXT</div>
+          <div style="display:none">STYLE_HIDDEN_TEXT</div>
+          <form><textarea>SECRET_TEXTAREA</textarea><input type="password" value="SECRET_PW" /></form>
+          <script>const secretVar = "SECRET_SCRIPT";</script>
+        </div>
+        <p id="real-text">Clean article body</p>
+      `);
+      const snap = await articlePage.evaluate(snapshotDomPage);
+      expect(snap.textFallback).toBe('Clean article body');
+      expect(snap.contentHtml).not.toContain('HIDDEN_SECRET_TEXT');
+      expect(snap.contentHtml).not.toContain('STYLE_HIDDEN_TEXT');
+      expect(snap.contentHtml).not.toContain('SECRET_TEXTAREA');
+      expect(snap.contentHtml).not.toContain('SECRET_SCRIPT');
+      expect(snap.contentHtml).not.toContain('Menu Item');
+    } finally {
+      await articlePage.close();
+    }
   } finally {
     fake.scopes = ['meetings'];
     fake.features = { meetings: true, notes: false };

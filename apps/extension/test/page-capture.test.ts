@@ -138,20 +138,35 @@ describe('HTML to Markdown conversion and escaping', () => {
     expect(md).not.toContain('Bản quyền 2027');
   });
 
-  it('drops dangerous link schemes and escapes bracket/paren injection in links', () => {
+  it('drops dangerous link schemes, escapes bracket/paren injection, preserves table cells, and handles attr quotes', () => {
     const html = `
       <p>
         <a href="javascript:alert(1)">Click JS</a>
         <a href="data:text/html,hi">Click Data</a>
-        <a href="https://example.com/a(1)/b)">Safe [Label]</a>
+        <a data-href="https://evil.example/track" href="https://example.com/a(1)/b)">Safe [Label]</a>
       </p>
+      <table><tr><td>12</td><td>34</td></tr><tr><td>56</td><td>78</td></tr></table>
+      <div title="1 > 0">Visible</div>
     `;
     const md = htmlToMarkdown(html, 'https://example.com/');
     expect(md).toContain('Click JS');
     expect(md).not.toContain('javascript:');
     expect(md).toContain('Click Data');
     expect(md).not.toContain('data:');
+    expect(md).not.toContain('evil.example');
     expect(md).toContain('[Safe \\[Label\\]](https://example.com/a%281%29/b%29)');
+    expect(md).toContain('12 34\n56 78');
+    expect(md).toContain('Visible');
+  });
+
+  it('converts large multi-thousand-block HTML in linear time without quadratic slowdown', () => {
+    const html = '<p>Sample paragraph content line.</p>'.repeat(5_000);
+    const start = performance.now();
+    const md = htmlToMarkdown(html, 'https://example.com/');
+    const elapsedMs = performance.now() - start;
+    expect(md.length).toBeGreaterThan(50_000);
+    expect(md.length).toBeLessThanOrEqual(CLIP_BODY_MAX);
+    expect(elapsedMs).toBeLessThan(1_000);
   });
 
   it('prefers selected HTML when present, falls back to plain text when needed, and respects CLIP_BODY_MAX', () => {

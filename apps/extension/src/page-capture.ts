@@ -151,7 +151,7 @@ function decodeEntities(text: string): string {
 }
 
 function readAttr(attrs: string, name: string): string | null {
-  const re = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\\\`]+))`, 'i');
+  const re = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>\\\`]+))`, 'i');
   const match = re.exec(attrs);
   const raw = match?.[1] ?? match?.[2] ?? match?.[3] ?? null;
   return raw === null ? null : decodeEntities(raw).trim();
@@ -186,29 +186,48 @@ export function htmlToMarkdown(html: string, baseUrl: string | null = null): str
   const parts: string[] = [];
   const skipStack: string[] = [];
   const listStack: Array<{ kind: 'ul' | 'ol'; index: number }> = [];
-  const linkStack: Array<{ href: string | null; buf: string[] }> = [];
+  const linkStack: Array<{ href: string | null; buf: string[]; lastChar: string }> = [];
   let inPre = false;
   let inCode = false;
   let inBlockquote = false;
   let lastIndex = 0;
+  let lastChar = '';
+  let trailingNewlines = 0;
+
+  const emitOut = (text: string) => {
+    if (text === '') return;
+    parts.push(text);
+    lastChar = text[text.length - 1]!;
+    let nl = 0;
+    for (let i = text.length - 1; i >= 0 && text[i] === '\n'; i -= 1) nl += 1;
+    trailingNewlines = nl === text.length ? trailingNewlines + nl : nl;
+  };
 
   const pushText = (text: string) => {
-    if (linkStack.length > 0) linkStack[linkStack.length - 1]!.buf.push(text);
-    else parts.push(text);
+    if (text === '') return;
+    if (linkStack.length > 0) {
+      const top = linkStack[linkStack.length - 1]!;
+      top.buf.push(text);
+      top.lastChar = text[text.length - 1]!;
+    } else {
+      emitOut(text);
+    }
   };
 
   const ensureLineBreak = (count: number) => {
     if (linkStack.length > 0) {
-      linkStack[linkStack.length - 1]!.buf.push(' ');
+      const top = linkStack[linkStack.length - 1]!;
+      if (top.lastChar !== '' && top.lastChar !== ' ') {
+        top.buf.push(' ');
+        top.lastChar = ' ';
+      }
       return;
     }
-    const joined = parts.join('');
-    const trailing = /\n+$/.exec(joined)?.[0].length ?? 0;
-    if (joined.length === 0) return;
-    if (trailing < count) parts.push('\n'.repeat(count - trailing));
+    if (lastChar === '') return;
+    if (trailingNewlines < count) emitOut('\n'.repeat(count - trailingNewlines));
   };
 
-  const tagPattern = /<\/?([a-z][a-z0-9:-]*)([^<>]*?)(\/?)>/gi;
+  const tagPattern = /<\/?([a-z][a-z0-9:-]*)((?:[^<>"']|"[^"]*"|'[^']*')*?)(\/?)>/gi;
   for (const match of cleaned.matchAll(tagPattern)) {
     const idx = match.index ?? 0;
     if (idx > lastIndex && skipStack.length === 0) {
@@ -218,8 +237,8 @@ export function htmlToMarkdown(html: string, baseUrl: string | null = null): str
       } else {
         const collapsed = rawText.replace(/\s+/g, ' ');
         if (collapsed !== '') {
-          const prev = linkStack.length > 0 ? linkStack[linkStack.length - 1]!.buf.join('') : parts.join('');
-          const atStart = prev.length === 0 || prev.endsWith('\n') || prev.endsWith(' ');
+          const prevLastChar = linkStack.length > 0 ? linkStack[linkStack.length - 1]!.lastChar : lastChar;
+          const atStart = prevLastChar === '' || prevLastChar === '\n' || prevLastChar === ' ';
           pushText(atStart ? collapsed.replace(/^ /, '') : collapsed);
         }
       }
@@ -344,7 +363,7 @@ export function htmlToMarkdown(html: string, baseUrl: string | null = null): str
     if (tag === 'a') {
       if (!closing && !selfClosing) {
         const href = resolveSafeHref(readAttr(attrs, 'href'), baseUrl);
-        linkStack.push({ href, buf: [] });
+        linkStack.push({ href, buf: [], lastChar: '' });
       } else if (closing && linkStack.length > 0) {
         const popped = linkStack.pop()!;
         const label = popped.buf.join('').replace(/\s+/g, ' ').trim();
@@ -355,13 +374,22 @@ export function htmlToMarkdown(html: string, baseUrl: string | null = null): str
       continue;
     }
 
-    if (BLOCK_BREAK_TAGS.has(tag)) {
-      if (tag === 'td' || tag === 'th') {
-        if (closing) pushText(' ');
-      } else {
-        ensureLineBreak(closing ? 2 : 1);
-        if (!closing && inBlockquote) pushText('> ');
+    if (tag === 'td' || tag === 'th') {
+      if (closing) {
+        const prevChar = linkStack.length > 0 ? linkStack[linkStack.length - 1]!.lastChar : lastChar;
+        if (prevChar !== '' && prevChar !== ' ' && prevChar !== '\n') pushText(' ');
       }
+      continue;
+    }
+
+    if (tag === 'tr') {
+      ensureLineBreak(1);
+      continue;
+    }
+
+    if (BLOCK_BREAK_TAGS.has(tag)) {
+      ensureLineBreak(closing ? 2 : 1);
+      if (!closing && inBlockquote) pushText('> ');
     }
   }
 
@@ -396,14 +424,18 @@ export function snapshotDomPage(): DomClipSnapshot {
   const MAX_HTML = 300_000;
   const MAX_TEXT = 120_000;
   const NOISE_SELECTOR =
-    'script, style, noscript, template, iframe, object, embed, svg, canvas, nav, aside, footer, header, form, input, textarea, select, button, [role="navigation"], [role="banner"], [role="contentinfo"], [hidden], [aria-hidden="true"]';
-  const SELECTION_NOISE = 'script, style, noscript, template, iframe, object, embed, svg, canvas, input, textarea, select, [hidden], [aria-hidden="true"]';
+    'script, style, noscript, template, iframe, object, embed, svg, canvas, nav, aside, footer, header, form, input, textarea, select, button, [role="navigation"], [role="banner"], [role="contentinfo"], [hidden], [aria-hidden="true"], [style*="display:none"], [style*="display: none"]';
+  const SELECTION_NOISE =
+    'script, style, noscript, template, iframe, object, embed, svg, canvas, input, textarea, select, [hidden], [aria-hidden="true"], [style*="display:none"], [style*="display: none"]';
 
-  const sanitizeClone = (node: Node, selector: string): string => {
+  const sanitizeClone = (node: Node, selector: string): { html: string; text: string } => {
     const box = document.createElement('div');
     box.append(node.cloneNode(true));
     for (const el of box.querySelectorAll(selector)) el.remove();
-    return box.innerHTML.slice(0, MAX_HTML);
+    return {
+      html: box.innerHTML.slice(0, MAX_HTML),
+      text: (box.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_TEXT),
+    };
   };
 
   let selectedHtml = '';
@@ -412,16 +444,18 @@ export function snapshotDomPage(): DomClipSnapshot {
   const activeTag = document.activeElement?.tagName;
   const inFormField = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT';
   if (sel && !sel.isCollapsed && !inFormField) {
-    const rawSel = sel.toString().trim();
     const anchorEl = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode?.parentElement;
-    if (rawSel && !anchorEl?.closest('input, textarea, select')) {
-      selectedText = rawSel.slice(0, MAX_TEXT);
+    if (!anchorEl?.closest('input, textarea, select')) {
       const wrap = document.createElement('div');
       for (let i = 0; i < sel.rangeCount; i += 1) {
         wrap.append(sel.getRangeAt(i).cloneContents());
       }
       for (const el of wrap.querySelectorAll(SELECTION_NOISE)) el.remove();
-      selectedHtml = wrap.innerHTML.slice(0, MAX_HTML);
+      const sanitizedSelectionText = (wrap.textContent ?? '').replace(/\s+/g, ' ').trim();
+      if (sanitizedSelectionText) {
+        selectedText = sanitizedSelectionText.slice(0, MAX_TEXT);
+        selectedHtml = wrap.innerHTML.slice(0, MAX_HTML);
+      }
     }
   }
 
@@ -435,16 +469,15 @@ export function snapshotDomPage(): DomClipSnapshot {
     }
   }
   const sourceEl = best ?? document.body ?? document.documentElement;
-  const contentHtml = sourceEl ? sanitizeClone(sourceEl, NOISE_SELECTOR) : '';
-  const fallbackRaw = sourceEl instanceof HTMLElement ? sourceEl.innerText || sourceEl.textContent || '' : sourceEl?.textContent || '';
+  const sanitized = sourceEl ? sanitizeClone(sourceEl, NOISE_SELECTOR) : { html: '', text: '' };
 
   return {
     url: window.location.href,
     title: document.title ?? '',
     selectedHtml,
     selectedText,
-    contentHtml,
-    textFallback: fallbackRaw.replace(/\r\n?/g, '\n').trim().slice(0, MAX_TEXT),
+    contentHtml: sanitized.html,
+    textFallback: sanitized.text,
   };
 }
 

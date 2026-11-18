@@ -43,6 +43,7 @@ let copyNote = '';
 let agendaNote = '';
 let agendaRead: { token: string; promise: Promise<AgendaNext | null> } | null = null;
 let serverModules: { address: string; promise: Promise<readonly string[] | null> } | null = null;
+const notesExcludedOrgs = new Set<string>();
 // Set when the org refused the method as not written (A2, #3160): the unwritten choice is then not offered for the rest of this popup.
 let strictOrg = false;
 let captureDraft: {
@@ -145,6 +146,8 @@ async function signIn(state: State, withAgenda = false): Promise<void> {
       notice = result.error === 'access_denied' ? T.signInDenied : T.signInFailed;
     } else {
       const done = await createClient(state.address, null).exchangeCode(result.code, pkce.verifier);
+      if (scopesToAsk.includes(NOTES_SCOPE) && !done.scopes.includes(NOTES_SCOPE)) notesExcludedOrgs.add(done.orgId);
+      else notesExcludedOrgs.delete(done.orgId);
       await saveState(area, withAccount(await loadState(area), { orgId: done.orgId, orgSlug: result.org, token: done.token, expiresAt: done.expiresAt }));
       notice = '';
     }
@@ -184,7 +187,7 @@ async function signedInView(state: State): Promise<Node[]> {
   }
   const features = visibleFeatures(me);
   let showNotesAsk = false;
-  if (!me.scopes.includes(NOTES_SCOPE)) {
+  if (!me.scopes.includes(NOTES_SCOPE) && !notesExcludedOrgs.has(account.orgId)) {
     if (serverModules?.address !== state.address) {
       serverModules = { address: state.address, promise: createClient(state.address, null).config().then((c) => c.modules ?? null).catch(() => null) };
     }
@@ -230,6 +233,7 @@ async function notesView(state: State, token: string): Promise<Node[]> {
     id: 'capture-title',
     value: captureDraft.title,
     maxlength: isNote ? String(CLIP_TITLE_MAX) : '300',
+    disabled: notesBusy,
     placeholder: isNote ? T.captureTitleNotePlaceholder : T.captureTitleTodoPlaceholder,
   });
   titleInput.addEventListener('input', () => void (captureDraft.title = titleInput.value));
@@ -239,6 +243,7 @@ async function notesView(state: State, token: string): Promise<Node[]> {
     const bodyInput = h('textarea', {
       id: 'capture-body',
       maxlength: String(CLIP_BODY_MAX),
+      disabled: notesBusy,
       placeholder: T.captureBodyPlaceholder,
     }, captureDraft.body);
     bodyInput.addEventListener('input', () => void (captureDraft.body = bodyInput.value));
@@ -246,6 +251,7 @@ async function notesView(state: State, token: string): Promise<Node[]> {
       type: 'text',
       id: 'capture-tags',
       value: captureDraft.tags,
+      disabled: notesBusy,
       placeholder: T.captureTagsPlaceholder,
     });
     tagsInput.addEventListener('input', () => void (captureDraft.tags = tagsInput.value));
@@ -259,6 +265,7 @@ async function notesView(state: State, token: string): Promise<Node[]> {
     const detailsInput = h('textarea', {
       id: 'capture-details',
       maxlength: '10000',
+      disabled: notesBusy,
       placeholder: T.captureDetailsPlaceholder,
     }, captureDraft.details);
     detailsInput.addEventListener('input', () => void (captureDraft.details = detailsInput.value));
@@ -266,6 +273,7 @@ async function notesView(state: State, token: string): Promise<Node[]> {
       type: 'date',
       id: 'capture-due',
       value: captureDraft.dueOn,
+      disabled: notesBusy,
     });
     dueInput.addEventListener('input', () => void (captureDraft.dueOn = dueInput.value));
     bodyFields.push(
@@ -281,6 +289,7 @@ async function notesView(state: State, token: string): Promise<Node[]> {
       h('span', {}, T.captureSourceLabel.replace('{url}', captureDraft.sourceUrl)),
       h('button', {
         id: 'capture-source-clear',
+        disabled: notesBusy,
         'aria-label': T.captureSourceClear,
         onclick: () => void ((captureDraft.sourceUrl = null), render()),
       }, 'x'))
@@ -356,9 +365,10 @@ async function toggleWebClipper(enable: boolean): Promise<void> {
 }
 
 async function clipCurrentPage(state: State, token: string, action: 'save' | 'fill'): Promise<void> {
+  if (notesBusy) return;
+  notesBusy = true;
   notice = '';
   notesStatus = T.clipping;
-  notesBusy = true;
   await render();
   try {
     const captured = await captureActiveTab({
@@ -402,9 +412,11 @@ async function clipCurrentPage(state: State, token: string, action: 'save' | 'fi
 }
 
 async function saveQuickCapture(state: State, token: string): Promise<void> {
+  if (notesBusy) return;
   notice = '';
   notesStatus = '';
-  const title = captureDraft.title.trim();
+  const sent = { ...captureDraft };
+  const title = sent.title.trim();
   if (!title) {
     notice = T.captureTitleRequired;
     await render();
@@ -415,29 +427,29 @@ async function saveQuickCapture(state: State, token: string): Promise<void> {
   await render();
   try {
     const client = createClient(state.address, token);
-    if (captureDraft.kind === 'note') {
+    if (sent.kind === 'note') {
       await client.clipNote({
         title,
-        body: captureDraft.body,
-        tags: parseTagsInput(captureDraft.tags),
-        sourceUrl: captureDraft.sourceUrl,
+        body: sent.body,
+        tags: parseTagsInput(sent.tags),
+        sourceUrl: sent.sourceUrl,
       });
-      captureDraft.title = '';
-      captureDraft.body = '';
-      captureDraft.tags = '';
-      captureDraft.sourceUrl = null;
+      if (captureDraft.title === sent.title) captureDraft.title = '';
+      if (captureDraft.body === sent.body) captureDraft.body = '';
+      if (captureDraft.tags === sent.tags) captureDraft.tags = '';
+      if (captureDraft.sourceUrl === sent.sourceUrl) captureDraft.sourceUrl = null;
       notesStatus = T.captureSavedNote;
     } else {
       await client.quickCaptureTodo({
         title,
-        details: captureDraft.details,
-        dueOn: captureDraft.dueOn || null,
-        sourceUrl: captureDraft.sourceUrl,
+        details: sent.details,
+        dueOn: sent.dueOn || null,
+        sourceUrl: sent.sourceUrl,
       });
-      captureDraft.title = '';
-      captureDraft.details = '';
-      captureDraft.dueOn = '';
-      captureDraft.sourceUrl = null;
+      if (captureDraft.title === sent.title) captureDraft.title = '';
+      if (captureDraft.details === sent.details) captureDraft.details = '';
+      if (captureDraft.dueOn === sent.dueOn) captureDraft.dueOn = '';
+      if (captureDraft.sourceUrl === sent.sourceUrl) captureDraft.sourceUrl = null;
       notesStatus = T.captureSavedTodo;
     }
   } catch (error) {

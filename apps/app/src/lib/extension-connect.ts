@@ -28,6 +28,19 @@ export interface ConnectRequest {
 
 const isScope = (value: string): value is ExtensionScopeId => (EXTENSION_SCOPE_IDS as readonly string[]).includes(value);
 
+const SCOPE_MODULE: Record<ExtensionScopeId, string> = { meetings: 'meetings', agenda: 'meetings', notes: 'notes' };
+
+/**
+ * Narrows requested extension scopes to those whose backing module is enabled for the chosen org (ADR-0053), keeping
+ * 'agenda' only while 'meetings' stays enabled.
+ */
+export function filterScopesForModules(scopes: readonly ExtensionScopeId[], enabledModules: readonly string[]): ExtensionScopeId[] {
+  const allowed = new Set(enabledModules);
+  const kept = scopes.filter((scope) => allowed.has(SCOPE_MODULE[scope]));
+  const hasMeetings = kept.includes('meetings');
+  return [...new Set(hasMeetings ? kept : kept.filter((s) => s !== 'agenda'))].sort();
+}
+
 // The request an address carries, or null when any part is missing or malformed: the extension's address must be a
 // chromiumapp.org one of an extension in `allowedIds` (EXTENSION_IDS, #2740), the challenge a SHA-256 in base64url, the
 // method S256, every scope a known one.
