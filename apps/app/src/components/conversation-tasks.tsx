@@ -16,6 +16,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { taskDueFromDay } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
+import { TOUCH_BUTTON } from '../lib/conversation-touch.ts';
 
 // The panel's own poll (the Inbox reads its other panes every six seconds): the stream sends no hint for tasks, so another member's task shows up on the next turn.
 const TASKS_POLL_MS = 6_000;
@@ -76,10 +77,10 @@ function NewTask({ conversationId, channelName, onDone }: { conversationId: stri
         <DateInput value={dueOn} onChange={edited(setDueOn)} className="mt-1" aria-label={tt('dueLabel')} />
       </label>
       <div className="flex gap-2">
-        <Button type="submit" size="sm" loading={create.isPending} disabled={title.trim() === ''}>
+        <Button type="submit" size="sm" className={TOUCH_BUTTON} loading={create.isPending} disabled={title.trim() === ''}>
           {t('save')}
         </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={onDone}>
+        <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" onClick={onDone}>
           {t('cancel')}
         </Button>
       </div>
@@ -122,7 +123,7 @@ export function ConversationTasks({ conversationId, channelName, canWrite }: { c
         (adding ? (
           <NewTask conversationId={conversationId} channelName={channelName} onDone={() => setAdding(false)} />
         ) : (
-          <Button type="button" size="sm" variant="outline" onClick={() => setAdding(true)}>
+          <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" onClick={() => setAdding(true)}>
             {t('add')}
           </Button>
         ))}

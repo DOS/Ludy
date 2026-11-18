@@ -42,7 +42,7 @@ suite('the S2b-HKD book download (#2517 slice 2c)', () => {
   let app: ReturnType<typeof createHttpApp>;
   let slug = '';
   let orgId = '';
-  let percentage = '';
+  let income = '';
   let groupOne = '';
   const owner = { subject: randomUUID(), email: 'owner@s2b-export.test', session: randomUUID() };
 
@@ -105,17 +105,17 @@ suite('the S2b-HKD book download (#2517 slice 2c)', () => {
     const body = (await created.json()) as { json: { slug: string; orgId: string } };
     slug = body.json.slug;
     orgId = body.json.orgId;
-    percentage = randomUUID();
+    income = randomUUID();
     groupOne = randomUUID();
     await admin(async (a) => {
       const user = (await a.query<{ user_id: string }>("SELECT user_id FROM crove_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'", [orgId])).rows[0]?.user_id;
-      for (const [id, name, group, method] of [[percentage, 'Hộ Theo Thu Nhập', 3, 'income'], [groupOne, 'Hộ Nhóm Một', 1, null]] as const) {
+      for (const [id, name, group, method] of [[income, 'Hộ Theo Thu Nhập', 3, 'income'], [groupOne, 'Hộ Nhóm Một', 1, null]] as const) {
         await a.query("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, $3, 'household', $4)", [orgId, id, name, user]);
         await a.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', $3, $4, ARRAY['goods'])", [orgId, id, group, method]);
       }
       // One sale on account 511 in September for the household on the income method; one transaction, since an entry needs its lines at commit.
       await a.query('BEGIN');
-      const entry = (await a.query<{ id: string }>("INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, DATE '2026-09-12', 'Bán hàng', 'finance.journal_voucher', $2, $3) RETURNING id", [orgId, randomUUID(), percentage])).rows[0]?.id;
+      const entry = (await a.query<{ id: string }>("INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, DATE '2026-09-12', 'Bán hàng', 'finance.journal_voucher', $2, $3) RETURNING id", [orgId, randomUUID(), income])).rows[0]?.id;
       await a.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '111', 500000, 0), ($1, $2, 2, '511', 0, 500000)", [orgId, entry]);
       await a.query('COMMIT');
     });
@@ -131,14 +131,14 @@ suite('the S2b-HKD book download (#2517 slice 2c)', () => {
   });
 
   it('answers the file while the rows are still commentary and writes one audit row', async () => {
-    const response = await download(`legalEntityId=${percentage}&period=2026-09`);
+    const response = await download(`legalEntityId=${income}&period=2026-09`);
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe(XLSX);
     expect(response.headers.get('content-disposition')).toContain('so-s2b-hkd-2026-09');
     expect(response.headers.get('cache-control')).toBe('private, no-store');
     // A real workbook (a zip); its cells are covered by the workbook unit tests, its figures by the query tests.
     expect(Buffer.from(await response.arrayBuffer()).subarray(0, 2).toString()).toBe('PK');
-    expect(await audits()).toEqual([{ book: 'S2b', legalEntityId: percentage, period: '2026-09', rows: 1 }]);
+    expect(await audits()).toEqual([{ book: 'S2b', legalEntityId: income, period: '2026-09', rows: 1 }]);
   });
 
   it('refuses a household that keeps S1a only, an entity that is not a household and a period that is not one, writing no audit row', async () => {
@@ -146,7 +146,7 @@ suite('the S2b-HKD book download (#2517 slice 2c)', () => {
     const one = await download(`legalEntityId=${groupOne}&period=2026-09`);
     expect(one.status).toBe(422);
     expect(await one.json()).toMatchObject({ code: 'HOUSEHOLD_BOOK_NOT_REQUIRED' });
-    for (const query of [`legalEntityId=${percentage}&period=2026-13`, `legalEntityId=${percentage}&period=abc`, `legalEntityId=${percentage}`, 'legalEntityId=not-an-id&period=2026-09']) {
+    for (const query of [`legalEntityId=${income}&period=2026-13`, `legalEntityId=${income}&period=abc`, `legalEntityId=${income}`, 'legalEntityId=not-an-id&period=2026-09']) {
       const response = await download(query);
       expect(response.status).toBeGreaterThanOrEqual(400);
       expect(response.status).toBeLessThan(500);

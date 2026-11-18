@@ -326,6 +326,32 @@ suite('the S2b-HKD revenue book of a household business (#2517 slice 2c)', () =>
     expect(october.commentary).toBe(true);
   });
 
+  it('refuses a period whose profiles name different trades, and gives the parts on either side of the change (#3714)', async () => {
+    const o = await org();
+    await setProfile(o);
+    const shirt = await item(o, 'AO', 'goods');
+    const repair = await item(o, 'SUA', 'services');
+    await entry(o, '2026-09-05', 'Bán hàng và sửa chữa', [['111', 1000000, 0], ['511', 0, 1000000]], { sale: [{ amount: 600000, item: shirt }, { amount: 400000, item: repair }] });
+    await entry(o, '2026-09-20', 'Bán lẻ', [['111', 200000, 0], ['511', 0, 200000]], { sale: [{ amount: 200000, item: shirt }] });
+    // From 16 September the household drops its service line: one month then has two trade lists, and the book never applies the later one to the earlier sales.
+    await setProfile(o, { effectiveFrom: '2026-09-16', trades: ['goods'] });
+    await expect(s2b(o, '2026-09')).rejects.toMatchObject({ code: 'HOUSEHOLD_TRADES_CHANGED' });
+    await expect(s2b(o, '2026-Q3')).rejects.toMatchObject({ code: 'HOUSEHOLD_TRADES_CHANGED' });
+    // The parts on either side of the change are not refused: August is under the first profile, October under the second.
+    const august = await s2b(o, '2026-08');
+    expect(august.lines.map((l) => l.trade)).toEqual(['goods', 'services']);
+    const october = await s2b(o, '2026-10');
+    expect(october.lines.map((l) => l.trade)).toEqual(['goods']);
+  });
+
+  it('does not refuse a period whose profiles change but keep the same trades', async () => {
+    const o = await org();
+    await setProfile(o);
+    await entry(o, '2026-09-05', 'Bán', [['111', 100000, 0], ['511', 0, 100000]]);
+    await setProfile(o, { effectiveFrom: '2026-09-16', einvoiceRegistered: true });
+    await expect(s2b(o, '2026-09')).resolves.toMatchObject({ total: '100000' });
+  });
+
   it('refuses an entity that is not a household, has no profile, is on group 1 or on the percentage method, and lets a viewer read the book', async () => {
     const o = await org();
     await expect(s2b(o, '2026-09')).rejects.toMatchObject({ code: 'HOUSEHOLD_BOOK_NOT_REQUIRED' });

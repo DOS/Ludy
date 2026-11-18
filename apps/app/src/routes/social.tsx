@@ -1,6 +1,6 @@
 // Crove Social home: what goes out next (an agenda by day), what waits for review, drafts, and what went out.
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
+import { Link, Navigate, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
@@ -11,7 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuLinkItem, DropdownMenuSe
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES } from '@crove/kernel-contract';
-import { AGENDA_STATUSES, bestTimes, engagementRateOfBases, type PublishedSample } from '@crove/mod-social/contract';
+import { AGENDA_STATUSES } from '@crove/mod-social/contract';
 import { cn } from '@crove/ui/lib/utils';
 import { DateInput } from '../components/date-input.tsx';
 import { MediaTagEditor, TagFilter, Thumb, sizeLabel, useLibrary, type LibraryItem } from '../components/social-media.tsx';
@@ -30,21 +30,9 @@ import { DraftsFromMediaPanel } from '../components/social-bulk-drafts.tsx';
 import { DraftFromPhotoLink, useAiPhotos } from '../components/social-ai-photos.tsx';
 import { DRAFTS_FROM_MEDIA_MAX, togglePick } from '../lib/social-bulk-drafts.ts';
 import { PlanFromPosts } from '../components/social-plan-review.tsx';
-import { ReportLinks } from '../components/social-report-links.tsx';
-import { MetricsSummary, useCanSummarize, useMetricsSummary } from '../components/social-summary.tsx';
-import { GoalsCard } from '../components/social-goals.tsx';
-import { TeamReport } from '../components/social-team-report.tsx';
-import { ReportSchedules } from '../components/social-report-schedules.tsx';
 import type { BulkAction } from '../lib/social-bulk.ts';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
-import { AccountGrowth, ChangeChip, ChannelTotals, EngagementRateCard, TopPosts } from '../components/social-growth.tsx';
-import { FollowerAudiences } from '../components/social-audience.tsx';
-import { ProfilePerformance } from '../components/social-performance.tsx';
-import { WhatWorks } from '../components/social-insights.tsx';
-import { OutsidePostCell, OutsideSwitch } from '../components/social-external-posts.tsx';
-import { mergePublished } from '../lib/social-external.ts';
-import { StoryLine, StoryTotals } from '../components/social-story-metrics.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient, uploadFiles } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
@@ -56,8 +44,6 @@ type Tab = SocialTab;
 const PAGE = 50;
 type ListTab = 'review' | 'attention' | 'drafts' | 'done' | 'archived';
 type PostCursor = { updatedAt: string; postId: string };
-// The counts the analytics table shows, in order; a platform that does not report one shows a dash.
-const METRIC_COLUMNS = ['reach', 'reactions', 'comments', 'shares'] as const;
 const DAY = 86_400_000;
 // The agenda lists what goes out in the next year, day by day.
 const AGENDA_DAYS = 366;
@@ -108,195 +94,6 @@ export function PostRow({ post, slug, names, labels, right }: { post: Post; slug
         {right && <span className="text-xs text-subtle-foreground tabular-nums">{right}</span>}
       </div>
     </Link>
-  );
-}
-
-// How published posts did (S8): totals over the window, then each published channel with its latest capture; with a
-// label chosen (#639), only the posts that carry it, on the screen and in the export. With the outside switch on
-// (#1054), the posts the channels published outside Crove count in the totals and show in the table with their chip;
-// they carry no label, so a label filter turns the switch off.
-function Metrics({ slug, names, labelId, action }: { slug: string; names: Map<string, string>; labelId: string | undefined; action?: ReactNode }) {
-  const t = useTranslations('social');
-  const f = useFormat();
-  const [days, setDays] = useState(30);
-  const [outside, setOutside] = useState(false);
-  const counting = outside && !labelId;
-  const label = labelId ? { labelId } : {};
-  const rows = useQuery(orpc.social.metrics.summary.queryOptions({ input: { days, ...label } }));
-  // The totals over every published channel of the window, summed by the server (#397); the list below stops at 500.
-  const totals = useQuery(orpc.social.metrics.totals.queryOptions({ input: { days, ...label, ...(counting ? { includeExternal: true } : {}) } }));
-  const outsideRows = useQuery({ ...orpc.social.metrics.external.queryOptions({ input: { days } }), enabled: counting });
-  // An AI summary of the window shown (#1237), for members and above on a server with AI; never saved.
-  const canSummarize = useCanSummarize();
-  const summary = useMetricsSummary();
-  // The window as a CSV file, built and audited by the server, saved by the browser.
-  const exportCsv = useMutation({
-    mutationFn: () => client.social.metrics.export({ days, ...label }),
-    onSuccess: (file) => {
-      const url = URL.createObjectURL(new Blob([file.csv], { type: 'text/csv;charset=utf-8' }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = file.filename;
-      a.click();
-      // Some browsers still read the link a moment after the click.
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    },
-  });
-  if (rows.isLoading) return <Spinner />;
-  if (rows.error) return <ErrorText>{errorMessage(rows.error)}</ErrorText>;
-  const data = rows.data ?? [];
-  const extra = counting ? (outsideRows.data ?? []) : [];
-  const total = (name: string) => totals.data?.metrics[name] ?? [...data, ...extra].reduce((sum, r) => sum + (r.metrics[name] ?? 0), 0);
-  // Clicks on Crove's short links (#706), where a channel sends its links through them.
-  const clicks = totals.data ? totals.data.clicks : data.some((r) => r.clicks !== null) ? data.reduce((sum, r) => sum + (r.clicks ?? 0), 0) : null;
-  const hasClicks = clicks !== null;
-  // The same totals of the window just before (#947), for the change next to each.
-  const previous = totals.data?.previous;
-  const against = t('growth.change.days', { days: String(days) });
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {[7, 30, 90].map((d) => (
-          <Button key={d} variant={d === days ? 'secondary' : 'ghost'} size="sm" aria-pressed={d === days} onClick={() => setDays(d)}>
-            {t('metricsDays', { days: String(d) })}
-          </Button>
-        ))}
-        {(data.length > 0 || extra.length > 0) && canSummarize && (
-          <Button variant="outline" size="sm" className="ml-auto" disabled={summary.write.isPending} onClick={() => summary.start({ days, labelId, includeExternal: counting })}>
-            {t('summary.open')}
-          </Button>
-        )}
-        {data.length > 0 && (
-          <Button variant="outline" size="sm" className={canSummarize ? undefined : 'ml-auto'} disabled={exportCsv.isPending} onClick={() => exportCsv.mutate()}>
-            {t('metricsExport')}
-          </Button>
-        )}
-      </div>
-      <MetricsSummary summary={summary} />
-      <OutsideSwitch checked={outside} onChange={setOutside} disabled={Boolean(labelId)} />
-      {exportCsv.error && <ErrorText>{errorMessage(exportCsv.error)}</ErrorText>}
-      {/* Without the server's totals the cards sum the listed rows only. */}
-      {totals.error && <ErrorText>{errorMessage(totals.error)}</ErrorText>}
-      {counting && outsideRows.error && <ErrorText>{errorMessage(outsideRows.error)}</ErrorText>}
-      {exportCsv.data?.truncated && <p className="text-xs text-warning">{t('metricsExportCut')}</p>}
-      <AccountGrowth days={days} names={names} />
-      <FollowerAudiences days={days} names={names} />
-      <ProfilePerformance days={days} names={names} />
-      {data.length === 0 && extra.length === 0 ? (
-        <Empty title={t('empty.metrics')} hint={t('metricsHint')} action={action} />
-      ) : (
-        <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {totals.data && (
-              <Card className="block p-4">
-                <p className="text-xs text-subtle-foreground">{t('growth.posts')}</p>
-                <p className="mt-1 text-xl font-semibold text-foreground tabular-nums">{f.number(totals.data.posts)}</p>
-                <ChangeChip current={totals.data.posts} previous={previous?.posts} against={against} withPrevious className="mt-1" />
-              </Card>
-            )}
-            {METRIC_COLUMNS.map((m) => (
-              <Card key={m} className="block p-4">
-                <p className="text-xs text-subtle-foreground">{t(`metric.${m}`)}</p>
-                <p className="mt-1 text-xl font-semibold text-foreground tabular-nums">{totals.isLoading ? '…' : f.number(total(m))}</p>
-                {previous && <ChangeChip current={total(m)} previous={previous.metrics[m]} against={against} withPrevious className="mt-1" />}
-              </Card>
-            ))}
-            {/* The engagement rate over the posts that report reach (else impressions, #1164), never a mean of rates (#1157). */}
-            {totals.data && <EngagementRateCard current={engagementRateOfBases([totals.data.rateBases])} previous={previous ? engagementRateOfBases([previous.rateBases]) : null} against={against} />}
-            {hasClicks && (
-              <Card className="block p-4">
-                <p className="text-xs text-subtle-foreground">{t('metricsClicks')}</p>
-                <p className="mt-1 text-xl font-semibold text-foreground tabular-nums">{totals.isLoading ? '…' : f.number(clicks ?? 0)}</p>
-                {previous && <ChangeChip current={clicks} previous={previous.clicks} against={against} withPrevious className="mt-1" />}
-              </Card>
-            )}
-          </div>
-          {totals.data && <StoryTotals metrics={totals.data.metrics} />}
-          {totals.data && totals.data.channels.length > 0 && <ChannelTotals current={totals.data.channels} previous={previous?.channels ?? []} days={days} names={names} />}
-          {data.length >= 500 && <p className="text-xs text-subtle-foreground">{t(totals.data ? 'metricsCapped' : 'metricsCappedPartial')}</p>}
-          <BestTimes rows={data} names={names} />
-          <WhatWorks slug={slug} days={days} labelId={labelId} names={names} />
-          <TopPosts rows={data} names={names} slug={slug} />
-          <div className="overflow-x-auto rounded-xl border">
-            <table className="w-full text-sm">
-              <thead className="bg-muted text-xs text-subtle-foreground">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">{t('metricsPost')}</th>
-                  {METRIC_COLUMNS.map((m) => (
-                    <th key={m} className="px-3 py-2 text-right font-medium">
-                      {t(`metric.${m}`)}
-                    </th>
-                  ))}
-                  {hasClicks && <th className="px-3 py-2 text-right font-medium">{t('metricsClicks')}</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {mergePublished(data, extra).map((item) => {
-                  const r = item.row;
-                  const meta = [providerName(r.provider), names.get(r.connectionId), r.publishedAt ? f.dateTime(r.publishedAt) : null, r.capturedAt ? t('metricsAsOf', { when: f.dateTime(r.capturedAt) }) : t('metricsPending')]
-                    .filter(Boolean)
-                    .join(' · ');
-                  return (
-                    <tr key={item.kind === 'crove' ? item.row.variantId : `outside-${item.row.id}`} className="border-t">
-                      <td className="max-w-md px-3 py-2">
-                        {item.kind === 'crove' ? (
-                          <>
-                            <Link to="/o/$slug/social/$id" params={{ slug, id: item.row.postId }} className="line-clamp-1 text-foreground hover:underline">
-                              {item.row.excerpt || t('emptyText')}
-                            </Link>
-                            <p className="text-xs text-subtle-foreground">{meta}</p>
-                            <StoryLine metrics={r.metrics} />
-                          </>
-                        ) : (
-                          <OutsidePostCell excerpt={item.row.excerpt} url={item.row.url} meta={meta} />
-                        )}
-                      </td>
-                      {METRIC_COLUMNS.map((m) => (
-                        <td key={m} className="px-3 py-2 text-right text-foreground tabular-nums">
-                          {r.metrics[m] === undefined ? '-' : f.number(r.metrics[m])}
-                        </td>
-                      ))}
-                      {hasClicks && <td className="px-3 py-2 text-right text-foreground tabular-nums">{item.kind === 'crove' && item.row.clicks !== null ? f.number(item.row.clicks) : '-'}</td>}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
-
-// When each channel's posts drew the most engagement, in the viewer's time zone, from the posts in the window.
-function BestTimes({ rows, names }: { rows: readonly PublishedSample[]; names: Map<string, string> }) {
-  const t = useTranslations('social');
-  const f = useFormat();
-  const best = useMemo(() => bestTimes(rows, Intl.DateTimeFormat().resolvedOptions().timeZone), [rows]);
-  if (best.size === 0) return null;
-  return (
-    <Card className="block space-y-3 p-4">
-      <div>
-        <p className="text-sm font-medium text-foreground">{t('bestTimesTitle')}</p>
-        <p className="text-xs text-subtle-foreground">{t('bestTimesHint')}</p>
-      </div>
-      <ul className="space-y-2">
-        {[...best.entries()].map(([connectionId, slots]) => (
-          <li key={connectionId} className="text-sm">
-            <span className="text-foreground">{names.get(connectionId) ?? connectionId.slice(0, 8)}</span>
-            <span className="text-subtle-foreground">
-              {': '}
-              {slots
-                .map((s) => t('bestTimesSlot', { day: t(`weekday.${DAY_KEYS[s.weekday - 1] ?? 'mon'}`), hour: String(s.hour).padStart(2, '0'), engagement: f.number(Math.round(s.engagement)), posts: String(s.posts) }))
-                .join(' · ')}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </Card>
   );
 }
 
@@ -618,6 +415,22 @@ function Agenda({
   );
 }
 
+// One line of the post figures, with the way to the report (#3658): the figures themselves are in Reports > Bài đăng.
+function ReportLine({ slug }: { slug: string }) {
+  const t = useTranslations('social');
+  const totals = useQuery(orpc.social.metrics.totals.queryOptions({ input: { days: 30 } }));
+  const data = totals.data;
+  if (!data || data.posts === 0) return null;
+  return (
+    <p className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground" data-testid="report-line">
+      <span>{t('reportLine', { days: 30, posts: data.posts, reach: data.metrics.reach ?? 0, reactions: data.metrics.reactions ?? 0 })}</span>
+      <Link to="/o/$slug/reports" params={{ slug }} search={{ area: 'posts' }} className="text-link hover:underline">
+        {t('reportOpen')}
+      </Link>
+    </p>
+  );
+}
+
 // Drops empty filters, so the address shows only what is set.
 const clean = (s: { [K in keyof SocialSearch]?: SocialSearch[K] | undefined }): SocialSearch => Object.fromEntries(Object.entries(s).filter(([, v]) => v !== undefined && v !== '')) as SocialSearch;
 
@@ -717,7 +530,7 @@ export function SocialPage() {
   // The post filters (label, channel, search, mine) are the same in the lists, the board and the calendar (#1022): one
   // state, in the address. The metrics take the label only; the calendar's own month or week is its date range.
   const postFilters = tab === 'upcoming' || listTab !== null || tab === 'board' || tab === 'calendar';
-  const labelFilter = (postFilters || tab === 'metrics') && (labelList.length > 0 || Boolean(search.label));
+  const labelFilter = postFilters && (labelList.length > 0 || Boolean(search.label));
   // Posts picked for a bulk action (#635), in the list on screen; a new tab or filter starts afresh.
   const [picked, setPicked] = useState<Set<string>>(new Set());
   useEffect(() => setPicked(new Set()), [tab, search.channel, search.label, search.q, search.from, search.to, search.assignee, search.author]);
@@ -805,6 +618,9 @@ export function SocialPage() {
   const excerptOf = (postId: string) => excerpt((rows.find((p) => p.id === postId) ?? upcoming.data?.find((p) => p.id === postId))?.body ?? '', 60) || t('emptyText');
   const channelName = (connectionId: string) => names.get(connectionId) ?? t('bulk.move.channelGone');
 
+  // The figures are in Reports > Bài đăng (#3658); an old link to the Số liệu screen opens there, with its label.
+  if (tab === 'metrics') return <Navigate to="/o/$slug/reports" params={{ slug }} search={{ area: 'posts', ...(search.label ? { label: search.label } : {}) }} replace />;
+
   return (
     <>
       <PageHeader
@@ -828,7 +644,7 @@ export function SocialPage() {
                   <DropdownMenuLinkItem render={<Link to="/o/$slug/social/import" params={{ slug }} />}>{t('import.open')}</DropdownMenuLinkItem>
                 )}
                 <DropdownMenuLinkItem render={<Link to="/o/$slug/social" params={{ slug }} search={(prev: SocialSearch) => clean({ ...prev, tab: 'library' })} />}>{t('tabs.library')}</DropdownMenuLinkItem>
-                <DropdownMenuLinkItem render={<Link to="/o/$slug/social" params={{ slug }} search={(prev: SocialSearch) => clean({ ...prev, tab: 'metrics' })} />}>{t('tabs.metrics')}</DropdownMenuLinkItem>
+                <DropdownMenuLinkItem render={<Link to="/o/$slug/reports" params={{ slug }} search={{ area: 'posts' }} />}>{t('tabs.metrics')}</DropdownMenuLinkItem>
                 {canWrite && (
                   <>
                     <DropdownMenuSeparator />
@@ -866,6 +682,7 @@ export function SocialPage() {
           )}
         </Card>
       )}
+      {!resolving && !noChannels && tab !== 'library' && <ReportLine slug={slug} />}
       {resolving ? (
         <Spinner />
       ) : (
@@ -1081,15 +898,6 @@ export function SocialPage() {
               )}
             </>
           )}
-        </TabsContent>
-        <TabsContent value="metrics">
-          <div className="space-y-4">
-            <GoalsCard channels={channels.data ?? []} />
-            <Metrics slug={slug} names={names} labelId={search.label} action={postAction(false)} />
-            <TeamReport key={slug} />
-            <ReportLinks channels={channels.data ?? []} />
-            <ReportSchedules channels={channels.data ?? []} />
-          </div>
         </TabsContent>
         <TabsContent value="library">{tab === 'library' && <Library slug={slug} canWrite={canWrite} />}</TabsContent>
         {(['review', 'attention', 'drafts', 'done', 'archived'] as const).map((id) => (

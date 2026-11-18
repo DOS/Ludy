@@ -99,6 +99,8 @@ export interface CroveFinanceSchema {
   'crove_finance.stock_move': FinanceStockMoveTable;
   'crove_finance.stock_period': FinanceStockPeriodTable;
   'crove_finance.stock_period_item': FinanceStockPeriodItemTable;
+  'crove_finance.supplier_bank_account': FinanceSupplierBankAccountTable;
+  'crove_finance.supplier_bank_account_change': FinanceSupplierBankAccountChangeTable;
   'crove_finance.vat_return_filed': FinanceVatReturnFiledTable;
   'crove_finance.vendor_account_rule': FinanceVendorAccountRuleTable;
 }
@@ -1658,6 +1660,37 @@ export interface FinanceStockPeriodTable {
   total_cost: ColumnType<string, string | undefined, NotGranted>;
   closed_by: ColumnType<string | null, string | null, NotGranted>;
   closed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.supplier_bank_account_change */
+export interface FinanceSupplierBankAccountChangeTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  account_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  old_number_hash: ColumnType<string | null, string | null, NotGranted>;
+  new_number_hash: ColumnType<string | null, string | null, NotGranted>;
+  changed_by: ColumnType<string | null, string | null, NotGranted>;
+  changed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  step_up_at: ColumnType<Date, Date | string, NotGranted>;
+}
+
+/** crove_finance.supplier_bank_account */
+export interface FinanceSupplierBankAccountTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  bank_name: ColumnType<string, string, NotGranted>;
+  account_holder_sealed: ColumnType<string, string, NotGranted>;
+  number_sealed: ColumnType<string, string, NotGranted>;
+  number_hash: ColumnType<string, string, NotGranted>;
+  hash_key_id: ColumnType<string, string, NotGranted>;
+  last4: ColumnType<string, string, NotGranted>;
+  status: Generated<string>;
+  retired_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_finance.vat_return_filed */

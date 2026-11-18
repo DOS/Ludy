@@ -61,7 +61,7 @@ test('the Engage app holds the CRM screens in its groups, an old CRM link opens 
     await expect(page.getByRole('region', { name: 'Hội thoại hiện tại' })).toBeVisible();
     for (const [tab, area, panel] of [
       ['Bán hàng', 'sales', 'Cơ hội theo giai đoạn'],
-      ['Bài đăng', 'posts', 'Bài đăng trong 30 ngày qua'],
+      ['Bài đăng', 'posts', 'Kết quả bài đăng'],
       ['Quảng cáo', 'ads', 'Quảng cáo tháng này'],
     ] as const) {
       await tabs.getByRole('tab', { name: tab }).click();

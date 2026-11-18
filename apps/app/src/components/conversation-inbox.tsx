@@ -21,9 +21,11 @@ import { channelsOfPosts, INBOX_PAGE_SIZE, inboxListInput, mergeConversationPage
 import { client, errorMessage, fetchConversationImage, orpc, queryClient } from '../lib/api.ts';
 import { appendQuoteMessage, canInsertQuoteLink } from '../lib/quote-reply.ts';
 import { takeReplyHandoff } from '../lib/reply-handoff.ts';
+import { TOUCH_BUTTON, TOUCH_SELECT } from '../lib/conversation-touch.ts';
 import { PersonalDataSection } from './conversation-erase.tsx';
 import { DraftPanel, replyTextFor } from './conversation-drafts.tsx';
 import { IntentBadge, IntentBar } from './conversation-intent.tsx';
+import { PaneError, ThreadSkeleton } from './conversation-states.tsx';
 import { REPLY_INSERT_EVENT, type ReplyInsert } from './quote-send.tsx';
 
 export const STATUSES: readonly ConversationStatus[] = ['new', 'pending', 'resolved'];
@@ -103,7 +105,7 @@ export function useConversationPages(input: ListInput) {
     refetchInterval: POLL_MS,
   });
   const items = useMemo(() => mergeConversationPages(pages.data?.pages ?? []), [pages.data]);
-  return { items, loaded: pages.data !== undefined, isPending: pages.isPending, error: pages.error, hasMore: pages.hasNextPage, loadingMore: pages.isFetchingNextPage, loadFailed: pages.isFetchNextPageError, loadMore: () => void pages.fetchNextPage() };
+  return { items, loaded: pages.data !== undefined, isPending: pages.isPending, error: pages.error, hasMore: pages.hasNextPage, loadingMore: pages.isFetchingNextPage, loadFailed: pages.isFetchNextPageError, loadMore: () => void pages.fetchNextPage(), retry: () => void pages.refetch() };
 }
 
 // "Load older conversations" under a list: shown only while the server says there are more.
@@ -112,7 +114,7 @@ export function LoadOlderConversations({ hasMore, loading, onLoad, failed }: { h
   if (!hasMore) return null;
   return (
     <div className="space-y-1" data-testid="conversation-more">
-      <Button type="button" size="sm" variant="outline" className="w-full" loading={loading} onClick={onLoad}>
+      <Button type="button" size="sm" variant="outline" className={cn('w-full', TOUCH_BUTTON)} loading={loading} onClick={onLoad}>
         {t('loadOlder')}
       </Button>
       {failed && <ErrorText>{t('loadOlderFailed')}</ErrorText>}
@@ -180,7 +182,7 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
           </TabsList>
         </Tabs>
         {list.isPending && <Spinner />}
-        {list.error && <ErrorText>{errorMessage(list.error)}</ErrorText>}
+        {list.error && <PaneError message={errorMessage(list.error)} onRetry={list.retry} testId="inbox-list-error" />}
         {list.loaded && items.length === 0 && <Empty title={empty ?? t(`empty.${status}`)} />}
         <ul className="divide-y divide-border rounded-md border border-border">
           {items.map((c) => (
@@ -285,8 +287,8 @@ export function ConversationThread({ conversationId, onGone, onOpenConversation,
     // A thread the reader may no longer read is gone from their screen.
     if (codeOf(detail.error) === 'CONVERSATION_NOT_FOUND') onGone();
   }, [detail.error]); // eslint-disable-line react-hooks/exhaustive-deps
-  if (detail.isPending) return <Spinner />;
-  if (detail.error || !data) return <ErrorText>{errorMessage(detail.error)}</ErrorText>;
+  if (detail.isPending) return <ThreadSkeleton />;
+  if (detail.error || !data) return <PaneError message={errorMessage(detail.error)} onRetry={() => void detail.refetch()} testId="thread-error" />;
   const c = data.conversation;
   const newer = seen !== null && c.lastSeq > seen;
   return (
@@ -324,7 +326,7 @@ export function ConversationThread({ conversationId, onGone, onOpenConversation,
         <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground" data-testid="conversation-parent-link">
           <span>{t('fromComment')}</span>
           {onOpenConversation && (
-            <Button type="button" size="sm" variant="ghost" onClick={() => onOpenConversation(data.parentId as string)}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" onClick={() => onOpenConversation(data.parentId as string)}>
               {t('openParentComment')}
             </Button>
           )}
@@ -338,7 +340,7 @@ export function ConversationThread({ conversationId, onGone, onOpenConversation,
       {newer && (
         <div role="status" className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm" data-testid="conversation-newer">
           <span>{t('newer')}</span>
-          <Button type="button" size="sm" variant="outline" onClick={() => setSeen(c.lastSeq)}>
+          <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" onClick={() => setSeen(c.lastSeq)}>
             {t('seenIt')}
           </Button>
         </div>
@@ -361,7 +363,7 @@ function AssignSelect({ conversation, members }: { conversation: ConversationSum
   const assign = useMutation({ mutationFn: (assigneeUserId: string | null) => client.conversations.assign({ conversationId: conversation.id, assigneeUserId }), onSuccess: refresh });
   return (
     <div>
-      <NativeSelect size="sm" aria-label={t('assignee')} value={conversation.assigneeUserId ?? ''} disabled={assign.isPending} onChange={(e) => assign.mutate(e.target.value || null)}>
+      <NativeSelect size="sm" className={TOUCH_SELECT} aria-label={t('assignee')} value={conversation.assigneeUserId ?? ''} disabled={assign.isPending} onChange={(e) => assign.mutate(e.target.value || null)}>
         <option value="">{t('unassigned')}</option>
         {members.map((m) => (
           <option key={m.userId} value={m.userId}>
@@ -383,7 +385,7 @@ function ResolveButton({ conversation }: { conversation: ConversationSummary }) 
   const failure = resolved ? reopen.error : resolve.error;
   return (
     <>
-    <Button type="button" size="sm" variant="outline" loading={pending} data-testid={resolved ? 'conversation-reopen' : 'conversation-resolve'} onClick={() => (resolved ? reopen.mutate() : resolve.mutate())}>
+    <Button type="button" size="lg" className={TOUCH_BUTTON} variant="outline" loading={pending} data-testid={resolved ? 'conversation-reopen' : 'conversation-resolve'} onClick={() => (resolved ? reopen.mutate() : resolve.mutate())}>
       {resolved ? t('reopen') : t('resolve')}
     </Button>
     {failure && <ErrorText>{errorMessage(failure)}</ErrorText>}
@@ -459,7 +461,7 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
         {m.removed ? <p className="italic text-muted-foreground">{t('removed')}</p> : <p className="whitespace-pre-wrap break-words text-foreground">{email ? email.fresh : m.body}</p>}
         {email && email.quoted !== '' && (
           <>
-            <Button type="button" size="sm" variant="ghost" aria-expanded={showQuoted} data-testid="conversation-quoted-toggle" onClick={() => setShowQuoted((v) => !v)}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" aria-expanded={showQuoted} data-testid="conversation-quoted-toggle" onClick={() => setShowQuoted((v) => !v)}>
               {t(showQuoted ? 'quoted.hide' : 'quoted.show')}
             </Button>
             {showQuoted && <p className="whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-muted-foreground" data-testid="conversation-quoted">{email.quoted}</p>}
@@ -479,12 +481,12 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
             <>
               {/* An unclear send that nothing can be read back for (an email, WhatsApp) is never sent again by a button: a person looks and marks it sent. */}
               {!(m.sendState === 'unknown' && !conversationCanResendUnknown(detail.conversation.channel.provider, detail.conversation.kind)) && (
-                <Button type="button" size="sm" variant="outline" loading={settle.isPending} onClick={() => settle.mutate('retry')}>
+                <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" loading={settle.isPending} onClick={() => settle.mutate('retry')}>
                   {m.sendState === 'unknown' ? t('sendAgainUnknown') : t('sendAgain')}
                 </Button>
               )}
               {m.sendState === 'unknown' && (
-                <Button type="button" size="sm" variant="ghost" loading={settle.isPending} onClick={() => settle.mutate('mark_sent')}>
+                <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" loading={settle.isPending} onClick={() => settle.mutate('mark_sent')}>
                   {t('wasSent')}
                 </Button>
               )}
@@ -494,18 +496,18 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
           {m.hideRequest && <Badge variant="outline">{t(m.hideRequest === 'hide' ? 'hiding' : 'unhiding')}</Badge>}
           {m.hideErrorCode && !m.hideRequest && <span className="text-destructive">{t('hideFailed')}</span>}
           {canHide && m.hideRequest && m.hideErrorCode && (
-            <Button type="button" size="sm" variant="outline" loading={hide.isPending} onClick={() => hide.mutate(m.hideRequest === 'hide')}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" loading={hide.isPending} onClick={() => hide.mutate(m.hideRequest === 'hide')}>
               {t('hideAgain')}
             </Button>
           )}
           {canHide && !m.hideRequest && (
-            <Button type="button" size="sm" variant="ghost" loading={hide.isPending} data-testid="conversation-hide" onClick={() => hide.mutate(!m.hidden)}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" loading={hide.isPending} data-testid="conversation-hide" onClick={() => hide.mutate(!m.hidden)}>
               {m.hidden ? t('unhide') : t('hide')}
             </Button>
           )}
           {supportsPrivateReply && m.privateReplyConversationId && (
             onOpenConversation ? (
-              <Button type="button" size="sm" variant="ghost" data-testid="conversation-private-reply-open" onClick={() => onOpenConversation(m.privateReplyConversationId as string)}>
+              <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" data-testid="conversation-private-reply-open" onClick={() => onOpenConversation(m.privateReplyConversationId as string)}>
                 {t('privateReplyView')}
               </Button>
             ) : (
@@ -513,7 +515,7 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
             )
           )}
           {supportsPrivateReply && !m.privateReplyConversationId && canWrite && withinPrivateWindow && (
-            <Button type="button" size="sm" variant="ghost" data-testid="conversation-private-reply-button" onClick={() => setPrivateOpen((v) => !v)}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" data-testid="conversation-private-reply-button" onClick={() => setPrivateOpen((v) => !v)}>
               {t('privateReplyOpen')}
             </Button>
           )}
@@ -536,12 +538,13 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
               data-testid="conversation-private-reply-text"
             />
             <div className="flex gap-2">
-              <Button type="submit" size="sm" loading={privateReply.isPending} disabled={privateText.trim() === ''} data-testid="conversation-private-reply-send">
+              <Button type="submit" size="sm" className={TOUCH_BUTTON} loading={privateReply.isPending} disabled={privateText.trim() === ''} data-testid="conversation-private-reply-send">
                 {t('privateReplySend')}
               </Button>
               <Button
                 type="button"
                 size="sm"
+                className={TOUCH_BUTTON}
                 variant="ghost"
                 onClick={() => {
                   setPrivateOpen(false);
@@ -697,7 +700,7 @@ export function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail
       {insertTooLong && <ErrorText>{t('quoteTooLong', { max: String(replyMax) })}</ErrorText>}
       {movedNote && <p role="status" className="text-sm text-muted-foreground">{t('movedAfterSend')}</p>}
       {send.error && !movedNote && <ErrorText>{errorMessage(send.error)}</ErrorText>}
-      <Button type="submit" size="sm" loading={send.isPending} disabled={text.trim() === ''} data-testid="conversation-send">
+      <Button type="submit" size="lg" className={TOUCH_BUTTON} loading={send.isPending} disabled={text.trim() === ''} data-testid="conversation-send">
         {t(detail.conversation.kind === 'email' ? 'sendEmail' : detail.conversation.kind === 'direct' ? 'sendPrivate' : 'sendPublic')}
       </Button>
     </form>
@@ -739,7 +742,7 @@ function Notes({ detail, members, canWrite }: { detail: ConversationDetail; memb
           }}
         >
           <Textarea aria-label={t('noteLabel')} rows={2} maxLength={CONVERSATION_NOTE_MAX} value={text} placeholder={t('notePlaceholder')} onChange={(e) => setText(e.target.value)} data-testid="conversation-note-text" />
-          <Button type="submit" size="sm" variant="outline" loading={add.isPending} disabled={text.trim() === ''} data-testid="conversation-note-add">
+          <Button type="submit" size="sm" className={TOUCH_BUTTON} variant="outline" loading={add.isPending} disabled={text.trim() === ''} data-testid="conversation-note-add">
             {t('addNote')}
           </Button>
         </form>
@@ -765,7 +768,7 @@ export function SandboxCommentButton({ connectionId, postId }: { connectionId: s
   });
   if (!open) {
     return (
-      <Button type="button" size="sm" variant="outline" data-testid="sandbox-comment-open" onClick={() => setOpen(true)}>
+      <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" data-testid="sandbox-comment-open" onClick={() => setOpen(true)}>
         {t('sandboxMake')}
       </Button>
     );
@@ -780,10 +783,10 @@ export function SandboxCommentButton({ connectionId, postId }: { connectionId: s
     >
       <Textarea aria-label={t('sandboxText')} rows={2} maxLength={2000} value={text} placeholder={t('sandboxText')} onChange={(e) => setText(e.target.value)} data-testid="sandbox-comment-text" />
       <div className="flex gap-2">
-        <Button type="submit" size="sm" loading={make.isPending} disabled={text.trim() === ''} data-testid="sandbox-comment-send">
+        <Button type="submit" size="sm" className={TOUCH_BUTTON} loading={make.isPending} disabled={text.trim() === ''} data-testid="sandbox-comment-send">
           {t('sandboxSend')}
         </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+        <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" onClick={() => setOpen(false)}>
           {t('cancel')}
         </Button>
       </div>
