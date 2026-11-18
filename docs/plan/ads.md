@@ -50,6 +50,8 @@ Ludy already holds the books (Finance), the bank and card lines, the documents a
 
 ### Where Ads sits in the app
 
+> **Naming update (2026-11-18, [#3796](https://github.com/DOS/Ludy/issues/3796)):** The rail app below was renamed to **Engage** (`engage`), housing three switchable modules (`social` as "Hộp thư & Bài đăng" / "Inbox & Posts", `crm`, and `ads`); the Ads screens live in Engage's `Marketing` feature group (`packages/kernel-contract/src/apps.ts`).
+
 Reference (the owner, 2026-11-01, a screenshot of Hootsuite's current dashboard): Ads is not a product of its own on the rail. It is a group inside its publishing product, next to Plan (calendar, drafts, content) and Analytics, with two items, Ads and Boost.
 
 **Recommendation: a group inside the Social (posting) app on the rail, not a rail item of its own.** The same person reads the calendar and the ad numbers, the two share the platform connections (section 5.1), and a fourth or fifth rail item for a module with one or two screens crowds a small business's shell. Each group is shown **only when its module is enabled**: with `ads` out of `CROVE_MODULES` the Ads group does not appear and Social looks as it does today; with `social` out and `ads` in, the app still shows, with the Ads group alone (the shell keeps an app while any of its groups has an installed item), so no rail item of its own is needed.

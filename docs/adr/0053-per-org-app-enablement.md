@@ -168,3 +168,10 @@ Most of the table row of section 3 was already true after (b) and (c); this slic
 - Every new module's sweeps, jobs, routes, public pages and webhooks must declare whether they are work or keeping, and must ask the org's gate, not only `Runtime.installed`. The two tests make a miss a red build.
 - Data is never deleted by turning off. An org that wants an app's data gone uses the existing erasure and offboarding commands.
 - Not decided here: a module-level limit on how long held events may wait that is shorter than the retention window, a per-member (rather than per-company) choice of apps, and the order of Vy's first-run suggestions.
+
+## Amendment (2026-11-18, #3796): App and Module naming alignment
+
+While database, SQL and RPC wire names keep their original identifiers (`crove_kernel.tenant.apps_off`, `crove_kernel.org_app_on`, `kernel.org.apps`, `kernel.org.set_app`), owner decision [#3796](https://github.com/DOS/Ludy/issues/3796) (`packages/kernel-contract/src/apps.ts`, [DESIGN.md](../../DESIGN.md) section 1.1) clarifies the product taxonomy:
+
+- Every switch controlled by `kernel.org.apps` / `kernel.org.set_app` is a **Module** (`ModuleId`), not a whole multi-module App.
+- Settings **Ứng dụng & Phân hệ** (`OrgAppsCard`) renders switches in `APP_IDS` order and groups multi-module Apps (`teamwork`: `notes`, `projects`, `meetings`; `engage`: `social`, `crm`, `ads`) under their parent **App** heading (`role="group"`), keeping single-module Apps flat and replacing `"Social"` copy with `"Hộp thư & Bài đăng"` / `"Inbox & Posts"` via the unified `modules.*` i18n keys.

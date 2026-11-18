@@ -730,6 +730,7 @@ export const en = {
       noAccount: 'Add the supplier\'s bank account first (open the supplier).',
       manyAccounts: 'This supplier has several active accounts: retire the old ones first (open the supplier).',
       more: 'Showing the oldest {count}; pay or settle some to see the rest.',
+<<<<<<< HEAD
       first: 'Suggested first',
       lineFacts: 'Invoices to pay: {count}, {total} in all, the oldest dated {date}',
       lineChanged: 'Of a supplier whose bank account changed recently: {count}',
@@ -738,6 +739,8 @@ export const en = {
         budget: "{finance} has used this month's AI budget: the figures above stand alone.",
         failed: '{finance} could not word this one: the figures above stand alone.',
       },
+=======
+>>>>>>> origin/main
     },
     payments: {
       title: 'Approved payments waiting for the bank',
@@ -13714,6 +13717,9 @@ export const en = {
         bank_file: {
           export: 'Record a download of the bank salary file (counts only, no name, account number or amount)',
           get: 'Open the bank salary file of an approved pay run, with each person\'s bank account number',
+        },
+        coworker: {
+          access: 'Check owner or admin access before calling the payroll coworker',
         },
         declaration: {
           export: 'Record a download of a declaration list (counts only, no name or amount)',

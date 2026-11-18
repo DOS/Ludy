@@ -5,7 +5,11 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+<<<<<<< HEAD
 import type { SupplierPayable, SupplierPayableLine, SupplierPayableList } from '@crove/kernel-contract';
+=======
+import type { SupplierPayable, SupplierPayableList } from '@crove/kernel-contract';
+>>>>>>> origin/main
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient, calls: [] as string[] }));
 
@@ -40,10 +44,16 @@ const base: SupplierPayable = {
   accountChangedOn: null,
 };
 
+<<<<<<< HEAD
 function render(answer: SupplierPayableList, locale: 'vi' | 'en' = 'en', line?: SupplierPayableLine): string {
   setActiveLocale(locale);
   cache.current.setQueryData(['supplierPayment', 'payable'], answer);
   if (line) cache.current.setQueryData(['supplierPayment', 'payableLine'], line);
+=======
+function render(answer: SupplierPayableList, locale: 'vi' | 'en' = 'en'): string {
+  setActiveLocale(locale);
+  cache.current.setQueryData(['supplierPayment', 'payable'], answer);
+>>>>>>> origin/main
   return renderToStaticMarkup(
     <QueryClientProvider client={cache.current}>
       <I18nProvider>
@@ -96,6 +106,7 @@ describe('the invoices to pay on the vendors page (#3113 S4b)', () => {
     expect(vi).toContain('Hóa đơn cần chi');
     expect(vi).toContain('Xin chi');
   });
+<<<<<<< HEAD
 
   const second: SupplierPayable = { ...base, purchaseDocumentId: '00000000-0000-4000-8000-0000000000d2', invoiceNumber: 'HD-0043', invoiceDate: '2026-11-05' };
   const facts = { invoices: 2, total: '220000', oldestDate: '2026-11-01', onChangedAccount: 0, suggestedPurchaseDocumentId: base.purchaseDocumentId };
@@ -141,4 +152,6 @@ describe('the invoices to pay on the vendors page (#3113 S4b)', () => {
     expect(html).toContain('2 hóa đơn cần chi, tổng');
     expect(html).toContain('Gợi ý chi trước');
   });
+=======
+>>>>>>> origin/main
 });

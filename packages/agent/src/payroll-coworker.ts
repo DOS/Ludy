@@ -159,16 +159,33 @@ export function pseudonymizeSheet(lines: readonly PayrollSheetLine[], options: {
   return { sheet: { language: options.language, blockingRules: Math.max(0, Math.trunc(options.blockingRules)), lines: out }, aliases };
 }
 
-/** The values (names, identity numbers, tax codes, accounts, addresses) found in a prompt, case and accents aside; the caller names them and refuses the call when any is found. Values
- * under three characters are not compared (a one-letter name would match everywhere). */
+/** The values (names, identity numbers, tax codes, accounts, addresses) found in a prompt, case and accents aside; the caller names them and refuses the call when any is found. Single-word
+ * alphabetic values match on word boundaries (at least two letters, so "Lan" or "An" is caught on its own without matching inside "plan" or "annual", while one-letter values are ignored);
+ * multi-word names, numbers, emails and other identifiers under three characters are not compared. */
 export function promptLeaks(prompt: string, forbidden: readonly string[]): string[] {
-  const fold = (v: string) => v.normalize('NFKD').replace(/\p{M}/gu, '').replace(/đ/gi, 'd').replace(/\s+/g, ' ').trim().toLowerCase();
+  const fold = (v: string) =>
+    v
+      .normalize('NFKD')
+      .replace(/\p{M}/gu, '')
+      .replace(/đ/gi, 'd')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
   const haystack = fold(prompt);
-  const compact = haystack.replace(/[\s.,\-_]/g, '');
+  const compact = haystack.replace(/[\s.,\-_()]/g, '');
   return forbidden.filter((value) => {
     const needle = fold(value);
+    if (!/[\s\d@]/u.test(needle) && /\p{L}/u.test(needle)) {
+      const lettersOnly = /^\p{L}+$/u.test(needle);
+      if (needle.length < (lettersOnly ? 2 : 3)) return false;
+      const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const left = /^\p{L}/u.test(needle) ? '(?<![\\p{L}\\p{N}])' : '';
+      const right = /\p{L}$/u.test(needle) ? '(?![\\p{L}\\p{N}])' : '';
+      return new RegExp(`${left}${escaped}${right}`, 'u').test(haystack);
+    }
     if (needle.length < 3) return false;
-    return haystack.includes(needle) || (/\d/.test(needle) && compact.includes(needle.replace(/[\s.,\-_]/g, '')));
+    const compactNeedle = needle.replace(/[\s.,\-_()]/g, '');
+    return haystack.includes(needle) || (/\d/.test(needle) && compactNeedle.length >= 3 && compact.includes(compactNeedle));
   });
 }
 
