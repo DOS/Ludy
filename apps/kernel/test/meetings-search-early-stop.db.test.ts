@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// crove_meetings.search_segment_ids after migration 20270117110000 (#3843): the page is read meeting by meeting in the order of the answer and stopped when full, and falls back to the
+// crove_meetings.search_segment_ids after migration 20270117120000 (#3843): the page is read meeting by meeting in the order of the answer and stopped when full, and falls back to the
 // statement of 20261226000000 when 40 meetings were not enough. The proof is a comparison against that statement, kept here as a reference function of the test database only: the same
 // ids in the same order, for an owner, an admin, a recorder, a reader and a member who reads nothing, over common, rare and unreadable-only words, pages and offsets, with drafts and a meeting
 // past its text date; and a count of the readability checks (pg_stat_user_functions), so the saving is measured by the database and not by a clock.
