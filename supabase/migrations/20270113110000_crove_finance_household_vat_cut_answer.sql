@@ -9,7 +9,7 @@ SET LOCAL lock_timeout = '2s';
 ALTER TABLE crove_finance.household_profile ADD COLUMN IF NOT EXISTS vat_cut_eligible text;
 
 -- One constraint under a fixed name, added only when it is missing, so a second run changes nothing. It is added NOT VALID (new and updated rows are checked at once) and validated by the next
--- migration (20270112140000) in its own transaction, so no scan of the table runs under this file's lock.
+-- migration (20270113120000) in its own transaction, so no scan of the table runs under this file's lock.
 DO $$
 BEGIN
   IF NOT EXISTS (
