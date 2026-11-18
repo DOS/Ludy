@@ -17,6 +17,7 @@ import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
+import { contextToken } from './invariant/fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -229,15 +230,31 @@ suite('MISA AMIS connections (#3875)', () => {
     // A code outside the shape is refused by the database, and a duplicate too.
     await expect(rows("UPDATE crove_finance.misa_amis_connection SET org_company_code = 'not-a-code' WHERE org_id = $1", [orgId])).rejects.toThrow();
     await expect(rows('UPDATE crove_finance.misa_amis_connection SET org_company_code = $1 WHERE org_id = $2', [codes[1]?.org_company_code, orgId])).rejects.toThrow(/misa_amis_connection_code_uq/);
-    // The tenant role's own privileges: it files a row without the code (the database makes it) and without a test result, and only a test's result may be updated afterwards.
-    const can = async (column: string, action: 'INSERT' | 'UPDATE') =>
-      (await rows<{ ok: boolean }>(`SELECT pg_catalog.has_column_privilege('crove_tenant', 'crove_finance.misa_amis_connection', $1, $2) AS ok`, [column, action]))[0]?.ok;
-    expect(await can('org_company_code', 'INSERT')).toBe(false);
-    expect(await can('org_company_code', 'UPDATE')).toBe(false);
-    expect(await can('last_test_state', 'INSERT')).toBe(false);
-    expect(await can('legal_entity_id', 'INSERT')).toBe(true);
-    expect(await can('last_test_state', 'UPDATE')).toBe(true);
-    expect(await can('legal_entity_id', 'UPDATE')).toBe(false);
+    // A tenant role never types the code or a test result: as the owner of the org (through the sealed context, as the tenant role) an INSERT that names both is stored with a fresh code and no result.
+    const typed = 'ludy-' + '0'.repeat(32);
+    const stored = await admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        // An entity and a channel connection of its own, made as the admin connection and rolled back with the rest.
+        const entity = randomUUID();
+        const channel = randomUUID();
+        await c.query("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Chi nhánh thử mã', 'branch', $3)", [orgId, entity, owner.userId]);
+        await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, `a-${entity}`, owner.userId]);
+        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner.userId, orgId)]);
+        await c.query('SET LOCAL ROLE crove_tenant');
+        const { rows: inserted } = await c.query<{ org_company_code: string; last_test_state: string | null; last_tested_at: Date | null }>(
+          "INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id, org_company_code, last_test_state, last_tested_at) VALUES ($1, $2, $3, $4, 'works', pg_catalog.now()) RETURNING org_company_code, last_test_state, last_tested_at",
+          [orgId, entity, channel, typed],
+        );
+        return inserted[0] ?? null;
+      } finally {
+        await c.query('ROLLBACK');
+      }
+    });
+    expect(stored?.org_company_code).not.toBe(typed);
+    expect(stored?.org_company_code).toMatch(CODE);
+    expect(stored?.last_test_state).toBeNull();
+    expect(stored?.last_tested_at).toBeNull();
   });
 
   it('refuses, in the database, a row filed on a channel connection of another provider', async () => {

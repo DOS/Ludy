@@ -35,9 +35,7 @@ CREATE TABLE IF NOT EXISTS crove_finance.misa_amis_connection (
 );
 CREATE INDEX IF NOT EXISTS misa_amis_connection_created_by_idx ON crove_finance.misa_amis_connection (org_id, created_by) WHERE created_by IS NOT NULL;
 SELECT crove_kernel.apply_tenant_rls('crove_finance.misa_amis_connection');
--- The company code is made by the database and read by the callback of a later slice to find the organisation: a tenant role never types it (nor the result of a test, which only a test writes).
-REVOKE INSERT, UPDATE ON crove_finance.misa_amis_connection FROM crove_tenant;
-GRANT INSERT (org_id, id, legal_entity_id, channel_connection_id, created_by, created_at) ON crove_finance.misa_amis_connection TO crove_tenant;
+REVOKE UPDATE ON crove_finance.misa_amis_connection FROM crove_tenant;
 GRANT UPDATE (last_test_state, last_tested_at) ON crove_finance.misa_amis_connection TO crove_tenant;
 DROP TRIGGER IF EXISTS b_legal_entity ON crove_finance.misa_amis_connection;
 CREATE TRIGGER b_legal_entity BEFORE INSERT OR UPDATE OF legal_entity_id ON crove_finance.misa_amis_connection
@@ -66,9 +64,17 @@ CREATE POLICY misa_amis_connection_delete ON crove_finance.misa_amis_connection 
 
 -- The row's channel connection is the AMIS one: a connection cannot be filed on a channel of another provider than the one that holds this credential. Runs as the writer,
 -- which reads the channel connection through its own policies: a row it cannot see is left to the foreign keys and the policies.
+-- A tenant role never types the company code (the callback of a later slice finds the organisation by it) nor the result of a connection test (only a test writes that): whatever such a writer
+-- gives for them is replaced by a fresh code and no result. The RLS matrix refuses column-level INSERT grants, so this is a trigger; a superuser (a restore) and the table's owner keep what they write.
 CREATE OR REPLACE FUNCTION crove_finance.misa_amis_connection_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
+  IF pg_catalog.pg_has_role(current_user, 'crove_tenant', 'MEMBER')
+     AND NOT (SELECT r.rolsuper FROM pg_catalog.pg_roles r WHERE r.rolname = current_user) THEN
+    NEW.org_company_code := 'ludy-' || pg_catalog.replace(pg_catalog.gen_random_uuid()::text, '-', '');
+    NEW.last_test_state := NULL;
+    NEW.last_tested_at := NULL;
+  END IF;
   IF EXISTS (SELECT 1 FROM crove_kernel.channel_connection c WHERE c.org_id = NEW.org_id AND c.id = NEW.channel_connection_id AND c.provider <> 'accounting_misa_amis') THEN
     RAISE EXCEPTION 'MISA_AMIS_CONNECTION_PROVIDER' USING ERRCODE = '42501';
   END IF;

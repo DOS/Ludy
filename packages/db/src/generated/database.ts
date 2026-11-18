@@ -1401,9 +1401,9 @@ export interface FinanceMisaAmisConnectionTable {
   id: ColumnType<string, string | undefined, NotGranted>;
   legal_entity_id: ColumnType<string, string, NotGranted>;
   channel_connection_id: ColumnType<string, string, NotGranted>;
-  org_company_code: ColumnType<string, NotGranted, NotGranted>;
-  last_test_state: ColumnType<string | null, NotGranted, string | null>;
-  last_tested_at: ColumnType<Date | null, NotGranted, Date | string | null>;
+  org_company_code: ColumnType<string, string | undefined, NotGranted>;
+  last_test_state: string | null;
+  last_tested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
