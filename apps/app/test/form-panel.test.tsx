@@ -28,6 +28,12 @@ describe('FormPanel closing', () => {
     expect(source).toContain('requestClose()');
     expect(source).toContain('data-testid="panel-discard"');
   });
+  it('hands the cancel button the same close, so Cancel asks like Escape', () => {
+    expect(source).toContain("typeof footer === 'function' ? footer(requestClose) : footer");
+  });
+  it('leaves Cmd+Enter to a field that already took the key', () => {
+    expect(source).toContain('event.defaultPrevented ||');
+  });
   it('puts focus on "keep editing" and back on the first field afterwards', () => {
     expect(source).toMatch(/<Button type="button" autoFocus onClick=\{keepEditing\}>/);
     expect(source).toContain("querySelector<HTMLElement>('input:not([type=hidden]), textarea, select')?.focus()");

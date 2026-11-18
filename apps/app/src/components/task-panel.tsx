@@ -4,7 +4,7 @@
 // the same panel once the task exists (edit). Typing a title that an open task already has shows it, with a link, before anything is saved.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { serializeTaskChecklist, type TaskChecklistStep } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
@@ -73,16 +73,16 @@ export function NewTaskPanel({ chart, onClose }: { chart: Chart | undefined; onC
       dirty={title.trim() !== '' || assignee !== '' || dueOn !== ''}
       onClose={onClose}
       onSubmit={submit}
-      footer={
+      footer={(requestClose) => (
         <>
-          <Button type="button" variant="outline" disabled={create.isPending} onClick={onClose}>
+          <Button type="button" variant="outline" disabled={create.isPending} onClick={requestClose}>
             {t('cancel')}
           </Button>
           <Button loading={create.isPending} type="submit">
             {t('create')}
           </Button>
         </>
-      }
+      )}
     >
       <label htmlFor={titleField.id} className="block text-xs">
         <span className="text-subtle-foreground">{t('newTitle')}</span>
@@ -136,14 +136,20 @@ export function NewTaskPanel({ chart, onClose }: { chart: Chart | undefined; onC
 // the description), then shows the form.
 export function EditTaskPanel({ taskId, chart, onClose }: { taskId: string; chart: Chart | undefined; onClose: () => void }) {
   const t = useTranslations('tasks');
-  const detail = useQuery(orpc.tasks.get.queryOptions({ input: { id: taskId } }));
-  if (detail.data) {
+  // The task is read afresh each time the panel opens, and the form is built from that answer only: a copy left in the cache from an
+  // earlier visit would show an old title or assignee, and the form keeps the values it starts from.
+  const detail = useQuery({ ...orpc.tasks.get.queryOptions({ input: { id: taskId } }), refetchOnMount: 'always' });
+  const [fresh, setFresh] = useState<{ task: TaskDetail } | null>(null);
+  useEffect(() => {
+    if (!fresh && detail.data && !detail.isFetching) setFresh({ task: detail.data.task });
+  }, [fresh, detail.data, detail.isFetching]);
+  if (fresh) {
     // An AI coworker holds the task: nothing can be changed until it lets go, so the panel says so and offers no form.
-    if (detail.data.task.checkedOut) {
+    if (fresh.task.checkedOut) {
       return (
         <FormPanel
           title={t('editTask')}
-          description={detail.data.task.title}
+          description={fresh.task.title}
           onClose={onClose}
           footer={
             <Button type="button" variant="outline" onClick={onClose}>
@@ -155,7 +161,7 @@ export function EditTaskPanel({ taskId, chart, onClose }: { taskId: string; char
         </FormPanel>
       );
     }
-    return <EditTaskForm key={detail.data.task.id} task={detail.data.task} chart={chart} onClose={onClose} />;
+    return <EditTaskForm key={fresh.task.id} task={fresh.task} chart={chart} onClose={onClose} />;
   }
   return (
     <FormPanel
@@ -184,6 +190,8 @@ function EditTaskForm({ task, chart, onClose }: { task: TaskDetail; chart: Chart
   const [dueOn, setDueOn] = useState(() => taskDueDay(task.due, tz));
   const [checklist, setChecklist] = useState<TaskChecklistStep[]>(() => (task.checklist ?? []).map((s) => ({ ...s })));
   const [stepError, setStepError] = useState(false);
+  // What is typed in the new-step box and not added yet is input too.
+  const [stepDraft, setStepDraft] = useState('');
   const [key, setKey] = useState(() => crypto.randomUUID());
   const update = useMutation(orpc.tasks.update.mutationOptions({ onSuccess: refresh }));
   const titleField = fieldControl(`task-${task.id}-title`, { error: titleError });
@@ -199,7 +207,7 @@ function EditTaskForm({ task, chart, onClose }: { task: TaskDetail; chart: Chart
     ...(dueOn !== taskDueDay(initial.due, tz) ? { due: taskDueFromDay(dueOn, tz) } : {}),
     ...(serializeTaskChecklist(nextChecklist) !== serializeTaskChecklist(initial.checklist ?? []) ? { checklist: nextChecklist } : {}),
   };
-  const dirty = Object.keys(patch).length > 0 || title !== initial.title;
+  const dirty = Object.keys(patch).length > 0 || title !== initial.title || stepDraft.trim() !== '';
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -233,21 +241,22 @@ function EditTaskForm({ task, chart, onClose }: { task: TaskDetail; chart: Chart
       dirty={dirty}
       onClose={onClose}
       onSubmit={submit}
-      footer={
+      footer={(requestClose) => (
         <>
-          <Button type="button" variant="outline" disabled={update.isPending} onClick={onClose}>
+          <Button type="button" variant="outline" disabled={update.isPending} onClick={requestClose}>
             {t('cancel')}
           </Button>
           <Button loading={update.isPending} type="submit">
             {t('save')}
           </Button>
         </>
-      }
+      )}
     >
       <label htmlFor={titleField.id} className="block text-xs">
         <span className="text-subtle-foreground">{t('newTitle')}</span>
         <Input
           {...titleField}
+          autoFocus
           required
           maxLength={300}
           value={title}
@@ -286,6 +295,7 @@ function EditTaskForm({ task, chart, onClose }: { task: TaskDetail; chart: Chart
       <TaskChecklistEditor
         idPrefix={`edit-task-${task.id}`}
         value={checklist}
+        onDraftChange={setStepDraft}
         stepError={stepError}
         onChange={(next) => {
           setChecklist(next);

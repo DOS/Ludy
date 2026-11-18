@@ -8799,6 +8799,7 @@ export const vi = {
     filterOpen: 'Đang mở',
     empty: 'Chưa có việc nào',
     emptyHint: 'Việc được giao cho một vị trí trong sơ đồ tổ chức, bằng nút Thêm việc hoặc khi tác tử AI cần người xem lại.',
+    emptyHintReadOnly: 'Việc được giao cho một vị trí trong sơ đồ tổ chức, hoặc khi tác tử AI cần người xem lại.',
     emptyMineHint: 'Việc giao cho bạn hoặc cho vị trí bạn giữ trong sơ đồ tổ chức sẽ hiện ở đây.',
     colTitle: 'Việc',
     colProject: 'Dự án',

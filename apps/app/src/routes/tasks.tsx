@@ -194,7 +194,7 @@ export function TasksPage() {
               <ErrorText>{errorMessage(projectsListError)}</ErrorText>
             </div>
           )}
-          <Empty title={t('empty')} hint={t(filter === 'mine' ? 'emptyMineHint' : 'emptyHint')} />
+          <Empty title={t('empty')} hint={t(filter === 'mine' ? 'emptyMineHint' : perms.tasks ? 'emptyHint' : 'emptyHintReadOnly')} />
         </>
       ) : visibleTasks.length === 0 ? (
         <>
@@ -352,7 +352,7 @@ export function TaskDetailPage() {
         title={task.title}
         subtitle={positionTitle(chart.data, task.assigneePositionId, t('rootAssignee'), t('unknownPosition'))}
         actions={
-          perms.tasks && !editing ? (
+          perms.tasks ? (
             <Button
               type="button"
               variant="outline"

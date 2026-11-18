@@ -55,6 +55,13 @@ test('create a task in the side panel, see the duplicate, edit it from its row, 
     await expect(panel().getByLabel('Tên việc')).toHaveValue('Gọi lại khách Hòa');
   });
 
+  await test.step('Cancel asks too, and "Bỏ thay đổi" closes the panel', async () => {
+    await panel().getByRole('button', { name: 'Hủy', exact: true }).click();
+    await expect(page.getByTestId('panel-discard')).toBeVisible();
+    await page.getByRole('button', { name: 'Tiếp tục nhập' }).click();
+    await expect(panel().getByLabel('Tên việc')).toHaveValue('Gọi lại khách Hòa');
+  });
+
   await test.step('Ctrl+Enter saves, the panel closes and the task is in the list', async () => {
     await panel().getByLabel('Tên việc').press('Control+Enter');
     await expect(panel()).toHaveCount(0);
@@ -85,10 +92,12 @@ test('create a task in the side panel, see the duplicate, edit it from its row, 
   });
 
   await test.step('the task page edits in the panel too, and the task is finished there', async () => {
-    await page.getByRole('button', { name: 'Sửa', exact: true }).click();
-    await expect(panel()).toBeVisible();
+    const edit = page.getByRole('button', { name: 'Sửa', exact: true });
+    await edit.click();
+    await expect(panel().getByLabel('Tên việc')).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(panel()).toHaveCount(0);
+    await expect(edit).toBeFocused();
     await page.getByLabel('Trạng thái').selectOption({ label: 'Xong' });
     await expect(page.getByText('Xong', { exact: true }).first()).toBeVisible();
   });

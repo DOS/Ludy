@@ -40,8 +40,9 @@ export function FormPanel({
   onClose: () => void;
   // Without it the panel shows a result (no form), with only the footer's buttons.
   onSubmit?: (event: FormEvent<HTMLFormElement>) => void;
-  // The buttons, cancel first: on a phone they stack with the first one last, so the main action is on top.
-  footer: ReactNode;
+  // The buttons, cancel first: on a phone they stack with the first one last, so the main action is on top. A function gets the
+  // panel's own close, which asks first when there is unsaved input: the cancel button goes through it like Escape does.
+  footer: ReactNode | ((requestClose: () => void) => ReactNode);
   children: ReactNode;
 }) {
   const root = useTranslations();
@@ -59,7 +60,8 @@ export function FormPanel({
     formRef.current?.querySelector<HTMLElement>('input:not([type=hidden]), textarea, select')?.focus();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
-    if (!isSaveShortcut({ key: event.key, metaKey: event.metaKey, ctrlKey: event.ctrlKey, isComposing: event.nativeEvent.isComposing })) return;
+    // A field that already took the key (the new-step box adds its step on Enter) has had its say: saving too would read a form the add has not reached yet.
+    if (event.defaultPrevented || !isSaveShortcut({ key: event.key, metaKey: event.metaKey, ctrlKey: event.ctrlKey, isComposing: event.nativeEvent.isComposing })) return;
     event.preventDefault();
     if (!busy) event.currentTarget.requestSubmit();
   };
@@ -79,7 +81,7 @@ export function FormPanel({
           </div>
         </div>
       ) : (
-        <SheetFooter>{footer}</SheetFooter>
+        <SheetFooter>{typeof footer === 'function' ? footer(requestClose) : footer}</SheetFooter>
       )}
     </>
   );

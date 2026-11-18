@@ -8800,6 +8800,7 @@ export const en = {
     filterOpen: 'Open',
     empty: 'No tasks yet',
     emptyHint: 'Tasks go to a position in the org chart, with the Add task button or when an AI agent needs a person to review.',
+    emptyHintReadOnly: 'Tasks go to a position in the org chart, or when an AI agent needs a person to review.',
     emptyMineHint: 'Tasks for you, or for a position you hold in the org chart, show here.',
     colTitle: 'Task',
     colProject: 'Project',
