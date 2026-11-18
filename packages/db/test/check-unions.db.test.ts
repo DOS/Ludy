@@ -336,6 +336,7 @@ const UNIONS = unions({
   'crove_meetings.translation.target_language': MEETING_LANGUAGES,
   'crove_notes.link.target_type': NOTE_LINK_TARGET_TYPES,
   'crove_notes.note.visibility': NOTE_VISIBILITIES,
+  'crove_notes.notebook.visibility': NOTE_VISIBILITIES,
   'crove_notes.todo.status': TODO_STATUSES,
   'crove_projects.project.status': PROJECT_STATUSES,
   'crove_sign.envelope.status': SIGN_ENVELOPE_STATUSES,
