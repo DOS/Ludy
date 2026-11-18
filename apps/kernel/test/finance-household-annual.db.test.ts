@@ -411,6 +411,14 @@ suite('the yearly rule of the household tax (#3710 slice 3)', () => {
       await revenue(changed, '2026-02-10', 1.2 * BILLION);
       await revenue(changed, '2026-08-12', 0.1 * BILLION);
       expect((await cnkd(changed, 3)).yearToDate).toMatchObject({ revenueToDate: '1300000000', crossed: true, payable: null });
+      // A profile that takes effect on 1 January replaces the one before it: services was the sole trade for the whole year, so nothing is held.
+      const newYear = await org();
+      await setProfile(newYear, { effectiveFrom: '2025-06-01' });
+      await setProfile(newYear, { trades: ['services'], effectiveFrom: '2026-01-01' });
+      await revenue(newYear, '2026-02-10', 1.2 * BILLION);
+      await revenue(newYear, '2026-08-12', 0.1 * BILLION);
+      expect((await cnkd(newYear, 3)).yearToDate).toMatchObject({ revenueToDate: '1300000000', crossed: true, deductionNeeded: false });
+      expect((await cnkd(newYear, 3)).yearToDate.payable).not.toBeNull();
       // The same single-trade household that never changed trades is not held (the test above).
     });
 

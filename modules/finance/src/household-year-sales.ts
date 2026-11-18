@@ -36,7 +36,7 @@ export async function salesEntriesOf(ctx: Ctx, entity: string, range: { from: st
 }
 
 // With one trade the year's revenue is put on it whole, which is wrong when an earlier profile of the year named another trade: the sales before the book's first day were made under that one. True when a profile
-// in force during the year before `from` (the one in force on 1 January and any later one) names other trades than `trades`; the yearly figures then wait for the accountant (#3710 slice 3 review).
+// in force during the year before `from` (the one in force on 1 January, which may start that day, and any later one) names other trades than `trades`; the yearly figures then wait for the accountant (#3710 slice 3 review).
 export async function tradesDifferEarlierInYear(ctx: Ctx, entity: string, year: string, from: string, trades: readonly string[]): Promise<boolean> {
   const jan1 = `${year}-01-01`;
   if (from <= jan1) return false;
@@ -49,7 +49,8 @@ export async function tradesDifferEarlierInYear(ctx: Ctx, entity: string, year: 
     .orderBy('effective_from', 'desc')
     .execute();
   const key = (list: readonly string[]) => [...list].sort().join(',');
-  const inYear = rows.filter((r) => r.effective_from >= jan1);
-  const onJan1 = rows.find((r) => r.effective_from < jan1);
+  // The profile in force on 1 January is the latest one effective on or before it (a profile that starts on 1 January replaces the one before); the later ones in the year are those after it.
+  const inYear = rows.filter((r) => r.effective_from > jan1);
+  const onJan1 = rows.find((r) => r.effective_from <= jan1);
   return [...inYear, ...(onJan1 ? [onJan1] : [])].some((r) => key(r.trades) !== key(trades));
 }
