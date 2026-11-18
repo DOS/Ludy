@@ -1367,6 +1367,33 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-27',
       dueTime: '09:00',
     });
+
+    // Fractions before measurement/quantity units ("1/2 kg", "1/2 lít", "1/2 trang") stay in title
+    expect(parseTodoQuickAdd('Mua 1/2 kg cà phê ngày mai 9h', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Mua 1/2 kg cà phê',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+    });
+    expect(parseTodoQuickAdd('Mua sữa 1/2 lít ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Mua sữa 1/2 lít',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Mua 1/2 kg thịt', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Mua 1/2 kg thịt',
+      dueOn: null,
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Đọc 1/2 trang tài liệu ngày mai', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Đọc 1/2 trang tài liệu',
+      dueOn: '2026-11-18',
+      dueTime: null,
+    });
+    expect(parseTodoQuickAdd('Họp ngày 1/2', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2027-02-01',
+      dueTime: null,
+    });
   });
 
   it('stays linear on 50k-character adversarial --, %, and tab inputs without ReDoS', () => {

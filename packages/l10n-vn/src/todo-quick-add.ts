@@ -266,6 +266,123 @@ const TEMPORAL_UNITS_AFTER_CLOCK = new Set([
   'seconds',
 ]);
 
+const DMY_MEASUREMENT_UNITS = new Set([
+  'kg',
+  'g',
+  'gr',
+  'gram',
+  'grams',
+  'mg',
+  'l',
+  'lit',
+  'liter',
+  'liters',
+  'litre',
+  'litres',
+  'ml',
+  'cl',
+  'dl',
+  'km',
+  'm',
+  'cm',
+  'mm',
+  'm2',
+  'm3',
+  'ha',
+  'oz',
+  'lb',
+  'lbs',
+  'tan',
+  'ta',
+  'yen',
+  'lang',
+  'can',
+  'hop',
+  'goi',
+  'chai',
+  'lon',
+  'thung',
+  'tui',
+  'bao',
+  'ly',
+  'coc',
+  'chen',
+  'bat',
+  'muong',
+  'thia',
+  'mieng',
+  'lat',
+  'khuc',
+  'suat',
+  'cup',
+  'cups',
+  'tbsp',
+  'tsp',
+  'bottle',
+  'bottles',
+  'pack',
+  'packs',
+  'box',
+  'boxes',
+  'bag',
+  'bags',
+  'piece',
+  'pieces',
+  'slice',
+  'slices',
+  'vnd',
+  'usd',
+  'trieu',
+  'nghin',
+  'ngan',
+  'dong',
+  'tr',
+]);
+
+const DMY_FRACTION_NOUNS = new Set([
+  'phan',
+  'ban',
+  'trang',
+  'cuon',
+  'to',
+  'don',
+  'qua',
+  'trai',
+  'cu',
+  'con',
+  'cai',
+  'chiec',
+  'gio',
+  'tieng',
+  'phut',
+  'ngay',
+  'tuan',
+  'thang',
+  'nam',
+  'hour',
+  'hours',
+  'minute',
+  'minutes',
+  'day',
+  'days',
+  'week',
+  'weeks',
+  'month',
+  'months',
+  'year',
+  'years',
+  'diem',
+  'point',
+  'points',
+  'so',
+  'luong',
+  'quang',
+  'bo',
+  'set',
+  'cap',
+  'doi',
+]);
+
 function foldVn(text: string): string {
   return text.normalize('NFD').replace(/\p{M}+/gu, '').replace(/[đĐ]/g, 'd').toLowerCase();
 }
@@ -1376,6 +1493,17 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const day = Number(m[1]);
     const month = Number(m[2]);
     const year = m[3] ? Number(m[3]) : undefined;
+    const prevWord = findAdjacentWordBefore(input, words, start, occupied);
+    const hasExplicitDateIntroducer =
+      prevWord !== null && (vnMatchAny(prevWord, ['ngày', 'từ', 'đến', 'trước', 'sau']) || prevWord.nfcLower === 'on');
+    if (year === undefined && !hasExplicitDateIntroducer) {
+      if (/^[ \t]*[%‰]/.test(input.slice(end))) continue;
+      const nextWord = findAdjacentWordAfter(input, words, end, occupied);
+      if (nextWord) {
+        if (DMY_MEASUREMENT_UNITS.has(nextWord.folded)) continue;
+        if (day < month && DMY_FRACTION_NOUNS.has(nextWord.folded)) continue;
+      }
+    }
     const resolved = resolveExplicitMonthDay(today, day, month, year);
     if (!resolved) continue;
     numericDateCandidates.push({ start, end, dueOn: resolved });
