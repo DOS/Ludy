@@ -389,6 +389,8 @@ export const stockMoveReturn = defineCommand({
     } catch (error) {
       // Two returns at once: the second meets the guard under the lock on the sale move.
       if (pgCode(error) === '23514' && /STOCK_RETURN_EXCEEDS/.test(pgMessage(error))) throw new DomainError('STOCK_RETURN_EXCEEDS', 409, 'Số lượng trả lại vượt quá số còn trả được');
+      // The sale was reversed between the check and the insert: the same conflict as the check gives.
+      if (pgCode(error) === '23514' && /STOCK_RETURN_REVERSED/.test(pgMessage(error))) throw new DomainError('STOCK_RETURN_REVERSED', 409, 'Lần xuất này đã được đảo nên không ghi nhận hàng trả lại nữa');
       throw error;
     }
   },

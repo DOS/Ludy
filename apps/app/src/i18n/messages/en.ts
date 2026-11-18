@@ -12549,6 +12549,10 @@ export const en = {
       STOCK_COUNT_STALE: 'The stock changed since the proposal was made; reject it and ask again.',
       STOCK_COUNT_UNSUPPORTED: 'The entry for the count cannot be made: too many accounts or an amount with a fraction of a dong.',
       STOCK_MOVE_COUNT: 'This move is the adjustment of a count, so it cannot be reversed; count again.',
+      STOCK_MOVE_HAS_RETURN: 'This sale already has goods returned against it; undo the returns first.',
+      STOCK_RETURN_NOT_SALE: 'Goods can only be returned against the stock-out of a sale.',
+      STOCK_RETURN_REVERSED: 'This sale stock-out has been reversed, so nothing more can be returned against it.',
+      STOCK_RETURN_EXCEEDS: 'The quantity is more than what is still returnable on this sale.',
       STOCK_COUNT_ENTRY: 'This entry posted the difference of a stock count, so it cannot be reversed; count again.',
       STOCK_COUNT_ITEM_INACTIVE: 'This item is no longer in use; switch it back on before counting it.',
       STOCK_COUNT_ITEM_ENTITY: 'The item and the count belong to two different legal entities.',
@@ -13415,6 +13419,7 @@ export const en = {
       stock_move: {
         list: 'View the stock moves of an item',
         reverse: 'Reverse a stock move',
+        return: 'Return part of the goods of a sale',
       },
       einvoice_series: {
         list: 'View the invoice series',

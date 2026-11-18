@@ -2553,7 +2553,8 @@ export const contract = {
       reverse: oc.input(z.object({ moveId: zId })).output(z.object({ id: zId })),
       // A partial return of the goods of a sale (#3712, a document line or a delivered CRM order line; not a marketplace order line): a stock-in of the same item naming the sale's stock-out, today's date, priced by the month close like any return in; no entry is posted.
       // STOCK_MOVE_NOT_FOUND (404), STOCK_RETURN_NOT_SALE, STOCK_RETURN_REVERSED, STOCK_RETURN_EXCEEDS (409).
-      return: oc.input(zStockMoveReturn).output(z.object({ id: zId })),
+      // The key is the identity of the return: a retry with the same key (a lost response) returns the first result and writes no second move.
+      return: oc.input(zStockMoveReturn.extend({ idempotencyKey: zId })).output(z.object({ id: zId })),
     },
     // The stock of a delivered CRM order line (#2818, ADR-0050): the hand-off, the line number, the date and 'deliver' (default) or 'return' (a reversing move). Idempotent on (order, line): a retry answers
     // already_moved. A text line is a service and moves nothing. ORDER_PAYLOAD_MISMATCH, ORDER_DATE_FUTURE, STOCK_ORDER_LINE_NO_ITEM, STOCK_LINE_NO_QUANTITY, STOCK_ITEM_ENTITY_MISMATCH (422),

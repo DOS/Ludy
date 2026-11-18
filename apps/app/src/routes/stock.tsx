@@ -120,11 +120,13 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
   // A reversal cannot be taken back, so the button asks once.
   const [confirming, setConfirming] = useState<string | null>(null);
   // A partial return of a sale's goods (#3712): the quantity is typed once on the row of the sale's stock-out; the cost comes back with the month close.
-  const [returning, setReturning] = useState<{ id: string; quantity: string } | null>(null);
+  // The key is the identity of one return: a retry of the same draft (a response that never came) sends the same key and writes no second move; typing another quantity is another return, so a new key.
+  const [returning, setReturning] = useState<{ id: string; quantity: string; key: string } | null>(null);
   const giveBack = useMutation({
-    mutationFn: (v: { moveId: string; quantity: string }) => client.stock.moves.return(v),
-    onSuccess: () => {
-      setReturning(null);
+    mutationFn: (v: { moveId: string; quantity: string; idempotencyKey: string }) => client.stock.moves.return(v),
+    // Only the draft that was sent is cleared: one opened on another row meanwhile stays.
+    onSuccess: (_data, v) => {
+      setReturning((cur) => (cur?.id === v.moveId ? null : cur));
       refresh();
     },
   });
@@ -159,7 +161,7 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
                         inputMode="decimal"
                         placeholder={t('returnLeft', { left: m.returnable })}
                         value={returning.quantity}
-                        onChange={(e) => setReturning({ id: m.id, quantity: e.target.value })}
+                        onChange={(e) => setReturning({ id: m.id, quantity: e.target.value, key: crypto.randomUUID() })}
                         data-testid="stock-move-return-quantity"
                       />
                       <Button
@@ -167,7 +169,7 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
                         size="sm"
                         loading={giveBack.isPending}
                         disabled={!/^\d{1,14}(\.\d{1,6})?$/.test(returning.quantity.trim()) || Number(returning.quantity) <= 0}
-                        onClick={() => giveBack.mutate({ moveId: m.id, quantity: returning.quantity.trim() })}
+                        onClick={() => giveBack.mutate({ moveId: m.id, quantity: returning.quantity.trim(), idempotencyKey: returning.key })}
                         data-testid="stock-move-return-confirm"
                       >
                         {t('returnConfirm')}
@@ -177,7 +179,7 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
                       </Button>
                     </span>
                   ) : (
-                    <Button variant="ghost" size="sm" className="mr-2" onClick={() => setReturning({ id: m.id, quantity: '' })} data-testid="stock-move-return">
+                    <Button variant="ghost" size="sm" className="mr-2" onClick={() => setReturning({ id: m.id, quantity: '', key: crypto.randomUUID() })} data-testid="stock-move-return">
                       {t('return')}
                     </Button>
                   )
