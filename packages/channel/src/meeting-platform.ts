@@ -65,7 +65,8 @@ export interface MeetingPlatformAdapter {
   // At most 100 recordings that are finished and started at or after `since`, newest first.
   list(credential: MeetingPlatformCredential, since: Date, signal?: AbortSignal): Promise<MeetingPlatformListed[]>;
   prepareDownload(credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, signal?: AbortSignal): Promise<MeetingPlatformDownload>;
-  // `refused`: the platform will not renew the grant, the job expires the connection.
+  // `refused`: the platform will not renew the grant, the job expires the connection (an adapter may also throw `connection_expired` for the same). It renews ONE token under a lock, in a transaction the database ends if it
+  // idles too long: it must honour `signal` and return the NEW refresh token a provider rotates, with the new expiry; a failure to reach the platform throws `platform_unavailable` and changes nothing.
   refresh?(credential: MeetingPlatformCredential, signal?: AbortSignal): Promise<MeetingPlatformCredential | { refused: true }>;
 }
 

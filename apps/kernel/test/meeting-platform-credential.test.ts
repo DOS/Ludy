@@ -4,7 +4,7 @@
 // asked of a credential that is not due.
 import { describe, expect, it } from 'vitest';
 import { MeetingPlatformError, SandboxMeetingPlatform, type MeetingPlatformAdapter } from '@crove/channel';
-import { REFRESH_HORIZON_MS, freshCredential, parseCredential, type RefreshOutcome } from '../src/meeting-platform-credential.ts';
+import { REFRESH_HORIZON_MS, freshCredential, parseCredential, withinTimeout, type RefreshOutcome } from '../src/meeting-platform-credential.ts';
 
 const NOW = new Date('2026-11-18T12:00:00Z');
 const ORG = '00000000-0000-4000-8000-000000000001';
@@ -46,6 +46,45 @@ describe('parseCredential', () => {
     expect(() => parseCredential(JSON.stringify({ refreshToken: 'r' }))).toThrow(MeetingPlatformError);
     expect(() => parseCredential(JSON.stringify({ accessToken: '' }))).toThrow(MeetingPlatformError);
     expect(() => parseCredential('not json')).toThrow(SyntaxError);
+  });
+});
+
+describe('parseCredential secrets', () => {
+  it('never quotes the text of a credential in an error: a text that is not JSON says only that it is not', () => {
+    for (const text of ['refresh-token-secret-xyz {', '"just a string"', 'null', '[1]']) {
+      let message = '';
+      try {
+        parseCredential(text);
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+        message = String((error as Error).message);
+      }
+      expect(message, text).not.toContain('secret-xyz');
+      expect(message, text).not.toContain('just a string');
+    }
+    expect(() => parseCredential('refresh-token-secret-xyz {')).toThrow(SyntaxError);
+  });
+});
+
+describe('withinTimeout', () => {
+  it('lets a call that finishes in time answer, and clears its timer', async () => {
+    expect(await withinTimeout(async () => 'ok', 1000)).toBe('ok');
+  });
+
+  it('abandons a call that ignores its signal after the limit, with platform_unavailable, and aborts the signal', async () => {
+    let signalSeen: AbortSignal | undefined;
+    const slow = (signal: AbortSignal) => {
+      signalSeen = signal;
+      return new Promise<string>((resolve) => setTimeout(() => resolve('late'), 300));
+    };
+    const started = Date.now();
+    await expect(withinTimeout(slow, 40)).rejects.toMatchObject({ code: 'platform_unavailable' });
+    expect(Date.now() - started).toBeLessThan(250);
+    expect(signalSeen?.aborted).toBe(true);
+  });
+
+  it('lets a call that fails fail with its own error', async () => {
+    await expect(withinTimeout(() => Promise.reject(new MeetingPlatformError('connection_expired')), 1000)).rejects.toMatchObject({ code: 'connection_expired' });
   });
 });
 

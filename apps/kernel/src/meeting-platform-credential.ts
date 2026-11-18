@@ -30,6 +30,22 @@ export const REFRESH_CALL_TIMEOUT_MS = 7_000;
 // How long a second worker waits for the row while the first one is at the provider (the statement timeout of the worker's connections is 15 seconds).
 const LOCK_WAIT = '12s';
 
+// The provider call, with a hard limit that does not depend on the adapter honouring its signal: after `ms` the call is abandoned (and its signal aborted) with `platform_unavailable`. Without it an adapter that
+// ignored the signal could keep the transaction idle past the database's limit, which would end the connection and release the lock while the provider call was still on its way.
+export function withinTimeout<T>(run: (signal: AbortSignal) => Promise<T>, ms: number): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new MeetingPlatformError('platform_unavailable'));
+    }, ms);
+  });
+  return Promise.race([run(controller.signal), limit]).finally(() => clearTimeout(timer));
+}
+// What a refreshing adapter that returns no expiry is taken to mean: a token that lives this long (shorter than any real one, so it is renewed early rather than late).
+export const DEFAULT_TOKEN_LIFE_MS = 30 * 60_000;
+
 export type RefreshOutcome =
   // The new pair is stored.
   | { outcome: 'refreshed'; expiresAt: string }
@@ -50,7 +66,14 @@ interface Stored {
 
 // A sealed credential's text: the access token, and when it has them the refresh token and the expiry (an ISO instant).
 export function parseCredential(secret: string): Stored {
-  const parsed = JSON.parse(secret) as { accessToken?: unknown; refreshToken?: unknown; expiresAt?: unknown };
+  let parsed: { accessToken?: unknown; refreshToken?: unknown; expiresAt?: unknown };
+  try {
+    parsed = JSON.parse(secret) as typeof parsed;
+  } catch {
+    // The message of a JSON error quotes a piece of the text, which here is a secret: say only that it is not JSON (the job reads a SyntaxError as an expired connection).
+    throw new SyntaxError('the credential is not JSON');
+  }
+  if (typeof parsed !== 'object' || parsed === null) throw new SyntaxError('the credential is not JSON');
   if (typeof parsed.accessToken !== 'string' || parsed.accessToken === '') throw new MeetingPlatformError('connection_expired');
   const expires = typeof parsed.expiresAt === 'string' ? new Date(parsed.expiresAt) : undefined;
   return {
@@ -106,6 +129,7 @@ export function meetingPlatformRefreshCommand(deps: RefreshCommandDeps) {
       if (row.status !== 'active') return { outcome: 'not_active' };
       const adapter = deps.adapters[row.provider];
       if (!adapter?.refresh) return { outcome: 'unsupported' };
+      const renew = adapter.refresh.bind(adapter);
       // 2. The credential, under the lock. The definer refuses a connection whose member left or that is no longer active.
       // In a savepoint: a definer that raises would otherwise leave the transaction aborted, and the command could not answer `not_active` and commit.
       let sealed: SealedRow | undefined;
@@ -126,32 +150,47 @@ export function meetingPlatformRefreshCommand(deps: RefreshCommandDeps) {
       if (!dueAt(credential, now().getTime())) return { outcome: 'fresh' };
       if (!credential.refreshToken) return { outcome: 'no_refresh_token' };
       // 3. The provider. A MeetingPlatformError or anything else is a failure to renew, not a refusal: nothing is changed, and the transaction commits no write.
-      let renewed: Awaited<ReturnType<NonNullable<MeetingPlatformAdapter['refresh']>>>;
+      let renewed: Awaited<ReturnType<NonNullable<MeetingPlatformAdapter['refresh']>>> | { refused: true };
       try {
-        renewed = await adapter.refresh({ accessToken: credential.accessToken, refreshToken: credential.refreshToken, ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}) }, AbortSignal.timeout(deps.callTimeoutMs ?? REFRESH_CALL_TIMEOUT_MS));
+        renewed = await withinTimeout((signal) => renew({ accessToken: credential.accessToken, refreshToken: credential.refreshToken, ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}) }, signal), deps.callTimeoutMs ?? REFRESH_CALL_TIMEOUT_MS);
       } catch (error) {
-        console.warn(`[meeting-platform-refresh] ${input.connectionId.slice(0, 8)} not renewed`, error instanceof MeetingPlatformError ? error.code : 'error');
-        return { outcome: 'unavailable' };
+        // An adapter that says the grant is gone by throwing `connection_expired` is read as a refusal, like the value `{ refused: true }`.
+        if (error instanceof MeetingPlatformError && error.code === 'connection_expired') renewed = { refused: true };
+        else {
+          console.warn(`[meeting-platform-refresh] ${input.connectionId.slice(0, 8)} not renewed`, error instanceof MeetingPlatformError ? error.code : 'error');
+          ctx.audit({ connection_id: input.connectionId, provider: row.provider, outcome: 'unavailable' });
+          return { outcome: 'unavailable' };
+        }
       }
       // The provider will not renew the grant: the connection expires in this transaction, and the member connects again.
       if ('refused' in renewed) {
         await sql`SELECT crove_kernel.meeting_platform_sync_failed(${input.connectionId}::uuid, ${'connection_expired'}, ${true})`.execute(ctx.trx);
-        ctx.audit({ connection_id: input.connectionId, provider: row.provider, refreshed: false, expired: true });
+        ctx.audit({ connection_id: input.connectionId, provider: row.provider, refreshed: false, expired: true, outcome: 'expired' });
         return { outcome: 'expired' };
       }
-      // 4. The new pair, sealed as at connect, stored in the same transaction as the call that rotated it.
-      const next: Stored = { accessToken: renewed.accessToken, ...(renewed.refreshToken ? { refreshToken: renewed.refreshToken } : { refreshToken: credential.refreshToken }), ...(renewed.expiresAt ? { expiresAt: renewed.expiresAt } : {}) };
+      // An answer with no access token is no renewal (and nothing is stored: a blank token would make the next open fail).
+      if (!renewed.accessToken) {
+        console.warn(`[meeting-platform-refresh] ${input.connectionId.slice(0, 8)} not renewed`, 'no_access_token');
+        ctx.audit({ connection_id: input.connectionId, provider: row.provider, outcome: 'unavailable' });
+        return { outcome: 'unavailable' };
+      }
+      // 4. The new pair, sealed as at connect, stored in the same transaction as the call that rotated it. An answer with no expiry is stored with a short assumed life, so renewals go on.
+      const next: Stored = {
+        accessToken: renewed.accessToken,
+        refreshToken: renewed.refreshToken || credential.refreshToken,
+        expiresAt: renewed.expiresAt ?? new Date(now().getTime() + DEFAULT_TOKEN_LIFE_MS),
+      };
       const resealed = deps.broker.seal(textOf(next), binding);
       await sql`SELECT crove_kernel.meeting_platform_credential_put(${input.connectionId}::uuid, ${resealed.keyId}, decode(${resealed.envelope.toString('base64')}, 'base64'))`.execute(ctx.trx);
       await ctx.trx
         .updateTable('crove_kernel.meeting_platform_connection')
-        .set({ expires_at: next.expiresAt ?? null, updated_at: ctx.now })
+        .set({ expires_at: next.expiresAt ?? null, updated_at: now() })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
         .execute();
       // The audit row names the connection and the provider: never a token, the account or the envelope.
-      ctx.audit({ connection_id: input.connectionId, provider: row.provider, refreshed: true });
-      return { outcome: 'refreshed', expiresAt: (next.expiresAt ?? new Date(0)).toISOString() };
+      ctx.audit({ connection_id: input.connectionId, provider: row.provider, refreshed: true, outcome: 'refreshed' });
+      return { outcome: 'refreshed', expiresAt: (next.expiresAt as Date).toISOString() };
     },
   });
 }

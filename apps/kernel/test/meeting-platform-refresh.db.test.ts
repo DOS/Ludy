@@ -48,7 +48,7 @@ function testBroker(): CredentialBroker & { failSeals: number } {
 
 // A provider that rotates its refresh token on every use, and takes a moment to answer (so two renewals at once overlap if nothing holds one of them back).
 function fakeZoom() {
-  const state = { calls: 0, valid: 'refresh-0', mode: 'ok' as 'ok' | 'down' | 'refuse', delayMs: 300, accessIssued: 0 };
+  const state = { calls: 0, valid: 'refresh-0', mode: 'ok' as 'ok' | 'down' | 'refuse' | 'throw_expired' | 'no_expiry', delayMs: 300, accessIssued: 0 };
   const adapter: MeetingPlatformAdapter = {
     provider: 'zoom',
     hosts: [],
@@ -58,10 +58,11 @@ function fakeZoom() {
       state.calls += 1;
       await new Promise((resolve) => setTimeout(resolve, state.delayMs));
       if (state.mode === 'down') throw new MeetingPlatformError('platform_unavailable');
+      if (state.mode === 'throw_expired') throw new MeetingPlatformError('connection_expired');
       if (state.mode === 'refuse' || credential.refreshToken !== state.valid) return { refused: true as const };
       state.accessIssued += 1;
       state.valid = `refresh-${state.accessIssued}`;
-      return { accessToken: `access-${state.accessIssued}`, refreshToken: state.valid, expiresAt: new Date(Date.now() + HOUR) };
+      return { accessToken: `access-${state.accessIssued}`, refreshToken: state.valid, ...(state.mode === 'no_expiry' ? {} : { expiresAt: new Date(Date.now() + HOUR) }) };
     },
   };
   return { state, adapter };
@@ -118,8 +119,9 @@ suite('the renewal of a meeting platform token on PostgreSQL (issue #3878)', () 
     const sealed = await worker.query<{ keyId: string; envelope: string; provider: string; externalAccount: string }>('kernel.meeting_platform.credential', { connectionId }, { actor: SYSTEM, orgId: o.orgId });
     return parseCredential(broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, meetingPlatformBinding(o.orgId, 'zoom', sealed.externalAccount)));
   }
+  const envelopeOf = async (connectionId: string) => (await sqlAdmin<{ e: string }>("SELECT encode(envelope, 'base64') AS e FROM crove_kernel.meeting_platform_credential WHERE id = $1", [connectionId])).rows[0]?.e as string;
   const rowOf = async (connectionId: string) => (await sqlAdmin<{ status: string; status_reason: string | null; expires_at: Date | null }>('SELECT status, status_reason, expires_at FROM crove_kernel.meeting_platform_connection WHERE id = $1', [connectionId])).rows[0];
-  const reset = (mode: 'ok' | 'down' | 'refuse' = 'ok') => {
+  const reset = (mode: 'ok' | 'down' | 'refuse' | 'throw_expired' | 'no_expiry' = 'ok') => {
     zoom.state.calls = 0;
     zoom.state.valid = 'refresh-0';
     zoom.state.accessIssued = 0;
@@ -148,7 +150,11 @@ suite('the renewal of a meeting platform token on PostgreSQL (issue #3878)', () 
     const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 8 });
     pools.push(appPool, workerPool);
     personDb = createDb(appPool);
-    api = new Runtime(personDb, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] });
+    // The API's runtime registers the command too (as a deployment never would), so the test can show that the command's own gate, `access: 'system'`, refuses a person.
+    api = new Runtime(personDb, { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands, meetingPlatformRefreshCommand({ broker, adapters: { zoom: zoom.adapter }, callTimeoutMs: 5_000 })],
+      queries: [...kernelQueries({ inboundDomain: null })],
+    });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, meetingPlatformRefreshCommand({ broker, adapters: { zoom: zoom.adapter }, callTimeoutMs: 5_000 })],
       queries: [...kernelQueries({ inboundDomain: null })],
@@ -222,11 +228,34 @@ suite('the renewal of a meeting platform token on PostgreSQL (issue #3878)', () 
     reset('refuse');
     const o = await org();
     const c = await connect(o, 60_000);
+    const envelopeBefore = await envelopeOf(c.connectionId);
     expect(await refresh(o, c.connectionId)).toEqual({ outcome: 'expired' });
     expect(await rowOf(c.connectionId)).toMatchObject({ status: 'expired', status_reason: 'connection_expired' });
+    // The stored pair is untouched (the member's reconnect replaces it).
+    expect(await envelopeOf(c.connectionId)).toBe(envelopeBefore);
     // A connection that is no longer active is not refreshed again.
     expect(await refresh(o, c.connectionId)).toEqual({ outcome: 'not_active' });
     expect(zoom.state.calls).toBe(1);
+    // The audit row says so, and holds no token.
+    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' AND detail ->> 'expired' = 'true'", [o.orgId, COMMAND]);
+    expect(audit.rowCount).toBe(1);
+    for (const secret of ['access-0', 'refresh-0', c.account]) expect(JSON.stringify(audit.rows[0]?.detail)).not.toContain(secret);
+  });
+
+  it('reads a provider that throws connection_expired as a refusal too, and a refresh answer with no expiry as a token that lives half an hour (renewals go on)', async () => {
+    reset('throw_expired');
+    const o = await org();
+    const gone = await connect(o, 60_000);
+    expect(await refresh(o, gone.connectionId)).toEqual({ outcome: 'expired' });
+    expect(await rowOf(gone.connectionId)).toMatchObject({ status: 'expired' });
+    reset('no_expiry');
+    const c = await connect(o, 60_000);
+    expect((await refresh(o, c.connectionId)).outcome).toBe('refreshed');
+    const now = await stored(o, c.connectionId);
+    expect(now).toMatchObject({ accessToken: 'access-1', refreshToken: 'refresh-1' });
+    const life = (now.expiresAt?.getTime() ?? 0) - Date.now();
+    expect(life).toBeGreaterThan(25 * 60_000);
+    expect(life).toBeLessThan(31 * 60_000);
   });
 
   it('changes nothing when the provider cannot be reached, and the next try renews', async () => {
@@ -262,8 +291,8 @@ suite('the renewal of a meeting platform token on PostgreSQL (issue #3878)', () 
     const o = await org();
     const other = await org();
     const c = await connect(o, 60_000);
-    // A member of the org cannot run it, whoever they are.
-    expect(await refuses(worker.execute(COMMAND, { connectionId: c.connectionId }, { actor: asUser(o.lan), orgId: o.orgId }))).toBe('FORBIDDEN');
+    // A member of the org cannot run it, whoever they are: the command's own gate (access: 'system'), on a runtime that registers it.
+    expect(await refuses(api.execute(COMMAND, { connectionId: c.connectionId }, { actor: asUser(o.lan), orgId: o.orgId }))).toBe('FORBIDDEN');
     // An unknown connection, and this connection through another org, are not found.
     expect(await refuses(refresh(o, randomUUID()))).toBe('MEETING_PLATFORM_NOT_FOUND');
     expect(await refuses(refresh(other, c.connectionId))).toBe('MEETING_PLATFORM_NOT_FOUND');
