@@ -73,6 +73,7 @@ export interface CroveFinanceSchema {
   'crove_finance.household_form_version': FinanceHouseholdFormVersionTable;
   'crove_finance.household_profile': FinanceHouseholdProfileTable;
   'crove_finance.household_return_form_version': FinanceHouseholdReturnFormVersionTable;
+  'crove_finance.household_tax_reduction': FinanceHouseholdTaxReductionTable;
   'crove_finance.household_threshold': FinanceHouseholdThresholdTable;
   'crove_finance.household_trade_rate': FinanceHouseholdTradeRateTable;
   'crove_finance.input_vat_check': FinanceInputVatCheckTable;
@@ -101,6 +102,7 @@ export interface CroveFinanceSchema {
   'crove_finance.stock_period_item': FinanceStockPeriodItemTable;
   'crove_finance.supplier_bank_account': FinanceSupplierBankAccountTable;
   'crove_finance.supplier_bank_account_change': FinanceSupplierBankAccountChangeTable;
+  'crove_finance.supplier_payment': FinanceSupplierPaymentTable;
   'crove_finance.vat_return_filed': FinanceVatReturnFiledTable;
   'crove_finance.vendor_account_rule': FinanceVendorAccountRuleTable;
 }
@@ -1235,6 +1237,7 @@ export interface FinanceHouseholdProfileTable {
   representative_name: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  vat_cut_eligible: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.household_return_form_version */
@@ -1244,6 +1247,16 @@ export interface FinanceHouseholdReturnFormVersionTable {
   effective_from: ColumnType<string, NotGranted, NotGranted>;
   name: ColumnType<string, NotGranted, NotGranted>;
   pit_methods: ColumnType<string[], NotGranted, NotGranted>;
+  source: ColumnType<string, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** crove_finance.household_tax_reduction */
+export interface FinanceHouseholdTaxReductionTable {
+  kind: ColumnType<string, NotGranted, NotGranted>;
+  effective_from: ColumnType<string, NotGranted, NotGranted>;
+  cut_percent: ColumnType<string, NotGranted, NotGranted>;
+  revenue_ceiling: ColumnType<string | null, NotGranted, NotGranted>;
   source: ColumnType<string, NotGranted, NotGranted>;
   status: ColumnType<string, NotGranted, NotGranted>;
 }
@@ -1691,6 +1704,36 @@ export interface FinanceSupplierBankAccountTable {
   status: Generated<string>;
   retired_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.supplier_payment */
+export interface FinanceSupplierPaymentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  purchase_document_id: ColumnType<string, string, NotGranted>;
+  amount: ColumnType<string, string, NotGranted>;
+  currency: ColumnType<string, string, NotGranted>;
+  bank_account_id: ColumnType<string, string, NotGranted>;
+  number_hash: ColumnType<string, string, NotGranted>;
+  hash_key_id: ColumnType<string, string, NotGranted>;
+  status: Generated<string>;
+  proposal_id: ColumnType<string, string, NotGranted>;
+  approved_by: ColumnType<string | null, string | null, NotGranted>;
+  approved_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  approver_step_up_at: ColumnType<Date, Date | string, NotGranted>;
+  payable_after: ColumnType<Date | null, Date | string | null, NotGranted>;
+  hold_reason: ColumnType<string | null, string | null, NotGranted>;
+  confirmed_by: string | null;
+  confirmed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  confirmed_channel: string | null;
+  stale_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  cancelled_by: string | null;
+  cancelled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  cancel_reason: string | null;
+  paid_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 

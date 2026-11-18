@@ -1940,9 +1940,11 @@ export function createHttpApp(deps: HttpDeps) {
       const scopes = done.exchange.scopes.filter((s): s is ExtensionScope => (EXTENSION_SCOPES as readonly string[]).includes(s));
       // The client gets the token only once this row is written. When it fails, the token row already exists and nobody
       // holds it: void it (its own system audit row follows) before answering, so no usable row is left behind (#2740).
+      // Notes-only tokens audit through notes.extension.exchanged because kernel.extension.token.exchanged requires 'meetings' (#3560).
+      const exchangeAuditCommand = scopes.includes('meetings') ? 'kernel.extension.token.exchanged' : 'notes.extension.exchanged';
       try {
         await runtime.execute(
-          'kernel.extension.token.exchanged',
+          exchangeAuditCommand,
           { codeId: done.exchange.codeId },
           { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes } }, orgId: done.exchange.orgId },
         );
@@ -2090,9 +2092,11 @@ export function createHttpApp(deps: HttpDeps) {
       if (!allowedExtensionIds.includes(input.extensionId)) throw new DomainError('FORBIDDEN', 403, 'Tiện ích này không được phép kết nối với Ludy', { rule: 'extension_id' });
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      if (input.scopes.includes('notes') && !runtime.installed('notes')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
       const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
-      // An org that switched Meetings off, or does not hold it, is not offered its scope either (ADR-0053).
+      // An org that switched Meetings or Notes off, or does not hold it, is not offered that scope either (ADR-0053).
       if (input.scopes.includes('meetings') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      if (input.scopes.includes('notes') && !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
       const code = newExtensionCode();
       const issued = await runtime.execute<{ expiresInSeconds: number }>(
         'kernel.extension.code.issue',
@@ -2113,12 +2117,17 @@ export function createHttpApp(deps: HttpDeps) {
     const { extension } = c.get('user');
     if (!extension) return problem(c, new DomainError('FORBIDDEN', 403, 'Đường này chỉ dành cho tiện ích Ludy', { rule: 'extension_only' }));
     const meetingsOn = runtime.installed('meetings') && (await runtime.appOn(extension.orgId, 'meetings', { fresh: true }).catch(() => true));
+    const notesOn = runtime.installed('notes') && (await runtime.appOn(extension.orgId, 'notes', { fresh: true }).catch(() => true));
     return c.json({
       tokenId: extension.tokenId,
       orgId: extension.orgId,
       scopes: extension.scopes,
       expiresAt: extension.expiresAt,
-      features: { meetings: extension.scopes.includes('meetings') && meetingsOn, agenda: extension.scopes.includes('agenda') && meetingsOn },
+      features: {
+        meetings: extension.scopes.includes('meetings') && meetingsOn,
+        agenda: extension.scopes.includes('agenda') && meetingsOn,
+        notes: extension.scopes.includes('notes') && notesOn,
+      },
     });
   });
 
@@ -3788,7 +3797,9 @@ export function createHttpApp(deps: HttpDeps) {
         const actor = actorOf(user);
         const period = c.req.query('period') ?? '';
         const legalEntityId = c.req.query('legalEntityId') ?? '';
-        const book = await runtime.query<HouseholdS2a>('finance.household.s2a', { legalEntityId, period }, { actor, orgId });
+        // A household with several trades picks the trade that takes the yearly threshold deduction (#3710 slice 3): &deductionTrade=services. The query checks the value.
+        const deductionTrade = c.req.query('deductionTrade');
+        const book = await runtime.query<HouseholdS2a>('finance.household.s2a', { legalEntityId, period, ...(deductionTrade ? { deductionTrade } : {}) }, { actor, orgId });
         const bytes = await buildS2aWorkbook(book, config.BRAND_NAME);
         await runtime.execute('finance.household.export', { legalEntityId, book: 'S2a', period, rows: book.rows.length }, { actor, orgId });
         return new Response(body(bytes), {
@@ -3857,7 +3868,7 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
 
-    // The 01/CNKD quarterly return worksheet of a household business (#2518), ?legalEntityId=<household>&year=2026&quarter=3 and, for a household with several trades, &split=goods:1000000,services:600000.
+    // The 01/CNKD quarterly return worksheet of a household business (#2518), ?legalEntityId=<household>&year=2026&quarter=3 and, for a household with several trades, &split=goods:1000000,services:600000 (and, from the yearly rule, &splitBefore=... and &deductionTrade=...).
     // The query checks the year and quarter, the roles, the profile and the split, and refuses (422) while revenue is unassigned (forExport), so the file only ever holds whole figures. While a row
     // behind the figures is still unconfirmed the file is given and every figure in it carries the provisional label (#2518). The audit row is recorded before the file is sent. A worksheet: Ludy files nothing.
     app.get('/api/export/household-cnkd.xlsx', async (c) => {
@@ -3869,15 +3880,24 @@ export function createHttpApp(deps: HttpDeps) {
         const legalEntityId = c.req.query('legalEntityId') ?? '';
         const year = Number(c.req.query('year') ?? '');
         const quarter = Number(c.req.query('quarter') ?? '');
-        const split = (c.req.query('split') ?? '')
-          .split(',')
-          .filter((part) => part !== '')
-          .map((part) => {
-            // Everything after the first colon is the amount, so "goods:1:2" fails the amount check instead of being read as 1.
-            const at = part.indexOf(':');
-            return { trade: at < 0 ? part : part.slice(0, at), revenue: at < 0 ? '' : part.slice(at + 1) };
-          });
-        const sheetData = await runtime.query<HouseholdCnkd>('finance.household.cnkd', { legalEntityId, year, quarter, ...(split.length > 0 ? { split } : {}), forExport: true }, { actor, orgId });
+        const tradeSplit = (text: string) =>
+          text
+            .split(',')
+            .filter((part) => part !== '')
+            .map((part) => {
+              // Everything after the first colon is the amount, so "goods:1:2" fails the amount check instead of being read as 1.
+              const at = part.indexOf(':');
+              return { trade: at < 0 ? part : part.slice(0, at), revenue: at < 0 ? '' : part.slice(at + 1) };
+            });
+        const split = tradeSplit(c.req.query('split') ?? '');
+        // The yearly rule (#3710 slice 3): &splitBefore=goods:600000 is the split of the year's revenue before the quarter, &deductionTrade=services the trade that takes the threshold deduction.
+        const splitBefore = tradeSplit(c.req.query('splitBefore') ?? '');
+        const deductionTrade = c.req.query('deductionTrade');
+        const sheetData = await runtime.query<HouseholdCnkd>(
+          'finance.household.cnkd',
+          { legalEntityId, year, quarter, ...(split.length > 0 ? { split } : {}), ...(splitBefore.length > 0 ? { splitBefore } : {}), ...(deductionTrade ? { deductionTrade } : {}), forExport: true },
+          { actor, orgId },
+        );
         const bytes = await buildCnkdWorkbook(sheetData, config.BRAND_NAME);
         await runtime.execute('finance.household.export', { legalEntityId, book: '01/CNKD', period: `${year}-Q${quarter}`, rows: sheetData.lines.length }, { actor, orgId });
         return new Response(body(bytes), {

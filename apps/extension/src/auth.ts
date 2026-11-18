@@ -21,13 +21,21 @@ export async function newPkce(): Promise<Pkce> {
 }
 
 // `withAgenda`: the member chose to see their next meetings (B2), so the consent page also lists the agenda scope; the plain sign-in never asks for it.
-export function connectUrl(address: string, pkce: Pkce, redirectUri: string, deviceName: string, withAgenda = false): string {
+export function connectUrl(
+  address: string,
+  pkce: Pkce,
+  redirectUri: string,
+  deviceName: string,
+  withAgenda = false,
+  featureScopes: readonly string[] = FEATURES.map((f) => f.scope),
+): string {
+  const requested = featureScopes.length > 0 ? featureScopes : FEATURES.map((f) => f.scope);
   const params = new URLSearchParams({
     code_challenge: pkce.challenge,
     code_challenge_method: 'S256',
     redirect_uri: redirectUri,
     state: pkce.state,
-    scope: signInScopes(FEATURES.map((f) => f.scope), withAgenda).join(' '),
+    scope: signInScopes(requested, withAgenda).join(' '),
     device: deviceName,
   });
   return `${ludyUrl(address, '/-/extension/connect')}?${params.toString()}`;

@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Org purge order for crove_notes.notebook (#3559): restated from 20270112110000 (the newest restatement, supplier_bank_account)
--- with ONE change: 'crove_notes.notebook' joins v_kernel_first immediately after 'crove_notes.note' (children before parent).
+-- Notes v2 E1 (#3559): crove_kernel.org_purge also deletes crove_notes.notebook immediately after crove_notes.note (children before parent).
+-- This is the body of 20270115150000 (the newest restatement, supplier_payment) with ONE change: 'crove_notes.notebook' joins v_kernel_first after 'crove_notes.note'. Its signature, owner, grants and every other list and step are unchanged.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -94,6 +94,9 @@ BEGIN
   DELETE FROM crove_finance.einvoice_notice n WHERE n.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_finance.einvoice_notice', v_n);
+  DELETE FROM crove_finance.supplier_payment sp WHERE sp.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_finance.supplier_payment', v_n);
   DELETE FROM crove_finance.supplier_bank_account_change h WHERE h.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_finance.supplier_bank_account_change', v_n);

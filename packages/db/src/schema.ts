@@ -509,10 +509,12 @@ export type EInvoiceDraftTable = Refine<
 // Stock (#2512, ADR-0045 point 1): the kind of an item, the trade it is sold in, and where a move of stock comes from.
 export const STOCK_ITEM_KINDS = ['goods'] as const;
 export type StockItemKind = (typeof STOCK_ITEM_KINDS)[number];
-export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
+export const STOCK_TRADES = ['goods', 'services', 'catering', 'digital_content', 'other'] as const;
 export type StockTrade = (typeof STOCK_TRADES)[number];
 // The household business kind (#2517): the fixed sets its CHECK constraints keep.
 export const HOUSEHOLD_PIT_METHODS = ['percentage', 'income'] as const;
+export const HOUSEHOLD_VAT_CUT_ANSWERS = ['yes', 'no'] as const;
+export type HouseholdVatCutAnswer = (typeof HOUSEHOLD_VAT_CUT_ANSWERS)[number];
 export const HOUSEHOLD_RULE_STATUSES = ['commentary', 'confirmed'] as const;
 export const HOUSEHOLD_EXPENSE_GROUPS = ['materials_goods', 'wages_insurance', 'depreciation', 'outside_services', 'interest', 'other'] as const;
 export const HOUSEHOLD_BOOKS = ['S1a', 'S2a', 'S2b', 'S2c', 'S2d', 'S2e', 'S3a'] as const;
@@ -533,10 +535,14 @@ export type StockAliasTable = Refine<G.FinanceStockAliasTable, { legal_entity_id
 // The household business kind (#2517): the profile of an entity of kind household, and the law as dated rows (global, read-only for every org).
 export type HouseholdProfileTable = Refine<
   G.FinanceHouseholdProfileTable,
-  { pit_method: HouseholdPitMethod | null; trades: StockTrade[]; legal_entity_id: LegalEntityColumn },
+  { pit_method: HouseholdPitMethod | null; trades: StockTrade[]; vat_cut_eligible: ColumnType<HouseholdVatCutAnswer | null, HouseholdVatCutAnswer | null, G.NotGranted>; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
 export type HouseholdThresholdTable = Refine<G.FinanceHouseholdThresholdTable, { status: HouseholdRuleStatus }>;
+// The 2026 reductions as dated law rows (#3710): `kind` is the tax the cut applies to.
+export const HOUSEHOLD_REDUCTION_KINDS = ['vat', 'pit'] as const;
+export type HouseholdReductionKind = (typeof HOUSEHOLD_REDUCTION_KINDS)[number];
+export type HouseholdTaxReductionTable = Refine<G.FinanceHouseholdTaxReductionTable, { kind: HouseholdReductionKind; status: HouseholdRuleStatus }>;
 export type HouseholdTradeRateTable = Refine<G.FinanceHouseholdTradeRateTable, { trade: StockTrade; status: HouseholdRuleStatus }>;
 export type HouseholdExpenseGroupMapTable = Refine<G.FinanceHouseholdExpenseGroupMapTable, { expense_group: HouseholdExpenseGroup; status: HouseholdRuleStatus }>;
 export type HouseholdFormVersionTable = Refine<G.FinanceHouseholdFormVersionTable, { book: HouseholdBook; pit_methods: Array<'none' | HouseholdPitMethod>; status: HouseholdRuleStatus }>;
@@ -591,6 +597,20 @@ export const SUPPLIER_BANK_ACCOUNT_CHANGE_KINDS = ['added', 'replaced', 'retired
 export type SupplierBankAccountChangeKind = (typeof SUPPLIER_BANK_ACCOUNT_CHANGE_KINDS)[number];
 export type SupplierBankAccountTable = Refine<G.FinanceSupplierBankAccountTable, { status: Generated<(typeof SUPPLIER_BANK_ACCOUNT_STATUSES)[number]> }>;
 export type SupplierBankAccountChangeTable = Refine<G.FinanceSupplierBankAccountChangeTable, { kind: SupplierBankAccountChangeKind }>;
+// A payment to a supplier approved in Ludy (#3113 S2): approved, paid, cancelled or stale (the supplier's account changed after the approval); the hold reason and the channel the supplier confirmed by are closed lists.
+export const SUPPLIER_PAYMENT_STATUSES = ['approved', 'paid', 'cancelled', 'stale'] as const;
+export const SUPPLIER_PAYMENT_HOLD_REASONS = ['new_account'] as const;
+export const SUPPLIER_PAYMENT_CHANNELS = ['phone_on_file', 'in_person', 'email_on_file'] as const;
+export type SupplierPaymentTable = Refine<
+  G.FinanceSupplierPaymentTable,
+  {
+    status: Generated<(typeof SUPPLIER_PAYMENT_STATUSES)[number]>;
+    hold_reason: (typeof SUPPLIER_PAYMENT_HOLD_REASONS)[number] | null;
+    confirmed_channel: (typeof SUPPLIER_PAYMENT_CHANNELS)[number] | null;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
 // A connection to a marketplace (#2519): the result of its last test and of its last poll, as states and never the platform's own text.
 export const MARKETPLACE_TEST_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable'] as const;
 export type MarketplaceTestState = (typeof MARKETPLACE_TEST_STATES)[number];
@@ -1421,6 +1441,7 @@ type Refined = Tables<{
   'crove_finance.household_profile': HouseholdProfileTable;
   'crove_finance.household_threshold': HouseholdThresholdTable;
   'crove_finance.household_trade_rate': HouseholdTradeRateTable;
+  'crove_finance.household_tax_reduction': HouseholdTaxReductionTable;
   'crove_finance.household_expense_group_map': HouseholdExpenseGroupMapTable;
   'crove_finance.household_form_version': HouseholdFormVersionTable;
   'crove_finance.household_return_form_version': HouseholdReturnFormVersionTable;
@@ -1429,6 +1450,7 @@ type Refined = Tables<{
   'crove_finance.stock_period_item': StockPeriodItemTable;
   'crove_finance.supplier_bank_account': SupplierBankAccountTable;
   'crove_finance.supplier_bank_account_change': SupplierBankAccountChangeTable;
+  'crove_finance.supplier_payment': SupplierPaymentTable;
   'crove_finance.stock_count': StockCountTable;
   'crove_finance.stock_count_line': StockCountLineTable;
   'crove_finance.categorization_rule': CategorizationRuleTable;

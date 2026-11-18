@@ -40,15 +40,10 @@ const REACHABLE = [
   'meetings.meeting.create:meetings',
   'meetings.meeting.extension_status:meetings',
   // Landed one step at a time and now all present, so each is pinned exactly like the rest: live notes' pieces (L4a-1, #3109, ADR-0052), the next-meetings read of B2
-  // (#3166, the `agenda` scope) and the report that a recording ended with no media (#3196).
+  // (#3166, the `agenda` scope), the report that a recording ended with no media (#3196), and Notes v2 E4 (#3560, the `notes` scope, write-only).
   'meetings.live.chunk:meetings',
   'meetings.agenda.next:agenda',
   'meetings.meeting.recording_stopped:meetings',
-];
-
-// Reachable only once Notes v2 E4 (#3560, the `notes` scope) lands: the test accepts each either present or absent,
-// so it holds before and after that change. Each is exactly the one name listed, under exactly the scope listed.
-const REACHABLE_WHEN_LANDED = [
   'notes.note.clip:notes',
   'notes.todo.quick_capture:notes',
   'notes.extension.exchanged:notes',
@@ -79,12 +74,12 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
     }
   }
 
-  async function insertToken(orgId: string, userId: string, id: string, extra = '') {
+  async function insertToken(orgId: string, userId: string, id: string, extra = '', scopes: readonly string[] = ['meetings']) {
     await admin((c) =>
       c.query(
         `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
-         VALUES ($1, $2, $3, $4, 'Test device', ARRAY['meetings'], now() ${extra}, now() ${extra} + interval '30 days', $3)`,
-        [orgId, id, userId, createHash('sha256').update(randomBytes(32)).digest()],
+         VALUES ($1, $2, $3, $4, 'Test device', $5::text[], now() ${extra}, now() ${extra} + interval '30 days', $3)`,
+        [orgId, id, userId, createHash('sha256').update(randomBytes(32)).digest(), [...scopes]],
       ),
     );
   }
@@ -161,9 +156,9 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
       name: string;
       extension?: { scope: string };
     }>;
+    expect(new Set(REACHABLE).size).toBe(REACHABLE.length);
     const reachable = defs.filter((d) => d.extension !== undefined).map((d) => `${d.name}:${d.extension?.scope}`);
-    expect(reachable.filter((name) => !REACHABLE_WHEN_LANDED.includes(name)).sort()).toEqual([...REACHABLE].sort());
-    expect(reachable.filter((name) => REACHABLE_WHEN_LANDED.includes(name)).length).toBeLessThanOrEqual(REACHABLE_WHEN_LANDED.length);
+    expect(reachable.sort()).toEqual([...REACHABLE].sort());
     expect([...EXTENSION_SCOPES]).toEqual([...EXTENSION_SCOPE_IDS]);
   });
 
@@ -220,6 +215,9 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
       () => runtime.query('notes.todo.list', { view: 'open' }, options),
       () => runtime.execute('notes.note.create', { title: 'x' }, options),
       () => runtime.execute('notes.todo.create', { title: 'x' }, options),
+      () => runtime.execute('notes.note.clip', { title: 'x' }, options),
+      () => runtime.execute('notes.todo.quick_capture', { title: 'x' }, options),
+      () => runtime.execute('notes.extension.exchanged', { codeId: randomUUID() }, options),
     ];
     for (const attempt of refused) {
       const error = await refusal(attempt());
@@ -239,6 +237,9 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
       () => runtime.query('notes.todo.list', { view: 'open' }, options),
       () => runtime.execute('notes.note.create', { title: 'x' }, options),
       () => runtime.execute('notes.todo.create', { title: 'x' }, options),
+      () => runtime.execute('notes.note.clip', { title: 'x' }, options),
+      () => runtime.execute('notes.todo.quick_capture', { title: 'x' }, options),
+      () => runtime.execute('notes.extension.exchanged', { codeId: randomUUID() }, options),
     ]) {
       const error = await refusal(attempt());
       expect(error.code, error.message).toBe('FORBIDDEN');
@@ -385,5 +386,55 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
     expect((await refusal(runtime.execute('meetings.meeting.create', CREATE, { actor: ext(users.member, tokens.member), orgId: orgA }))).code).toBe('EXTENSION_TOKEN_INVALID');
     // Already revoked: the same single answer.
     expect((await refusal(runtime.execute('kernel.extension.token.revoke', { tokenId: tokens.member }, { actor: browser(users.member), orgId: orgA }))).code).toBe('EXTENSION_TOKEN_NOT_FOUND');
+  });
+
+  it('lets a notes-scoped token write private, tainted clips and quick todos while keeping every read closed (#3560)', async () => {
+    const notesToken = randomUUID();
+    await insertToken(orgA, users.member, notesToken, '', ['notes']);
+    const actor = ext(users.member, notesToken, ['notes']);
+    const options = { actor, orgId: orgA };
+
+    const clipped = await runtime.execute<{ noteId: string; revision: number }>(
+      'notes.note.clip',
+      { title: 'Scoped clip', body: 'Hello world', tags: ['clip'], sourceUrl: 'https://example.com/item' },
+      options,
+    );
+    const todo = await runtime.execute<{ todoId: string; revision: number }>(
+      'notes.todo.quick_capture',
+      { title: 'Scoped todo', details: 'Check contract' },
+      options,
+    );
+
+    const noteRow = await admin(async (c) =>
+      (await c.query<{ visibility: string; tainted: boolean; author_user_id: string }>(
+        'SELECT visibility, tainted, author_user_id FROM crove_notes.note WHERE id = $1',
+        [clipped.noteId],
+      )).rows[0],
+    );
+    expect(noteRow).toEqual({ visibility: 'private', tainted: true, author_user_id: users.member });
+
+    const todoRow = await admin(async (c) =>
+      (await c.query<{ tainted: boolean; owner_user_id: string }>(
+        'SELECT tainted, owner_user_id FROM crove_notes.todo WHERE id = $1',
+        [todo.todoId],
+      )).rows[0],
+    );
+    expect(todoRow).toEqual({ tainted: true, owner_user_id: users.member });
+
+    // Every read and standard note/to-do mutation, as well as meetings/kernel routes, stays closed.
+    for (const attempt of [
+      () => runtime.query('notes.note.list', { view: 'mine' }, options),
+      () => runtime.query('notes.note.get', { noteId: clipped.noteId }, options),
+      () => runtime.query('notes.todo.list', { view: 'open' }, options),
+      () => runtime.query('notes.todo.get', { todoId: todo.todoId }, options),
+      () => runtime.execute('notes.note.create', { title: 'x', visibility: 'org' }, options),
+      () => runtime.execute('notes.todo.create', { title: 'x' }, options),
+      () => runtime.execute('meetings.meeting.create', CREATE, options),
+      () => runtime.execute('kernel.extension.token.exchanged', { codeId: randomUUID() }, options),
+    ]) {
+      const err = await refusal(attempt());
+      expect(err.code).toBe('FORBIDDEN');
+      expect(err.details?.rule).toBe('extension_scope');
+    }
   });
 });

@@ -249,6 +249,7 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
   ['crove_finance.stock_count_line', ['update']],
   ['crove_finance.stock_item', ['update']],
   ['crove_finance.supplier_bank_account', ['update']],
+  ['crove_finance.supplier_payment', ['update']],
   ['crove_kernel.channel_access', ['delete']],
   ['crove_kernel.conversation_setting', ['update', 'delete']],
   ['crove_kernel.member_availability', ['update', 'delete']],
@@ -1746,25 +1747,37 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
   },
   // #3113 S1: a supplier's bank account (a party's): the number is sealed ciphertext plus a keyed hash and the last four digits. Owners and admins insert and retire it (a column grant on the
-  // status), so the update probes assign the status to itself; there is no delete grant.
+  // status), so the update probes assign the status to itself; there is no delete grant. S2 (#3699) adds a deferred constraint trigger: an account inserted or retired in a transaction has its
+  // change row in that transaction, so the account is seeded with the change row of its own creation (`complete`).
   'crove_finance.supplier_bank_account': {
     update: { set: 'status = status' },
-    make: (o) => ({
-      row: {
-        org_id: o.id,
-        id: randomUUID(),
-        party_id: o.party,
-        bank_name: 'RLS matrix bank',
-        account_holder_sealed: 'crove:s1:rls-matrix-holder',
-        number_sealed: 'crove:s1:rls-matrix',
-        number_hash: randomUUID().replaceAll('-', '').repeat(2),
-        hash_key_id: 'k1',
-        last4: '1234',
-        created_by: o.owner,
-      },
-    }),
+    make: (o) => {
+      const account = randomUUID();
+      const hash = randomUUID().replaceAll('-', '').repeat(2);
+      return {
+        row: {
+          org_id: o.id,
+          id: account,
+          party_id: o.party,
+          bank_name: 'RLS matrix bank',
+          account_holder_sealed: 'crove:s1:rls-matrix-holder',
+          number_sealed: 'crove:s1:rls-matrix',
+          number_hash: hash,
+          hash_key_id: 'k1',
+          last4: '1234',
+          created_by: o.owner,
+        },
+        complete: [
+          {
+            table: 'crove_finance.supplier_bank_account_change',
+            values: { org_id: o.id, id: randomUUID(), party_id: o.party, account_id: account, kind: 'added', new_number_hash: hash, changed_by: o.owner, step_up_at: '2026-11-18T00:00:00Z' },
+          },
+        ],
+      };
+    },
   },
-  // #3113 S1: the append-only history of a supplier's bank account changes (APPEND_ONLY); it names the account row it added, so each row seeds one.
+  // #3113 S1: the append-only history of a supplier's bank account changes (APPEND_ONLY). The row is the change that retires an account; its setup is the account and the change that added it
+  // (an account never stands without its creation row in a transaction that ends, #3699).
   'crove_finance.supplier_bank_account_change': {
     make: (o) => {
       const account = randomUUID();
@@ -1775,8 +1788,50 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
             table: 'crove_finance.supplier_bank_account',
             values: { org_id: o.id, id: account, party_id: o.party, bank_name: 'RLS matrix bank', account_holder_sealed: 'crove:s1:rls-matrix-holder', number_sealed: 'crove:s1:rls-matrix', number_hash: hash, hash_key_id: 'k1', last4: '1234', created_by: o.owner },
           },
+          {
+            table: 'crove_finance.supplier_bank_account_change',
+            values: { org_id: o.id, id: randomUUID(), party_id: o.party, account_id: account, kind: 'added', new_number_hash: hash, changed_by: o.owner, step_up_at: '2026-11-18T00:00:00Z' },
+          },
         ],
-        row: { org_id: o.id, id: randomUUID(), party_id: o.party, account_id: account, kind: 'added', new_number_hash: hash, changed_by: o.owner, step_up_at: '2026-11-18T00:00:00Z' },
+        row: { org_id: o.id, id: randomUUID(), party_id: o.party, account_id: account, kind: 'retired', old_number_hash: hash, changed_by: o.owner, step_up_at: '2026-11-18T00:00:00Z' },
+      };
+    },
+  },
+  // #3113 S2: a payment to a supplier approved in Ludy (one received invoice, the account the approver saw). Only the execution of an approved finance.supplier_payment.record proposal inserts one
+  // (b_supplier_payment_proposal; the matrix seeds as the database owner, which that check lets through). It pins an active account of the supplier (seeded with its creation change row) and the org's base
+  // purchase document; tenant roles move it on through a column grant on the status, so the update probes assign the status to itself; there is no delete grant.
+  'crove_finance.supplier_payment': {
+    update: { set: 'status = status' },
+    insertDenied: /row-level security policy|SUPPLIER_PAYMENT_(PROPOSAL|ACCOUNT_CHANGED|DOCUMENT)/,
+    noInsertControl: 'only the execution of an approved finance.supplier_payment.record proposal inserts a payment, in a context of its org; every other context of the org is refused by its guard (finance-supplier-payment.db.test.ts tests it)',
+    make: (o) => {
+      const account = randomUUID();
+      const hash = randomUUID().replaceAll('-', '').repeat(2);
+      return {
+        setup: [
+          {
+            table: 'crove_finance.supplier_bank_account',
+            values: { org_id: o.id, id: account, party_id: o.party, bank_name: 'RLS matrix bank', account_holder_sealed: 'crove:s1:rls-matrix-holder', number_sealed: 'crove:s1:rls-matrix', number_hash: hash, hash_key_id: 'k1', last4: '1234', created_by: o.owner },
+          },
+          {
+            table: 'crove_finance.supplier_bank_account_change',
+            values: { org_id: o.id, id: randomUUID(), party_id: o.party, account_id: account, kind: 'added', new_number_hash: hash, changed_by: o.owner, step_up_at: '2026-11-18T00:00:00Z' },
+          },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          party_id: o.party,
+          purchase_document_id: o.document,
+          amount: '110',
+          currency: 'VND',
+          bank_account_id: account,
+          number_hash: hash,
+          hash_key_id: 'k1',
+          proposal_id: randomUUID(),
+          approved_by: o.owner,
+          approver_step_up_at: '2026-11-18T00:00:00Z',
+        },
       };
     },
   },

@@ -11,8 +11,11 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import {
   auditValue,
+  formatClippedNoteBody,
   NOTE_BODY_MAX,
   NOTE_TITLE_MAX,
+  zId,
+  zNoteClip,
   zNoteCreate,
   zNoteLinkAdd,
   zNoteLinkRemove,
@@ -213,6 +216,63 @@ export const noteCreate = defineCommand({
       ...(input.link ? { linkId, ...linkTargetFact(row.visibility, input.link.targetType, input.link.targetId) } : {}),
     });
     return written(row);
+  },
+});
+
+// Extension Quick Capture and 1-click Web Clipper (#3560, Notes v2 E4): writes one private, tainted note for the
+// caller. Visibility is fixed to 'private' and tainted to true on the server regardless of input, so extension captures
+// never expose clipped text to other members or to Vy before the author reviews or edits it.
+export const noteClip = defineCommand({
+  name: 'notes.note.clip',
+  input: zNoteClip,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  extension: { scope: 'notes' },
+  handler: async (ctx, input): Promise<NoteWritten> => {
+    const userId = userOf(ctx.actor);
+    const body = formatClippedNoteBody(input.body, input.sourceUrl ?? null);
+    const row = await ctx.trx
+      .insertInto('crove_notes.note')
+      .values({
+        org_id: ctx.orgId,
+        author_user_id: userId,
+        visibility: 'private',
+        title: input.title,
+        body,
+        tags: input.tags,
+        tainted: true,
+        created_at: ctx.now,
+        updated_at: ctx.now,
+      })
+      .returning(['id', 'visibility', 'revision'])
+      .executeTakeFirstOrThrow();
+    ctx.audit({
+      noteId: row.id,
+      visibility: row.visibility,
+      title: auditValue(NOTE, 'title', input.title),
+      tags: auditValue(NOTE, 'tags', input.tags.length > 0 ? input.tags : null),
+      tainted: true,
+    });
+    return written(row);
+  },
+});
+
+// Audits an extension token exchange when the token carries the 'notes' scope without 'meetings' (#3560).
+export const notesExtensionExchanged = defineCommand({
+  name: 'notes.extension.exchanged',
+  input: z.strictObject({ codeId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  extension: { scope: 'notes' },
+  writes: [],
+  handler: async (ctx, input): Promise<{ recorded: true }> => {
+    if (ctx.actor.type !== 'user' || !ctx.actor.extension) {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ mã của tiện ích mới ghi nhận được lượt đổi mã');
+    }
+    ctx.audit({ codeId: input.codeId });
+    return { recorded: true as const };
   },
 });
 
@@ -591,5 +651,5 @@ export const privateCounts = defineQuery({
   },
 });
 
-export const noteCommands = [noteCreate, noteFromMeetingSummary, noteUpdate, noteSetVisibility, notePin, noteUnpin, noteArchive, noteRestore, noteDelete, linkAdd, linkRemove];
+export const noteCommands = [noteCreate, noteClip, notesExtensionExchanged, noteFromMeetingSummary, noteUpdate, noteSetVisibility, notePin, noteUnpin, noteArchive, noteRestore, noteDelete, linkAdd, linkRemove];
 export const noteQueries = [noteList, noteGet, noteSearch, recordPanel, privateCounts];
