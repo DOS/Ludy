@@ -509,6 +509,10 @@ function askedScopes(raw: unknown): string[] {
 }
 // The rows of a list in an answer; anything that is not a list counts as none.
 const rowCount = (list: unknown): number => (Array.isArray(list) ? list.length : 0);
+
+// The rows one `ludy_meeting_minutes` answer spends of the grant's daily budget: one for the meeting, one per summary line, decision and action item, so what leaves is what is counted (N2 of the
+// post-merge review of #3745: the summary lines were left out).
+export const minutesRows = (value: Record<string, unknown>): number => 1 + rowCount(value.summaryLines) + rowCount(value.decisions) + rowCount(value.actions);
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 
 // The post and channel rows of the Social reads (plan section 3.8), as `social.mcp.posts` and `social.mcp.review_queue` return them.
@@ -808,7 +812,7 @@ function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draftBudget
             },
             annotations: READ_ONLY,
             read: async (args: Record<string, unknown>) => await runtime.query<Record<string, unknown>>('meetings.mcp.minutes', args, { actor, orgId }),
-            rows: (value: Record<string, unknown>) => 1 + rowCount(value.decisions) + rowCount(value.actions),
+            rows: minutesRows,
           } satisfies ToolDescriptor,
         ]),
     ...(mayDraft ? [draftTool(runtime, actor, orgId, draftBudget)] : []),

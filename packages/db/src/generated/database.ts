@@ -1735,6 +1735,9 @@ export interface FinanceSupplierPaymentTable {
   cancel_reason: string | null;
   paid_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  exported_by: string | null;
+  exported_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  export_count: Generated<number>;
 }
 
 /** crove_finance.vat_return_filed */

@@ -170,7 +170,7 @@ export const supplierPaymentRecord = defineCommand({
         approved_by: ctx.actor.userId,
         approver_step_up_at: new Date(mfaAt * 1000),
       })
-      .returning(['id', 'party_id', 'purchase_document_id', 'amount', 'currency', 'status', 'approved_at', 'payable_after', 'hold_reason', 'confirmed_at', 'confirmed_channel', 'stale_at', 'cancelled_at', 'paid_at'])
+      .returning(['id', 'party_id', 'purchase_document_id', 'amount', 'currency', 'status', 'approved_at', 'payable_after', 'hold_reason', 'confirmed_at', 'confirmed_channel', 'stale_at', 'cancelled_at', 'paid_at', 'exported_at', 'export_count'])
       .executeTakeFirstOrThrow();
     // The party, the invoice, the account and the amount: never the number, the last four digits or the hash.
     ctx.audit({ paymentId: row.id, partyId: doc.party_id, purchaseDocumentId: invoiceId, accountId: account.id, amount: money(doc.total).toFixed(), currency: doc.currency, holdReason: row.hold_reason });
@@ -193,6 +193,8 @@ type PaymentRow = {
   stale_at: Date | string | null;
   cancelled_at: Date | string | null;
   paid_at: Date | string | null;
+  exported_at: Date | string | null;
+  export_count: number;
 };
 
 function toView(row: PaymentRow, bankName: string, last4: string): SupplierPayment {
@@ -213,10 +215,12 @@ function toView(row: PaymentRow, bankName: string, last4: string): SupplierPayme
     staleAt: iso(row.stale_at),
     cancelledAt: iso(row.cancelled_at),
     paidAt: iso(row.paid_at),
+    exportedAt: iso(row.exported_at),
+    exportCount: row.export_count,
   };
 }
 
-const PAYMENT_COLUMNS = ['p.id', 'p.party_id', 'p.purchase_document_id', 'p.amount', 'p.currency', 'p.status', 'p.approved_at', 'p.payable_after', 'p.hold_reason', 'p.confirmed_at', 'p.confirmed_channel', 'p.stale_at', 'p.cancelled_at', 'p.paid_at'] as const;
+const PAYMENT_COLUMNS = ['p.id', 'p.party_id', 'p.purchase_document_id', 'p.amount', 'p.currency', 'p.status', 'p.approved_at', 'p.payable_after', 'p.hold_reason', 'p.confirmed_at', 'p.confirmed_channel', 'p.stale_at', 'p.cancelled_at', 'p.paid_at', 'p.exported_at', 'p.export_count'] as const;
 
 async function loadPayment(trx: Trx, orgId: string, id: string) {
   const row = await trx
