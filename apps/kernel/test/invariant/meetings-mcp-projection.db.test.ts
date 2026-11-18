@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The privacy pins of the two Meetings reads of the MCP endpoint (#3731, ADR-0051; Meetings PO design review on the issue, 2026-11-18): what a company grant reads of Meetings is the exact set of keys below
+// The privacy pins of the Meetings reads of the MCP endpoint (#3731, #3804, #3837, ADR-0051; Meetings PO design review on the issue, 2026-11-18): what a company grant reads of Meetings is the exact set of keys below
 // and nothing more, only the PUBLISHED minutes of meetings whose visibility is 'org', only in its own org, and only for a company grant of an owner or admin with the read scope. A meeting of attendees only
 // is not read even when the grant's own person recorded it; a draft, the transcript, the notes, a translation, the readers and any user id never appear (canary strings); a member grant and a browser session
 // are refused; and an unknown id, an attendees-only meeting, an unpublished one, another org's and one whose text period ended all answer the same not found. The database side (the three read policies) is
@@ -38,6 +38,9 @@ interface OpenActions {
   items: Array<{ meetingId: string; meetingTitle: string; meetingStartedAt: string; title: string; owner: string | null; dueDate: string | null; status: string }>;
   total: number;
   truncated: boolean;
+}
+interface SeriesOpenItems extends OpenActions {
+  series: boolean;
 }
 interface Minutes {
   id: string;
@@ -181,6 +184,7 @@ suite('the privacy pins of the Meetings MCP reads (#3731)', () => {
     throw new Error('expected a refusal');
   }
   const openActions = async (input: unknown = {}, who = 'admin', org = orgA) => runtime.query<OpenActions>('meetings.mcp.open_actions', input, await company(who, org));
+  const seriesItems = async (input: unknown, who = 'admin', org = orgA) => runtime.query<SeriesOpenItems>('meetings.mcp.series_open_items', input, await company(who, org));
   const shapeOf = (e: DomainError) => ({ code: e.code, status: e.status, message: e.message });
 
   it('lists exactly the org-visible meetings with published minutes, with exactly the named keys, and no other meeting', async () => {
@@ -346,5 +350,84 @@ suite('the privacy pins of the Meetings MCP reads (#3731)', () => {
     const text = readFileSync(fileURLToPath(new URL('../../../../modules/meetings/src/mcp.ts', import.meta.url)), 'utf8');
     const tables = [...new Set([...text.matchAll(/crove_\w+\.\w+/g)].map((m) => m[0]))].sort();
     expect(tables).toEqual(['crove_meetings.action_item', 'crove_meetings.meeting', 'crove_meetings.meeting_result']);
+  });
+
+  // The open action items of one series (#3837). The fixture is built once, on first use, by whichever of these cases runs first (so a rerun of one case alone still works), and adds its own meetings after
+  // the cases above, so their counts stay what they were; a case appended later must not assume org A holds only the two published org meetings and 61 open items.
+  const SERIES_KEYS = ['items', 'series', 'total', 'truncated'];
+  const seriesIds = { one: randomUUID(), two: randomUUID() };
+  const setSeries = (org: string, meetingId: string, seriesId: string) => sqlAdmin('UPDATE crove_meetings.meeting SET series_id = $3 WHERE org_id = $1 AND id = $2', [org, meetingId, seriesId]);
+  let seriesFixture: Promise<void> | undefined;
+  const withSeries = (): Promise<void> => {
+    seriesFixture ??= (async () => {
+      // Series one holds the two readable meetings of org A and every kind of meeting that must stay out: a draft-only one, two of attendees only, an expired one and one of org B. Series two and a meeting with no series are readable and apart.
+      for (const key of ['orgPublished', 'rich', 'orgDraft', 'attendeesByAdmin', 'attendeesByMember', 'expired']) await setSeries(orgA, ids[key] as string, seriesIds.one);
+      await setSeries(orgB, ids.otherOrg as string, seriesIds.one);
+      await seedMeeting(orgA, 'otherSeries', 'recorder', 'org', true);
+      await setSeries(orgA, ids.otherSeries as string, seriesIds.two);
+      await seedMeeting(orgA, 'solo', 'recorder', 'org', true);
+    })();
+    return seriesFixture;
+  };
+
+  it('lists the open action items of every readable meeting of the series of the given meeting, the given one included, newest first, with exactly the named keys, and no id of a series (#3837)', async () => {
+    await withSeries();
+    const got = await seriesItems({ meetingId: ids.orgPublished, limit: 100 });
+    expect(Object.keys(got).sort()).toEqual(SERIES_KEYS);
+    expect(got.series).toBe(true);
+    for (const i of got.items) expect(Object.keys(i).sort(), i.title).toEqual(OPEN_ACTION_KEYS);
+    // The given meeting and the other readable one of the series, the newer (rich) first; the same 61 items the whole-company read finds, since no other readable meeting has items outside the series but the two below.
+    expect([...new Set(got.items.map((i) => i.meetingId))]).toEqual([ids.rich, ids.orgPublished]);
+    expect(got.items.filter((i) => i.meetingId === ids.rich)).toHaveLength(60);
+    expect(got.items.filter((i) => i.meetingId === ids.orgPublished).map((i) => i.title)).toEqual([`${CANARY} việc`]);
+    expect(got.total).toBe(61);
+    expect(got.truncated).toBe(false);
+    expect(got.items.every((i) => i.status === 'open')).toBe(true);
+    // Out: another series, a meeting with no series, and the series' meetings that are not readable (draft only, attendees only, expired, another org's).
+    for (const key of ['otherSeries', 'solo', 'orgDraft', 'attendeesByAdmin', 'attendeesByMember', 'expired', 'otherOrg']) expect(got.items.map((i) => i.meetingId), key).not.toContain(ids[key]);
+    // Neither the draft item, the flagged one, the one made a task, nor any id (of a series, a person or a task) reaches the client.
+    const everything = JSON.stringify(got);
+    for (const word of ['example.com', 'Việc đã giao', 'việc nháp', `${CANARY} bản ghi`, `${CANARY} ghi chú`, seriesIds.one, seriesIds.two]) expect(everything).not.toContain(word);
+    for (const who of ['owner', 'admin', 'recorder', 'attendee', 'foreign']) expect(everything).not.toContain(users[who] as string);
+    // Any readable meeting of the series gives the same list; the owner's grant too.
+    expect((await seriesItems({ meetingId: ids.rich, limit: 100 })).items).toEqual(got.items);
+    expect((await seriesItems({ meetingId: ids.rich, limit: 100 }, 'owner')).total).toBe(61);
+    // Another series reads its own one item, and never series one's.
+    const other = await seriesItems({ meetingId: ids.otherSeries });
+    expect(other.series).toBe(true);
+    expect(other.items.map((i) => i.meetingId)).toEqual([ids.otherSeries]);
+    expect(other.total).toBe(1);
+  });
+
+  it('answers series false and nothing for a meeting with no series, and one and the same not found for a meeting that cannot be read (#3837)', async () => {
+    await withSeries();
+    expect(await seriesItems({ meetingId: ids.solo })).toEqual({ series: false, items: [], total: 0, truncated: false });
+    const answers = [];
+    for (const id of [randomUUID(), ids.attendeesByAdmin, ids.attendeesByMember, ids.orgDraft, ids.otherOrg, ids.expired]) answers.push(shapeOf(await refusal(seriesItems({ meetingId: id }))));
+    expect(answers[0]).toEqual({ code: 'MEETING_NOT_FOUND', status: 404, message: 'Meeting not found' });
+    for (const a of answers) expect(a).toEqual(answers[0]);
+    // The same answer the minutes give.
+    expect(shapeOf(await refusal(minutes(ids.expired as string)))).toEqual(answers[0]);
+  });
+
+  it('caps the list at the limit with the total and the truncated flag, takes no series id or other input, and refuses a member grant, a browser session, a grant without the scope and a plain member (#3837)', async () => {
+    await withSeries();
+    const one = await seriesItems({ meetingId: ids.rich, limit: 1 });
+    expect(one.items).toHaveLength(1);
+    expect(one.total).toBe(61);
+    expect(one.truncated).toBe(true);
+    expect((await seriesItems({ meetingId: ids.rich })).items).toHaveLength(50);
+    for (const bad of [{ meetingId: ids.rich, limit: 101 }, { meetingId: ids.rich, limit: 0 }, { meetingId: 'x' }, { meetingId: ids.rich, seriesId: seriesIds.one }, { limit: 5 }, {}]) {
+      expect((await refusal(seriesItems(bad))).code, JSON.stringify(bad)).toBe('VALIDATION');
+    }
+    await sqlAdmin(`UPDATE crove_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1`, [orgA]);
+    const memberGrant = await insertGrant(orgA, users.recorder as string, 'member');
+    const asMember = { actor: mcp(users.recorder as string, memberGrant, 'member'), orgId: orgA };
+    expect((await refusal(runtime.query('meetings.mcp.series_open_items', { meetingId: ids.rich }, asMember))).code).toBe('FORBIDDEN');
+    expect((await refusal(runtime.query('meetings.mcp.series_open_items', { meetingId: ids.rich }, { actor: asUser('admin'), orgId: orgA }))).code).toBeTruthy();
+    const noScope = { actor: mcp(users.admin as string, await insertGrant(orgA, users.admin as string), 'company', ['ludy.other']), orgId: orgA };
+    expect((await refusal(runtime.query('meetings.mcp.series_open_items', { meetingId: ids.rich }, noScope))).code).toBeTruthy();
+    const memberCompany = { actor: mcp(users.recorder as string, await insertGrant(orgA, users.recorder as string), 'company'), orgId: orgA };
+    expect((await refusal(runtime.query('meetings.mcp.series_open_items', { meetingId: ids.rich }, memberCompany))).code).toBeTruthy();
   });
 });

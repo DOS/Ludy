@@ -23,6 +23,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AmountInput } from '../components/amount-input.tsx';
 import { DateInput } from '../components/date-input.tsx';
+import { MisaCheckPanel } from '../components/misa-check-panel.tsx';
 import { DuplicateHint, FormPanel } from '../components/form-panel.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DataTable, Empty, ErrorText, FieldError, fieldControl, fieldErrorId, fieldHintId, focusFirstInvalid, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
@@ -558,6 +559,7 @@ export function VouchersPage() {
         </div>
       )}
       {entering && <VoucherFormPanel slug={slug} onClose={() => setEntering(false)} />}
+      <MisaCheckPanel formats={['misa_sme_cash_receipts', 'misa_sme_cash_payments', 'misa_sme_bank_credits', 'misa_sme_bank_debits']} from={from} to={to} legalEntityId={entity.legalEntityId} />
       {/* The accounts a voucher is entered against are the chart of accounts of Settings (#3589). */}
       <p className="mb-3 text-sm">
         <Link to="/o/$slug/settings/accounting" params={{ slug }} hash="chart-of-accounts" className="text-link hover:underline">

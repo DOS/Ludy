@@ -167,6 +167,13 @@ export function isHeadedGroup(id: AppGroupId): id is HeadedGroupId {
   return id === 'inbox' || id === 'crm' || id === 'marketing' || id === 'sell' || id === 'buy' || id === 'ledger';
 }
 
+// Words that find a menu item in Ctrl K without being shown (#3588): what an owner types for the thing, not the screen's name. Folded like the label, so
+// "hoa don" finds Chứng từ (the screen that holds the purchase invoices) and "invoice" finds it in English. A label not listed has none.
+export const NAV_KEYWORDS: Partial<Record<NavLabel, string>> = {
+  documents: 'hoa don hóa đơn mua vao invoice bill',
+  tax: 'thue vat gtgt tax to khai',
+};
+
 // Every screen of the menus, apps first, for the command palette (Ctrl K searches all of them, whatever the app): the overview, the apps' items, the bell, Settings, and the tabs and inner
 // screens that name a `find` label (Sàn, Hộ kinh doanh, Nhắc thu nợ...).
 export const ALL_NAV: readonly NavItem[] = [...TOP_ITEMS, ...APPS.flatMap((a) => a.groups.flatMap((g) => g.items)), ...(BELL_ITEM ? [BELL_ITEM] : []), ...ADMIN_ITEMS, ...FIND_ITEMS];

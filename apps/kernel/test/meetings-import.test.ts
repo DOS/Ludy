@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The download job of the recording import (meetings integrations C1, #3173): what it stages, what it refuses before any network call, how each failure is recorded, and that a transient one retries.
-import { describe, expect, it } from 'vitest';
-import { MeetingPlatformError, SandboxMeetingPlatform, type MeetingPlatformAdapter, type MeetingPlatformDownload } from '@crove/channel';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { MeetingPlatformError, SandboxMeetingPlatform, ZoomMeetingPlatform, type MeetingPlatformAdapter, type MeetingPlatformDownload } from '@crove/channel';
 import { MEETING_PLATFORM_IMPORT_MAX_BYTES } from '@crove/kernel-contract';
 import { DomainError, EgressError, type EgressStream } from '@crove/kernel-runtime';
 import { MEETINGS_IMPORT_CONCURRENCY, runMeetingsImport, type MeetingsImportDeps, type MeetingsImportJob } from '../src/meetings-import.ts';
@@ -55,7 +57,7 @@ function harness(over: Partial<MeetingsImportDeps> = {}, executeError?: (name: s
       },
     },
     adapters: { sandbox: new SandboxMeetingPlatform() },
-    media: null,
+    extractor: null,
     ...over,
   } as unknown as MeetingsImportDeps;
   return { deps, calls };
@@ -74,7 +76,7 @@ describe('runMeetingsImport', () => {
     expect(calls.executed[0]?.input).toEqual({ recordingId: job().id, stagingKey: KEY });
   });
 
-  it('refuses a declared size over the cap before any network call, and a video-only recording while no audio extraction is wired', async () => {
+  it('refuses a declared size over the cap before any network call, and a video-only recording while no audio extraction is configured', async () => {
     const touched: string[] = [];
     const spy: MeetingPlatformAdapter = {
       provider: 'sandbox',
@@ -290,5 +292,103 @@ describe('runMeetingsImport', () => {
 
   it('buffers at most two downloads at once per worker (the pinned concurrency)', () => {
     expect(MEETINGS_IMPORT_CONCURRENCY).toBe(2);
+  });
+});
+
+// A Zoom download through the REAL egress guard (#3175): the adapter's own description of the request, a local server standing in for Zoom's hosts by the guard's test resolver, and a redirect to a host that
+// is not Zoom's. Only the scheme and port of the address are swapped for the local server; the hosts, the suffix and the headers are the adapter's own.
+describe('a Zoom recording download (the redirect rules)', () => {
+  let server: Server;
+  let port = 0;
+  const seen: Array<{ host: string; path: string; authorization: string | undefined }> = [];
+  const resolveMap: Record<string, string> = { 'us02web.zoom.us': '127.0.0.1', 'cdn.zoom.us': '127.0.0.1', 'evil.example.test': '127.0.0.1', 'zoom.us.evil.example.test': '127.0.0.1', 'notzoom.us': '127.0.0.1' };
+  const audio = Buffer.from('zoom-audio-bytes');
+
+  beforeAll(async () => {
+    server = createServer((req, res) => {
+      const host = String(req.headers.host ?? '').split(':')[0] ?? '';
+      const path = req.url ?? '/';
+      seen.push({ host, path, authorization: req.headers.authorization });
+      const to = (target: string) => {
+        res.writeHead(302, { location: `http://${target}:${port}/rec/steal` });
+        res.end();
+      };
+      if (path === '/rec/ok') {
+        res.writeHead(200, { 'content-type': 'audio/mp4', 'content-length': String(audio.byteLength) });
+        res.end(audio);
+      } else if (path === '/rec/to-evil') to('evil.example.test');
+      else if (path === '/rec/to-lookalike') to('zoom.us.evil.example.test');
+      else if (path === '/rec/to-suffix-lookalike') to('notzoom.us');
+      else if (path === '/rec/to-cdn') {
+        res.writeHead(302, { location: `http://cdn.zoom.us:${port}/rec/ok` });
+        res.end();
+      } else {
+        res.writeHead(200, { 'content-length': '0' });
+        res.end();
+      }
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    port = (server.address() as AddressInfo).port;
+  });
+  afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
+
+  // The adapter, answering "which file" from a mocked API, with the address of the file pointing at the local server.
+  function zoomAt(path: string): MeetingPlatformAdapter {
+    const files = { recording_files: [{ id: 'f', file_type: 'M4A', file_size: audio.byteLength, recording_type: 'audio_only', status: 'completed', download_url: `https://us02web.zoom.us${path}` }] };
+    const real = new ZoomMeetingPlatform({ clientId: 'zoom-client-id-0001', clientSecret: 'zoom-client-secret-not-real' }, { fetch: async () => new Response(JSON.stringify(files), { status: 200 }) });
+    return {
+      provider: 'zoom',
+      hosts: real.hosts,
+      list: (c, since, signal) => real.list(c, since, signal),
+      prepareDownload: async (c, id, format, signal) => {
+        const download = await real.prepareDownload(c, id, format, signal);
+        return { ...download, url: download.url.replace('https://us02web.zoom.us', `http://us02web.zoom.us:${port}`) };
+      },
+    };
+  }
+  const run = (path: string) => {
+    seen.length = 0;
+    const { deps, calls } = harness({
+      adapters: { zoom: zoomAt(path) },
+      streamOptions: {
+        resolve: async (host: string) => {
+          const address = resolveMap[host];
+          if (!address) throw new Error('ENOTFOUND');
+          return [{ address, family: 4 }];
+        },
+        allowed: (address: string) => address === '127.0.0.1',
+        anyPort: true,
+        httpsOnly: false,
+        timeoutMs: 5000,
+      },
+    });
+    return runMeetingsImport(deps, job({ provider: 'zoom', externalId: 'AAAAAAAAAAAAAAAAAAAAAA==' }), attempt).then((result) => ({ result, calls }));
+  };
+
+  it('stages the file from a Zoom host, sending the member\'s token to that first host only', async () => {
+    const { result, calls } = await run('/rec/ok');
+    expect(result).toBe('staged');
+    expect(Buffer.from(calls.stored.get(KEY) ?? new Uint8Array()).toString()).toBe('zoom-audio-bytes');
+    expect(seen).toEqual([{ host: 'us02web.zoom.us', path: '/rec/ok', authorization: 'Bearer token-123' }]);
+  });
+
+  it('refuses a redirect to a host that is not Zoom\'s (a foreign one, a lookalike, a suffix that is not a subdomain), records platform_refused, and never reaches the target', async () => {
+    for (const path of ['/rec/to-evil', '/rec/to-lookalike', '/rec/to-suffix-lookalike']) {
+      const { result, calls } = await run(path);
+      expect(result, path).toBe('failed');
+      expect(recorded(calls), path).toEqual([failedWith('platform_refused')]);
+      expect(calls.stored.size, path).toBe(0);
+      // Only the first request was made; the redirect target was never connected to.
+      expect(seen.map((r) => r.host), path).toEqual(['us02web.zoom.us']);
+    }
+  });
+
+  it('follows a redirect to another Zoom subdomain, without the member\'s token (the headers stay with the first host)', async () => {
+    const { result } = await run('/rec/to-cdn');
+    expect(result).toBe('staged');
+    expect(seen).toEqual([
+      { host: 'us02web.zoom.us', path: '/rec/to-cdn', authorization: 'Bearer token-123' },
+      { host: 'cdn.zoom.us', path: '/rec/ok', authorization: undefined },
+    ]);
   });
 });

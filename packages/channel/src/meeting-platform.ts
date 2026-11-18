@@ -8,6 +8,8 @@
 //
 // The provider and error-code unions below repeat those of `@crove/kernel-contract` (meeting-platform.ts); this package does not depend on the contract, and the kernel's tests hold the two equal.
 
+import { ZoomMeetingPlatform, type ZoomAppConfig } from './meeting-platform-zoom.ts';
+
 export type MeetingPlatformProvider = 'sandbox' | 'google_meet' | 'zoom' | 'microsoft_teams';
 export type MeetingPlatformErrorCode =
   | 'download_failed'
@@ -58,6 +60,23 @@ export interface MeetingPlatformDownload {
   inline?: { bytes: Uint8Array; contentType: string } | undefined;
 }
 
+// One line of a platform's own transcript (C2, #3174): seconds from the start of the call, the speaker's name where the platform gives it, and the text. Tainted data: the job bounds it again.
+export interface MeetingPlatformTranscriptEntry {
+  startSeconds: number;
+  endSeconds: number;
+  speaker: string | null;
+  text: string;
+}
+
+// A platform's transcript of a call. `source` names who made it: this is the PLATFORM's transcription, never Ludy's, and the data and the screens say so. `truncated`: the platform's transcript was longer
+// than the adapter reads.
+export interface MeetingPlatformTranscript {
+  source: 'google_meet';
+  language: string | null;
+  truncated: boolean;
+  entries: MeetingPlatformTranscriptEntry[];
+}
+
 export interface MeetingPlatformAdapter {
   readonly provider: MeetingPlatformProvider;
   // The API hosts this adapter may call itself (its fetch is bound to them, ADR-0025).
@@ -65,7 +84,10 @@ export interface MeetingPlatformAdapter {
   // At most 100 recordings that are finished and started at or after `since`, newest first.
   list(credential: MeetingPlatformCredential, since: Date, signal?: AbortSignal): Promise<MeetingPlatformListed[]>;
   prepareDownload(credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, signal?: AbortSignal): Promise<MeetingPlatformDownload>;
-  // `refused`: the platform will not renew the grant, the job expires the connection.
+  // The platform's own transcript of one recording, for an adapter that has one (Google Meet, C2). The job never opens a transcript download: the adapter calls its own API hosts.
+  transcript?(credential: MeetingPlatformCredential, recordingId: string, signal?: AbortSignal): Promise<MeetingPlatformTranscript>;
+  // `refused`: the platform will not renew the grant, the job expires the connection (an adapter may also throw `connection_expired` for the same). It renews ONE token under a lock, in a transaction the database ends if it
+  // idles too long: it must honour `signal` and return the NEW refresh token a provider rotates, with the new expiry; a failure to reach the platform throws `platform_unavailable` and changes nothing.
   refresh?(credential: MeetingPlatformCredential, signal?: AbortSignal): Promise<MeetingPlatformCredential | { refused: true }>;
 }
 
@@ -178,15 +200,18 @@ export class SandboxMeetingPlatform implements MeetingPlatformAdapter {
 }
 
 export interface MeetingPlatformAdaptersConfig {
+  // The Zoom adapter (C3, #3175) is there only when the deployment has a Zoom OAuth app (ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET); without one the provider has no adapter at all.
+  zoom?: ZoomAppConfig | undefined;
   // The offline sandbox is on unless this is `false`.
   sandbox?: boolean | undefined;
   // A shared sandbox store (tests and the dev stack add fixtures to it); a fresh seeded one when omitted.
   sandboxPlatform?: SandboxMeetingPlatform | undefined;
 }
 
-// The adapters a deployment has, by provider; a provider without one has no key. C2 to C4 add theirs here.
+// The adapters a deployment has, by provider; a provider without one has no key. C2 and C4 add theirs here; Zoom's (C3) is there when its app is configured.
 export function meetingPlatformAdapters(config: MeetingPlatformAdaptersConfig = {}): Partial<Record<MeetingPlatformProvider, MeetingPlatformAdapter>> {
   const adapters: Partial<Record<MeetingPlatformProvider, MeetingPlatformAdapter>> = {};
   if (config.sandbox !== false) adapters.sandbox = config.sandboxPlatform ?? new SandboxMeetingPlatform();
+  if (config.zoom) adapters.zoom = new ZoomMeetingPlatform(config.zoom);
   return adapters;
 }

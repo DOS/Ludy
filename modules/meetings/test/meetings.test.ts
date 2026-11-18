@@ -96,6 +96,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.action_item.accept',
       'meetings.action_item.accept_clean',
       'meetings.notes.save',
+      'meetings.chapters.save',
       'meetings.summary.copy_result',
       'meetings.speaker.name',
       'meetings.series.set',
@@ -169,6 +170,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.result.get',
       'meetings.action_item.source',
       'meetings.notes.get',
+      'meetings.chapters.get',
       'meetings.notes.preview',
       'meetings.summary.attendees',
       'meetings.speaker.suggestions',
@@ -206,6 +208,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.mcp.list',
       'meetings.mcp.minutes',
       'meetings.mcp.open_actions',
+      'meetings.mcp.series_open_items',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');
