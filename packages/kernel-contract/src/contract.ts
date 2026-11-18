@@ -1,6 +1,6 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
-import { zChapters, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
+import { zChapters, zChaptersCopied, zChaptersCopy, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
   zBulkApproveItems,
   SOCIAL_REVIEW_CHECKS_MAX,
@@ -1353,6 +1353,11 @@ export const contract = {
       // The table of contents (#3844): `chaptersGet` the recorder's draft and published chapters, or a reader's published ones; `chaptersSave` the recorder's own set, replacing their draft.
       chaptersGet: oc.input(zMeetingRef).output(zChapters),
       chaptersSave: oc.input(zChaptersSave).output(zChaptersSaved),
+      // The recorder's Vy writing the chapters (#3844, the same run family and budget lines as the summary but its own meter key): `chaptersStatus` feeds the button, `chaptersRun` makes the run,
+      // `chaptersCopy` copies a finished run into the recorder's draft as the model's text, not yet read.
+      chaptersStatus: oc.input(zSummaryRef).output(zSummaryStatus),
+      chaptersRun: oc.input(zSummaryRef).output(zSummarized),
+      chaptersCopy: oc.input(zChaptersCopy).output(zChaptersCopied),
       enhance: oc.input(zSummaryRef).output(zSummarized),
       enhancePreview: oc.input(zNotesPreviewInput).output(zNotesPreview),
       // Speaker names (#3502): the recorder's Vy may suggest which attendee a speaker label is; `speakerSuggestions` is what a finished summary run suggested and still applies,
