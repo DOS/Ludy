@@ -49,17 +49,17 @@ test('filters the drafts by a writer, keeps it in the link, and shares it as a s
   await expect(page.getByText('Bài nháp của chủ')).toBeHidden();
 
   // Saved for the team.
-  await page.getByRole('button', { name: 'Lưu chế độ xem' }).click();
+  await page.getByRole('button', { name: 'Lưu bộ lọc này' }).click();
   await page.getByLabel('Tên chế độ xem').fill('Nháp của Lan');
   await page.getByRole('checkbox', { name: 'Dùng chung với cả nhóm' }).click();
-  await page.getByRole('form', { name: 'Lưu chế độ xem' }).getByRole('button', { name: 'Lưu', exact: true }).click();
+  await page.getByRole('form', { name: 'Lưu bộ lọc này' }).getByRole('button', { name: 'Lưu', exact: true }).click();
   await expect(page.getByText('Đã lưu chế độ xem “Nháp của Lan”.')).toBeVisible();
   // And one for the owner alone, on their own drafts.
   await page.getByLabel('Người viết').selectOption('me');
   await expect(page.getByText('Bài nháp của chủ')).toBeVisible();
-  await page.getByRole('button', { name: 'Lưu chế độ xem' }).click();
+  await page.getByRole('button', { name: 'Lưu bộ lọc này' }).click();
   await page.getByLabel('Tên chế độ xem').fill('Nháp riêng của chủ');
-  await page.getByRole('form', { name: 'Lưu chế độ xem' }).getByRole('button', { name: 'Lưu', exact: true }).click();
+  await page.getByRole('form', { name: 'Lưu bộ lọc này' }).getByRole('button', { name: 'Lưu', exact: true }).click();
   await expect(page.getByText('Đã lưu chế độ xem “Nháp riêng của chủ”.')).toBeVisible();
 
   // Lan opens the shared view in one click; the owner's private one is not offered to her.

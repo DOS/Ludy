@@ -149,7 +149,8 @@ export function Chip({
   // A series post or one of its copies (#979).
   const recurring = group.post.recurrence !== null || group.post.recurrenceSourceId !== null;
   const time = f.time(group.at.toISOString());
-  const channels = group.items.length === 1 ? providerName(first.v.provider) : t('calendar.channels', { count: group.items.length });
+  // A single channel by its name too (#3655): two Pages of one network read alike without it, and a title shows nothing on touch.
+  const channels = group.items.length === 1 ? channelLabel(first, names) : t('calendar.channels', { count: group.items.length });
   const statuses = groupStatuses(group)
     .map((s) => t(`status.${s.key}`))
     .join(', ');
@@ -227,7 +228,7 @@ export function Chip({
         onClick={onPlan}
         aria-label={t(`calendar.${menu}Of`, { text })}
         title={t(`calendar.${menu}`)}
-        className="inline-flex min-h-6 min-w-6 shrink-0 items-center justify-center rounded px-1 text-xs text-subtle-foreground opacity-0 group-hover/chip:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none max-sm:hidden"
+        className="inline-flex min-h-6 min-w-6 shrink-0 items-center justify-center rounded px-1 text-xs text-subtle-foreground opacity-0 group-hover/chip:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:opacity-100"
       >
         ⋯
       </button>
@@ -1115,7 +1116,7 @@ export function SocialCalendar({
                             type="button"
                             onClick={() => start(d)}
                             aria-label={t('calendar.newOn', { day: f.date(id) })}
-                            className="rounded px-1 text-xs text-subtle-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                            className="rounded px-1 text-xs text-subtle-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none max-sm:min-h-8 max-sm:min-w-8 max-sm:text-base max-sm:opacity-100 pointer-coarse:opacity-100"
                           >
                             +
                           </button>
@@ -1127,6 +1128,28 @@ export function SocialCalendar({
                       {(occasionsByDay.get(id) ?? []).map((o) => (
                         <OccasionChip key={o.id} occasion={o} onStart={startFor} />
                       ))}
+                      {/* On a phone a month day is too narrow for chips (#3655): a dot per post (up to four) and the count, a tap
+                          opens the day's list (the same dialog as "+N"); chips return from `sm` up. */}
+                      {view === 'month' && list.length > 0 && (
+                        <button
+                          type="button"
+                          aria-haspopup="dialog"
+                          onClick={() => setDayOpen(id)}
+                          data-testid="calendar-day-dots"
+                          className="flex min-h-8 items-center gap-0.5 self-start rounded px-1 sm:hidden focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                        >
+                          {list.slice(0, 4).map((group) => (
+                            <span key={group.key} aria-hidden="true" className={cn('size-1.5 rounded-full', group.planned ? 'border border-primary' : 'bg-primary')} />
+                          ))}
+                          {list.length > 4 && (
+                            <span aria-hidden="true" className="text-[10px] leading-none text-muted-foreground tabular-nums">
+                              +{list.length - 4}
+                            </span>
+                          )}
+                          <span className="sr-only">{t('calendar.dayPosts', { count: list.length, day: f.date(id) })}</span>
+                        </button>
+                      )}
+                      <div className={cn('contents', view === 'month' && 'max-sm:hidden')}>
                       {list.slice(0, shown).map((group) => {
                         // The menu: a planned draft's date, or (under a channel filter with open slots, for an owner or
                         // admin) a slot of the queue.
@@ -1147,6 +1170,7 @@ export function SocialCalendar({
                           />
                         );
                       })}
+                      </div>
                       {/* The chips past those shown open in the day's full list, by pointer and keyboard (#1220). */}
                       {list.length > shown && (
                         <button
@@ -1155,7 +1179,7 @@ export function SocialCalendar({
                           ref={keep(moreButtons.current, id)}
                           onClick={() => setDayOpen(id)}
                           data-testid="calendar-more"
-                          className="inline-flex min-h-6 self-start items-center rounded px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                          className={cn('inline-flex min-h-6 self-start items-center rounded px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none', view === 'month' && 'max-sm:hidden')}
                         >
                           {t('calendar.more', { count: list.length - shown })}
                           <span className="sr-only"> {t('calendar.moreOf', { day: f.date(id) })}</span>

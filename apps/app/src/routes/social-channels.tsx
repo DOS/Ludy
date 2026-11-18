@@ -38,6 +38,8 @@ import { isAdOAuthProvider } from '../lib/ads.ts';
 import { getConfig } from '../lib/auth.ts';
 import { AutoDraftSetting, SavedRepliesManager } from '../components/conversation-drafts.tsx';
 import { YoutubeCommentsPanel } from '../components/youtube-comments-panel.tsx';
+import { CalendarFeedCard } from '../components/social-calendar-feed.tsx';
+import { PlanReviewCard } from '../components/social-plan-review.tsx';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
 import { connectSplit, isMessagingOnly, minuteLabel, parseMinute, providerName, zoneLabel } from '../lib/social.ts';
 import { shuffleRange } from '../lib/social-queue-order.ts';
@@ -914,6 +916,10 @@ export function SocialChannelsPage() {
               </div>
               <ChatAlertCard canEdit={isAdmin} />
             </Card>
+            {/* Moved here from the calendar (#3655): the address that shows the schedule in Google Calendar and the plan link a client
+                approves are settings, not part of the calendar. Owners and admins manage them; others see what exists. */}
+            {channels.data && <PlanReviewCard channels={channels.data} canManage={isAdmin} />}
+            <CalendarFeedCard canManage={isAdmin} />
             <ShareCard />
             {/* Once the channels are loaded: before, every set would read as having none left. */}
             {channels.data && <ChannelSetsCard channels={publishing.filter((c) => c.status !== 'revoked')} canEdit={isAdmin} />}

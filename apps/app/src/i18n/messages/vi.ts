@@ -10112,6 +10112,9 @@ export const vi = {
     publishNow: 'Duyệt và lên lịch',
     publishNowHint: 'Lưu bài, tự duyệt và lên lịch theo lựa chọn ở mục Khi nào đăng. Kênh cần người khác duyệt sẽ chờ người đó.',
     publishNowChanged: 'Danh sách kiểm tra hoặc quy định duyệt vừa thay đổi, nên bài đã được gửi duyệt thay vì đăng ngay. Hãy duyệt trong bảng duyệt.',
+    tools: { open: 'Công cụ' },
+    postViews: { label: 'Cách xem bài', list: 'Danh sách', calendar: 'Lịch', board: 'Bảng' },
+    screenBack: '← Bài đăng',
     tabs: { upcoming: 'Lịch đăng', calendar: 'Xem lịch', board: 'Bảng', review: 'Cần duyệt', attention: 'Cần xử lý', drafts: 'Nháp', done: 'Đã đăng', archived: 'Đã lưu trữ', metrics: 'Số liệu', library: 'Thư viện ảnh' },
     filters: {
       channel: 'Kênh',
@@ -10139,7 +10142,7 @@ export const vi = {
       sharedName: '{name} (dùng chung)',
       ownedBy: '{name} · của {owner}',
       someone: 'một thành viên',
-      save: 'Lưu chế độ xem',
+      save: 'Lưu bộ lọc này',
       name: 'Tên chế độ xem',
       namePlaceholder: 'Ví dụ: Bài của Lan tuần này',
       share: 'Dùng chung với cả nhóm',
@@ -10198,6 +10201,7 @@ export const vi = {
       cancel: 'Hủy',
     },
     calendar: {
+      dayPosts: '{count, plural, other {# bài ngày {day}, mở danh sách}}',
       previous: 'Trước',
       campaignShade: 'Nhãn "{name}" chạy {period}; những ngày ngoài chiến dịch được tô xám.',
       outsideCampaign: 'Ngoài thời gian chiến dịch',
