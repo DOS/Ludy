@@ -57,7 +57,7 @@ export function AuditTargetPicker({ onPick }: { onPick: (choice: { id: string; l
     >
       <Input value={text} onChange={(e) => change(e.target.value)} placeholder={t('hint')} className="mt-1 w-72" aria-label={t('label')} />
       {typed !== null && open && (
-        <div className="absolute z-20 mt-1 w-80 max-w-[calc(100vw-2rem)] rounded-md border border-border bg-popover p-1 text-sm shadow-md" role="status">
+        <div className="absolute z-20 mt-1 w-80 max-w-[calc(100vw-2rem)] rounded-md border border-border bg-popover p-1 text-sm shadow-sm" role="status">
           {found.isError ? (
             <p className="px-2 py-1.5 text-xs text-warning">{t('failed')}</p>
           ) : term !== typed || found.isFetching ? (
