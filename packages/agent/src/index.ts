@@ -69,7 +69,8 @@ const zExtracted = z.object({
     name: z.string(),
     taxCode: z.string().nullable(),
     address: z.string().nullable(),
-    bankAccount: z.string().nullable().describe('The seller\'s bank account number as printed (Số tài khoản, STK), digits as printed; null when none is printed or when several are'),
+    // A reading that leaves it out (an older model, a fake) is a null, not a refusal of the whole invoice; the schema the model is asked for still lists it as required.
+    bankAccount: z.string().nullable().catch(null).describe('The seller\'s bank account number as printed (Số tài khoản, STK), digits as printed; null when none is printed or when several are'),
   }),
   buyer: z.object({ name: z.string(), taxCode: z.string().nullable(), address: z.string().nullable() }),
   lines: z
