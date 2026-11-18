@@ -459,7 +459,7 @@ test('turns on evergreen reposting for a published post', async ({ page }) => {
   await evergreen.selectOption('30');
   await expect(evergreen).toHaveValue('30');
   await page.reload();
-  await page.getByText('Tùy chọn khác', { exact: true }).click();
+  // A repeat that is on opens "Tùy chọn khác" by itself.
   await expect(page.getByRole('radio', { name: 'Theo chu kỳ' })).toBeChecked();
   await expect(page.getByLabel('Chu kỳ đăng lại')).toHaveValue('30');
   await expect(page.getByLabel('Chu kỳ đăng lại').locator('option:checked')).toHaveText('Mỗi 30 ngày');
