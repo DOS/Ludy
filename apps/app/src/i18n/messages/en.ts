@@ -10820,6 +10820,7 @@ export const en = {
     shortcutHint: 'Ctrl + Enter: save and submit. On a post, Ctrl + S: save.',
     postTitle: 'Post',
     postSubtitle: 'Updated {updated}',
+    firstCommentOut: 'First comment',
     postStatus: {
       draft: 'Draft: send it for review to publish.',
       review: 'Waiting for review: once approved it can be scheduled.',

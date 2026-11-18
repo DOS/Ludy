@@ -182,7 +182,7 @@ export function SocialImportPage() {
         title={t('import.title')}
         subtitle={t('import.subtitle')}
         actions={
-          <Link to="/o/$slug/social" params={{ slug }} search={lastSocialList()} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
+          <Link to="/o/$slug/social" params={{ slug }} search={lastSocialList(slug)} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
             {t('back')}
           </Link>
         }

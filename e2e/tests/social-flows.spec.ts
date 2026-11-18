@@ -203,7 +203,8 @@ test('retries a failed channel and settles the channels Crove could not account 
   // The person found the post on the platform: the channel counts as published.
   await seenCard.getByRole('button', { name: 'Đã thấy bài trên trang' }).click();
   await expect(seenCard.getByText('Đã đăng', { exact: true })).toBeVisible();
-  await expect(seenCard.getByText(/^Đã đăng lúc/)).toBeVisible();
+  // The time it went out is in the result at the top of the page (#3656).
+  await expect(page.getByTestId('published-summary').getByText(/^Đã đăng lúc/)).toBeVisible();
 
   // The person drops the channel instead: it is cancelled, with nothing left to do on it.
   await droppedCard.getByRole('button', { name: 'Bỏ bài trên kênh này' }).click();

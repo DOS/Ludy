@@ -13,14 +13,20 @@ describe('the list kept for the way back (#3656)', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('gives back the tab and filters it was given, through the same checks as a typed link', () => {
-    rememberSocialList({ tab: 'review', q: 'khai trương' });
-    expect(lastSocialList()).toEqual({ tab: 'review', q: 'khai trương' });
-    store.set('crove:social-list', JSON.stringify({ tab: 'nope', channel: 'not-a-uuid' }));
-    expect(lastSocialList()).toEqual({});
+    rememberSocialList('hoa-mai', { tab: 'review', q: 'khai trương' });
+    expect(lastSocialList('hoa-mai')).toEqual({ tab: 'review', q: 'khai trương' });
+    store.set('crove:social-list:hoa-mai', JSON.stringify({ tab: 'nope', channel: 'not-a-uuid' }));
+    expect(lastSocialList('hoa-mai')).toEqual({});
+  });
+
+  it('keeps one list per organization, so a filter of one never reaches another', () => {
+    rememberSocialList('hoa-mai', { tab: 'drafts' });
+    expect(lastSocialList('lan-anh')).toEqual({});
+    expect(lastSocialList('hoa-mai')).toEqual({ tab: 'drafts' });
   });
 
   it('is empty before anything was kept, and when storage is not there', () => {
-    expect(lastSocialList()).toEqual({});
+    expect(lastSocialList('hoa-mai')).toEqual({});
     vi.stubGlobal('sessionStorage', {
       getItem: () => {
         throw new Error('blocked');
@@ -29,7 +35,7 @@ describe('the list kept for the way back (#3656)', () => {
         throw new Error('blocked');
       },
     });
-    expect(() => rememberSocialList({ tab: 'drafts' })).not.toThrow();
-    expect(lastSocialList()).toEqual({});
+    expect(() => rememberSocialList('hoa-mai', { tab: 'drafts' })).not.toThrow();
+    expect(lastSocialList('hoa-mai')).toEqual({});
   });
 });

@@ -725,8 +725,8 @@ export function SocialPage() {
   // Kept for the way back from a post (#3656): the tab and filters on screen, once the tab is settled.
   const addressNow = JSON.stringify({ ...search, tab });
   useEffect(() => {
-    if (!resolving) rememberSocialList(JSON.parse(addressNow) as SocialSearch);
-  }, [addressNow, resolving]);
+    if (!resolving) rememberSocialList(slug, JSON.parse(addressNow) as SocialSearch);
+  }, [addressNow, resolving, slug]);
   // The one action of an empty list (#3654): write a post (the first one, or another), or connect the first channel; none for
   // a viewer, who can do neither.
   const postAction = (first: boolean): ReactNode =>

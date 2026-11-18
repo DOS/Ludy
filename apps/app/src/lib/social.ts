@@ -334,20 +334,21 @@ export const MEDIA_RULE_PROVIDERS = ['instagram', 'facebook_page', 'zalo_oa'] as
 export type MediaRuleProvider = (typeof MEDIA_RULE_PROVIDERS)[number];
 export function mediaRuleProviders(providers: readonly string[]): MediaRuleProvider[] {
   return MEDIA_RULE_PROVIDERS.filter((p) => providers.includes(p));
+}
 
-// The list the person last looked at (#3656): its tab and filters, kept for this browser tab, so "Quay lại" on a post or a
+// The list the person last looked at in an organization (#3656): its tab and filters, kept for this browser tab, so "Quay lại" on a post or a
 // settings screen returns to it, not to the default tab. Storage may be unavailable (a private window): then none.
 const LIST_KEY = 'crove:social-list';
-export function rememberSocialList(search: SocialSearch): void {
+export function rememberSocialList(slug: string, search: SocialSearch): void {
   try {
-    sessionStorage.setItem(LIST_KEY, JSON.stringify(search));
+    sessionStorage.setItem(`${LIST_KEY}:${slug}`, JSON.stringify(search));
   } catch {
     // Not kept: the way back opens the default list.
   }
 }
-export function lastSocialList(): SocialSearch {
+export function lastSocialList(slug: string): SocialSearch {
   try {
-    const raw = sessionStorage.getItem(LIST_KEY);
+    const raw = sessionStorage.getItem(`${LIST_KEY}:${slug}`);
     return raw ? parseSocialSearch(JSON.parse(raw) as Record<string, unknown>) : {};
   } catch {
     return {};

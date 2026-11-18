@@ -1,6 +1,6 @@
 // Compose a post and work on it: shared text, a variant per channel that inherits it or has its own text, live
 // channel rules and a preview, then review (owners and admins decide on what they see), schedule and cancel.
-import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
+import { useIsMutating, useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { Link, useBlocker, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
@@ -2400,6 +2400,14 @@ function ChannelEditor({
           onChange={(next) => onChange({ ...own, ...next })}
         />
       )}
+      {/* A thread that went out, and its first comment, stay readable (#3656) after the fields that set them are gone. */}
+      {settled && Boolean(threadPartsOf(own.settings)) && <ThreadField settings={own.settings} disabled onChange={() => undefined} />}
+      {settled && typeof own.settings.firstComment === 'string' && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium">{t('firstCommentOut')}</p>
+          <p className="text-sm whitespace-pre-wrap text-muted-foreground">{own.settings.firstComment}</p>
+        </div>
+      )}
       {/* The optional automations in one closed group (#3656); a disabled group with nothing set is not drawn at all. */}
       {hasAdvanced && (!disabled || advancedUsed) && !settled && (
         <AdvancedOptions title={t('advanced.title', { channel })} filled={advancedUsed}>
@@ -3943,6 +3951,8 @@ function AutoRepostPanel({ post, published, onDone }: { post: Post; published: b
   type Mode = 'none' | 'cycle' | 'weekly';
   const saved: Mode = post.evergreenDays !== null ? 'cycle' : post.recurrence !== null ? 'weekly' : 'none';
   const [mode, setMode] = useState<Mode>(saved);
+  // A rule being saved in one of the panels below settles first: a choice made meanwhile would not turn it off.
+  const saving = useIsMutating() > 0;
   const turnOffCycle = useMutation({ mutationFn: () => client.social.posts.setEvergreen({ postId: post.id, days: null }), onSuccess: onDone });
   const turnOffWeekly = useMutation({ mutationFn: () => client.social.posts.clearRecurrence({ postId: post.id }), onSuccess: onDone });
   const choose = (next: Mode) => {
@@ -3961,7 +3971,7 @@ function AutoRepostPanel({ post, published, onDone }: { post: Post; published: b
         <div role="radiogroup" aria-labelledby={`${id}-label`} className="flex flex-wrap gap-x-4 gap-y-2">
           {choices.map((c) => (
             <label key={c} className="flex min-h-8 items-center gap-2 text-sm text-muted-foreground">
-              <input type="radio" name={`${id}-mode`} checked={mode === c} disabled={turnOffCycle.isPending || turnOffWeekly.isPending} onChange={() => choose(c)} />
+              <input type="radio" name={`${id}-mode`} checked={mode === c} disabled={saving || turnOffCycle.isPending || turnOffWeekly.isPending} onChange={() => choose(c)} />
               {t(`autoRepost.${c}`)}
             </label>
           ))}
@@ -4304,7 +4314,7 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
         actions={
           <>
             {/* The list the person came from, with its tab and filters (#3656). */}
-            <Link to="/o/$slug/social" params={{ slug }} search={lastSocialList()} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
+            <Link to="/o/$slug/social" params={{ slug }} search={lastSocialList(slug)} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
               {t('back')}
             </Link>
             {editable && (
@@ -4458,7 +4468,7 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
               <UtmFields utm={shownUtm} onChange={setUtm} disabled={save.isPending} />
             </Card>
           )}
-          {published ? <AdvancedOptions title={t('moreOptions')} filled={false}>{labelPicker}{autoRepost}</AdvancedOptions> : <>{labelPicker}{autoRepost}</>}
+          {published ? <AdvancedOptions title={t('moreOptions')} filled={p.evergreenDays !== null || p.recurrence !== null || p.labelIds.length > 0}>{labelPicker}{autoRepost}</AdvancedOptions> : <>{labelPicker}{autoRepost}</>}
           <CampaignFindings
             labelIds={p.labelIds}
             labels={labelList.data ?? []}
@@ -4472,8 +4482,8 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
           {canWrite && p.recurrenceSourceId === null && (p.evergreenDays !== null || p.recurrence !== null) && (
             <TextVariationsCard key={`${JSON.stringify(p.textVariations)}:${p.textVariationNext}`} post={p} onDone={refresh} />
           )}
-          {/* A published post has nothing left to send to a client for approval (#3656). */}
-          {!published && <ReviewLinks postId={p.id} canDecide={canDecide} canReply={canWrite} />}
+          {/* Once every channel is out or dropped there is nothing left to send to a client for approval (#3656): the links still live and the answers stay. */}
+          <ReviewLinks postId={p.id} canDecide={canDecide} canReply={canWrite} canCreate={p.variants.some((v) => !['published', 'removed', 'cancelled'].includes(v.status))} />
           {team && <AssignCard post={p} canEdit={canDecide || (canWrite && p.authorUserId !== null && p.authorUserId === userId)} />}
           {team && <PostVersions
             postId={p.id}
