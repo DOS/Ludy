@@ -64,8 +64,11 @@ export async function misaAmisPreview(query: MisaAmisPreviewQuery, ask: MisaAmis
     partyCodes: null,
   };
   const entries: Entry[] = [];
+  // The loaders are asked for one more than the list holds; a full answer means the period holds more, whatever the kind then keeps.
+  let loaded = 0;
   if (ask.kind === 'purchase_services' || ask.kind === 'purchase_goods') {
     const vouchers = await query<PurchaseVoucher[]>('finance.vouchers.purchases', range);
+    loaded = vouchers.length;
     if (ask.kind === 'purchase_services') {
       for (const v of vouchers) {
         // A purchase with only stock lines has no services voucher.
@@ -83,15 +86,17 @@ export async function misaAmisPreview(query: MisaAmisPreviewQuery, ask: MisaAmis
     }
   } else if (ask.kind === 'sales') {
     const vouchers = await query<SalesVoucher[]>('finance.vouchers.sales', range);
+    loaded = vouchers.length;
     for (const v of vouchers) {
       if (salesRows(v).length === 0) continue;
       entries.push({ sourceId: v.sourceId, mapping: salesAmisVouchers(v, ctx) });
     }
   } else {
     const vouchers = await query<CashVoucher[]>('finance.vouchers.cash', { ...range, type: ask.kind });
+    loaded = vouchers.length;
     for (const v of vouchers) entries.push({ sourceId: v.sourceId, mapping: cashAmisVouchers(v, ctx) });
   }
-  const more = entries.length > MISA_AMIS_PREVIEW_LIMIT;
+  const more = loaded > MISA_AMIS_PREVIEW_LIMIT;
   const items = entries.slice(0, MISA_AMIS_PREVIEW_LIMIT).map(item);
   const blocked = items.filter((i) => i.blockers.length > 0).length;
   return { kind: ask.kind, vouchers: items.length, ready: items.length - blocked, blocked, checkedAgainstAmis: false, purchasePurpose: ctx.purchasePurpose, more, items };

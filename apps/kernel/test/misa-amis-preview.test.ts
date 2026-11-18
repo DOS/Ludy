@@ -122,6 +122,20 @@ describe('misaAmisPreview', () => {
     expect(sales2.items).toMatchObject([{ reftype: 3530, reasonTypeId: null, blockers: [{ code: 'item_code_unknown', lineNo: 1 }] }]);
   });
 
+  it('says there are more when the loader was full, even if the kind keeps only a few of the documents', async () => {
+    // 501 purchase documents loaded, none with a stock line: the goods preview lists nothing but must not claim the period is complete.
+    const docs = Array.from({ length: MISA_AMIS_PREVIEW_LIMIT + 1 }, () => purchase());
+    const result = await misaAmisPreview(fake({ ...all, 'finance.vouchers.purchases': docs }).query, { kind: 'purchase_goods', ...range });
+    expect(result).toMatchObject({ items: [], vouchers: 0, more: true });
+  });
+
+  it('lists a cash voucher with a too long number instead of failing the preview', async () => {
+    const long = { ...cash(), code: 'PC1234567890123' };
+    const result = await misaAmisPreview(fake({ ...all, 'finance.vouchers.cash': [long, cash()] }).query, { kind: 'cash_payment', ...range });
+    expect(result).toMatchObject({ vouchers: 2, ready: 1, blocked: 1 });
+    expect(result.items[0]).toMatchObject({ voucherNo: 'PC1234567890123', blockers: [{ code: 'voucher_number_too_long', lineNo: null }] });
+  });
+
   it('keeps the first vouchers and says there are more when the period holds more than the list', async () => {
     const many = Array.from({ length: MISA_AMIS_PREVIEW_LIMIT + 1 }, () => cash());
     const result = await misaAmisPreview(fake({ ...all, 'finance.vouchers.cash': many }).query, { kind: 'cash_payment', ...range });

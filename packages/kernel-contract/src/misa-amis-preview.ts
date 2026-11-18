@@ -11,7 +11,7 @@ export const MISA_AMIS_KINDS = ['purchase_services', 'purchase_goods', 'sales', 
 export type MisaAmisKind = (typeof MISA_AMIS_KINDS)[number];
 
 // branch_missing and party_code_unknown need AMIS's dictionary; the preview cannot raise them yet.
-export const MISA_AMIS_BLOCKERS = ['branch_missing', 'party_code_unknown', 'item_code_unknown', 'vat_rate_unmapped', 'no_lines'] as const;
+export const MISA_AMIS_BLOCKERS = ['branch_missing', 'party_code_unknown', 'item_code_unknown', 'stock_missing', 'vat_rate_unmapped', 'voucher_number_too_long', 'no_lines'] as const;
 export type MisaAmisBlockerCode = (typeof MISA_AMIS_BLOCKERS)[number];
 
 // A code of AMIS's item dictionary, as a person types it.

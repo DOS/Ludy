@@ -96,3 +96,16 @@ Unconfirmed, to check in the sandbox: that a purchase with `reftype` 330 and no 
 party by name and tax code when no `account_object_code` is given; whether `purchase_purpose_id` is a string or the object the
 payments' table shows (the mapper sends the id and the code); what AMIS does with a second push of a revised voucher under the
 same `org_refid`.
+
+Also unconfirmed, found in the review of S3a:
+
+- A sales line is written without `stock_code` and `stock_name`, which the sales detail table marks required; for a service
+  line AMIS may want none (`is_description`), for a stock line it needs one. The sandbox check decides, and the push (S3b) must
+  not be enabled for sales before it does.
+- A trade discount is a negative line in Ludy, so the discount fields are 0 and the line carries a negative `amount` and
+  `unit_price`; AMIS may expect it in `discount_*` instead.
+- A party with no tax code is sent by name and address with no `account_object_code` and is no blocker.
+- Fields the tables of some kinds do not list are written because the documentation's own examples carry them
+  (`account_object_tax_code` on cash and bank lines, `tax_account_object_*` on purchase lines); they are probably ignored.
+- A goods line whose saved warehouse is empty is blocked (`stock_missing`) because `stock_code` is required.
+- A cash or bank voucher number over MISA's 20 characters is a blocker (`voucher_number_too_long`), never cut.

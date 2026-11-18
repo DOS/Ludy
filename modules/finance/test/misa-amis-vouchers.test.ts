@@ -141,20 +141,21 @@ describe('cash and bank vouchers', () => {
     });
   });
 
+  // type, voucher_type, reftype, reason_type_id, debit account, credit account, carries a purchase purpose
   it.each([
     ['cash_receipt', AMIS_VOUCHER_TYPES.cashReceipt, 1010, undefined, '1111', '131', false],
     ['cash_payment', AMIS_VOUCHER_TYPES.cashPayment, 1020, 23, '6422', '1111', true],
     ['bank_credit', AMIS_VOUCHER_TYPES.bankCredit, 1500, 34, '1121', '711', false],
     ['bank_debit', AMIS_VOUCHER_TYPES.bankDebit, 1510, 43, '6422', '1121', true],
   ] as const)('%s: voucher_type %i, reftype %i, reason %s, Dr %s, Cr %s, purchase purpose %s', (type, voucherType, reftype, reason, debit, credit, purpose) => {
-    const inflow = type === 'cash_receipt' || type === 'bank_credit';
     const cashAccount = type.startsWith('cash') ? '1111' : '1121';
-    const account = inflow ? (type === 'cash_receipt' ? '131' : '711') : '6422';
+    // The line's own account is the one that is not the cash or bank account.
+    const account = debit === cashAccount ? credit : debit;
     const [v] = sent(cashAmisVouchers(cash({ type, cashAccount, party: null, personName: null, lines: [{ lineNo: 1, account, amount: '100000', memo: null }] }), ctx()));
     expect(v).toMatchObject({ voucher_type: voucherType, reftype });
     expect(v?.reason_type_id).toBe(reason);
     const [line] = (v?.detail ?? []) as Array<Record<string, unknown>>;
-    expect(line).toMatchObject({ debit_account: type === 'cash_receipt' ? cashAccount : debit === cashAccount ? cashAccount : debit, credit_account: credit });
+    expect(line).toMatchObject({ debit_account: debit, credit_account: credit });
     expect('purchase_purpose_id' in (line ?? {})).toBe(purpose);
   });
 
@@ -329,5 +330,116 @@ describe('size and exactness', () => {
     expect(derivedRefId(SOURCE_ID, 'a')).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(derivedRefId(SOURCE_ID, 'a')).toBe(derivedRefId(SOURCE_ID.toLowerCase(), 'a'));
     expect(derivedRefId(SOURCE_ID, 'a')).not.toBe(derivedRefId(SOURCE_ID, 'b'));
+  });
+});
+
+// The fields AMISKT marks required (x) in the voucher structure tables, for those Ludy writes itself. The fields that are an alternative to a code (an id next to a code, a name
+// next to an id) and the warehouse of a sales line are left out; the warehouse is listed as unconfirmed in docs/integrations/misa-amis-api.md.
+const REQUIRED: Record<string, { header: string[]; detail: string[] }> = {
+  cash_payment: {
+    header: ['voucher_type', 'org_refid', 'org_refno', 'branch_id', 'reason_type_id', 'refdate', 'reftype', 'posted_date', 'exchange_rate', 'total_amount_oc', 'total_amount'],
+    detail: ['sort_order', 'amount_oc', 'amount', 'debit_account', 'credit_account', 'purchase_purpose_id'],
+  },
+  cash_receipt: {
+    header: ['voucher_type', 'org_refid', 'org_refno', 'branch_id', 'refdate', 'reftype', 'posted_date'],
+    detail: ['sort_order', 'amount_oc', 'amount', 'debit_account', 'credit_account'],
+  },
+  bank_debit: {
+    header: ['voucher_type', 'org_refid', 'org_refno', 'branch_id', 'posted_date', 'reason_type_id', 'refdate', 'reftype', 'exchange_rate', 'total_amount_oc', 'total_amount'],
+    detail: ['sort_order', 'amount_oc', 'amount', 'debit_account', 'credit_account', 'purchase_purpose_id'],
+  },
+  bank_credit: {
+    header: ['voucher_type', 'org_refid', 'org_refno', 'branch_id', 'posted_date', 'reason_type_id', 'refdate', 'reftype', 'exchange_rate', 'total_amount', 'total_amount_oc'],
+    detail: ['amount', 'amount_oc', 'credit_account', 'debit_account', 'description', 'sort_order'],
+  },
+  purchase_services: {
+    header: ['voucher_type', 'org_refid', 'org_refno', 'reftype', 'branch_id', 'include_invoice', 'total_sale_amount_oc', 'total_sale_amount', 'total_amount_oc', 'total_amount', 'total_discount_amount_oc', 'total_discount_amount', 'total_vat_amount_oc', 'total_vat_amount'],
+    detail: ['amount', 'amount_oc', 'credit_account', 'debit_account', 'description', 'inventory_item_code', 'inventory_item_name', 'inventory_item_type', 'purchase_purpose_id', 'quantity', 'sort_order', 'unit_name', 'unit_price'],
+  },
+  purchase_goods: {
+    header: ['voucher_type', 'org_refid', 'org_refno', 'reftype', 'posted_date', 'refdate', 'branch_id', 'currency_id', 'exchange_rate', 'total_sale_amount_oc', 'total_sale_amount', 'total_amount_oc', 'total_amount', 'total_discount_amount_oc', 'total_discount_amount', 'total_vat_amount_oc', 'total_vat_amount'],
+    detail: ['inventory_item_code', 'inventory_item_name', 'inventory_item_type', 'purchase_purpose_id', 'sort_order', 'quantity', 'unit_price', 'amount_oc', 'amount', 'description', 'stock_code', 'debit_account', 'credit_account', 'main_convert_rate', 'main_quantity', 'main_unit_name', 'unit_name', 'inventory_resale_type_id'],
+  },
+  sales: {
+    header: ['voucher_type', 'org_refid', 'org_refno', 'branch_id', 'is_sale_with_outward', 'posted_date', 'refdate', 'reftype', 'total_sale_amount_oc', 'total_sale_amount', 'total_amount_oc', 'total_amount', 'total_discount_amount_oc', 'total_discount_amount', 'total_vat_amount_oc', 'total_vat_amount'],
+    detail: ['credit_account', 'exchange_rate_operator', 'inventory_item_code', 'inventory_item_name', 'description', 'inventory_item_type', 'debit_account', 'unit_name', 'main_unit_name', 'main_unit_price', 'main_quantity', 'quantity', 'unit_price', 'amount_oc', 'amount', 'discount_rate', 'discount_amount_oc', 'discount_amount', 'vat_amount_oc', 'vat_amount', 'main_convert_rate', 'sort_order'],
+  },
+};
+
+const GOODS_PARENTS = accountParents([
+  { code: '156', parentCode: null },
+  { code: '1561', parentCode: '156' },
+]);
+const goodsPurchase = (): PurchaseVoucher =>
+  purchase({
+    lines: [{ lineNo: 1, description: 'Giấy A4', unit: 'Ram', quantity: '10', unitPrice: '60000', amount: '600000', vatRate: '10%', debitAccount: '1561' }],
+    vatAmount: '60000',
+  });
+
+describe('every field AMISKT marks required is written', () => {
+  const mappings: Array<[string, AmisMapping]> = [
+    ['cash_payment', cashAmisVouchers(cash(), ctx())],
+    ['cash_receipt', cashAmisVouchers(cash({ type: 'cash_receipt', cashAccount: '1111', lines: [{ lineNo: 1, account: '131', amount: '1', memo: null }] }), ctx())],
+    ['bank_debit', cashAmisVouchers(cash({ type: 'bank_debit', cashAccount: '1121' }), ctx())],
+    ['bank_credit', cashAmisVouchers(cash({ type: 'bank_credit', cashAccount: '1121', lines: [{ lineNo: 1, account: '131', amount: '1', memo: null }] }), ctx())],
+    ['purchase_services', purchaseServiceAmisVouchers(purchase(), ctx())],
+    ['purchase_goods', purchaseGoodsAmisVouchers(goodsPurchase(), [{ accountCode: '156', itemCode: 'HH_VPP', warehouseCode: 'KHO1' }], GOODS_PARENTS, ctx())],
+    ['sales', salesAmisVouchers(sale(), ctx())],
+  ];
+  it.each(mappings)('%s', (kind, mapping) => {
+    const [v] = sent(mapping);
+    const need = REQUIRED[kind];
+    if (!need || !v) throw new Error(`no voucher or no list for ${kind}`);
+    // A required field is present and not null.
+    for (const field of need.header) expect(v[field], `${kind} header ${field}`).not.toBeUndefined();
+    for (const field of need.header) expect(v[field], `${kind} header ${field}`).not.toBeNull();
+    for (const line of v.detail as Array<Record<string, unknown>>) {
+      for (const field of need.detail) {
+        expect(line[field], `${kind} detail ${field}`).not.toBeUndefined();
+        expect(line[field], `${kind} detail ${field}`).not.toBeNull();
+      }
+    }
+  });
+});
+
+describe('what the reviewer found', () => {
+  it('writes the invoice on a sales voucher and the item name on a purchase line', () => {
+    const [sales] = sent(salesAmisVouchers(sale(), ctx()));
+    expect(sales).toMatchObject({ inv_no: '45', inv_series: 'C26TBB', inv_date: '2026-10-05' });
+    const [services] = sent(purchaseServiceAmisVouchers(purchase(), ctx()));
+    expect(((services?.detail ?? []) as Array<Record<string, unknown>>)[0]).toMatchObject({ inventory_item_name: 'Phí dịch vụ tháng 9' });
+  });
+
+  it('blocks a goods line whose saved row has no warehouse, instead of writing a null stock_code', () => {
+    const mapping = purchaseGoodsAmisVouchers(goodsPurchase(), [{ accountCode: '156', itemCode: 'HH_VPP', warehouseCode: null }], GOODS_PARENTS, ctx());
+    expect(mapping.vouchers).toEqual([]);
+    expect(mapping.blockers).toEqual([{ code: 'stock_missing', sourceId: SOURCE_ID, lineNo: 1 }]);
+  });
+
+  it('lists a cash voucher whose number is too long with a blocker instead of throwing', () => {
+    const mapping = cashAmisVouchers(cash({ code: 'PC1234567890123' }), ctx());
+    expect(mapping.vouchers).toEqual([]);
+    expect(mapping.blockers).toEqual([{ code: 'voucher_number_too_long', sourceId: SOURCE_ID, lineNo: null }]);
+    expect(mapping).toMatchObject({ voucherNo: 'PC1234567890123', amisType: 4, reftype: 1020 });
+  });
+
+  it('writes the VAT codes KCT, KKKNT and KHAC as -1, -2 and -3 with the other rate', () => {
+    const line = (lineNo: number, vatRate: string) => ({ lineNo, description: 'x', unit: null, quantity: null, unitPrice: null, amount: '1000000', vatRate, revenueAccount: '511' });
+    const mapping = salesAmisVouchers(sale({ lines: [line(1, 'KCT'), line(2, 'KKKNT'), line(3, 'KHAC:5.26%')], vatAmount: '52600' }), ctx());
+    const detail = (sent(mapping)[0]?.detail ?? []) as Array<Record<string, unknown>>;
+    expect(detail.map((d) => d.vat_rate)).toEqual([-1, -2, -3]);
+    expect(detail[2]?.other_vat_rate).toBe(5.26);
+    expect(detail.map((d) => d.vat_amount)).toEqual([0, 0, 52600]);
+  });
+
+  it('splits a purchase and a sale of more than 500 lines with the VAT adding up across the parts', () => {
+    const lines = Array.from({ length: 501 }, (_, i) => ({ lineNo: i + 1, description: 'x', unit: null, quantity: null, unitPrice: null, amount: '1000', vatRate: '10%', debitAccount: '6422' }));
+    const bought = purchaseServiceAmisVouchers(purchase({ lines, vatAmount: '50100' }), ctx());
+    expect(bought.vouchers.map((v) => v.detail.length)).toEqual([500, 1]);
+    expect(sent(bought).map((v) => [v.total_vat_amount, v.total_amount])).toEqual([[50000, 550000], [100, 1100]]);
+    expect(new Set(bought.vouchers.map((v) => v.org_refid)).size).toBe(2);
+    const salesLines = lines.map((l) => ({ lineNo: l.lineNo, description: l.description, unit: null, quantity: null, unitPrice: null, amount: l.amount, vatRate: '10%', revenueAccount: '511' }));
+    const sold = salesAmisVouchers(sale({ lines: salesLines, vatAmount: '50100' }), ctx());
+    expect(sent(sold).map((v) => v.total_vat_amount)).toEqual([50000, 100]);
   });
 });

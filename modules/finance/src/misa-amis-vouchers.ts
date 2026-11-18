@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import { PAYABLE_ACCOUNT, money, sum } from '@crove/l10n-vn';
 import { AMIS_MAX_VOUCHER_LINES, AMIS_VOUCHER_TYPES, AmisNumber, amisNumber, type AmisVoucher } from '@crove/misa-amis';
 import { isInflow, type AccountParents, type MisaGoodsCode } from '@crove/kernel-contract';
+import { DomainError } from '@crove/kernel-runtime';
 import { canonical } from './domain/money.ts';
 import {
   cashVoucherNo,
@@ -66,7 +67,9 @@ export type AmisBlockerCode =
   | 'branch_missing'
   | 'party_code_unknown'
   | 'item_code_unknown'
+  | 'stock_missing'
   | 'vat_rate_unmapped'
+  | 'voucher_number_too_long'
   | 'no_lines';
 
 export interface AmisBlocker {
@@ -155,7 +158,11 @@ function vatFields(vat: MisaVatRate): Record<string, unknown> | null {
   }
 }
 
-/** The AMIS party code of a party, by tax code; undefined when the dictionary says there is none; null when it was not read. */
+/**
+ * The AMIS party code of a party, by tax code; undefined when the dictionary says there is none; null when it was not read.
+ * A party with no tax code (a private person) is also null: there is nothing to match on, so it is sent by name and address
+ * without a code and is no blocker. Whether AMIS accepts that is UNCONFIRMED (see the top of this file).
+ */
 function partyCode(party: VoucherParty, ctx: AmisContext): string | null | undefined {
   if (ctx.partyCodes === null || party.taxCode === null) return null;
   return ctx.partyCodes.get(party.taxCode);
@@ -198,7 +205,6 @@ const BANK_DEPOSIT_REASON = { customer: 29, other: 34 } as const;
 const startsWith = (account: string, root: string): boolean => account === root || account.startsWith(root);
 
 export function cashAmisVouchers(voucher: CashVoucher, ctx: AmisContext): AmisMapping {
-  const no = cashVoucherNo(voucher);
   const inflow = isInflow(voucher.type);
   const fromSupplier = voucher.lines.some((l) => startsWith(l.account, PAYABLE_ACCOUNT));
   const fromCustomer = voucher.lines.some((l) => startsWith(l.account, '131'));
@@ -209,6 +215,15 @@ export function cashAmisVouchers(voucher: CashVoucher, ctx: AmisContext): AmisMa
     // 1510 Ủy nhiệm chi: Ludy has no cheque kind (UNCONFIRMED, see the top of this file).
     bank_debit: { type: AMIS_VOUCHER_TYPES.bankDebit, reftype: 1510, reason: fromSupplier ? BANK_WITHDRAW_REASON.supplierNoInvoice : BANK_WITHDRAW_REASON.other },
   }[voucher.type];
+  let no: string;
+  try {
+    no = cashVoucherNo(voucher);
+  } catch (error) {
+    // The number is over MISA's 20 characters and is never cut (cashVoucherNo): a blocker on the voucher, not a failed preview.
+    if (!(error instanceof DomainError)) throw error;
+    const long = { voucherNo: voucher.code, amisType: kind.type, reftype: kind.reftype, reasonTypeId: kind.reason };
+    return blocked(long, [{ code: 'voucher_number_too_long', sourceId: voucher.sourceId, lineNo: null }]);
+  }
   const meta = { voucherNo: no, amisType: kind.type, reftype: kind.reftype, reasonTypeId: kind.reason };
   const blockers: AmisBlocker[] = [];
   if (ctx.branchId === null) blockers.push({ code: 'branch_missing', sourceId: voucher.sourceId, lineNo: null });
@@ -285,6 +300,7 @@ function purchaseDetail<R extends PurchaseRow>(
     return {
       sort_order: i + 1,
       inventory_item_code: itemCode(row),
+      inventory_item_name: line.description,
       description: line.description,
       debit_account: line.debitAccount,
       credit_account: PAYABLE_ACCOUNT,
@@ -369,6 +385,8 @@ export function purchaseGoodsAmisVouchers(
   const meta = { voucherNo: no, amisType: AMIS_VOUCHER_TYPES.purchaseGoods, reftype: 302, reasonTypeId: null };
   const rows = goodsPurchaseRows(voucher, saved, parents);
   const blockers = purchaseBlockers(voucher, rows, ctx, (row) => row.goods.itemCode);
+  // stock_code is required on a goods line, and a saved row may have no warehouse.
+  for (const row of rows) if (row.goods.warehouseCode === null) blockers.push({ code: 'stock_missing', sourceId: voucher.sourceId, lineNo: row.line.lineNo });
   if (blockers.length > 0) return blocked(meta, blockers);
   const code = partyCode(voucher.vendor, ctx);
   const detail = purchaseDetail(
@@ -451,6 +469,10 @@ export function salesAmisVouchers(voucher: SalesVoucher, ctx: AmisContext): Amis
       exchange_rate_operator: '*',
       amount_oc: num(line.amount),
       amount: num(line.amount),
+      // A discount is a negative line in Ludy (no discount field), so these are 0.
+      discount_rate: 0,
+      discount_amount_oc: 0,
+      discount_amount: 0,
       ...vatFields(row.vat),
       vat_amount_oc: num(row.vatAmount),
       vat_amount: num(row.vatAmount),
@@ -472,6 +494,9 @@ export function salesAmisVouchers(voucher: SalesVoucher, ctx: AmisContext): Amis
           branch_id: ctx.branchId,
           is_sale_with_outward: false,
           include_invoice: 1,
+          inv_no: voucher.invoice.number,
+          inv_series: voucher.invoice.series,
+          inv_date: voucher.invoice.date,
           refdate: voucher.invoice.date,
           posted_date: voucher.entryDate,
           currency_id: 'VND',
