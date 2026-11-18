@@ -21,7 +21,7 @@ import type { Locale } from '../i18n/locale.ts';
 import { apiUrl } from '../lib/api-base.ts';
 import { getConfig } from '../lib/auth.ts';
 import { errorMessage } from '../lib/api.ts';
-import { dayLabel, isVietnamZone, manageTokenOf, slotsByDay, timeIn, visitorTimeZone, weekRange, zoneOffset, zonePlace, type Slot } from '../lib/booking.ts';
+import { dayLabel, isVietnamZone, manageTokenOf, slotsByDay, timeIn, visitorTimeZone, weekRange, zoneOffset, weekOffset, zonePlace, type Slot } from '../lib/booking.ts';
 import { apiErrorFromResponse } from '../lib/errors.ts';
 import { loadTurnstile } from '../lib/turnstile.ts';
 
@@ -38,9 +38,10 @@ async function call<T>(path: string, init?: RequestInit): Promise<T | null> {
 const post = <T,>(path: string, body: unknown) => call<T>(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 // "Thứ Hai, 02/11/2026, 09:00 - 09:30" in the visitor's zone; a visitor outside Vietnam is told the offset, "(GMT+9)", never the zone's IANA name (#3646).
-export const whenOf = (s: Slot, zone: string, locale: Locale) => {
+// `named: true` is for text that leaves the screen (a reply the host sends to a customer, whose own zone is not known): the offset is always said, "(GMT+7)".
+export const whenOf = (s: Slot, zone: string, locale: Locale, { named = false }: { named?: boolean } = {}) => {
   const base = `${dayLabel(zonedDate(zone, Date.parse(s.start)), locale)}, ${timeIn(s.start, zone, locale)} - ${timeIn(s.end, zone, locale)}`;
-  return isVietnamZone(zone) ? base : `${base} (${zoneOffset(zone, Date.parse(s.start))})`;
+  return isVietnamZone(zone) && !named ? base : `${base} (${zoneOffset(zone, Date.parse(s.start))})`;
 };
 
 // An error in the page's own frame (#3646): what went wrong in the page's words and a "Tải lại" that asks again, not a bare red box.
@@ -120,7 +121,7 @@ export function SlotPicker({ path, zone, onPick }: { path: string; zone: string;
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         {/* The zone is named only to a visitor outside Vietnam, whose times differ from the host's; by place and offset, never by IANA name (#3646). */}
-        {isVietnamZone(zone) ? <span /> : <p className="text-sm text-muted-foreground">{t('zone', { place: zonePlace(zone), offset: zoneOffset(zone, now) })}</p>}
+        {isVietnamZone(zone) ? <span /> : <p className="text-sm text-muted-foreground">{t('zone', { place: zonePlace(zone), offset: weekOffset(zone, range) })}</p>}
         <div className="flex gap-2">
           <Button type="button" variant="outline" className="h-11 px-4" disabled={week === 0} onClick={() => setWeek((w) => w - 1)}>
             {t('previousWeek')}

@@ -1,7 +1,7 @@
 // The public booking page's helpers (issue #1318): slots grouped by the visitor's day, times in the visitor's zone, and
 // the week one page read covers.
 import { describe, expect, it } from 'vitest';
-import { dayLabel, isVietnamZone, manageTokenOf, slotsByDay, timeIn, weekRange, zoneOffset, zonePlace } from '../src/lib/booking.ts';
+import { dayLabel, isVietnamZone, manageTokenOf, slotsByDay, timeIn, weekRange, weekOffset, zoneOffset, zonePlace } from '../src/lib/booking.ts';
 
 const slot = (start: string, end: string) => ({ start, end });
 
@@ -63,5 +63,12 @@ describe('how a time zone is told to a customer (#3646)', () => {
     expect(zonePlace('America/New_York')).toBe('New York');
     expect(zonePlace('Asia/Tokyo')).toBe('Tokyo');
     expect(zonePlace('UTC')).toBe('UTC');
+  });
+
+  it('says both offsets for a week in which the clocks change', () => {
+    // New York moves to summer time on 14 March 2027.
+    expect(weekOffset('America/New_York', weekRange(Date.parse('2027-03-01T12:00:00.000Z'), 0, 'America/New_York'))).toBe('GMT-5');
+    expect(weekOffset('America/New_York', weekRange(Date.parse('2027-03-10T12:00:00.000Z'), 0, 'America/New_York'))).toBe('GMT-5 / GMT-4');
+    expect(weekOffset('America/New_York', weekRange(Date.parse('2027-03-17T12:00:00.000Z'), 0, 'America/New_York'))).toBe('GMT-4');
   });
 });

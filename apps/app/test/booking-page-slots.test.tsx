@@ -63,7 +63,7 @@ describe('the booking page slot picker', () => {
     expect(vi).toContain('Giờ hiển thị theo múi giờ của bạn: Tokyo (GMT+9).');
     expect(vi).not.toContain('Asia/Tokyo');
     const en = render('America/New_York', 'slots', 'en');
-    expect(en).toContain('Times are in your time zone: New York (GMT-5).');
+    expect(en).toContain('Times are in your time zone: New York (GMT-4 / GMT-5).');
     expect(en).not.toContain('America/New_York');
   });
 
@@ -79,5 +79,9 @@ describe('whenOf', () => {
   it('prints no zone for Vietnam and the offset, never the IANA name, elsewhere', () => {
     expect(whenOf(s, 'Asia/Ho_Chi_Minh', 'vi')).toBe('Thứ Hai, 02/11/2026, 09:00 - 09:30');
     expect(whenOf(s, 'Asia/Tokyo', 'vi')).toBe('Thứ Hai, 02/11/2026, 11:00 - 11:30 (GMT+9)');
+  });
+
+  it('keeps the offset in a text that leaves the screen, a reply to a customer whose zone is not known', () => {
+    expect(whenOf(s, 'Asia/Ho_Chi_Minh', 'vi', { named: true })).toBe('Thứ Hai, 02/11/2026, 09:00 - 09:30 (GMT+7)');
   });
 });

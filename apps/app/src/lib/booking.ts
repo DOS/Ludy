@@ -29,6 +29,13 @@ export function zoneOffset(zone: string, at: number): string {
   }
 }
 
+/** The offset of the week on screen: "GMT-5", or "GMT-5 / GMT-4" for a week that holds the clocks changing. */
+export function weekOffset(zone: string, range: { from: string; to: string }): string {
+  const first = zoneOffset(zone, Date.parse(range.from));
+  const last = zoneOffset(zone, Date.parse(range.to) - 1);
+  return first === last ? first : `${first} / ${last}`;
+}
+
 /** "New York" for "America/New_York": the place of a zone, without the region and the underscores of its IANA name. */
 export function zonePlace(zone: string): string {
   return (zone.split('/').pop() ?? zone).replaceAll('_', ' ');
