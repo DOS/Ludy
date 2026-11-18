@@ -35,9 +35,18 @@ const ITEM_MAX = 60;
 // two.
 export const normalizeBankAccount = (account: string): string => account.replace(/[^0-9A-Za-z]/g, '').toUpperCase();
 
-// An account number for a sentence: all but its last four characters hidden.
+// The digit runs of an account as it is compared (#2426): digits split only by spaces, dots or dashes are one run ("0011 2233 4455"), and a run counts from BANK_ACCOUNT_RUN_MIN digits, so a bank name in
+// brackets, "N/A", a branch note or a short code does not make one account two or a real account differ from a note. Nothing is guessed: text with no such run has no account to compare.
+export const BANK_ACCOUNT_RUN_MIN = 6;
+export function bankAccountRuns(account: string): string[] {
+  const joined = account.replace(/(?<=\d)[\s.-]+(?=\d)/g, '');
+  return [...new Set(joined.match(new RegExp(`\\d{${BANK_ACCOUNT_RUN_MIN},}`, 'g')) ?? [])];
+}
+
+// An account number for a sentence: all but its last four characters hidden (of its longest digit run when it has one).
 export function maskBankAccount(account: string): string {
-  const plain = normalizeBankAccount(account);
+  const longest = bankAccountRuns(account).reduce((best, run) => (run.length > best.length ? run : best), '');
+  const plain = longest === '' ? normalizeBankAccount(account) : longest;
   return plain.length <= 4 ? plain : `${'*'.repeat(Math.min(plain.length - 4, 8))}${plain.slice(-4)}`;
 }
 
@@ -59,16 +68,17 @@ const positive = (value: string): DecimalValue | null => {
 // The invoice names a bank account the vendor's earlier invoices did not: the classic payment fraud. Nothing without an
 // account on this invoice or without earlier ones to compare with.
 export function bankAccountCheck(account: string | null | undefined, earlier: readonly string[]): InvoiceCheck | null {
-  const now = account ? normalizeBankAccount(account) : '';
-  const before = earlier.map(normalizeBankAccount).filter((a) => a.length > 0);
-  if (now === '' || before.length === 0 || before.includes(now)) return null;
-  const last = before[0] as string;
+  const now = account ? bankAccountRuns(account) : [];
+  const before = earlier.map(bankAccountRuns).filter((runs) => runs.length > 0);
+  if (now.length === 0 || before.length === 0 || before.some((runs) => runs.some((run) => now.includes(run)))) return null;
+  const last = maskBankAccount((earlier.find((a) => bankAccountRuns(a).length > 0) as string));
+  const current = maskBankAccount(account as string);
   return {
     id: 'anomaly_bank',
     status: 'warn',
     code: 'anomaly_bank.changed',
-    message: `Cảnh báo: tài khoản nhận tiền khác lần trước (lần trước ${maskBankAccount(last)}, lần này ${maskBankAccount(now)}); hãy xác nhận với nhà cung cấp trước khi thanh toán`,
-    params: { previous: maskBankAccount(last), current: maskBankAccount(now) },
+    message: `Cảnh báo: tài khoản nhận tiền khác lần trước (lần trước ${last}, lần này ${current}); hãy xác nhận với nhà cung cấp trước khi thanh toán`,
+    params: { previous: last, current },
   };
 }
 
