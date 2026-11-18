@@ -39,6 +39,8 @@ import {
   type HrBankFile,
   type HrDeclarationDocument,
   zHrBankFileQuery,
+  zSupplierPaymentBankFileQuery,
+  type SupplierPaymentBankFile,
   zHrDeclarationDocument,
   type MisaGoodsCode,
   type HouseholdCnkd,
@@ -99,6 +101,7 @@ import {
   buildS2bWorkbook,
   buildS2cWorkbook,
   buildMisaWorkbook,
+  buildSupplierPaymentBankFileWorkbook,
   buildVat01Xml,
   buildVatWorkbook,
   xmlCarryForward,
@@ -4231,6 +4234,59 @@ export function createHttpApp(deps: HttpDeps) {
           throw error;
         }
       } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // The bank file of approved supplier payments (#3113 S3b-2, #3700): GET /api/supplier-payment-bank-file/payments.xlsx?ids=<payment ids, comma separated>[&reexport=1]. Ludy never initiates a payment: the file is for
+  // the accountant to upload to the bank. The same rules as the salary file above: built only in the requesting owner's or admin's own context by the sensitive query finance.supplier_payment.bank_file.get (its audit row is
+  // committed before the sealed holder and number are opened), a second factor used in the last 5 minutes, a slot of the export limiter, built whole, `private, no-store`, no HEAD, and no account number in the URL
+  // (only payment ids). Before the bytes are sent the command finance.supplier_payment.bank_file.export writes its audit row and marks each payment (exported_at, exported_by, export_count) in one transaction: no row and no
+  // marker, no download; a payment already marked is refused unless reexport=1 confirms a second file, which the row says. A refusal that belongs to one payment carries its paymentId (and, for a file handed over before, the
+  // time) so the page can say which payment and why; never a holder, a number or an amount.
+  if (runtime.installed('finance')) {
+    app.get('/api/supplier-payment-bank-file/:file', async (c) => {
+      if (c.req.method === 'HEAD') return c.body(null, 405, { allow: 'GET' });
+      try {
+        if (c.req.param('file') !== 'payments.xlsx') throw new DomainError('NOT_FOUND', 404, 'Không có file này');
+        const user = c.get('user');
+        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        if (!hasFreshMfa(actorOf(user))) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
+        const reexport = c.req.query('reexport') === '1';
+        const parsed = zSupplierPaymentBankFileQuery.safeParse({ paymentIds: (c.req.query('ids') ?? '').split(',').filter((id) => id !== ''), ...(reexport ? { reexport: true } : {}) });
+        if (!parsed.success) throw new DomainError('BAD_REQUEST', 400, 'Yêu cầu không hợp lệ: cần danh sách số hiệu khoản chi (ids), tối đa 200');
+        const release = exportSlots.tryAcquire(user.userId);
+        if (!release) {
+          c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
+          throw new DomainError('EXPORT_BUSY', 503, 'Đang có nhiều lượt xuất; hãy thử lại sau vài giây');
+        }
+        try {
+          const document = await runtime.query<SupplierPaymentBankFile>('finance.supplier_payment.bank_file.get', parsed.data, { actor: actorOf(user), orgId });
+          const bytes = await buildSupplierPaymentBankFileWorkbook(document, config.BRAND_NAME);
+          await runtime.execute(
+            'finance.supplier_payment.bank_file.export',
+            { paymentIds: parsed.data.paymentIds, rows: document.rows.length, currency: document.currency, ...(reexport ? { reexport: true } : {}) },
+            { actor: actorOf(user), orgId },
+          );
+          return new Response(held(new Uint8Array(bytes), release), {
+            headers: {
+              'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'chuyen-khoan-ncc', document.currency.toLowerCase(), ORG_SLUG], 'xlsx'),
+              'x-content-type-options': 'nosniff',
+              'cache-control': 'private, no-store',
+            },
+          });
+        } catch (error) {
+          release();
+          throw error;
+        }
+      } catch (error) {
+        if (error instanceof DomainError && typeof error.details?.paymentId === 'string') {
+          const at = error.details.exportedAt;
+          return c.json({ code: error.code, message: error.message, paymentId: error.details.paymentId, ...(typeof at === 'string' ? { exportedAt: at } : {}) }, error.status);
+        }
         return problem(c, error);
       }
     });

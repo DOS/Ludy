@@ -495,6 +495,22 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       expect(await orderMoves(o, handoff.orderId)).toHaveLength(1);
     });
 
+    it('takes the partial returns of a delivery back first when the whole line is returned: the return, then the delivery, and nothing is left on hand', async () => {
+      const o = await org();
+      const item = await makeItem(o);
+      await teach(o, item, LINE_TWO);
+      const handoff = handoffOf(o.entity, [{ description: LINE_TWO, quantity: '2' }]);
+      const delivered = await move(o, handoff, 1);
+      await execute(o, 'finance.stock_move.return', { moveId: delivered.moveId, quantity: '1' });
+      expect(await onHand(o, item)).toBe('-1');
+      const back = await move(o, handoff, 1, { action: 'return' });
+      expect(back.status).toBe('returned');
+      const list = await moves(o, item);
+      expect(list.filter((m) => m.source === 'sale_return').every((m) => m.reversed)).toBe(true);
+      expect(list.find((m) => m.id === delivered.moveId)?.reversed).toBe(true);
+      expect(await onHand(o, item)).toBe('0');
+    });
+
     it('refuses with a bare 409 a delivery of a line whose move sits in an entity the caller cannot see, instead of a 500', async () => {
       const o = await org();
       const branch = (

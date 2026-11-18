@@ -4,10 +4,12 @@
 // the queries refuse it, and the database gives its sealed context no row of the module.
 //
 // What a company grant reads is the PUBLISHED results of meetings whose visibility is 'org' (the recorder chose "cả công ty"), the same minutes every member already reads, and nothing else. The database
-// holds that line first (the three read policies of meeting, meeting_result and action_item admit the sealed company context only for visibility 'org' and the whole-org scope, and for a published row);
-// the queries below ask for the same again. Never returned, and never reachable: the transcript, the recorder's notes, drafts, translations, live lines, readers and attendees, consent records, the
-// recording, the speaker names, the minutes template's name, the meeting's origin (how it was recorded), the recorder's id and any user id, the task made from an item, and every meeting of attendees only,
-// even one the grant's own person recorded. Per meeting: id, title, start, length, language and the time its minutes were published. Per minutes: those and the minutes' text as plain lines (the template's
+// holds that line first (the three read policies of meeting, meeting_result and action_item admit the sealed company context only for an org-visible meeting with a published result whose text period has
+// not ended, for the whole-org scope, and for a published item that no flag marks; #3790); the queries below ask for the same again. Never returned: the transcript, the recorder's notes, drafts,
+// translations, live lines, readers and attendees, consent records, the recording, the speaker names, the minutes template's name, the meeting's origin (how it was recorded), the recorder's id and any user id,
+// the task made from an item, and every meeting of attendees only, even one the grant's own person recorded. Never reachable, as tables: the transcript, notes, drafts, translations, live lines, readers and
+// the consent records have no branch. The database does admit whole rows of the meetings it may read, so the columns of a meeting row (the recorder's id, the consent columns, the retention dates) are
+// reachable there, and only this projection leaves them out (its keys are pinned in meetings-mcp-projection.db.test.ts). Per meeting: id, title, start, length, language and the time its minutes were published. Per minutes: those and the minutes' text as plain lines (the template's
 // headings are lines of it), the decisions as plain lines (at most MCP_DECISIONS_MAX), and the action items (at most MCP_ACTIONS_MAX: title, who as it was said, the due date when one was matched, and
 // whether it was made a task; an item code flagged as holding a contact detail is left out). Every text is one plain line (see plainLine) and reaches the client as data, never as an instruction: minutes are what people and a model wrote.
 //

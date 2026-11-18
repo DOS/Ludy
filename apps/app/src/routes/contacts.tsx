@@ -22,6 +22,7 @@ import { LinkedMeetings, meetingsInstalled } from '../components/linked-meetings
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { EditParty } from '../components/party-edit.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
+import { ConditionChips } from '../components/condition-chips.tsx';
 import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
@@ -30,7 +31,6 @@ import {
   CONTACT_SORT_OPTIONS,
   EMPTY_CONTACT_FILTER,
   astToContactFilter,
-  conditionLabel,
   contactFilterToAst,
   sortOfValue,
   sortValue,
@@ -276,18 +276,7 @@ export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies
           </Button>
         )}
       </div>
-      {bar.rest.length > 0 && (
-        <ul className="mb-3 flex flex-wrap gap-2" aria-label={t('filters.other')}>
-          {bar.rest.map((c, i) => (
-            <li key={`${c.field}:${c.op}:${i}`} className="flex items-center gap-1 rounded-full border px-3 py-1 text-xs text-muted-foreground">
-              {conditionLabel(c)}
-              <Button variant="ghost" size="sm" aria-label={t('filters.remove', { condition: conditionLabel(c) })} onClick={() => setBar({ ...bar, rest: bar.rest.filter((_, j) => j !== i) })}>
-                ×
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <ConditionChips scope="party" rest={bar.rest} onChange={(rest) => setBar({ ...bar, rest })} listLabel={t('filters.other')} removeLabel={(condition) => t('filters.remove', { condition })} />
       {contacts.isPending ? (
         <TableSkeleton columns={head.length} />
       ) : contacts.error && rows.length === 0 ? (

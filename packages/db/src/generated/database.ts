@@ -1643,6 +1643,7 @@ export interface FinanceStockMoveTable {
   amount: ColumnType<string | null, string | null, NotGranted>;
   crm_order_id: ColumnType<string | null, string | null, NotGranted>;
   crm_order_line_no: ColumnType<number | null, number | null, NotGranted>;
+  return_of_move_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.stock_period_item */
@@ -1734,6 +1735,9 @@ export interface FinanceSupplierPaymentTable {
   cancel_reason: string | null;
   paid_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  exported_by: string | null;
+  exported_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  export_count: Generated<number>;
 }
 
 /** crove_finance.vat_return_filed */

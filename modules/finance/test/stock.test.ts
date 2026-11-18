@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The pure side of stock (#2512): how a name is reduced to its alias key, how a line's quantity becomes a move, and the figures a posting must never fail on.
 import { describe, expect, it } from 'vitest';
-import { STOCK_GOODS_ACCOUNT, moveQuantity, movableQuantity, normalizeAlias, oppositeQuantity, plainQuantity, sameUnit } from '../src/domain/stock.ts';
+import { STOCK_GOODS_ACCOUNT, isSaleOut, moveQuantity, movableQuantity, normalizeAlias, oppositeQuantity, plainQuantity, returnableQuantity, sameUnit } from '../src/domain/stock.ts';
 
 describe('alias keys', () => {
   it('reduces two spellings of one name to one key: composed, lower case, one space, trimmed', () => {
@@ -51,5 +51,23 @@ describe('what a line moves', () => {
   });
   it('names the goods accounts of each side', () => {
     expect(STOCK_GOODS_ACCOUNT).toEqual({ purchase: '156', sale: '5111' });
+  });
+});
+
+describe('a partial return of the goods of a sale (#3712)', () => {
+  it('knows a sale stock-out: a document line or a CRM order line, below zero; nothing else', () => {
+    expect(isSaleOut({ source: 'document_line', quantity: '-3' })).toBe(true);
+    expect(isSaleOut({ source: 'crm_order_line', quantity: '-1.5' })).toBe(true);
+    // A purchase line is a stock-in; a marketplace order line has its own return from the platform's report; a reversal, a count, a manual move and a return are not sales.
+    expect(isSaleOut({ source: 'document_line', quantity: '3' })).toBe(false);
+    for (const source of ['order_line', 'reversal', 'count', 'manual', 'sale_return']) expect(isSaleOut({ source, quantity: '-3' })).toBe(false);
+  });
+
+  it('works out what can still be returned: what was sold less the live returns, never below zero, to the six decimals', () => {
+    expect(returnableQuantity('-10', '0')).toBe('10');
+    expect(returnableQuantity('-10', '3')).toBe('7');
+    expect(returnableQuantity('-10', '9.999999')).toBe('0.000001');
+    expect(returnableQuantity('-10', '10')).toBe('0');
+    expect(returnableQuantity('-10', '12')).toBe('0');
   });
 });

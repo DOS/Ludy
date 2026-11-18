@@ -4,7 +4,7 @@
 // stored view's other conditions show as chips that can be removed. Search and the owner are always there; the rest sit
 // behind "Bộ lọc khác" with the count of those in use (#3647). On the board the stage, the status and the sort are what the
 // columns already say, so they show there only while a view has set one.
-import { useId, useState, type ReactNode } from 'react';
+import { useId, useMemo, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import type { PipelineStage, SavedViewSort } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -15,7 +15,6 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import {
   DEAL_SORT_OPTIONS,
   EMPTY_DEAL_FILTER,
-  dealConditionLabel,
   dealFilterToAst,
   dealSortOfValue,
   dealSortValue,
@@ -25,6 +24,7 @@ import {
   type DealStatusFilter,
 } from '../lib/deal-filter.ts';
 import { normalizeAmount } from '../lib/vouchers.ts';
+import { ConditionChips } from './condition-chips.tsx';
 
 // The words of each sort option, by its `field:dir` value.
 const SORT_LABELS: Record<string, 'sort.created_asc' | 'sort.created_desc' | 'sort.name_asc' | 'sort.name_desc' | 'sort.amount_asc' | 'sort.amount_desc' | 'sort.expected_close_asc' | 'sort.expected_close_desc' | 'sort.updated_asc' | 'sort.updated_desc'> = {
@@ -65,6 +65,8 @@ export function DealFilterBar({
   const panelId = useId();
   const [openChoice, setOpenChoice] = useState<boolean | null>(null);
   const filtered = dealFilterToAst(bar).all.length > 0;
+  // The ids a stored view can name that this screen can say: its stages and its members.
+  const chipNames = useMemo(() => new Map<string, string>([...stages.map((s) => [s.id, s.name] as const), ...members.map((m) => [m.userId, m.displayName || m.email] as const)]), [stages, members]);
   const board = view === 'board';
   const showStage = !board || bar.stage !== '';
   const showStatus = !board || bar.status !== '';
@@ -208,18 +210,14 @@ export function DealFilterBar({
             )}
         </div>
       )}
-      {bar.rest.length > 0 && (
-        <ul className="mb-3 flex flex-wrap gap-2" aria-label={t('filters.other')}>
-          {bar.rest.map((c, i) => (
-            <li key={`${c.field}:${c.op}:${i}`} className="flex items-center gap-1 rounded-full border px-3 py-1 text-xs text-muted-foreground">
-              {dealConditionLabel(c)}
-              <Button variant="ghost" size="sm" aria-label={t('filters.remove', { condition: dealConditionLabel(c) })} onClick={() => setBar({ ...bar, rest: bar.rest.filter((_, j) => j !== i) })}>
-                ×
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <ConditionChips
+        scope="deal"
+        rest={bar.rest}
+        onChange={(rest) => setBar({ ...bar, rest })}
+        names={chipNames}
+        listLabel={t('filters.other')}
+        removeLabel={(condition) => t('filters.remove', { condition })}
+      />
     </>
   );
 }

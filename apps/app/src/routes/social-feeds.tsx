@@ -117,7 +117,7 @@ export function SocialFeedsPage() {
       />
       {canManage && (
         <Card className="block space-y-3 p-4">
-          <h3 className="text-sm font-medium text-foreground">{t('add')}</h3>
+          <h2 className="text-sm font-medium text-foreground">{t('add')}</h2>
           <form
             className="space-y-3"
             onSubmit={(e) => {

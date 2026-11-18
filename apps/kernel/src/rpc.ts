@@ -3289,6 +3289,12 @@ export function createRpcHandler(
       moves: {
         list: os.stock.moves.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_move.list', input, { actor, orgId }))),
         reverse: os.stock.moves.reverse.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_move.reverse', input, { actor, orgId }))),
+        return: os.stock.moves.return.handler(({ context, input }) =>
+          inFinance(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('finance.stock_move.return', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
       },
       unassigned: os.stock.unassigned.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.unassigned', input ?? {}, { actor, orgId }))),
       moveFromOrderLine: os.stock.moveFromOrderLine.handler(({ context, input }) =>
