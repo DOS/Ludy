@@ -124,8 +124,8 @@ function PartyPicker({ value, onPick, invalid, describedBy, locked }: { value: P
   );
 }
 
-// presetParty: a new deal for this party, chosen and not changeable (the contact panel's "Thêm cơ hội", #3292).
-export function DealForm({ deal, members, onDone, presetParty = null }: { deal: Deal | null; members: readonly Member[]; onDone: () => void; presetParty?: PartyChoice | null }) {
+// presetParty: a new deal for this party, chosen and not changeable (the contact panel's "Thêm cơ hội", #3292). plain: the form sits in a side sheet (#3648), which frames it: one column, no border of its own.
+export function DealForm({ deal, members, onDone, presetParty = null, plain = false }: { deal: Deal | null; members: readonly Member[]; onDone: () => void; presetParty?: PartyChoice | null; plain?: boolean }) {
   const t = useTranslations('deals');
   const [title, setTitle] = useState(deal?.title ?? '');
   const [party, setParty] = useState<PartyChoice | null>(deal ? { id: deal.partyId, name: deal.partyName, kind: 'organization', taxCode: null } : presetParty);
@@ -157,8 +157,8 @@ export function DealForm({ deal, members, onDone, presetParty = null }: { deal: 
   };
   const error = create.error ?? update.error;
   return (
-    <form onSubmit={submit} noValidate className="grid gap-3 rounded-lg border border-border p-4 sm:grid-cols-2" aria-label={deal ? t('form.editTitle') : t('form.newTitle')}>
-      <Field label={t('form.title')} error={fields.of('title')} className="sm:col-span-2">
+    <form onSubmit={submit} noValidate className={plain ? 'grid gap-3' : 'grid gap-3 rounded-lg border border-border p-4 sm:grid-cols-2'} aria-label={deal ? t('form.editTitle') : t('form.newTitle')}>
+      <Field label={t('form.title')} error={fields.of('title')} {...(plain ? {} : { className: 'sm:col-span-2' })}>
         {(c) => <Input {...c} maxLength={DEAL_TITLE_MAX} value={title} onChange={(e) => (setTitle(e.target.value), fields.edit('title'))} />}
       </Field>
       <Field label={t('form.party')} error={fields.of('party')}>
@@ -182,11 +182,11 @@ export function DealForm({ deal, members, onDone, presetParty = null }: { deal: 
         )}
       </Field>
       {error && (
-        <div className="sm:col-span-2">
+        <div className={plain ? undefined : 'sm:col-span-2'}>
           <ErrorText>{errorMessage(error)}</ErrorText>
         </div>
       )}
-      <div className="flex gap-2 sm:col-span-2">
+      <div className={plain ? 'flex gap-2' : 'flex gap-2 sm:col-span-2'}>
         <Button type="submit" loading={pending}>
           {deal ? t('form.save') : t('form.create')}
         </Button>
@@ -195,7 +195,7 @@ export function DealForm({ deal, members, onDone, presetParty = null }: { deal: 
         </Button>
       </div>
       {deal && (
-        <div className="sm:col-span-2">
+        <div className={plain ? undefined : 'sm:col-span-2'}>
           <DealConversations dealId={deal.id} />
         </div>
       )}

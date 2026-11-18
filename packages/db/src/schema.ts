@@ -509,7 +509,7 @@ export type EInvoiceDraftTable = Refine<
 // Stock (#2512, ADR-0045 point 1): the kind of an item, the trade it is sold in, and where a move of stock comes from.
 export const STOCK_ITEM_KINDS = ['goods'] as const;
 export type StockItemKind = (typeof STOCK_ITEM_KINDS)[number];
-export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
+export const STOCK_TRADES = ['goods', 'services', 'catering', 'digital_content', 'other'] as const;
 export type StockTrade = (typeof STOCK_TRADES)[number];
 // The household business kind (#2517): the fixed sets its CHECK constraints keep.
 export const HOUSEHOLD_PIT_METHODS = ['percentage', 'income'] as const;
@@ -537,6 +537,10 @@ export type HouseholdProfileTable = Refine<
   'legal_entity_id'
 >;
 export type HouseholdThresholdTable = Refine<G.FinanceHouseholdThresholdTable, { status: HouseholdRuleStatus }>;
+// The 2026 reductions as dated law rows (#3710): `kind` is the tax the cut applies to.
+export const HOUSEHOLD_REDUCTION_KINDS = ['vat', 'pit'] as const;
+export type HouseholdReductionKind = (typeof HOUSEHOLD_REDUCTION_KINDS)[number];
+export type HouseholdTaxReductionTable = Refine<G.FinanceHouseholdTaxReductionTable, { kind: HouseholdReductionKind; status: HouseholdRuleStatus }>;
 export type HouseholdTradeRateTable = Refine<G.FinanceHouseholdTradeRateTable, { trade: StockTrade; status: HouseholdRuleStatus }>;
 export type HouseholdExpenseGroupMapTable = Refine<G.FinanceHouseholdExpenseGroupMapTable, { expense_group: HouseholdExpenseGroup; status: HouseholdRuleStatus }>;
 export type HouseholdFormVersionTable = Refine<G.FinanceHouseholdFormVersionTable, { book: HouseholdBook; pit_methods: Array<'none' | HouseholdPitMethod>; status: HouseholdRuleStatus }>;
@@ -1419,6 +1423,7 @@ type Refined = Tables<{
   'crove_finance.household_profile': HouseholdProfileTable;
   'crove_finance.household_threshold': HouseholdThresholdTable;
   'crove_finance.household_trade_rate': HouseholdTradeRateTable;
+  'crove_finance.household_tax_reduction': HouseholdTaxReductionTable;
   'crove_finance.household_expense_group_map': HouseholdExpenseGroupMapTable;
   'crove_finance.household_form_version': HouseholdFormVersionTable;
   'crove_finance.household_return_form_version': HouseholdReturnFormVersionTable;

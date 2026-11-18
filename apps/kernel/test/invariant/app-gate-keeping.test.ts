@@ -6,7 +6,8 @@
 // The list is strict: the 11 commands that RECORD the outcome of an irreversible call a job already made (#3310; a switch-off between the call
 // and its record would lose the outcome and a later retry could do the call twice), the 2 eSign keeping commands (#3406 / #3323), and the 3
 // Social takedown commands (#3310, C3c) that are not records: a takedown stops the exposure of a post, so it still goes out while Social is off
-// (the record of an outcome is kept, and the notice of a failed one waits for the app, #3456).
+// (the record of an outcome is kept, and the notice of a failed one waits for the app, #3456). `HR_KEEPING` (#3447, step 0 of 2) stages the
+// two-step runsWhenOff parity allowance for `hr.recruiting.candidate.erase` before the module command declares it in step 2.
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md).
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/config.ts';
@@ -37,6 +38,9 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
 
   // The Social takedown commands that run while Social is off (C3c): a takedown stops exposure, so it is never refused for an app that is off.
   const TAKEDOWN = ['social.remove.begin', 'social.remove.schedule', 'social.remove.watch'];
+
+  // Step 0 of 2 (#3447): pending runsWhenOff allowance for candidate PDPL erasure while HR is off.
+  const HR_KEEPING = ['hr.recruiting.candidate.erase'];
 
   it('are exactly these commands', () => {
     const current = [
@@ -73,7 +77,8 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
       'social.report_link.revoke',
       'social.review_link.revoke',
     ].sort();
-    expect(named(commands)).toEqual([...current, ...RECORDS, ...SIGN_KEEPING, ...TAKEDOWN].sort());
+    const base = [...current, ...RECORDS, ...SIGN_KEEPING, ...TAKEDOWN].sort();
+    expect([base, [...base, ...HR_KEEPING].sort()]).toContainEqual(named(commands));
   });
 
   it('are exactly these queries', () => {

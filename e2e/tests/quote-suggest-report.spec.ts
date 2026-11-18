@@ -30,7 +30,7 @@ test('the suggestion panel answers when no model is on, the editor still works, 
     await form.getByRole('button', { name: 'Thêm', exact: true }).click();
     const card = page.getByTestId('deal-card').filter({ hasText: 'Gói kế toán năm' });
     await expect(card).toBeVisible();
-    await card.getByRole('button', { name: 'Báo giá' }).click();
+    await card.getByTestId('deal-card-open').click();
     await page.getByRole('button', { name: 'Tạo báo giá' }).click();
     await expect(page.getByTestId('quote-editor')).toBeVisible();
   });

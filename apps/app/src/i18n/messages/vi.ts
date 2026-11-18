@@ -1260,6 +1260,12 @@ export const vi = {
     pipeline: {
       moveTo: 'Chuyển giai đoạn',
     },
+    pagination: {
+      loadMore: 'Tải thêm ứng viên',
+      loadedOfTotal: 'Đang hiển thị {loaded} / {total} ứng viên.',
+      loadedMoreAvailable: 'Đang hiển thị {loaded} ứng viên đầu tiên; bấm tải thêm để xem tiếp.',
+      loadedAll: 'Đã hiển thị toàn bộ {loaded} ứng viên.',
+    },
     interview: {
       title: 'Lịch phỏng vấn',
       current: 'Đã đặt lịch vào {at} (chỉ ghi tên vị trí trên lịch, không lộ thông tin cá nhân ứng viên).',
@@ -1277,6 +1283,7 @@ export const vi = {
       title: 'Đánh giá sơ bộ cùng Ly',
       subtitle: 'Hồ sơ được ẩn danh trước khi gửi mô hình; bạn luôn tự quyết định tuyển hay từ chối.',
       run: 'Nhờ Ly đánh giá sơ bộ',
+      includeNotes: 'Gửi kèm ghi chú phỏng vấn/sàng lọc đã lọc thông tin cá nhân cho Ly (mặc định không gửi)',
       strengths: 'Điểm phù hợp',
       risks: 'Điểm cần lưu ý',
       questions: 'Gợi ý câu hỏi phỏng vấn',
@@ -1301,6 +1308,7 @@ export const vi = {
         ok: 'Ly đã tóm tắt từ hồ sơ ẩn danh và câu hỏi gợi ý.',
         off: 'Chưa bật AI; đang hiển thị kiểm tra xác định và câu hỏi gợi ý mặc định.',
         budget: 'Đã hết ngân sách AI tháng này; đang hiển thị kiểm tra xác định.',
+        rate_limited: 'Đã chạm giới hạn lượt gọi AI trong phút này; đang hiển thị kiểm tra xác định.',
         unavailable: 'Dịch vụ AI tạm thời không sẵn sàng; đang hiển thị kiểm tra xác định.',
         refused: 'Câu chữ AI không đạt kiểm tra an toàn nên đã bỏ qua; đang hiển thị kiểm tra xác định.',
       },
@@ -1778,7 +1786,7 @@ export const vi = {
     cardValue: 'Giá trị nhập',
     directions: { purchase: 'Mua vào', sale: 'Bán ra' },
     sources: { document_line: 'Từ hóa đơn', manual: 'Nhập tay', reversal: 'Đảo', order_line: 'Từ đơn hàng sàn', count: 'Kiểm kê', crm_order_line: 'Giao hàng của đơn bán' },
-    trades: { goods: 'Hàng hóa', services: 'Dịch vụ', catering: 'Ăn uống', other: 'Khác' },
+    trades: { goods: 'Hàng hóa', services: 'Dịch vụ', catering: 'Ăn uống', digital_content: 'Nội dung số', other: 'Khác' },
     // The finance coworker on stock (#2514): the item it suggests for an unassigned line.
     suggest: {
       button: 'Nhờ {finance} gợi ý mặt hàng',
@@ -3597,6 +3605,8 @@ export const vi = {
     none: 'Chưa có',
     deals: {
       title: 'Cơ hội',
+      openTitle: 'Cơ hội đang mở',
+      emptyOpen: 'Khách này chưa có cơ hội đang mở. Bấm Thêm cơ hội để tạo.',
       open: 'Mở màn Cơ hội',
       empty: 'Liên hệ này chưa có cơ hội nào. Bấm Thêm cơ hội để tạo.',
       emptyRead: 'Liên hệ này chưa có cơ hội nào.',
@@ -4306,6 +4316,11 @@ export const vi = {
     emptyHint: 'Thêm cơ hội đầu tiên: chọn khách hàng, nhập số tiền và ngày dự kiến chốt.',
     loadMore: 'Xem thêm',
     importFile: 'Nhập khách hàng từ tệp',
+    editOf: 'Sửa cơ hội {title}',
+    sheet: {
+      newHint: 'Chọn khách hàng, nhập số tiền và ngày dự kiến chốt.',
+      details: 'Thông tin cơ hội',
+    },
     editStages: 'Sửa giai đoạn',
     edit: 'Sửa',
     delete: 'Xóa',
@@ -4357,6 +4372,8 @@ export const vi = {
     },
     board: {
       loading: 'Đang tải bảng cơ hội...',
+      owner: 'Phụ trách: {name}',
+      noOwner: 'Chưa có người phụ trách',
       emptyTitle: 'Bảng chưa có cơ hội nào.',
       emptyHint: 'Thêm cơ hội đầu tiên, hoặc nhập khách hàng từ tệp trước. Cơ hội đã đóng hơn 30 ngày trước xem ở dạng Danh sách.',
       closeOn: 'Dự kiến chốt {date}',
@@ -4732,7 +4749,7 @@ export const vi = {
     pitMethod: 'Phương pháp tính thuế thu nhập cá nhân',
     methods: { percentage: 'Theo tỷ lệ trên doanh thu', income: 'Theo thu nhập' },
     trades: 'Ngành nghề',
-    tradeNames: { goods: 'Hàng hóa', services: 'Dịch vụ', catering: 'Ăn uống và xây dựng có bao thầu nguyên vật liệu', other: 'Khác' },
+    tradeNames: { goods: 'Hàng hóa', services: 'Dịch vụ', catering: 'Ăn uống và xây dựng có bao thầu nguyên vật liệu', digital_content: 'Nội dung số (trò chơi, phim, ảnh, nhạc, quảng cáo số)', other: 'Khác' },
     einvoice: 'Đã đăng ký hóa đơn điện tử',
     representative: 'Người đại diện (in cạnh chỗ ký)',
     yes: 'Có',

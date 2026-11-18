@@ -1262,6 +1262,12 @@ export const en = {
     pipeline: {
       moveTo: 'Move stage',
     },
+    pagination: {
+      loadMore: 'Load more candidates',
+      loadedOfTotal: 'Showing {loaded} of {total} candidates.',
+      loadedMoreAvailable: 'Showing the first {loaded} candidates; load more to inspect the rest.',
+      loadedAll: 'Showing all {loaded} candidates.',
+    },
     interview: {
       title: 'Interview schedule',
       current: 'Scheduled at {at} (calendar event keeps role title only, no candidate PII).',
@@ -1279,6 +1285,7 @@ export const en = {
       title: 'Ly preliminary screening',
       subtitle: 'Candidate profile is pseudonymized before sending to the model; people make every hiring decision.',
       run: 'Ask Ly for screening brief',
+      includeNotes: 'Include sanitized screening/interview notes when asking Ly (excluded by default)',
       strengths: 'Strengths',
       risks: 'Risks & gaps',
       questions: 'Suggested interview questions',
@@ -1303,6 +1310,7 @@ export const en = {
         ok: 'Ly summarized the pseudonymized profile and interview questions.',
         off: 'AI is off; showing deterministic readiness checks and baseline questions.',
         budget: 'Monthly AI budget reached; showing deterministic readiness checks.',
+        rate_limited: 'Per-minute AI limit reached; showing deterministic readiness checks.',
         unavailable: 'AI is temporarily unavailable; showing deterministic readiness checks.',
         refused: 'AI wording failed safety checks and was discarded; showing deterministic checks.',
       },
@@ -1780,7 +1788,7 @@ export const en = {
     cardValue: 'Value in',
     directions: { purchase: 'Purchase', sale: 'Sale' },
     sources: { document_line: 'From an invoice', manual: 'Entered by hand', reversal: 'Reversal', order_line: 'From a marketplace order', count: 'Stock count', crm_order_line: 'Delivery of a sales order' },
-    trades: { goods: 'Goods', services: 'Services', catering: 'Catering', other: 'Other' },
+    trades: { goods: 'Goods', services: 'Services', catering: 'Catering', digital_content: 'Digital content', other: 'Other' },
     // The finance coworker on stock (#2514): the item it suggests for an unassigned line.
     suggest: {
       button: 'Ask {finance} to suggest items',
@@ -3599,6 +3607,8 @@ export const en = {
     none: 'None',
     deals: {
       title: 'Deals',
+      openTitle: 'Open deals',
+      emptyOpen: 'This customer has no open deal. Choose Add deal to create one.',
       open: 'Open the Deals screen',
       empty: 'This contact has no deals yet. Choose Add deal to create one.',
       emptyRead: 'This contact has no deals yet.',
@@ -4308,6 +4318,11 @@ export const en = {
     emptyHint: 'Add the first deal: pick a customer, enter the amount and the expected close date.',
     loadMore: 'Load more',
     importFile: 'Import customers from a file',
+    editOf: 'Edit deal {title}',
+    sheet: {
+      newHint: 'Pick the customer, enter the amount and the expected close date.',
+      details: 'Deal details',
+    },
     editStages: 'Edit stages',
     edit: 'Edit',
     delete: 'Delete',
@@ -4359,6 +4374,8 @@ export const en = {
     },
     board: {
       loading: 'Loading the deal board...',
+      owner: 'Owner: {name}',
+      noOwner: 'No owner yet',
       emptyTitle: 'The board has no deals yet.',
       emptyHint: 'Add the first deal, or import your customers from a file first. Deals closed more than 30 days ago are in the List view.',
       closeOn: 'Expected to close {date}',
@@ -4734,7 +4751,7 @@ export const en = {
     pitMethod: 'Personal income tax method',
     methods: { percentage: 'A percentage of revenue', income: 'On income' },
     trades: 'Trades',
-    tradeNames: { goods: 'Goods', services: 'Services', catering: 'Catering and construction with materials', other: 'Other' },
+    tradeNames: { goods: 'Goods', services: 'Services', catering: 'Catering and construction with materials', digital_content: 'Digital content (games, film, photos, music, digital ads)', other: 'Other' },
     einvoice: 'Registered for e-invoices',
     representative: 'Representative (printed beside the signature)',
     yes: 'Yes',

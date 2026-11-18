@@ -67,6 +67,8 @@ export const zHouseholdRules = z.strictObject({
   date: zLocalDate,
   thresholds: z.array(z.strictObject({ code: z.string(), amount: z.string(), ...zRuleBase })),
   tradeRates: z.array(z.strictObject({ trade: zHouseholdTrade, vatPercent: z.string(), pitPercent: z.string(), ...zRuleBase })),
+  // The 2026 tax reductions in force on the date: the share of the tax that is cut and, for the PIT cut, the yearly revenue up to which it applies (null: no ceiling). A cut that has ended is a row of 0.
+  reductions: z.array(z.strictObject({ kind: z.enum(['vat', 'pit']), cutPercent: z.string(), revenueCeiling: z.string().nullable(), ...zRuleBase })),
   expenseGroups: z.array(z.strictObject({ expenseGroup: z.enum(HOUSEHOLD_EXPENSE_GROUPS), accountPrefix: z.string(), ...zRuleBase })),
   forms: z.array(z.strictObject({ book: zHouseholdBook, version: z.string(), name: z.string(), pitMethods: z.array(z.enum(['none', ...HOUSEHOLD_PIT_METHODS])), ...zRuleBase })),
   commentary: z.boolean(),

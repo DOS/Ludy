@@ -109,6 +109,21 @@ describe('the S2b-HKD workbook', () => {
     expect(find(rows, 'Tổng thuế GTGT')![head.indexOf('Tổng số tiền')]).toBe('');
   });
 
+  it('names the digital content trade in Vietnamese, in its column and in the list of rows waiting', async () => {
+    const { rows } = await rowsOf(
+      book({
+        rows: [{ entryId: E1, date: '2026-09-05', reference: null, description: 'Bán nhạc số', amount: '100000', reversal: false, parts: [{ trade: 'digital_content', amount: '100000' }] }],
+        total: '100000',
+        lines: [{ trade: 'digital_content', revenue: '100000', vatPercent: '5', vat: '5000' }],
+        totals: { revenue: '100000', vat: '5000' },
+        unconfirmed: [{ kind: 'rate', key: 'digital_content', effectiveFrom: '2026-01-01' }],
+      }),
+    );
+    expect(find(rows, 'Diễn giải')).toContain('Nội dung số (trò chơi, phim, ảnh, nhạc, quảng cáo số)');
+    expect(rows.flat().some((t) => t.includes('Chưa xác nhận: tỷ lệ thuế của ngành "Nội dung số (trò chơi, phim, ảnh, nhạc, quảng cáo số)"'))).toBe(true);
+    expect(rows.flat().some((t) => t.includes('digital_content'))).toBe(false);
+  });
+
   it('never reads a description as a formula', async () => {
     const { sheet } = await rowsOf(book());
     let formula = false;
