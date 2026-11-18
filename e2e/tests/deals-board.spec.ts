@@ -119,7 +119,8 @@ test('a member adds deals, moves them between stages and the board keeps its ord
     const again = page.getByTestId('deal-sheet').getByRole('form', { name: 'Sửa cơ hội' });
     await again.getByLabel('Tên cơ hội').fill('Tư vấn thuế');
     await again.getByRole('button', { name: 'Lưu', exact: true }).click();
-    await expect(column('Mới').getByTestId('deal-card').filter({ hasText: 'Tư vấn thuế' })).toBeVisible();
+    // The exact title: "Tư vấn thuế quý" also contains it, and the move below must run on the refreshed card, not on one whose version is behind.
+    await expect(column('Mới').getByTestId('deal-title').filter({ hasText: /^Tư vấn thuế$/ })).toBeVisible();
   });
 
   await test.step('the stage menu moves a card to another column', async () => {
