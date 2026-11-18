@@ -7848,16 +7848,17 @@ export const en = {
     outcomes: { ok: 'Done', pending_approval: 'Pending approval', denied: 'Refused', failed: 'Failed' },
     columns: { at: 'When', actor: 'By', what: 'What was done', outcome: 'Outcome', target: 'About', detail: 'Details' },
     target: {
-      label: 'Document, party or entry',
-      hint: 'Type a name, a document number or a description',
+      label: 'Document or party',
+      hint: 'Type a party name or a document number',
       searching: 'Searching...',
       none: 'Nothing found',
       failed: 'Could not search, try again later',
-      kinds: { party: 'Party', document: 'Document', entry: 'Entry' },
+      kinds: { party: 'Party', document: 'Document', approval: 'Approval and posting' },
       only: 'Showing only the rows of: {name}',
       some: 'the chosen item',
       clear: 'Clear',
       rowsOfThis: 'Show the rows of this item',
+      generic: 'Another item',
     },
     detail: {
       open: 'Open details',
@@ -7930,6 +7931,7 @@ export const en = {
       },
       finance: {
         document: 'Document',
+        purchase_document: 'Purchase invoice',
         journal_entry: 'Journal entry',
         stock_item: 'Stock item',
         einvoice_draft: 'E-invoice draft',
@@ -13996,26 +13998,26 @@ export const en = {
         budgets: {
           list: 'List AI budgets',
         },
-        dispatch_event: 'Hand an event to AI agents',
+        dispatch_event: 'Hand an event to AI coworkers',
         kill_switch: {
           engage: 'Stop AI',
           release: 'Let AI run again',
         },
         proposal: {
-          approve: "Carry out an AI agent's approval",
-          create: "Create an AI agent's proposal",
+          approve: "Carry out an AI coworker's approval",
+          create: "Create an AI coworker's proposal",
         },
         run: {
-          finish: 'Finish an AI agent run',
-          start: 'Start an AI agent run',
+          finish: 'Finish an AI coworker run',
+          start: 'Start an AI coworker run',
         },
         template: {
-          install: 'Install an AI agent from a template',
+          install: 'Install an AI coworker from a template',
         },
         templates: {
-          list: 'List AI agent templates',
+          list: 'List AI coworker templates',
         },
-        update: 'Edit an AI agent',
+        update: 'Edit an AI coworker',
       },
       audit: {
         commands: 'List the commands in the audit log',

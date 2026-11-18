@@ -228,7 +228,7 @@ function AuditLog({ search }: { search: AuditSearch }) {
       </div>
       {log.isLoading ? (
         <TableSkeleton columns={5} />
-      ) : log.error && rows.length === 0 ? (
+      ) : log.error && all.length === 0 ? (
         <ErrorText>{errorMessage(log.error)}</ErrorText>
       ) : rows.length === 0 && !log.hasNextPage ? (
         <Empty title={hidden > 0 ? t('onlySystem', { count: String(hidden) }) : t('empty')} />
@@ -256,14 +256,16 @@ function AuditLog({ search }: { search: AuditSearch }) {
                   <Badge variant={OUTCOME_BADGE[r.outcome]}>{t(`outcomes.${r.outcome}`)}</Badge>
                 </TableCell>
                 <TableCell className="px-4 py-3 text-xs text-muted-foreground">
-                  {objectName(r.targetType)}
+                  {objectName(r.targetType) ?? (r.targetId ? t('target.generic') : null)}
                   {r.targetId && (
                     <button
                       type="button"
+                      aria-label={`${t('target.rowsOfThis')}: ${sentence(r)}`}
                       className="block text-link hover:underline"
                       onClick={() => {
-                        setForm((prev) => ({ ...prev, target: r.targetId ?? '', targetType: r.targetType ?? '' }));
-                        setTargetLabel(null);
+                        // The type is not kept: a proposal's rows include what it ran, whose objects are of other types (#1445).
+                        setForm((prev) => ({ ...prev, target: r.targetId ?? '', targetType: '' }));
+                        setTargetLabel(objectName(r.targetType));
                       }}
                     >
                       {t('target.rowsOfThis')}
@@ -271,7 +273,7 @@ function AuditLog({ search }: { search: AuditSearch }) {
                   )}
                 </TableCell>
                 <TableCell className="px-4 py-3">
-                  <Button variant="ghost" size="sm" onClick={() => setOpened(r)}>
+                  <Button variant="ghost" size="sm" aria-label={`${t('detail.open')}: ${sentence(r)}`} onClick={() => setOpened(r)}>
                     {t('detail.open')}
                   </Button>
                 </TableCell>

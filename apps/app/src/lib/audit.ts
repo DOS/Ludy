@@ -151,20 +151,23 @@ export function isSystemRow(row: Pick<AuditEntry, 'actorType' | 'via'>): boolean
   return row.actorType === 'system' && row.via === null;
 }
 
-// A label's first letter in lower case, for a sentence that goes on after "Đã" or "Tried to"; a label that starts with a
-// name or an acronym ("Vy ...", "AI ...") keeps its capital.
+// A label's first letter in lower case, for a sentence that goes on after "Đã" or "Tried to"; a label that starts with an AI
+// coworker's name, an acronym or a product name ("Vy ...", "AI ...", "Google ...") keeps its capital.
+const KEEP_CAPITAL = /^(Vy|Ly|Dy|Uy|Hy|Google|Zalo|Slack|Teams|Facebook|Instagram|TikTok|YouTube|Meta|Claude|MISA)$/;
+
 export function lowerFirst(label: string): string {
-  const word = /^\S+/u.exec(label)?.[0] ?? '';
-  const plain = word.length > 2 && word.slice(1) === word.slice(1).toLowerCase();
-  return plain ? label.charAt(0).toLowerCase() + label.slice(1) : label;
+  const word = /^[^\s,.:;()]+/u.exec(label)?.[0] ?? '';
+  const keep = KEEP_CAPITAL.test(word) || (word.length > 1 && word === word.toUpperCase() && /\p{Lu}/u.test(word));
+  return keep || word === '' ? label : label.charAt(0).toLowerCase() + label.slice(1);
 }
 
-// What the screen's object search offers (#3595): a party, a document or a journal entry by its words, each with the id the
-// log filters by. A document filters by the proposal that made it when it has one, so the filter finds the decision and
-// the rows of what it ran, as a link from a proposal does (#1445).
+// What the screen's object search offers (#3595): a party, or a document by its series, number or party, each with the id the
+// log filters by. A document that came through a proposal is offered twice: its own rows (what was done to it later) and its
+// approval (the decision and the rows of what it ran, as a link from a proposal shows, #1445); the filter takes one id, so the
+// owner picks which. A journal entry is not offered: its rows name no entry, so the filter would find nothing.
 export interface AuditTargetChoice {
   key: string;
-  kind: 'party' | 'document' | 'entry';
+  kind: 'party' | 'document' | 'approval';
   id: string;
   label: string;
   hint: string;
@@ -173,13 +176,17 @@ export interface AuditTargetChoice {
 export interface AuditSearchFound {
   parties: readonly { id: string; name: string; taxCode: string | null }[];
   documents: readonly { id: string; series: string; number: string; partyName: string; proposalId: string | null }[];
-  entries: readonly { id: string; description: string; entryDate: string }[];
 }
 
 export function auditTargetChoices(found: AuditSearchFound): AuditTargetChoice[] {
   return [
     ...found.parties.map((p): AuditTargetChoice => ({ key: `party-${p.id}`, kind: 'party', id: p.id, label: p.name, hint: p.taxCode ?? '' })),
-    ...found.documents.map((d): AuditTargetChoice => ({ key: `document-${d.id}`, kind: 'document', id: d.proposalId ?? d.id, label: [d.series, d.number].filter(Boolean).join(' '), hint: d.partyName })),
-    ...found.entries.map((e): AuditTargetChoice => ({ key: `entry-${e.id}`, kind: 'entry', id: e.id, label: e.description, hint: e.entryDate })),
+    ...found.documents.flatMap((d): AuditTargetChoice[] => {
+      const label = [d.series, d.number].filter(Boolean).join(' ');
+      return [
+        { key: `document-${d.id}`, kind: 'document', id: d.id, label, hint: d.partyName },
+        ...(d.proposalId ? [{ key: `approval-${d.id}`, kind: 'approval' as const, id: d.proposalId, label, hint: d.partyName }] : []),
+      ];
+    }),
   ];
 }

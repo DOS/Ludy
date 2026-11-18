@@ -92,22 +92,26 @@ describe('activity log in words', () => {
     expect(lowerFirst('Approve a proposal')).toBe('approve a proposal');
     expect(lowerFirst('Vy ghi nhớ một mục')).toBe('Vy ghi nhớ một mục');
     expect(lowerFirst('AI budget')).toBe('AI budget');
+    // A short Vietnamese verb is lower-cased like any other (it once kept its capital for being two letters long).
+    expect(lowerFirst('Bỏ vai trò của thành viên')).toBe('bỏ vai trò của thành viên');
+    expect(lowerFirst('Gỡ việc khỏi dự án')).toBe('gỡ việc khỏi dự án');
+    expect(lowerFirst('Mở lại một hội thoại')).toBe('mở lại một hội thoại');
+    expect(lowerFirst('Google Meet được tạo')).toBe('Google Meet được tạo');
   });
 
-  it('finds an object by a name or a number: a party, a document (by its proposal when it has one) and an entry', () => {
+  it('finds an object by a name or a number: a party, and a document twice when a proposal made it', () => {
     const choices = auditTargetChoices({
       parties: [{ id: 'p1', name: 'Công ty ABC', taxCode: '0312345678' }],
       documents: [
         { id: 'd1', series: 'C26TAA', number: '0000012', partyName: 'Công ty ABC', proposalId: 'pr1' },
         { id: 'd2', series: '', number: 'PC-7', partyName: 'Anh Nam', proposalId: null },
       ],
-      entries: [{ id: 'e1', description: 'Chi phí quảng cáo', entryDate: '2026-11-02' }],
     });
     expect(choices.map((c) => [c.kind, c.id, c.label, c.hint])).toEqual([
       ['party', 'p1', 'Công ty ABC', '0312345678'],
-      ['document', 'pr1', 'C26TAA 0000012', 'Công ty ABC'],
+      ['document', 'd1', 'C26TAA 0000012', 'Công ty ABC'],
+      ['approval', 'pr1', 'C26TAA 0000012', 'Công ty ABC'],
       ['document', 'd2', 'PC-7', 'Anh Nam'],
-      ['entry', 'e1', 'Chi phí quảng cáo', '2026-11-02'],
     ]);
   });
 

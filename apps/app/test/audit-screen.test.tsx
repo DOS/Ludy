@@ -102,7 +102,7 @@ describe('AuditPage default list', () => {
   it('shows four "đã duyệt" rows and no kernel.* text, with a line saying what is hidden', () => {
     const html = render('vi', rows);
     const list = table(html);
-    expect(list.match(/Đã duyệt đề xuất/g)).toHaveLength(4);
+    expect(text(list).match(/Đã duyệt đề xuất/g)).toHaveLength(4);
     expect(list).not.toContain('kernel.');
     expect(text(list)).not.toContain('aal=');
     expect(text(list)).not.toContain('Hệ thống');
@@ -112,7 +112,7 @@ describe('AuditPage default list', () => {
 
   it('says the same in English', () => {
     const html = render('en', rows);
-    expect(table(html).match(/Approved a proposal/g)).toHaveLength(4);
+    expect(text(table(html)).match(/Approved a proposal/g)).toHaveLength(4);
     expect(table(html)).not.toContain('kernel.');
     expect(text(html)).toContain('Show system activity too');
     expect(text(html)).toContain('Hiding 3 rows of routine system work');
@@ -159,17 +159,29 @@ describe('AuditPage default list', () => {
     expect(text(table(en))).toContain('AI coworker');
     expect(text(table(en))).not.toMatch(/agent|assistant/i);
   });
+
+  it('never says tác tử, even for an AI coworker command that was refused or has no sentence of its own', () => {
+    const refused: AuditEntry = { ...row('u', 'kernel.agent.update'), outcome: 'denied' };
+    expect(text(table(render('vi', [refused])))).toContain('Đã thử sửa đồng nghiệp AI');
+    expect(text(table(render('vi', [refused])))).not.toMatch(/tác tử/i);
+    expect(text(table(render('en', [refused])))).toContain('Tried to edit an AI coworker');
+  });
+
+  it('writes a short Vietnamese verb in lower case after "Đã"', () => {
+    const revoked = row('v', 'kernel.member.role.revoke');
+    expect(text(table(render('vi', [revoked])))).toContain('Đã bỏ vai trò của thành viên');
+  });
 });
 
 // AL-2 (#3595): the object is found by a name or a number, not an id; the raw record is one click away.
 describe('AuditPage object filter and detail', () => {
-  it('asks for a name, a document number or a description, and has no UUID field', () => {
+  it('asks for a name or a document number, and has no UUID field', () => {
     const vi = render('vi');
-    expect(text(vi)).toContain('Chứng từ, đối tác hoặc bút toán');
-    expect(vi).toContain('placeholder="Gõ tên, số chứng từ hoặc nội dung"');
+    expect(text(vi)).toContain('Chứng từ hoặc đối tác');
+    expect(vi).toContain('placeholder="Gõ tên đối tác hoặc số chứng từ"');
     expect(vi).not.toMatch(/UUID|Mã đối tượng/);
     const en = render('en');
-    expect(en).toContain('placeholder="Type a name, a document number or a description"');
+    expect(en).toContain('placeholder="Type a party name or a document number"');
     expect(en).not.toMatch(/UUID|Object id/);
   });
 
@@ -225,7 +237,7 @@ describe('AuditPage filters from the URL (#1445)', () => {
       expect(text(html)).toContain('Bỏ chọn');
       expect(text(html)).not.toContain('0192f0aa');
       // The picker gives way to the chosen object.
-      expect(html).not.toContain('placeholder="Gõ tên, số chứng từ hoặc nội dung"');
+      expect(html).not.toContain('placeholder="Gõ tên đối tác hoặc số chứng từ"');
     } finally {
       search.current = {};
     }

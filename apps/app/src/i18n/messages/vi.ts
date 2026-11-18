@@ -7844,16 +7844,17 @@ export const vi = {
     outcomes: { ok: 'Thành công', pending_approval: 'Chờ duyệt', denied: 'Bị từ chối', failed: 'Lỗi' },
     columns: { at: 'Thời điểm', actor: 'Người thực hiện', what: 'Việc đã làm', outcome: 'Kết quả', target: 'Liên quan đến', detail: 'Chi tiết' },
     target: {
-      label: 'Chứng từ, đối tác hoặc bút toán',
-      hint: 'Gõ tên, số chứng từ hoặc nội dung',
+      label: 'Chứng từ hoặc đối tác',
+      hint: 'Gõ tên đối tác hoặc số chứng từ',
       searching: 'Đang tìm...',
       none: 'Không tìm thấy',
       failed: 'Chưa tìm được, bạn thử lại sau',
-      kinds: { party: 'Đối tác', document: 'Chứng từ', entry: 'Bút toán' },
+      kinds: { party: 'Đối tác', document: 'Chứng từ', approval: 'Duyệt và ghi sổ' },
       only: 'Chỉ xem các dòng của: {name}',
       some: 'một mục đã chọn',
       clear: 'Bỏ chọn',
       rowsOfThis: 'Xem các dòng của mục này',
+      generic: 'Một mục khác',
     },
     detail: {
       open: 'Mở chi tiết',
@@ -7926,6 +7927,7 @@ export const vi = {
       },
       finance: {
         document: 'Chứng từ',
+        purchase_document: 'Hóa đơn mua vào',
         journal_entry: 'Bút toán',
         stock_item: 'Mặt hàng',
         einvoice_draft: 'Hóa đơn điện tử nháp',
@@ -13995,26 +13997,26 @@ export const vi = {
         budgets: {
           list: 'Xem ngân sách AI',
         },
-        dispatch_event: 'Giao việc cho tác tử AI theo sự kiện',
+        dispatch_event: 'Giao việc cho đồng nghiệp AI theo sự kiện',
         kill_switch: {
           engage: 'Dừng AI',
           release: 'Cho AI chạy lại',
         },
         proposal: {
-          approve: 'Thực hiện lượt duyệt của tác tử AI',
-          create: 'Tạo đề xuất theo yêu cầu của tác tử AI',
+          approve: 'Thực hiện lượt duyệt của đồng nghiệp AI',
+          create: 'Tạo đề xuất theo yêu cầu của đồng nghiệp AI',
         },
         run: {
-          finish: 'Kết thúc lượt chạy của tác tử AI',
-          start: 'Bắt đầu lượt chạy của tác tử AI',
+          finish: 'Kết thúc lượt chạy của đồng nghiệp AI',
+          start: 'Bắt đầu lượt chạy của đồng nghiệp AI',
         },
         template: {
-          install: 'Cài tác tử AI từ mẫu',
+          install: 'Cài đồng nghiệp AI từ mẫu',
         },
         templates: {
-          list: 'Xem các mẫu tác tử AI',
+          list: 'Xem các mẫu đồng nghiệp AI',
         },
-        update: 'Sửa tác tử AI',
+        update: 'Sửa đồng nghiệp AI',
       },
       audit: {
         commands: 'Xem các lệnh trong nhật ký hoạt động',

@@ -25,6 +25,8 @@ function useSettled<T>(value: T, ms: number): T {
 export function AuditTargetPicker({ onPick }: { onPick: (choice: { id: string; label: string | null }) => void }) {
   const t = useTranslations('audit.target');
   const [text, setText] = useState('');
+  // The result list closes on Escape or when focus leaves the field and the list; typing opens it again.
+  const [open, setOpen] = useState(true);
   const typed = searchTerm(text);
   const term = useSettled(typed, 250);
   const found = useQuery({
@@ -36,6 +38,7 @@ export function AuditTargetPicker({ onPick }: { onPick: (choice: { id: string; l
   const choices = term !== null && term === typed && found.data ? auditTargetChoices(found.data) : [];
   const change = (value: string) => {
     setText(value);
+    setOpen(true);
     // An id pasted whole is used as it is.
     const pasted = value.trim();
     if (UUID.test(pasted)) onPick({ id: pasted.toLowerCase(), label: null });
@@ -45,9 +48,15 @@ export function AuditTargetPicker({ onPick }: { onPick: (choice: { id: string; l
     setText('');
   };
   return (
-    <div className="relative">
+    <div
+      className="relative"
+      onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);
+      }}
+    >
       <Input value={text} onChange={(e) => change(e.target.value)} placeholder={t('hint')} className="mt-1 w-72" aria-label={t('label')} />
-      {typed !== null && (
+      {typed !== null && open && (
         <div className="absolute z-20 mt-1 w-80 max-w-[calc(100vw-2rem)] rounded-md border border-border bg-popover p-1 text-sm shadow-md" role="status">
           {found.isError ? (
             <p className="px-2 py-1.5 text-xs text-warning">{t('failed')}</p>
