@@ -196,7 +196,7 @@ import {
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
 import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
 import { zMarketplaceFeeClearingRequest, zMarketplacePayoutRequest, zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
-import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
+import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
 import { zBankSupplierMatch, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
 import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep } from './einvoice-notice.ts';
@@ -2554,6 +2554,10 @@ export const contract = {
       list: oc.input(z.object({ itemId: zId, limit: z.number().int().min(1).max(500).optional() })).output(z.array(zStockMove)),
       // The correction of a move: a reversing move of the opposite quantity. STOCK_MOVE_NOT_FOUND (404), STOCK_MOVE_IS_REVERSAL and STOCK_MOVE_REVERSED (409).
       reverse: oc.input(z.object({ moveId: zId })).output(z.object({ id: zId })),
+      // A partial return of the goods of a sale (#3712, a document line or a delivered CRM order line; not a marketplace order line): a stock-in of the same item naming the sale's stock-out, today's date, priced by the month close like any return in; no entry is posted.
+      // STOCK_MOVE_NOT_FOUND (404), STOCK_RETURN_NOT_SALE, STOCK_RETURN_REVERSED, STOCK_RETURN_EXCEEDS (409).
+      // The key is the identity of the return: a retry with the same key (a lost response) returns the first result and writes no second move.
+      return: oc.input(zStockMoveReturn.extend({ idempotencyKey: zId })).output(z.object({ id: zId })),
     },
     // The stock of a delivered CRM order line (#2818, ADR-0050): the hand-off, the line number, the date and 'deliver' (default) or 'return' (a reversing move). Idempotent on (order, line): a retry answers
     // already_moved. A text line is a service and moves nothing. ORDER_PAYLOAD_MISMATCH, ORDER_DATE_FUTURE, STOCK_ORDER_LINE_NO_ITEM, STOCK_LINE_NO_QUANTITY, STOCK_ITEM_ENTITY_MISMATCH (422),

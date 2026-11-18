@@ -105,7 +105,8 @@ jobs:
   db:
     name: Database tests (${{ matrix.part.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Stopgap (#3756): shard 1 runs over 20 minutes on main itself (it timed out twice on docs-only #3790) and the times in tools/ci/db-test-times.json need re-measuring.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

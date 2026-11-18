@@ -1644,6 +1644,7 @@ export interface FinanceStockMoveTable {
   amount: ColumnType<string | null, string | null, NotGranted>;
   crm_order_id: ColumnType<string | null, string | null, NotGranted>;
   crm_order_line_no: ColumnType<number | null, number | null, NotGranted>;
+  return_of_move_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.stock_period_item */

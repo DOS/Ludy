@@ -13,7 +13,7 @@ import { chartAccounts } from './accounts.ts';
 import { money } from '@crove/l10n-vn';
 import { STOCK_GOODS_ACCOUNT, STOCK_SALE_DEFAULT_ACCOUNT, moveQuantity, movableQuantity, normalizeAlias, oppositeQuantity, sameUnit } from './domain/stock.ts';
 import { latestRevision } from './source-entry.ts';
-import { loadItem, writeStockMove } from './stock.ts';
+import { loadItem, reverseLiveReturns, writeStockMove } from './stock.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -154,6 +154,9 @@ export async function reverseDocumentStock(ctx: CommandContext, documentId: stri
     .orderBy('m.line_no')
     .execute();
   for (const move of moves) {
+    // The returns of a sale come back first (#3712): the database refuses to reverse a sale move that still has a live return. The goods that really came back are returned again against the
+    // replacement document's move, by a person.
+    await reverseLiveReturns(ctx, move.id, date);
     await writeStockMove(ctx, { itemId: move.item_id, date, quantity: oppositeQuantity(move.quantity), source: { type: 'reversal', reversesMoveId: move.id } });
   }
   return moves.length;

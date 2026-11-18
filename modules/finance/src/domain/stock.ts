@@ -49,3 +49,16 @@ export function moveQuantity(direction: 'purchase' | 'sale', quantity: string, f
 
 // Two spellings of one unit ('Cái' and 'cái ').
 export const sameUnit = (a: string | null | undefined, b: string | null | undefined): boolean => normalizeAlias(a ?? '') === normalizeAlias(b ?? '');
+
+// A stock-out of a sale, the move a partial return gives back (#3712): a document line or a delivered CRM order line, quantity below zero. A marketplace order line is not one: the platform's own
+// report of a returned order brings its stock back (marketplace-orders), so a person's return on top of it would count the goods twice.
+export function isSaleOut(move: { source: string; quantity: string }): boolean {
+  if (!money(move.quantity).isNegative()) return false;
+  return move.source === 'document_line' || move.source === 'crm_order_line';
+}
+
+// What of a sale's stock-out can still be returned: what was sold (the move's quantity, negative) less the live returns, never below zero, as a plain quantity.
+export function returnableQuantity(soldSigned: string, returned: string): string {
+  const left = money(soldSigned).negated().minus(money(returned));
+  return plainQuantity((left.isNegative() ? money(0) : left).toFixed());
+}
