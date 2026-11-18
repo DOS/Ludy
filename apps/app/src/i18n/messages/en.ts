@@ -12611,6 +12611,7 @@ export const en = {
       LIVE_PIECE_UNREADABLE: 'A piece could not be read from storage, so they cannot be joined yet. Tell your system administrator.',
       MEDIA_ALREADY_RECORDED: 'This meeting already has its recording; the one that arrived first is kept and the later one is refused.',
       MEDIA_JOINED_IN_USE: 'The recording joined from the live pieces was already used for a transcript or a summary, so the complete recording that arrived late cannot replace it and is refused.',
+      IMPORT_NOT_CLAIMED: 'This transcript is no longer waiting to be imported (it was imported, or the import was cancelled). Try importing it again from the list of recordings.',
       IMPORT_ONLY: 'This meeting holds only the recording imported from its meeting platform; no other audio can be added to it.',
       MEETING_PLATFORM_BUSY: 'A recording from this platform is still being imported. Wait for it to finish or fail, then disconnect.',
       MEETING_PLATFORM_NOT_ACTIVE: 'The connection to this meeting platform is no longer valid. Connect again.',
@@ -14689,6 +14690,7 @@ export const en = {
       import: {
         discard_empty: 'Remove the empty meeting a failed import left behind',
         start: 'Import a recording a meeting platform finished as a meeting',
+        take_transcript: "Store a meeting platform's own transcript as a draft of the imported meeting, for the recorder to read",
       },
       live: {
         assemble_plan: "Read the recorder's own live pieces to join them into the recording",

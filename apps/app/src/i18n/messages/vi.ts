@@ -12599,6 +12599,7 @@ export const vi = {
       LIVE_PIECE_UNREADABLE: 'Không đọc được một đoạn từ kho lưu trữ nên chưa ghép được. Hãy báo người quản trị hệ thống.',
       MEDIA_ALREADY_RECORDED: 'Cuộc họp này đã có bản ghi rồi; bản ghi đến trước được giữ và bản đến sau bị từ chối.',
       MEDIA_JOINED_IN_USE: 'Bản ghép từ các đoạn trực tiếp đã được dùng để chép lời hoặc tóm tắt, nên bản ghi đầy đủ đến muộn không thay được nó và bị từ chối.',
+      IMPORT_NOT_CLAIMED: 'Bản chép lời này không còn chờ nhập nữa (đã nhập xong, hoặc lượt nhập đã bị hủy). Hãy thử nhập lại từ danh sách bản ghi.',
       IMPORT_ONLY: 'Cuộc họp này chỉ chứa bản ghi nhập từ nền tảng họp của nó; không thêm âm thanh khác vào được.',
       MEETING_PLATFORM_BUSY: 'Còn bản ghi đang được nhập từ nền tảng này. Hãy chờ nhập xong hoặc báo lỗi rồi hãy ngắt kết nối.',
       MEETING_PLATFORM_NOT_ACTIVE: 'Kết nối với nền tảng họp này đã hết hiệu lực. Hãy kết nối lại.',
@@ -14688,6 +14689,7 @@ export const vi = {
       import: {
         discard_empty: 'Xóa cuộc họp trống do một lần nhập lỗi để lại',
         start: 'Nhập bản ghi họp có sẵn từ nền tảng họp thành một cuộc họp',
+        take_transcript: 'Ghi bản chép lời của nền tảng họp vào cuộc họp đã nhập, thành bản nháp để người ghi đọc lại',
       },
       live: {
         assemble_plan: 'Đọc các đoạn trực tiếp của người ghi để ghép thành bản ghi',
