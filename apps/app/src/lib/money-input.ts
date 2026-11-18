@@ -3,10 +3,11 @@
 // one), "20,5" or "20.5", "5.000.000,50". It becomes the canonical decimal string the server takes ("5000000", "20.5"), never a JS number, so no digit is lost or
 // rounded on the way. A dot or comma followed by exactly three digits, repeated, is a group mark; followed by one or two digits it is the decimal mark.
 const PLAIN = /^\d+$/;
-const GROUPED = /^\d{1,3}(?:([.,])\d{3})+$/;
+// A first group of a grouped number never starts with 0: "0.500" is half, not five hundred.
+const GROUPED = /^[1-9]\d{0,2}(?:([.,])\d{3})+$/;
 const DECIMAL = /^\d+[.,]\d{1,2}$/;
-const VI_GROUPED_DECIMAL = /^\d{1,3}(?:\.\d{3})+,\d{1,2}$/;
-const EN_GROUPED_DECIMAL = /^\d{1,3}(?:,\d{3})+\.\d{1,2}$/;
+const VI_GROUPED_DECIMAL = /^[1-9]\d{0,2}(?:\.\d{3})+,\d{1,2}$/;
+const EN_GROUPED_DECIMAL = /^[1-9]\d{0,2}(?:,\d{3})+\.\d{1,2}$/;
 
 const trimZeros = (digits: string): string => digits.replace(/^0+(?=\d)/, '');
 

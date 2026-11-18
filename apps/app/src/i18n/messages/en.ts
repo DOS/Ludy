@@ -5051,7 +5051,7 @@ export const en = {
       title: 'Google Ads',
       action: 'Connect a Google Ads account',
       another: 'Connect another Google Ads account',
-      note: '{brand} only asks for permission to read ad reports; it creates or changes no campaign unless you turn on running ads.',
+      note: 'Google has a single permission that covers both reading and writing, so Google’s consent screen speaks of managing campaigns; {brand} only reads reports, and creates or changes no campaign unless you turn on running ads.',
       expiry: 'Turn on a passkey or 2-step verification for your Google account.',
       reconnect: 'Reconnect with Google',
     },

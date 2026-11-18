@@ -5049,7 +5049,7 @@ export const vi = {
       title: 'Quảng cáo Google',
       action: 'Kết nối tài khoản Google Ads',
       another: 'Kết nối thêm tài khoản Google Ads',
-      note: '{brand} chỉ xin quyền đọc báo cáo quảng cáo; không tạo hay sửa chiến dịch trừ khi bạn bật chạy quảng cáo.',
+      note: 'Google chỉ có một quyền chung cho cả đọc và ghi, nên màn cấp quyền của Google sẽ nói là quản lý chiến dịch; {brand} chỉ đọc báo cáo, và không tạo hay sửa chiến dịch trừ khi bạn bật chạy quảng cáo.',
       expiry: 'Hãy bật khóa truy cập (passkey) hoặc xác minh 2 bước cho tài khoản Google của bạn.',
       reconnect: 'Kết nối lại với Google',
     },

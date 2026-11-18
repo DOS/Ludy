@@ -1614,7 +1614,7 @@ describe('Google Ads connection, short refresh-token warning, and 7-day comparis
     const withGoogle = render(<AdsEmpty canManage sandbox={false} google={{ slug: 'acme' }} entities={one} onConnected={() => undefined} />);
     expect(withGoogle).toContain(en.ads.connectGoogle.title);
     expect(withGoogle).toContain(en.ads.connectGoogle.action);
-    expect(withGoogle).toContain('only asks for permission to read ad reports');
+    expect(withGoogle).toContain('single permission that covers both reading and writing');
     expect(withGoogle).not.toMatch(/googleapis|adwords|customers:|googleAds:/);
 
     const reconnect = render(<ConnectGoogle slug="acme" another reconnect />, 'vi');

@@ -28,7 +28,7 @@ describe('parseMoneyInput', () => {
   });
 
   it('refuses what is not an amount', () => {
-    for (const text of ['', ' ', 'abc', '5.00.000', '1.234,567', '1,234.567', '5..000', '1.2345', '1e6', '-5', '12abc', '1.', '.5', ',5', '1,2,3', '5.000,', '1.000.00']) expect(parseMoneyInput(text), text).toBeNull();
+    for (const text of ['', ' ', 'abc', '5.00.000', '1.234,567', '1,234.567', '5..000', '1.2345', '1e6', '-5', '12abc', '1.', '.5', ',5', '1,2,3', '5.000,', '1.000.00', '0.500', '0,500', '0.000']) expect(parseMoneyInput(text), text).toBeNull();
   });
 });
 

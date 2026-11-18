@@ -24,9 +24,14 @@ describe('the owner copy of Ads', () => {
     });
   }
 
-  it('says what Ludy asks the platform for in the owner’s words, for Meta and for Google', () => {
+  it('says what Ludy asks the platform for in the owner’s words: Meta reads reports only; Google has one permission for reading and writing and Ludy only reads', () => {
     const vi = catalog('vi').ads as unknown as { connectMeta: { note: string }; connectGoogle: { note: string } };
     expect(vi.connectMeta.note).toBe('Ludy chỉ xin quyền đọc báo cáo quảng cáo; không tạo hay sửa chiến dịch trừ khi bạn bật chạy quảng cáo.');
-    expect(vi.connectGoogle.note).toBe(vi.connectMeta.note);
+    // Google's consent screen speaks of managing campaigns, so the note must not claim a read-only permission (the adapter asks the one scope that covers both).
+    expect(vi.connectGoogle.note).toContain('một quyền chung cho cả đọc và ghi');
+    expect(vi.connectGoogle.note).toContain('chỉ đọc báo cáo');
+    expect(vi.connectGoogle.note).not.toContain('chỉ xin quyền đọc');
+    const en = catalog('en').ads as unknown as { connectGoogle: { note: string } };
+    expect(en.connectGoogle.note).toContain('single permission that covers both reading and writing');
   });
 });
