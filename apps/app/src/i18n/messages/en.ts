@@ -1262,6 +1262,12 @@ export const en = {
     pipeline: {
       moveTo: 'Move stage',
     },
+    pagination: {
+      loadMore: 'Load more candidates',
+      loadedOfTotal: 'Showing {loaded} of {total} candidates.',
+      loadedMoreAvailable: 'Showing the first {loaded} candidates; load more to inspect the rest.',
+      loadedAll: 'Showing all {loaded} candidates.',
+    },
     interview: {
       title: 'Interview schedule',
       current: 'Scheduled at {at} (calendar event keeps role title only, no candidate PII).',
@@ -1279,6 +1285,7 @@ export const en = {
       title: 'Ly preliminary screening',
       subtitle: 'Candidate profile is pseudonymized before sending to the model; people make every hiring decision.',
       run: 'Ask Ly for screening brief',
+      includeNotes: 'Include sanitized screening/interview notes when asking Ly (excluded by default)',
       strengths: 'Strengths',
       risks: 'Risks & gaps',
       questions: 'Suggested interview questions',
@@ -1303,6 +1310,7 @@ export const en = {
         ok: 'Ly summarized the pseudonymized profile and interview questions.',
         off: 'AI is off; showing deterministic readiness checks and baseline questions.',
         budget: 'Monthly AI budget reached; showing deterministic readiness checks.',
+        rate_limited: 'Per-minute AI limit reached; showing deterministic readiness checks.',
         unavailable: 'AI is temporarily unavailable; showing deterministic readiness checks.',
         refused: 'AI wording failed safety checks and was discarded; showing deterministic checks.',
       },

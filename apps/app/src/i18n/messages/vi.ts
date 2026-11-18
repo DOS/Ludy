@@ -1260,6 +1260,12 @@ export const vi = {
     pipeline: {
       moveTo: 'Chuyển giai đoạn',
     },
+    pagination: {
+      loadMore: 'Tải thêm ứng viên',
+      loadedOfTotal: 'Đang hiển thị {loaded} / {total} ứng viên.',
+      loadedMoreAvailable: 'Đang hiển thị {loaded} ứng viên đầu tiên; bấm tải thêm để xem tiếp.',
+      loadedAll: 'Đã hiển thị toàn bộ {loaded} ứng viên.',
+    },
     interview: {
       title: 'Lịch phỏng vấn',
       current: 'Đã đặt lịch vào {at} (chỉ ghi tên vị trí trên lịch, không lộ thông tin cá nhân ứng viên).',
@@ -1277,6 +1283,7 @@ export const vi = {
       title: 'Đánh giá sơ bộ cùng Ly',
       subtitle: 'Hồ sơ được ẩn danh trước khi gửi mô hình; bạn luôn tự quyết định tuyển hay từ chối.',
       run: 'Nhờ Ly đánh giá sơ bộ',
+      includeNotes: 'Gửi kèm ghi chú phỏng vấn/sàng lọc đã lọc thông tin cá nhân cho Ly (mặc định không gửi)',
       strengths: 'Điểm phù hợp',
       risks: 'Điểm cần lưu ý',
       questions: 'Gợi ý câu hỏi phỏng vấn',
@@ -1301,6 +1308,7 @@ export const vi = {
         ok: 'Ly đã tóm tắt từ hồ sơ ẩn danh và câu hỏi gợi ý.',
         off: 'Chưa bật AI; đang hiển thị kiểm tra xác định và câu hỏi gợi ý mặc định.',
         budget: 'Đã hết ngân sách AI tháng này; đang hiển thị kiểm tra xác định.',
+        rate_limited: 'Đã chạm giới hạn lượt gọi AI trong phút này; đang hiển thị kiểm tra xác định.',
         unavailable: 'Dịch vụ AI tạm thời không sẵn sàng; đang hiển thị kiểm tra xác định.',
         refused: 'Câu chữ AI không đạt kiểm tra an toàn nên đã bỏ qua; đang hiển thị kiểm tra xác định.',
       },

@@ -488,4 +488,27 @@ describe('InboxReader.recruitingBrief & hr.recruiting_brief meter', () => {
     }
     expect(bodies[0]).not.toContain('22000000');
   });
+
+  it('classifies upstream HTTP 429 rate-limit errors from the model endpoint as reason rate_limited (#3447)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: { message: 'Too many requests' } }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '10' },
+        }),
+      ),
+    );
+
+    const meter: AiMeter = {
+      admit: async () => undefined,
+      record: async () => undefined,
+    };
+    const reader = new InboxReader({ ...CONFIG, maxRetries: 0 });
+    const result = await withAiScope({ orgId: 'org-1', agentId: 'agent-ly', meter }, () =>
+      reader.recruitingBrief(sampleInput(), { forbidden: FORBIDDEN_PII }),
+    );
+    expect(result.ai).toEqual({ ok: false, reason: 'rate_limited' });
+    expect(result.interviewQuestions.length).toBeGreaterThanOrEqual(3);
+  });
 });

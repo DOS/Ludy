@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Recruiting coworker ("Ly", COWORKER_BY_MODULE['hr'] === 'finance') orchestration on the API side (#3425).
+// Recruiting coworker ("Ly", COWORKER_BY_MODULE['hr'] === 'finance') orchestration on the API side (#3425, #3447).
 //
 // Reads a pseudonymized snapshot through the audited sensitive query `hr.recruiting.brief.read` (owner/admin only,
 // audited before returning) BEFORE checking AI availability so non-admin callers ALWAYS receive 403 FORBIDDEN even
-// when AI is disabled. Runs `InboxReader.recruitingBrief` outside the DB transaction under `DraftBudget` with
-// candidate displayName/email/phone in `forbidden`, records `{ candidateId, aiReason }` (zero PII) via
-// `hr.recruiting.brief.audit`, and degrades cleanly to deterministic readiness + baseline interview questions.
+// when AI is disabled. Candidate free-text notes stay excluded by default unless `includeNotes === true`. Runs
+// `InboxReader.recruitingBrief` outside the DB transaction under `DraftBudget` with candidate displayName/email/phone
+// in `forbidden`, records `{ candidateId, aiReason, include_notes }` (zero PII) via `hr.recruiting.brief.audit`, and
+// degrades cleanly to deterministic readiness + baseline interview questions when AI is off, rate-limited, over budget,
+// unavailable, or refused.
 import {
   AiBudgetExhaustedError,
   PayrollPromptLeakError,
@@ -25,8 +27,12 @@ export interface RecruitingBriefAi {
 }
 
 export interface RecruitingBriefPorts {
-  read(candidateId: string, lang: 'vi' | 'en'): Promise<HrRecruitingBriefSnapshot>;
-  record(candidateId: string, aiReason: RecruitingBriefAiReason): Promise<void>;
+  read(candidateId: string, lang: 'vi' | 'en', includeNotes: boolean): Promise<HrRecruitingBriefSnapshot>;
+  record(candidateId: string, aiReason: RecruitingBriefAiReason, includeNotes: boolean): Promise<void>;
+}
+
+function isRateLimitError(error: unknown): boolean {
+  return error instanceof DomainError && (error.code === 'RATE_LIMITED' || error.status === 429);
 }
 
 export async function generateRecruitingBrief(
@@ -37,12 +43,14 @@ export async function generateRecruitingBrief(
   input: HrRecruitingBriefAsk,
 ): Promise<HrRecruitingBriefResult> {
   const lang = input.lang ?? 'vi';
+  const includeNotes = input.includeNotes === true;
   // Always run the owner/admin-gated sensitive read FIRST so non-admin callers never slip through with 200 when AI is off.
-  const snapshot = await ports.read(input.candidateId, lang);
+  const snapshot = await ports.read(input.candidateId, lang, includeNotes);
+  const promptInput = includeNotes ? snapshot.input : { ...snapshot.input, notes: [] };
 
   let result: RecruitingBriefResult;
   if (!ai.reader) {
-    result = await reviewCandidateProfile(snapshot.input, {
+    result = await reviewCandidateProfile(promptInput, {
       generate: null,
       aiDisabledReason: 'off',
       forbidden: snapshot.forbidden,
@@ -50,45 +58,49 @@ export async function generateRecruitingBrief(
   } else {
     const ticket = ai.budget.take(orgId, userId);
     if (!ticket.allowed) {
-      throw new DomainError(
-        'RATE_LIMITED',
-        429,
-        ticket.reason === 'busy'
-          ? 'Đang chờ AI trả lời, hãy đợi xong rồi thử tiếp'
-          : 'Đã dùng AI nhiều lần trong phút này, hãy thử lại sau ít phút',
-        { retryAfterSeconds: ticket.retryAfterSeconds },
-      );
-    }
-    try {
-      result = await ai.reader.recruitingBrief(snapshot.input, { forbidden: snapshot.forbidden });
-    } catch (error: unknown) {
-      if (error instanceof AiBudgetExhaustedError) {
-        result = await reviewCandidateProfile(snapshot.input, {
-          generate: null,
-          aiDisabledReason: 'budget',
-          forbidden: snapshot.forbidden,
-        });
-      } else if (error instanceof PayrollPromptLeakError) {
-        result = await reviewCandidateProfile(snapshot.input, {
-          generate: null,
-          aiDisabledReason: 'unavailable',
-          forbidden: snapshot.forbidden,
-        });
-        result = { ...result, ai: { ok: false, reason: 'refused' } };
-      } else {
-        console.error('[hr-recruiting-ai] brief failed', error instanceof Error ? error.name : typeof error);
-        result = await reviewCandidateProfile(snapshot.input, {
-          generate: null,
-          aiDisabledReason: 'unavailable',
-          forbidden: snapshot.forbidden,
-        });
+      result = await reviewCandidateProfile(promptInput, {
+        generate: null,
+        aiDisabledReason: 'rate_limited',
+        forbidden: snapshot.forbidden,
+      });
+    } else {
+      try {
+        result = await ai.reader.recruitingBrief(promptInput, { forbidden: snapshot.forbidden });
+      } catch (error: unknown) {
+        if (error instanceof AiBudgetExhaustedError) {
+          result = await reviewCandidateProfile(promptInput, {
+            generate: null,
+            aiDisabledReason: 'budget',
+            forbidden: snapshot.forbidden,
+          });
+        } else if (isRateLimitError(error)) {
+          result = await reviewCandidateProfile(promptInput, {
+            generate: null,
+            aiDisabledReason: 'rate_limited',
+            forbidden: snapshot.forbidden,
+          });
+        } else if (error instanceof PayrollPromptLeakError) {
+          result = await reviewCandidateProfile(promptInput, {
+            generate: null,
+            aiDisabledReason: 'unavailable',
+            forbidden: snapshot.forbidden,
+          });
+          result = { ...result, ai: { ok: false, reason: 'refused' } };
+        } else {
+          console.error('[hr-recruiting-ai] brief failed', error instanceof Error ? error.name : typeof error);
+          result = await reviewCandidateProfile(promptInput, {
+            generate: null,
+            aiDisabledReason: 'unavailable',
+            forbidden: snapshot.forbidden,
+          });
+        }
+      } finally {
+        ticket.release();
       }
-    } finally {
-      ticket.release();
     }
   }
 
-  await ports.record(input.candidateId, result.ai.reason);
+  await ports.record(input.candidateId, result.ai.reason, includeNotes);
   return {
     candidateId: snapshot.candidateId,
     readiness: result.readiness,
