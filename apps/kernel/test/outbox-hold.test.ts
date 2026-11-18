@@ -56,6 +56,7 @@ describe('which events wait', () => {
     expect(heldAppOf('finance.archive_requested')).toBe('finance');
     expect(heldAppOf('ads.launch.queued')).toBe('ads');
     expect(heldAppOf('notes.attachment.extract_queued')).toBe('notes');
+    expect(heldAppOf('notes.todo.handed_over')).toBeNull();
     expect(heldAppOf('kernel.file.ingested')).toBe('finance');
     expect(heldAppOf('kernel.file.reextract_requested')).toBe('finance');
   });

@@ -570,7 +570,7 @@ export function NoteAttachments({
       )}
 
       <Dialog open={lightbox !== null} onOpenChange={(open) => !open && setLightbox(null)}>
-        <DialogContent className="max-w-4xl">
+        <DialogContent className="max-w-4xl" closeLabel={t('closeLightbox')}>
           <DialogHeader>
             <DialogTitle>{lightbox?.filename ?? ''}</DialogTitle>
             <DialogDescription className="sr-only">{t('closeLightbox')}</DialogDescription>

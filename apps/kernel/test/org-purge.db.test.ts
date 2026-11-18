@@ -281,6 +281,16 @@ suite('org purge on PostgreSQL (#1024)', () => {
       await c.query(`INSERT INTO crove_notes.link (org_id, note_id, target_type, target_id, party_id, created_by) VALUES ($1, $2, 'kernel.party', $3, $3, $4)`, [org.orgId, privateNote, stray, owner]);
       // A member's own to-do (#1673), made from the private note: deleted too, before the note it names.
       await c.query(`INSERT INTO crove_notes.todo (org_id, owner_user_id, title, sort_key, source_note_id) VALUES ($1, $2, 'Việc riêng', 'V', $3)`, [org.orgId, member, privateNote]);
+      // A file attached to the private note (#3561): its row goes before the note and its blob, under notes/<org>/<id>, in the same command.
+      const noteAttachmentId = randomUUID();
+      const noteAttachmentKey = `notes/${org.orgId}/${noteAttachmentId}`;
+      const noteAttachmentBytes = new TextEncoder().encode(`%PDF-1.4 note-${tag}`);
+      store.blobs.set(noteAttachmentKey, noteAttachmentBytes);
+      await c.query(
+        `INSERT INTO crove_notes.attachment (org_id, id, note_id, author_user_id, filename, content_type, size_bytes, sha256, storage_key)
+         VALUES ($1, $2, $3, $4, 'hop-dong.pdf', 'application/pdf', $5, $6, $7)`,
+        [org.orgId, noteAttachmentId, privateNote, owner, noteAttachmentBytes.byteLength, 'c'.repeat(64), noteAttachmentKey],
+      );
       // The people payroll is run for (#2530): an employee, an append-only employment row and a dependent, all deleted with the org (the employment through its own guard).
       const employee = (await c.query<{ id: string }>(`INSERT INTO crove_hr.payroll_employee (org_id, display_name) VALUES ($1, 'Nhân viên') RETURNING id`, [org.orgId])).rows[0]?.id;
       await c.query(`INSERT INTO crove_hr.payroll_employment (org_id, employee_id, effective_from, contract_type, region, base_wage) VALUES ($1, $2, '2026-01-01', 'indefinite', 'I', 1000000)`, [org.orgId, employee]);
@@ -292,7 +302,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
         [org.orgId, run, employee],
       );
       await c.query(`UPDATE crove_hr.payroll_run SET status = 'approved', approved_at = now(), approved_by = $2, approval = '{}'::jsonb WHERE id = $1`, [run, owner]);
-      return { stray, position, parent, pinned, free, ledgerParty, imageKey, pendingKey, einvoiceDraft };
+      return { stray, position, parent, pinned, free, ledgerParty, imageKey, pendingKey, einvoiceDraft, noteAttachmentKey };
     });
     // The first step, draft to submitting, is a person's approved issue (finance-einvoice-issue.db.test.ts); here it is set up as the database owner with the triggers off.
     await admin(async (c) => {
@@ -504,6 +514,11 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(store.blobs.has(s.imageKey)).toBe(false);
     expect(store.blobs.has(other.imageKey)).toBe(true);
     expect((await admin(async (c) => (await c.query('SELECT storage_key FROM crove_kernel.conversation_blob_doomed WHERE storage_key LIKE $1', [`conversation/${s.org.orgId}/%`])).rows)).map((r) => r.storage_key).sort()).toEqual([s.imageKey, s.pendingKey].sort());
+    // A note's attachment (#3561): its row and its blob go in the same command, and the other org's stay.
+    expect(before['crove_notes.attachment']).toBe(1);
+    expect(after['crove_notes.attachment'] ?? 0).toBe(0);
+    expect(store.blobs.has(s.noteAttachmentKey)).toBe(false);
+    expect(store.blobs.has(other.noteAttachmentKey)).toBe(true);
     // The booked party and the one only a ledger line names stay, anonymized; the stray one is deleted.
     expect(after['crove_kernel.party']).toBe(2);
     expect(
@@ -567,10 +582,11 @@ suite('org purge on PostgreSQL (#1024)', () => {
       detail: {
         reason: 'Owner left, export downloaded',
         minDays: 30,
-        blobs: { deleted: 2, held: 0 },
+        blobs: { deleted: 3, held: 0 },
         counts: {
           deleted: expect.objectContaining({
             'crove_kernel.conversation_attachment': 2,
+            'crove_notes.attachment': 1,
             'crove_kernel.tenant_member': 2,
             'crove_kernel.file': 1,
             'crove_kernel.party': 2,
@@ -770,8 +786,8 @@ suite('org purge on PostgreSQL (#1024)', () => {
     try {
       const { code, out } = await run(s.org.slug);
       expect(code).toBe(0);
-      // The org's customer image (CV5c) is deleted, the held file's blob is not.
-      expect(out).toContain('blobs deleted 1, held 1 (under a retention hold, left in place)');
+      // The org's customer image (CV5c) and its note attachment (#3561) are deleted, the held file's blob is not.
+      expect(out).toContain('blobs deleted 2, held 1 (under a retention hold, left in place)');
     } finally {
       held = null;
     }

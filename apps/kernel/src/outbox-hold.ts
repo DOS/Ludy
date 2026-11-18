@@ -51,7 +51,8 @@ const HOLDING_PREFIXES: Readonly<Record<string, string>> = {
   'social.': 'social',
   'crm.': 'crm',
   'ads.': 'ads',
-  'notes.': 'notes',
+  // Only the attachment extraction requests of Notes (#3561); its other events keep flowing as before.
+  'notes.attachment.': 'notes',
 };
 
 /** The app whose events wait while it is off, for this event type, or null when the event is never parked. */

@@ -176,7 +176,7 @@ export async function uploadNoteAttachment(
     apiFetch(`/api/notes/${encodeURIComponent(noteId)}/attachments`, {
       method: 'POST',
       body: form,
-      orgSlug,
+      ...(orgSlug === undefined ? {} : { orgSlug }),
     }),
   );
   const data = (await response.json()) as { attachment: NoteAttachment };
@@ -187,7 +187,7 @@ export async function fetchNoteAttachmentBlob(
   attachmentId: string,
   orgSlug?: string | null,
 ): Promise<Blob> {
-  const response = await apiFetch(`/api/notes/attachments/${encodeURIComponent(attachmentId)}`, { orgSlug });
+  const response = await apiFetch(`/api/notes/attachments/${encodeURIComponent(attachmentId)}`, orgSlug === undefined ? {} : { orgSlug });
   return response.blob();
 }
 
