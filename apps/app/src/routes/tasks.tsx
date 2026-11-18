@@ -3,9 +3,9 @@
 // (an email, a run that read one) is marked, so nobody acts on it unchecked.
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { PROJECT_TASK_MAP_LIMIT, serializeTaskChecklist, type FilterAst, type SavedViewSort, type TaskChecklistStep } from '@crove/kernel-contract';
+import { PROJECT_TASK_MAP_LIMIT, type FilterAst, type SavedViewSort } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -15,27 +15,19 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { ProjectIcon } from '@crove/ui/components/project-icon';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
-import { Textarea } from '@crove/ui/components/textarea';
-import { DateInput } from '../components/date-input.tsx';
 import { meetingsInstalled } from '../components/linked-meetings.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
-import {
-  TaskChecklistBadge,
-  TaskChecklistEditor,
-  TaskChecklistSection,
-  hasBlankChecklistStep,
-  normalizeChecklistSteps,
-} from '../components/task-checklist.tsx';
+import { TaskChecklistBadge, TaskChecklistSection } from '../components/task-checklist.tsx';
+import { EditTaskPanel, NewTaskPanel } from '../components/task-panel.tsx';
 import { TaskConversationLink } from '../components/task-conversation-link.tsx';
 import { TaskFilterBar } from '../components/task-filter-bar.tsx';
 import { TaskRecurrenceControl, formatRecurrenceBadgeLabel } from '../components/task-recurrence-control.tsx';
-import { DataTable, Empty, ErrorText, FieldError, ListSkeleton, PageHeader, PageSkeleton, fieldControl } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, ListSkeleton, PageHeader, PageSkeleton } from '../components/ui.tsx';
 import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, conversationOf, fromTodo, meetingItemOf, meetingSourceOf, socialPostOf, taskDueDay, taskDueFromDay, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
+import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, conversationOf, fromTodo, meetingItemOf, meetingSourceOf, socialPostOf, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isModuleOff } from '../lib/errors.ts';
-import { browserTimeZone } from '../lib/my-work.ts';
 import { filterTasksByProject, projectsInstalled, taskProjectMap, taskProjectOptions } from '../lib/projects.ts';
 import { withSearch } from '../lib/search.ts';
 import { EMPTY_TASK_FILTER, astToTaskFilter, taskFilterToAst, type TaskFilterState } from '../lib/task-filter.ts';
@@ -55,94 +47,6 @@ function statusVariant(status: string): 'success' | 'warning' | 'outline' | 'sec
 function positionTitle(chart: Chart | undefined, id: string | null, root: string, unknown: string): string {
   if (id === null) return root;
   return chart?.positions.find((p) => p.id === id)?.title ?? unknown;
-}
-
-function NewTask({ chart }: { chart: Chart | undefined }) {
-  const t = useTranslations('tasks');
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [assignee, setAssignee] = useState('');
-  const [dueOn, setDueOn] = useState('');
-  const [checklist, setChecklist] = useState<TaskChecklistStep[]>([]);
-  const [stepError, setStepError] = useState(false);
-  const [key, setKey] = useState(() => crypto.randomUUID());
-  const create = useMutation(orpc.tasks.create.mutationOptions({ onSuccess: refresh }));
-  const positions = (chart?.positions ?? []).filter((p) => p.status !== 'archived');
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (hasBlankChecklistStep(checklist)) {
-      setStepError(true);
-      return;
-    }
-    const due = taskDueFromDay(dueOn, browserTimeZone());
-    const nextChecklist = normalizeChecklistSteps(checklist);
-    create.mutate(
-      {
-        title: title.trim(),
-        ...(description.trim() ? { description: description.trim() } : {}),
-        assigneePositionId: assignee || null,
-        ...(due ? { due } : {}),
-        ...(nextChecklist.length > 0 ? { checklist: nextChecklist } : {}),
-        idempotencyKey: key,
-      },
-      {
-        onSuccess: () => {
-          setTitle('');
-          setDescription('');
-          setDueOn('');
-          setChecklist([]);
-          setStepError(false);
-          setKey(crypto.randomUUID());
-        },
-      },
-    );
-  };
-  return (
-    <form onSubmit={submit} className="mb-6 grid gap-3 rounded-lg border bg-muted/40 p-3 md:grid-cols-6">
-      <p className="text-sm font-medium text-foreground md:col-span-6">{t('newTask')}</p>
-      <label className="block text-xs md:col-span-2">
-        <span className="text-subtle-foreground">{t('newTitle')}</span>
-        <Input required maxLength={300} value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1" />
-      </label>
-      <label className="block text-xs md:col-span-2">
-        <span className="text-subtle-foreground">{t('assignTo')}</span>
-        <NativeSelect className="mt-1 w-full" value={assignee} onChange={(e) => setAssignee(e.target.value)}>
-          <NativeSelectOption value="">{t('rootAssignee')}</NativeSelectOption>
-          {positions.map((p) => (
-            <NativeSelectOption key={p.id} value={p.id}>
-              {p.title}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-      </label>
-      <label className="block text-xs md:col-span-2">
-        <span className="text-subtle-foreground">{t('dueLabel')}</span>
-        <DateInput value={dueOn} onChange={setDueOn} className="mt-1" aria-label={t('dueLabel')} />
-      </label>
-      <label className="block text-xs md:col-span-6">
-        <span className="text-subtle-foreground">{t('newDescription')}</span>
-        <Input maxLength={10000} value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1" />
-      </label>
-      <div className="md:col-span-6">
-        <TaskChecklistEditor
-          key={key}
-          idPrefix="new-task"
-          value={checklist}
-          stepError={stepError}
-          onChange={(next) => {
-            setChecklist(next);
-            if (stepError && !hasBlankChecklistStep(next)) setStepError(false);
-          }}
-        />
-      </div>
-      <div className="flex items-center gap-2 md:col-span-6">
-        <Button loading={create.isPending} type="submit">
-          {t('create')}
-        </Button>
-        {create.error && <span className="text-xs text-destructive">{errorMessage(create.error)}</span>}
-      </div>
-    </form>
-  );
 }
 
 export function TasksPage() {
@@ -179,6 +83,8 @@ export function TasksPage() {
     placeholderData: keepPreviousData,
   });
   const perms = agentPermissions(org.data?.role);
+  // The panel over the list: a new task, or one task opened from its row.
+  const [panel, setPanel] = useState<{ kind: 'new' } | { kind: 'edit'; id: string } | null>(null);
 
   const hasProjectsModule = projectsInstalled();
   const projectsQuery = useQuery({
@@ -218,8 +124,19 @@ export function TasksPage() {
 
   return (
     <div>
-      <PageHeader title={t('title')} subtitle={t('subtitle')} />
-      {perms.tasks && <NewTask chart={chart.data} />}
+      <PageHeader
+        title={t('title')}
+        subtitle={t('subtitle')}
+        actions={
+          perms.tasks ? (
+            <Button type="button" data-testid="task-add" onClick={() => setPanel({ kind: 'new' })}>
+              {t('addTask')}
+            </Button>
+          ) : undefined
+        }
+      />
+      {panel?.kind === 'new' && perms.tasks && <NewTaskPanel chart={chart.data} onClose={() => setPanel(null)} />}
+      {panel?.kind === 'edit' && perms.tasks && <EditTaskPanel taskId={panel.id} chart={chart.data} onClose={() => setPanel(null)} />}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <Tabs value={filter} onValueChange={(value) => setFilter(value as TaskFilter)}>
           <TabsList>
@@ -302,8 +219,8 @@ export function TasksPage() {
           <DataTable
             head={
               projectsActive
-                ? [t('colTitle'), t('colProject'), t('colAssignee'), t('colStatus'), t('colCreated')]
-                : [t('colTitle'), t('colAssignee'), t('colStatus'), t('colCreated')]
+                ? [t('colTitle'), t('colProject'), t('colAssignee'), t('colStatus'), t('colCreated'), ...(perms.tasks ? [t('colActions')] : [])]
+                : [t('colTitle'), t('colAssignee'), t('colStatus'), t('colCreated'), ...(perms.tasks ? [t('colActions')] : [])]
             }
           >
             {visibleTasks.map((task) => {
@@ -353,6 +270,13 @@ export function TasksPage() {
                     <Badge variant={statusVariant(task.status)}>{t(`status.${task.status}`)}</Badge>
                   </TableCell>
                   <TableCell className="px-4 text-xs text-muted-foreground">{f.dateTime(task.createdAt)}</TableCell>
+                  {perms.tasks && (
+                    <TableCell className="px-4">
+                      <Button type="button" variant="ghost" size="sm" aria-label={t('editRow', { title: task.title })} onClick={() => setPanel({ kind: 'edit', id: task.id })}>
+                        {t('edit')}
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               );
             })}
@@ -360,129 +284,6 @@ export function TasksPage() {
         </>
       )}
     </div>
-  );
-}
-
-type TaskDetail = Awaited<ReturnType<typeof orpc.tasks.get.call>>['task'];
-
-function EditTaskForm({ task, chart, onDone }: { task: TaskDetail; chart: Chart | undefined; onDone: () => void }) {
-  const t = useTranslations('tasks');
-  const tz = browserTimeZone();
-  const [initial] = useState(task);
-  const [title, setTitle] = useState(task.title);
-  const [titleError, setTitleError] = useState(false);
-  const [description, setDescription] = useState(task.description ?? '');
-  const [assignee, setAssignee] = useState(task.assigneePositionId ?? '');
-  const [dueOn, setDueOn] = useState(() => taskDueDay(task.due, tz));
-  const [checklist, setChecklist] = useState<TaskChecklistStep[]>(() => (task.checklist ?? []).map((s) => ({ ...s })));
-  const [stepError, setStepError] = useState(false);
-  const [key, setKey] = useState(() => crypto.randomUUID());
-  const update = useMutation(orpc.tasks.update.mutationOptions({ onSuccess: refresh }));
-  const positions = (chart?.positions ?? []).filter((p) => p.status !== 'archived' || p.id === task.assigneePositionId);
-  const titleField = fieldControl(`task-${task.id}-title`, { error: titleError });
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const nextTitle = title.trim();
-    if (!nextTitle) {
-      setTitleError(true);
-      return;
-    }
-    if (hasBlankChecklistStep(checklist)) {
-      setStepError(true);
-      return;
-    }
-    const nextDescription = description.trim() ? description.trim() : null;
-    const nextAssignee = assignee || null;
-    const initialDueOn = taskDueDay(initial.due, tz);
-    const nextChecklist = normalizeChecklistSteps(checklist);
-    const checklistChanged = serializeTaskChecklist(nextChecklist) !== serializeTaskChecklist(initial.checklist ?? []);
-    const patch = {
-      ...(nextTitle !== initial.title ? { title: nextTitle } : {}),
-      ...(description !== (initial.description ?? '') ? { description: nextDescription } : {}),
-      ...(nextAssignee !== initial.assigneePositionId ? { assigneePositionId: nextAssignee } : {}),
-      ...(dueOn !== initialDueOn ? { due: taskDueFromDay(dueOn, tz) } : {}),
-      ...(checklistChanged ? { checklist: nextChecklist } : {}),
-    };
-    if (Object.keys(patch).length === 0) {
-      onDone();
-      return;
-    }
-    update.mutate(
-      {
-        id: task.id,
-        ...patch,
-        idempotencyKey: key,
-      },
-      {
-        onSuccess: () => {
-          setKey(crypto.randomUUID());
-          onDone();
-        },
-      },
-    );
-  };
-  return (
-    <form onSubmit={submit} className="grid gap-3 rounded-lg border bg-muted/40 p-3 md:grid-cols-6" data-testid="task-edit-form">
-      <label htmlFor={titleField.id} className="block text-xs md:col-span-2">
-        <span className="text-subtle-foreground">{t('newTitle')}</span>
-        <Input
-          {...titleField}
-          required
-          maxLength={300}
-          value={title}
-          onBlur={(e) => {
-            if (!e.target.value.trim()) setTitleError(true);
-          }}
-          onChange={(e) => {
-            setTitle(e.target.value);
-            if (titleError && e.target.value.trim()) setTitleError(false);
-          }}
-          className="mt-1"
-        />
-        <FieldError id={titleField.id} className="mt-1">
-          {titleError ? t('titleRequired') : null}
-        </FieldError>
-      </label>
-      <label className="block text-xs md:col-span-2">
-        <span className="text-subtle-foreground">{t('assignTo')}</span>
-        <NativeSelect className="mt-1 w-full" value={assignee} onChange={(e) => setAssignee(e.target.value)}>
-          <NativeSelectOption value="">{t('rootAssignee')}</NativeSelectOption>
-          {positions.map((p) => (
-            <NativeSelectOption key={p.id} value={p.id}>
-              {p.title}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-      </label>
-      <label className="block text-xs md:col-span-2">
-        <span className="text-subtle-foreground">{t('dueLabel')}</span>
-        <DateInput value={dueOn} onChange={setDueOn} className="mt-1" aria-label={t('dueLabel')} />
-      </label>
-      <label className="block text-xs md:col-span-6">
-        <span className="text-subtle-foreground">{t('description')}</span>
-        <Textarea rows={3} maxLength={10000} value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1" />
-      </label>
-      <div className="md:col-span-6">
-        <TaskChecklistEditor
-          idPrefix={`edit-task-${task.id}`}
-          value={checklist}
-          stepError={stepError}
-          onChange={(next) => {
-            setChecklist(next);
-            if (stepError && !hasBlankChecklistStep(next)) setStepError(false);
-          }}
-        />
-      </div>
-      <div className="flex items-center gap-2 md:col-span-6">
-        <Button loading={update.isPending} type="submit">
-          {t('save')}
-        </Button>
-        <Button type="button" variant="outline" disabled={update.isPending} onClick={onDone}>
-          {t('cancel')}
-        </Button>
-        {update.error && <span className="text-xs text-destructive">{errorMessage(update.error)}</span>}
-      </div>
-    </form>
   );
 }
 
@@ -565,7 +366,7 @@ export function TaskDetailPage() {
           ) : undefined
         }
       />
-      {editing && perms.tasks && <EditTaskForm key={task.id} task={task} chart={chart.data} onDone={() => setEditingTaskId(null)} />}
+      {editing && perms.tasks && <EditTaskPanel key={task.id} taskId={task.id} chart={chart.data} onClose={() => setEditingTaskId(null)} />}
       <Card className="gap-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={statusVariant(task.status)}>{t(`status.${task.status}`)}</Badge>

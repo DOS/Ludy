@@ -4,9 +4,17 @@
 // middle and the buttons always in view at the bottom. Focus moves into the panel, Tab stays inside, Escape or the close
 // button cancels and focus returns to the button that opened it. While the request is on its way the panel stays open, so the
 // answer is not lost. The caller keeps its own state and mutation; this only decides where the form lives.
-import type { FormEvent, ReactNode } from 'react';
+// Two habits live here so every form in a panel has them (#3606): Cmd or Ctrl plus Enter saves from any field, and a form
+// that holds input (`dirty`) asks before Escape or the close button throws it away.
+import { useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
+import { Button } from '@crove/ui/components/button';
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@crove/ui/components/sheet';
+
+// Cmd or Ctrl plus Enter, not in the middle of an IME composition (a Vietnamese Telex or VNI word being typed).
+export function isSaveShortcut(event: { key: string; metaKey: boolean; ctrlKey: boolean; isComposing: boolean }): boolean {
+  return event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.isComposing;
+}
 
 export function FormPanel({
   title,
@@ -14,6 +22,7 @@ export function FormPanel({
   label,
   wide = false,
   busy = false,
+  dirty = false,
   onClose,
   onSubmit,
   footer,
@@ -26,6 +35,8 @@ export function FormPanel({
   // A form with a row of columns (the voucher's lines) takes a wider column from sm up.
   wide?: boolean;
   busy?: boolean;
+  // The form holds input that has not been saved: closing it asks first, and says what is lost.
+  dirty?: boolean;
   onClose: () => void;
   // Without it the panel shows a result (no form), with only the footer's buttons.
   onSubmit?: (event: FormEvent<HTMLFormElement>) => void;
@@ -34,10 +45,42 @@ export function FormPanel({
   children: ReactNode;
 }) {
   const root = useTranslations();
+  const formRef = useRef<HTMLFormElement>(null);
+  const [asking, setAsking] = useState(false);
+  // Escape, the close button and the cancel buttons all end here; a click on the dimmed page never does (see below).
+  const requestClose = () => {
+    if (busy) return;
+    if (dirty && onSubmit) setAsking(true);
+    else onClose();
+  };
+  const keepEditing = () => {
+    setAsking(false);
+    // The warning's own button is about to go away, so focus goes back to the first field instead of to the page.
+    formRef.current?.querySelector<HTMLElement>('input:not([type=hidden]), textarea, select')?.focus();
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
+    if (!isSaveShortcut({ key: event.key, metaKey: event.metaKey, ctrlKey: event.ctrlKey, isComposing: event.nativeEvent.isComposing })) return;
+    event.preventDefault();
+    if (!busy) event.currentTarget.requestSubmit();
+  };
   const content = (
     <>
       <SheetBody className="space-y-4">{children}</SheetBody>
-      <SheetFooter>{footer}</SheetFooter>
+      {asking ? (
+        <div role="alert" data-testid="panel-discard" className="space-y-3 border-t border-border bg-muted/50 p-4">
+          <p className="text-sm text-foreground">{root('common.discardAsk')}</p>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="destructive" onClick={onClose}>
+              {root('common.discard')}
+            </Button>
+            <Button type="button" autoFocus onClick={keepEditing}>
+              {root('common.keepEditing')}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <SheetFooter>{footer}</SheetFooter>
+      )}
     </>
   );
   return (
@@ -46,7 +89,7 @@ export function FormPanel({
       // A form is not dropped by a stray click on the dimmed page: Escape and the close button still cancel it, as the cancel button did.
       disablePointerDismissal={onSubmit !== undefined}
       onOpenChange={(open) => {
-        if (!open && !busy) onClose();
+        if (!open) requestClose();
       }}
     >
       <SheetContent closeLabel={root('common.close')} className={wide ? 'sm:max-w-2xl' : undefined}>
@@ -55,7 +98,7 @@ export function FormPanel({
           {description && <SheetDescription>{description}</SheetDescription>}
         </SheetHeader>
         {onSubmit ? (
-          <form aria-label={label ?? title} className="flex min-h-0 flex-1 flex-col" onSubmit={onSubmit}>
+          <form ref={formRef} aria-label={label ?? title} className="flex min-h-0 flex-1 flex-col" onSubmit={onSubmit} onKeyDown={onKeyDown}>
             {content}
           </form>
         ) : (
