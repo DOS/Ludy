@@ -14340,6 +14340,7 @@ export const vi = {
       mcp: {
         list: 'Cho ứng dụng AI xem danh sách các cuộc họp đã công bố biên bản và chia sẻ cho cả công ty',
         minutes: 'Cho ứng dụng AI đọc biên bản đã công bố của một cuộc họp chia sẻ cho cả công ty',
+        open_actions: 'Cho ứng dụng AI xem các việc còn mở từ biên bản đã công bố của những cuộc họp chia sẻ cho cả công ty',
       },
       hook: {
         clear: 'Gỡ địa chỉ nhận biên bản của bạn',

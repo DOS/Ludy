@@ -16,8 +16,9 @@ Only through a **company grant** (an owner or admin connected the app for the wh
 | --- | --- | --- |
 | `ludy_meetings_list` | optional `from` and `to` (ISO 8601 with an offset, for example `2026-11-16T00:00:00+07:00`), optional `limit` (1 to 50, default 25) | the latest meetings first: `id`, `title`, `startedAt`, `lengthSeconds`, `language` (`vi` or `en`) and `publishedAt`; `total` (how many exist) and `truncated` (true when there are more than were returned) |
 | `ludy_meeting_minutes` | `meetingId` (an `id` from the list) | the same fields, then `summaryLines` (the minutes as plain lines; the template's headings are lines of it; at most 80 lines of 2,000 characters), `decisions` (at most 30 lines) and `actions` (at most 50: `title`, `who` as it was said in the meeting or null, `dueDate` when one was matched or null, `status` `open` or `task_made`); the flags `summaryTruncated`, `decisionsTruncated` and `actionsTruncated` say when something was left out |
+| `ludy_meetings_open_actions` | optional `dueBefore` (an ISO day; items with no due date are left out when it is set), optional `limit` (1 to 100, default 50) | the open action items (no task made yet) of published meetings shared with the whole company, the newest meeting first: `meetingId`, `meetingTitle`, `meetingStartedAt`, `title`, `owner` (as it was said in the meeting or null; never a user), `dueDate` (an ISO day or null) and `status` (always `open`); `total` and `truncated` |
 
-A third tool, `ludy_meetings_open_actions` (the open action items across meetings, issue #3804), is **not shipped yet**. When it lands it is listed in [the endpoint runbook](../runbooks/mcp-endpoint.md); until then read the actions from each meeting's minutes.
+`ludy_meetings_open_actions` (issue #3804) is the one read for follow-ups: use it for "what is still open" instead of opening each meeting's minutes. An item a person already made a task of is not listed (its progress is a task, which no tool here reads); drafts and items Ludy flagged are never listed. It is also listed in [the endpoint runbook](../runbooks/mcp-endpoint.md).
 
 ### The exact scope
 
@@ -35,6 +36,7 @@ Titles, minutes, decisions and action items are text that people and an AI wrote
 - Every grant has a **daily row budget** (default 2,000 rows, counted over the UTC day, `MCP_GRANT_DAILY_ROWS`), a rate limit (60 calls a minute) and a cap of concurrent calls (4). Once the day's budget is spent every tool call is refused (`rate_limited`) until midnight UTC; a call that starts under the budget may end over it by one answer.
 - `ludy_meetings_list` costs **one row per meeting returned**.
 - `ludy_meeting_minutes` costs **1 + the number of summary lines + decisions + action items** it returns. The worst case is 1 + 80 + 30 + 50 = 161 rows; a typical set of minutes is 15 to 40.
+- `ludy_meetings_open_actions` costs **one row per item returned** (at most 100).
 - So: list with a narrow `from` and `to` (the last week, say), read the minutes only of meetings you have not handled (compare `publishedAt` with the last one you saw), and do not re-read minutes on every run.
 
 ### Flow A: the wake arrives, read the minutes, prepare follow-ups
@@ -67,8 +69,9 @@ Chỉ qua **quyền kết nối của công ty** (chủ hoặc quản trị viê
 | --- | --- | --- |
 | `ludy_meetings_list` | tùy chọn `from` và `to` (ISO 8601 có múi giờ, ví dụ `2026-11-16T00:00:00+07:00`), tùy chọn `limit` (1 đến 50, mặc định 25) | các cuộc họp mới nhất trước: `id`, `title`, `startedAt`, `lengthSeconds`, `language` (`vi` hoặc `en`), `publishedAt`; `total` (tổng số) và `truncated` (true khi còn nhiều hơn số đã trả) |
 | `ludy_meeting_minutes` | `meetingId` (một `id` lấy từ danh sách) | các trường trên, rồi `summaryLines` (biên bản thành các dòng thường; tiêu đề của mẫu cũng là một dòng; tối đa 80 dòng, mỗi dòng 2.000 ký tự), `decisions` (tối đa 30 dòng) và `actions` (tối đa 50: `title`, `who` như đã nói trong cuộc họp hoặc null, `dueDate` khi nhận ra được ngày hoặc null, `status` là `open` hoặc `task_made`); các cờ `summaryTruncated`, `decisionsTruncated`, `actionsTruncated` báo khi có phần bị cắt |
+| `ludy_meetings_open_actions` | tùy chọn `dueBefore` (một ngày ISO; khi đặt thì việc không có hạn bị bỏ qua), tùy chọn `limit` (1 đến 100, mặc định 50) | các việc cần làm còn mở (chưa thành công việc) của những cuộc họp đã công bố và chia sẻ cho cả công ty, cuộc họp mới nhất trước: `meetingId`, `meetingTitle`, `meetingStartedAt`, `title`, `owner` (như đã nói trong cuộc họp hoặc null; không bao giờ là một người dùng), `dueDate` (ngày ISO hoặc null) và `status` (luôn là `open`); `total` và `truncated` |
 
-Công cụ thứ ba, `ludy_meetings_open_actions` (các việc cần làm còn mở trên nhiều cuộc họp, issue #3804), **chưa phát hành**. Khi có, nó được ghi trong [sổ tay MCP](../runbooks/mcp-endpoint.md); đến lúc đó hãy đọc việc cần làm từ biên bản của từng cuộc họp.
+`ludy_meetings_open_actions` (issue #3804) là lần đọc dành cho việc theo dõi: dùng nó cho câu "còn việc gì đang mở" thay vì mở biên bản từng cuộc họp. Việc mà một người đã tạo thành công việc thì không có trong danh sách (tiến độ của nó là một công việc, mà công cụ nào ở đây cũng không đọc); bản nháp và việc Ludy đã đánh dấu thì không bao giờ có. Công cụ cũng được ghi trong [sổ tay MCP](../runbooks/mcp-endpoint.md).
 
 ### Phạm vi chính xác
 
@@ -86,6 +89,7 @@ Tiêu đề, biên bản, quyết định và việc cần làm là chữ do ng�
 - Mỗi quyền kết nối có **ngân sách dòng mỗi ngày** (mặc định 2.000 dòng, tính theo ngày UTC, `MCP_GRANT_DAILY_ROWS`), giới hạn tốc độ (60 lượt gọi mỗi phút) và giới hạn số lượt gọi đồng thời (4). Hết ngân sách trong ngày thì mọi lượt gọi công cụ bị từ chối (`rate_limited`) cho đến nửa đêm UTC; một lượt gọi bắt đầu khi còn ngân sách có thể kết thúc vượt thêm một câu trả lời.
 - `ludy_meetings_list` tốn **một dòng cho mỗi cuộc họp trả về**.
 - `ludy_meeting_minutes` tốn **1 + số dòng tóm tắt + số quyết định + số việc cần làm** trả về. Tệ nhất là 1 + 80 + 30 + 50 = 161 dòng; một biên bản thường khoảng 15 đến 40.
+- `ludy_meetings_open_actions` tốn **một dòng cho mỗi việc trả về** (tối đa 100).
 - Vì vậy: lấy danh sách với `from` và `to` hẹp (ví dụ tuần qua), chỉ đọc biên bản của những cuộc họp chưa xử lý (so `publishedAt` với lần trước), và đừng đọc lại biên bản mỗi lần chạy.
 
 ### Luồng A: nhận được báo thức, đọc biên bản, chuẩn bị việc theo dõi
