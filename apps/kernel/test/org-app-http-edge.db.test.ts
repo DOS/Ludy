@@ -117,16 +117,19 @@ suite('the HTTP edge and the stream of the per-org app switch (ADR-0053, C2b)', 
     expect(((await (await post('meeting_audio')).json()) as { code?: string }).code).toBe('STAGED_UPLOAD_REQUIRED');
   });
 
-  it('offers the extension no Meetings feature while Meetings is off', async () => {
-    const extension = { tokenId: randomUUID(), orgId, userId: owner, scopes: ['meetings', 'agenda'] as const, expiresAt: new Date(Date.now() + 3_600_000).toISOString() };
+  it('offers the extension no Meetings or Notes feature while that module is off', async () => {
+    const extension = { tokenId: randomUUID(), orgId, userId: owner, scopes: ['meetings', 'agenda', 'notes'] as const, expiresAt: new Date(Date.now() + 3_600_000).toISOString() };
     current = { ...current, extension: { ...extension, scopes: [...extension.scopes] } };
-    const me = async () => ((await (await http.request('/api/extension/me', { headers: { authorization: 'Bearer t' } })).json()) as { features: { meetings: boolean; agenda: boolean } }).features;
+    const me = async () => ((await (await http.request('/api/extension/me', { headers: { authorization: 'Bearer t' } })).json()) as { features: { meetings: boolean; agenda: boolean; notes: boolean } }).features;
     try {
-      expect(await me()).toEqual({ meetings: true, agenda: true });
+      expect(await me()).toEqual({ meetings: true, agenda: true, notes: true });
       await setApp('meetings', false);
-      expect(await me()).toEqual({ meetings: false, agenda: false });
+      expect(await me()).toEqual({ meetings: false, agenda: false, notes: true });
+      await setApp('notes', false);
+      expect(await me()).toEqual({ meetings: false, agenda: false, notes: false });
       await setApp('meetings', true);
-      expect(await me()).toEqual({ meetings: true, agenda: true });
+      await setApp('notes', true);
+      expect(await me()).toEqual({ meetings: true, agenda: true, notes: true });
     } finally {
       const { extension: _gone, ...rest } = current;
       current = rest;

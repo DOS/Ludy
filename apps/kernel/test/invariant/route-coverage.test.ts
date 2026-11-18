@@ -59,6 +59,11 @@ const PUBLIC: Record<string, string> = {
   '/api/sign/submit': 'public eSign single-use submission (#3324): same token in JSON body; enforces OTP gate (403 SIGN_OTP_REQUIRED) and atomic token consume preventing concurrent replay (409 SIGN_ALREADY_SUBMITTED)',
   '/api/sign/decline': 'public eSign single-use decline (#3324): same token in JSON body; enforces OTP gate (403 SIGN_OTP_REQUIRED), atomic token consume preventing concurrent replay (409 SIGN_ALREADY_SUBMITTED), and revokes remaining envelope tokens',
   '/api/sign/verify': 'public eSign certificate integrity lookup (#3324): takes certificateCode and client-hashed sealed PDF sha256; checks org_app_on + entitlement with opaque 404',
+  '/api/sign/direct/view': 'public eSign direct template link view (#3551): fragment token resolves 1-signer template metadata with org_app_on + entitlement opaque 404',
+  '/api/sign/direct/pdf': 'public eSign direct link template PDF stream (#3551): fragment token + optional OTP gate (403 OTP_REQUIRED), bounded concurrency, and opaque 404',
+  '/api/sign/direct/otp/request': 'public eSign direct link email OTP request (#3551): rate limited per IP, token hash, email bucket, and DB hourly cap with opaque 404',
+  '/api/sign/direct/otp/verify': 'public eSign direct link email OTP verify (#3551): validates 6-digit OTP, locks after 5 attempts, and returns short-lived verified claim',
+  '/api/sign/direct/start': 'public eSign direct link self-service start (#3551): atomically enforces max_uses + optional OTP, instantiates sent envelope, and returns single-use signing token without storing plaintext tokens',
   '/api/report/view': "Social's client report link (#643): a signed, expiring report link is the credential",
   '/cal/:file': 'the posting calendar feed (#862): an unguessable feed token in the file name is the credential',
   '/l/:code': 'short link redirects (#706): public by design, they only redirect to the stored target',
@@ -86,11 +91,6 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
-  '/api/sign/direct/view': 'public eSign direct template link view (Slice 2a A1): fragment token resolves 1-signer template metadata with org_app_on + entitlement opaque 404',
-  '/api/sign/direct/pdf': 'public eSign direct link template PDF stream (Slice 2a A1): fragment token + optional OTP gate before streaming template PDF',
-  '/api/sign/direct/otp/request': 'public eSign direct link email OTP request (Slice 2a A1): rate limited per IP and email/token',
-  '/api/sign/direct/otp/verify': 'public eSign direct link email OTP verify (Slice 2a A1): validates 6-digit OTP and returns short-lived verified claim',
-  '/api/sign/direct/start': 'public eSign direct link self-service start (Slice 2a A1): creates signer envelope from 1-signer template under IP/token rate limits + optional OTP, returning single-use submit token without storing plaintext token',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
@@ -326,6 +326,14 @@ describe('route enumeration with an extension token (#2582)', () => {
       ['POST', '/api/rpc/notes/todos/get'],
       ['POST', '/api/rpc/notes/todos/myWork'],
       ['POST', '/api/rpc/notes/todos/counts'],
+      ['POST', '/api/rpc/notes/create'],
+      ['POST', '/api/rpc/notes/update'],
+      ['POST', '/api/rpc/notes/setVisibility'],
+      ['POST', '/api/rpc/notes/delete'],
+      ['POST', '/api/rpc/notes/todos/create'],
+      ['POST', '/api/rpc/notes/todos/update'],
+      ['POST', '/api/rpc/notes/todos/complete'],
+      ['POST', '/api/rpc/notes/todos/delete'],
       ['GET', `/api/meetings/${UUID}/audio`],
       ['GET', `/api/meetings/${UUID}/video`],
       ['GET', `/api/files/${UUID}`],

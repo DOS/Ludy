@@ -7,6 +7,7 @@ import {
   MAX_MEETING_VIDEO_BYTES,
   MAX_SOCIAL_VIDEO_BYTES,
   MAX_UPLOAD_BYTES,
+  PAYROLL_PAYMENT_COMMAND,
   UPLOAD_PURPOSES,
   VOUCHER_COMMAND,
   VOUCHER_TYPES,
@@ -117,6 +118,8 @@ const PROPOSAL_COMMANDS = new Set([
   'ads.campaign.launch',
   // Issuing a sales e-invoice (ADR-0044 point 3, #2502): a legal document, posted to no ledger.
   'finance.einvoice.issue',
+  // A payment to a supplier approved in Ludy (#3113 S2): posts to no ledger (Ludy moves no money).
+  'finance.supplier_payment.record',
 ]);
 // The proposals a user may ask for and their preparers: PROPOSAL_PREPARERS in proposal-resubmit.ts.
 const ADMINS = ['owner', 'admin'] as const;
@@ -959,27 +962,36 @@ export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
 // The proposals approved one at a time, never in a batch: what opens the way to spend on an ad platform (ADR-0043 point 1,
 // #2294). The approver reads what changes on its own card, and one stale item must not decide the rest. A batch refuses them
 // item by item with BULK_NOT_ALLOWED, without running them.
-const SINGLE_APPROVAL_COMMANDS = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock', 'ads.campaign.launch', 'finance.einvoice.issue'];
+const SINGLE_APPROVAL_COMMANDS = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock', 'ads.campaign.launch', 'finance.einvoice.issue', 'finance.supplier_payment.record'];
 
 // Whether a nested approval's error refuses only that item.
 export function isBulkItemRefusal(error: unknown): error is DomainError {
   return error instanceof DomainError && BULK_ITEM_REFUSALS.has(error.code);
 }
 
+// Commands whose approval records a cash or bank voucher and takes its per-type numbering lock (#509, #2793).
+export const VOUCHER_BULK_COMMANDS = [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND] as const;
+
 // The order a bulk approval runs its items in, so that concurrent batches take their locks in one order. Every item
 // but a cash or bank voucher comes first, in id order, so two batches over the same proposals lock them in the same
-// order. Vouchers (#327) follow, by voucher type (VOUCHER_TYPES order) and then id: posting one holds its org's
-// numbering lock for its type until commit (20261019270000), so a batch taking PT then PC and another taking PC then
-// PT would deadlock (40P01, both users told to retry). In one type order the second batch waits for the first. A voucher
-// made from a bank statement line (#326) also locks that line, always after its numbering lock (20261020130000), and a
-// line takes vouchers of one type only, so the order holds.
+// order. Vouchers (#327) and payroll payment vouchers (#2532, #2793) follow, by voucher type (VOUCHER_TYPES order) and
+// then id: posting one holds its entity's numbering lock for its type until commit (20261019270000, 20261103040000),
+// so a batch taking PT then PC and another taking PC then PT would deadlock (40P01, both users told to retry). In one
+// type order the second batch waits for the first. A voucher made from a bank statement line (#326) also locks that
+// line, and a payroll payment voucher locks its (run, kind) slot (20261212114500) after its numbering lock.
 // voucherTypes: the voucher type of each voucher item, by proposal id; items not in it are not vouchers.
 export function bulkApproveOrder<T extends { id: string }>(items: readonly T[], voucherTypes: ReadonlyMap<string, string>): T[] {
   const rank = (id: string) => {
-    const type = voucherTypes.get(id);
+    const type = voucherTypes.get(id) ?? voucherTypes.get(id.toLowerCase());
     return type === undefined ? 0 : 1 + Math.max(0, (VOUCHER_TYPES as readonly string[]).indexOf(type));
   };
-  return [...items].sort((a, b) => rank(a.id) - rank(b.id) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return [...items].sort((a, b) => {
+    const byRank = rank(a.id) - rank(b.id);
+    if (byRank !== 0) return byRank;
+    const la = a.id.toLowerCase();
+    const lb = b.id.toLowerCase();
+    return la < lb ? -1 : la > lb ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
 }
 
 export type BulkApproveResult =
@@ -1018,7 +1030,7 @@ export const approveProposals = defineCommand({
       .selectFrom('crove_kernel.proposal')
       .select(['id', sql<string | null>`payload ->> 'type'`.as('voucher_type')])
       .where('org_id', '=', ctx.orgId)
-      .where('command', '=', VOUCHER_COMMAND)
+      .where('command', 'in', VOUCHER_BULK_COMMANDS)
       .where('id', 'in', input.items.map((i) => i.id))
       .execute();
     const voucherTypes = new Map(vouchers.map((v) => [v.id, v.voucher_type ?? '']));

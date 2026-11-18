@@ -19,8 +19,11 @@ export interface FakeLudy {
   // The bodies of the code exchanges (POST /api/extension/token) the extension made.
   exchanges: Array<Record<string, unknown>>;
   created: Array<Record<string, unknown>>;
+  clips: Array<Record<string, unknown>>;
+  todos: Array<Record<string, unknown>>;
   uploads: Upload[];
-  features: { meetings: boolean };
+  scopes: string[];
+  features: { meetings: boolean; notes: boolean };
   failUploads: boolean;
   // A strict org (A2, #3160): a meeting whose consent method is not written is refused with 422 CONSENT_METHOD_NOT_ALLOWED.
   strict: boolean;
@@ -37,7 +40,21 @@ const read = (req: IncomingMessage): Promise<Buffer> =>
   });
 
 export async function startFakeLudy(): Promise<FakeLudy> {
-  const fake: FakeLudy = { origin: '', requests: [], exchanges: [], created: [], uploads: [], features: { meetings: true }, failUploads: false, strict: false, redirectMeTo: null, close: async () => undefined };
+  const fake: FakeLudy = {
+    origin: '',
+    requests: [],
+    exchanges: [],
+    created: [],
+    clips: [],
+    todos: [],
+    uploads: [],
+    scopes: ['meetings'],
+    features: { meetings: true, notes: false },
+    failUploads: false,
+    strict: false,
+    redirectMeTo: null,
+    close: async () => undefined,
+  };
   const server: Server = createServer((req, res) => {
     void (async () => {
       const path = new URL(req.url ?? '/', 'http://x').pathname;
@@ -55,7 +72,17 @@ export async function startFakeLudy(): Promise<FakeLudy> {
       }
       if (path === '/api/extension/me' && fake.redirectMeTo) return void res.writeHead(302, { location: `${fake.redirectMeTo}/api/extension/me` }).end();
       if (path === '/api/extension/me') {
-        return json({ tokenId: 't1', orgId: 'org1', scopes: ['meetings'], expiresAt: '2027-01-01T00:00:00.000Z', features: { meetings: fake.features.meetings } });
+        return json({ tokenId: 't1', orgId: 'org1', scopes: fake.scopes, expiresAt: '2027-01-01T00:00:00.000Z', features: { meetings: fake.features.meetings, notes: fake.features.notes } });
+      }
+      if (path === '/api/rpc/notes/clip') {
+        const input = (JSON.parse(body.toString()) as { json: Record<string, unknown> }).json;
+        fake.clips.push(input);
+        return json({ json: { noteId: '22222222-2222-4222-8222-222222222222', revision: 1 } });
+      }
+      if (path === '/api/rpc/notes/todos/quickCapture') {
+        const input = (JSON.parse(body.toString()) as { json: Record<string, unknown> }).json;
+        fake.todos.push(input);
+        return json({ json: { todoId: '33333333-3333-4333-8333-333333333333', revision: 1 } });
       }
       if (path === '/api/rpc/meetings/create') {
         const input = (JSON.parse(body.toString()) as { json: Record<string, unknown> }).json;

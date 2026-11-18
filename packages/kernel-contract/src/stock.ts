@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { zId, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
 
 export const STOCK_ITEM_KINDS = ['goods'] as const;
-export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
+export const STOCK_TRADES = ['goods', 'services', 'catering', 'digital_content', 'other'] as const;
 export type StockTradeKey = (typeof STOCK_TRADES)[number];
 export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count', 'crm_order_line'] as const;
 export type StockMoveSourceKey = (typeof STOCK_MOVE_SOURCES)[number];

@@ -175,6 +175,8 @@ export const EXTENSION_ROUTES: readonly ExtensionRoute[] = Object.freeze([
   { method: 'POST', path: '/api/files/uploads', scope: 'meetings', why: 'an upload grant, for the meeting_audio and meeting_video purposes only (the handler refuses any other purpose for a token)' },
   { method: 'POST', path: '/api/meetings/:id/media', scope: 'meetings', why: 'finish the upload of the media of a meeting this token created (meetings.media.record)' },
   { method: 'POST', path: '/api/meetings/:id/live-chunk', scope: 'meetings', why: 'a piece of the recording of a live-notes meeting this token created, sealed and stored by the route (meetings.live.chunk, ADR-0052 L4a)' },
+  { method: 'POST', path: '/api/rpc/notes/clip', scope: 'notes', why: 'save a quick note or clipped web page, always private and tainted (notes.note.clip, E4)' },
+  { method: 'POST', path: '/api/rpc/notes/todos/quickCapture', scope: 'notes', why: 'save a quick-captured personal to-do, always private and tainted (notes.todo.quick_capture, E4)' },
 ]);
 
 const ROUTE_PATTERNS = EXTENSION_ROUTES.map((route) => ({

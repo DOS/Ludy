@@ -9,6 +9,8 @@
 //   (a marketplace settlement, a manual voucher) and any item whose trade the profile does not list is `unassigned`. any `unassigned` part holds the totals back (`totals` is null), as in the CNKD.
 // - While the form or a percentage in use is `commentary` (the accountant has not confirmed it, #2520) the book is still given, with `commentary` and the list of unconfirmed rows, so the screen
 //   and the Excel file label every figure "Số liệu tạm, kế toán chưa xác nhận tỷ lệ"; the label goes by itself when later dated `confirmed` rows exist (owner's direction of 2026-11-17).
+// - The Decree 174 VAT cut is not applied to all revenue (#3710): the profile's answer decides (yes applies it, no applies none, not answered computes without it and shows the VAT if eligible). `vatCut`
+//   carries the cut by line; `vat` stays the VAT before the cut. A profile whose answer changes inside the period is refused (HOUSEHOLD_VAT_CUT_CHANGED), like a change of trades.
 // Amounts are decimal strings through decimal.js, never JS numbers.
 import type { HouseholdS2a, HouseholdS2aRow } from '@crove/kernel-contract';
 import { HOUSEHOLD_TRADES, zHouseholdS2a, zHouseholdS2aGet, type HouseholdTrade } from '@crove/kernel-contract';
@@ -18,6 +20,9 @@ import { money, sum, toMoney } from '@crove/l10n-vn';
 import { pickInForce } from './domain/household-rules.ts';
 import { splitAmount, taxOn, type SplitBucket, type SplitWeight } from './domain/household-tax.ts';
 import { householdBookWindow, householdSalesRows, type HouseholdBookWindow } from './household-books.ts';
+import { yearToDateBlock, type YearRevenue } from './household-annual.ts';
+import { salesEntriesOf, tradesDifferEarlierInYear } from './household-year-sales.ts';
+import { vatCutBlock, vatCutInForce, vatCutUnconfirmed } from './household-vat-cut.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const CHUNK = 500;
@@ -116,7 +121,39 @@ export async function saleDocumentWeights(ctx: Ctx, entryIds: readonly string[],
 
 // What S2a and S2b share: the rows of 511 shared between the profile's trades, the percentage of each trade in force on the period's last day, the revenue, VAT and PIT of each line, the totals that wait for
 // every part to have a trade, and the rows behind the figures that the accountant has not confirmed. One code path, so the two books cannot disagree on a row, a split or a rounding. S2b drops the PIT.
-export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow, book: 'S2a' | 'S2b') {
+// The year's revenue by trade from 1 January, split by the same rule as the book's rows (a sale document's lines by their stock item's trade; one trade takes everything; anything else is unassigned): through the period's
+// last day, and up to the day before the book's first day. The household's yearly threshold is its own, so entries before its first profile count here though the book does not list them (#3710 slice 3).
+async function yearRevenue(ctx: QueryContext, w: HouseholdBookWindow, trades: readonly HouseholdTrade[]): Promise<YearRevenue> {
+  const year = w.to.slice(0, 4);
+  const entries = await salesEntriesOf(ctx, w.entity, { from: `${year}-01-01`, to: w.to });
+  const weights = trades.length > 1 ? await saleDocumentWeights(ctx, entries.map((e) => e.entryId), trades) : new Map<string, SplitWeight[]>();
+  const toDate = new Map<string, ReturnType<typeof money>>();
+  const before = new Map<string, ReturnType<typeof money>>();
+  let unassignedGross = money(0);
+  let unassignedToDate = money(0);
+  let unassignedBefore = money(0);
+  for (const e of entries) {
+    const parts = trades.length === 1 ? [{ bucket: trades[0]! as SplitBucket, amount: e.amount }] : splitAmount(e.amount, weights.get(e.entryId) ?? []);
+    for (const p of parts) {
+      toDate.set(p.bucket, (toDate.get(p.bucket) ?? money(0)).plus(p.amount));
+      if (e.date < w.from) before.set(p.bucket, (before.get(p.bucket) ?? money(0)).plus(p.amount));
+      if (p.bucket === 'unassigned') {
+        unassignedGross = unassignedGross.plus(money(p.amount).abs());
+        unassignedToDate = unassignedToDate.plus(p.amount);
+        if (e.date < w.from) unassignedBefore = unassignedBefore.plus(p.amount);
+      }
+    }
+  }
+  // The unassigned part is counted apart (it has no trade), so the per-trade maps carry only the trades.
+  toDate.delete('unassigned');
+  before.delete('unassigned');
+  // One trade puts all the year on it, so an earlier profile with other trades makes the sales before the book ambiguous: held, not guessed.
+  const ambiguous = trades.length === 1 && (await tradesDifferEarlierInYear(ctx, w.entity, year, w.from, trades));
+  const text = (m: Map<string, ReturnType<typeof money>>) => new Map([...m.entries()].map(([k, v]) => [k, toMoney(v)]));
+  return { toDate: text(toDate), before: text(before), unassigned: { toDate: toMoney(unassignedToDate), before: toMoney(unassignedBefore) }, unassignedHeld: !unassignedGross.isZero() || ambiguous };
+}
+
+export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow, book: 'S2a' | 'S2b', deductionTrade?: HouseholdTrade) {
   const trades = HOUSEHOLD_TRADES.filter((t) => w.profile.trades.includes(t));
 
   // The percentage of each trade the profile names, in force on the period's last day.
@@ -160,6 +197,10 @@ export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow
       })()
     : null;
 
+  // The Decree 174 VAT cut on the period's last day, applied only as the household's profile answer says (#3710); the books carry it as a block next to the VAT, which stays the VAT before the cut.
+  const cutRow = await vatCutInForce(ctx, w.to);
+  const vatCut = vatCutBlock({ answer: w.profile.vatCutEligible, cut: cutRow, lines, complete: totals !== null });
+
   const unconfirmed: HouseholdS2a['unconfirmed'] = [];
   // The layout of the book in force on the period's last day, from its own row (the book rule of the profile view carries no date), so the label follows the same day as the rates.
   const formRows = await ctx.trx.selectFrom('crove_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'status']).where('book', '=', book).where('effective_from', '<=', w.to).execute();
@@ -172,6 +213,12 @@ export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow
     if (rate.status !== 'confirmed') unconfirmed.push({ kind: 'rate', key: t, effectiveFrom: rate.effective_from });
   }
 
+  const cutUnconfirmed = vatCutUnconfirmed(vatCut, cutRow);
+  if (cutUnconfirmed) unconfirmed.push(cutUnconfirmed);
+  // The yearly rule (#3710 slice 3): the threshold, VAT on all revenue above it, PIT only above it, and the PIT cut; the period's tax is the difference of two year-to-date figures.
+  const year = await yearToDateBlock(ctx, { to: w.to, trades, rates, answer: w.profile.vatCutEligible, pitApplies: book === 'S2a', deductionTrade, revenue: await yearRevenue(ctx, w, trades) });
+  unconfirmed.push(...year.unconfirmed);
+
   const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();
   return {
     period: { period: w.ledger.period.period, from: w.from, to: w.to },
@@ -183,6 +230,8 @@ export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow
     unassigned,
     unassignedGross,
     totals,
+    vatCut,
+    yearToDate: year.block,
     unconfirmed,
     commentary: unconfirmed.length > 0,
   };
@@ -196,7 +245,7 @@ export const householdS2a = defineQuery({
     const w = await householdBookWindow(ctx, input.legalEntityId, input.period, 'S2a');
     // S2a is the book of the percentage method; the form row says so, and the profile must agree on the last day.
     if (w.profile.pitMethod !== 'percentage') throw new DomainError('HOUSEHOLD_BOOK_NOT_REQUIRED', 422, 'Hồ sơ hộ kinh doanh của pháp nhân này không yêu cầu sổ S2a trong kỳ đã chọn');
-    return zHouseholdS2a.parse(await tradeRevenueBook(ctx, w, 'S2a'));
+    return zHouseholdS2a.parse(await tradeRevenueBook(ctx, w, 'S2a', input.deductionTrade));
   },
 });
 

@@ -164,3 +164,19 @@ export function payrollCashCheck(count: number): InvoiceCheck | null {
     params: { count: String(count) },
   };
 }
+
+// An ordinary payment voucher (finance.voucher.record) debits a payroll payable account while the same legal entity has a
+// pending or recorded pay-run payment voucher for that liability (#2793). Only the voucher's own account codes are named
+// (never a person, run id or payroll figure), and the check id starts with `anomaly` so the reviewer checks it one by one.
+export function payrollLiabilityCheck(accounts: readonly string[]): InvoiceCheck | null {
+  const unique = [...new Set(accounts.map((a) => a.trim()).filter((a) => a.length > 0))].sort();
+  if (unique.length === 0) return null;
+  const joined = unique.join(', ').slice(0, 180);
+  return {
+    id: 'anomaly_payroll',
+    status: 'warn',
+    code: 'anomaly_payroll.active_payment',
+    message: `Cảnh báo: chứng từ chi thẳng vào tài khoản công nợ lương (${joined}) trong khi pháp nhân đang có chứng từ chi lương theo bảng lương chờ duyệt hoặc đã ghi sổ; hãy kiểm tra để tránh chi trùng nghĩa vụ của bảng lương`,
+    params: { accounts: joined },
+  };
+}

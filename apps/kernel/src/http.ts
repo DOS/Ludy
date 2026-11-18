@@ -23,6 +23,7 @@ import {
   MAX_SOCIAL_VIDEO_MS,
   MAX_UPLOAD_BYTES,
   ORG_HEADER,
+  SIGN_DIRECT_PAGE_PATH,
   SIGN_PAGE_PATH,
   SOCIAL_IMAGE_TYPES,
   DEFAULT_EXTENSION_IDS,
@@ -175,6 +176,24 @@ import type { OauthServer } from './oauth-server.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
 import { quoteLogo, quoteView, readLogoFile, QUOTE_LOGO_READS_MAX, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
 import { reportView, REPORT_VIEWS_PER_MINUTE } from './report-link.ts';
+import {
+  SIGN_DIRECT_EMAIL_OTP_REQUESTS_PER_MINUTE,
+  SIGN_DIRECT_OTP_REQUESTS_PER_MINUTE,
+  SIGN_DIRECT_OTP_VERIFIES_PER_MINUTE,
+  SIGN_DIRECT_PDFS_PER_MINUTE,
+  SIGN_DIRECT_STARTS_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_OTP_REQUESTS_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_OTP_VERIFIES_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_PDFS_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_STARTS_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_VIEWS_PER_MINUTE,
+  SIGN_DIRECT_VIEWS_PER_MINUTE,
+  resolvePublicDirectPdf,
+  runSignDirectOtpRequest,
+  runSignDirectOtpVerify,
+  runSignDirectStart,
+  runSignDirectView,
+} from './sign-direct-link.ts';
 import {
   SIGN_OTP_REQUESTS_PER_MINUTE,
   SIGN_OTP_VERIFIES_PER_MINUTE,
@@ -349,6 +368,20 @@ export interface HttpDeps {
     submit: RateLimiter;
     tokenSubmit: RateLimiter;
     verify: RateLimiter;
+  }>;
+  // Per-client and per-token/email rate limiters for public direct signing routes (#3551).
+  signDirectLimits?: Partial<{
+    views: RateLimiter;
+    tokenViews: RateLimiter;
+    pdfs: RateLimiter;
+    tokenPdfs: RateLimiter;
+    otpRequest: RateLimiter;
+    tokenOtpRequest: RateLimiter;
+    emailOtpRequest: RateLimiter;
+    otpVerify: RateLimiter;
+    tokenOtpVerify: RateLimiter;
+    start: RateLimiter;
+    tokenStart: RateLimiter;
   }>;
   // The posting calendar feed's budget per client (#862). Unset: CALENDAR_FEED_HITS_PER_MINUTE.
   calendarFeedLimit?: RateLimiter;
@@ -1495,6 +1528,106 @@ export function createHttpApp(deps: HttpDeps) {
         return problem(c, error);
       }
     });
+
+    const signDirectViewLimit = deps.signDirectLimits?.views ?? new RateLimiter({ perMinute: SIGN_DIRECT_VIEWS_PER_MINUTE });
+    const signDirectTokenViewLimit = deps.signDirectLimits?.tokenViews ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_VIEWS_PER_MINUTE });
+    const signDirectPdfLimit = deps.signDirectLimits?.pdfs ?? new RateLimiter({ perMinute: SIGN_DIRECT_PDFS_PER_MINUTE });
+    const signDirectTokenPdfLimit = deps.signDirectLimits?.tokenPdfs ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_PDFS_PER_MINUTE });
+    const signDirectOtpReqLimit = deps.signDirectLimits?.otpRequest ?? new RateLimiter({ perMinute: SIGN_DIRECT_OTP_REQUESTS_PER_MINUTE });
+    const signDirectTokenOtpReqLimit = deps.signDirectLimits?.tokenOtpRequest ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_OTP_REQUESTS_PER_MINUTE });
+    const signDirectEmailOtpReqLimit = deps.signDirectLimits?.emailOtpRequest ?? new RateLimiter({ perMinute: SIGN_DIRECT_EMAIL_OTP_REQUESTS_PER_MINUTE });
+    const signDirectOtpVerifyLimit = deps.signDirectLimits?.otpVerify ?? new RateLimiter({ perMinute: SIGN_DIRECT_OTP_VERIFIES_PER_MINUTE });
+    const signDirectTokenOtpVerifyLimit = deps.signDirectLimits?.tokenOtpVerify ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_OTP_VERIFIES_PER_MINUTE });
+    const signDirectStartLimit = deps.signDirectLimits?.start ?? new RateLimiter({ perMinute: SIGN_DIRECT_STARTS_PER_MINUTE });
+    const signDirectTokenStartLimit = deps.signDirectLimits?.tokenStart ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_STARTS_PER_MINUTE });
+
+    app.post('/api/sign/direct/view', signEdgeGuard(signDirectViewLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignDirectView(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signDirectTokenViewLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        return c.json(res.view);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/direct/pdf', signEdgeGuard(signDirectPdfLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const lookup = await resolvePublicDirectPdf(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signDirectTokenPdfLimit.take(hash));
+        if (lookup.status === 'not_found') return signOpaqueNotFound(c);
+        if (lookup.status === 'rate_limited') return signRateLimited(c, lookup.retryAfterSeconds);
+        if (lookup.status === 'otp_required') {
+          return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
+        }
+        const release = signPdfReads.tryAcquire('sign-pdf');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
+        }
+        try {
+          const bytes = await readPublicPdfBytes(store, lookup.source);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'application/pdf',
+              'content-disposition': 'inline; filename="document.pdf"',
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/direct/otp/request', signEdgeGuard(signDirectOtpReqLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignDirectOtpRequest(
+          runtime,
+          signBilling,
+          await c.req.json().catch(() => null),
+          (hash) => signDirectTokenOtpReqLimit.take(hash),
+          (bucket) => signDirectEmailOtpReqLimit.take(bucket),
+        );
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/direct/otp/verify', signEdgeGuard(signDirectOtpVerifyLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignDirectOtpVerify(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signDirectTokenOtpVerifyLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        if (res.result.ok) return c.json(res.result, 200);
+        if (res.result.locked) return c.json(res.result, 423);
+        return c.json(res.result, 401);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/direct/start', signEdgeGuard(signDirectStartLimit), signBodyLimit(4096), async (c) => {
+      try {
+        const res = await runSignDirectStart(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signDirectTokenStartLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
   }
 
   // The client review page (#589): no account, the link's token is the only credential. It comes in the body, never the
@@ -1940,9 +2073,11 @@ export function createHttpApp(deps: HttpDeps) {
       const scopes = done.exchange.scopes.filter((s): s is ExtensionScope => (EXTENSION_SCOPES as readonly string[]).includes(s));
       // The client gets the token only once this row is written. When it fails, the token row already exists and nobody
       // holds it: void it (its own system audit row follows) before answering, so no usable row is left behind (#2740).
+      // Notes-only tokens audit through notes.extension.exchanged because kernel.extension.token.exchanged requires 'meetings' (#3560).
+      const exchangeAuditCommand = scopes.includes('meetings') ? 'kernel.extension.token.exchanged' : 'notes.extension.exchanged';
       try {
         await runtime.execute(
-          'kernel.extension.token.exchanged',
+          exchangeAuditCommand,
           { codeId: done.exchange.codeId },
           { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes } }, orgId: done.exchange.orgId },
         );
@@ -2090,9 +2225,11 @@ export function createHttpApp(deps: HttpDeps) {
       if (!allowedExtensionIds.includes(input.extensionId)) throw new DomainError('FORBIDDEN', 403, 'Tiện ích này không được phép kết nối với Ludy', { rule: 'extension_id' });
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      if (input.scopes.includes('notes') && !runtime.installed('notes')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
       const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
-      // An org that switched Meetings off, or does not hold it, is not offered its scope either (ADR-0053).
+      // An org that switched Meetings or Notes off, or does not hold it, is not offered that scope either (ADR-0053).
       if (input.scopes.includes('meetings') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      if (input.scopes.includes('notes') && !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
       const code = newExtensionCode();
       const issued = await runtime.execute<{ expiresInSeconds: number }>(
         'kernel.extension.code.issue',
@@ -2113,12 +2250,17 @@ export function createHttpApp(deps: HttpDeps) {
     const { extension } = c.get('user');
     if (!extension) return problem(c, new DomainError('FORBIDDEN', 403, 'Đường này chỉ dành cho tiện ích Ludy', { rule: 'extension_only' }));
     const meetingsOn = runtime.installed('meetings') && (await runtime.appOn(extension.orgId, 'meetings', { fresh: true }).catch(() => true));
+    const notesOn = runtime.installed('notes') && (await runtime.appOn(extension.orgId, 'notes', { fresh: true }).catch(() => true));
     return c.json({
       tokenId: extension.tokenId,
       orgId: extension.orgId,
       scopes: extension.scopes,
       expiresAt: extension.expiresAt,
-      features: { meetings: extension.scopes.includes('meetings') && meetingsOn, agenda: extension.scopes.includes('agenda') && meetingsOn },
+      features: {
+        meetings: extension.scopes.includes('meetings') && meetingsOn,
+        agenda: extension.scopes.includes('agenda') && meetingsOn,
+        notes: extension.scopes.includes('notes') && notesOn,
+      },
     });
   });
 
@@ -3788,7 +3930,9 @@ export function createHttpApp(deps: HttpDeps) {
         const actor = actorOf(user);
         const period = c.req.query('period') ?? '';
         const legalEntityId = c.req.query('legalEntityId') ?? '';
-        const book = await runtime.query<HouseholdS2a>('finance.household.s2a', { legalEntityId, period }, { actor, orgId });
+        // A household with several trades picks the trade that takes the yearly threshold deduction (#3710 slice 3): &deductionTrade=services. The query checks the value.
+        const deductionTrade = c.req.query('deductionTrade');
+        const book = await runtime.query<HouseholdS2a>('finance.household.s2a', { legalEntityId, period, ...(deductionTrade ? { deductionTrade } : {}) }, { actor, orgId });
         const bytes = await buildS2aWorkbook(book, config.BRAND_NAME);
         await runtime.execute('finance.household.export', { legalEntityId, book: 'S2a', period, rows: book.rows.length }, { actor, orgId });
         return new Response(body(bytes), {
@@ -3857,7 +4001,7 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
 
-    // The 01/CNKD quarterly return worksheet of a household business (#2518), ?legalEntityId=<household>&year=2026&quarter=3 and, for a household with several trades, &split=goods:1000000,services:600000.
+    // The 01/CNKD quarterly return worksheet of a household business (#2518), ?legalEntityId=<household>&year=2026&quarter=3 and, for a household with several trades, &split=goods:1000000,services:600000 (and, from the yearly rule, &splitBefore=... and &deductionTrade=...).
     // The query checks the year and quarter, the roles, the profile and the split, and refuses (422) while revenue is unassigned (forExport), so the file only ever holds whole figures. While a row
     // behind the figures is still unconfirmed the file is given and every figure in it carries the provisional label (#2518). The audit row is recorded before the file is sent. A worksheet: Ludy files nothing.
     app.get('/api/export/household-cnkd.xlsx', async (c) => {
@@ -3869,15 +4013,24 @@ export function createHttpApp(deps: HttpDeps) {
         const legalEntityId = c.req.query('legalEntityId') ?? '';
         const year = Number(c.req.query('year') ?? '');
         const quarter = Number(c.req.query('quarter') ?? '');
-        const split = (c.req.query('split') ?? '')
-          .split(',')
-          .filter((part) => part !== '')
-          .map((part) => {
-            // Everything after the first colon is the amount, so "goods:1:2" fails the amount check instead of being read as 1.
-            const at = part.indexOf(':');
-            return { trade: at < 0 ? part : part.slice(0, at), revenue: at < 0 ? '' : part.slice(at + 1) };
-          });
-        const sheetData = await runtime.query<HouseholdCnkd>('finance.household.cnkd', { legalEntityId, year, quarter, ...(split.length > 0 ? { split } : {}), forExport: true }, { actor, orgId });
+        const tradeSplit = (text: string) =>
+          text
+            .split(',')
+            .filter((part) => part !== '')
+            .map((part) => {
+              // Everything after the first colon is the amount, so "goods:1:2" fails the amount check instead of being read as 1.
+              const at = part.indexOf(':');
+              return { trade: at < 0 ? part : part.slice(0, at), revenue: at < 0 ? '' : part.slice(at + 1) };
+            });
+        const split = tradeSplit(c.req.query('split') ?? '');
+        // The yearly rule (#3710 slice 3): &splitBefore=goods:600000 is the split of the year's revenue before the quarter, &deductionTrade=services the trade that takes the threshold deduction.
+        const splitBefore = tradeSplit(c.req.query('splitBefore') ?? '');
+        const deductionTrade = c.req.query('deductionTrade');
+        const sheetData = await runtime.query<HouseholdCnkd>(
+          'finance.household.cnkd',
+          { legalEntityId, year, quarter, ...(split.length > 0 ? { split } : {}), ...(splitBefore.length > 0 ? { splitBefore } : {}), ...(deductionTrade ? { deductionTrade } : {}), forExport: true },
+          { actor, orgId },
+        );
         const bytes = await buildCnkdWorkbook(sheetData, config.BRAND_NAME);
         await runtime.execute('finance.household.export', { legalEntityId, book: '01/CNKD', period: `${year}-Q${quarter}`, rows: sheetData.lines.length }, { actor, orgId });
         return new Response(body(bytes), {
@@ -4202,10 +4355,16 @@ export function createHttpApp(deps: HttpDeps) {
     app.use('/favicon.svg', serveStatic({ root }));
     const indexPath = join(config.WEB_DIST, 'index.html');
     const csp = contentSecurityPolicy(publicAuthUrl(config), store.direct ? directTransferOrigin(config) : null, Boolean(config.TURNSTILE_SITE_KEY), null, hostedLoginTokenOrigin(config));
+    const signCsp = contentSecurityPolicy(publicAuthUrl(config), store.direct ? directTransferOrigin(config) : null, false, null, hostedLoginTokenOrigin(config));
     let indexHtml: string | null = null;
     app.get('*', async (c) => {
-      c.header('content-security-policy', csp);
-      if (c.req.path === SIGN_PAGE_PATH || c.req.path.startsWith(`${SIGN_PAGE_PATH}/`)) {
+      const isSignPage =
+        c.req.path === SIGN_PAGE_PATH ||
+        c.req.path.startsWith(`${SIGN_PAGE_PATH}/`) ||
+        c.req.path === SIGN_DIRECT_PAGE_PATH ||
+        c.req.path.startsWith(`${SIGN_DIRECT_PAGE_PATH}/`);
+      c.header('content-security-policy', isSignPage ? signCsp : csp);
+      if (isSignPage) {
         c.header('referrer-policy', 'no-referrer');
         c.header('cache-control', 'no-store');
         c.header('x-content-type-options', 'nosniff');

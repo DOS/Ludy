@@ -29,7 +29,7 @@ const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
 const profile = (over: Partial<HouseholdProfileView> = {}): HouseholdProfileView => ({
   date: '2026-11-09',
-  profile: { effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, representativeName: 'Nguyễn Văn A' },
+  profile: { effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, representativeName: 'Nguyễn Văn A', vatCutEligible: null },
   books: [{ book: 'S1a', version: '2026.1', name: 'Sổ doanh thu bán hàng hóa, dịch vụ (S1a-HKD)', status: 'commentary' }],
   commentary: true,
   ...over,
@@ -51,6 +51,8 @@ const cnkd = (over: Partial<HouseholdCnkd> = {}): HouseholdCnkd => ({
   lines: [{ trade: 'goods', revenue: '1600000', vatPercent: '1', pitPercent: '0.5', vat: '16000', pit: '8000' }],
   unassigned: '0',
   totals: { revenue: '1600000', vat: '16000', pit: '8000', tax: '24000' },
+  vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [], total: null, ifEligible: null },
+  yearToDate: { year: 2026, revenueToDate: '1500000', revenueBefore: '0', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: false, deductionTrade: null, deductionNeeded: false, deductionShort: false, payable: { vatBefore: '0', vatCut: '0', vat: '0', pitBefore: '0', pitCut: '0', pit: '0' }, pitCut: null },
   withheld: { total: '4200', settlements: [{ id: '00000000-0000-4000-8000-0000000000a1', platform: 'shopee', periodStart: '2026-10-01', periodEnd: '2026-10-15', taxWithheld: '4200' }] },
   due: '19800',
   overpaid: '0',
@@ -63,7 +65,7 @@ const cnkd = (over: Partial<HouseholdCnkd> = {}): HouseholdCnkd => ({
 });
 const percentage = (trades: Array<'goods' | 'services'> = ['goods']): HouseholdProfileView =>
   profile({
-    profile: { effectiveFrom: '2026-01-01', taxGroup: 2, pitMethod: 'percentage', trades, einvoiceRegistered: false, representativeName: 'Nguyễn Văn A' },
+    profile: { effectiveFrom: '2026-01-01', taxGroup: 2, pitMethod: 'percentage', trades, einvoiceRegistered: false, representativeName: 'Nguyễn Văn A', vatCutEligible: null },
     books: [{ book: 'S2a', version: '2026.1', name: 'Sổ doanh thu bán hàng hóa, dịch vụ (S2a-HKD)', status: 'commentary' }],
   });
 const entity = { id: '00000000-0000-4000-8000-0000000000e1', name: 'Hộ kinh doanh Nguyễn Văn A', kind: 'household', taxCode: null, isDefault: false };
@@ -114,7 +116,7 @@ describe('the household books screen (#2517)', () => {
   it('shows no S1a for a method that keeps other books, and says the others are not built yet', () => {
     const html = page('owner', {
       profile: profile({
-        profile: { effectiveFrom: '2026-01-01', taxGroup: 3, pitMethod: 'income', trades: ['goods', 'services'], einvoiceRegistered: true, representativeName: null },
+        profile: { effectiveFrom: '2026-01-01', taxGroup: 3, pitMethod: 'income', trades: ['goods', 'services'], einvoiceRegistered: true, representativeName: null, vatCutEligible: null },
         books: [{ book: 'S2d', version: '2026.1', name: 'Sổ chi tiết vật liệu, dụng cụ, sản phẩm, hàng hóa (S2d-HKD)', status: 'commentary' }],
       }),
     });
@@ -161,15 +163,15 @@ describe('the household books screen (#2517)', () => {
 
     it('puts the provisional label on every figure that depends on a rule: each trade, the tax, what is left to pay, and a tax paid too much', () => {
       const labels = (html: string) => html.match(/data-testid="household-cnkd-provisional"/g)?.length ?? 0;
-      // One trade, tax and what is left to pay: three figures.
+      // One trade, tax and what is left to pay: three figures, and two more under the period's VAT and PIT payable of the yearly section.
       const html = page('owner', { profile: percentage() }, 'vi');
-      expect(labels(html)).toBe(3);
+      expect(labels(html)).toBe(5);
       expect(html).toContain('Số liệu tạm, kế toán chưa xác nhận tỷ lệ');
       // The same words for a screen reader in the VAT and PIT cells of the trade line (hidden from the eye).
       expect(html.match(/<span class="sr-only">Số liệu tạm, kế toán chưa xác nhận tỷ lệ<\/span>/g)?.length).toBe(2);
       // The tax the platforms withheld comes from the settlements, not from a rule: no label on it.
       expect(html).toMatch(/data-testid="household-cnkd-withheld">[^<]*<\/dd>/);
-      // Two trades and a tax paid too much: two lines, the tax, what is left to pay and the overpaid amount.
+      // Two trades and a tax paid too much: two lines, the tax, what is left to pay and the overpaid amount, plus the two figures of the yearly section.
       const more = page('owner', {
         profile: percentage(['goods', 'services']),
         cnkd: cnkd({
@@ -180,7 +182,7 @@ describe('the household books screen (#2517)', () => {
           ],
         }),
       }, 'en');
-      expect(labels(more)).toBe(5);
+      expect(labels(more)).toBe(7);
       expect(more).toContain('Provisional figures: the accountant has not confirmed the percentages yet');
     });
 
@@ -220,7 +222,7 @@ describe('the household books screen (#2517)', () => {
     it('shows no worksheet for group 1 or the income method, and every role reads it', () => {
       expect(page('owner')).not.toContain('data-testid="household-cnkd"');
       cache.current.clear();
-      const income = profile({ profile: { effectiveFrom: '2026-01-01', taxGroup: 3, pitMethod: 'income', trades: ['goods'], einvoiceRegistered: false, representativeName: null }, books: [] });
+      const income = profile({ profile: { effectiveFrom: '2026-01-01', taxGroup: 3, pitMethod: 'income', trades: ['goods'], einvoiceRegistered: false, representativeName: null, vatCutEligible: null }, books: [] });
       expect(page('owner', { profile: income })).not.toContain('data-testid="household-cnkd"');
       for (const role of ['admin', 'member', 'viewer'] as const) {
         cache.current.clear();
@@ -234,5 +236,115 @@ describe('the household books screen (#2517)', () => {
       expect(html).toContain('không nộp tờ khai');
       expect(html).toContain('Còn phải nộp');
     });
+  });
+});
+
+describe('the Decree 174 VAT cut on the 01/CNKD screen and in the profile (#3710 slice 2)', () => {
+  beforeEach(() => cache.current.clear());
+  const text = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+
+  it('shows the cut and the VAT to pay after it when the profile answered yes', () => {
+    const html = page('owner', {
+      profile: percentage(),
+      cnkd: cnkd({ vatCut: { answer: 'yes', percent: '20.0000', applied: true, lines: [{ trade: 'goods', cut: '3200', vatPayable: '12800' }], total: { cut: '3200', vatPayable: '12800' }, ifEligible: null } }),
+    });
+    expect(html).toContain('data-testid="household-cnkd-vatcut"');
+    expect(text(html)).toContain('VAT cut 20.0000% (Decree 174, period percentage, for reference) ₫3,200');
+    expect(text(html)).toContain('VAT after the cut at the period percentage (for reference) ₫12,800');
+  });
+
+  it('says what the VAT would be if eligible when the profile has not answered', () => {
+    const html = page('owner', {
+      profile: percentage(),
+      cnkd: cnkd({ vatCut: { answer: null, percent: '20.0000', applied: false, lines: [], total: { cut: '0', vatPayable: '16000' }, ifEligible: { cut: '3200', vatPayable: '12800' } } }),
+    });
+    expect(html).toContain('data-testid="household-cnkd-vatcut-ask"');
+    expect(text(html)).toContain('If the household is eligible, the VAT would be ₫12,800 (cut by ₫3,200)');
+  });
+
+  it('shows the profile answer on the profile card, in each state', () => {
+    const p = (answer: 'yes' | 'no' | null) => profile({ profile: { effectiveFrom: '2026-01-01', taxGroup: 2, pitMethod: 'percentage', trades: ['goods'], einvoiceRegistered: false, representativeName: null, vatCutEligible: answer } });
+    expect(text(page('owner', { profile: p('yes') }))).toContain('VAT cut (Decree 174) Yes, eligible for the cut');
+    expect(text(page('owner', { profile: p('no') }))).toContain('VAT cut (Decree 174) No, not eligible');
+    expect(text(page('owner', { profile: p(null) }))).toContain('VAT cut (Decree 174) Not answered');
+  });
+});
+
+
+describe('the yearly threshold on the 01/CNKD screen (#3710 slice 3)', () => {
+  beforeEach(() => cache.current.clear());
+  const text = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+  const base = cnkd().yearToDate;
+
+  it('says nothing is owed yet below the threshold', () => {
+    const html = page('owner', { profile: percentage() });
+    expect(html).toContain('data-testid="household-cnkd-ytd"');
+    expect(text(html)).toContain('has not passed the threshold, so no tax is owed yet');
+  });
+
+  it('shows the VAT and PIT payable and the PIT cut once the threshold is crossed', () => {
+    const html = page('owner', {
+      profile: percentage(),
+      cnkd: cnkd({ yearToDate: { ...base, revenueToDate: '1200000000', revenueBefore: '0', crossed: true, payable: { vatBefore: '12000000', vatCut: '2400000', vat: '9600000', pitBefore: '1000000', pitCut: '300000', pit: '700000' }, pitCut: { percent: '30.0000', ceiling: '3000000000', applied: true } } }),
+    });
+    const t = text(html);
+    expect(t).toContain('VAT to pay for the period ₫9,600,000');
+    expect(t).toContain('PIT to pay for the period ₫700,000');
+    expect(t).toContain('PIT cut 30.0000% ₫300,000');
+  });
+
+  it('asks for the deduction trade and, from the second quarter, the revenue before the quarter by trade', () => {
+    const html = page('owner', {
+      profile: percentage(['goods', 'services']),
+      cnkd: cnkd({ yearToDate: { ...base, revenueToDate: '1200000000', revenueBefore: '1100000000', crossed: true, deductionNeeded: true, deductionShort: false, payable: null } }),
+    });
+    expect(html).toContain('data-testid="household-cnkd-ytd-deduction"');
+    expect(html).toContain('value="services"');
+    expect(html).toContain('data-testid="household-cnkd-split-before"');
+    expect(text(html)).toContain('had ₫1,100,000,000 of revenue');
+    expect(html).not.toContain('household-cnkd-ytd-pit"');
+  });
+
+  it('shows "Not worked out yet" and not a zero when the amount due is not known', () => {
+    const html = page('owner', {
+      profile: percentage(['goods', 'services']),
+      cnkd: cnkd({ due: null, overpaid: null, yearToDate: { ...base, revenueToDate: '1200000000', revenueBefore: '0', crossed: true, deductionNeeded: true, deductionShort: false, payable: null } }),
+    });
+    const t = text(html);
+    expect(t).toContain('Left to pay Not worked out yet');
+    expect(t).not.toContain('Left to pay ₫0');
+  });
+
+  it('shows the VAT cut and a reversed PIT cut that the payable used', () => {
+    const html = page('owner', {
+      profile: percentage(['goods', 'services']),
+      cnkd: cnkd({ yearToDate: { ...base, revenueToDate: '1300000000', crossed: true, deductionTrade: 'goods', deductionNeeded: false, payable: { vatBefore: '13000000', vatCut: '2600000', vat: '10400000', pitBefore: '1500000', pitCut: '-150000', pit: '1650000' }, pitCut: { percent: '30.0000', ceiling: '10000000000', applied: true } } }),
+    });
+    const t = text(html);
+    expect(t).toContain('VAT cut deducted ₫2,600,000');
+    expect(t).toContain('PIT cut 30.0000% -₫150,000');
+  });
+
+  it('says the PIT is held back for the accountant when no trade reaches the threshold', () => {
+    const html = page('owner', {
+      profile: percentage(['goods', 'services']),
+      cnkd: cnkd({ yearToDate: { ...base, revenueToDate: '1200000000', crossed: true, deductionNeeded: false, deductionShort: true, payable: null } }),
+    });
+    expect(html).toContain('data-testid="household-cnkd-ytd-short"');
+    expect(text(html)).toContain('No single trade reaches');
+    expect(html).not.toContain('household-cnkd-ytd-deduction');
+    expect(html).not.toContain('household-cnkd-ytd-payable');
+  });
+
+  it('does not ask for the revenue before the quarter with one trade or when nothing came before', () => {
+    expect(page('owner', { profile: percentage() })).not.toContain('household-cnkd-split-before');
+    expect(page('owner', { profile: percentage(['goods', 'services']) })).not.toContain('household-cnkd-split-before');
+  });
+
+  it('lists the unconfirmed threshold and the PIT cut', () => {
+    const html = page('owner', { profile: percentage(), cnkd: cnkd({ unconfirmed: [{ kind: 'threshold', key: 'no_tax_revenue', effectiveFrom: '2026-01-01' }, { kind: 'reduction', key: 'pit', effectiveFrom: '2026-01-01' }] }) });
+    const t = text(html);
+    expect(t).toContain('The yearly revenue threshold below which no tax is owed, from');
+    expect(t).toContain('The personal income tax cut, from');
   });
 });

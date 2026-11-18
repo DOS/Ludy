@@ -439,10 +439,19 @@ export const signApi = {
       requireEmailOtp?: boolean;
     }>;
   }) => client.sign.template.instantiate(input),
-  setTemplateDirectLink: (input: { templateId: string; enabled: boolean; requireEmailOtp?: boolean }) =>
-    client.sign.template.direct_link_set(input),
-  rotateTemplateDirectLink: (input: { templateId: string; requireEmailOtp?: boolean }) =>
-    client.sign.template.direct_link_rotate(input),
+  setTemplateDirectLink: (input: {
+    templateId: string;
+    enabled: boolean;
+    requireEmailOtp?: boolean;
+    maxUses?: number | null;
+    expiresAt?: string | null;
+  }) => client.sign.template.direct_link_set(input),
+  rotateTemplateDirectLink: (input: {
+    templateId: string;
+    requireEmailOtp?: boolean;
+    maxUses?: number | null;
+    expiresAt?: string | null;
+  }) => client.sign.template.direct_link_rotate(input),
 };
 
 export type SignTemplateStatus = 'draft' | 'active' | 'archived';
@@ -476,6 +485,9 @@ export interface SignTemplateDirectLinkDetail {
   id: string;
   enabled: boolean;
   requireEmailOtp: boolean;
+  maxUses?: number | null | undefined;
+  usesCount?: number | undefined;
+  expiresAt?: string | null | undefined;
   lastRotatedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -499,6 +511,9 @@ export interface SignTemplateSummary {
   directLink: {
     enabled: boolean;
     requireEmailOtp: boolean;
+    maxUses?: number | null | undefined;
+    usesCount?: number | undefined;
+    expiresAt?: string | null | undefined;
     lastRotatedAt: string | null;
   } | null;
   version: number;
@@ -662,4 +677,126 @@ export const publicSignApi = {
       certificateCode: payload.certificateCode ?? input.certificateCode,
     };
   },
+};
+
+export type PublicDirectSignViewState =
+  | {
+      state: 'otp_required';
+      orgName: string;
+      title: string;
+      description: string | null;
+      roleLabel: string;
+      signerRole: 'signer' | 'approver';
+      requireEmailOtp: true;
+    }
+  | {
+      state: 'ready';
+      orgName: string;
+      title: string;
+      description: string | null;
+      message: string | null;
+      roleLabel: string;
+      signerRole: 'signer' | 'approver';
+      emailRequired: boolean;
+      requireEmailOtp: boolean;
+      otpVerified: boolean;
+      verifiedEmail: string | null;
+      pageCount: number;
+      pageDimensions?: Array<{ pageNumber: number; widthPt: number; heightPt: number }>;
+      fieldCount: number;
+    };
+
+export interface PublicDirectOtpRequestResult {
+  sent: boolean;
+  expiresInMinutes: number;
+  maskedEmail: string | null;
+}
+
+export interface PublicDirectOtpVerifyResult {
+  ok: boolean;
+  locked: boolean;
+  attemptsRemaining: number;
+  expired?: boolean;
+  notReady?: boolean;
+  otpSessionToken?: string;
+  verifiedEmail?: string;
+}
+
+export interface PublicDirectStartResult {
+  envelopeId: string;
+  signerId: string;
+  signingToken: string;
+  expiresAt: string;
+}
+
+// Public direct signing ceremony endpoints (/-/sign/d#<token>, #3551): token sits exclusively inside JSON POST bodies.
+export const publicDirectSignApi = {
+  view: async (token: string, otpSessionToken?: string | null): Promise<PublicDirectSignViewState> => {
+    const raw = await postPublicJson<Record<string, unknown>>('/api/sign/direct/view', {
+      token,
+      ...(otpSessionToken ? { otpSessionToken } : {}),
+    });
+    if (raw.state === 'otp_required') {
+      return {
+        state: 'otp_required',
+        orgName: typeof raw.orgName === 'string' ? raw.orgName : '',
+        title: String(raw.title ?? ''),
+        description: typeof raw.description === 'string' ? raw.description : null,
+        roleLabel: typeof raw.roleLabel === 'string' ? raw.roleLabel : '',
+        signerRole: raw.signerRole === 'approver' ? 'approver' : 'signer',
+        requireEmailOtp: true,
+      };
+    }
+    return {
+      state: 'ready',
+      orgName: typeof raw.orgName === 'string' ? raw.orgName : '',
+      title: String(raw.title ?? ''),
+      description: typeof raw.description === 'string' ? raw.description : null,
+      message: typeof raw.message === 'string' ? raw.message : null,
+      roleLabel: typeof raw.roleLabel === 'string' ? raw.roleLabel : '',
+      signerRole: raw.signerRole === 'approver' ? 'approver' : 'signer',
+      emailRequired: Boolean(raw.emailRequired),
+      requireEmailOtp: Boolean(raw.requireEmailOtp),
+      otpVerified: Boolean(raw.otpVerified),
+      verifiedEmail: typeof raw.verifiedEmail === 'string' ? raw.verifiedEmail : null,
+      pageCount: Number(raw.pageCount ?? 1),
+      ...(Array.isArray(raw.pageDimensions)
+        ? { pageDimensions: raw.pageDimensions as Array<{ pageNumber: number; widthPt: number; heightPt: number }> }
+        : {}),
+      fieldCount: Number(raw.fieldCount ?? 0),
+    };
+  },
+
+  pdf: async (token: string, otpSessionToken?: string | null): Promise<Uint8Array> => {
+    const response = await postPublicResponse('/api/sign/direct/pdf', {
+      token,
+      ...(otpSessionToken ? { otpSessionToken } : {}),
+    });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
+      throw new PublicSignError(response.status, data.code ?? 'SIGN_PDF_UNAVAILABLE', data.message);
+    }
+    const buffer = await response.arrayBuffer();
+    return new Uint8Array(buffer);
+  },
+
+  requestOtp: (token: string, email: string) =>
+    postPublicJson<PublicDirectOtpRequestResult>('/api/sign/direct/otp/request', { token, email }),
+
+  verifyOtp: async (token: string, email: string, code: string): Promise<PublicDirectOtpVerifyResult> => {
+    const response = await postPublicResponse('/api/sign/direct/otp/verify', { token, email, code });
+    if (response.status === 200 || response.status === 401 || response.status === 423) {
+      return (await response.json()) as PublicDirectOtpVerifyResult;
+    }
+    const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string };
+    throw new PublicSignError(response.status, data.code ?? 'SIGN_LINK_INVALID', data.message);
+  },
+
+  start: (input: { token: string; name: string; email?: string | null; otpSessionToken?: string | null }) =>
+    postPublicJson<PublicDirectStartResult>('/api/sign/direct/start', {
+      token: input.token,
+      name: input.name,
+      ...(input.email ? { email: input.email } : {}),
+      ...(input.otpSessionToken ? { otpSessionToken: input.otpSessionToken } : {}),
+    }),
 };
