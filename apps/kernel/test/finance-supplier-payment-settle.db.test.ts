@@ -273,14 +273,15 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     // A second exported payment of the same amount is offered too; the settlement asked for one holds its whole line (not offered to the other payment), while another open line still offers the other.
     await exportFile(o, [second.id]);
     // Dated on the later of the two file days, so a run across Vietnam midnight offers both.
-    const open = await bankLine(o, '-110', [day, await fileDay(o, second.id)].sort().at(-1) as string);
+    const openDay = [day, await fileDay(o, second.id)].sort().at(-1) as string;
+    const open = await bankLine(o, '-110', openDay);
     expect((await matchOf(open)).candidates.map((c) => c.paymentId).sort()).toEqual([payment.id, second.id].sort());
     await ask(o, payment.id, open);
     expect((await matchOf(open)).candidates).toEqual([]);
     const another = await bankLine(o, '-110', await fileDay(o, second.id));
     expect((await matchOf(another)).candidates.map((c) => c.paymentId)).toEqual([second.id]);
     // An ordinary voucher for the held line is refused too, so the settlement cannot be starved by the other approval.
-    const held = await codeOf(execute(o, 'kernel.proposal.request', { command: 'finance.voucher.record', input: { type: 'bank_debit', date: day, cashAccount: '1121', partyId: o.supplier, description: 'x', lines: [{ account: '331', amount: '110' }], bankLineId: open } }));
+    const held = await codeOf(execute(o, 'kernel.proposal.request', { command: 'finance.voucher.record', input: { type: 'bank_debit', date: openDay, cashAccount: '1121', partyId: o.supplier, description: 'x', lines: [{ account: '331', amount: '110' }], bankLineId: open } }));
     expect(held).toBe('BANK_LINE_PROPOSED');
     expect(await codeOf(rt.query('finance.bank.supplier_match', { bankLineId: open }, { actor: user(o.member), orgId: o.orgId }))).toBe('FORBIDDEN');
   });
