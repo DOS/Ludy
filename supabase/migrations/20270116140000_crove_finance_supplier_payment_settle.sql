@@ -2,7 +2,7 @@
 -- Crove finance (issue #3700, S3c of #3113): the settlement of an approved supplier payment by the bank line that is its transfer. Idempotent; applied files stay untouched.
 --
 -- Ludy moves no money: when the bank line of the transfer is matched, finance.supplier_payment.settle.record (an R3 ledger proposal) records a bank voucher (giấy báo Nợ, Dr 331 / Cr the bank) that
--- names the payment, and the payment becomes `paid`, in one transaction. The approval policy is in 20270116120000 (the kernel's own migration).
+-- names the payment, and the payment becomes `paid`, in one transaction. The approval policy is in 20270116150000 (the kernel's own migration).
 -- crove_finance.cash_voucher.supplier_payment_id    the voucher that settles a payment names it (the id of crove_finance.supplier_payment; no foreign key, as the pay run's: the org purge keeps the
 --                                                   vouchers and deletes the payments). A voucher that names a payment is a bank_debit made from a bank line by an approved proposal. One voucher per payment (a unique
 --                                                   index): a voucher of a payment cannot be reversed while the payment is paid (the trigger below), so this is also "one live voucher".

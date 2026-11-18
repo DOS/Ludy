@@ -257,7 +257,7 @@ export const bankSupplierMatch = defineQuery({
 });
 
 // The entry of a settlement's voucher is not reversed while its payment is paid (SUPPLIER_PAYMENT_PAID): checked when the reversal is asked for and again when it is approved; the database holds it too
-// (20270116110000). Every other entry is let through.
+// (20270116140000). Every other entry is let through.
 export async function refuseSupplierPaymentReversal(ctx: QueryContext, entry: { source_type: string; source_id: string }): Promise<void> {
   if (entry.source_type !== 'finance.cash_voucher') return;
   const { rows } = await sql<{ payment_id: string }>`

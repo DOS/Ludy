@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove approval policy for the settlement of a supplier payment (#3700 S3c): finance.supplier_payment.settle.record is an R3 ledger proposal (it records a bank voucher, Dr 331 / Cr the bank, and moves the
 -- payment to paid): the same rule as every posting (owners and admins, and a member holding finance.proposal.approve org-wide; four-eyes and the one-person path, P10; only the chief accountant in an
--- accountant-preset org, P09), and its effect (a voucher that names the payment, with its entry) must be stored in the approving transaction (crove_finance.ledger_effect_recorded, 20270116110000). Kept equal to
+-- accountant-preset org, P09), and its effect (a voucher that names the payment, with its entry) must be stored in the approving transaction (crove_finance.ledger_effect_recorded, 20270116140000). Kept equal to
 -- approval.ts (POLICIES, APPROVAL_POLICY_VERSION 16) by apps/kernel/test/invariant/proposal-approve-gate.db.test.ts.
 --
 -- crove_kernel.approval_command_policy  the body of 20270115140000 (the newest) with the command added to the ledger list (the signature and OUT columns are unchanged).
