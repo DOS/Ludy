@@ -5,6 +5,7 @@
 // apps/app/test/module-screens.test.ts fails when a route of the app's router, under /o/$slug or outside it (#1660),
 // has no entry or two, or a label has no message in Vietnamese or English; apps/kernel/test/manifest-screens.test.ts fails when a manifest drifts
 // from its entry or a route names an undeclared permission. Modules are in the order of the app switcher.
+import type { ModuleId } from './apps.ts';
 import type { ModuleScreens } from './manifest.ts';
 
 const KERNEL_SCREENS = {
@@ -237,4 +238,4 @@ export const MODULE_SCREENS = {
   meetings: MEETINGS_SCREENS,
   projects: PROJECTS_SCREENS,
   sign: SIGN_SCREENS,
-} as const;
+} as const satisfies Record<ModuleId, ModuleScreens>;
