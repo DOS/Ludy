@@ -41,7 +41,7 @@ import { YoutubeCommentsPanel } from '../components/youtube-comments-panel.tsx';
 import { CalendarFeedCard } from '../components/social-calendar-feed.tsx';
 import { PlanReviewCard } from '../components/social-plan-review.tsx';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
-import { connectSplit, isMessagingOnly, minuteLabel, parseMinute, providerName, zoneLabel } from '../lib/social.ts';
+import { connectSplit, isMessagingOnly, lastSocialList, minuteLabel, parseMinute, providerName, zoneLabel } from '../lib/social.ts';
 import { shuffleRange } from '../lib/social-queue-order.ts';
 import type { QueueSuggestion } from '../lib/social-best-time.ts';
 import { copySlots } from '../lib/social-queue-copy.ts';
@@ -567,7 +567,7 @@ export function SocialChannelsPage() {
         title={t('channelsTitle')}
         subtitle={t('channelsSubtitle')}
         actions={
-          <Link to="/o/$slug/social" params={{ slug }} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
+          <Link to="/o/$slug/social" params={{ slug }} search={lastSocialList(slug)} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
             {t('back')}
           </Link>
         }
