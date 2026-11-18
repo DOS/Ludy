@@ -127,15 +127,16 @@ async function insertChange(
 async function insertAccount(ctx: CommandContext, partyId: string, input: { bankName: string; accountHolder: string; accountNumber: string }): Promise<{ row: AccountRow; hash: string }> {
   const digits = normalizeAccountNumber(input.accountNumber);
   const { hash, keyId } = hashNumber(ctx, digits);
-  const duplicate = await ctx.trx
+  // Each active account is judged under the key its own hash was made under (after a rotation a row can hold a hash under an older key id), so a number already held is refused while the
+  // deployment keeps that older key; the unique index still holds the current-key case. A key the deployment no longer keeps cannot be compared without opening the number (see sameAccount).
+  const active = await ctx.trx
     .selectFrom('crove_finance.supplier_bank_account')
-    .select('id')
+    .select(['number_hash', 'hash_key_id'])
     .where('org_id', '=', ctx.orgId)
     .where('party_id', '=', partyId)
-    .where('number_hash', '=', hash)
     .where('status', '=', 'active')
-    .executeTakeFirst();
-  if (duplicate) throw new DomainError('SUPPLIER_BANK_ACCOUNT_EXISTS', 409, 'Nhà cung cấp này đã có tài khoản với số đó');
+    .execute();
+  if (active.some((row) => sameAccount(ctx, digits, row))) throw new DomainError('SUPPLIER_BANK_ACCOUNT_EXISTS', 409, 'Nhà cung cấp này đã có tài khoản với số đó');
   const subject = supplierSubject(partyId);
   const numberSealed = await ctx.seal(subject, NUMBER_PLACE, digits);
   const holderSealed = await ctx.seal(subject, HOLDER_PLACE, input.accountHolder);
