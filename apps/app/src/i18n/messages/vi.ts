@@ -14753,6 +14753,10 @@ export const vi = {
         get: 'Xem tóm tắt và việc cần làm của cuộc họp',
         publish: 'Chia sẻ tóm tắt và việc cần làm với người dự họp',
       },
+      chapters: {
+        get: 'Xem mục lục của một cuộc họp',
+        save: 'Lưu bản nháp mục lục của người ghi cuộc họp',
+      },
       notes: {
         get: 'Xem ghi chú riêng của người ghi về cuộc họp',
         preview: 'Xem bản Vy viết lại từ ghi chú của người ghi',
