@@ -3816,11 +3816,13 @@ export function createHttpApp(deps: HttpDeps) {
         const legalEntityId = c.req.query('legalEntityId') ?? '';
         const book = await runtime.query<HouseholdS2b>('finance.household.s2b', { legalEntityId, period }, { actor, orgId });
         const bytes = await buildS2bWorkbook(book, config.BRAND_NAME);
+        // The file name is built before the audit row: a request that cannot be given a name (no organization slug) fails here, so no audit row is written for a file that is never sent.
+        const disposition = attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s2b-hkd', period, ORG_SLUG], 'xlsx');
         await runtime.execute('finance.household.export', { legalEntityId, book: 'S2b', period, rows: book.rows.length }, { actor, orgId });
         return new Response(body(bytes), {
           headers: {
             'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s2b-hkd', period, ORG_SLUG], 'xlsx'),
+            'content-disposition': disposition,
             'cache-control': 'private, no-store',
           },
         });
