@@ -1837,8 +1837,8 @@ suite('meetings module database integration tests (#2576)', () => {
       { startSeconds: 5, endSeconds: 9, speakerLabel: 'Khách A', text: 'Báo giá cho khách A là 120 triệu.' },
     ];
     const newMeeting = async () => String((await rpc('meetings/create', 'recorder', { title: 'Họp Google Meet', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start' })).body.meetingId);
-    const claimed = async (meetingId: string, over: { hasAudio?: boolean; status?: string } = {}) => {
-      const recordingId = await suggest('recorder', { hasAudio: over.hasAudio ?? false, hasTranscript: true });
+    const claimed = async (meetingId: string, over: { hasAudio?: boolean; status?: string; owner?: string } = {}) => {
+      const recordingId = await suggest(over.owner ?? 'recorder', { hasAudio: over.hasAudio ?? false, hasTranscript: true });
       await admin((c) =>
         c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = $2, meeting_id = $3, staging_key = $4, length_seconds = 600 WHERE id = $1`, [recordingId, over.status ?? 'claimed', meetingId, `staging/${randomBytes(32).toString('hex')}`]),
       );
@@ -1858,8 +1858,16 @@ suite('meetings module database integration tests (#2576)', () => {
     const withAudio = await newMeeting();
     await claimed(withAudio, { hasAudio: true });
     expect(await refusedWith(take('recorder', { meetingId: withAudio, segments }))).toBe('IMPORT_NOT_CLAIMED');
-    expect(await stored(meetingId)).toEqual([]);
+    // A claimed transcript-only row that belongs to ANOTHER member is no claim of this recorder.
+    const foreign = await newMeeting();
+    await claimed(foreign, { owner: 'attendee' });
+    expect(await refusedWith(take('recorder', { meetingId: foreign, segments }))).toBe('IMPORT_NOT_CLAIMED');
+    for (const id of [meetingId, unclaimed, withAudio, foreign]) expect(await stored(id)).toEqual([]);
     expect(await recordingRow(recordingId)).toMatchObject({ status: 'claimed' });
+    // The database backs the label: a line that is not Ludy's own is born tainted whoever inserts it, and its source never changes.
+    const insertLine = (tainted: boolean) =>
+      admin((c) => c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text, source, tainted) VALUES ($1, $2, 0, 1, 'x', 'google_meet', $3)`, [orgId, meetingId, tainted]));
+    await expect(insertLine(false)).rejects.toThrow(/MEETINGS_TAINT_FORBIDDEN/);
 
     // The claimed transcript-only row of the recorder: written as Google's tainted draft.
     expect(await take('recorder', { meetingId, segments })).toEqual({ meetingId, stored: 2 });
@@ -1878,6 +1886,8 @@ suite('meetings module database integration tests (#2576)', () => {
     const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.import.take_transcript' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
     expect(audit).toMatchObject({ meetingId, recordingId, stored: 2, source: 'google_meet' });
     expect(JSON.stringify(audit)).not.toContain('120 triệu');
+    await expect(admin((c) => c.query(`UPDATE crove_meetings.transcript_segment SET source = 'ludy' WHERE meeting_id = $1`, [meetingId]))).rejects.toThrow(/MEETINGS_TAINT_FORBIDDEN/);
+    await expect(admin((c) => c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text, source) VALUES ($1, $2, 0, 1, 'x', 'someone_else')`, [orgId, meetingId]))).rejects.toThrow(/transcript_segment_source_check/);
     // Taken once: the row is imported now, so the same call is refused.
     expect(await refusedWith(take('recorder', { meetingId, segments }))).toBe('IMPORT_NOT_CLAIMED');
   });

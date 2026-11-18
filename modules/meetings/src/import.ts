@@ -221,6 +221,10 @@ export const meetingImportTakeTranscript = defineCommand({
     await lockMeetingMedia(ctx, input.meetingId);
     await replaceDraft(ctx, input.meetingId, input.segments, { tainted: true, source: 'google_meet' });
     await sql`SELECT crove_kernel.meeting_platform_recording_imported(${input.meetingId}::uuid)`.execute(ctx.trx);
+    // The definer does nothing for a row that is no longer claimed (the sweep may have failed a stale claim since the read above, and the row cannot be locked by this role): then the
+    // lines and the end of the meeting go with the rolled-back transaction, and the member is told so, never left with a half-imported meeting and a retry that makes a second one.
+    const done = await ctx.trx.selectFrom('crove_kernel.meeting_platform_recording').select('status').where('org_id', '=', ctx.orgId).where('id', '=', row.id).executeTakeFirst();
+    if (done?.status !== 'imported') throw new DomainError('IMPORT_NOT_CLAIMED', 409, 'Bản chép lời này không còn chờ nhập nữa, hãy thử nhập lại');
     // The call ended when the platform says it did, else with its last line; never later than now (the rule of recording a media).
     const seconds = row.length_seconds ?? Math.ceil(Math.max(...input.segments.map((s) => s.endSeconds)));
     await sql`
