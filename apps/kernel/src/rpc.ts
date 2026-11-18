@@ -8,8 +8,9 @@ import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
+import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChangeRequest, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -291,6 +292,8 @@ export interface RpcChannels {
   marketplaceProviders?: Readonly<Record<string, MarketplaceProvider>>;
   // The ad platforms this deployment offers, by provider id (ADR-0040, #2217): the offline sandbox when ADS_SANDBOX is on.
   adsPlatforms?: Readonly<Record<string, AdPlatform>>;
+  // The deployment can confirm who sent an email (INBOUND_AUTHSERV_ID, #3636): only then do conversations carry the "sender not confirmed" mark. Left out: it cannot.
+  emailSenderCheck?: boolean;
   // The write Meta app is the read ads app or the Pages app (metaWriteAppShared of the config): switching running ads off then closes every
   // Meta reading connection (ADR-0043 point 4). Left out, it is taken as shared, the safe side.
   adsWriteAppShared?: boolean;
@@ -2765,10 +2768,10 @@ export function createRpcHandler(
       mute: os.notifications.mute.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.mute', input, { actor, orgId }))),
     },
     conversations: {
-      list: os.conversations.list.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.list', input, { actor, orgId }))),
+      list: os.conversations.list.handler(({ context, input }) => inOrg(context, async (orgId, actor) => markableListed((await runtime.query('kernel.conversation.list', input, { actor, orgId })) as ConversationListed, channels?.emailSenderCheck === true))),
       counts: os.conversations.counts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.counts', input, { actor, orgId }))),
       postCounts: os.conversations.postCounts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.post_counts', input, { actor, orgId }))),
-      get: os.conversations.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.get', input, { actor, orgId }))),
+      get: os.conversations.get.handler(({ context, input }) => inOrg(context, async (orgId, actor) => markableDetail((await runtime.query('kernel.conversation.get', input, { actor, orgId })) as ConversationDetail, channels?.emailSenderCheck === true))),
       reply: os.conversations.reply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply', input, { actor, orgId }))),
       replyPrivately: os.conversations.replyPrivately.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply_privately', input, { actor, orgId })),
