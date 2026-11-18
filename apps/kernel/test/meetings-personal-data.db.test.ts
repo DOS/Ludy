@@ -182,9 +182,10 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
     expect(found.meetingTextSkipped).toBe(false);
     if (process.env.CROVE_TEST_TIMING_FILE) appendFileSync(process.env.CROVE_TEST_TIMING_FILE, `finder over 120000 lines: email ${seconds.toFixed(2)} s, phone ${phoneSeconds.toFixed(2)} s\n`);
     expect(found.meetingText?.find((m) => m.recorderUserId === users.recorder)?.lines).toBeGreaterThanOrEqual(3);
-    // A generous budget for a shared runner: the point is that it is seconds, not minutes.
-    expect(seconds).toBeLessThan(30);
-    expect(phoneSeconds).toBeLessThan(30);
+    // A budget for a shared runner, tightened with the prefilter of crove_kernel.text_mentions (#3832): the email search took about 3 s and the phone search about 20 s on a laptop before it, about 2.5 s
+    // and 6 s after, so 20 s no longer passes the phone budget (a regression to the regex on every line fails here), and a runner two to three times slower still does.
+    expect(seconds).toBeLessThan(10);
+    expect(phoneSeconds).toBeLessThan(15);
   }, 120_000);
 
   // After the large meeting above: a search that the connection's statement timeout stops in the meeting text goes on without it, says so, and leaves the rest of the answer whole.
