@@ -62,7 +62,9 @@ describe('WorkingHoursCard', () => {
     expect(days[1]).toContain(`>${en.workingHours.off}<`);
     expect(days[2]).toContain('value="08:00"');
     expect(days[2]).toContain('value="12:00"');
-    expect(html).toContain('>Asia/Ho_Chi_Minh<');
+    // The zone as a person says it, not its IANA name (#3650).
+    expect(html).toContain('>Vietnam (GMT+7)<');
+    expect(html).not.toContain('>Asia/Ho_Chi_Minh<');
     // The two-day day off, not the meeting.
     expect(html).toContain(`${formatDate('2026-11-02', 'vi')} to ${formatDate('2026-11-03', 'vi')}`);
     expect(html).not.toContain('Họp');
@@ -92,5 +94,12 @@ describe('WorkingHoursCard', () => {
     expect(html).not.toContain(`>${en.workingHours.save}<`);
     expect(html).not.toContain(`aria-label="${en.workingHours.addDayOff}"`);
     expect(html).toContain('disabled=""');
+  });
+
+  it('says why the save is off when every day is off (#3650)', () => {
+    const html = card(true, { ...calendar, hours: { timeZone: 'Asia/Ho_Chi_Minh', windows: [] } });
+    expect(html).toContain(en.workingHours.saveNeedsDay);
+    expect(html).toMatch(/<button[^>]*disabled[^>]*aria-describedby="working-hours-save-hint"/);
+    expect(card(true)).not.toContain(en.workingHours.saveNeedsDay);
   });
 });

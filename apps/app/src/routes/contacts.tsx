@@ -160,7 +160,7 @@ export function ContactDeals({ contact, canEdit }: { contact: Contact; canEdit: 
       ) : deals.error ? (
         <ErrorText>{errorMessage(deals.error)}</ErrorText>
       ) : (deals.data?.length ?? 0) === 0 ? (
-        <p className="text-sm text-subtle-foreground">{t('deals.empty')}</p>
+        <p className="text-sm text-subtle-foreground">{canEdit ? t('deals.empty') : t('deals.emptyRead')}</p>
       ) : (
         <ul className="space-y-1 text-sm">
           {deals.data?.map((d) => (
@@ -359,7 +359,7 @@ export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies
           )}
           {contacts.hasNextPage && (
             <div className="mt-3 flex flex-wrap items-center gap-3">
-              <p className="text-xs text-muted-foreground">{t('more', { count: rows.length })}</p>
+              <p className="text-xs text-muted-foreground">{t(mode === 'companies' ? 'companiesMore' : 'more', { count: rows.length })}</p>
               <Button variant="outline" size="sm" disabled={contacts.isFetchingNextPage} onClick={() => void contacts.fetchNextPage()}>
                 {t('loadMore')}
               </Button>

@@ -1,19 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The member's outside calendars in Settings (issue #2123, part of #1374): connect Google Calendar, see when each last
 // synced, disconnect. The busy times of a connected calendar block booking slots; only start and end are read. With no
-// OAuth app configured on the server no connect button is shown and the card stays out of the way. A viewer has no
+// OAuth app configured no connect button is shown and the card says so in a line. A viewer has no
 // calendar of their own to connect.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
 import type { CalendarConnectionView, CalendarOAuthProvider } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { Checkbox } from '@crove/ui/components/checkbox';
+import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { meetingsInstalled } from '../components/linked-meetings.tsx';
 import { ErrorText } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { adminConsentLink, oauthProviderOf, rememberAdminLink } from '../lib/calendar-oauth.ts';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
+
+// The longer words of an option, folded behind "Tìm hiểu thêm" (#3650): one short line shows, the permissions and what is kept are one click away.
+function More({ children }: { children: React.ReactNode }) {
+  const t = useTranslations('workingHours');
+  return (
+    <details className="mt-0.5 text-xs text-muted-foreground">
+      <summary className="cursor-pointer text-link">{t('externalMore')}</summary>
+      <div className="mt-1 space-y-1">{children}</div>
+    </details>
+  );
+}
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.calendar.connections.key() });
 // The member's own meetings list (B1) follows the switch: it is shown or emptied as soon as the switch changes.
@@ -58,22 +70,38 @@ function ConnectionRow({
         </span>
         <span className={connection.status === 'expired' || connection.statusReason ? 'block text-xs text-destructive' : 'block text-xs text-subtle-foreground'}>{note}</span>
       </span>
-      <Button type="button" variant="ghost" size="sm" disabled={disconnect.isPending} onClick={() => disconnect.mutate({ connectionId: connection.id })} aria-label={t('externalDisconnectOf', { name: connection.displayName })}>
+      <ConfirmDialog
+        render={<Button type="button" variant="ghost" size="sm" aria-label={t('externalDisconnectOf', { name: connection.displayName })} />}
+        disabled={disconnect.isPending}
+        title={t('externalDisconnectTitle', { name: connection.displayName })}
+        description={t('externalDisconnectDescription')}
+        confirm={t('externalDisconnect')}
+        destructive
+        onConfirm={() => disconnect.mutate({ connectionId: connection.id })}
+      >
         {t('externalDisconnect')}
-      </Button>
+      </ConfirmDialog>
       </div>
       {offerWriteBack &&
         (connection.canWriteBack ? (
-          <label className="mt-1 flex items-start gap-2 text-xs text-muted-foreground">
-            <Checkbox checked={connection.writeBack} disabled={writeBack.isPending} onCheckedChange={(on) => writeBack.mutate({ connectionId: connection.id, enabled: on === true })} />
-            <span>
+          <div className="mt-1">
+            <label className="flex items-start gap-2 text-xs text-muted-foreground">
+              <Checkbox checked={connection.writeBack} disabled={writeBack.isPending} onCheckedChange={(on) => writeBack.mutate({ connectionId: connection.id, enabled: on === true })} />
               <span className="font-medium text-foreground">{t('externalWriteBack')}</span>
-              <span className="block">{t('externalWriteBackHint')}</span>
-            </span>
-          </label>
+            </label>
+            {/* Outside the label, so opening the words never ticks the box. */}
+            <div className="ml-6">
+              <More>
+                <p>{t('externalWriteBackHint')}</p>
+              </More>
+            </div>
+          </div>
         ) : (
           <div className="mt-1 text-xs text-muted-foreground">
-            <p>{t('externalWriteBackHint')}</p>
+            <p className="font-medium text-foreground">{t('externalWriteBack')}</p>
+            <More>
+              <p>{t('externalWriteBackHint')}</p>
+            </More>
             <Button type="button" variant="outline" size="sm" className="mt-1" onClick={onAllowWriteBack}>
               {t('externalAllowWriteBack')}
             </Button>
@@ -82,17 +110,23 @@ function ConnectionRow({
       {writeBack.error && <ErrorText>{errorMessage(writeBack.error)}</ErrorText>}
       {offerReadEvents &&
         (connection.canReadEvents ? (
-          <label className="mt-1 flex items-start gap-2 text-xs text-muted-foreground">
-            <Checkbox checked={connection.readEvents} disabled={readEvents.isPending} onCheckedChange={(on) => readEvents.mutate({ connectionId: connection.id, enabled: on === true })} data-testid="calendar-read-events" />
-            <span>
+          <div className="mt-1">
+            <label className="flex items-start gap-2 text-xs text-muted-foreground">
+              <Checkbox checked={connection.readEvents} disabled={readEvents.isPending} onCheckedChange={(on) => readEvents.mutate({ connectionId: connection.id, enabled: on === true })} data-testid="calendar-read-events" />
               <span className="font-medium text-foreground">{t('externalReadEvents')}</span>
-              <span className="block">{microsoft ? t('externalReadEventsHintMicrosoft') : t('externalReadEventsHint')}</span>
-            </span>
-          </label>
+            </label>
+            <div className="ml-6">
+              <More>
+                <p>{microsoft ? t('externalReadEventsHintMicrosoft') : t('externalReadEventsHint')}</p>
+              </More>
+            </div>
+          </div>
         ) : (
           <div className="mt-1 text-xs text-muted-foreground">
             <p className="font-medium text-foreground">{t('externalReadEvents')}</p>
-            <p>{microsoft ? t('externalReadEventsHintMicrosoft') : t('externalReadEventsHint')}</p>
+            <More>
+              <p>{microsoft ? t('externalReadEventsHintMicrosoft') : t('externalReadEventsHint')}</p>
+            </More>
             <Button type="button" variant="outline" size="sm" className="mt-1" onClick={onAllowReadEvents} data-testid="calendar-allow-read-events">
               {t('externalAllowReadEvents')}
             </Button>
@@ -100,9 +134,11 @@ function ConnectionRow({
         ))}
       {readEvents.error && <ErrorText>{errorMessage(readEvents.error)}</ErrorText>}
       {microsoft && (
-        <p className="mt-1 text-xs text-muted-foreground" data-testid="calendar-microsoft-note">
-          {t('externalMicrosoftNote')}
-        </p>
+        <div data-testid="calendar-microsoft-note">
+          <More>
+            <p>{t('externalMicrosoftNote')}</p>
+          </More>
+        </div>
       )}
     </li>
   );
@@ -134,13 +170,25 @@ export function ExternalCalendars({ canEdit }: { canEdit: boolean }) {
   });
   const offered: readonly CalendarOAuthProvider[] = providers.data ?? [];
   const rows = connections.data ?? [];
-  // Nothing to connect and nothing connected: the feature is not on for this server.
-  if (offered.length === 0 && rows.length === 0) return null;
+  // Nothing to connect and nothing connected: the feature is not on here, which the card says in one line instead of vanishing (#3650).
+  // While the two reads are on their way, or one failed, the card does not claim the feature is off.
+  if (providers.isPending || connections.isPending) return null;
+  if (offered.length === 0 && rows.length === 0 && !providers.error && !connections.error) {
+    return (
+      <div className="mt-4" aria-label={t('externalTitle')}>
+        <p className="text-xs font-medium text-muted-foreground">{t('externalTitle')}</p>
+        <p className="mt-1 text-xs text-subtle-foreground">{t('externalNotOn')}</p>
+      </div>
+    );
+  }
   return (
     <div className="mt-4" aria-label={t('externalTitle')}>
       <p className="text-xs font-medium text-muted-foreground">{t('externalTitle')}</p>
       <p className="mt-1 text-xs text-subtle-foreground">{t('externalIntro')}</p>
-      {(offered.includes('microsoft_calendar') || rows.some((c) => c.provider === 'microsoft')) && <p className="mt-1 text-xs text-subtle-foreground">{t('externalIntroMicrosoft')}</p>}
+      <More>
+        <p>{t('externalIntroDetail')}</p>
+        {(offered.includes('microsoft_calendar') || rows.some((c) => c.provider === 'microsoft')) && <p>{t('externalIntroMicrosoft')}</p>}
+      </More>
       {rows.length === 0 ? (
         <p className="mt-2 text-sm text-subtle-foreground">{t('externalNone')}</p>
       ) : (
