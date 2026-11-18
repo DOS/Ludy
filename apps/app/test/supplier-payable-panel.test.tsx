@@ -5,7 +5,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SupplierPayable, SupplierPayableList } from '@crove/kernel-contract';
+import type { SupplierPayable, SupplierPayableLine, SupplierPayableList } from '@crove/kernel-contract';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient, calls: [] as string[] }));
 
@@ -40,9 +40,10 @@ const base: SupplierPayable = {
   accountChangedOn: null,
 };
 
-function render(answer: SupplierPayableList, locale: 'vi' | 'en' = 'en'): string {
+function render(answer: SupplierPayableList, locale: 'vi' | 'en' = 'en', line?: SupplierPayableLine): string {
   setActiveLocale(locale);
   cache.current.setQueryData(['supplierPayment', 'payable'], answer);
+  if (line) cache.current.setQueryData(['supplierPayment', 'payableLine'], line);
   return renderToStaticMarkup(
     <QueryClientProvider client={cache.current}>
       <I18nProvider>
@@ -94,5 +95,50 @@ describe('the invoices to pay on the vendors page (#3113 S4b)', () => {
     const vi = render({ items: [base], more: false }, 'vi');
     expect(vi).toContain('Hóa đơn cần chi');
     expect(vi).toContain('Xin chi');
+  });
+
+  const second: SupplierPayable = { ...base, purchaseDocumentId: '00000000-0000-4000-8000-0000000000d2', invoiceNumber: 'HD-0043', invoiceDate: '2026-11-05' };
+  const facts = { invoices: 2, total: '220000', oldestDate: '2026-11-01', onChangedAccount: 0, suggestedPurchaseDocumentId: base.purchaseDocumentId };
+  const two: SupplierPayableList = { items: [base, second], more: false };
+
+  it('shows the facts by code, marks the suggested invoice and words the coworker\'s sentence (S4c)', () => {
+    const html = render(two, 'en', { facts, ai: 'used', text: '2 received invoices are waiting, 220,000 dong in total.' });
+    expect(html).toContain('data-testid="supplier-payable-line-facts"');
+    expect(html).toContain('2 invoices to pay');
+    expect(html).toContain('data-testid="supplier-payable-line-text"');
+    expect(html).toContain('2 received invoices are waiting');
+    // Only the suggested invoice carries the mark.
+    expect(html.match(/data-testid="supplier-payable-first"/g)).toHaveLength(1);
+    expect(html).not.toContain('recently');
+  });
+
+  it('shows the facts alone, with a note, when the coworker is busy, out of budget or refused, and with AI off', () => {
+    const ai = render(two, 'en', { facts, ai: 'off', text: null });
+    expect(ai).toContain('supplier-payable-line-facts');
+    expect(ai).not.toContain('supplier-payable-line-text');
+    expect(ai).not.toContain('supplier-payable-line-ai-state');
+    expect(ai).toContain('data-testid="supplier-payable-open"');
+    for (const state of ['busy', 'budget', 'failed'] as const) {
+      cache.current.clear();
+      const html = render(two, 'en', { facts, ai: state, text: null });
+      expect(html).toContain('data-testid="supplier-payable-line-ai-state"');
+      expect(html).not.toContain('supplier-payable-line-text');
+    }
+  });
+
+  it('counts the changed accounts, and drops an answer written for another list', () => {
+    const changed = render(two, 'en', { facts: { ...facts, onChangedAccount: 1 }, ai: 'none', text: null });
+    expect(changed).toContain('1 of a supplier whose bank account changed recently');
+    cache.current.clear();
+    // The answer was written for three invoices, the list now holds two: nothing of it is shown beside the new list.
+    const stale = render(two, 'en', { facts: { ...facts, invoices: 3 }, ai: 'used', text: '3 invoices.' });
+    expect(stale).not.toContain('supplier-payable-line');
+    expect(stale).not.toContain('supplier-payable-first');
+  });
+
+  it('speaks Vietnamese on the line', () => {
+    const html = render(two, 'vi', { facts, ai: 'used', text: 'Có 2 hóa đơn cần chi.' });
+    expect(html).toContain('2 hóa đơn cần chi, tổng');
+    expect(html).toContain('Gợi ý chi trước');
   });
 });

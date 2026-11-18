@@ -30,6 +30,7 @@ import {
   type RecruitingBriefResult,
   type ReviewCandidateProfileOptions,
 } from './recruiting-coworker.ts';
+import { checkSupplierPayableLineSentence, supplierPayableLineInstructions, supplierPayableLinePrompt, type SupplierPayableLineFacts, type SupplierPayableLineResult } from './supplier-payable-line.ts';
 import { checkMarketplaceLineSentence, marketplaceLineInstructions, marketplaceLinePrompt, type MarketplaceLineFacts, type MarketplaceLineResult } from './marketplace-line.ts';
 import { checkPayrollMatchSentence, payrollMatchInstructions, payrollMatchPrompt, type PayrollMatchFacts, type PayrollMatchResult } from './payroll-match.ts';
 import { checkVatLateSentence, vatLateInstructions, vatLatePrompt, vatLateQuiet, type VatLateFacts, type VatLateSentenceResult } from './vat-late.ts';
@@ -146,6 +147,10 @@ const zPayrollMatchOut = z.object({
 const zMarketplaceLineOut = z.object({
   sentence: z.string().describe('One plain sentence on what is waiting on the marketplace screen, citing only the figures given, each number written exactly as given'),
 });
+const zSupplierPayableLineOut = z.object({
+  sentence: z.string().describe('One plain sentence on what is waiting above the list of received invoices to pay, citing only the figures given, each number and date written exactly as given'),
+});
+export type SupplierPayableLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zSupplierPayableLineOut> | null; usage?: AiUsage }>;
 export type MarketplaceLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceLineOut> | null; usage?: AiUsage }>;
 export type PayrollMatchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zPayrollMatchOut> | null; usage?: AiUsage }>;
 export type OverviewGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zOverviewOut> | null; usage?: AiUsage }>;
@@ -251,6 +256,7 @@ export class InboxReader {
   private readonly generateVatLate: VatLateGenerator;
   private readonly generatePayrollMatch: PayrollMatchGenerator;
   private readonly generateMarketplaceLine: MarketplaceLineGenerator;
+  private readonly generateSupplierPayableLine: SupplierPayableLineGenerator;
   private readonly generateStockMatch: StockMatchGenerator;
   private readonly generateReorder: ReorderGenerator;
   private readonly generateEInvoiceDraft: EInvoiceDraftGenerator;
@@ -261,7 +267,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; marketplaceLine?: MarketplaceLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
@@ -343,6 +349,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.marketplace_line', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zMarketplaceLineOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateSupplierPayableLine =
+      generators.supplierPayableLine ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.supplier_payable_line', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zSupplierPayableLineOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -525,6 +539,14 @@ export class InboxReader {
     const { output, usage } = await this.generateMarketplaceLine({ system: marketplaceLineInstructions(facts.language), prompt: marketplaceLinePrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkMarketplaceLineSentence(facts, output);
+  }
+
+  /** The finance coworker's one line above the received invoices to pay (#3113 S4c), from four facts code read from the books and nothing else, or why there is none: the text is refused when it states a
+   * number or date the facts do not hold, a link, advice, or says something was paid, approved or sent (supplier-payable-line.ts). onUsage gets the tokens the call used. */
+  async supplierPayableLineSentence(facts: SupplierPayableLineFacts, onUsage?: (usage: AiUsage) => void): Promise<SupplierPayableLineResult> {
+    const { output, usage } = await this.generateSupplierPayableLine({ system: supplierPayableLineInstructions(facts.language), prompt: supplierPayableLinePrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkSupplierPayableLineSentence(facts, output);
   }
 
   /** The finance coworker's one line on why a bank statement line may be a payroll payment (#2532), from the kind, month, amount and date of the payment only, or why there is none: the text is

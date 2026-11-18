@@ -728,6 +728,14 @@ export const vi = {
       noAccount: 'Hãy thêm tài khoản ngân hàng của nhà cung cấp trước (mở nhà cung cấp).',
       manyAccounts: 'Nhà cung cấp này có nhiều tài khoản đang dùng: hãy ngừng các tài khoản cũ trước (mở nhà cung cấp).',
       more: 'Đang hiển thị {count} hóa đơn cũ nhất; chi hoặc xử lý bớt để thấy phần còn lại.',
+      first: 'Gợi ý chi trước',
+      lineFacts: '{count} hóa đơn cần chi, tổng {total}, cũ nhất ngày {date}',
+      lineChanged: '{count} hóa đơn của nhà cung cấp vừa đổi tài khoản ngân hàng',
+      lineAi: {
+        busy: '{finance} đang bận, các con số ở trên đứng một mình lúc này.',
+        budget: '{finance} đã dùng hết ngân sách AI tháng này: các con số ở trên đứng một mình.',
+        failed: '{finance} chưa diễn đạt được lần này: các con số ở trên đứng một mình.',
+      },
     },
     payments: {
       title: 'Khoản chi đã duyệt chờ chuyển khoản',
@@ -8237,6 +8245,7 @@ export const vi = {
       finance_vat_late_explain: 'Viết một câu nêu các hóa đơn bán ra lập muộn trong bảng kê thuế GTGT',
       finance_bank_match_explain: 'Giải thích vì sao một giao dịch ngân hàng có thể là khoản trả lương',
       finance_marketplace_line: 'Diễn đạt điều đang chờ trên màn hình sàn thương mại điện tử',
+      finance_supplier_payable_line: 'Diễn đạt các hóa đơn mua đang chờ chi',
       meetings_transcribe: 'Ghi lời cuộc họp thành văn bản',
       meetings_summary: 'Tóm tắt cuộc họp, các quyết định và việc cần làm',
       meetings_translate: 'Dịch bản tóm tắt cuộc họp giữa tiếng Việt và tiếng Anh',

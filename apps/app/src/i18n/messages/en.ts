@@ -730,6 +730,14 @@ export const en = {
       noAccount: 'Add the supplier\'s bank account first (open the supplier).',
       manyAccounts: 'This supplier has several active accounts: retire the old ones first (open the supplier).',
       more: 'Showing the oldest {count}; pay or settle some to see the rest.',
+      first: 'Suggested first',
+      lineFacts: '{count} invoices to pay, {total} in all, the oldest dated {date}',
+      lineChanged: '{count} of a supplier whose bank account changed recently',
+      lineAi: {
+        busy: '{finance} is busy, the figures above stand alone for now.',
+        budget: "{finance} has used this month's AI budget: the figures above stand alone.",
+        failed: '{finance} could not word this one: the figures above stand alone.',
+      },
     },
     payments: {
       title: 'Approved payments waiting for the bank',
@@ -8238,6 +8246,7 @@ export const en = {
       finance_vat_late_explain: 'One sentence naming the late sales invoices on the VAT working',
       finance_bank_match_explain: 'Explaining why a bank transaction may be a payroll payment',
       finance_marketplace_line: 'Wording what is waiting on the marketplace screen',
+      finance_supplier_payable_line: 'Wording the received invoices waiting to be paid',
       meetings_transcribe: 'Turning meeting audio into text',
       meetings_summary: 'Summarizing a meeting, its decisions and action items',
       meetings_translate: 'Translating a meeting summary between Vietnamese and English',
