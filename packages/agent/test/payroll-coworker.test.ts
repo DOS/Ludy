@@ -84,7 +84,7 @@ describe('promptLeaks', () => {
   });
 
   it('matches single-word names on word boundaries (including two-letter and diacritic-folded forms) without false hits inside longer words', () => {
-    for (const text of ['pay Lan', 'Lan,', '(Lan)', 'pay Lân', 'lan_nguyen', 'lan@company.vn']) {
+    for (const text of ['pay Lan', 'Lan,', '(Lan)', 'pay Lân', 'lan_nguyen', 'lan@example.com']) {
       expect(promptLeaks(text, ['Lan']), text).toEqual(['Lan']);
     }
     expect(promptLeaks('pay Lan', ['Lân'])).toEqual(['Lân']);
@@ -103,7 +103,7 @@ describe('promptLeaks', () => {
   });
 
   it('keeps strict substring and compact matching for multi-word names, IDs, emails, bank accounts and phone numbers', () => {
-    expect(promptLeaks('contact mailto:lan@company.vn now', ['lan@company.vn'])).toEqual(['lan@company.vn']);
+    expect(promptLeaks('contact mailto:lan@example.com now', ['lan@example.com'])).toEqual(['lan@example.com']);
     expect(promptLeaks('ID:079201012345', ['079201012345'])).toEqual(['079201012345']);
     expect(promptLeaks('TK VCB-1234-5678-9012', ['VCB 1234 5678 9012'])).toEqual(['VCB 1234 5678 9012']);
     expect(promptLeaks('call (090) 912-3456 today', ['0909123456'])).toEqual(['0909123456']);

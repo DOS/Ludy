@@ -13685,6 +13685,9 @@ export const en = {
           export: 'Record a download of the bank salary file (counts only, no name, account number or amount)',
           get: 'Open the bank salary file of an approved pay run, with each person\'s bank account number',
         },
+        coworker: {
+          access: 'Check owner or admin access before calling the payroll coworker',
+        },
         declaration: {
           export: 'Record a download of a declaration list (counts only, no name or amount)',
           get: 'Open a list to declare from (D02-LT, 05/KK-TNCN, 05/QTT-TNCN, data of the 03/TNCN certificate, labor register, 01/PLI report), with identity numbers, tax codes and insurance numbers',
