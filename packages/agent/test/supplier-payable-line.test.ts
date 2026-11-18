@@ -41,6 +41,8 @@ describe('a sentence that states the facts as given', () => {
   it.each([
     [VI, 'Có 3 hóa đơn cần chi, tổng 12.500.000 đồng, cũ nhất ngày 03/10/2026.'],
     [VI, 'Hiện có 3 hóa đơn, trong đó 1 của nhà cung cấp đã đổi tài khoản ngân hàng.'],
+    [VI, 'Có 3 hóa đơn chờ chi, tổng 12.500.000 đồng, cũ nhất ngày 03/10/2026, trong đó 1 hóa đơn của nhà cung cấp vừa đổi tài khoản ngân hàng.'],
+    [EN, '3 invoices, total 12,500,000 dong, oldest 03/10/2026, 1 invoice of a supplier whose bank account changed.'],
     [EN, '3 received invoices are waiting, 12,500,000 dong in total, the oldest dated 03/10/2026.'],
     [EN, 'Of the 3 invoices waiting to be paid, 1 is of a supplier whose bank account changed.'],
   ])('is kept: %#', (facts, sentence) => {
@@ -72,6 +74,8 @@ describe('a sentence that is refused, not repaired', () => {
     refused(VI, 'Có 3 hóa đơn của nhà cung cấp đổi tài khoản.', 'BINDING');
     refused(EN, 'Total 3 across 12,500,000 invoices.', 'BINDING');
     refused(EN, 'The newest invoice is dated 03/10/2026.', 'BINDING');
+    // Safe over lively: a count next to the changed-account words that is not the changed-account number is refused, and the screen shows the facts alone.
+    refused(EN, '1 of the 3 invoices is of a supplier whose bank account changed.', 'BINDING');
     refused(EN, 'There are 3 invoices, dated 03/10/2026.', 'BINDING');
   });
 
@@ -83,6 +87,10 @@ describe('a sentence that is refused, not repaired', () => {
     refused(EN, 'The 3 invoices were paid.', 'CLAIM');
     refused(EN, 'A payment request was sent for 3 invoices.', 'CLAIM');
     refused(EN, 'The 3 invoices are approved.', 'CLAIM');
+    refused(EN, '3 invoices, total 12,500,000 dong, payment is made.', 'CLAIM');
+    refused(EN, '3 invoices, total 12,500,000 dong, all overdue.', 'CLAIM');
+    refused(EN, '3 invoices, payment pending approval.', 'CLAIM');
+    refused(VI, 'Có 3 hóa đơn đã quá hạn.', 'CLAIM');
     refused(VI, 'Có 3 hóa đơn, mình ѕẽ chi hôm nay.', 'SCRIPT');
   });
 

@@ -104,7 +104,7 @@ describe('the invoices to pay on the vendors page (#3113 S4b)', () => {
   it('shows the facts by code, marks the suggested invoice and words the coworker\'s sentence (S4c)', () => {
     const html = render(two, 'en', { facts, ai: 'used', text: '2 received invoices are waiting, 220,000 dong in total.' });
     expect(html).toContain('data-testid="supplier-payable-line-facts"');
-    expect(html).toContain('2 invoices to pay');
+    expect(html).toContain('Invoices to pay: 2');
     expect(html).toContain('data-testid="supplier-payable-line-text"');
     expect(html).toContain('2 received invoices are waiting');
     // Only the suggested invoice carries the mark.
@@ -128,7 +128,7 @@ describe('the invoices to pay on the vendors page (#3113 S4b)', () => {
 
   it('counts the changed accounts, and drops an answer written for another list', () => {
     const changed = render(two, 'en', { facts: { ...facts, onChangedAccount: 1 }, ai: 'none', text: null });
-    expect(changed).toContain('1 of a supplier whose bank account changed recently');
+    expect(changed).toContain('Of a supplier whose bank account changed recently: 1');
     cache.current.clear();
     // The answer was written for three invoices, the list now holds two: nothing of it is shown beside the new list.
     const stale = render(two, 'en', { facts: { ...facts, invoices: 3 }, ai: 'used', text: '3 invoices.' });

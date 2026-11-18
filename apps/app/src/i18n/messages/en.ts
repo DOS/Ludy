@@ -731,8 +731,8 @@ export const en = {
       manyAccounts: 'This supplier has several active accounts: retire the old ones first (open the supplier).',
       more: 'Showing the oldest {count}; pay or settle some to see the rest.',
       first: 'Suggested first',
-      lineFacts: '{count} invoices to pay, {total} in all, the oldest dated {date}',
-      lineChanged: '{count} of a supplier whose bank account changed recently',
+      lineFacts: 'Invoices to pay: {count}, {total} in all, the oldest dated {date}',
+      lineChanged: 'Of a supplier whose bank account changed recently: {count}',
       lineAi: {
         busy: '{finance} is busy, the figures above stand alone for now.',
         budget: "{finance} has used this month's AI budget: the figures above stand alone.",

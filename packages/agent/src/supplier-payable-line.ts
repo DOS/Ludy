@@ -65,7 +65,7 @@ const fold = (text: string): string => text.normalize('NFKD').replace(/\p{Diacri
 
 // Words that say a step was DONE: "waiting to be paid" is a fact, "was paid", "đã trả" or "approved" is a claim the model cannot know. Vietnamese: any "đã" (the line is in the present tense) except
 // "đã đổi" (a bank account changed is a fact the line is given), and the words for finished; English: the verbs below, except where the sentence says they are still to come.
-const DONE_EN = 'posted|approved|paid|sent|booked|recorded|cleared|settled|received|collected|matched|reconciled|transferred|processed|confirmed|completed|done|issued|resolved|credited|debited|deposited|requested|exported';
+const DONE_EN = 'made|pending|overdue|late|due|owe|owed|owing|posted|approved|paid|sent|booked|recorded|cleared|settled|received|collected|matched|reconciled|transferred|processed|confirmed|completed|done|issued|resolved|credited|debited|deposited|requested|exported';
 const STILL_TO_COME = new RegExp(`\\b(?:yet to be|not yet been|not been|not yet|to be|waiting to be|awaiting being)\\s+(?:${DONE_EN})\\b`, 'g');
 const VI_STEP = '(?:ghi\\s+so|duyet|thanh\\s+toan|chuyen|gui|nhan|tra|chi|khop|hach\\s+toan|doi\\s+soat|xu\\s+ly|yeu\\s+cau)';
 const STILL_TO_COME_VI = new RegExp(`\\bcho\\s+(?:duoc\\s+)?${VI_STEP}\\b`, 'g');
@@ -73,6 +73,7 @@ const CLAIMS: readonly RegExp[] = [
   // "Received" is the situation of every invoice here ("received invoices"), so it is read as a claim only through the other words.
   new RegExp(`\\b(?:${DONE_EN.replace('received|', '')})\\b`),
   /\bda\b/,
+  /\b(qua han|tre han|den han|cho duyet|dang cho duyet|no)\b/,
   /\b(xong|roi|hoan tat|hoan thanh|ket thuc)\b/,
   new RegExp(`\\b(?:vua|moi)\\s+(?:duoc\\s+)?${VI_STEP}\\b`),
   new RegExp(`\\bduoc\\s+${VI_STEP}\\b`),
@@ -142,9 +143,13 @@ function bindingProblem(facts: SupplierPayableLineFacts, text: string): boolean 
     const unit = /^\s*(?:dong|d|vnd)\b/.test(read.slice(at + match[0].length));
     const { before, after } = clause(read, at, at + match[0].length);
     const cue = unit ? 'total' : nearestCue(before, after);
-    if (cue === null || !(meaning[token] ?? []).includes(cue)) return true;
-    // "3 invoices of a supplier whose bank account changed" says all three are of a changed account: a count that shares its clause with the changed-account words must be the changed-account number too.
-    if (cue === 'count' && !unit && new RegExp(CUES[2]![1].source).test(after) && !(meaning[token] ?? []).includes('changed')) return true;
+    if (cue === null) return true;
+    const allowed = meaning[token] ?? [];
+    // "3 invoices of a supplier whose bank account changed" says all three are of a changed account, and "1 invoice of a supplier whose bank account changed" is the changed-account count worded naturally: a
+    // count that shares its clause with the changed-account words must equal the changed-account number; any other number is held to its nearest cue.
+    if (cue === 'count' && !unit && new RegExp(CUES[2]![1].source).test(after)) {
+      if (!allowed.includes('changed')) return true;
+    } else if (!allowed.includes(cue)) return true;
   }
   // "One invoice" in words is a count the digits check cannot see: allowed only when it is the count.
   if (/\b(one|a single|single)\s+(received\s+)?(invoices?|bills?)\b/.test(read) && facts.invoices !== 1) return true;
