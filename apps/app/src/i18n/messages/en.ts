@@ -3697,6 +3697,11 @@ export const en = {
       },
       back: 'Back to the list',
       emptyNewHint: 'New comments and messages from customers on your connected channels will show up here.',
+      noChannels: 'No channel connected yet',
+      noChannelsHint: 'Connect Facebook, Zalo, WhatsApp or another channel to receive your customers’ messages and comments here.',
+      connectChannel: 'Connect a channel',
+      orForward: 'or forward an email to this address:',
+      retry: 'Try again',
     },
     // The intent of a conversation (CV3, #2306): the label a person applies, and the AI's suggestion beside it, which a click applies.
     intent: {

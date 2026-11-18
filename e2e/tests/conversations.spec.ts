@@ -193,3 +193,15 @@ test('a saved reply with the contact-name placeholder shows the contact name in 
   expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.conversation_message m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.direction = 'out'`, { slug })[0]?.n).toBe('0');
   await expect(box).toHaveValue('Chào {tên}, shop còn hàng ạ.');
 });
+
+test('an Inbox with no channel connected says so and offers to connect one, instead of "no new conversations" (#3638)', async ({ page }) => {
+  await signInNewUser(page, newEmail('inbox-no-channels'));
+  const slug = await createOrg(page, 'Công ty Chưa Kênh');
+  await page.goto(`/o/${slug}/social/inbox`);
+  const empty = page.getByTestId('inbox-no-channels');
+  await expect(empty).toBeVisible();
+  await expect(empty).toContainText('Chưa kết nối kênh nào');
+  await expect(page.getByTestId('inbox-list-empty')).toHaveCount(0);
+  await page.getByTestId('inbox-connect-channel').click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/channels`));
+});

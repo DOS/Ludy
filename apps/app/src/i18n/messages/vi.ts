@@ -3695,6 +3695,11 @@ export const vi = {
       },
       back: 'Về danh sách hội thoại',
       emptyNewHint: 'Bình luận và tin nhắn mới của khách ở các kênh đã kết nối sẽ hiện ở đây.',
+      noChannels: 'Chưa kết nối kênh nào',
+      noChannelsHint: 'Kết nối Facebook, Zalo, WhatsApp hay kênh khác để nhận tin nhắn và bình luận của khách tại đây.',
+      connectChannel: 'Kết nối kênh',
+      orForward: 'hoặc chuyển tiếp email tới địa chỉ này:',
+      retry: 'Thử lại',
     },
     // The intent of a conversation (CV3, #2306): the label a person applies, and the AI's suggestion beside it, which a click applies.
     intent: {
