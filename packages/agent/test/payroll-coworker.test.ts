@@ -82,6 +82,34 @@ describe('promptLeaks', () => {
     expect(promptLeaks('so 0,792,010,123,45', ['079201012345'])).toEqual(['079201012345']);
     expect(promptLeaks('E1 gets a bonus', ['a'])).toEqual([]);
   });
+
+  it('matches single-word names on word boundaries (including two-letter and diacritic-folded forms) without false hits inside longer words', () => {
+    for (const text of ['pay Lan', 'Lan,', '(Lan)', 'pay Lân', 'lan_nguyen', 'lan@company.vn']) {
+      expect(promptLeaks(text, ['Lan']), text).toEqual(['Lan']);
+    }
+    expect(promptLeaks('pay Lan', ['Lân'])).toEqual(['Lân']);
+    for (const text of ['pay An', 'An,', '(An)', 'pay Ân', 'an-tran']) {
+      expect(promptLeaks(text, ['An']), text).toEqual(['An']);
+    }
+    expect(promptLeaks('pay An', ['Ân'])).toEqual(['Ân']);
+
+    // Ordinary prompt words that contain "lan" or "an" as substrings must not trigger a false refusal.
+    expect(promptLeaks('Check the plan, balance, language, allowance, accountant, cannot, and annual leave cap.', ['Lan', 'Lân', 'An', 'Ân'])).toEqual([]);
+    // Trailing punctuation on a single-word display name still respects the leading word boundary.
+    expect(promptLeaks('Review the plan.', ['Lan.'])).toEqual([]);
+    expect(promptLeaks('Pay Lan.', ['Lan.'])).toEqual(['Lan.']);
+    // Short digit strings (1-2 chars) stay ignored so prompt figures never falsely match.
+    expect(promptLeaks('E1 worked 12 months and took 2 days', ['1', '2', '12'])).toEqual([]);
+  });
+
+  it('keeps strict substring and compact matching for multi-word names, IDs, emails, bank accounts and phone numbers', () => {
+    expect(promptLeaks('contact mailto:lan@company.vn now', ['lan@company.vn'])).toEqual(['lan@company.vn']);
+    expect(promptLeaks('ID:079201012345', ['079201012345'])).toEqual(['079201012345']);
+    expect(promptLeaks('TK VCB-1234-5678-9012', ['VCB 1234 5678 9012'])).toEqual(['VCB 1234 5678 9012']);
+    expect(promptLeaks('call (090) 912-3456 today', ['0909123456'])).toEqual(['0909123456']);
+    expect(promptLeaks('call +84 909.123.456 today', ['+84909123456'])).toEqual(['+84909123456']);
+    expect(promptLeaks('gluedE1nguyen van lanhere', ['Nguyễn Văn Lan'])).toEqual(['Nguyễn Văn Lan']);
+  });
 });
 
 describe('findAnomalies', () => {
@@ -351,6 +379,34 @@ describe('PayrollCoworker', () => {
     // The caller's own list of values: a value that appears in the prompt (here a phrase of the facts) stops the call.
     await expect(coworker.flag(sheet, { forbidden: ['tháng trước'] })).rejects.toBeInstanceOf(PayrollPromptLeakError);
     expect(prompts).toEqual([]);
+
+    // Single-word display names "Lan" and "An" do not falsely refuse English prompts containing "annual", "allowance", "accountant" or "cannot".
+    const enSheet = pseudo(
+      [
+        line('1', {
+          previous: null,
+          exceededAnnualDays: '1.5',
+          checks: { ...quiet, annualLeaveExceeded: true },
+          contract: { ...calm, severanceCheckSuggested: true },
+        }),
+      ],
+      { language: 'en', blockingRules: 1 },
+    ).sheet;
+    const enCoworker = new PayrollCoworker(CONFIG, {
+      prepare: spy({ items: [{ id: 'S1', field: 'contract', note: 'E1 has 12 months worked; check severance.' }] }),
+      flag: spy({ items: [{ id: 'A1', sentence: 'E1 exceeded annual leave by 1.5 day(s).' }] }),
+      explain: spy({ text: 'Gross pay is 10,500,000 dong and net pay is 9,450,000 dong.' }),
+    });
+    expect((await enCoworker.prepare(enSheet, { forbidden: ['Lan', 'Lân', 'An', 'Ân'] })).kind).toBe('proposals');
+    expect((await enCoworker.flag(enSheet, { forbidden: ['Lan', 'Lân', 'An', 'Ân'] })).kind).toBe('flags');
+    expect(
+      (
+        await enCoworker.explain(
+          { language: 'en', figures: figures({ base_wage: '10000000', allowances: '500000', gross: '10500000', employee_insurance: '1050000', net: '9450000' }), dependentsCounted: 0 },
+          { forbidden: ['Lan', 'Lân', 'An', 'Ân'] },
+        )
+      ).kind,
+    ).toBe('text');
   });
 
   it('does not ask the model when code found nothing to say, and reports the tokens of a call', async () => {
