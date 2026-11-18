@@ -263,6 +263,10 @@ CREATE POLICY supplier_payment_update ON crove_finance.supplier_payment AS RESTR
 CREATE OR REPLACE FUNCTION crove_finance.journal_entry_supplier_payment_reversal() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
+  -- Definer rights see every org: a write for another org than the caller's context is not judged here (the table's own row policy refuses it).
+  IF NEW.org_id IS DISTINCT FROM crove_kernel.ctx_org_id() THEN
+    RETURN NEW;
+  END IF;
   IF EXISTS (
     SELECT 1
     FROM crove_finance.journal_entry o
