@@ -77,7 +77,7 @@ describe('misaAmisPreview', () => {
     for (const kind of MISA_AMIS_KINDS) {
       const { query, calls } = fake(all);
       const result = await misaAmisPreview(query, { kind, ...range, legalEntityId: entity });
-      expect(result).toEqual({ kind, vouchers: 0, ready: 0, blocked: 0, checkedAgainstAmis: false, more: false, items: [] });
+      expect(result).toEqual({ kind, vouchers: 0, ready: 0, blocked: 0, checkedAgainstAmis: false, purchasePurpose: '1', more: false, items: [] });
       expect(calls.find((c) => c.name === expected[kind])?.input, kind).toMatchObject({ ...range, limit: MISA_AMIS_PREVIEW_LIMIT + 1, legalEntityId: entity });
       expect(calls.some((c) => c.name === 'finance.misa_goods_codes.list'), kind).toBe(kind === 'purchase_goods');
     }
@@ -96,7 +96,7 @@ describe('misaAmisPreview', () => {
     const blocked = await misaAmisPreview(fake(answers).query, { kind: 'purchase_services', ...range });
     expect(blocked).toMatchObject({ vouchers: 1, ready: 0, blocked: 1, items: [{ sourceId: SOURCE, amisType: 17, parts: 1, total: '0', blockers: [{ code: 'item_code_unknown', lineNo: 1 }] }] });
     const ready = await misaAmisPreview(fake(answers).query, { kind: 'purchase_services', ...range, serviceItemCode: 'DV_CHUNG' });
-    expect(ready).toMatchObject({ vouchers: 1, ready: 1, blocked: 0, items: [{ amisType: 17, lines: 1, total: '1100000', blockers: [] }] });
+    expect(ready).toMatchObject({ vouchers: 1, ready: 1, blocked: 0, items: [{ amisType: 17, reftype: 330, reasonTypeId: null, lines: 1, total: '1100000', blockers: [] }] });
     // Nothing in the answer names a party, an invoice or an amount of a line.
     expect(JSON.stringify(ready)).not.toMatch(/ABC|C26TAA|Phí/);
   });
@@ -113,7 +113,13 @@ describe('misaAmisPreview', () => {
     const sales = await misaAmisPreview(fake({ ...all, 'finance.vouchers.sales': [sale()] }).query, { kind: 'sales', ...range, salesItemCode: 'BH' });
     expect(sales.items).toMatchObject([{ amisType: 13, total: '1080000' }]);
     const payment = await misaAmisPreview(fake({ ...all, 'finance.vouchers.cash': [cash()] }).query, { kind: 'cash_payment', ...range });
-    expect(payment.items).toMatchObject([{ amisType: 4, voucherNo: 'CRPC202600012', total: '500000', blockers: [] }]);
+    expect(payment.items).toMatchObject([{ amisType: 4, reftype: 1020, reasonTypeId: 24, voucherNo: 'CRPC202600012', total: '500000', blockers: [] }]);
+    expect(payment.purchasePurpose).toBe('1');
+    const other = await misaAmisPreview(fake({ ...all, 'finance.vouchers.cash': [cash()] }).query, { kind: 'cash_payment', ...range, purchasePurpose: '3' });
+    expect(other.purchasePurpose).toBe('3');
+    // A blocked voucher still shows the choices it would be written with.
+    const sales2 = await misaAmisPreview(fake({ ...all, 'finance.vouchers.sales': [sale()] }).query, { kind: 'sales', ...range });
+    expect(sales2.items).toMatchObject([{ reftype: 3530, reasonTypeId: null, blockers: [{ code: 'item_code_unknown', lineNo: 1 }] }]);
   });
 
   it('keeps the first vouchers and says there are more when the period holds more than the list', async () => {

@@ -43,6 +43,8 @@ function item(entry: Entry): MisaAmisPreviewItem {
     sourceId: entry.sourceId,
     voucherNo: entry.mapping.voucherNo,
     amisType: entry.mapping.amisType,
+    reftype: entry.mapping.reftype,
+    reasonTypeId: entry.mapping.reasonTypeId,
     parts: Math.max(vouchers.length, 1),
     lines,
     total: blockers.length === 0 ? total : '0',
@@ -92,5 +94,5 @@ export async function misaAmisPreview(query: MisaAmisPreviewQuery, ask: MisaAmis
   const more = entries.length > MISA_AMIS_PREVIEW_LIMIT;
   const items = entries.slice(0, MISA_AMIS_PREVIEW_LIMIT).map(item);
   const blocked = items.filter((i) => i.blockers.length > 0).length;
-  return { kind: ask.kind, vouchers: items.length, ready: items.length - blocked, blocked, checkedAgainstAmis: false, more, items };
+  return { kind: ask.kind, vouchers: items.length, ready: items.length - blocked, blocked, checkedAgainstAmis: false, purchasePurpose: ctx.purchasePurpose, more, items };
 }

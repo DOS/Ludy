@@ -37,8 +37,10 @@ export const zMisaAmisPreviewItem = z.strictObject({
   sourceId: zId,
   // Ludy's own voucher number (the `org_refno`), as on the MISA SME file.
   voucherNo: z.string().max(40),
-  // AMIS's voucher_type.
+  // AMIS's voucher_type, reftype and reason_type_id (null when the kind has none). The last two are Ludy's own choices, not yet confirmed in a MISA sandbox, so the person sees them before anything is sent.
   amisType: z.number().int().positive(),
+  reftype: z.number().int().positive(),
+  reasonTypeId: z.number().int().positive().nullable(),
   // How many requests it is: more than one when it has more than 500 lines.
   parts: z.number().int().min(1),
   lines: z.number().int().min(0),
@@ -57,8 +59,10 @@ export const zMisaAmisPreview = z.strictObject({
   vouchers: z.number().int().min(0),
   ready: z.number().int().min(0),
   blocked: z.number().int().min(0),
-  // false until the AMIS dictionary has been read: the branch and the party codes are not checked.
+  // false until the AMIS dictionary has been read: the branch and the party codes are not checked ("not matched with AMIS yet").
   checkedAgainstAmis: z.boolean(),
+  // The "mục đích mua vào" the purchases and payments are written with (default 1, not yet confirmed in a MISA sandbox).
+  purchasePurpose: z.enum(['1', '2', '3', '4', '5']),
   // true when the period holds more than MISA_AMIS_PREVIEW_LIMIT vouchers: the counts and items are of the first ones.
   more: z.boolean(),
   items: z.array(zMisaAmisPreviewItem).max(MISA_AMIS_PREVIEW_LIMIT),

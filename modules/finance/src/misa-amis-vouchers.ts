@@ -8,6 +8,11 @@
 // needs one it was not given is NOT written: the result lists a blocker (a code, never a sentence), the preview shows it and the
 // accounting coworker (S5) may explain it; the deterministic list decides.
 //
+// UNCONFIRMED (docs/integrations/misa-amis-api.md, "Unconfirmed, to check in the sandbox", under "How Ludy's vouchers map to AMIS"): three choices here are Ludy's own and
+// have not run against a MISA sandbox: the purchase purpose defaults to 1, a bank payment is written as reftype 1510 (ủy nhiệm chi), and the reason_type_id of a cash or bank voucher
+// is derived from its accounts (331 a supplier, 131 a customer). They are shown in the preview, nothing is pushed without a person approving it, and they are confirmed in the sandbox
+// check before the push (S3b, #3902) is enabled for any org.
+//
 // Amounts are decimal strings, written as exact JSON numbers (`amisNumber`); arithmetic goes through decimal.js (@crove/l10n-vn).
 import { createHash } from 'node:crypto';
 import { PAYABLE_ACCOUNT, money, sum } from '@crove/l10n-vn';
@@ -33,6 +38,7 @@ import {
 
 // The five "mục đích mua vào" AMIS defines, with the GUIDs its documentation fixes for them (the same in every database).
 export type AmisPurchasePurposeCode = '1' | '2' | '3' | '4' | '5';
+// UNCONFIRMED default: 1 (see the top of this file). A person can pick another per batch.
 export const AMIS_PURCHASE_PURPOSES: Readonly<Record<AmisPurchasePurposeCode, string>> = {
   '1': 'ed4bd91d-83ac-4a26-b4c1-4bce85faecb8',
   '2': 'd1609311-93aa-41c3-9d24-020bb6d47af5',
@@ -73,9 +79,11 @@ export interface AmisBlocker {
 
 /** `vouchers` is empty when there is a blocker: nothing is half written. More than one voucher when the lines exceed AMIS's 500. */
 export interface AmisMapping {
-  /** Ludy's number of the voucher (the `org_refno` of its first part) and the AMIS voucher_type: known whether or not it can be written. */
+  /** Ludy's number of the voucher (the `org_refno` of its first part), the AMIS voucher_type, reftype and reason_type_id: known whether or not it can be written. */
   voucherNo: string;
   amisType: number;
+  reftype: number;
+  reasonTypeId: number | null;
   vouchers: AmisVoucher[];
   blockers: AmisBlocker[];
 }
@@ -172,6 +180,9 @@ export function amisTotals(vouchers: readonly AmisVoucher[]): { lines: number; t
 interface Meta {
   voucherNo: string;
   amisType: number;
+  /** AMIS's reftype and reason_type_id of the voucher: what a preview shows, because they are Ludy's choices (see UNCONFIRMED below). */
+  reftype: number;
+  reasonTypeId: number | null;
 }
 const done = (meta: Meta, vouchers: AmisVoucher[]): AmisMapping => ({ ...meta, vouchers, blockers: [] });
 const blocked = (meta: Meta, blockers: AmisBlocker[]): AmisMapping => ({ ...meta, vouchers: [], blockers });
@@ -186,23 +197,8 @@ const BANK_DEPOSIT_REASON = { customer: 29, other: 34 } as const;
 
 const startsWith = (account: string, root: string): boolean => account === root || account.startsWith(root);
 
-const CASH_AMIS_TYPE = {
-  cash_receipt: AMIS_VOUCHER_TYPES.cashReceipt,
-  cash_payment: AMIS_VOUCHER_TYPES.cashPayment,
-  bank_credit: AMIS_VOUCHER_TYPES.bankCredit,
-  bank_debit: AMIS_VOUCHER_TYPES.bankDebit,
-} as const;
-
 export function cashAmisVouchers(voucher: CashVoucher, ctx: AmisContext): AmisMapping {
   const no = cashVoucherNo(voucher);
-  const meta = { voucherNo: no, amisType: CASH_AMIS_TYPE[voucher.type] };
-  const blockers: AmisBlocker[] = [];
-  if (ctx.branchId === null) blockers.push({ code: 'branch_missing', sourceId: voucher.sourceId, lineNo: null });
-  if (voucher.lines.length === 0) blockers.push({ code: 'no_lines', sourceId: voucher.sourceId, lineNo: null });
-  const code = voucher.party ? partyCode(voucher.party, ctx) : null;
-  if (voucher.party && code === undefined) blockers.push({ code: 'party_code_unknown', sourceId: voucher.sourceId, lineNo: null });
-  if (blockers.length > 0) return blocked(meta, blockers);
-
   const inflow = isInflow(voucher.type);
   const fromSupplier = voucher.lines.some((l) => startsWith(l.account, PAYABLE_ACCOUNT));
   const fromCustomer = voucher.lines.some((l) => startsWith(l.account, '131'));
@@ -210,9 +206,17 @@ export function cashAmisVouchers(voucher: CashVoucher, ctx: AmisContext): AmisMa
     cash_receipt: { type: AMIS_VOUCHER_TYPES.cashReceipt, reftype: 1010, reason: null },
     cash_payment: { type: AMIS_VOUCHER_TYPES.cashPayment, reftype: 1020, reason: fromSupplier ? CASH_PAYMENT_REASON.supplier : CASH_PAYMENT_REASON.other },
     bank_credit: { type: AMIS_VOUCHER_TYPES.bankCredit, reftype: 1500, reason: fromCustomer ? BANK_DEPOSIT_REASON.customer : BANK_DEPOSIT_REASON.other },
-    // 1510 Ủy nhiệm chi: Ludy has no cheque kind.
+    // 1510 Ủy nhiệm chi: Ludy has no cheque kind (UNCONFIRMED, see the top of this file).
     bank_debit: { type: AMIS_VOUCHER_TYPES.bankDebit, reftype: 1510, reason: fromSupplier ? BANK_WITHDRAW_REASON.supplierNoInvoice : BANK_WITHDRAW_REASON.other },
   }[voucher.type];
+  const meta = { voucherNo: no, amisType: kind.type, reftype: kind.reftype, reasonTypeId: kind.reason };
+  const blockers: AmisBlocker[] = [];
+  if (ctx.branchId === null) blockers.push({ code: 'branch_missing', sourceId: voucher.sourceId, lineNo: null });
+  if (voucher.lines.length === 0) blockers.push({ code: 'no_lines', sourceId: voucher.sourceId, lineNo: null });
+  const code = voucher.party ? partyCode(voucher.party, ctx) : null;
+  if (voucher.party && code === undefined) blockers.push({ code: 'party_code_unknown', sourceId: voucher.sourceId, lineNo: null });
+  if (blockers.length > 0) return blocked(meta, blockers);
+
   const needsPurpose = voucher.type === 'cash_payment' || voucher.type === 'bank_debit';
   const detail = voucher.lines.map((line, i) => ({
     sort_order: i + 1,
@@ -323,7 +327,7 @@ function purchaseHeader(lines: ReadonlyArray<{ amount: { text: string }; vat_amo
 
 export function purchaseServiceAmisVouchers(voucher: PurchaseVoucher, ctx: AmisContext): AmisMapping {
   const no = misaVoucherNo(PURCHASE_VOUCHER_PREFIX, voucher.entryId);
-  const meta = { voucherNo: no, amisType: AMIS_VOUCHER_TYPES.purchaseServices };
+  const meta = { voucherNo: no, amisType: AMIS_VOUCHER_TYPES.purchaseServices, reftype: 330, reasonTypeId: null };
   const rows = servicePurchaseRows(voucher);
   const blockers = purchaseBlockers(voucher, rows, ctx, () => ctx.serviceItemCode);
   if (blockers.length > 0) return blocked(meta, blockers);
@@ -362,7 +366,7 @@ export function purchaseGoodsAmisVouchers(
   ctx: AmisContext,
 ): AmisMapping {
   const no = misaVoucherNo(GOODS_PURCHASE_VOUCHER_PREFIX, voucher.entryId);
-  const meta = { voucherNo: no, amisType: AMIS_VOUCHER_TYPES.purchaseGoods };
+  const meta = { voucherNo: no, amisType: AMIS_VOUCHER_TYPES.purchaseGoods, reftype: 302, reasonTypeId: null };
   const rows = goodsPurchaseRows(voucher, saved, parents);
   const blockers = purchaseBlockers(voucher, rows, ctx, (row) => row.goods.itemCode);
   if (blockers.length > 0) return blocked(meta, blockers);
@@ -412,7 +416,7 @@ export function purchaseGoodsAmisVouchers(
 
 export function salesAmisVouchers(voucher: SalesVoucher, ctx: AmisContext): AmisMapping {
   const no = misaVoucherNo(SALES_VOUCHER_PREFIX, voucher.entryId);
-  const meta = { voucherNo: no, amisType: AMIS_VOUCHER_TYPES.sales };
+  const meta = { voucherNo: no, amisType: AMIS_VOUCHER_TYPES.sales, reftype: 3530, reasonTypeId: null };
   const rows = salesRows(voucher);
   const blockers: AmisBlocker[] = [];
   const at = (code: AmisBlockerCode, lineNo: number | null) => blockers.push({ code, sourceId: voucher.sourceId, lineNo });
