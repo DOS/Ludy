@@ -3911,7 +3911,7 @@ export const en = {
     draft: {
       title: "{sales}'s draft",
       badge: '{sales}’s proposal: read it before sending',
-      intro: '{sales}, the AI sales coworker, suggests intents, contacts and replies; you decide.',
+      intro: '{sales}, the AI sales coworker, suggests conversation types, contacts and replies; you decide.',
       hint: "An AI wrote this from the customer's message and may be wrong. Nothing is sent until you press Send.",
       writing: '{sales} is drafting…',
       ask: 'Ask {sales} to draft a reply',

@@ -77,6 +77,7 @@ export function ContactSuggestions({ conversationId, lastSeq }: { conversationId
                   variant="outline"
                   loading={link.isPending && link.variables === c.partyId}
                   data-testid="contact-suggestion-link"
+                  aria-describedby={confirming === c.partyId ? `name-only-${c.partyId}` : undefined}
                   onClick={() => (c.reason === 'name' && confirming !== c.partyId ? setConfirming(c.partyId) : link.mutate(c.partyId))}
                 >
                   {confirming === c.partyId ? t('nameOnlyConfirm', { name: c.name }) : t('linkThis', { name: c.name })}
@@ -97,7 +98,7 @@ export function ContactSuggestions({ conversationId, lastSeq }: { conversationId
               </span>
             </div>
             {confirming === c.partyId && (
-              <p role="note" className="text-xs text-muted-foreground" data-testid="contact-name-only-warn">
+              <p id={`name-only-${c.partyId}`} role="status" className="text-xs text-muted-foreground" data-testid="contact-name-only-warn">
                 {t('nameOnlyWarn', { name: c.name })}
               </p>
             )}

@@ -3909,7 +3909,7 @@ export const vi = {
     draft: {
       title: 'Bản nháp của {sales}',
       badge: 'Đề xuất của {sales}: hãy đọc lại trước khi gửi',
-      intro: '{sales}, đồng nghiệp AI bán hàng, gợi ý ý định, liên hệ và câu trả lời; bạn quyết định.',
+      intro: '{sales}, đồng nghiệp AI bán hàng, gợi ý loại hội thoại, liên hệ và câu trả lời; bạn quyết định.',
       hint: 'AI viết từ tin nhắn của khách, có thể sai. Chưa có gì được gửi cho đến khi bạn bấm Gửi.',
       writing: '{sales} đang soạn…',
       ask: 'Nhờ {sales} soạn trả lời',

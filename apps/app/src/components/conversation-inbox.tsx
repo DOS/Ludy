@@ -314,8 +314,8 @@ export function ConversationThread({ conversationId, onGone, onOpenConversation,
           <Badge variant={c.status === 'new' ? 'default' : 'outline'} data-testid="conversation-status">
             {t(`status.${c.status}`)}
           </Badge>
-          {/* A one-person org has no one else to hand a thread to (#3637), so the control appears with two members or more. */}
-          {canWrite && members.length >= 2 && <AssignSelect conversation={c} members={members} />}
+          {/* A one-person org has no one else to hand a thread to (#3637), so the control appears with two members or more, or when the thread already has someone in charge (who can then be changed or cleared). */}
+          {canWrite && (members.length >= 2 || c.assigneeUserId !== null) && <AssignSelect conversation={c} members={members} />}
           {canWrite && <ResolveButton conversation={c} />}
         </div>
       </header>

@@ -69,7 +69,7 @@ describe('the contact suggestions (IN-5)', () => {
     expect(suggestions('en')).toContain('Dy ranked these');
   });
 
-  it('offers a visible skip on every row, named for its contact, and leaves the warning for the name-only match until it is clicked', () => {
+  it('offers a visible skip on every row, named for its contact, and does not show the name-only warning before anything is clicked (the click flow is checked in the browser by e2e, not here)', () => {
     const html = suggestions();
     expect(html.match(/data-testid="contact-suggestion-dismiss"/g)).toHaveLength(2);
     expect(html).toContain('>Bỏ qua<');
@@ -135,10 +135,10 @@ describe('Dy in the reply box (IN-6, IN-11, IN-12)', () => {
   it('is introduced as the AI sales coworker that proposes, before the button that asks it', () => {
     const html = box(detail());
     expect(html).toContain('data-testid="conversation-dy-intro"');
-    expect(html).toContain('Dy, đồng nghiệp AI bán hàng, gợi ý ý định, liên hệ và câu trả lời; bạn quyết định.');
+    expect(html).toContain('Dy, đồng nghiệp AI bán hàng, gợi ý loại hội thoại, liên hệ và câu trả lời; bạn quyết định.');
     expect(html.indexOf('conversation-dy-intro')).toBeLessThan(html.indexOf('conversation-draft-ask'));
     expect(html).toContain('Nhờ Dy soạn trả lời');
-    expect(box(detail(), 'en')).toContain('Dy, the AI sales coworker, suggests intents, contacts and replies; you decide.');
+    expect(box(detail(), 'en')).toContain('Dy, the AI sales coworker, suggests conversation types, contacts and replies; you decide.');
   });
 
   it('shows the draft as a proposal chip, in the proposal words', () => {
