@@ -8,8 +8,9 @@
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { MeetingPlatformError, type MeetingPlatformAdapter } from '@crove/channel';
-import { MEETING_PLATFORM_LIST_DAYS, meetingPlatformBinding, type MeetingPlatformProvider } from '@crove/kernel-contract';
+import { MEETING_PLATFORM_LIST_DAYS, type MeetingPlatformProvider } from '@crove/kernel-contract';
 import { DomainError, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { freshCredential } from './meeting-platform-credential.ts';
 import type { MeetingsImportJob } from './meetings-import.ts';
 
 export const MEETINGS_IMPORT_SWEEP_CRON = '* * * * *';
@@ -102,12 +103,10 @@ export async function runMeetingsImportSweep(deps: MeetingsImportSweepDeps): Pro
       worked += 1;
       try {
         if (!adapter) throw new MeetingPlatformError('platform_unavailable');
-        const sealed = await deps.runtime.query<{ keyId: string; envelope: string; provider: string; externalAccount: string }>('kernel.meeting_platform.credential', { connectionId: row.connection_id }, ctx);
-        const secret = deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, meetingPlatformBinding(row.org_id, sealed.provider as MeetingPlatformProvider, sealed.externalAccount));
-        const parsed = JSON.parse(secret) as { accessToken?: unknown; refreshToken?: unknown };
-        if (typeof parsed.accessToken !== 'string' || parsed.accessToken === '') throw new MeetingPlatformError('connection_expired');
+        // The token in hand, renewed first when it is about to expire (see meeting-platform-credential.ts).
+        const credential = await freshCredential(deps, row.org_id, row.connection_id, adapter);
         const since = new Date(now().getTime() - MEETING_PLATFORM_LIST_DAYS * 86_400_000);
-        const listed = await adapter.list({ accessToken: parsed.accessToken, ...(typeof parsed.refreshToken === 'string' ? { refreshToken: parsed.refreshToken } : {}) }, since);
+        const listed = await adapter.list(credential, since);
         await deps.runtime.execute('kernel.meeting_platform.recording_replace', { connectionId: row.connection_id, rows: listed.slice(0, 100) }, ctx);
         done.listed += 1;
       } catch (error) {

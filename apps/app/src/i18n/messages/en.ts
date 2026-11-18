@@ -14384,6 +14384,7 @@ export const en = {
         connect: 'Connect a meeting platform',
         connections: 'View my meeting platforms',
         credential: 'Read the sealed sign-in of a meeting platform',
+        credential_refresh: 'Renew a meeting platform access token before it expires',
         disconnect: 'Disconnect a meeting platform',
         import: {
           claim: 'Take a downloaded recording from a meeting platform',
