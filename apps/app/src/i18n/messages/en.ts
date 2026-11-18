@@ -8028,10 +8028,10 @@ export const en = {
     allowDraft: 'Allow “{client}” to read the data of {org} and write Engage post drafts',
     limitsDraft: 'The app works with your rights in this organization: it reads, and can only create Engage post drafts that wait for a person to review. An owner or admin can cut it off at once in Settings.',
   },
-  // Settings "Apps & Modules" (ADR-0053, #3312): which apps and modules the company uses.
+  // Settings "Apps & Modules" (ADR-0053, #3312): toggle switchable modules grouped by parent App.
   orgApps: {
     title: 'Apps & Modules',
-    hint: 'Choose the apps and modules your company uses. Anything turned off disappears from the menu, from Today and from what Vy mentions. Its data is kept as it is until the retention period you set ends (the nightly clean-up still runs), and turning it back on brings everything back that is still kept.',
+    hint: 'Choose which modules your company uses, grouped under their apps. Any module turned off disappears from the menu, from Today and from what Vy mentions. Its data is kept as it is until the retention period you set ends (the nightly clean-up still runs), and turning it back on brings everything back that is still kept.',
     readOnly: 'Only an owner or an admin can change this.',
     switchLabel: 'Use {app}',
     status: { on: 'In use', off: 'Off', notInPlan: 'Not in your plan' },
@@ -8044,7 +8044,7 @@ export const en = {
       social: 'Connected channels are kept and paused. A post that was scheduled and is more than an hour late when you turn it back on waits for your review instead of going out.',
       ads: 'Connected ad accounts are kept and paused.',
       crm: 'The public booking page stops taking visitors until you turn it back on.',
-      meetings: 'Meeting platform connections are kept and paused. It cannot be turned off while a recording is running. To delete a meeting on request, turn this module back on first.',
+      meetings: 'Meeting platform connections are kept and paused. It cannot be turned off while a recording or a platform recording import is running; wait until both finish before trying again. To delete a meeting on request, turn this module back on first.',
       other: 'No connection is removed.',
     },
   },

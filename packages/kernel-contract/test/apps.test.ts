@@ -13,9 +13,14 @@ import {
 } from '../src/index.ts';
 
 describe('canonical app and module naming hierarchy', () => {
-  it('keeps MODULE_IDS, MODULE_CATALOG, and MODULE_SCREENS in lockstep', () => {
+  it('keeps MODULE_IDS, MODULE_CATALOG, MODULE_SCREENS, and SWITCHABLE_MODULE_IDS in lockstep', () => {
     expect(Object.keys(MODULE_CATALOG).sort()).toEqual([...MODULE_IDS].sort());
     expect(Object.keys(MODULE_SCREENS).sort()).toEqual([...MODULE_IDS].sort());
+    expect(new Set(SWITCHABLE_MODULE_IDS).size).toBe(SWITCHABLE_MODULE_IDS.length);
+    for (const id of MODULE_IDS) {
+      expect(MODULE_CATALOG[id].switchable).toBe(id !== 'kernel');
+    }
+    expect([...SWITCHABLE_MODULE_IDS].sort()).toEqual(MODULE_IDS.filter((id) => MODULE_CATALOG[id].switchable).sort());
   });
 
   it('maps every non-kernel module to a declared AppId', () => {

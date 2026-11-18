@@ -50,7 +50,12 @@ describe('Settings Apps', () => {
   it('shows an owner every app on with a switch each, no confirmation open, and the plain hint', () => {
     const html = render(true, [app('finance'), app('social'), app('crm')]);
     for (const id of ['finance', 'social', 'crm']) expect(html).toContain(`org-app-${id}`);
-    expect(html).toContain('org-app-group-engage');
+    const engageGroup = html.slice(html.indexOf('data-testid="org-app-group-engage"'));
+    expect(engageGroup).toContain('role="group"');
+    expect(engageGroup).toContain('aria-labelledby="org-app-group-engage-label"');
+    expect(engageGroup).toContain('org-app-social');
+    expect(engageGroup).toContain('org-app-crm');
+    expect(html.indexOf('org-app-finance')).toBeLessThan(html.indexOf('data-testid="org-app-group-engage"'));
     expect(html).not.toContain('org-app-group-finance');
     expect(html).toContain(en.orgApps.hint.slice(0, 30));
     expect(html.match(/aria-checked="true"/g)).toHaveLength(3);
@@ -84,11 +89,17 @@ describe('Settings Apps', () => {
   it('speaks Vietnamese with the app and module names', () => {
     const html = render(true, [app('finance'), app('meetings', { enabled: false }), app('notes'), app('sign')], 'vi');
     const escapeHtml = (s: string) => s.replaceAll('&', '&amp;');
-    expect(html).toContain('org-app-group-teamwork');
-    expect(html).toContain(escapeHtml(viMessages.nav.apps.teamwork));
+    const teamworkStart = html.indexOf('data-testid="org-app-group-teamwork"');
+    const financeStart = html.indexOf('data-testid="org-app-finance"');
+    const teamworkGroup = html.slice(teamworkStart, financeStart);
+    expect(teamworkGroup).toContain('role="group"');
+    expect(teamworkGroup).toContain('aria-labelledby="org-app-group-teamwork-label"');
+    expect(teamworkGroup).toContain(escapeHtml(viMessages.nav.apps.teamwork));
+    expect(teamworkGroup).toContain('org-app-notes');
+    expect(teamworkGroup).toContain('org-app-meetings');
+    expect(teamworkGroup).toContain(escapeHtml(viMessages.modules.meetings));
+    expect(teamworkGroup).toContain(escapeHtml(viMessages.modules.notes));
     expect(html).toContain(escapeHtml(viMessages.modules.finance));
-    expect(html).toContain(escapeHtml(viMessages.modules.meetings));
-    expect(html).toContain(escapeHtml(viMessages.modules.notes));
     expect(html).toContain('eSign');
     expect(en.modules.sign).toBe('eSign');
     expect(viMessages.modules.sign).toBe('eSign');

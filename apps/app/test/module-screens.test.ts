@@ -183,7 +183,13 @@ describe('module screens against the router (#1652)', () => {
     }
     for (const moduleId of MODULE_IDS) {
       expect(isKnownModule(moduleId)).toBe(true);
-      expect(MODULE_CATALOG).toHaveProperty(moduleId);
+      const catalogEntry = MODULE_CATALOG[moduleId];
+      if (catalogEntry.switchable) {
+        const screens = MODULE_SCREENS[moduleId];
+        for (const navItem of screens.nav ?? []) {
+          expect(navItem.app, `MODULE_SCREENS.${moduleId}.nav app vs MODULE_CATALOG`).toBe(catalogEntry.app);
+        }
+      }
       for (const [lang, messages] of [['vi', viMessages], ['en', en]] as const) {
         expect(messages.modules, `${lang}.modules.${moduleId}`).toHaveProperty(moduleId);
         const label = messages.modules[moduleId];
@@ -194,7 +200,7 @@ describe('module screens against the router (#1652)', () => {
   });
 
   // The five apps of the switcher (#3225, owner decision 2026-11-14): Cộng tác, Tài chính, Engage, Nhân sự, Ludy AI. Chờ duyệt is the first tab of the Chứng từ item
-  // (path `inbox`); the other tabs (Tất cả chứng từ, Nhắc thu nợ, Sàn, Tờ khai hộ, Mẫu ngân hàng, Thông báo bài đăng, Chiến dịch) are no menu item.
+  // (path `inbox`); the other tabs (Tất cả chứng từ, Nhắc thu nợ, Sàn, Tờ khai hộ, Mẫu ngân hàng, Cập nhật bài đăng, Chiến dịch) are no menu item.
   it('keeps the menus users know, in their order', () => {
     expect(APPS.map((a) => [a.id, a.groups.map((g) => [g.id, g.items.map((i) => i.to.slice('/o/$slug/'.length))])])).toEqual([
       ['teamwork', [['work', ['my-work', 'tasks', 'projects', 'notes', 'meetings']]]],

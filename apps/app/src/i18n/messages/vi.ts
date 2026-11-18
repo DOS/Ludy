@@ -8025,10 +8025,10 @@ export const vi = {
     allowDraft: 'Cho phép “{client}” đọc dữ liệu và soạn bản nháp bài đăng Engage của tổ chức {org}',
     limitsDraft: 'Ứng dụng làm việc với quyền của bạn trong tổ chức này: đọc, và chỉ tạo được bản nháp bài đăng Engage chờ một người duyệt. Chủ sở hữu hay quản trị viên có thể ngắt ngay ở Cài đặt.',
   },
-  // Settings "Ứng dụng & Phân hệ" (ADR-0053, #3312): which apps and modules the company uses.
+  // Settings "Ứng dụng & Phân hệ" (ADR-0053, #3312): toggle switchable modules grouped by parent App.
   orgApps: {
     title: 'Ứng dụng & Phân hệ',
-    hint: 'Chọn ứng dụng và phân hệ công ty bạn sử dụng. Mục đã tắt biến mất khỏi menu, trang Hôm nay và những gì Vy nhắc tới. Dữ liệu vẫn được giữ nguyên cho tới hết thời hạn lưu trữ bạn đã đặt (việc dọn dẹp hằng đêm vẫn chạy), bật lại là có đủ phần còn lưu.',
+    hint: 'Chọn các phân hệ công ty bạn sử dụng, được nhóm theo từng ứng dụng. Phân hệ đã tắt biến mất khỏi menu, trang Hôm nay và những gì Vy nhắc tới. Dữ liệu vẫn được giữ nguyên cho tới hết thời hạn lưu trữ bạn đã đặt (việc dọn dẹp hằng đêm vẫn chạy), bật lại là có đủ phần còn lưu.',
     readOnly: 'Chỉ chủ sở hữu hoặc quản trị viên đổi được.',
     switchLabel: 'Bật hoặc tắt {app}',
     status: { on: 'Đang dùng', off: 'Đã tắt', notInPlan: 'Chưa có trong gói' },
@@ -8041,7 +8041,7 @@ export const vi = {
       social: 'Các kênh đăng bài đã kết nối được giữ và tạm dừng. Bài đã hẹn giờ mà quá một giờ khi bạn bật lại sẽ chờ bạn duyệt, không tự đăng.',
       ads: 'Các tài khoản quảng cáo đã kết nối được giữ và tạm dừng.',
       crm: 'Trang đặt lịch công khai ngừng nhận khách cho tới khi bạn bật lại.',
-      meetings: 'Kết nối nền tảng họp được giữ và tạm dừng. Không tắt được khi đang ghi âm. Muốn xóa một cuộc họp theo yêu cầu, hãy bật lại phân hệ này trước.',
+      meetings: 'Kết nối nền tảng họp được giữ và tạm dừng. Không tắt được khi đang ghi âm hoặc đang nhập bản ghi từ nền tảng; hãy chờ cả hai việc hoàn tất rồi thử lại. Muốn xóa một cuộc họp theo yêu cầu, hãy bật lại phân hệ này trước.',
       other: 'Không có kết nối nào bị gỡ.',
     },
   },

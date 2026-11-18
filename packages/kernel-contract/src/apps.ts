@@ -37,7 +37,20 @@ export const MODULE_CATALOG: Readonly<Record<ModuleId, ModuleCatalogEntry>> = {
 // Switchable modules ordered by App (APP_IDS) and menu placement within each App.
 export const SWITCHABLE_MODULE_IDS = ['notes', 'projects', 'meetings', 'finance', 'social', 'crm', 'ads', 'hr', 'sign'] as const satisfies readonly SwitchableModuleId[];
 
-/** Return true when `id` is a known module shipped by this build. */
+// Guard against catalog flags and SWITCHABLE_MODULE_IDS drifting out of lockstep at runtime.
+if (new Set(SWITCHABLE_MODULE_IDS).size !== SWITCHABLE_MODULE_IDS.length) {
+  throw new Error('SWITCHABLE_MODULE_IDS contains duplicate module IDs');
+}
+for (const id of SWITCHABLE_MODULE_IDS) {
+  if (!MODULE_CATALOG[id].switchable) throw new Error(`Switchable module ${id} is marked non-switchable in MODULE_CATALOG`);
+}
+for (const id of MODULE_IDS) {
+  if (MODULE_CATALOG[id].switchable && !(SWITCHABLE_MODULE_IDS as readonly string[]).includes(id)) {
+    throw new Error(`Module ${id} is switchable in MODULE_CATALOG but missing from SWITCHABLE_MODULE_IDS`);
+  }
+}
+
+/** Return true when `id` is a canonical module shipped by the codebase, regardless of whether it is enabled in `CROVE_MODULES`. */
 export function isKnownModule(id: string): id is ModuleId {
   return (MODULE_IDS as readonly string[]).includes(id);
 }

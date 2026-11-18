@@ -118,20 +118,20 @@ export function OrgAppsCard() {
         <p className="mt-1 text-sm text-subtle-foreground">{t('hint')}</p>
       </div>
       <ul className="divide-y rounded-lg border">
-        {sections.flatMap((section) =>
-          section.kind === 'single'
-            ? [renderRow(section.row, false)]
-            : [
-                <li
-                  key={`group:${section.appId}`}
-                  className="bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground"
-                  data-testid={`org-app-group-${section.appId}`}
-                >
+        {sections.map((section) => {
+          if (section.kind === 'single') return renderRow(section.row, false);
+          const labelId = `org-app-group-${section.appId}-label`;
+          return (
+            <li key={`group:${section.appId}`} data-testid={`org-app-group-${section.appId}`}>
+              <div role="group" aria-labelledby={labelId}>
+                <p id={labelId} className="border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
                   {tNav(`apps.${section.appId}`)}
-                </li>,
-                ...section.rows.map((row) => renderRow(row, true)),
-              ],
-        )}
+                </p>
+                <ul className="divide-y">{section.rows.map((row) => renderRow(row, true))}</ul>
+              </div>
+            </li>
+          );
+        })}
       </ul>
       {!canChange && <p className="text-xs text-subtle-foreground">{t('readOnly')}</p>}
       {set.error && <ErrorText>{errorMessage(set.error)}</ErrorText>}

@@ -152,7 +152,8 @@ describe('AgentsPage', () => {
   it('translates every canonical ModuleId in add-position options and template cards instead of showing raw slugs', () => {
     configMock.modules = [...MODULE_IDS];
     const escapeHtml = (s: string) => s.replaceAll('&', '&amp;');
-    const allTemplates = MODULE_IDS.filter((m) => m !== 'kernel').map((module, index) => ({
+    const switchableModules = MODULE_IDS.filter((m) => m !== 'kernel');
+    const allTemplates = switchableModules.map((module, index) => ({
       ...templates[0]!,
       key: `${module}.helper_${index}`,
       module,
@@ -160,10 +161,14 @@ describe('AgentsPage', () => {
     }));
     const html = page('owner', oneEntity, allTemplates);
     for (const id of MODULE_IDS) {
-      expect(html).toContain(`>${escapeHtml(en.modules[id])}<`);
+      expect(html).toContain(`value="${id}"${id === 'kernel' ? ' selected=""' : ''}>${escapeHtml(en.modules[id])}<`);
     }
-    for (const raw of ['>ads<', '>crm<', '>notes<', '>hr<', '>social<', '>meetings<', '>projects<', '>finance<', '>sign<', '>kernel<']) {
-      expect(html).not.toContain(raw);
+    const cards = html.split('data-testid="template"').slice(1);
+    expect(cards).toHaveLength(switchableModules.length);
+    for (const [index, id] of switchableModules.entries()) {
+      const card = cards[index]!;
+      expect(card).toContain(`Module ${escapeHtml(en.modules[id])},`);
+      expect(card).not.toContain(`Module ${id},`);
     }
   });
 });
