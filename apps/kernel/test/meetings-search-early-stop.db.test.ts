@@ -26,6 +26,7 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
   let appUrl = '';
   const pools: pg.Pool[] = [];
   let orgId = '';
+  let orgTwo = '';
   const users: Record<string, string> = {};
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = new pg.Client({ connectionString: adminUrl });
@@ -37,12 +38,12 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
     }
   }
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
-  async function asUser<T>(who: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
+  async function asUser<T>(who: string, fn: (c: pg.Client) => Promise<T>, org = orgId): Promise<T> {
     const c = new pg.Client({ connectionString: appUrl });
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(users[who] as string, orgId)]);
+      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org, contextToken(users[who] as string, org)]);
       return await fn(c);
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -52,7 +53,7 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
   const ids = async (c: pg.Client, fn: string, q: string, limit: number, offset: number): Promise<string[]> =>
     (await c.query<{ id: string }>(`SELECT id FROM crove_meetings.${fn}($1, $2, $3)`, [q, limit, offset])).rows.map((r) => r.id);
 
-  async function meetings(count: number, recorder: string, visibility: 'org' | 'attendees', readers: string[], held: (g: number) => string, lines: (g: number) => string[], stage: 'published' | 'draft' = 'published'): Promise<string[]> {
+  async function meetings(count: number, recorder: string, visibility: 'org' | 'attendees', readers: string[], held: (g: number) => string, lines: (g: number) => string[], stage: 'published' | 'draft' = 'published', org = orgId): Promise<string[]> {
     const made: string[] = [];
     for (let g = 1; g <= count; g++) {
       const id = randomUUID();
@@ -60,12 +61,12 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
       await sqlAdmin(
         `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
          VALUES ($1, $2, $3, 'vi', $4::timestamptz, $4::timestamptz + interval '30 minutes', 1800, $5, $6, 'ready', 'told_at_start', $5, now(), '1.0', current_date + 20, current_date + 365)`,
-        [orgId, id, `Họp ${id.slice(0, 8)}`, held(g), users[recorder], visibility],
+        [org, id, `Họp ${id.slice(0, 8)}`, held(g), users[recorder], visibility],
       );
-      for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), id, users[reader]]);
+      for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [org, randomUUID(), id, users[reader]]);
       let start = 0;
       for (const text of lines(g)) {
-        await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3::numeric, $3::numeric + 1, 'Hà', $4, $5)`, [orgId, id, start, text, stage]);
+        await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3::numeric, $3::numeric + 1, 'Hà', $4, $5)`, [org, id, start, text, stage]);
         start += 2;
       }
     }
@@ -109,8 +110,15 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
     // The owner's own meetings, with a draft.
     await meetings(3, 'owner', 'attendees', [], (g) => day(g + 20), () => ['Của chủ về giá', 'Nháp khuyến mãi'], 'draft');
     // A meeting past its text date: left out for everyone.
-    const [expired] = await meetings(1, 'recorder', 'org', [], () => '2026-01-02T03:00:00Z', () => ['Hết hạn về giá đặc biệt khuyến mãi']);
+    const [expired] = await meetings(1, 'recorder', 'org', [], () => '2026-12-01T03:00:00Z', () => ['Hết hạn về giá đặc biệt khuyến mãi']);
     await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = (timezone('Asia/Ho_Chi_Minh', now()))::date WHERE id = $1`, [expired]);
+    // The newest meeting by date is the expired one: a filter that forgot the text date would put its lines on the first page. Three meetings of the org have no start time (the held date is then their creation).
+    await sqlAdmin(`UPDATE crove_meetings.meeting SET started_at = NULL, ended_at = NULL WHERE id IN (SELECT id FROM crove_meetings.meeting WHERE org_id = $1 AND visibility = 'org' ORDER BY id LIMIT 3)`, [orgId]);
+    // A second org where its owner reads only 5 meetings: every meeting they read is visited and the page is not full, the answer being complete without the old way.
+    const second = new Runtime(createDb(pools[0] as pg.Pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] });
+    users.owner2 = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'meetings-early', subject: 'owner2', email: 'owner2@meetings-early.test', name: null });
+    orgTwo = (await createOrg(second, { type: 'user', userId: users.owner2 as string, aal: 'aal1' }, 'Công ty nhỏ')).orgId;
+    await meetings(5, 'owner2', 'attendees', [], (g) => day(g), (g) => [`Họp nhỏ về giá ${g}`, 'Báo giá cho khách', 'Hết giờ'], 'published', orgTwo);
     await sqlAdmin('ANALYZE crove_meetings.transcript_segment');
   }, 600_000);
 
@@ -144,6 +152,23 @@ suite('crove_meetings.search_segment_ids reads the first page early and answers 
         }
       });
     }
+    // The small org: fewer than 40 meetings are readable, so the early way visits all of them and answers without the old way.
+    await asUser(
+      'owner2',
+      async (c) => {
+        for (const q of ['giá', 'báo giá', 'hết giờ', 'không có từ này']) {
+          for (const [limit, offset] of PAGES) {
+            const before = await ids(c, 'search_segment_ids_reference', q, limit, offset);
+            const after = await ids(c, 'search_segment_ids', q, limit, offset);
+            expect(after, `owner2 "${q}" ${limit}/${offset}`).toEqual(before);
+            found[`owner2 ${q}`] = Math.max(found[`owner2 ${q}`] ?? 0, after.length);
+          }
+        }
+      },
+      orgTwo,
+    );
+    expect(found['owner2 giá']).toBe(10);
+    expect(found['owner2 báo giá']).toBe(5);
     expect(compared).toBe(5 * QUERIES.length * PAGES.length);
     // Not a pass on empty answers.
     expect(nonEmpty).toBeGreaterThan(compared / 3);
