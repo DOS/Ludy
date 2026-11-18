@@ -2,6 +2,7 @@ import { mcpFinanceQueries } from './mcp.ts';
 import { financeOverdueReceivablesSignals } from './signals-overdue-receivables.ts';
 import { financeSalesSignals } from './signals-sales.ts';
 export { MCP_LINES_PER_INVOICE, zMcpInvoicesInput } from './mcp.ts';
+export { zMcpOverviewInput } from './mcp-overview.ts';
 import { fixedAssetCommands, fixedAssetQueries } from './fixed-assets.ts';
 import { createAccount, setVendorDefaultAccount, updateAccount } from './accounts.ts';
 import { categorizationCommands, categorizationQueries } from './categorization.ts';
