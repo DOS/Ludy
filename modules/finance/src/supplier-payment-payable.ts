@@ -52,8 +52,8 @@ export const supplierPaymentPayable = defineQuery({
       items: shown.map((r) => ({
         purchaseDocumentId: r.id,
         partyId: r.party_id,
-        partyName: r.party_name ?? '',
-        invoiceNumber: r.invoice_number ?? '',
+        partyName: (r.party_name ?? '').slice(0, 300),
+        invoiceNumber: (r.invoice_number ?? '').slice(0, 100),
         invoiceDate: r.invoice_date,
         amount: money(r.total).toFixed(),
         currency: r.currency,

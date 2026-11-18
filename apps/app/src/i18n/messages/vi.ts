@@ -717,6 +717,7 @@ export const vi = {
       title: 'Hóa đơn cần chi',
       hint: 'Hóa đơn mua vào chưa có khoản chi. "Xin chi" gửi đề xuất chờ duyệt vào Hộp thư: một người khác duyệt (hoặc bạn, với xác thực hai lớp mới và giữ 24 giờ nếu tài khoản mới). Ludy không chuyển tiền.',
       ask: 'Xin chi',
+      askOf: 'Xin chi cho {name}, hóa đơn {number}',
       confirm: 'Việc này gửi đề xuất chi hóa đơn này vào tài khoản ngân hàng nhà cung cấp đã lưu. Đề xuất chờ người có quyền duyệt trong Hộp thư. Ludy không chuyển tiền.',
       send: 'Gửi đề xuất',
       cancel: 'Hủy',

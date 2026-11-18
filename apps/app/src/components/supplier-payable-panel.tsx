@@ -34,8 +34,9 @@ function Row({ item, onAsked }: { item: SupplierPayable; onAsked: (id: string, p
       setIdempotencyKey(crypto.randomUUID());
       onAsked(item.purchaseDocumentId, data.proposalId);
     },
+    // A refusal that says the invoice's state moved (409: asked by someone else, paid, no account any more) is a reason to reload the list; any other server refusal changes nothing.
     onSettled: (_data, error) => {
-      if (!isServerRefusal(error)) void refresh();
+      if (!isServerRefusal(error) || (error as { status?: number }).status === 409) void refresh();
     },
   });
   return (
@@ -43,7 +44,7 @@ function Row({ item, onAsked }: { item: SupplierPayable; onAsked: (id: string, p
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-foreground">{item.partyName}</span>
         <span className="text-muted-foreground">{t('invoice', { number: item.invoiceNumber, date: f.date(item.invoiceDate) })}</span>
-        <span className="ml-auto font-medium tabular-nums">{f.money(item.amount)}</span>
+        <span className="ml-auto font-medium tabular-nums">{f.money(item.amount, item.currency)}</span>
       </div>
       {item.accountChangedOn !== null && (
         <p className="mt-1 text-xs text-destructive" data-testid="supplier-payable-changed">
@@ -54,7 +55,7 @@ function Row({ item, onAsked }: { item: SupplierPayable; onAsked: (id: string, p
       {item.account === 'many' && <p className="mt-1 text-xs text-muted-foreground">{t('manyAccounts')}</p>}
       {item.account === 'ready' && !open && (
         <div className="mt-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)} data-testid="supplier-payable-open">
+          <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)} aria-label={t('askOf', { name: item.partyName, number: item.invoiceNumber })} data-testid="supplier-payable-open">
             {t('ask')}
           </Button>
         </div>

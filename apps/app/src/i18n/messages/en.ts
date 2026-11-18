@@ -719,6 +719,7 @@ export const en = {
       title: 'Invoices to pay',
       hint: 'Received invoices that have no payment yet. "Ask to pay" sends a request for approval to the Inbox: a second person approves it (or you, with a fresh second factor and a 24 hour hold on a new account). Ludy does not move money.',
       ask: 'Ask to pay',
+      askOf: 'Ask to pay {name}, invoice {number}',
       confirm: 'This sends a request to pay this invoice to the supplier\'s bank account on file. It waits in the Inbox for someone who may approve. Ludy does not move money.',
       send: 'Send the request',
       cancel: 'Cancel',

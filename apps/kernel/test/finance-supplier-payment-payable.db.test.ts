@@ -42,17 +42,15 @@ suite('the received invoices that can be asked for payment (#3113 S4b)', () => {
   const rows = <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => admin(async (c) => (await c.query<T>(text, values)).rows);
   const identity = (name: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@rule3.test`, name: null });
 
-  type Org = { orgId: string; owner: string; admin: string; member: string; viewer: string; branchMember: string; supplier: string };
-  // An owner and an admin (four-eyes: the asker never approves), a member, a viewer and a member limited to a branch (a partial view of the books).
+  type Org = { orgId: string; owner: string; admin: string; member: string; viewer: string; supplier: string };
+  // An owner and an admin (four-eyes: the asker never approves), a member and a viewer.
   async function org(): Promise<Org> {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, user(owner), `Công ty Chi ${randomUUID().slice(0, 6)}`);
-    const [adminUser, member, viewer, branchMember] = [await identity('admin'), await identity('member'), await identity('viewer'), await identity('branch')];
-    const branch = (await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [orgId, owner]))[0]?.id as string;
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member')", [orgId, adminUser, member, viewer, branchMember]);
-    await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, branchMember, branch, owner]);
+    const [adminUser, member, viewer] = [await identity('admin'), await identity('member'), await identity('viewer')];
+    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]);
     const supplier = await party(orgId, 'Nhà cung cấp thử');
-    return { orgId, owner, admin: adminUser, member, viewer, branchMember, supplier };
+    return { orgId, owner, admin: adminUser, member, viewer, supplier };
   }
   const party = (orgId: string, name: string) => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, kind, name) VALUES ($1, 'organization', $2) RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
   const execute = <T>(o: Org, name: string, input: unknown, who = o.owner) => rt.execute<T>(name, input, { actor: user(who), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -156,6 +154,10 @@ suite('the received invoices that can be asked for payment (#3113 S4b)', () => {
       const error = await payable(o, who).then(() => 'answered', (e: { code?: string }) => e.code);
       expect(error).toBe('FORBIDDEN');
     }
+    // A member cannot ask for the payment either, through the ordinary request that the button uses.
+    const doc = (await payable(o)).items[0]?.purchaseDocumentId;
+    const asked = await execute(o, 'kernel.proposal.request', { command: 'finance.supplier_payment.record', input: { purchaseDocumentId: doc } }, o.member).then(() => 'accepted', (e: { code?: string }) => e.code);
+    expect(asked).not.toBe('accepted');
   });
 
   it('shows at most 100, oldest first, and says when more were left out', async () => {
