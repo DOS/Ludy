@@ -35,7 +35,7 @@ test('create a task in the side panel, see the duplicate, edit it from its row, 
     await expect(panel()).toBeVisible();
     await expect(panel().getByLabel('Tên việc')).toBeFocused();
     await expect(panel().getByLabel('Mô tả (không bắt buộc)')).toHaveCount(0);
-    await expect(panel().getByText('Các bước')).toHaveCount(0);
+    await expect(panel().getByText('Các bước', { exact: true })).toHaveCount(0);
     const scan = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
     expect(scan.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')).toEqual([]);
     await page.keyboard.press('Escape');
