@@ -87,7 +87,7 @@ function RetentionSettingsCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{t('title')}</CardTitle>
+        <CardTitle role="heading" aria-level={2}>{t('title')}</CardTitle>
         <CardDescription>{t('hint')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -317,7 +317,7 @@ export function MeetingsPage() {
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="min-w-0 break-words font-semibold text-foreground">{m.title}</span>
-                  <Badge variant={STATUS_VARIANTS[m.status] ?? 'outline'}>{m.status}</Badge>
+                  <Badge variant={STATUS_VARIANTS[m.status] ?? 'outline'}>{t(`status.${m.status}`)}</Badge>
                   <Badge variant="outline">
                     {m.visibility === 'org' ? t('badgeOrg') : t('badgeAttendees')}
                   </Badge>
