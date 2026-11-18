@@ -9,13 +9,15 @@ import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
-import { ErrorText, Spinner } from './ui.tsx';
+import { ErrorText } from './ui.tsx';
+import { PaneError, PanelSkeleton } from './conversation-states.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { channelKindLabel } from '../lib/conversation-labels.ts';
 import { dismissContactMatch, dismissedContactMatches } from '../lib/conversation-dismissed.ts';
 import { canInsertQuoteLink } from '../lib/quote-reply.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
+import { TOUCH_BUTTON } from '../lib/conversation-touch.ts';
 import { ConversationTasks } from './conversation-tasks.tsx';
 import { PersonalDataSection } from './conversation-erase.tsx';
 import { POLL_MS, useContactName, useMe } from './conversation-inbox.tsx';
@@ -76,7 +78,7 @@ export function ContactSuggestions({ conversationId, lastSeq }: { conversationId
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="h-auto min-h-8 max-w-full whitespace-normal break-words text-left"
+                  className={`h-auto min-h-8 max-w-full whitespace-normal break-words text-left ${TOUCH_BUTTON}`}
                   loading={link.isPending && link.variables === c.partyId}
                   data-testid="contact-suggestion-link"
                   aria-describedby={confirming === c.partyId ? `name-only-${c.partyId}` : undefined}
@@ -87,6 +89,7 @@ export function ContactSuggestions({ conversationId, lastSeq }: { conversationId
                 <Button
                   type="button"
                   size="sm"
+                  className={TOUCH_BUTTON}
                   variant="ghost"
                   aria-label={t('dismissLabel', { name: c.name })}
                   data-testid="contact-suggestion-dismiss"
@@ -144,7 +147,7 @@ function LinkContact({ conversationId, defaultName, hasParty }: { conversationId
   return (
     <div className="space-y-2" data-testid="contact-link">
       {hasParty && (
-        <Button type="button" size="sm" variant="outline" loading={link.isPending} onClick={() => link.mutate(null)}>
+        <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" loading={link.isPending} onClick={() => link.mutate(null)}>
           {t('unlink')}
         </Button>
       )}
@@ -179,17 +182,17 @@ function LinkContact({ conversationId, defaultName, hasParty }: { conversationId
           </label>
           <Input id={`create-${conversationId}`} value={name} maxLength={200} onChange={(e) => setName(e.target.value)} />
           <div className="flex gap-2">
-            <Button type="submit" size="sm" loading={create.isPending} disabled={name.trim() === ''}>
+            <Button type="submit" size="sm" className={TOUCH_BUTTON} loading={create.isPending} disabled={name.trim() === ''}>
               {t('createSave')}
             </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setCreating(false)}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" onClick={() => setCreating(false)}>
               {t('cancel')}
             </Button>
           </div>
           {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
         </form>
       ) : (
-        <Button type="button" size="sm" variant="outline" onClick={() => setCreating(true)}>
+        <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" onClick={() => setCreating(true)}>
           {t('create')}
         </Button>
       )}
@@ -205,8 +208,8 @@ export function ContactPanel({ conversationId, onOpen, onErased }: { conversatio
   const contactName = useContactName();
   const { canWrite, isAdmin } = useMe();
   const detail = useQuery({ ...orpc.conversations.get.queryOptions({ input: { conversationId } }), refetchInterval: POLL_MS });
-  if (detail.isPending) return <Spinner />;
-  if (detail.error || !detail.data) return <ErrorText>{errorMessage(detail.error)}</ErrorText>;
+  if (detail.isPending) return <PanelSkeleton />;
+  if (detail.error || !detail.data) return <PaneError message={errorMessage(detail.error)} onRetry={() => void detail.refetch()} testId="panel-error" />;
   const { conversation: c, others } = detail.data;
   return (
     <aside aria-label={t('title')} className="space-y-4 text-sm" data-testid="contact-panel">
