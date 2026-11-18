@@ -105,6 +105,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.template.archive',
       'meetings.draft.review',
       'meetings.summary.start',
+      'meetings.summary.ready',
+      'meetings.summary.ready_notice',
       'meetings.translation.copy_result',
       'meetings.translate.start',
       'meetings.translation.transcript_start',

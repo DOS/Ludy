@@ -4,7 +4,7 @@ import { CompiledQuery, sql, type Transaction } from 'kysely';
 import pg from 'pg';
 import { PgBoss, type Db as BossDb, type SendOptions } from 'pg-boss';
 import type { Database, Db } from '@crove/db';
-import { vietnamToday } from '@crove/kernel-contract';
+import { SUMMARY_READY_EVENT, vietnamToday } from '@crove/kernel-contract';
 import { DomainError, inboundKey, moduleOffOf, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { KERNEL_NOTIFYING_EVENTS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
 import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@crove/agent';
@@ -105,9 +105,11 @@ const SOCIAL_NOTIFY_RETRY_LIMIT = 3;
 // stale limit of a remove job that started up to half an hour late.
 const REMOVE_WATCH_RETRY_LIMIT = 5;
 // In-app notifications of the kernel and finance (#671): the dispatch command of the module whose event it is.
-const NOTIFY_COMMANDS: ReadonlyMap<string, { module: string; command: string }> = new Map<string, { module: string; command: string }>([
+export const NOTIFY_COMMANDS: ReadonlyMap<string, { module: string; command: string }> = new Map<string, { module: string; command: string }>([
   ...KERNEL_NOTIFYING_EVENTS.map((type): [string, { module: string; command: string }] => [type, { module: 'kernel', command: 'kernel.notification.dispatch' }]),
   ...FINANCE_NOTIFYING_EVENTS.map((type): [string, { module: string; command: string }] => [type, { module: 'finance', command: 'finance.notification.dispatch' }]),
+  // The recorder's "minutes draft ready" notice and its mail (#3730).
+  [SUMMARY_READY_EVENT, { module: 'meetings', command: 'meetings.summary.ready_notice' }],
 ]);
 const NOTIFY_RETRY_LIMIT = 3;
 // A booking's confirmation (#1318): a failure retries soon, since the visitor's page is waiting on it.

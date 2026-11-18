@@ -14,6 +14,7 @@ import { mcpMeetingsQueries } from './mcp.ts';
 import { seriesCommands, seriesQueries } from './series.ts';
 import { speakerCommands } from './speaker.ts';
 import { summaryCommands, summaryQueries } from './summary.ts';
+import { summaryReadyCommands } from './summary-ready.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
 import { translateCommands } from './translate.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
@@ -1008,6 +1009,7 @@ export const meetingsCommands = [
   ...seriesCommands,
   ...minutesTemplateCommands,
   ...summaryRunCommands,
+  ...summaryReadyCommands,
   ...translateCommands,
   ...translateRunCommands,
   ...askRunCommands,

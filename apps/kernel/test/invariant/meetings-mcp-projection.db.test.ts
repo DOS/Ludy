@@ -122,10 +122,14 @@ suite('the privacy pins of the Meetings MCP reads (#3731)', () => {
     for (let i = 0; i < 60; i += 1) {
       await exec('recorder', 'meetings.action_item.create', { meetingId: ids.rich, title: `Việc ${i} \u202e`, who: i === 0 ? `Lan \t\n An` : '', whoUserId: null, when: 'thứ sáu', whenDate: i === 0 ? '2026-12-01' : null, transcriptSeconds: i }, orgA);
     }
+    await exec('recorder', 'meetings.action_item.create', { meetingId: ids.rich, title: 'Gửi báo giá cho lan@example.com', who: '', whoUserId: null, when: '', whenDate: null, transcriptSeconds: 0 }, orgA);
     await exec('recorder', 'meetings.result.publish', { meetingId: ids.rich, confirmed: true }, orgA);
     const taskId = randomUUID();
     await sqlAdmin(`INSERT INTO crove_kernel.task (org_id, id, title, source, created_by_type, status) VALUES ($1, $2, 'Việc đã giao', 'human', 'system', 'todo')`, [orgA, taskId]);
     await sqlAdmin(`UPDATE crove_meetings.action_item SET task_id = $3, status = 'accepted' WHERE org_id = $1 AND meeting_id = $2 AND transcript_seconds = 1`, [orgA, ids.rich, taskId]);
+    // A published meeting that has a newer draft summary and a draft item since: only the published text is read.
+    await exec('recorder', 'meetings.summary.save', { meetingId: ids.orgPublished, summary: `${CANARY} bản nháp mới sau khi công bố`, decisions: [`${CANARY} quyết định nháp`] }, orgA);
+    await exec('recorder', 'meetings.action_item.create', { meetingId: ids.orgPublished, title: `${CANARY} việc nháp`, who: '', whoUserId: null, when: '', whenDate: null, transcriptSeconds: 9 }, orgA);
     await seedMeeting(orgA, 'expired', 'recorder', 'org', true);
     await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2`, [orgA, ids.expired]);
   }, 300_000);
@@ -198,6 +202,10 @@ suite('the privacy pins of the Meetings MCP reads (#3731)', () => {
     expect(got.actions).toHaveLength(1);
     for (const a of got.actions) expect(Object.keys(a).sort()).toEqual(ACTION_KEYS);
     expect(got.actions[0]).toMatchObject({ title: `${CANARY} việc`, who: 'An', status: 'open' });
+    // A draft written since the minutes were published (a newer summary, a draft decision and item) is never read.
+    expect(JSON.stringify(got)).not.toContain('bản nháp mới');
+    expect(JSON.stringify(got)).not.toContain('quyết định nháp');
+    expect(JSON.stringify(got)).not.toContain('việc nháp');
     // Nothing the module keeps apart reaches a client: the canary words of the transcript, the notes, and every id of a person.
     const everything = JSON.stringify(got) + JSON.stringify(await list({ limit: 50 }));
     expect(everything).not.toContain(`${CANARY} bản ghi`);
@@ -214,6 +222,8 @@ suite('the privacy pins of the Meetings MCP reads (#3731)', () => {
     expect([...(rich.summaryLines[2] ?? '')]).toHaveLength(2000);
     expect(rich.decisions).toHaveLength(30);
     expect(rich.decisionsTruncated).toBe(true);
+    // An item Ludy flagged (a contact detail in its title) is left out, though it sorts first.
+    expect(JSON.stringify(rich)).not.toContain('example.com');
     expect(rich.actions).toHaveLength(50);
     expect(rich.actionsTruncated).toBe(true);
     expect(rich.actions[0]).toMatchObject({ title: 'Việc 0', who: 'Lan An', dueDate: '2026-12-01', status: 'open' });

@@ -65,6 +65,8 @@ function useLine() {
         return t('text.projects_weekly_status', { title: n.detail.title ?? '' });
       case 'meetings.series_open_items':
         return t('text.series_open_items', { count: Number(n.detail.count ?? 0) });
+      case 'meetings.summary_ready':
+        return t('text.summary_ready');
       case 'kernel.channel_expired':
         return t('text.channel_expired');
       case 'kernel.ai_budget':

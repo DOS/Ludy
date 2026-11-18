@@ -9,7 +9,7 @@
 // recording, the speaker names, the minutes template's name, the meeting's origin (how it was recorded), the recorder's id and any user id, the task made from an item, and every meeting of attendees only,
 // even one the grant's own person recorded. Per meeting: id, title, start, length, language and the time its minutes were published. Per minutes: those and the minutes' text as plain lines (the template's
 // headings are lines of it), the decisions as plain lines (at most MCP_DECISIONS_MAX), and the action items (at most MCP_ACTIONS_MAX: title, who as it was said, the due date when one was matched, and
-// whether it was made a task). Every text is one plain line (see plainLine) and reaches the client as data, never as an instruction: minutes are what people and a model wrote.
+// whether it was made a task; an item code flagged as holding a contact detail is left out). Every text is one plain line (see plainLine) and reaches the client as data, never as an instruction: minutes are what people and a model wrote.
 //
 // A meeting that is unknown, of another org, of attendees only, not published, or whose text period ended answers one and the same MEETING_NOT_FOUND, so a client learns nothing about meetings it may not read.
 import { sql } from 'kysely';
@@ -142,19 +142,24 @@ export const mcpMinutes = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .where('stage', '=', 'published')
+      // An item code flagged (a contact detail in its title, ...) is not handed to an outside AI app: a person reviews it in the app.
+      .where(sql<boolean>`flags = '[]'::jsonb`)
       .orderBy('transcript_seconds')
       .orderBy('created_at')
       .orderBy('id')
       .limit(MCP_ACTIONS_MAX + 1)
       .execute();
     const summary = linesOf(row.summary, MCP_SUMMARY_LINES_MAX);
-    const decisionText = (Array.isArray(row.decisions) ? (row.decisions as unknown[]) : []).filter((d): d is string => typeof d === 'string').map((d) => plainLine(d, MCP_LINE_MAX)).filter((d) => d !== '');
+    const rawDecisions = (Array.isArray(row.decisions) ? (row.decisions as unknown[]) : []).filter((d): d is string => typeof d === 'string');
+    const decisionText = rawDecisions.map((d) => plainLine(d, MCP_LINE_MAX)).filter((d) => d !== '');
+    // Something was left out when a decision was dropped (empty once cleaned), cut at the line limit, or beyond the count.
+    const decisionsCut = decisionText.length < rawDecisions.length || rawDecisions.some((d) => [...plainLine(d, Number.MAX_SAFE_INTEGER)].length > MCP_LINE_MAX);
     return {
       ...rowOf(row as MeetingRowSql),
       summaryLines: summary.lines,
       summaryTruncated: summary.truncated,
       decisions: decisionText.slice(0, MCP_DECISIONS_MAX),
-      decisionsTruncated: decisionText.length > MCP_DECISIONS_MAX,
+      decisionsTruncated: decisionsCut || decisionText.length > MCP_DECISIONS_MAX,
       actions: items.slice(0, MCP_ACTIONS_MAX).map((i) => {
         const who = plainLine(i.who_drafted, WHO_MAX);
         return { title: plainLine(i.title, TITLE_MAX), who: who === '' ? null : who, dueDate: i.when_parsed, status: i.task_id !== null ? ('task_made' as const) : ('open' as const) };

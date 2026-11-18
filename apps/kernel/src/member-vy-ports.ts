@@ -268,9 +268,21 @@ async function runRecorderVy(deps: MeetingSummaryDeps, orgId: string, actor: Use
       console.error('[meetings-summary] run failed: AI_STOPPED');
       return { meetingId, runId, state: 'failed', errorCode: 'AI_STOPPED' };
     }
+    // The recorder's notice that the draft is waiting (#3730): only for a summary (not the notes run), only once the result is stored as ready, and best effort: a notice that could not be
+    // queued never fails the run, and a failed run (every path above) sends nothing. The event holds ids and the language, no text of the summary or the meeting.
+    if (kind === 'summary') await notifySummaryReady(deps.runtime, as, { meetingId, runId });
     return { meetingId, runId, state: 'ready', errorCode: null };
   } finally {
     ticket.release();
+  }
+}
+
+// One outbox event for a finished run, written by the recorder's own command; the worker turns it into the notice (the API's role cannot write a notification). Only the code of a failure is logged.
+async function notifySummaryReady(runtime: Runtime, as: { actor: UserActor; orgId: string }, input: { meetingId: string; runId: string }): Promise<void> {
+  try {
+    await runtime.execute('meetings.summary.ready', input, as);
+  } catch (error: unknown) {
+    console.error(`[meetings-summary] ready notice not written: ${codeOf(error)}`);
   }
 }
 
