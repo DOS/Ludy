@@ -92,7 +92,7 @@ suite('crove_kernel.text_mentions with its prefilter (#3832)', () => {
   });
 
   it('answers as the pattern does on a hostile set of Vietnamese phone formats', async () => {
-    const values = ['0912345678', '84912345678', '02838291234', '842838291234', '0101234567001', '079091001234', '0901234567', '8401234567', '091777665', '123456789012345'];
+    const values = ['0912345678', '84912345678', '02838291234', '842838291234', '0101234567001', '079091001234', '0901234567', '8401234567', '091777665', '123456789012345', '1234567890123456', '12345678901234567890', '09123456789012345678'];
     // The spaces the pattern names (space, tab, line breaks, no-break spaces, the zero-width no-break space), the punctuation it allows, and characters it must not take as separators.
     const allowed = [' ', '  ', '   ', '.', '-', '(', ')', ' ( ', ' ', ' ', ' ', '﻿', '\t', '\n', ' . ', '.-', ') ', '-.'];
     const refused = ['/', ',', '_', 'x', ' ', '٠', ':', '+', '    ', '....'];
@@ -110,7 +110,7 @@ suite('crove_kernel.text_mentions with its prefilter (#3832)', () => {
         // One digit short, one swapped, one extra, the digits of both forms mixed, a list one number a line, and a longer number in groups around it.
         const short = form.slice(0, -1);
         cases.push({ text: spell(short, ' '), kind: 'digits', value });
-        cases.push({ text: `${form.slice(0, 3)}${form.slice(4, 3)}${form.slice(3, 4)}${form.slice(4)}`, kind: 'digits', value });
+        cases.push({ text: `${form.slice(0, 3)}${form.slice(4, 5)}${form.slice(3, 4)}${form.slice(5)}`, kind: 'digits', value });
         cases.push({ text: `${form}9`, kind: 'digits', value });
         cases.push({ text: `1. ${form}\n2. ${form}`, kind: 'digits', value });
         cases.push({ text: `${form.slice(0, 4)} ${form.slice(4)} ${form.slice(0, 4)}`, kind: 'digits', value });
@@ -145,7 +145,7 @@ suite('crove_kernel.text_mentions with its prefilter (#3832)', () => {
         value = `${pick(['ab', 'khach.hang', 'a+b', 'đặng', 'x_y'])}@${pick(['x.example', 'congty.example', 'A.Example'])}`.toLowerCase();
         rendered = rand() < 0.5 ? value : value.toUpperCase();
       } else {
-        const base = pick([digits(8), digits(10), `0${digits(9)}`, `0${digits(10)}`, `84${digits(9)}`, `84${digits(10)}`, digits(12), digits(13), digits(15)]);
+        const base = pick([digits(8), digits(10), `0${digits(9)}`, `0${digits(10)}`, `84${digits(9)}`, `84${digits(10)}`, digits(12), digits(13), digits(15), digits(17), digits(20)]);
         value = base;
         const form = rand() < 0.5 ? base : base.startsWith('0') ? `84${base.slice(1)}` : base.startsWith('84') ? `0${base.slice(2)}` : base;
         rendered = form

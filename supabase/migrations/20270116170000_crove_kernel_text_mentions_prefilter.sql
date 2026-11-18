@@ -10,7 +10,7 @@
 --     no regex engine: a line of words with no digits fails at the first digit it lacks.
 -- text_mention_pattern, text_redact, the signature, the grants and the validation stay as they are: the value and the kind are still checked first (a bad one raises even for a NULL text), a NULL text is
 -- still false, and the forms are derived by the same rules as in text_mention_pattern (a value from 84 with 11 or 12 digits is found also from 0, a value from 0 with 10 or 11 digits also from 84; those
--- rules are the lengths of the value, which the pattern function has already checked to be 8 to 15 digits). The equivalence is pinned in apps/kernel/test/text-mentions-prefilter.db.test.ts against the
+-- rules are the lengths of the value, which the pattern function has already checked to be 8 to 20 digits, as its latest definition, 20261122040000, does). The equivalence is pinned in apps/kernel/test/text-mentions-prefilter.db.test.ts against the
 -- unchanged pattern. Idempotent: CREATE OR REPLACE.
 SET LOCAL lock_timeout = '2s';
 
