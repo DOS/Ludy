@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The "minutes draft ready" notice (#3730) on a real database, with a fake model: when the recorder's summary run is stored as ready, the RECORDER gets one in-app notice and one email, and
-// nobody else does; the notice and the mail hold the meeting's title and the link, never a word of the summary, a decision or an item (canary strings pin it); the notification setting
+// nobody else does; the notice and the mail hold a fixed line and the link, never a title or a word of the summary, a decision or an item (canary strings pin it); the notification setting
 // turns off both; a replay of the same run writes and sends nothing more; a failed run, the notes run and a deployment with the AI off send nothing.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -232,6 +232,29 @@ suite('the "minutes draft ready" notice (#3730)', () => {
       expect(await mails(meetingId)).toEqual([]);
     } finally {
       await sqlAdmin(`DELETE FROM crove_kernel.notification_mute WHERE org_id = $1 AND user_id = $2 AND kind = $3`, [orgId, users.recorder, KIND]);
+    }
+  });
+
+  it('a second call for the same run, a disabled account and an event of another type send no second mail, no mail, and nothing', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const out = await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId);
+    // The same run announced twice (a retry of the API): two events, one notice, one mail.
+    await exec('recorder', 'meetings.summary.ready', { meetingId, runId: out.runId });
+    expect(await dispatchAll(meetingId)).toEqual([{ notified: true, mailed: true }, { notified: false, mailed: false }]);
+    expect(await notices(meetingId)).toHaveLength(1);
+    expect(await mails(meetingId)).toHaveLength(1);
+    // An event that is not the ready event writes nothing.
+    const other = await sqlAdmin<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type <> 'meetings.summary.ready' LIMIT 1`, [orgId]);
+    if (other.rows[0]) expect(await dispatch(other.rows[0].id)).toEqual({ notified: false, mailed: false });
+    // A recorder whose account is disabled gets the in-app notice (it is theirs when they return) and no mail.
+    const meeting2 = await seedMeeting('recorder');
+    await runMeetingSummary(deps(), orgId, asUser('recorder'), meeting2);
+    await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [users.recorder]);
+    try {
+      expect(await dispatchAll(meeting2)).toEqual([{ notified: true, mailed: false }]);
+      expect(await mails(meeting2)).toEqual([]);
+    } finally {
+      await sqlAdmin('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [users.recorder]);
     }
   });
 

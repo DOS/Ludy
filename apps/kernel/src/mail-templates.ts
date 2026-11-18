@@ -42,7 +42,7 @@ export const MAIL_TEMPLATES: MailTemplates = {
   [QUOTE_MAIL_TEMPLATE]: quoteMailTemplate,
   // The follow-up of a meeting, sent by the recorder's click with the published summary (L3, #2590).
   [FOLLOWUP_MAIL_TEMPLATE]: followupMailTemplate,
-  // The recorder's "minutes draft ready" mail: the meeting's title and the link, no text of the draft (#3730).
+  // The recorder's "minutes draft ready" mail: a fixed line and the link, no title and no text of the draft (#3730).
   'meetings.summary_ready': summaryReadyMailTemplate,
   // A project's weekly status shared by email to project members (#2609).
   'projects.weekly_status': projectWeeklyStatusMailTemplate,

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The "minutes draft ready" notice (#3730): when Vy's summary run of a meeting is stored as ready, the RECORDER (nobody else) gets one in-app notice and one email that the draft
-// is waiting for their review. The notice holds no word of the draft and no title: the in-app line names the meeting through its subject (the app shows the title to a reader), the mail
+// is waiting for their review. The notice holds no word of the draft and no title: the in-app line is a fixed text that opens the meeting through its subject, the mail
 // holds a fixed line and the link, and the detail is empty. Not a decision, not an item, not a sentence of the summary is ever read here, and no copy of a title is made that a
 // retention purge or an erasure would have to chase (as the follow-up mail's, #3016).
 //
@@ -49,6 +49,7 @@ export const summaryReadyNotice = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<{ notified: boolean; mailed: boolean }> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới báo bản nháp biên bản đã sẵn sàng');
+    // The meeting is not read again: meeting rows answer a person only, not the system's context. A meeting deleted since the event leaves a link that opens to not found, once.
     const event = await outboxEvent(ctx, input.eventId);
     if (!event || event.type !== SUMMARY_READY_EVENT) return { notified: false, mailed: false };
     const ready = zSummaryReadyEvent.parse(event.payload);
@@ -57,7 +58,7 @@ export const summaryReadyNotice = defineCommand({
       users: [ready.recorderUserId],
       key: `summary:${ready.runId}`,
       subject: { type: 'meetings.meeting', id: ready.meetingId },
-      // Nothing besides the subject: the title and the draft are read at display time, by a reader.
+      // Nothing besides the subject: no title and no draft.
       detail: {},
       eventId: input.eventId,
       legalEntityId: await uploaderEntity(ctx, ready.recorderUserId),
@@ -76,7 +77,7 @@ export const summaryReadyNotice = defineCommand({
           templateKey: SUMMARY_READY_MAIL_TEMPLATE,
           to: email,
           subject: SUBJECT[ready.language],
-          payload: zSummaryReadyMail.parse({ lang: ready.language, org: org.name.trim() || org.slug, path: `/o/${org.slug}/meetings/${ready.meetingId}` }),
+          payload: zSummaryReadyMail.parse({ lang: ready.language, org: (org.name.trim() || org.slug).slice(0, 200), path: `/o/${org.slug}/meetings/${ready.meetingId}` }),
           status: 'queued',
         })
       : null;

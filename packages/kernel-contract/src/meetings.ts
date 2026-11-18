@@ -1124,8 +1124,8 @@ export type SeriesOpenItems = z.infer<typeof zSeriesOpenItems>;
 // What the worker's series nudge is told (the command checks it again before it writes anything): one member, the series, and the start of the next meeting of it.
 export const zSeriesNudge = z.strictObject({ userId: zId, seriesId: zId, startsAt: z.iso.datetime({ offset: true }) });
 
-// The "minutes draft ready" notice of the recorder (#3730): kind, event and mail template. The notice holds no text of the draft and no title: the in-app line names the meeting through its
-// subject (the app reads the title at display time, for a reader), and the mail holds a fixed line and the link, so no copy of the title or of the draft exists to erase.
+// The "minutes draft ready" notice of the recorder (#3730): kind, event and mail template. The notice holds no text of the draft and no title: the in-app line is a fixed text that opens the meeting through its
+// subject, and the mail holds a fixed line and the link, so no copy of the title or of the draft exists to erase.
 export const SUMMARY_READY_KIND = 'meetings.summary_ready';
 export const SUMMARY_READY_EVENT = 'meetings.summary.ready';
 export const SUMMARY_READY_MAIL_TEMPLATE = 'meetings.summary_ready';
