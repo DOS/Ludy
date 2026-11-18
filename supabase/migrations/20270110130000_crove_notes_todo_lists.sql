@@ -507,6 +507,50 @@ BEGIN
   PERFORM crove_kernel.text_mention_pattern(p_kind, p_value);
   v_key := crove_notes.private_notice_key_of(v_org, p_kind, p_value);
 
+  -- Global lock DAG: todo_list[id ASC] -> todo[id ASC] before any DELETE so concurrent todoUpdate/todoComplete
+  -- (which lock todo_list FOR SHARE before todo FOR UPDATE) and FK ON DELETE SET NULL stay deadlock-free.
+  PERFORM l.id
+    FROM crove_notes.todo_list l
+   WHERE l.org_id = v_org
+     AND (
+       crove_kernel.text_mentions(l.name, p_kind, p_value)
+       OR EXISTS (
+         SELECT 1 FROM pg_catalog.jsonb_array_elements(l.sections) AS s(sec)
+         WHERE crove_kernel.text_mentions(s.sec ->> 'name', p_kind, p_value)
+       )
+       OR EXISTS (
+         SELECT 1 FROM crove_notes.todo t
+          WHERE t.org_id = v_org AND t.list_id = l.id
+            AND (crove_kernel.text_mentions(t.title, p_kind, p_value)
+                 OR crove_kernel.text_mentions(t.details, p_kind, p_value)
+                 OR crove_kernel.text_mentions(t.checklist::text, p_kind, p_value)
+                 OR crove_kernel.text_mentions(pg_catalog.array_to_string(t.tags, ' '), p_kind, p_value))
+       )
+     )
+   ORDER BY l.id
+   FOR UPDATE;
+
+  PERFORM t.id
+    FROM crove_notes.todo t
+   WHERE t.org_id = v_org
+     AND (
+       crove_kernel.text_mentions(t.title, p_kind, p_value)
+       OR crove_kernel.text_mentions(t.details, p_kind, p_value)
+       OR crove_kernel.text_mentions(t.checklist::text, p_kind, p_value)
+       OR crove_kernel.text_mentions(pg_catalog.array_to_string(t.tags, ' '), p_kind, p_value)
+       OR EXISTS (
+         SELECT 1 FROM crove_notes.todo_list l
+          WHERE l.org_id = v_org AND l.id = t.list_id
+            AND (crove_kernel.text_mentions(l.name, p_kind, p_value)
+                 OR EXISTS (
+                   SELECT 1 FROM pg_catalog.jsonb_array_elements(l.sections) AS s(sec)
+                   WHERE crove_kernel.text_mentions(s.sec ->> 'name', p_kind, p_value)
+                 ))
+       )
+     )
+   ORDER BY t.id
+   FOR UPDATE;
+
   -- Erase matched notes and todos first so todo_list deletion below only triggers ON DELETE SET NULL on surviving todos.
   WITH told AS (
     SELECT a.detail, a.actor_id FROM crove_kernel.audit_event a

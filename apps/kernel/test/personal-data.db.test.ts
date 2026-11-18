@@ -464,6 +464,53 @@ suite('finding a person in the org (#923)', () => {
     const survivingRow = await admin((c) => c.query<{ list_id: string | null; section_id: string | null }>(`SELECT list_id, section_id FROM crove_notes.todo WHERE id = $1`, [survivingTodo]));
     expect(survivingRow.rows).toEqual([{ list_id: null, section_id: null }]);
     expect((await admin((c) => c.query(`SELECT id FROM crove_notes.todo WHERE id = $1`, [taggedTodo]))).rows).toEqual([]);
+
+    // Concurrent private_erase vs todo.update on a matched todo inside a matched todo_list locks todo_list -> todo
+    // in the same order without Postgres 40P01 deadlock.
+    const raceValue = 'race-pii@khach.example';
+    const [raceList, raceTodo] = [randomUUID(), randomUUID()];
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO crove_notes.todo_list (org_id, id, owner_user_id, name, sections, sort_key) VALUES
+           ($1, $2, $3, 'Danh sách race-pii@khach.example', '[{"id": "s1", "name": "Mục 1"}]'::jsonb, 'd0')`,
+        [org.orgId, raceList, org.member],
+      );
+      await c.query(
+        `INSERT INTO crove_notes.todo (org_id, id, owner_user_id, title, tags, list_id, section_id, sort_key) VALUES
+           ($1, $2, $3, 'Việc race', ARRAY['race-pii@khach.example'], $4, 's1', 'd0')`,
+        [org.orgId, raceTodo, org.member, raceList],
+      );
+    });
+    await rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value: raceValue }, { actor: asMfa(org.owner), orgId: org.orgId, idempotencyKey: randomUUID() });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [org.orgId]);
+      await c.query('COMMIT');
+    });
+    const [eraseOutcome, updateOutcome] = await Promise.allSettled([
+      erase(raceValue),
+      rt.execute(
+        'notes.todo.update',
+        {
+          todoId: raceTodo,
+          revision: 1,
+          title: 'Cập nhật song song',
+          details: '',
+          checklist: [],
+          dueOn: null,
+          dueTime: null,
+          timeZone: 'Asia/Ho_Chi_Minh',
+          listId: raceList,
+          sectionId: 's1',
+        },
+        { actor: asUser(org.member), orgId: org.orgId, idempotencyKey: randomUUID() },
+      ),
+    ]);
+    expect(eraseOutcome.status).toBe('fulfilled');
+    if (updateOutcome.status === 'rejected') {
+      expect(updateOutcome.reason).toMatchObject({ status: 404 });
+    }
   });
 
   it("finds the legal entities the org keeps books for, kept by law, and the default one as the org's own (#1312)", async () => {
