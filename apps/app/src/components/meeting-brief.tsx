@@ -46,7 +46,7 @@ export function MeetingBrief({ slug, emptyNote = false, ...which }: { slug: stri
   return (
     <Card data-testid="meeting-brief">
       <CardHeader>
-        <CardTitle className="text-base font-medium">{t('title')}</CardTitle>
+        <CardTitle role="heading" aria-level={2} className="text-base font-medium">{t('title')}</CardTitle>
         {data.previous && (
           <CardDescription className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>{t('from', { title: data.previous.title, date: vnDateOf(data.previous.startedAt) })}</span>
