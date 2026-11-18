@@ -14,6 +14,7 @@ import {
   type Transcript,
   type TranscriptSegmentInput,
   type TranscriptStage,
+  type TranscriptionMaker,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { dayText, vnDay } from './retention.ts';
@@ -43,11 +44,13 @@ export async function openMeeting(trx: QueryContext['trx'], orgId: string, meeti
 // A new run replaces the earlier draft, corrections included: the recorder asked for it. The caller has checked that the caller is the recorder.
 // `fromRun` is set only by the copy of a Vy result (meetings.transcript.copy_result): those rows are the model's text, so they are born tainted and name the run they came
 // from (source_run_id), and nothing can change either afterwards but the recorder's review (crove_meetings.draft_review). What the recorder typed is not tainted.
+// `source` names whose transcription the rows are when it is not Ludy's own (C2, #3174: the transcript Google Meet wrote, taken by meetings.import.take_transcript); such rows are tainted too and
+// name no run. Nothing updates `source` afterwards.
 export async function replaceDraft(
   ctx: { trx: QueryContext['trx']; orgId: string },
   meetingId: string,
   segments: readonly TranscriptSegmentInput[],
-  fromRun?: { tainted: true; sourceRunId: string },
+  fromRun?: { tainted: true; sourceRunId?: string; source?: TranscriptionMaker },
 ): Promise<void> {
   for (const segment of segments) {
     if (segment.endSeconds < segment.startSeconds) throw new DomainError('INVALID', 422, 'A transcript segment ends before it starts');
@@ -64,7 +67,7 @@ export async function replaceDraft(
       speaker_label: s.speakerLabel,
       text: s.text,
       stage: 'draft' as const,
-      ...(fromRun ? { tainted: fromRun.tainted, source_run_id: fromRun.sourceRunId } : {}),
+      ...(fromRun ? { tainted: fromRun.tainted, ...(fromRun.sourceRunId === undefined ? {} : { source_run_id: fromRun.sourceRunId }), ...(fromRun.source === undefined ? {} : { source: fromRun.source }) } : {}),
     }));
     await ctx.trx.insertInto('crove_meetings.transcript_segment').values(rows).execute();
   }
@@ -136,7 +139,7 @@ export const transcriptGet = defineQuery({
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     const rows = await ctx.trx
       .selectFrom('crove_meetings.transcript_segment')
-      .select(['id', sql<string>`start_seconds::text`.as('start_seconds'), sql<string>`end_seconds::text`.as('end_seconds'), 'speaker_label', 'text', 'stage', 'corrected'])
+      .select(['id', sql<string>`start_seconds::text`.as('start_seconds'), sql<string>`end_seconds::text`.as('end_seconds'), 'speaker_label', 'text', 'stage', 'corrected', 'source'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .orderBy('start_seconds')
@@ -155,6 +158,7 @@ export const transcriptGet = defineQuery({
         text: r.text,
         stage: r.stage as TranscriptStage,
         corrected: r.corrected,
+        source: r.source as TranscriptionMaker,
       })),
     };
   },
