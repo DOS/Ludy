@@ -5323,6 +5323,8 @@ export const en = {
       launchRetryQueued: 'A retry is queued and will run shortly.',
       launchRetriedToast: 'Asked to run the launch again.',
       launchObjectsTitle: 'Created on the ad platform',
+      launchObjectDetails: 'Details',
+      launchObjectId: 'Platform id: {id}',
       statesReadOk: 'Asked {platform} at {time}',
       statesReadFailed: 'Could not ask {platform} at {time}; showing the last known state',
       statesReadPlatform: 'the ad platform',

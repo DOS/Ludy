@@ -638,6 +638,7 @@ function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canMana
 
 function LaunchObjectsList({ launch, title, root }: { launch: AdsLaunchView; title: string; root: Translate }) {
   const f = useFormat();
+  const t = useTranslations('ads');
   if (launch.objects.length === 0) return null;
   const read = statesReadNote(launch, root, (value) => f.dateTime(value));
   return (
@@ -647,7 +648,12 @@ function LaunchObjectsList({ launch, title, root }: { launch: AdsLaunchView; tit
         {launch.objects.map((o) => (
           <li key={o.slot} className="flex flex-wrap items-center justify-between gap-2">
             <span>
-              {launchObjectLevelText(o.level, root)}: <span className="font-medium text-foreground">{o.name}</span> ({o.externalId})
+              {launchObjectLevelText(o.level, root)}: <span className="font-medium text-foreground">{o.name}</span>
+              {/* The platform's own id is for support and for finding the object in its manager: behind a link, not in the line (AD-11, #3659). */}
+              <details className="mt-0.5">
+                <summary className="cursor-pointer text-subtle-foreground">{t('campaigns.launchObjectDetails')}</summary>
+                <span className="block font-mono">{t('campaigns.launchObjectId', { id: o.externalId })}</span>
+              </details>
             </span>
             <Badge variant={launchObjectStatusVariant(o, launch)}>
               {launchObjectStatusText(o, launch, root)}

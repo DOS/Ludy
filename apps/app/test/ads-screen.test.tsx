@@ -1320,6 +1320,16 @@ describe('the tables of a period', () => {
     expect(html.match(new RegExp(`>${en.ads.columns.costPerResult}<`, 'g'))).toHaveLength(3);
   });
 
+  it('puts the results and their cost right after spend, so a phone that scrolls sideways does not hide them (AD-12)', () => {
+    const html = tables(summary());
+    const heads = [...html.matchAll(/<thead[^>]*>[\s\S]*?<\/thead>/g)].map((m) => [...m[0].matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((h) => h[1]));
+    expect(heads).toHaveLength(3);
+    const c = en.ads.columns;
+    expect(heads[0]).toEqual([c.month, c.spend, c.results, c.costPerResult, c.impressions, c.clicks]);
+    expect(heads[1]).toEqual([c.campaign, c.spend, c.results, c.costPerResult, c.impressions, c.clicks]);
+    expect(heads[2]).toEqual([c.day, c.spend, c.results, c.costPerResult, c.impressions, c.clicks, c.reach]);
+  });
+
   it('leaves the results columns out when no result kind is chosen', () => {
     const none = metric({ results: null, costPerResult: null });
     const html = tables(
