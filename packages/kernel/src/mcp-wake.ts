@@ -10,7 +10,7 @@
 // - Only a user, and no MCP grant, sets any of it: the handlers say so themselves, and a test reads them.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { mcpWakeUrlProblem, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, type McpWakeView } from '@crove/kernel-contract';
+import { MINUTES_PUBLISHED_EVENT, MINUTES_WAKE_TYPE, mcpWakeUrlProblem, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMinutesPublishedEvent, type McpWakeView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@crove/kernel-runtime';
 
@@ -195,7 +195,7 @@ const zWakeKey = z.string().max(300);
 export const zMcpWakeEnqueue = z.strictObject({
   id: zWakeEventId,
   grantId: zMcpWakeGrantRef.shape.grantId,
-  type: z.enum(['signal.fired', 'schedule.due', 'ping']),
+  type: z.enum(['signal.fired', 'schedule.due', 'ping', MINUTES_WAKE_TYPE]),
   body: z.record(z.string(), z.unknown()),
   // The signal keys this event carries: noted as seen in the same transaction that stores it.
   keys: z.array(zWakeKey).max(20).optional(),
@@ -288,7 +288,7 @@ export const mcpWakeSignalsCheck = defineCommand({
 export interface McpWakeDeliveryRow {
   id: string;
   grantId: string;
-  type: 'signal.fired' | 'schedule.due' | 'ping';
+  type: 'signal.fired' | 'schedule.due' | 'ping' | typeof MINUTES_WAKE_TYPE;
   body: Record<string, unknown>;
   status: 'queued' | 'sent' | 'failed' | 'dropped';
   attempts: number;
@@ -325,5 +325,46 @@ export const mcpWakeTarget = defineQuery({
   },
 });
 
-export const mcpWakeCommands = [mcpWakeSet, mcpWakeRotate, mcpWakeClear, mcpWakeTest, mcpWakeEnqueue, mcpWakeTouch, mcpWakeRecord, mcpWakeSignalsCheck];
+// The grants to wake for a published minutes event (#3803), and the 24-hour bound: the worker's notify job gives the event's id; the command reads the event itself (never the job's copy), checks its type, and
+// lists the company grants whose wake-up stands now through the worker-only definer. An event older than 24 hours when it would be sent is dropped (nothing is listed) and audited by its id, so a long
+// off-period of Meetings cannot release a burst of stale wake-ups; the agent reads current state through the gated tool, so nothing is lost. It is a command, not a query, for that one audit row.
+// What it answers: the meeting's id and the instant (from the event), the grants, and whether it dropped. Never a title or a word of the minutes: the event holds none.
+export const MINUTES_WAKE_MAX_AGE_MS = 24 * 3_600_000;
+const MINUTES_WAKE_GRANTS_MAX = 200;
+export const zMcpWakeMinutesTargets = z.strictObject({ eventId: z.uuid(), now: z.iso.datetime() });
+export interface McpWakeMinutesTargets {
+  meetingId: string;
+  publishedAt: string;
+  grants: string[];
+  dropped: boolean;
+}
+export const mcpWakeMinutesTargets = defineCommand({
+  name: 'kernel.mcp.wake.minutes_targets',
+  input: zMcpWakeMinutesTargets,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<McpWakeMinutesTargets | null> => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới tìm các quyền kết nối cần báo thức');
+    const event = await ctx.trx
+      .selectFrom('crove_kernel.outbox_event')
+      .select(['type', 'payload', 'created_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.eventId)
+      .executeTakeFirst();
+    if (!event || event.type !== MINUTES_PUBLISHED_EVENT) return null;
+    const published = zMinutesPublishedEvent.parse(event.payload);
+    // Stale when it would be sent: older than 24 hours at the moment the worker asks.
+    const stale = Date.parse(input.now) - event.created_at.getTime() > MINUTES_WAKE_MAX_AGE_MS;
+    const grants = stale
+      ? []
+      : (await sql<{ grant_id: string }>`SELECT grant_id FROM crove_kernel.mcp_wake_company_targets(${ctx.orgId}::uuid, ${MINUTES_WAKE_GRANTS_MAX}::int)`.execute(ctx.trx)).rows.map((r) => r.grant_id);
+    // The event's id and what came of it: never a body.
+    // `capped` says the list stopped at its limit, so a count equal to it is never read as the whole.
+    ctx.audit({ eventId: input.eventId, dropped: stale, grants: grants.length, capped: grants.length >= MINUTES_WAKE_GRANTS_MAX });
+    return { meetingId: published.meetingId, publishedAt: published.publishedAt, grants, dropped: stale };
+  },
+});
+
+export const mcpWakeCommands = [mcpWakeSet, mcpWakeRotate, mcpWakeClear, mcpWakeTest, mcpWakeEnqueue, mcpWakeTouch, mcpWakeRecord, mcpWakeSignalsCheck, mcpWakeMinutesTargets];
 export const mcpWakeQueries = [mcpWakeGet, mcpWakeDelivery, mcpWakeTarget];

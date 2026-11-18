@@ -47,4 +47,4 @@ export { zMeetingPlatformConnect, type MeetingPlatformImportOpen, type MeetingPl
 export * from './numbering.ts';
 export * from './manifest.ts';
 export { zMcpPartiesInput } from './mcp.ts';
-export { MCP_WAKE_PROVIDER, type McpWakeCredential, type McpWakeDeliveryRow, type McpWakeTargetRow } from './mcp-wake.ts';
+export { MCP_WAKE_PROVIDER, type McpWakeCredential, type McpWakeDeliveryRow, type McpWakeMinutesTargets, type McpWakeTargetRow } from './mcp-wake.ts';

@@ -4,7 +4,7 @@ import { CompiledQuery, sql, type Transaction } from 'kysely';
 import pg from 'pg';
 import { PgBoss, type Db as BossDb, type SendOptions } from 'pg-boss';
 import type { Database, Db } from '@crove/db';
-import { SUMMARY_READY_EVENT, vietnamToday } from '@crove/kernel-contract';
+import { MINUTES_PUBLISHED_EVENT, SUMMARY_READY_EVENT, vietnamToday } from '@crove/kernel-contract';
 import { DomainError, inboundKey, moduleOffOf, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { KERNEL_NOTIFYING_EVENTS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
 import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@crove/agent';
@@ -46,6 +46,7 @@ import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMed
 import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { MEMBER_VY_SWEEP_CRON, MEMBER_VY_SWEEP_EXPIRE_SECONDS, MEMBER_VY_SWEEP_TZ, sweepMemberVyFormerMembers, sweepMemberVyResults } from './member-vy-worker.ts';
 import { WAKE_JOB_EXPIRE_SECONDS, WAKE_RETRY_DELAY_SECONDS, WAKE_RETRY_LIMIT, runWakeDelivery, type WakeJob } from './mcp-wake.ts';
+import { wakeMinutesPublished } from './mcp-wake-minutes.ts';
 import { MCP_WAKE_SWEEP_CRON, MCP_WAKE_SWEEP_EXPIRE_SECONDS, runWakeSweep } from './mcp-wake-sweep.ts';
 import { runMeetingHookDelivery, type MeetingHookJob } from './meeting-hook.ts';
 import { MEETINGS_SERIES_NUDGE_CRON, runMeetingsSeriesNudgeSweep } from './meetings-series-nudge.ts';
@@ -1381,6 +1382,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // The wake-up webhook of an MCP grant (ADR-0051 decision 4, #3024): a sweep every minute stores and hands over what is due (mcp-wake-sweep.ts), and one job per delivery posts
   // it to the receiver the org set (mcp-wake.ts). Without a credential key no secret can be opened, so neither runs and nothing is sent; the queue's retries are bounded.
   const wakeBroker = deps.channels?.broker;
+  // One delivery handed to the kernel-mcp-wake queue (a singleton job per delivery), by the sweep and by the wake-up for published minutes (#3803).
+  const sendWake = (job: WakeJob) =>
+    boss.send(QUEUES.mcpWake, job, { singletonKey: jobKey(job.orgId, QUEUES.mcpWake, job.id), retryLimit: WAKE_RETRY_LIMIT, retryDelay: WAKE_RETRY_DELAY_SECONDS, retryBackoff: true, expireInSeconds: WAKE_JOB_EXPIRE_SECONDS });
   if (wakeBroker && wakeBroker.id !== 'none') {
     await boss.work<WakeJob>(QUEUES.mcpWake, { batchSize: 1, includeMetadata: true }, async ([job]) => {
       if (!job) return;
@@ -1390,8 +1394,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       const done = await runWakeSweep({
         runtime: deps.runtime,
         workerDb: deps.workerDb,
-        send: (job: WakeJob) =>
-          boss.send(QUEUES.mcpWake, job, { singletonKey: jobKey(job.orgId, QUEUES.mcpWake, job.id), retryLimit: WAKE_RETRY_LIMIT, retryDelay: WAKE_RETRY_DELAY_SECONDS, retryBackoff: true, expireInSeconds: WAKE_JOB_EXPIRE_SECONDS }),
+        send: sendWake,
       });
       if (done.handedOver + done.expired + done.schedules + done.signals + done.failures > 0) {
         console.log(`[mcp-wake-sweep] handed over ${done.handedOver}, expired ${done.expired}, schedules ${done.schedules}, signals ${done.signals}, failures ${done.failures}`);
@@ -1778,6 +1781,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // In-app notifications of the kernel and finance (#671): the module's dispatch reads the event from the outbox.
   await boss.work<AgentDispatchJob & { type: string }>(QUEUES.notify, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
+    // The wake-up of an AI app for the minutes of an org-visible meeting (#3803): stored and handed to the wake queue here, by the worker (a module cannot build the signed body).
+    if (job.data.type === MINUTES_PUBLISHED_EVENT) {
+      if (!deps.runtime.installed('meetings')) return;
+      const done = await wakeMinutesPublished({ runtime: deps.runtime, send: sendWake }, { orgId: job.data.orgId, eventId: job.data.eventId });
+      if (done.stored > 0 || done.dropped) console.log(`[mcp-wake-minutes] ${job.data.eventId.slice(0, 8)} stored ${done.stored}, handed over ${done.handedOver}${done.dropped ? ', dropped (older than 24 hours)' : ''}`);
+      return;
+    }
     const notify = NOTIFY_COMMANDS.get(job.data.type);
     if (!notify || !deps.runtime.installed(notify.module)) return;
     await deps.runtime.execute(notify.command, { eventId: job.data.eventId }, { actor: { type: 'system', component: 'kernel.notify' }, orgId: job.data.orgId });
@@ -2939,6 +2949,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               // An in-app notification (#671), besides whatever else the event starts (an agent's review task).
               const notify = NOTIFY_COMMANDS.get(row.type);
               if (notify && deps.runtime.installed(notify.module)) {
+                await boss.send(QUEUES.notify, { orgId: row.org_id, eventId: row.event_id, type: row.type } satisfies AgentDispatchJob & { type: string }, {
+                  singletonKey: jobKey(row.org_id, QUEUES.notify, row.event_id),
+                  retryLimit: NOTIFY_RETRY_LIMIT,
+                  retryDelay: 20,
+                  retryBackoff: true,
+                });
+              }
+              // The minutes of an org-visible meeting were published (#3803): one notify job per event, which stores the wake-ups for the company grants that stand.
+              if (row.type === MINUTES_PUBLISHED_EVENT && deps.runtime.installed('meetings')) {
                 await boss.send(QUEUES.notify, { orgId: row.org_id, eventId: row.event_id, type: row.type } satisfies AgentDispatchJob & { type: string }, {
                   singletonKey: jobKey(row.org_id, QUEUES.notify, row.event_id),
                   retryLimit: NOTIFY_RETRY_LIMIT,

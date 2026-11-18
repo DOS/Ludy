@@ -1162,3 +1162,13 @@ export const zSummaryReadyMail = z.strictObject({
   path: z.string().regex(/^\/o\/[a-z0-9][a-z0-9-]{0,62}\/meetings\/[0-9a-f-]{36}$/),
 });
 export type SummaryReadyMail = z.infer<typeof zSummaryReadyMail>;
+
+// The wake-up of an agent when the minutes of an org-visible meeting are published (#3803, ADR-0051 decision 4). The outbox event holds the meeting's id and the instant its result was published, and nothing
+// a person typed (no title, no text): `meetings.result.publish` emits it only for a meeting of visibility 'org' when the call published a result. The wake-up body the receiver gets (type MINUTES_WAKE_TYPE) carries
+// the same two facts as `meeting_id` and `published_at`; the agent reads the minutes with ludy_meeting_minutes under its grant.
+export const MINUTES_PUBLISHED_EVENT = 'meetings.minutes.published';
+export const MINUTES_WAKE_TYPE = 'meetings.minutes_published';
+export const zMinutesPublishedEvent = z.strictObject({ meetingId: zId, publishedAt: z.iso.datetime() });
+export type MinutesPublishedEvent = z.infer<typeof zMinutesPublishedEvent>;
+// The worker's dispatch is told the event's id only and reads the event itself.
+export const zMinutesWakeDispatch = z.strictObject({ eventId: zId });

@@ -29,6 +29,7 @@ import {
   zMeetingResultSave,
   zMeetingTemplateSet,
   zMeetingTemplateSetDone,
+  zMinutesPublishedEvent,
   zResultPublish,
   type ActionItemView,
   type ItemFlag,
@@ -274,6 +275,12 @@ export const actionItemDelete = defineCommand({
   },
 });
 
+// Whether the recorder shared the meeting with the whole company (visibility 'org'): the only meetings whose published minutes wake an agent (#3803). The caller is the recorder, who reads the row.
+async function meetingIsOrgVisible(trx: Trx, orgId: string, meetingId: string): Promise<boolean> {
+  const row = await trx.selectFrom('crove_meetings.meeting').select('visibility').where('org_id', '=', orgId).where('id', '=', meetingId).executeTakeFirst();
+  return row?.visibility === 'org';
+}
+
 export const resultPublish = defineCommand({
   name: 'meetings.result.publish',
   input: zResultPublish,
@@ -299,7 +306,7 @@ export const resultPublish = defineCommand({
     const draft = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().executeTakeFirst();
     // The draft replaces the summary published before it (one published summary a meeting).
     let results = 0;
-    let published: { summary: string; decisions: unknown } | null = null;
+    let published: { summary: string; decisions: unknown; updated_at: Date } | null = null;
     if (draft) {
       await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
       published =
@@ -308,7 +315,7 @@ export const resultPublish = defineCommand({
           .set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', draft.id)
-          .returning(['summary', 'decisions'])
+          .returning(['summary', 'decisions', 'updated_at'])
           .executeTakeFirst()) ?? null;
       results = 1;
     }
@@ -330,6 +337,11 @@ export const resultPublish = defineCommand({
       decisions: published && Array.isArray(published.decisions) ? published.decisions.filter((d): d is string => typeof d === 'string') : null,
       items: items.slice(0, 100).map((i) => ({ title: i.title, whoDrafted: i.who_drafted, whenParsed: i.when_parsed })),
     });
+    // The wake-up for an agent (#3803): when this call published a result of a meeting the recorder shared with the whole company, one event with the meeting's id and the instant, and no word of the minutes.
+    // A publish of items alone, an attendees-only meeting and a refused publish emit nothing. The same transaction stores it, so a rollback sends nothing.
+    if (published !== null && (await meetingIsOrgVisible(ctx.trx, ctx.orgId, input.meetingId))) {
+      await ctx.emit('meetings.minutes.published', zMinutesPublishedEvent.parse({ meetingId: input.meetingId, publishedAt: published.updated_at.toISOString() }));
+    }
     ctx.audit({ meetingId: input.meetingId, results, items: items.length });
     return { meetingId: input.meetingId, results, items: items.length };
   },

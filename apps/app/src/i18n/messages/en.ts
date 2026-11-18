@@ -14207,6 +14207,7 @@ export const en = {
           delivery: 'Read a wake-up waiting to be sent',
           enqueue: 'Queue a wake-up for an AI app',
           get: 'See the wake-up receivers of the AI apps',
+          minutes_targets: 'Find the AI apps to wake when meeting minutes are published',
           queued: 'Note a wake-up was handed to the queue',
           record: 'Record the result of sending a wake-up',
           rotate_secret: 'Rotate the wake-up secret of an AI app',

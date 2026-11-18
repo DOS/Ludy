@@ -6,6 +6,7 @@
 // (test/invariant/mcp-wake.test.ts) feeds this function hostile input.
 import { z } from 'zod';
 import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ } from '@crove/kernel';
+import { MINUTES_WAKE_TYPE } from '@crove/kernel-contract';
 
 // The rules the kernel runs: a new rule is a change here, in the database function and in the invariant test.
 export const WAKE_RULES = [DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ] as const;
@@ -40,6 +41,8 @@ const zEvent = z.discriminatedUnion('type', [
   z.strictObject({ ...head, type: z.literal('signal.fired'), data: z.strictObject({ items: z.array(zItem).min(1).max(WAKE_ITEMS_MAX) }) }),
   z.strictObject({ ...head, type: z.literal('schedule.due'), data: z.strictObject({ date: zDate }) }),
   z.strictObject({ ...head, type: z.literal('ping'), data: z.strictObject({}) }),
+  // The minutes of an org-visible meeting were published (#3803): the meeting's id and the instant, nothing a person typed. The agent reads the minutes with ludy_meeting_minutes.
+  z.strictObject({ ...head, type: z.literal(MINUTES_WAKE_TYPE), data: z.strictObject({ meeting_id: zId, published_at: zInstant }) }),
 ]);
 
 export type WakeEvent = z.infer<typeof zEvent>;

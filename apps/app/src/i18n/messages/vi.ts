@@ -14206,6 +14206,7 @@ export const vi = {
           delivery: 'Đọc một lần báo thức đang chờ gửi',
           enqueue: 'Xếp hàng một lần báo thức cho ứng dụng AI',
           get: 'Xem địa chỉ nhận báo thức của các ứng dụng AI',
+          minutes_targets: 'Tìm các ứng dụng AI cần báo thức khi biên bản cuộc họp được công bố',
           queued: 'Ghi nhận một lần báo thức đã chuyển vào hàng đợi',
           record: 'Ghi kết quả một lần gửi báo thức',
           rotate_secret: 'Đổi khóa bí mật báo thức của một ứng dụng AI',
