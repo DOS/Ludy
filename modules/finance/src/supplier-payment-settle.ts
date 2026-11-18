@@ -208,7 +208,6 @@ export const supplierPaymentSettleRecord = defineCommand({
       .executeTakeFirst();
     if (!moved) throw new DomainError('SUPPLIER_PAYMENT_NOT_APPROVED', 409, 'Khoản chi này không còn ở trạng thái đã duyệt', { paymentId });
     ctx.audit({ supplier_payment_id: paymentId });
-    await ctx.activity('finance.supplier_payment', paymentId, 'supplier_payment.paid', `Ghi sổ chi ${recorded.code} cho khoản chi nhà cung cấp`);
     return { ...recorded, paymentId };
   },
 });

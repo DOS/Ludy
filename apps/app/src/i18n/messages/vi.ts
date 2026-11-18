@@ -13246,6 +13246,10 @@ export const vi = {
         list: 'Xem các khoản chi nhà cung cấp đã duyệt',
         prepare: 'Lập đề xuất chi cho một hóa đơn mua vào',
         record: 'Duyệt khoản chi cho nhà cung cấp',
+        settle: {
+          prepare: 'Lập đề xuất ghi sổ một khoản chi nhà cung cấp từ dòng sao kê ngân hàng',
+          record: 'Ghi sổ giấy báo Nợ của khoản chi nhà cung cấp và đánh dấu đã chi',
+        },
       },
       supplier_bank_account: {
         add: 'Thêm tài khoản ngân hàng của nhà cung cấp',
@@ -13277,6 +13281,7 @@ export const vi = {
         matched: 'Xem các dòng sao kê đã khớp chứng từ',
         open_lines: 'Xem các dòng sao kê chưa đối chiếu',
         payroll_match: 'Xem khoản chi lương mà một dòng sao kê chi ra có thể là',
+        supplier_match: 'Xem khoản chi nhà cung cấp đã duyệt mà một dòng sao kê chi ra có thể là',
         platform_lines: 'Xem các dòng sao kê mang tên một nền tảng quảng cáo',
         preview: 'Xem trước sao kê ngân hàng',
         statement_confirm: 'Nhập sao kê ngân hàng đã đọc từ tệp (thư gửi đến hoặc tải vào Chứng từ chờ duyệt)',
