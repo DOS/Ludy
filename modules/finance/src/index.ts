@@ -51,6 +51,7 @@ import { einvoiceCorrectionCommands, einvoiceCorrectionQueries } from './einvoic
 import { einvoiceNoticeCommands, einvoiceNoticeQueries } from './einvoice-notice.ts';
 import { supplierBankAccountCommands, supplierBankAccountQueries } from './supplier-bank-account.ts';
 import { supplierPaymentCommands, supplierPaymentQueries } from './supplier-payment.ts';
+import { supplierPaymentPayableQueries } from './supplier-payment-payable.ts';
 import { supplierPaymentBankFileCommands, supplierPaymentBankFileQueries } from './supplier-payment-bank-file.ts';
 import { supplierPaymentSettleCommands, supplierPaymentSettleQueries } from './supplier-payment-settle.ts';
 import { einvoiceIssueCommands, einvoiceIssueQueries } from './einvoice-issue.ts';
@@ -269,6 +270,7 @@ export const financeQueries = [
   ...einvoiceNoticeQueries,
   ...supplierBankAccountQueries,
   ...supplierPaymentQueries,
+  ...supplierPaymentPayableQueries,
   ...supplierPaymentBankFileQueries,
   ...supplierPaymentSettleQueries,
   ...orderHandoffQueries,

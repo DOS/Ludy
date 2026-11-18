@@ -1,5 +1,6 @@
 export * from './money.ts';
 export * from './tax-code.ts';
+export * from './buyer-label.ts';
 export * from './invoice.ts';
 export * from './einvoice-detect.ts';
 export * from './accounting.ts';

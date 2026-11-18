@@ -3,7 +3,7 @@
 // fields.
 import { describe, expect, it } from 'vitest';
 import { enterpriseCheckDigit } from '@crove/l10n-vn';
-import { checkDraft, computeDraft, isBuyerIdentity, isLateSale, maskBuyerIdentity, nextWorkingDay, normalizeVatRate, type DraftInput } from '../src/domain/einvoice-draft.ts';
+import { checkDraft, computeDraft, isBuyerIdentity, isLateSale, isNationalityCode, maskBuyerIdentity, nextWorkingDay, normalizeVatRate, type DraftInput } from '../src/domain/einvoice-draft.ts';
 
 // A synthetic tax code made at run time (the repository holds no checksum-valid one): a nine digit prefix and its check digit, and the same with the check digit off by one.
 const PREFIX = '010010910';
@@ -188,8 +188,43 @@ describe("an individual buyer's identity (#3678)", () => {
     expect(codes(individual({ kind: 'cccd', value: '12345' }))).toContain('buyer.identity:BUYER_IDENTITY_INVALID');
     expect(codes(individual({ kind: 'cccd', value: '012345678901' }, 'business'))).toContain('buyer.identity:BUYER_IDENTITY_INVALID');
   });
+  it('asks a passport for the buyer\'s nationality, two capital letters, and allows it with nothing else (#3709)', () => {
+    const passport = (nationality: string | null) => individual({ kind: 'passport', value: 'B1234567', nationality });
+    expect(codes(passport('US'))).toEqual([]);
+    expect(codes(passport(null))).toContain('buyer.nationality:BUYER_NATIONALITY_REQUIRED');
+    expect(codes(passport(''))).toContain('buyer.nationality:BUYER_NATIONALITY_REQUIRED');
+    expect(codes(passport('usa'))).toContain('buyer.nationality:BUYER_NATIONALITY_INVALID');
+    expect(codes(passport('u1'))).toContain('buyer.nationality:BUYER_NATIONALITY_INVALID');
+    // A CCCD or a budget code carries none, and a draft that has not been given the field (an older caller) is judged as one without.
+    expect(codes(individual({ kind: 'cccd', value: '012345678901', nationality: 'US' }))).toContain('buyer.nationality:BUYER_NATIONALITY_INVALID');
+    expect(codes(individual({ kind: 'cccd', value: '012345678901', nationality: null }))).toEqual([]);
+    expect(codes(individual({ kind: 'budget_code', value: '1234567' }))).toEqual([]);
+  });
   it('masks all but the last three characters', () => {
     expect(maskBuyerIdentity('012345678901')).toBe('•••••••••901');
     expect(maskBuyerIdentity('AB')).toBe('••');
+  });
+});
+
+describe('a nationality code (#3709)', () => {
+  it('is two capital letters', () => {
+    expect(isNationalityCode('VN')).toBe(true);
+    expect(isNationalityCode('vn')).toBe(false);
+    expect(isNationalityCode('VNM')).toBe(false);
+    expect(isNationalityCode('V')).toBe(false);
+  });
+});
+
+describe('the 8% of a correction follows the confirmed basis (#3709)', () => {
+  const REFUSED = 'lines.1.vatRate:LINE_VAT_RATE_REDUCED_OUTSIDE_PERIOD';
+  const eight = [line({ vatRate: '8%' })];
+  it('on the original basis a 2027 correction keeps judging 8% on the original date', () => {
+    expect(codes(draft({ date: '2027-01-10', rateDate: '2026-11-20', lines: eight }), '2027-01-10')).not.toContain(REFUSED);
+  });
+  it('on the correction date basis (no rateDate) a 2027 quantity fix left at 8% is refused, and at 10% it passes', () => {
+    expect(codes(draft({ date: '2027-01-10', lines: eight }), '2027-01-10')).toContain(REFUSED);
+    expect(codes(draft({ date: '2027-01-10', lines: [line({ vatRate: '10%' })] }), '2027-01-10')).not.toContain(REFUSED);
+    // Still inside the reduced period the correction date allows 8%.
+    expect(codes(draft({ date: '2026-12-15', lines: eight }), '2026-12-15')).not.toContain(REFUSED);
   });
 });

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
-import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
+import { SANDBOX_EINVOICE_SECRET, createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import type { ExtractClient } from '@crove/extract-contract';
 import { enterpriseCheckDigit } from '@crove/l10n-vn';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
@@ -199,9 +199,23 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     expect(await run(o, draft.id, p.provider)).toMatchObject({ state: 'issued' });
     return { draftId: draft.id, documentId: await post(o, draft.id) };
   }
-  type Corrected = { id: string; state: string; correction: { kind: string; originalDraftId: string; reasonCode: string; agreementFileId: string | null } | null; lines: Array<{ unitPrice: string }>; total: string; issues: Array<{ code: string }> };
-  const start = (o: Org, originalDraftId: string, kind: 'adjustment' | 'replacement', extra: { reasonCode?: string; agreementFileId?: string | null } = {}) =>
-    execute<Corrected>(o, 'finance.einvoice.start_correction', { originalDraftId, kind, reasonCode: '1', agreementFileId: null, ...extra });
+  type Corrected = {
+    id: string;
+    state: string;
+    correction: { kind: string; originalDraftId: string; reasonCode: string; agreementFileId: string | null; rateBasis: string | null } | null;
+    lines: Array<{ unitPrice: string; vatRate: string; amount: string; vatAmount: string }>;
+    subtotal: string;
+    vatAmount: string;
+    total: string;
+    issues: Array<{ code: string }>;
+  };
+  // A correction says what it is about and confirms the basis that goes with it (#3709): by default one that changes no amount, on the original's rate.
+  const start = (
+    o: Org,
+    originalDraftId: string,
+    kind: 'adjustment' | 'replacement',
+    extra: { reasonCode?: string; agreementFileId?: string | null; rateNature?: string; rateBasis?: string } = {},
+  ) => execute<Corrected>(o, 'finance.einvoice.start_correction', { originalDraftId, kind, reasonCode: '1', agreementFileId: null, rateNature: 'no_amount_change', rateBasis: 'original', ...extra });
   // The correcting draft with the lines the person typed: the buyer and the series are the copy's.
   async function fill(o: Org, corrected: Corrected & { buyer: Record<string, unknown>; seriesId: string }, lines: Array<{ description: string; unit: string | null; quantity: string; unitPrice: string; vatRate: string }>) {
     return execute<Corrected>(o, 'finance.einvoice_draft.save', { draftId: corrected.id, legalEntityId: null, date: today(), seriesId: corrected.seriesId, buyer: corrected.buyer, lines });
@@ -242,11 +256,11 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     const p = sandbox();
     const person = await issued(o, p, 'individual');
     const a = await start(o, person.draftId, 'adjustment');
-    expect(a.correction).toEqual({ kind: 'adjustment', originalDraftId: person.draftId, reasonCode: '1', agreementFileId: null });
+    expect(a.correction).toEqual({ kind: 'adjustment', originalDraftId: person.draftId, reasonCode: '1', agreementFileId: null, rateBasis: 'original' });
     const company = await issued(o, p);
     const file = await agreementFile(o);
     const b = await start(o, company.draftId, 'replacement', { agreementFileId: file });
-    expect(b.correction).toEqual({ kind: 'replacement', originalDraftId: company.draftId, reasonCode: '1', agreementFileId: file });
+    expect(b.correction).toEqual({ kind: 'replacement', originalDraftId: company.draftId, reasonCode: '1', agreementFileId: file, rateBasis: 'original' });
   });
 
   it('adjusts up and down: the original stays in force, each adjusting invoice is linked to it and posts only the difference, and the same method is kept', async () => {
@@ -378,7 +392,7 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     const original = await issued(o, p, 'individual');
     const corr = (await start(o, original.draftId, 'adjustment')) as Corrected & { buyer: { identity: unknown } & Record<string, unknown>; seriesId: string };
     const lines = [{ description: 'Hàng A', unit: null, quantity: '1', unitPrice: '50000', vatRate: '10%' }];
-    const withIdentity = (identity: { kind: string; value: string } | null) =>
+    const withIdentity = (identity: { kind: string; value: string; nationality?: string | null } | null) =>
       execute<Corrected>(o, 'finance.einvoice_draft.save', { draftId: corr.id, legalEntityId: null, date: today(), seriesId: corr.seriesId, buyer: { ...corr.buyer, identity }, lines });
     await withIdentity(null);
     const none = await hash(corr.id);
@@ -388,11 +402,49 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     expect(cccd).not.toBe(none);
     await withIdentity({ kind: 'cccd', value: '012345678902' });
     expect(await hash(corr.id)).not.toBe(cccd);
-    await withIdentity({ kind: 'passport', value: '012345678901' });
-    expect(await hash(corr.id)).not.toBe(cccd);
+    // A passport's nationality is in the hash only when set: the passport with one differs from the CCCD and from the same passport with another.
+    await withIdentity({ kind: 'passport', value: '012345678901', nationality: 'US' });
+    const us = await hash(corr.id);
+    expect(us).not.toBe(cccd);
+    await withIdentity({ kind: 'passport', value: '012345678901', nationality: 'KR' });
+    expect(await hash(corr.id)).not.toBe(us);
     // Back to no identity: the hash is the one it was.
     await withIdentity(null);
     expect(await hash(corr.id)).toBe(none);
+    // The confirmed rate basis joins the hash when set (#3709), and a correction made before the column existed (null) hashes as the formula of 20270110100000 did.
+    const setBasis = (basis: string | null) => rows('UPDATE crove_finance.einvoice_draft SET correction_rate_basis = $3 WHERE org_id = $1 AND id = $2', [o.orgId, corr.id, basis]);
+    const legacy = async () =>
+      (
+        await rows<{ h: string }>(
+          `SELECT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to((pg_catalog.jsonb_build_array(
+              d.legal_entity_id::text, COALESCE(d.series_id::text, ''), d.invoice_date::text, d.currency, d.buyer_kind,
+              COALESCE(d.buyer_tax_code, ''), COALESCE(d.buyer_name, ''), COALESCE(d.buyer_address, ''), COALESCE(d.buyer_email, ''),
+              d.subtotal::text, d.vat_amount::text, d.total::text,
+              COALESCE((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_array(l.line_no::text, l.description, COALESCE(l.unit, ''), l.quantity::text, l.unit_price::text, l.amount::text, l.vat_rate, l.vat_amount::text) ORDER BY l.line_no)
+                        FROM crove_finance.einvoice_draft_line l WHERE l.org_id = d.org_id AND l.draft_id = d.id), '[]'::pg_catalog.jsonb))
+             || CASE WHEN d.sale_date IS NULL THEN '[]'::pg_catalog.jsonb ELSE pg_catalog.jsonb_build_array(d.sale_date::text, COALESCE(d.late_reason, '')) END
+             || CASE WHEN d.buyer_identity IS NULL THEN '[]'::pg_catalog.jsonb ELSE pg_catalog.jsonb_build_array(d.buyer_identity_kind, d.buyer_identity) END
+             || CASE WHEN d.correction_kind IS NULL THEN '[]'::pg_catalog.jsonb
+                     ELSE pg_catalog.jsonb_build_array(d.correction_kind, d.original_draft_id::text, d.reason_code, COALESCE(d.agreement_file_id::text, '')) END)::text, 'UTF8')), 'hex') AS h
+             FROM crove_finance.einvoice_draft d WHERE d.org_id = $1 AND d.id = $2`,
+          [o.orgId, corr.id],
+        )
+      )[0]?.h;
+    await setBasis(null);
+    const legacyHash = await hash(corr.id);
+    expect(legacyHash).toBe(await legacy());
+    await setBasis('original');
+    expect(await hash(corr.id)).not.toBe(legacyHash);
+    expect(await hash(corr.id)).toBe(none);
+    await setBasis('correction_date');
+    expect(await hash(corr.id)).not.toBe(none);
+    expect(await hash(corr.id)).not.toBe(legacyHash);
+    // The database keeps the basis to a correction and to the two values.
+    await expect(rows('UPDATE crove_finance.einvoice_draft SET correction_rate_basis = $3 WHERE org_id = $1 AND id = $2', [o.orgId, corr.id, 'someday'])).rejects.toMatchObject({ code: '23514' });
+    // A draft that is no correction cannot carry one (a draft row: an issued invoice would meet the state guard first).
+    const plainDraft = await execute<{ id: string }>(o, 'finance.einvoice_draft.save', form(o));
+    await expect(rows("UPDATE crove_finance.einvoice_draft SET correction_rate_basis = 'original' WHERE org_id = $1 AND id = $2", [o.orgId, plainDraft.id])).rejects.toMatchObject({ code: '23514' });
+    await setBasis('original');
     // The same draft made a replacement instead (another original) hashes differently from this adjustment.
     const other = await issued(o, p, 'individual');
     const replacement = await start(o, other.draftId, 'replacement');
@@ -456,6 +508,93 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     expect(emailed).toEqual({ fileId: agreement.fileId, duplicate: true });
     expect(await rows('SELECT source FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, agreement.fileId])).toEqual([{ source: 'agreement' }]);
   });
+  it('proposes the VAT rate of a correction by the nature picked, stores the basis the person confirmed and refuses one that does not match (#3709)', async () => {
+    const o = await org();
+    const p = sandbox();
+    const original = await issued(o, p, 'individual');
+    const query = <T>(name: string, input: unknown) => rt.query<T>(name, input, { actor: asUser(o.owner), orgId: o.orgId });
+    type Rate = { nature: string; basis: string; originalDate: string; correctionDate: string; reasonCode: string; changes: Array<{ from: string; to: string }>; kept: string[]; reducedUntil: string; reason: string; precedentNote: string | null };
+    const rateOf = (nature: string) => query<Rate>('finance.einvoice.correction_rate', { originalDraftId: original.draftId, nature });
+    // What the amount-changing nature gives depends on the day the suite runs (the database's day), as the rule does.
+    const reduced = today() <= '2026-12-31';
+
+    // A correction that changes no amount, a return and a trade discount keep the rates of the original, whatever the day.
+    for (const nature of ['no_amount_change', 'return', 'trade_discount']) {
+      const rate = await rateOf(nature);
+      expect(rate).toMatchObject({ nature, basis: 'original', changes: [], kept: ['10%', '8%'], reducedUntil: '2026-12-31', correctionDate: today() });
+      expect(rate.reason).toContain('giữ thuế suất của hóa đơn gốc');
+      expect(rate.precedentNote).toContain('2121/TCT-CS');
+    }
+    const amount = await rateOf('amount_change');
+    expect(amount).toMatchObject({ nature: 'amount_change', basis: 'correction_date', reducedUntil: '2026-12-31' });
+    expect(amount.changes).toEqual(reduced ? [] : [{ from: '8%', to: '10%' }]);
+    expect(amount.reasonCode).toBe(reduced ? 'amount_change_still_reduced' : 'amount_change_standard');
+    expect(amount.precedentNote).toContain('2121/TCT-CS');
+    // Read only, and only of an invoice that was issued here.
+    expect(await refusal(query('finance.einvoice.correction_rate', { originalDraftId: randomUUID(), nature: 'return' }))).toBe('EINVOICE_DRAFT_NOT_FOUND');
+    const notIssued = await execute<{ id: string }>(o, 'finance.einvoice_draft.save', form(o));
+    expect(await refusal(query('finance.einvoice.correction_rate', { originalDraftId: notIssued.id, nature: 'return' }))).toBe('EINVOICE_ORIGINAL_NOT_ISSUED');
+
+    // The command works the basis out from the nature and refuses a different one (a stale or forged screen), and an unknown nature or none.
+    expect(await refusal(start(o, original.draftId, 'adjustment', { rateNature: 'amount_change', rateBasis: 'original' }))).toBe('EINVOICE_RATE_BASIS_MISMATCH');
+    expect(await refusal(start(o, original.draftId, 'adjustment', { rateNature: 'return', rateBasis: 'correction_date' }))).toBe('EINVOICE_RATE_BASIS_MISMATCH');
+    expect(await refusal(start(o, original.draftId, 'adjustment', { rateNature: 'whatever', rateBasis: 'original' }))).not.toBe('accepted');
+    expect(await rows('SELECT 1 FROM crove_finance.einvoice_draft WHERE org_id = $1 AND original_draft_id = $2', [o.orgId, original.draftId])).toHaveLength(0);
+
+    // The confirmed basis is stored with the correction and returned with it, and the audit says the nature and the basis and nothing of the buyer.
+    const adjusting = await start(o, original.draftId, 'adjustment', { rateNature: 'amount_change', rateBasis: 'correction_date' });
+    expect(adjusting.correction).toMatchObject({ kind: 'adjustment', rateBasis: 'correction_date' });
+    expect((await rows<{ correction_rate_basis: string | null }>('SELECT correction_rate_basis FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, adjusting.id]))[0]?.correction_rate_basis).toBe('correction_date');
+    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.start_correction' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId]);
+    expect(audit[0]?.detail).toMatchObject({ rateNature: 'amount_change', rateBasis: 'correction_date' });
+
+    // The 8% of the correcting draft is judged on the confirmed basis: a draft dated 2027 and left at 8% is refused on the correction date basis, kept on the original's, and judged on the original's
+    // for a correction made before the basis existed (no basis sent).
+    const live = (rateBasis: string | null) =>
+      query<{ issues: Array<{ code: string }> }>('finance.einvoice_draft.check', {
+        date: '2027-01-10', saleDate: null, lateReason: null, seriesId: o.seriesId, buyer: (adjusting as unknown as { buyer: Record<string, unknown> }).buyer,
+        correction: { kind: 'adjustment', originalDraftId: original.draftId, ...(rateBasis ? { rateBasis } : {}) },
+        lines: [{ description: 'Hàng', unit: null, quantity: '1', unitPrice: '-5000', vatRate: '8%' }],
+      });
+    expect((await live('correction_date')).issues.map((i) => i.code)).toContain('LINE_VAT_RATE_REDUCED_OUTSIDE_PERIOD');
+    expect((await live('original')).issues.map((i) => i.code)).not.toContain('LINE_VAT_RATE_REDUCED_OUTSIDE_PERIOD');
+    expect((await live(null)).issues.map((i) => i.code)).not.toContain('LINE_VAT_RATE_REDUCED_OUTSIDE_PERIOD');
+
+    // A replacement that follows the correction's date carries the rate that date gives each line, its amounts worked again by code and the totals the sum of its lines.
+    const other = await issued(o, p, 'individual');
+    const replacement = await start(o, other.draftId, 'replacement', { rateNature: 'amount_change', rateBasis: 'correction_date' });
+    expect(replacement.correction).toMatchObject({ kind: 'replacement', rateBasis: 'correction_date' });
+    expect(replacement.lines.map((l) => l.vatRate)).toEqual(reduced ? ['10%', '8%'] : ['10%', '10%']);
+    const sum = (key: 'amount' | 'vatAmount') => replacement.lines.reduce((acc, l) => acc + Number(l[key]), 0);
+    expect(Number(replacement.subtotal)).toBe(sum('amount'));
+    expect(Number(replacement.vatAmount)).toBe(sum('vatAmount'));
+    expect(Number(replacement.total)).toBe(sum('amount') + sum('vatAmount'));
+    if (!reduced) expect(replacement.lines[1]).toMatchObject({ amount: '50000', vatAmount: '5000' });
+    // On the original basis the copy keeps every rate as it was.
+    const third = await issued(o, p, 'individual');
+    const kept = await start(o, third.draftId, 'replacement', { rateNature: 'return', rateBasis: 'original' });
+    expect(kept.lines.map((l) => l.vatRate)).toEqual(['10%', '8%']);
+  });
+
+  it('sends the consumer label and a passport\'s nationality in the provider\'s document (#3709)', async () => {
+    const o = await org();
+    const { provider, control } = sandbox();
+    const xmlOf = async (draftId: string): Promise<string> => {
+      await approve(o, draftId);
+      expect(await run(o, draftId, provider)).toMatchObject({ state: 'issued' });
+      const ref = (await draftRow(o, draftId)).provider_ref ?? '';
+      return new TextDecoder().decode((await provider.files(SANDBOX_EINVOICE_SECRET, ref)).xml);
+    };
+    const consumer = await execute<{ id: string }>(o, 'finance.einvoice_draft.save', { ...form(o), buyer: { kind: 'consumer', partyId: null, taxCode: null, name: null, address: null, email: null, identity: null } });
+    expect(await xmlOf(consumer.id)).toContain('<NMua><Ten>Bán cho người tiêu dùng</Ten>');
+    const passport = await execute<{ id: string }>(o, 'finance.einvoice_draft.save', {
+      ...form(o),
+      buyer: { kind: 'individual', partyId: null, taxCode: null, name: 'John Smith', address: null, email: null, identity: { kind: 'passport', value: 'B1234567', nationality: 'US' } },
+    });
+    expect(await xmlOf(passport.id)).toContain('<DDanh Loai="passport" QTich="US">B1234567</DDanh>');
+    expect(control.calls.length).toBeGreaterThan(0);
+  });
+
   it('tells the screen the reason codes, which invoice was corrected by which method and whether it was replaced, and checks a correction as it will be stored', async () => {
     const o = await org();
     const { provider, control } = sandbox();

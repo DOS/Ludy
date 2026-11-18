@@ -501,9 +501,11 @@ export const EINVOICE_DRAFT_STATES = ['draft', 'submitting', 'pending', 'issued'
 export const EINVOICE_BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
 // What an individual buyer gives instead of a tax code (#3678): a CCCD, a passport number or a budget-relation unit code.
 export const EINVOICE_BUYER_IDENTITY_KINDS = ['cccd', 'passport', 'budget_code'] as const;
+// The day the 8% of an adjusting or a replacing invoice's lines is judged on, as a person confirmed it (#3709): the original's date or the correction's own.
+export const EINVOICE_CORRECTION_RATE_BASES = ['original', 'correction_date'] as const;
 export type EInvoiceDraftTable = Refine<
   G.FinanceEinvoiceDraftTable,
-  { state: Generated<(typeof EINVOICE_DRAFT_STATES)[number]>; buyer_kind: (typeof EINVOICE_BUYER_KINDS)[number]; buyer_identity_kind: (typeof EINVOICE_BUYER_IDENTITY_KINDS)[number] | null; legal_entity_id: LegalEntityColumn },
+  { state: Generated<(typeof EINVOICE_DRAFT_STATES)[number]>; buyer_kind: (typeof EINVOICE_BUYER_KINDS)[number]; buyer_identity_kind: (typeof EINVOICE_BUYER_IDENTITY_KINDS)[number] | null; correction_rate_basis: (typeof EINVOICE_CORRECTION_RATE_BASES)[number] | null; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
 // Stock (#2512, ADR-0045 point 1): the kind of an item, the trade it is sold in, and where a move of stock comes from.
