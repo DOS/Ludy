@@ -66,7 +66,7 @@ const EXECUTORS: Readonly<Record<string, readonly string[]>> = {
 
 // Definers an open PR adds (the two-step landing of the invariant suite: this list first, in a PR of its own, then the PR with the migration moves each one into RETURNS and EXECUTORS above). A name here may be
 // absent from the database; when it is there it must return exactly this type and be executable by exactly these roles, and any other function of the family still fails the exact check below.
-// meeting_platform_ring (Zoom's webhook doorbell, #3175): clears the last listing of the active connections of one account so the sweep lists them again, returns only how many; the API login runs it.
+// meeting_platform_ring (Zoom's webhook doorbell, #3175): clears the last listing of the active connections of one account whose org has Meetings on (it asks org_app_on) so the sweep lists them again, returns only how many; the API login runs it.
 const PENDING_RETURNS: Readonly<Record<string, string>> = { meeting_platform_ring: 'integer' };
 const PENDING_EXECUTORS: Readonly<Record<string, readonly string[]>> = { meeting_platform_ring: ['crove_app'] };
 
