@@ -121,7 +121,8 @@ export async function checkSurplusVoucher(ctx: Ctx, payload: JournalVoucherPropo
 // What a person needs to decide where the surplus goes (#3712 slice 2b), read from the books and nothing else: the items in surplus (largest by value first), the total, the supplier the goods were
 // last received from when there is one, and whether a person already made an entry by hand on 3381 since the count. The supplier is a hint the screen may offer; it is never chosen here, and what
 // the person picks still goes through the resolution request above. A count that is not confirmed or has no surplus is refused like a resolution is.
-const SURPLUS_VIEW_ROLES: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
+// A viewer is left out: the answer names a supplier and may spend from the AI budget.
+const SURPLUS_VIEW_ROLES: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
 export const surplusSource = defineQuery({
   name: 'finance.stock_count.surplus_source',
@@ -148,7 +149,7 @@ export const surplusSource = defineQuery({
         FROM crove_finance.stock_move m
         JOIN crove_finance.purchase_document d ON d.org_id = m.org_id AND d.id = m.document_id
         JOIN crove_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
-        WHERE m.org_id = ${ctx.orgId}::uuid AND m.legal_entity_id = ${count.legalEntityId}::uuid AND m.source_type = 'document_line' AND m.quantity > 0
+        WHERE m.org_id = ${ctx.orgId}::uuid AND m.legal_entity_id = ${count.legalEntityId}::uuid AND m.source_type = 'document_line' AND m.quantity > 0 AND d.direction = 'purchase'
           AND m.item_id = ANY (${itemIds}::uuid[]) AND m.move_date <= ${count.countDate}::date
           AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id)
         ORDER BY m.move_date DESC, m.created_at DESC, m.id DESC
@@ -164,6 +165,7 @@ export const surplusSource = defineQuery({
       JOIN crove_finance.journal_voucher v ON v.org_id = e.org_id AND v.id::text = e.source_id::text
       WHERE jl.org_id = ${ctx.orgId}::uuid AND jl.account_code = ${SURPLUS_ACCOUNT} AND jl.legal_entity_id = ${count.legalEntityId}::uuid
         AND e.source_type = 'finance.journal_voucher' AND e.reverses_entry_id IS NULL AND e.entry_date >= ${count.countDate}::date
+        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = e.org_id AND r.reverses_entry_id = e.id)
         AND v.stock_count_id IS NULL AND v.surplus_count_id IS NULL AND v.closing_year IS NULL AND v.stock_closing_month IS NULL
       LIMIT 1`.execute(ctx.trx);
     const standing = await surplusStanding(ctx, countId);

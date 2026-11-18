@@ -78,9 +78,9 @@ const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u
 
 // A step said to be DONE, which the model cannot know: posted, approved, paid and the like, and the Vietnamese "đã" (the text is in the present tense).
 const DONE =
-  /\b(?:posted|approved|paid|sent|booked|recorded|cleared|settled|reconciled|resolved|credited|debited|transferred|confirmed|completed|done|issued|ghi so|duyet|thanh toan|hach toan|xu ly xong|da|xong|hoan tat|hoan thanh)\b/;
+  /\b(?:posted|approved|paid|sent|booked|recorded|cleared|settled|reconciled|resolved|credited|debited|transferred|confirmed|completed|done|issued|moved|created|added|adjusted|corrected|written off|ghi so|ghi nhan|chuyen|ket chuyen|duyet|thanh toan|hach toan|xu ly xong|da|xong|hoan tat|hoan thanh)\b/;
 // What to choose is the person's call: "should", "recommend", "nên", "khuyên" and the like are refused.
-const ADVICE = /\b(?:should|must|recommend(?:ed)?|suggest(?:ed)?|advise|best|better|prefer(?:red)?|nen|khuyen|de xuat|uu tien|tot nhat|can phai)\b/;
+const ADVICE = /\b(?:should|must|recommend(?:ed)?|suggest(?:ed)?|advise|best|better|prefer(?:red)?|nen|khuyen|de xuat|uu tien|tot nhat|can phai|chon|hay|choose|pick|select|go with|opt for|phu hop|hop ly|thich hop|ideal|appropriate|use account|nen dung)\b/;
 
 type Account = '711' | '3388' | '331';
 // The words that belong to each account's meaning (folded). An account number followed, in its own clause, by the words of another account and none of its own is a swap.

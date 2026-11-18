@@ -271,8 +271,8 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
     expect(facts).toMatchObject({ countId, countDate: '2026-09-30', total: '150', moreItems: 0, supplier: null, manualEntry: false, voucherId: null, proposalId: null });
     expect(facts.items).toHaveLength(1);
     expect(facts.items[0]).toMatchObject({ quantity: '3', unit: 'cái', value: '150' });
-    // Every role may read it; another org's member may not find the count.
-    expect((await source(o, countId, o.viewer)).total).toBe('150');
+    // A viewer may not (the answer names a supplier and may spend AI budget); another org's member does not find the count.
+    await expect(source(o, countId, o.viewer)).rejects.toMatchObject({ status: 403 });
     await expect(source(await org(), countId)).rejects.toMatchObject({ code: 'STOCK_COUNT_NOT_FOUND' });
   });
 

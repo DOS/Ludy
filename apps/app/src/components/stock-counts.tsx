@@ -151,7 +151,7 @@ function SurplusResolution({ count, canWrite, slug }: { count: StockCount; canWr
   // The facts (items, total, supplier hint, manual-entry flag) come from the books and the coworker's words are an extra: with AI off, busy or refused the screen shows its own line. Kept for a while.
   const note = useQuery({
     ...orpc.stock.counts.surplusNote.queryOptions({ input: { countId: count.id, lang: locale.startsWith('vi') ? 'vi' : 'en' } }),
-    enabled: waiting,
+    enabled: waiting && canWrite,
     staleTime: 5 * 60 * 1000,
     refetchOnWindowFocus: false,
     retry: false,

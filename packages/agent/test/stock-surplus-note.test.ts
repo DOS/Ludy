@@ -51,6 +51,9 @@ describe('the check on what the model wrote', () => {
     expect(say(FACTS, 'The surplus worth 1.500.000 dong was posted to 711.')).toEqual({ kind: 'none', code: 'CLAIM' });
     expect(say(FACTS, 'Hàng thừa trị giá 1.500.000 đồng, bạn nên chọn 711.')).toEqual({ kind: 'none', code: 'ADVICE' });
     expect(say(FACTS, 'Hàng thừa trị giá 1.500.000 đồng; we recommend 3388.')).toEqual({ kind: 'none', code: 'ADVICE' });
+    expect(say(FACTS, 'Hàng thừa trị giá 1.500.000 đồng, bạn chọn 711 là hợp lý.')).toEqual({ kind: 'none', code: 'ADVICE' });
+    expect(say(FACTS, 'Hàng thừa trị giá 1.500.000 đồng; go with 3388.')).toEqual({ kind: 'none', code: 'ADVICE' });
+    expect(say(FACTS, 'Hàng thừa trị giá 1.500.000 đồng được ghi nhận vào 711.')).toEqual({ kind: 'none', code: 'CLAIM' });
   });
 
   it('refuses an account number set against the meaning of another account', () => {
