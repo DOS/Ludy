@@ -223,7 +223,7 @@ export type NoteAttachmentDeleted = z.infer<typeof zNoteAttachmentDeleted>;
 export const zNote = zNoteSummary.extend({
   body: z.string(),
   links: z.array(zNoteLinkView),
-  attachments: z.array(zNoteAttachment),
+  attachments: z.array(zNoteAttachment).optional(),
 });
 export type Note = z.infer<typeof zNote>;
 
@@ -832,17 +832,19 @@ export const zNotesExport = z.object({
       archivedAt: z.string().nullable(),
       deletedAt: z.string().nullable(),
       links: z.array(z.object({ targetType: z.string(), targetId: z.string() })),
-      attachments: z.array(
-        z.object({
-          id: z.string(),
-          filename: z.string(),
-          contentType: z.string(),
-          sizeBytes: z.number().int(),
-          sha256: z.string(),
-          extractStatus: z.enum(NOTE_ATTACHMENT_EXTRACT_STATUSES),
-          createdAt: z.string(),
-        }),
-      ),
+      attachments: z
+        .array(
+          z.object({
+            id: z.string(),
+            filename: z.string(),
+            contentType: z.string(),
+            sizeBytes: z.number().int(),
+            sha256: z.string(),
+            extractStatus: z.enum(NOTE_ATTACHMENT_EXTRACT_STATUSES),
+            createdAt: z.string(),
+          }),
+        )
+        .optional(),
     }),
   ),
   todos: z.array(

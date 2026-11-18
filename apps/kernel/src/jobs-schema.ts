@@ -69,6 +69,8 @@ export const QUEUES = {
   notesTrash: 'notes-trash',
   // Created by the notes reminders migration (20261103210000).
   notesRemind: 'notes-reminders',
+  // Created by the notes attachments migration (20270118140000): extracts text from PDF/DOCX/UTF-8 note attachments in crove-extract (#3561).
+  notesAttachmentExtract: 'notes-attachment-extract',
   // Created by the member Vy sweeps migration (20261212100000): the daily expiry of results and purge of a former member's Vy data (#2822).
   memberVySweep: 'kernel-member-vy-sweep',
   // Created by the wake-up delivery migration (20261224000000): one delivery of an MCP grant's wake-up webhook, and the sweep that hands deliveries over (ADR-0051 decision 4, #3024).
@@ -195,6 +197,7 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.notesMemberPurge]: 'none',
   [QUEUES.notesTrash]: 'none',
   [QUEUES.notesRemind]: 'none',
+  [QUEUES.notesAttachmentExtract]: 'none',
   // The sweep reads the database and runs a command that writes an in-app notice; it reaches nothing.
   [QUEUES.meetingsSeriesNudge]: 'none',
   [QUEUES.memberVySweep]: 'none',

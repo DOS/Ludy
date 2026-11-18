@@ -5,7 +5,7 @@ import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
 import type { RecordingStopReason } from '@crove/meeting-recorder';
 import { mediaUploadQuery, needsAudioExtraction } from './meeting-upload.ts';
-import { DIRECT_UPLOAD_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, type contract, type UploadPurpose } from '@crove/kernel-contract';
+import { DIRECT_UPLOAD_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, NOTE_ATTACHMENT_MAX_BYTES, type contract, type NoteAttachment, type UploadPurpose } from '@crove/kernel-contract';
 import { activeLocale, translator } from '../i18n/runtime.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
 import { accessToken, afterMfaRefusal, auth, getConfig, secondFactorStillOwed } from './auth.ts';
@@ -155,6 +155,40 @@ export async function fetchFile(fileId: string): Promise<Blob> {
 // not read the thread gets a 404), and it is shown as an image only, from an object URL, never as a page.
 export async function fetchConversationImage(attachmentId: string): Promise<Blob> {
   return (await apiFetch(`/api/conversations/attachments/${attachmentId}`)).blob();
+}
+
+export async function uploadNoteAttachment(
+  noteId: string,
+  file: File,
+  orgSlug?: string | null,
+): Promise<NoteAttachment> {
+  if (file.size === 0) {
+    throw new ClientError('notes.attachments.emptyFile', (t) => t('notes.attachments.emptyFile'));
+  }
+  if (file.size > NOTE_ATTACHMENT_MAX_BYTES) {
+    throw new ClientError('notes.attachments.fileTooLarge', (t) =>
+      t('notes.attachments.fileTooLarge', { name: file.name || 'dinh-kem' }),
+    );
+  }
+  const form = new FormData();
+  form.append('file', file, file.name || 'dinh-kem');
+  const response = await retryWhileBusy(() =>
+    apiFetch(`/api/notes/${encodeURIComponent(noteId)}/attachments`, {
+      method: 'POST',
+      body: form,
+      orgSlug,
+    }),
+  );
+  const data = (await response.json()) as { attachment: NoteAttachment };
+  return data.attachment;
+}
+
+export async function fetchNoteAttachmentBlob(
+  attachmentId: string,
+  orgSlug?: string | null,
+): Promise<Blob> {
+  const response = await apiFetch(`/api/notes/attachments/${encodeURIComponent(attachmentId)}`, { orgSlug });
+  return response.blob();
 }
 
 type Uploaded = { fileId: string; duplicate: boolean };

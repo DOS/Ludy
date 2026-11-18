@@ -249,6 +249,7 @@ import type { PortalSync } from './portal-sync.ts';
 import { hasVideoTrack, imageSize, sniffVideo, videoDurationMs, type ImageSize } from './media-probe.ts';
 import { safeFilename, sniffType } from './sniff.ts';
 import { sniffConversationImage } from './conversation-media.ts';
+import { handleNoteAttachmentDownload, handleNoteAttachmentUpload } from './note-attachments.ts';
 import { directTransferOrigin } from './storage.ts';
 import {
   MAX_BUFFERED_BYTES,
@@ -2606,6 +2607,74 @@ export function createHttpApp(deps: HttpDeps) {
           'x-content-type-options': 'nosniff',
           'cache-control': 'private, no-store',
         },
+      });
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  // Isolated note attachments (#3561, docs/plan/notes-v2.md V2-5, owner decision A3, ADR-0037):
+  // never touches crove_kernel.file, refuses extension tokens (403), checks Origin on POST, streams <= 25 MiB,
+  // and serves downloads with strict sandbox CSP, X-Content-Type-Options: nosniff, and safe Content-Disposition.
+  const assertNoteUploadOrigin = (c: Context) => {
+    const origin = c.req.header('origin');
+    if (origin === undefined) return;
+    const reqOrigin = new URL(c.req.url).origin;
+    const publicOrigin = URL.canParse(config.PUBLIC_URL) ? new URL(config.PUBLIC_URL).origin : null;
+    const appOrigin = config.APP_URL !== undefined && URL.canParse(config.APP_URL) ? new URL(config.APP_URL).origin : null;
+    const permitted =
+      origin === reqOrigin ||
+      origin === publicOrigin ||
+      origin === appOrigin ||
+      config.CORS_ALLOWED_ORIGINS.includes(origin);
+    if (!permitted) {
+      throw new DomainError('FORBIDDEN', 403, 'Nguồn gốc yêu cầu tải lên không hợp lệ');
+    }
+  };
+
+  app.post('/api/notes/:noteId/attachments', uploadSlot, async (c) => {
+    try {
+      const who = uploaders.get(c);
+      if (!who) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      const { user, orgId } = who;
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      assertNoteUploadOrigin(c);
+      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
+      }
+      const attachment = await handleNoteAttachmentUpload({
+        runtime,
+        store,
+        user,
+        orgId,
+        noteId: c.req.param('noteId'),
+        req: c.req.raw,
+      });
+      c.header('cache-control', 'private, no-store');
+      return c.json({ attachment }, 201);
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  app.get('/api/notes/attachments/:id', async (c) => {
+    try {
+      const user = c.get('user');
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOTE_ATTACHMENT_NOT_FOUND', 404, 'Không tìm thấy tệp đính kèm này');
+      }
+      return await handleNoteAttachmentDownload({
+        runtime,
+        store,
+        user,
+        orgId,
+        attachmentId: c.req.param('id'),
       });
     } catch (error) {
       return problem(c, error);

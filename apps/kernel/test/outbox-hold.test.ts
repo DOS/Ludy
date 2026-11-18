@@ -49,12 +49,13 @@ const ORG_B = '01900000-0000-7000-8000-00000000000b';
 const row = (org_id: string, type: string, n = 1) => ({ org_id, type, event_id: `01900000-0000-7000-8000-0000000000${String(n).padStart(2, '0')}` });
 
 describe('which events wait', () => {
-  it('parks the events of Finance, Social, CRM and Ads, and the file events whose consumer is Finance', () => {
+  it('parks the events of Finance, Social, CRM, Ads and Notes, and the file events whose consumer is Finance', () => {
     expect(heldAppOf('social.post.submitted')).toBe('social');
     expect(heldAppOf('social.channel_option.requested')).toBe('social');
     expect(heldAppOf('crm.booking.requested')).toBe('crm');
     expect(heldAppOf('finance.archive_requested')).toBe('finance');
     expect(heldAppOf('ads.launch.queued')).toBe('ads');
+    expect(heldAppOf('notes.attachment.extract_queued')).toBe('notes');
     expect(heldAppOf('kernel.file.ingested')).toBe('finance');
     expect(heldAppOf('kernel.file.reextract_requested')).toBe('finance');
   });
