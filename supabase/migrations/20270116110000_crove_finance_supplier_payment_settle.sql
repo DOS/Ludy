@@ -16,6 +16,10 @@
 --                                                   can never free a payment to be paid twice.
 SET LOCAL lock_timeout = '2s';
 
+-- crove_finance.supplier_payment.first_exported_at  when the first file with the payment was handed over (set by the guard with the first export; a second file moves exported_at, never this): the day
+--                                                   a settlement's line may not precede, so a re-export cannot make the transfer of the first file look older than the file.
+ALTER TABLE crove_finance.supplier_payment ADD COLUMN IF NOT EXISTS first_exported_at timestamptz;
+UPDATE crove_finance.supplier_payment SET first_exported_at = exported_at WHERE first_exported_at IS NULL AND exported_at IS NOT NULL;
 ALTER TABLE crove_finance.cash_voucher ADD COLUMN IF NOT EXISTS supplier_payment_id uuid;
 DO $$
 BEGIN
@@ -176,8 +180,8 @@ BEGIN
     RETURN NEW;
   END IF;
   -- Update. A member leaving clears approved_by, confirmed_by and cancelled_by (the foreign keys' SET NULL); nothing else but the moves below may change.
-  IF pg_catalog.to_jsonb(NEW) - ARRAY['status', 'confirmed_by', 'confirmed_at', 'confirmed_channel', 'stale_at', 'cancelled_by', 'cancelled_at', 'cancel_reason', 'paid_at', 'approved_by', 'exported_by', 'exported_at', 'export_count']
-     <> pg_catalog.to_jsonb(OLD) - ARRAY['status', 'confirmed_by', 'confirmed_at', 'confirmed_channel', 'stale_at', 'cancelled_by', 'cancelled_at', 'cancel_reason', 'paid_at', 'approved_by', 'exported_by', 'exported_at', 'export_count']
+  IF pg_catalog.to_jsonb(NEW) - ARRAY['status', 'confirmed_by', 'confirmed_at', 'confirmed_channel', 'stale_at', 'cancelled_by', 'cancelled_at', 'cancel_reason', 'paid_at', 'approved_by', 'exported_by', 'exported_at', 'export_count', 'first_exported_at']
+     <> pg_catalog.to_jsonb(OLD) - ARRAY['status', 'confirmed_by', 'confirmed_at', 'confirmed_channel', 'stale_at', 'cancelled_by', 'cancelled_at', 'cancel_reason', 'paid_at', 'approved_by', 'exported_by', 'exported_at', 'export_count', 'first_exported_at']
      OR (NEW.approved_by IS NOT NULL AND NEW.approved_by IS DISTINCT FROM OLD.approved_by) THEN
     RAISE EXCEPTION 'SUPPLIER_PAYMENT_STATE' USING ERRCODE = '42501';
   END IF;
@@ -199,6 +203,9 @@ BEGIN
       RAISE EXCEPTION 'SUPPLIER_PAYMENT_STATE' USING ERRCODE = '42501';
     END IF;
     NEW.exported_at := pg_catalog.now();
+    IF OLD.export_count = 0 THEN
+      NEW.first_exported_at := NEW.exported_at;
+    END IF;
   ELSIF NEW.exported_at IS DISTINCT FROM OLD.exported_at OR (NEW.exported_by IS NOT NULL AND NEW.exported_by IS DISTINCT FROM OLD.exported_by) THEN
     RAISE EXCEPTION 'SUPPLIER_PAYMENT_STATE' USING ERRCODE = '42501';
   END IF;
@@ -249,8 +256,8 @@ CREATE POLICY supplier_payment_update ON crove_finance.supplier_payment AS RESTR
                  AND crove_finance.effect_proposal_is_executing(v.org_id, v.proposal_id, ARRAY['finance.supplier_payment.settle.record'])))
   WITH CHECK ((SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = supplier_payment.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin'))
-    OR EXISTS (SELECT 1 FROM crove_finance.cash_voucher v WHERE v.org_id = supplier_payment.org_id AND v.supplier_payment_id = supplier_payment.id
-                 AND crove_finance.effect_proposal_is_executing(v.org_id, v.proposal_id, ARRAY['finance.supplier_payment.settle.record'])));
+    OR (supplier_payment.status = 'paid' AND EXISTS (SELECT 1 FROM crove_finance.cash_voucher v WHERE v.org_id = supplier_payment.org_id AND v.supplier_payment_id = supplier_payment.id
+                 AND crove_finance.effect_proposal_is_executing(v.org_id, v.proposal_id, ARRAY['finance.supplier_payment.settle.record']))));
 
 -- Owned by the migration runner, like the ledger checks, so it sees every voucher and payment of the org whatever the writer can see. It reads only rows of NEW.org_id.
 CREATE OR REPLACE FUNCTION crove_finance.journal_entry_supplier_payment_reversal() RETURNS trigger

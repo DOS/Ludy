@@ -8,7 +8,7 @@
 //   shared voucher path), then moves the payment to `paid`; the guard of the payment and the database checks of the voucher hold the same rules.
 // - finance.bank.supplier_match: the payments an open money-out line may be (read only).
 // Conditions of the PO, all checked at the request and again at the approval:
-//   1. the line's amount equals the payment's frozen amount and the payment is in VND; the line is not before the day the file was handed over (the file's day itself is fine: a transfer on the day
+//   1. the line's amount equals the payment's frozen amount and the payment is in VND; the line is not before the day the FIRST file was handed over (first_exported_at: a re-export does not move it) (the file's day itself is fine: a transfer on the day
 //      of the file is normal); the payment is approved, past its hold, still on its pinned account with its invoice standing, and has been exported;
 //   2. when the line carries the beneficiary's account number, its keyed hash must be the pinned account's: a different one refuses the settlement (SUPPLIER_PAYMENT_ACCOUNT_MISMATCH), never settles
 //      by itself and leaves no voucher; a line without a usable number is settled on the amount and the file;
@@ -49,7 +49,7 @@ type PaymentRow = {
   status: string;
   ready: boolean;
   export_count: number;
-  exported_at: Date | string | null;
+  first_exported_at: Date | string | null;
   account_ok: boolean;
   voided: boolean;
   number_hash: string;
@@ -61,7 +61,7 @@ type PaymentRow = {
 async function loadPayment(ctx: QueryContext, paymentId: string): Promise<PaymentRow> {
   const { rows } = await sql<PaymentRow>`
     SELECT p.id, p.party_id, pa.name AS party_name, pa.tax_code, p.legal_entity_id, p.amount::text AS amount, p.currency, p.status,
-           (p.payable_after IS NULL OR p.payable_after <= pg_catalog.now()) AS ready, p.export_count, p.exported_at,
+           (p.payable_after IS NULL OR p.payable_after <= pg_catalog.now()) AS ready, p.export_count, p.first_exported_at,
            (a.id IS NOT NULL AND a.status = 'active' AND a.number_hash = p.number_hash AND a.hash_key_id = p.hash_key_id AND a.party_id = p.party_id) AS account_ok,
            EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id) AS voided,
            p.number_hash, p.hash_key_id, d.invoice_number
@@ -88,7 +88,7 @@ function checkSettleable(ctx: CommandContext, p: PaymentRow, line: StoredBankLin
   if (!p.ready) throw new DomainError('SUPPLIER_PAYMENT_HELD', 409, 'Khoản chi này còn trong thời gian giữ 24 giờ', { paymentId: p.id });
   if (!p.account_ok) throw new DomainError('SUPPLIER_PAYMENT_ACCOUNT_CHANGED', 409, 'Tài khoản ngân hàng của nhà cung cấp đã thay đổi từ lúc duyệt; hãy tạo đề xuất chi mới', { paymentId: p.id });
   if (p.voided) throw new DomainError('SUPPLIER_PAYMENT_DOCUMENT', 409, 'Hóa đơn của khoản chi này đã bị hủy', { paymentId: p.id });
-  if (p.export_count === 0 || p.exported_at === null) {
+  if (p.export_count === 0 || p.first_exported_at === null) {
     throw new DomainError('SUPPLIER_PAYMENT_NOT_EXPORTED', 409, 'Khoản chi này chưa có file chuyển khoản; hãy xuất file trước khi ghi sổ', { paymentId: p.id });
   }
   const amount = money(p.amount).toFixed();
@@ -101,7 +101,7 @@ function checkSettleable(ctx: CommandContext, p: PaymentRow, line: StoredBankLin
   if (problems.length > 0) {
     throw new DomainError('SUPPLIER_PAYMENT_LINE_MISMATCH', 422, 'Dòng sao kê phải là tiền ra, đúng số tiền và cùng pháp nhân với khoản chi', { paymentId: p.id, problems });
   }
-  if (line.date < localDay(p.exported_at)) {
+  if (line.date < localDay(p.first_exported_at)) {
     throw new DomainError('SUPPLIER_PAYMENT_LINE_BEFORE_FILE', 422, 'Dòng sao kê có ngày trước ngày xuất file chuyển khoản nên không phải khoản chi này', { paymentId: p.id });
   }
   beneficiaryIsApproved(ctx, p, line);
@@ -112,10 +112,10 @@ function checkSettleable(ctx: CommandContext, p: PaymentRow, line: StoredBankLin
 function beneficiaryIsApproved(ctx: CommandContext, p: PaymentRow, line: StoredBankLine): void {
   if (line.counterpartyAccount === null) return;
   const digits = line.counterpartyAccount.replace(/[\s.-]/g, '');
-  if (!/^[0-9]{6,20}$/.test(digits)) return;
+  // A number that is there but not a whole one cannot be compared: it refuses (the statement's own check keeps it to 6 to 20 digits, so this is the safe side, not a case).
   let same = false;
   try {
-    same = ctx.keyedHash(HASH_PURPOSE, digits, p.hash_key_id) === p.number_hash;
+    same = /^[0-9]{6,20}$/.test(digits) && ctx.keyedHash(HASH_PURPOSE, digits, p.hash_key_id) === p.number_hash;
   } catch (error) {
     if (!(error instanceof DomainError && error.code === 'KEYED_HASH_KEY_RETIRED')) throw error;
   }
@@ -236,7 +236,7 @@ export const bankSupplierMatch = defineQuery({
        WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${line.legalEntityId}::uuid AND p.status = 'approved' AND p.currency = 'VND'
          AND p.exported_at IS NOT NULL AND (p.payable_after IS NULL OR p.payable_after <= pg_catalog.now())
          AND p.amount = ${wanted}::numeric
-         AND (p.exported_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= ${line.date}::date
+         AND (p.first_exported_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date <= ${line.date}::date AND p.amount = trunc(p.amount)
          AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id)
          AND NOT EXISTS (SELECT 1 FROM crove_kernel.proposal q WHERE q.org_id = p.org_id AND q.command = ${SUPPLIER_PAYMENT_SETTLE_COMMAND} AND q.status = 'pending'
                            AND pg_catalog.lower(q.payload->'supplierPayment'->>'paymentId') = p.id::text)

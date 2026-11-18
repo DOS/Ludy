@@ -266,4 +266,17 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     expect((await matchOf(line)).candidates).toEqual([]);
     expect(await codeOf(rt.query('finance.bank.supplier_match', { bankLineId: line }, { actor: user(o.member), orgId: o.orgId }))).toBe('FORBIDDEN');
   });
+
+  it('judges the line against the first file: a second file moves the export time but not the first one', async () => {
+    const o = await org(true);
+    await addAccount(o, NUMBER);
+    const payment = await ready(o);
+    await exportFile(o, [payment.id]);
+    const times = () => rows<{ first: Date; last: Date }>('SELECT first_exported_at AS first, exported_at AS last FROM crove_finance.supplier_payment WHERE org_id = $1 AND id = $2', [o.orgId, payment.id]).then((r) => r[0]);
+    const before = await times();
+    await execute(o, 'finance.supplier_payment.bank_file.export', { paymentIds: [payment.id], rows: 1, currency: 'VND', reexport: true });
+    const after = await times();
+    expect(after?.first.getTime()).toBe(before?.first.getTime());
+    expect((after?.last.getTime() ?? 0) > (before?.last.getTime() ?? 0)).toBe(true);
+  });
 });
