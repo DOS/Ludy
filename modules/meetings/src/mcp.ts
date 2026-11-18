@@ -200,6 +200,8 @@ export const mcpOpenActions = defineQuery({
         .innerJoin('crove_meetings.action_item as a', (join) => join.onRef('a.org_id', '=', 'm.org_id').onRef('a.meeting_id', '=', 'm.id'))
         .where('a.org_id', '=', ctx.orgId)
         .where('a.stage', '=', 'published')
+        // Open: not yet accepted and no task made from it (only `action_item_accept` sets either, together).
+        .where('a.status', '=', 'suggested')
         .where('a.task_id', 'is', null)
         // An item code flagged (a contact detail in its title, ...) is not handed to an outside AI app: a person reviews it in the app.
         .where(sql<boolean>`a.flags = '[]'::jsonb`);
