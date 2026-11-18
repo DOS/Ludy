@@ -24,7 +24,7 @@ import { takeReplyHandoff } from '../lib/reply-handoff.ts';
 import { TOUCH_BUTTON, TOUCH_SELECT } from '../lib/conversation-touch.ts';
 import { PersonalDataSection } from './conversation-erase.tsx';
 import { DraftPanel, replyTextFor } from './conversation-drafts.tsx';
-import { IntentBadge, IntentBar } from './conversation-intent.tsx';
+import { IntentBadge, IntentBar, useSpamSuggested } from './conversation-intent.tsx';
 import { PaneError, ThreadSkeleton } from './conversation-states.tsx';
 import { REPLY_INSERT_EVENT, type ReplyInsert } from './quote-send.tsx';
 
@@ -439,8 +439,11 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
       if (onOpenConversation) onOpenConversation(done.conversationId);
     },
   });
-  // Only where the platform's hide is confirmed (the provider's rules): Threads' is not until its live check (#3133).
-  const canHide = canWrite && detail.conversation.kind === 'comment_thread' && !mine && !m.removed && Boolean(conversationRules(detail.conversation.channel.provider)?.canHide);
+  // Only where the platform's hide is confirmed (the provider's rules): Threads' is not until its live check (#3133). The thread says whether this channel's
+  // grant allows it now (a YouTube channel without the comment scope shows no button, #3808); an older answer without the field keeps the provider's rule.
+  const canHide = canWrite && detail.conversation.kind === 'comment_thread' && !mine && !m.removed && Boolean(conversationRules(detail.conversation.channel.provider)?.canHide) && detail.hideAllowed !== false;
+  // Dy's suggestion that this thread is spam (read from the header's cache, no new model call): only a hint beside the button, a person clicks.
+  const spamSuggested = useSpamSuggested(detail.conversation);
   const supportsPrivateReply =
     detail.conversation.kind === 'comment_thread' &&
     !mine &&
@@ -499,6 +502,11 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
             <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" loading={hide.isPending} onClick={() => hide.mutate(m.hideRequest === 'hide')}>
               {t('hideAgain')}
             </Button>
+          )}
+          {canHide && !m.hideRequest && !m.hidden && spamSuggested && (
+            <Badge variant="proposal" data-testid="conversation-hide-suggested">
+              {t('hideSuggested')}
+            </Badge>
           )}
           {canHide && !m.hideRequest && (
             <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" loading={hide.isPending} data-testid="conversation-hide" onClick={() => hide.mutate(!m.hidden)}>

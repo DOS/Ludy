@@ -2,7 +2,8 @@
 // The intent of a conversation in the Inbox (CV3, #2306, plan docs/plan/conversations.md section 13): the label a person applied, and the AI coworker's
 // suggestion beside it. A suggestion is read on the side (a model reads the customer's words, through the AI budget) and is never stored or applied: it has
 // the proposal hue and says it is a suggestion, and only a click turns it into the label. With the model off, spent or failing there is simply no
-// suggestion, and no error: the Inbox works as it did. Nothing is routed, assigned, resolved or hidden by an intent.
+// suggestion, and no error: the Inbox works as it did. Nothing is routed, assigned, resolved or hidden by an intent (a spam suggestion only shows a hint
+// beside the Hide button of a comment, #3808: a person clicks).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
@@ -59,6 +60,15 @@ export function IntentBadge({ intent, applied }: { intent: ConversationIntent; a
       {applied ? t(`label.${intent}`) : t('suggestedShort', { intent: t(`label.${intent}`) })}
     </Badge>
   );
+}
+
+// Whether the AI coworker suggested "spam" for this thread (#3808), read from what the header's query already holds: this hook asks nothing, so a
+// hide hint costs no model call, and with the model off, spent or failing there is no suggestion and so no hint. Only a hint: a person clicks Hide.
+export function useSpamSuggested(c: ConversationSummary): boolean {
+  // Never enabled: the observer only reads the cache the header's query fills, and its own function is never called.
+  const cached = useQuery({ queryKey: ['conversation-intents', `${c.id}:${c.lastSeq}`], queryFn: () => Promise.reject(new Error('not asked here')), enabled: false });
+  const data = cached.data as { suggestions: { conversationId: string; intent: ConversationIntent | null }[] } | undefined;
+  return c.intent === null && data?.suggestions.find((s) => s.conversationId === c.id)?.intent === 'spam';
 }
 
 // In the thread's header, for a member who may write it: the label a person applied (changed or cleared from the list), or the suggestion with one click
