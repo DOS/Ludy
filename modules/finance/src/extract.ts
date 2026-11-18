@@ -122,7 +122,7 @@ const DUPLICATE_CHECK: Readonly<InvoiceCheck> = Object.freeze({ id: 'duplicate',
 
 // What the books remember of a vendor (#2380): the totals, the line unit prices and the bank accounts of its last
 // HISTORY_DOCUMENTS invoices in force, newest first, without the invoice being read (a re-reading of it is not its own
-// history). The bank accounts are those its earlier proposals carried.
+// history). The bank accounts are those its earlier proposals carried, from an XML or a PDF read but not a photo (#2426).
 async function vendorHistory(ctx: QueryContext, partyId: string, current: { series: string; number: string }): Promise<VendorHistory> {
   const documents = await ctx.trx
     .selectFrom('crove_finance.purchase_document as d')
@@ -154,7 +154,8 @@ async function vendorHistory(ctx: QueryContext, partyId: string, current: { seri
       ? []
       : await ctx.trx
           .selectFrom('crove_kernel.proposal')
-          .select(['id', sql<string | null>`payload #>> '{seller,bankAccount}'`.as('account')])
+          // An account a photo gave is left out: nothing in the document confirms the model read it right (one read from a PDF was checked against its text, one from an XML was printed by the seller's software).
+          .select(['id', sql<string | null>`CASE WHEN payload ->> 'extractionMethod' IN ('einvoice_xml', 'pdf_text_ai') THEN payload #>> '{seller,bankAccount}' END`.as('account')])
           .where('org_id', '=', ctx.orgId)
           .where('id', 'in', proposalIds)
           .execute();
