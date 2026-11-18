@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #3832): a cheap, necessary prefilter in front of the exact regex of crove_kernel.text_mentions, so a line that cannot hold the value never reaches the regex engine.
--- The finder and the erasure of personal data (#923, #1678, #1948) call text_mentions on every free-text column and, in Meetings, on every transcript line three times a search; the regex (a
+-- The finder and the erasure of personal data (#923, #1678, #1948) call text_mentions on every free-text column and, in Meetings, on every transcript line, twice in an owner's search and once in an admin's; the regex (a
 -- lookbehind, an alternation and up to three separators between every digit, case-folded, tried at every character) costs about 37 microseconds a line of 200 characters, so a phone search over
 -- 120 000 lines took about 20 s. This changes how fast the answer comes, never what it is: each check below is a NECESSARY condition of the pattern text_mention_pattern builds (a text that fails it
 -- cannot match the pattern), and a text that passes it still goes through the same regex, so text_mentions returns exactly what it returned before.
