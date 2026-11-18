@@ -22,6 +22,15 @@ export {
   type VerifyEventChainResult,
 } from './events.ts';
 export { signManifest } from './manifest.ts';
+export {
+  applyEnvelopeVisibilityFilter,
+  assertCanAccessEnvelopeRow,
+  assertCanCreateEnvelopeForSource,
+  canAccessEnvelopeRow,
+  isHrPrivilegedRole,
+  type HrEnvelopeVisibilityCtx,
+  type HrEnvelopeVisibilityRow,
+} from './hr-visibility.ts';
 export { validateSignaturePngBase64, type ValidatedSignaturePng } from './png.ts';
 export { signDirectPublicCommands } from './direct-public.ts';
 export {

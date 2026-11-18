@@ -22,6 +22,7 @@ import {
 import { tableWrite } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
+import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
 import { signManifest } from './manifest.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
 import {
@@ -519,6 +520,8 @@ export const templateCreate = defineCommand({
         .selectFrom('crove_sign.envelope')
         .select([
           'id',
+          'source_kind',
+          'created_by',
           'routing_mode',
           'subject',
           'message',
@@ -536,6 +539,14 @@ export const templateCreate = defineCommand({
         .forShare()
         .executeTakeFirst();
       if (!env) throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Source envelope not found');
+      assertCanAccessEnvelopeRow(ctx, env, 'Source envelope not found');
+      if (env.source_kind === 'hr_contract') {
+        throw new DomainError(
+          'SIGN_FORBIDDEN',
+          403,
+          'Confidential HR contract envelopes cannot be converted into organization-wide templates',
+        );
+      }
       if (env.inspect_status === 'failed') {
         throw new DomainError('SIGN_INSPECT_FAILED', 409, 'Source envelope PDF inspection failed');
       }
@@ -568,6 +579,21 @@ export const templateCreate = defineCommand({
       };
     } else {
       const file = await requireSignSourceFile(ctx, input.sourceFileId!);
+      const existingHrEnv = await ctx.trx
+        .selectFrom('crove_sign.envelope')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('source_kind', '=', 'hr_contract')
+        .where('source_file_id', '=', file.id)
+        .limit(1)
+        .executeTakeFirst();
+      if (existingHrEnv) {
+        throw new DomainError(
+          'SIGN_FORBIDDEN',
+          403,
+          'Confidential HR contract documents cannot be converted into organization-wide templates',
+        );
+      }
       const reused = await findPassedInspectForFile(ctx, file);
       sourceMeta = {
         sourceFileId: file.id,
@@ -1507,6 +1533,16 @@ export const templateInstantiate = defineCommand({
   ],
   handler: async (ctx, input) => {
     const userId = userIdOf(ctx);
+    const sourceKind = input.sourceKind ?? 'standalone';
+    const sourceId = input.sourceId ?? null;
+    if (sourceKind === 'standalone' && sourceId !== null) {
+      throw new DomainError('SIGN_INVALID_SOURCE', 422, 'Standalone envelopes cannot specify sourceId');
+    }
+    if (sourceKind !== 'standalone' && sourceId === null) {
+      throw new DomainError('SIGN_INVALID_SOURCE', 422, 'Linked envelopes require sourceId');
+    }
+    assertCanCreateEnvelopeForSource(ctx, sourceKind);
+
     const tpl = await ctx.trx
       .selectFrom('crove_sign.template')
       .selectAll()
@@ -1619,8 +1655,8 @@ export const templateInstantiate = defineCommand({
         message: input.message === undefined ? tpl.message : input.message,
         status: 'draft',
         routing_mode: tpl.routing_mode,
-        source_kind: 'standalone',
-        source_id: null,
+        source_kind: sourceKind,
+        source_id: sourceId,
         source_file_id: tpl.source_file_id,
         source_storage_key: tpl.source_storage_key,
         source_generation: tpl.source_generation,
@@ -1642,7 +1678,12 @@ export const templateInstantiate = defineCommand({
       actorId: userId,
       actorLabel: actorLabelOfCtx(ctx),
       documentSha256: env.source_sha256,
-      payloadJson: { routingMode: env.routing_mode, sourceKind: 'standalone', templateId: tpl.id },
+      payloadJson: {
+        routingMode: env.routing_mode,
+        sourceKind,
+        ...(sourceId ? { sourceId } : {}),
+        templateId: tpl.id,
+      },
       occurredAt: ctx.now,
     });
 

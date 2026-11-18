@@ -1467,6 +1467,23 @@ export const en = {
     contractTermCol: 'Term / End date',
     probationCol: 'Probation',
     termMonthsShort: '{months} mo',
+    sign: {
+      column: 'eSign',
+      send: 'Send for eSign',
+      downloadSealed: 'Download signed PDF',
+      envelopeTitle: 'Labor contract - {name} ({date})',
+      signerRoleLabel: 'Employee',
+      openLabel: 'Open signing envelope: {title} ({status})',
+      status: {
+        draft: 'Draft',
+        sent: 'Awaiting signature',
+        in_progress: 'Awaiting signature',
+        completed: 'Signed',
+        declined: 'Declined / Voided',
+        voided: 'Declined / Voided',
+        expired: 'Expired',
+      },
+    },
     alerts: {
       contract_expired: 'Contract expired {days}d ago ({date})',
       contract_expiring_soon: 'Contract expires in {days}d ({date})',

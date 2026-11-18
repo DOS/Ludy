@@ -87,6 +87,10 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
     modules: ['crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'],
     why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed; the meeting columns (#2579) are registered, and erased by deleting the meeting; project names and descriptions (#2591) are redacted in place; unsealed crove_sign.signer rows are deleted on erasure via crove_sign.personal_erase_unsealed_signers (#3427) while eSign OTP emails are erased via crove_sign.personal_erase_otp (#3323)',
   },
+  'packages/kernel/src/queries.ts': {
+    modules: ['sign'],
+    why: 'kernel.file.get checks crove_sign.can_read_sign_file for sign_document, sign_sealed and sign_certificate rows (#3553) whatever is installed now, so a confidential HR contract PDF or certificate stored by an earlier install of sign stays restricted to owners, admins and its creator even when sign is off',
+  },
   'apps/kernel/src/meta-deletion.ts': { modules: ['ads'], why: "Meta's one data deletion callback fans a verified request out to the Ads side (crove_ads.deletion_request) as well as to the conversations (CV6, #2305): the Ads definers are called only for a secret the deployment holds for the Ads app" },
   'apps/kernel/src/ads-deletion.ts': { modules: ['ads'], why: "Meta's data deletion callback of the Ads connection: its signed request, the status page, and the worker's erasure of the accounts a request names, only when ads is installed (http.ts, worker.ts)" },
   'apps/kernel/src/ads-revoke.ts': { modules: ['ads'], why: "the revoke at the platform of a closed ads connection's token (#2296, W2-1): the sweep's worker-only definers (crove_ads.token_revoke_due, token_seal_get, token_revoke_expire, write_orphans), worked and scheduled only when ads is installed (worker.ts)" },
