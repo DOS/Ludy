@@ -5396,6 +5396,7 @@ export const vi = {
       capFromTo: 'Từ {previous} thành {amount}.',
       campaignLaunch: 'Duyệt kế hoạch chiến dịch “{name}” trên {account}.',
       campaignLaunchDetail: 'Duyệt là cho phép chi tối đa {amount} trong {days, plural, other {# ngày}}, mỗi ngày {daily}. Ludy giữ {amount} trong hạn mức chi tiêu, tạo chiến dịch trên nền tảng quảng cáo ở trạng thái tạm dừng, rồi tự bật từ ngày bắt đầu ({from}) mà không hỏi lại, trừ khi trước đó hạn mức bị giảm hoặc việc chạy quảng cáo bị tắt. Chưa tiêu đồng nào trước ngày đó. Bạn hủy hoặc dừng được ở màn Chiến dịch.',
+      campaignLaunchHeldDetail: 'Duyệt là cho phép chi tối đa {amount} trong {days, plural, other {# ngày}}, mỗi ngày {daily}, và giữ {amount} trong hạn mức chi tiêu. Máy chủ này chưa bật chạy quảng cáo thật nên chiến dịch chưa được tạo trên nền tảng và hiện chưa tiêu đồng nào. Kế hoạch nằm chờ ở đây, số tiền vẫn được giữ. Nếu sau này máy chủ bật chạy quảng cáo thật, chiến dịch sẽ được tạo ở trạng thái tạm dừng rồi tự bật từ ngày bắt đầu, không hỏi lại; bạn hủy kế hoạch được ở màn Chiến dịch cho đến lúc đó.',
       campaignAi: 'Do đồng nghiệp AI soạn: {fields}. Hãy đọc như mọi nội dung bạn không tự viết.',
       campaignAiEdited: 'Ban đầu do đồng nghiệp AI soạn; một người đã sửa mọi trường mà AI soạn.',
       plan: {
@@ -7376,6 +7377,10 @@ export const vi = {
     adsOpenScreen: 'Mở màn hình Quảng cáo',
     approveAds: 'Duyệt thay đổi',
     approveCampaignLaunch: 'Duyệt và giữ chỗ {amount}',
+    approveCampaignHeldOnly: 'Duyệt và chỉ giữ chỗ {amount} (chưa tạo chiến dịch)',
+    adsNoLauncher: 'Máy chủ này chưa bật chạy quảng cáo thật; duyệt sẽ giữ chỗ hạn mức nhưng chưa tạo chiến dịch.',
+    adsLaunchHeldSubtitle: 'Kế hoạch chiến dịch quảng cáo: duyệt là cho phép chi tối đa số tiền dưới đây và giữ số tiền trong hạn mức. Máy chủ này chưa bật chạy quảng cáo thật nên chiến dịch chưa được tạo và chưa tiêu đồng nào. Không ghi gì vào sổ sách.',
+    approvedCampaignHeldToast: 'Đã duyệt kế hoạch {name}. Ludy giữ {amount} trong hạn mức nhưng chưa tạo chiến dịch, vì máy chủ này chưa bật chạy quảng cáo thật.',
     stepUpApproveAds: 'duyệt thay đổi chạy quảng cáo này',
     approvedAdsToast: 'Đã duyệt. Thay đổi đã có hiệu lực.',
     approvedCampaignToast: 'Đã duyệt kế hoạch {name}. Ludy giữ {amount} trong hạn mức, đang tạo chiến dịch ở trạng thái tạm dừng và sẽ tự bật từ {from}.',

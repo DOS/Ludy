@@ -1080,6 +1080,44 @@ describe('the Inbox card of a campaign launch (#3296)', () => {
     expect(html).toContain(viMessages.ads.change.plan.placementsAutomatic);
   });
 
+  // #3675: a deployment with no launch writer (ADS_LIVE_LAUNCH off) holds the amount and creates nothing, so the card must not promise a launch.
+  describe('on a server that cannot launch (#3675)', () => {
+    const asked = (canLaunch: boolean | null, locale: 'en' | 'vi' = 'en') => {
+      client.current.setQueryData(['ads', 'proposal', { id: 'p1' }], { change: change(), canLaunch });
+      return render(<AdsProposalCard id="p1" title="t" slug="shop" />, locale);
+    };
+
+    it('says plainly that approving holds the amount and does not create the campaign, and promises no launch', () => {
+      const html = asked(false);
+      expect(html).toContain('data-testid="ads-no-launcher"');
+      expect(html).toContain(en.inboxDetail.adsNoLauncher);
+      expect(html).toContain('This server has not turned on running real ads, so the campaign is not created');
+      expect(html).not.toContain('Ludy holds');
+      expect(html).not.toContain('creates the campaign at the ad platform paused');
+      expect(html).toContain('If this server turns on running real ads later');
+      const vi = asked(false, 'vi');
+      expect(vi).toContain(viMessages.inboxDetail.adsNoLauncher);
+      expect(vi).toContain('chưa tạo chiến dịch');
+      expect(vi).not.toContain('tạo chiến dịch trên nền tảng quảng cáo ở trạng thái tạm dừng');
+    });
+
+    it('keeps the promise of a launch where the server can launch, and where it does not say', () => {
+      for (const answer of [true, null]) {
+        const html = asked(answer);
+        expect(html).not.toContain('data-testid="ads-no-launcher"');
+        expect(html).toContain('switches it on by itself from the start date');
+      }
+      // An older answer without the field reads as unknown, never as "cannot".
+      client.current.setQueryData(['ads', 'proposal', { id: 'p1' }], { change: change() });
+      expect(render(<AdsProposalCard id="p1" title="t" slug="shop" />)).not.toContain('data-testid="ads-no-launcher"');
+    });
+
+    it('says nothing about launching on a request that launches nothing', () => {
+      client.current.setQueryData(['ads', 'proposal', { id: 'p1' }], { change: { change: 'write_enable' }, canLaunch: null });
+      expect(render(<AdsProposalCard id="p1" title="t" slug="shop" />)).not.toContain('data-testid="ads-no-launcher"');
+    });
+  });
+
   it('adds no plan to a change that has none', () => {
     const html = card({ change: 'write_enable' });
     expect(html).not.toContain('data-testid="ads-plan"');

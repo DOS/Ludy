@@ -516,7 +516,10 @@ export const adsProposalChange = defineQuery({
   access: MANAGERS,
   handler: async (ctx, input) => {
     const row = await ctx.trx.selectFrom('crove_kernel.proposal').select(['kind', 'payload']).where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
-    return { change: row ? changeOf(row.kind, row.payload) : null };
+    const change = row ? changeOf(row.kind, row.payload) : null;
+    // The provider of a plan's ad account, for the kernel to say whether this deployment can launch on it (#3675); the app never sees it.
+    const account = change?.change === 'campaign_launch' ? await ctx.trx.selectFrom('crove_ads.ad_account').select('provider').where('org_id', '=', ctx.orgId).where('id', '=', change.adAccountId).executeTakeFirst() : undefined;
+    return { change, provider: account?.provider ?? null };
   },
 });
 
