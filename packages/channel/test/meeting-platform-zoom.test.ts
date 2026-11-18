@@ -353,10 +353,12 @@ describe('ZoomMeetingPlatform connect (authorizeUrl and exchange)', () => {
     // A grant with no refresh token would die within the hour: refused at connect, not an hour later.
     expect(await codeOf(zoom([{ json: { access_token: 'a1', expires_in: 3600 } }]).adapter.exchange(GRANT))).toBe('platform_unavailable');
     expect(await codeOf(zoom([{ json: fixture('token') }, { status: 502 }]).adapter.exchange(GRANT))).toBe('platform_unavailable');
-    const error = await zoom([{ status: 400, text: 'secret-body-code-not-real-0001 access-new' }]).adapter.exchange(GRANT).catch((e: unknown) => e as Error);
-    expect(error.message).not.toContain(GRANT.code);
-    expect(error.message).not.toContain('secret-body');
-    expect(error.message).not.toContain('access-new');
+    const failure: unknown = await zoom([{ status: 400, text: 'secret-body-code-not-real-0001 access-new' }]).adapter.exchange(GRANT).then(() => null, (e: unknown) => e);
+    expect(failure).toBeInstanceOf(MeetingPlatformError);
+    const message = (failure as MeetingPlatformError).message;
+    expect(message).not.toContain(GRANT.code);
+    expect(message).not.toContain('secret-body');
+    expect(message).not.toContain('access-new');
   });
 });
 
