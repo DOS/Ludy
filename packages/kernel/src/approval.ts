@@ -108,6 +108,10 @@ const POLICIES: Record<string, CommandPolicy> = {
   'ads.launches.unblock': ADS,
   // The launch of a drafted campaign (ADR-0043, #2295, W1): the plan and its largest amount are what the approver signs; the same rule.
   'ads.campaign.launch': ADS,
+  // A resume, a raised daily budget and a longer schedule of a running ad (#3835, W4): what the approver signs is the largest amount the launch can spend with the change; the same rule.
+  'ads.object.resume': ADS,
+  'ads.budget.raise': ADS,
+  'ads.schedule.extend': ADS,
   'finance.einvoice.issue': EINVOICE,
   'finance.supplier_payment.record': SUPPLIER_PAYMENT,
 };
@@ -138,7 +142,8 @@ export function liveApprovalCommands(): string[] {
 // 14: the clearing of a platform's waiting fees by its invoice (finance.marketplace_fee_clearing.record, #2516) was given its approval policy.
 // 15: the payment of a supplier invoice to the supplier's bank account (finance.supplier_payment.record, #3699) was given its approval policy.
 // 16: the settlement of an approved supplier payment by its bank line (finance.supplier_payment.settle.record, #3700 S3c) was given its approval policy (a ledger posting).
-export const APPROVAL_POLICY_VERSION = 16;
+// 17: a resume, a raised daily budget and a longer schedule of a running ad (ads.object.resume, ads.budget.raise, ads.schedule.extend, #3835) were given their approval policy (the launch's).
+export const APPROVAL_POLICY_VERSION = 17;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).

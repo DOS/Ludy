@@ -29,11 +29,24 @@ export function monthsWindow(startOn: string, endOn: string): { from: string; to
 
 // Every launch of the org that still commits some of its budget in the window, in the currency (crove_ads.launch_commitments: owners, admins and the system,
 // across the org's entities, since an org cap counts every account).
-export async function committedLaunches(ctx: Db, currency: string, startOn: string, endOn: string): Promise<Commitment[]> {
+// `exceptLaunchId` leaves one launch out (W4, #3835): the begin step and the approval of a raise, an extension or a resume judge the launch against the OTHERS, with its own
+// new values, so its own commitment (which already holds the change, as a queued change is held) is never counted twice.
+export async function committedLaunches(ctx: Db, currency: string, startOn: string, endOn: string, exceptLaunchId: string | null = null): Promise<Commitment[]> {
   const { from, to } = monthsWindow(startOn, endOn);
   const { rows } = await sql<{ ad_account_id: string; currency: string; daily_budget: string; start_on: string; commit_until: string }>`
     SELECT ad_account_id, currency, daily_budget, start_on::text AS start_on, commit_until::text AS commit_until
-    FROM crove_ads.launch_commitments(${currency}, ${from}::date, ${to}::date)`.execute(ctx.trx);
+    FROM crove_ads.launch_commitments_except(${currency}, ${from}::date, ${to}::date, ${exceptLaunchId}::uuid)`.execute(ctx.trx);
+  return rows.map((r) => ({ adAccountId: r.ad_account_id, currency: r.currency, dailyBudget: r.daily_budget, startOn: r.start_on, endOn: r.commit_until }));
+}
+
+// One launch's own commitment, as segments (W4, #3835): what it holds against the caps by budget, the last segment running to its end. The change of a running ad replaces that last
+// segment with the values it is judged at and keeps the earlier ones.
+export async function ownCommitments(ctx: Db, launchId: string, currency: string, startOn: string, endOn: string): Promise<Commitment[]> {
+  const { from, to } = monthsWindow(startOn, endOn);
+  const { rows } = await sql<{ ad_account_id: string; currency: string; daily_budget: string; start_on: string; commit_until: string }>`
+    SELECT ad_account_id, currency, daily_budget, start_on::text AS start_on, commit_until::text AS commit_until
+    FROM crove_ads.launch_commitments_of(${currency}, ${from}::date, ${to}::date, ${launchId}::uuid)
+    ORDER BY start_on`.execute(ctx.trx);
   return rows.map((r) => ({ adAccountId: r.ad_account_id, currency: r.currency, dailyBudget: r.daily_budget, startOn: r.start_on, endOn: r.commit_until }));
 }
 
