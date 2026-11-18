@@ -1721,6 +1721,7 @@ export const vi = {
     return: 'Hàng trả lại',
     returnQuantity: 'Số lượng hàng trả lại (còn trả được {left})',
     returnLeft: 'Còn {left}',
+    returnHint: 'Khi hóa đơn bán bị hủy, các lần trả lại của nó cũng bị đảo theo. Hàng thực sự đã về kho thì ghi nhận trả lại lại, trên lần xuất của hóa đơn thay thế.',
     returnConfirm: 'Xác nhận trả lại',
     reverseConfirm: 'Xác nhận đảo',
     reversed: 'Đã đảo',

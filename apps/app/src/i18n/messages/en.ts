@@ -1723,6 +1723,7 @@ export const en = {
     return: 'Goods returned',
     returnQuantity: 'Quantity returned ({left} still returnable)',
     returnLeft: '{left} left',
+    returnHint: 'When a sale invoice is voided, its returns are undone with it. Goods that really did come back are returned again, against the stock-out of the replacement invoice.',
     returnConfirm: 'Confirm return',
     reverseConfirm: 'Confirm reverse',
     reversed: 'Reversed',

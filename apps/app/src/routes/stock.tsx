@@ -215,6 +215,11 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
           ))}
         </DataTable>
       )}
+      {moves.data?.some((m) => m.source === 'sale_return') && (
+        <p className="mt-3 text-xs text-subtle-foreground" data-testid="stock-return-hint">
+          {t('returnHint')}
+        </p>
+      )}
       {reverse.error && <ErrorText>{errorMessage(reverse.error)}</ErrorText>}
       {giveBack.error && <ErrorText>{errorMessage(giveBack.error)}</ErrorText>}
     </Card>
