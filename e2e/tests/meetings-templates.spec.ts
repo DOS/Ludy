@@ -70,8 +70,7 @@ test('an owner writes a template and uses it on a meeting; a member cannot write
     expect((await saved).ok()).toBe(true);
     await panel.getByRole('button', { name: 'Chia sẻ cho người dự họp' }).click();
     await expect(panel.getByRole('heading', { name: 'Đã chia sẻ cho người dự họp' })).toBeVisible();
-    // The shared text keeps the template's headings.
-    await expect(panel).toContainText('Kết quả tuần');
+    // The shared text is there (the headings are checked on the biên bản below).
     await expect(panel).toContainText('Gửi báo giá cho khách B.');
   });
 
@@ -88,7 +87,10 @@ test('an owner writes a template and uses it on a meeting; a member cannot write
   });
 
   await test.step('a member does not see the settings card', async () => {
+    // The card needs the member's role from the org call: look only once that has answered.
+    const orgRead = member.waitForResponse((r) => /\/org\/get/.test(r.url()));
     await member.goto(`/o/${slug}/settings`);
+    expect((await orgRead).ok()).toBe(true);
     await expect(member.getByRole('heading', { name: 'Cài đặt', level: 1 })).toBeVisible();
     await member.waitForLoadState('networkidle');
     await expect(member.getByTestId('minutes-templates-card')).toHaveCount(0);
