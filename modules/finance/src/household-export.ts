@@ -67,6 +67,7 @@ const TRADE_LABEL: Readonly<Record<string, string>> = {
   goods: 'Phân phối, cung cấp hàng hóa',
   services: 'Dịch vụ',
   catering: 'Ăn uống, sản xuất, xây dựng có bao thầu nguyên vật liệu',
+  digital_content: 'Nội dung số (trò chơi, phim, ảnh, nhạc, quảng cáo số)',
   other: 'Hoạt động kinh doanh khác',
 };
 

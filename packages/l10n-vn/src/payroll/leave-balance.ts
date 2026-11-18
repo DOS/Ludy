@@ -31,7 +31,10 @@ export interface LeaveEntry {
 export interface LeaveBalanceInput {
   /** Calendar year YYYY. */
   year: string;
-  category: LeaveCategory;
+  /** Work conditions category under Labor Code 2019 Art. 113(1); defaults to `'standard'` (12 days/year). */
+  category?: LeaveCategory;
+  /** Optional contractual or employer-policy annual leave baseline days/year (>= the statutory minimum for `category`, <= 366). */
+  standardAnnualDays?: string;
   /** ISO date YYYY-MM-DD when employment began. */
   hireDate: string;
   /** ISO date YYYY-MM-DD when employment ended, or null / omitted if still active. */
@@ -278,8 +281,16 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
   if (!YEAR_PATTERN.test(input.year) || input.year < YEAR_FLOOR) {
     throw invalid('year must be YYYY');
   }
-  if (!LEAVE_CATEGORIES.includes(input.category)) {
-    throw invalid(`unknown leave category: ${String(input.category)}`);
+  const category: LeaveCategory = input.category ?? 'standard';
+  if (!LEAVE_CATEGORIES.includes(category)) {
+    throw invalid(`unknown leave category: ${String(category)}`);
+  }
+  let parsedBaseline: Decimal | null = null;
+  if (input.standardAnnualDays !== undefined) {
+    parsedBaseline = parsePositiveWorkingDays('standardAnnualDays', input.standardAnnualDays);
+    if (parsedBaseline.greaterThan('366')) {
+      throw invalid('standardAnnualDays cannot exceed 366');
+    }
   }
   parseIsoDate('hireDate', input.hireDate);
   const endedOn = input.endedOn ?? null;
@@ -470,12 +481,18 @@ export function calculateLeaveBalance(input: LeaveBalanceInput, rules: readonly 
   const senioritySteps = money(String(seniorityYears)).div(String(rule.value.seniorityYearsStep)).floor();
   const fullSeniorityDays = senioritySteps.times(money(rule.value.seniorityExtraDays));
 
-  const baseDaysPerYear =
-    input.category === 'standard'
+  const statutoryDaysPerYear =
+    category === 'standard'
       ? rule.value.standardDaysPerYear
-      : input.category === 'heavy'
+      : category === 'heavy'
         ? rule.value.heavyDaysPerYear
         : rule.value.specialHeavyDaysPerYear;
+  if (parsedBaseline !== null && parsedBaseline.lessThan(money(statutoryDaysPerYear))) {
+    throw invalid(
+      `standardAnnualDays (${toMoney(parsedBaseline)}) cannot be below the statutory minimum (${statutoryDaysPerYear}) for category ${category}`,
+    );
+  }
+  const baseDaysPerYear = parsedBaseline !== null ? parsedBaseline.toFixed() : statutoryDaysPerYear;
   const monthsInYear = String(CALENDAR_MONTHS.length);
   const entitlementDays = toMoney(money(baseDaysPerYear).times(String(eligibleMonths)).div(monthsInYear));
   const seniorityDays = toMoney(fullSeniorityDays.times(String(eligibleMonths)).div(monthsInYear));

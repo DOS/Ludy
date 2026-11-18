@@ -1788,7 +1788,7 @@ export const en = {
     cardValue: 'Value in',
     directions: { purchase: 'Purchase', sale: 'Sale' },
     sources: { document_line: 'From an invoice', manual: 'Entered by hand', reversal: 'Reversal', order_line: 'From a marketplace order', count: 'Stock count', crm_order_line: 'Delivery of a sales order' },
-    trades: { goods: 'Goods', services: 'Services', catering: 'Catering', other: 'Other' },
+    trades: { goods: 'Goods', services: 'Services', catering: 'Catering', digital_content: 'Digital content', other: 'Other' },
     // The finance coworker on stock (#2514): the item it suggests for an unassigned line.
     suggest: {
       button: 'Ask {finance} to suggest items',
@@ -4751,7 +4751,7 @@ export const en = {
     pitMethod: 'Personal income tax method',
     methods: { percentage: 'A percentage of revenue', income: 'On income' },
     trades: 'Trades',
-    tradeNames: { goods: 'Goods', services: 'Services', catering: 'Catering and construction with materials', other: 'Other' },
+    tradeNames: { goods: 'Goods', services: 'Services', catering: 'Catering and construction with materials', digital_content: 'Digital content (games, film, photos, music, digital ads)', other: 'Other' },
     einvoice: 'Registered for e-invoices',
     representative: 'Representative (printed beside the signature)',
     yes: 'Yes',
@@ -12000,6 +12000,8 @@ export const en = {
       HR_INTERVIEW_SLOT_TAKEN: 'This time slot conflicts with an existing calendar event',
       HR_LEAVE_BALANCE_UNAVAILABLE: 'Unable to calculate the annual leave balance for the selected options',
       HR_LEAVE_DAYS_OUT_OF_RANGE: 'Unpaid leave days synced to payroll support at most 1 decimal place and range from 0 to 99.9 days',
+      HR_LEAVE_AFTER_END: 'The leave month cannot be after the employee termination month',
+      HR_LEAVE_BASELINE_INVALID: 'The standard annual leave days cannot be below the statutory minimum for this work category',
       HR_RUN_NOT_APPROVED: 'Only an approved pay run can be posted',
       HR_POSTING_OPEN: 'This pay run already has a posting proposal waiting for approval',
       HR_POSTING_DONE: 'This pay run is already posted',

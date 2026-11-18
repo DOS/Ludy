@@ -301,14 +301,22 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
       expect(aiOff.ai).toBe('off');
       expect(aiOff.items.some((i) => i.kind === 'annual_leave_exceeded' && i.facts.includes('1,5'))).toBe(true);
 
-      // A 2-decimal unpaid_leave entry such as '1.25' refuses instead of silently rounding to 1 decimal place.
-      await o.exec(o.owner, 'hr.payroll.leave.set', {
-        employeeId: emp.employeeId,
-        month: '2026-11',
-        kind: 'unpaid_leave',
-        days: '1.25',
-        approved: true,
-      });
+      // A 2-decimal unpaid_leave entry such as '1.25' is rejected at write time; a legacy 2-decimal DB value also fails closed on sync.
+      await expect(
+        o.exec(o.owner, 'hr.payroll.leave.set', {
+          employeeId: emp.employeeId,
+          month: '2026-11',
+          kind: 'unpaid_leave',
+          days: '1.25',
+          approved: true,
+        }),
+      ).rejects.toMatchObject({ status: 422 });
+      await withAdmin((c) =>
+        c.query(
+          `UPDATE crove_hr.payroll_leave_entry SET days = 1.25 WHERE org_id = $1 AND employee_id = $2 AND month = '2026-11' AND kind = 'unpaid_leave'`,
+          [o.orgId, emp.employeeId],
+        ),
+      );
       await expect(o.exec(o.owner, 'hr.payroll.run.sync_leave', { runId: run.runId })).rejects.toMatchObject({
         code: 'HR_LEAVE_DAYS_OUT_OF_RANGE',
         status: 422,
@@ -390,5 +398,167 @@ suite('HR annual leave ledger, unpaid-leave sync, and Ly anomaly (#3394)', () =>
       approved: true,
     });
     expect(JSON.stringify(leaveAudits)).not.toContain('4.5');
+  });
+
+  it('preserves imported timekeeping on unsynced lines, skips orphaned lines, refuses post-end leave writes, and honors heavy/custom baselines in Ly (#3411)', async () => {
+    setRuleStatus('confirmed');
+    try {
+      const o = await org();
+      const importedEmp = await o.hire('Trần Minh Khôi Canary', '2025-01-01', '14000000');
+      const leavingEmp = await o.hire('Hoàng Thu Trang Canary', '2025-01-01', '14000000');
+      const heavyEmp = await o.hire('Ngô Quốc Huy Canary', '2025-01-01', '18000000');
+
+      const novRun = await o.open('2026-11');
+      const initialSheet = await o.sheet(novRun.runId);
+      const importedLine = initialSheet.lines.find((l) => l.employeeId === importedEmp.employeeId)!;
+      const heavyLine = initialSheet.lines.find((l) => l.employeeId === heavyEmp.employeeId)!;
+
+      // 1. Imported timekeeping sets unpaidLeaveDays = '3' on importedEmp (no leave ledger entry).
+      await o.exec(o.owner, 'hr.payroll.run.import_timekeeping', {
+        runId: novRun.runId,
+        rows: [{ lineId: importedLine.id, unpaidLeaveDays: '3', daysNotEmployed: '0', nightHours: '0', overtime: [] }],
+      });
+
+      // 2. Configure heavyEmp with `leaveCategory: 'heavy'` (14 statutory days/year) and record 1.5 unpaid_leave + 12.5 annual_leave by Nov 2026
+      // (11/12 * 14 = 12.83 prorated entitlement in Nov => 12.5 <= 12.83, whereas standard 12/year = 11 days in Nov would falsely flag 1.5 exceeded!).
+      await o.exec(o.owner, 'hr.payroll.line.inputs.set', {
+        lineId: heavyLine.id,
+        inputs: { ...heavyLine.inputs, leaveCategory: 'heavy' },
+      });
+      await o.exec(o.owner, 'hr.payroll.leave.set', {
+        employeeId: heavyEmp.employeeId,
+        month: '2026-11',
+        kind: 'unpaid_leave',
+        days: '1.5',
+        approved: true,
+      });
+      await o.exec(o.owner, 'hr.payroll.leave.set', {
+        employeeId: heavyEmp.employeeId,
+        month: '2026-11',
+        kind: 'annual_leave',
+        days: '12.5',
+        approved: true,
+      });
+
+      // 3. End leavingEmp on 2026-10-31 AFTER the 2026-11 draft run was opened:
+      //    - Setting non-zero leave in 2026-11 refuses with HR_LEAVE_AFTER_END (422), while days = '0' cleanup stays allowed.
+      //    - Syncing leave on 2026-11 skips leavingEmp's orphaned pay line instead of aborting the whole run sync.
+      await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: leavingEmp.employeeId, endedOn: '2026-10-31' });
+      await expect(
+        o.exec(o.owner, 'hr.payroll.leave.set', {
+          employeeId: leavingEmp.employeeId,
+          month: '2026-11',
+          kind: 'annual_leave',
+          days: '1',
+        }),
+      ).rejects.toMatchObject({ code: 'HR_LEAVE_AFTER_END', status: 422 });
+      const cleaned = await o.exec<HrLeaveWritten>(o.owner, 'hr.payroll.leave.set', {
+        employeeId: leavingEmp.employeeId,
+        month: '2026-11',
+        kind: 'annual_leave',
+        days: '0',
+      });
+      expect(cleaned.deleted).toBe(false);
+
+      const syncRes = await o.exec<HrRunWritten>(o.admin, 'hr.payroll.run.sync_leave', { runId: novRun.runId });
+      expect(syncRes.lines).toBe(1);
+
+      const afterSync = await o.sheet(novRun.runId);
+      const afterImported = afterSync.lines.find((l) => l.employeeId === importedEmp.employeeId)!;
+      const afterHeavy = afterSync.lines.find((l) => l.employeeId === heavyEmp.employeeId)!;
+      expect(afterImported.inputs.unpaidLeaveDays).toBe('3');
+      expect(afterHeavy.inputs.unpaidLeaveDays).toBe('1.5');
+      expect(afterHeavy.flags).not.toContain('annual_leave_exceeded');
+
+      // Simulate pre-upgrade draft lines (no `unpaidLeaveFromLedger` key in stored JSONB):
+      // - applying 13th-month bonus (`runApplyThirteenthMonth`) AND partial `import_timekeeping` on `importedEmp`
+      //   do NOT mask `heavyEmp`'s synced leave provenance, so deleting `heavyEmp`'s leave entry still resets to '0';
+      // - `importedEmp`'s pre-upgrade imported days ('3') survive repeated `sync_leave` calls.
+      await withAdmin((c) =>
+        c.query(`UPDATE crove_hr.payroll_line SET inputs = inputs - 'unpaidLeaveFromLedger' WHERE org_id = $1 AND id = $2`, [
+          o.orgId,
+          afterHeavy.id,
+        ]),
+      );
+      await o.exec(o.owner, 'hr.payroll.run.apply_thirteenth_month', {
+        runId: novRun.runId,
+        year: 2026,
+        mode: 'replace',
+        rows: [{ lineId: afterHeavy.id, workedMonths: '12' }],
+      });
+      await o.exec(o.owner, 'hr.payroll.run.import_timekeeping', {
+        runId: novRun.runId,
+        rows: [{ lineId: afterImported.id, unpaidLeaveDays: '3', daysNotEmployed: '0', nightHours: '0', overtime: [] }],
+      });
+      await withAdmin((c) =>
+        c.query(`UPDATE crove_hr.payroll_line SET inputs = inputs - 'unpaidLeaveFromLedger' WHERE org_id = $1 AND id = $2`, [
+          o.orgId,
+          afterImported.id,
+        ]),
+      );
+      await o.exec(o.owner, 'hr.payroll.leave.set', {
+        employeeId: heavyEmp.employeeId,
+        month: '2026-11',
+        kind: 'unpaid_leave',
+        days: '0',
+      });
+      const legacyResetRes = await o.exec<HrRunWritten>(o.admin, 'hr.payroll.run.sync_leave', { runId: novRun.runId });
+      expect(legacyResetRes.lines).toBe(1);
+      // Second sync after stamping `unpaidLeaveFromLedger: false` on `importedEmp` keeps '3' untouched (0 updates).
+      const secondLegacySync = await o.exec<HrRunWritten>(o.admin, 'hr.payroll.run.sync_leave', { runId: novRun.runId });
+      expect(secondLegacySync.lines).toBe(0);
+      const afterLegacyReset = await o.sheet(novRun.runId);
+      expect(afterLegacyReset.lines.find((l) => l.employeeId === heavyEmp.employeeId)!.inputs.unpaidLeaveDays).toBe('0');
+      expect(afterLegacyReset.lines.find((l) => l.employeeId === importedEmp.employeeId)!.inputs.unpaidLeaveDays).toBe('3');
+
+      const sheetSummary: HrRunSummary = {
+        id: novRun.runId,
+        legalEntityId: afterSync.run.legalEntityId,
+        month: '2026-11',
+        status: 'draft',
+        workingDays: afterSync.run.workingDays,
+        lines: afterSync.lines.length,
+        refused: 0,
+        totals: afterSync.totals,
+        approvedAt: null,
+      };
+      const lyReads: PayrollReads = {
+        runs: async () => [sheetSummary],
+        sheet: async () => afterSync,
+        payslip: async () => {
+          throw new Error('unused');
+        },
+      };
+      const lyNov = await flagMonth({ reader: null, budget: new DraftBudget() }, lyReads, o.orgId, o.owner, novRun.runId, 'vi');
+      expect(lyNov.items.some((i) => i.kind === 'annual_leave_exceeded')).toBe(false);
+
+      // 4. Opening Dec 2026 copies recurring `leaveCategory: 'heavy'` forward, and custom `standardAnnualDays: '16'` is honored too.
+      const decRun = await o.open('2026-12');
+      const decSheet = await o.sheet(decRun.runId);
+      const decHeavy = decSheet.lines.find((l) => l.employeeId === heavyEmp.employeeId)!;
+      expect(decHeavy.inputs.leaveCategory).toBe('heavy');
+      expect(decHeavy.inputs.unpaidLeaveFromLedger).toBe(false);
+
+      // Taking another 2.5 days in Dec (total 15 > 14 heavy baseline) flags 1.0 exceeded day, until standardAnnualDays = '16' is set.
+      await o.exec(o.owner, 'hr.payroll.leave.set', {
+        employeeId: heavyEmp.employeeId,
+        month: '2026-12',
+        kind: 'annual_leave',
+        days: '2.5',
+        approved: true,
+      });
+      const decExceeded = (await o.sheet(decRun.runId)).lines.find((l) => l.employeeId === heavyEmp.employeeId)!;
+      expect(decExceeded.flags).toContain('annual_leave_exceeded');
+      expect(decExceeded.exceededAnnualDays).toBe('1');
+
+      await o.exec(o.owner, 'hr.payroll.line.inputs.set', {
+        lineId: decHeavy.id,
+        inputs: { ...decHeavy.inputs, standardAnnualDays: '16' },
+      });
+      const decCleared = (await o.sheet(decRun.runId)).lines.find((l) => l.employeeId === heavyEmp.employeeId)!;
+      expect(decCleared.flags).not.toContain('annual_leave_exceeded');
+    } finally {
+      setRuleStatus('commentary');
+    }
   });
 });
