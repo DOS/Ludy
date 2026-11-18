@@ -60,6 +60,25 @@ export const zSupplierPayment = z.strictObject({
 export type SupplierPayment = z.infer<typeof zSupplierPayment>;
 export const zSupplierPaymentList = z.array(zSupplierPayment);
 
+// The received invoices that can be asked for payment (#3113 S4b, #3701), owners and admins. Facts only, read from the books and the supplier's accounts: the supplier's name and the invoice's number,
+// day and amount, whether the supplier has exactly one active bank account (`ready`), none or several, and the day of its latest account change when that is inside the last 30 days. Never a bank,
+// a number or a holder. At most 100, oldest invoice first; `more` says that older ones were not all shown.
+export const zSupplierPayable = z.strictObject({
+  purchaseDocumentId: z.uuid(),
+  partyId: z.uuid(),
+  partyName: z.string().max(300),
+  invoiceNumber: z.string().max(100),
+  invoiceDate: zLocalDate,
+  amount: zAmount,
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  account: z.enum(['ready', 'none', 'many']),
+  accountChangedOn: zLocalDate.nullable(),
+});
+export type SupplierPayable = z.infer<typeof zSupplierPayable>;
+export const SUPPLIER_PAYABLE_MAX = 100;
+export const zSupplierPayableList = z.strictObject({ items: z.array(zSupplierPayable).max(SUPPLIER_PAYABLE_MAX), more: z.boolean() });
+export type SupplierPayableList = z.infer<typeof zSupplierPayableList>;
+
 // The bank file of approved supplier payments (#3113 S3, #3700). `finance.supplier_payment.bank_file.get` is a sensitive query in the requesting owner's or admin's own context: its audit row is
 // committed before it reads, it needs a second factor used in the last 5 minutes, and it opens the sealed holder and number of each payment's pinned account there and nowhere else. The answer is
 // returned to the caller and never stored. One file holds the payments the caller names, all in one currency; a payment the file cannot carry refuses the whole file, naming the payment (never a number).

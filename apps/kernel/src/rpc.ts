@@ -11,7 +11,7 @@ import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wa
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -64,6 +64,7 @@ import { checkLaborReadiness, type LaborCheckAi, type LaborCheckPorts } from './
 import { generateRecruitingBrief, type RecruitingBriefAi, type RecruitingBriefPorts } from './recruiting-coworker-ai.ts';
 import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot } from '@crove/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
+import { einvoiceRateAi, explainCorrectionRate } from './einvoice-rate-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
@@ -456,6 +457,10 @@ export function createRpcHandler(
   // The finance coworker on a sales e-invoice draft (#2505): lines, the VAT rate the text states and the buyer, from a text a person typed. The same reader and model, a budget of its own. It is
   // told the text and the names of the customers that fit it, never an address, tax code, credential or provider data, and what it answers only fills the form as proposals.
   const einvoiceCoworker = einvoiceAi(conversationReader?.einvoiceDraft ? { einvoiceDraft: conversationReader.einvoiceDraft.bind(conversationReader) } : null, suggestionBudget());
+
+  // The accounting coworker's explanation of the VAT rate a correcting e-invoice proposes (#3709): the same reader and model, a budget of its own. Code decides the rate and the basis (the finance
+  // query); the model is told the nature, two dates and the rates only, and what it writes only explains. With AI off the screen shows the code's own reason.
+  const einvoiceRateCoworker = einvoiceRateAi(conversationReader?.einvoiceRateExplanation ? { einvoiceRateExplanation: conversationReader.einvoiceRateExplanation.bind(conversationReader) } : null, suggestionBudget());
 
   // The sales coworker on the lines of a quote (#2698): the same reader and model, a budget of its own. It is told the deal, the customer's latest words (only while the org's switch for AI on customers'
   // words is on) and the earlier quotes to them, and what it answers only fills the editor as proposals that a person applies or drops.
@@ -2963,6 +2968,7 @@ export function createRpcHandler(
       erase: os.supplierBank.erase.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.erase', input, { actor, orgId }))),
     },
     supplierPayment: {
+      payable: os.supplierPayment.payable.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_payment.payable', input, { actor, orgId }))),
       list: os.supplierPayment.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_payment.list', input, { actor, orgId }))),
       confirmAccount: os.supplierPayment.confirmAccount.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.confirm_account', input, { actor, orgId }))),
       cancel: os.supplierPayment.cancel.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.cancel', input, { actor, orgId }))),
@@ -3110,6 +3116,13 @@ export function createRpcHandler(
         orderLines: os.einvoice.drafts.orderLines.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.order_lines', input, { actor, orgId }))),
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
         startCorrection: os.einvoice.drafts.startCorrection.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.start_correction', input, { actor, orgId }))),
+        // The VAT rate a correction proposes for the nature picked (#3709): the code's proposal read in the member's own transaction, then the coworker's explanation outside any transaction.
+        correctionRate: os.einvoice.drafts.correctionRate.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            const proposal = await runtime.query<EInvoiceCorrectionRate>('finance.einvoice.correction_rate', input, { actor, orgId });
+            return explainCorrectionRate(einvoiceRateCoworker, orgId, actor.userId, proposal);
+          }),
+        ),
         correctionOptions: os.einvoice.drafts.correctionOptions.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.correction_options', input, { actor, orgId }))),
         noticeOpen: os.einvoice.drafts.noticeOpen.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.notice_open', input, { actor, orgId }))),
         noticeStep: os.einvoice.drafts.noticeStep.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice.notice_step', input, { actor, orgId }))),

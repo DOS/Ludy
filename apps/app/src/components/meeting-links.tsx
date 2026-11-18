@@ -162,7 +162,7 @@ export function MeetingLinks({ meetingId, isRecorder }: { meetingId: string; isR
   return (
     <Card data-testid="meeting-links">
       <CardHeader>
-        <CardTitle className="text-sm font-medium">{t('links.title')}</CardTitle>
+        <CardTitle role="heading" aria-level={2} className="text-sm font-medium">{t('links.title')}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {links.error && <ErrorText>{errorMessage(links.error)}</ErrorText>}

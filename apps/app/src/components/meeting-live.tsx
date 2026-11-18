@@ -126,7 +126,7 @@ function LivePane({ meetingId }: { meetingId: string }) {
     <Card data-testid="live-pane">
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="text-base font-medium">{t('title')}</CardTitle>
+          <CardTitle role="heading" aria-level={2} className="text-base font-medium">{t('title')}</CardTitle>
           {data.enabled && <Badge variant="outline">{t(`states.${data.state}`)}</Badge>}
         </div>
         <CardDescription className="text-xs text-muted-foreground">{t('draftNote')}</CardDescription>

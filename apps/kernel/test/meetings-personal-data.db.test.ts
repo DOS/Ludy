@@ -164,6 +164,10 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
 
   it('counts a large body of transcript text in one linear scan', async () => {
     const big = await meeting(orgId, 'recorder', 'Họp dài', 'attendees');
+    // `search` is a stored generated column (crove_kernel.search_vector(text)), and computing it for 120 000 lines was more than half of this test's time (about 24 s of 47 s on a laptop). The finder
+    // under test reads the text alone and nothing else in this file reads `search`, so in this file's own throwaway database it becomes a plain column first (the column and its index stay, the
+    // lines keep a null vector). The insert, the lines, the scans and every assertion below are unchanged.
+    await sqlAdmin(`ALTER TABLE crove_meetings.transcript_segment ALTER COLUMN search DROP EXPRESSION`);
     // 120 000 lines of about 200 characters, a few of them holding the value, and one line of 4000 digits and spaces that no pattern may take long over.
     await sqlAdmin(
       `INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage)
