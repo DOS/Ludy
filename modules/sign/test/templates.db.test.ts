@@ -295,6 +295,113 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     // Swapping roleKeys preserves field links and prevents existing-field role from becoming CC.
     const r2Id = savedRoles.roles.find((r) => r.roleKey === 'r2')!.id;
     const r1Id = savedRoles.roles.find((r) => r.roleKey === 'r1')!.id;
+
+    // Explicit templateRoleId must resolve directly and never fall back to roleByKey (#3566).
+    await expect(
+      runtime.execute(
+        'sign.template.fields_set',
+        {
+          templateId: created.templateId,
+          fields: [
+            {
+              templateRoleId: randomUUID(),
+              roleKey: 'r2',
+              fieldType: 'signature',
+              pageNumber: 1,
+              xNorm: 0.2,
+              yNorm: 0.3,
+              wNorm: 0.24,
+              hNorm: 0.08,
+              required: true,
+            },
+          ],
+        },
+        { actor: asUser(ownerA), orgId: orgA },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_ROLE_NOT_FOUND', status: 422 });
+
+    // Conflicting templateRoleId and roleKey is rejected with 422 SIGN_INVALID_FIELD.
+    await expect(
+      runtime.execute(
+        'sign.template.fields_set',
+        {
+          templateId: created.templateId,
+          fields: [
+            {
+              templateRoleId: r1Id,
+              roleKey: 'r2',
+              fieldType: 'date',
+              pageNumber: 1,
+              xNorm: 0.1,
+              yNorm: 0.2,
+              wNorm: 0.18,
+              hNorm: 0.05,
+              required: false,
+            },
+          ],
+        },
+        { actor: asUser(ownerA), orgId: orgA },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_INVALID_FIELD', status: 422 });
+
+    // Unknown roleKey without templateRoleId is rejected with 422 SIGN_ROLE_NOT_FOUND.
+    await expect(
+      runtime.execute(
+        'sign.template.fields_set',
+        {
+          templateId: created.templateId,
+          fields: [
+            {
+              roleKey: 'r99',
+              fieldType: 'date',
+              pageNumber: 1,
+              xNorm: 0.1,
+              yNorm: 0.2,
+              wNorm: 0.18,
+              hNorm: 0.05,
+              required: false,
+            },
+          ],
+        },
+        { actor: asUser(ownerA), orgId: orgA },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_ROLE_NOT_FOUND', status: 422 });
+
+    // Matching templateRoleId + roleKey succeeds cleanly.
+    const matchedFieldsSet = await runtime.execute<{ fieldCount: number }>(
+      'sign.template.fields_set',
+      {
+        templateId: created.templateId,
+        fields: [
+          {
+            templateRoleId: r2Id,
+            roleKey: 'r2',
+            fieldType: 'signature',
+            pageNumber: 2,
+            xNorm: 0.55,
+            yNorm: 0.72,
+            wNorm: 0.24,
+            hNorm: 0.08,
+            label: 'Chu ky B',
+            required: true,
+          },
+          {
+            templateRoleId: r1Id,
+            roleKey: 'r1',
+            fieldType: 'date',
+            pageNumber: 1,
+            xNorm: 0.1,
+            yNorm: 0.2,
+            wNorm: 0.18,
+            hNorm: 0.05,
+            label: 'Ngay duyet',
+            required: false,
+          },
+        ],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    expect(matchedFieldsSet.fieldCount).toBe(2);
     await expect(
       runtime.execute(
         'sign.template.roles_set',

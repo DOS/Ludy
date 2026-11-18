@@ -784,8 +784,8 @@ const signTemplateRow = (o: { id: string; owner: string; file: string }) => {
     source_storage_key: `org/${o.id}/${sha256}`,
     source_generation: '1',
     source_sha256: sha256,
-    inspect_status: 'passed',
-    status: 'active',
+    inspect_status: 'pending',
+    status: 'draft',
     created_by: o.owner,
   };
 };
