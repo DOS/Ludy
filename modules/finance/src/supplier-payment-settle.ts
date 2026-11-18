@@ -120,7 +120,7 @@ function beneficiaryIsApproved(ctx: CommandContext, p: PaymentRow, line: StoredB
     if (!(error instanceof DomainError && error.code === 'KEYED_HASH_KEY_RETIRED')) throw error;
   }
   if (!same) {
-    throw new DomainError('SUPPLIER_PAYMENT_ACCOUNT_MISMATCH', 409, 'Tiền đã đi tới tài khoản khác tài khoản đã duyệt; không tự ghi sổ. Hãy kiểm tra với ngân hàng và nhà cung cấp', { paymentId: p.id });
+    throw new DomainError('SUPPLIER_PAYMENT_ACCOUNT_MISMATCH', 409, 'Tài khoản trên sao kê không khớp được với tài khoản đã duyệt (khác tài khoản, hoặc không đối chiếu được); không tự ghi sổ. Hãy kiểm tra với ngân hàng và nhà cung cấp', { paymentId: p.id });
   }
 }
 
@@ -239,7 +239,7 @@ export const bankSupplierMatch = defineQuery({
          AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id)
          AND NOT EXISTS (SELECT 1 FROM crove_kernel.proposal q WHERE q.org_id = p.org_id AND q.command = ${SUPPLIER_PAYMENT_SETTLE_COMMAND} AND q.status = 'pending'
                            AND pg_catalog.lower(q.payload->'supplierPayment'->>'paymentId') = p.id::text)
-       ORDER BY p.exported_at DESC, p.id
+       ORDER BY (d.invoice_number IS NOT NULL AND d.invoice_number <> '' AND pg_catalog.strpos(pg_catalog.lower(${line.description}), pg_catalog.lower(d.invoice_number)) > 0) DESC, p.exported_at DESC, p.id
        LIMIT 20`.execute(ctx.trx);
     const description = line.description.toLowerCase();
     const candidates: BankSupplierCandidate[] = rows.map((r) => ({

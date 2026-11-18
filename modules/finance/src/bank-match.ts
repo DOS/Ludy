@@ -14,6 +14,7 @@ import { z } from 'zod';
 import {
   MARKETPLACE_PAYOUT_COMMAND,
   PAYROLL_PAYMENT_COMMAND,
+  SUPPLIER_PAYMENT_SETTLE_COMMAND,
   VOUCHER_COMMAND,
   journalVoucherCode,
   defaultCounterAccount,
@@ -130,7 +131,8 @@ export async function bankLineStates(ctx: QueryContext, ids: readonly string[]):
     .select(['id', sql<string>`payload->>'bankLineId'`.as('line_id')])
     .where('org_id', '=', ctx.orgId)
     // A payment voucher of a pay run (#2532) settles a bank line too, so its pending proposal counts as proposed.
-    .where('command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND, MARKETPLACE_PAYOUT_COMMAND])
+    // A supplier payment's settlement (#3700 S3c) holds its line too: a second voucher for the same line cannot be requested while it waits, so the one approved first cannot starve the other.
+    .where('command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND, MARKETPLACE_PAYOUT_COMMAND, SUPPLIER_PAYMENT_SETTLE_COMMAND])
     .where('status', '=', 'pending')
     .where(sql<string>`payload->>'bankLineId'`, 'in', ids)
     .orderBy('created_at')
@@ -385,7 +387,7 @@ export const bankOpenLines = defineQuery({
             selectFrom('crove_kernel.proposal as p')
               .select('p.id')
               .whereRef('p.org_id', '=', 'l.org_id')
-              .where('p.command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND])
+              .where('p.command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND, SUPPLIER_PAYMENT_SETTLE_COMMAND])
               .where('p.status', '=', 'pending')
               .where(sql`p.payload->>'bankLineId'`, '=', sql`l.id::text`),
           ),

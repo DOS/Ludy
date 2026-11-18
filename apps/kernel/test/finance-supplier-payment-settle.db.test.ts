@@ -89,13 +89,13 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
   const request = (o: Org, doc: string, who = o.owner) => execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.supplier_payment.record', input: { purchaseDocumentId: doc } }, who);
   const approve = (o: Org, proposalId: string, who = o.owner) => execute<{ id: string; status: string }>(o, 'kernel.proposal.approve', { id: proposalId, revision: 1 }, who);
   type Payment = { id: string; status: string; payable_after: Date | null; hold_reason: string | null; bank_account_id: string; amount: string; approved_at: Date; stale_at: Date | null; paid_at: Date | null; confirmed_at: Date | null };
-  const payments = (o: Org) =>
-    rows<Payment>('SELECT id, status, payable_after, hold_reason, bank_account_id, amount::text, approved_at, stale_at, paid_at, confirmed_at FROM crove_finance.supplier_payment WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
+  const payments = (o: Org, doc: string | null = null) =>
+    rows<Payment>('SELECT id, status, payable_after, hold_reason, bank_account_id, amount::text, approved_at, stale_at, paid_at, confirmed_at FROM crove_finance.supplier_payment WHERE org_id = $1 AND ($2::uuid IS NULL OR purchase_document_id = $2) ORDER BY created_at, id', [o.orgId, doc]);
   // Asks and approves one invoice end to end, as the right pair of people for the org.
   async function pay(o: Org, doc: string): Promise<Payment> {
     const { proposalId } = await request(o, doc);
     await approve(o, proposalId, o.admin ?? o.owner);
-    const all = await payments(o);
+    const all = await payments(o, doc);
     return all.find((p) => p.status === 'approved') as Payment;
   }
 
@@ -147,6 +147,9 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     );
     return line?.id as string;
   };
+  // The Vietnam day of the first file, as the database stored it: a line made after the export is dated from it, so a test run across midnight does not depend on the clock.
+  const fileDay = async (o: Org, id: string) =>
+    (await rows<{ day: string }>("SELECT (first_exported_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS day FROM crove_finance.supplier_payment WHERE org_id = $1 AND id = $2", [o.orgId, id]))[0]?.day as string;
   const SETTLE = 'finance.supplier_payment.settle.record';
   const ask = (o: Org, paymentId: string, bankLineId: string, who = o.owner) => execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: SETTLE, input: { paymentId, bankLineId } }, who);
   const status = async (o: Org, id: string) => (await rows<{ status: string; paid_at: Date | null }>('SELECT status, paid_at FROM crove_finance.supplier_payment WHERE org_id = $1 AND id = $2', [o.orgId, id]))[0];
@@ -157,7 +160,7 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     await addAccount(o, NUMBER);
     const payment = await ready(o);
     await exportFile(o, [payment.id]);
-    const line = await bankLine(o, '-110');
+    const line = await bankLine(o, '-110', await fileDay(o, payment.id));
     const { proposalId } = await ask(o, payment.id, line);
     // The request is the voucher the server builds from the payment and the line: Dr 331 with the supplier, Cr the bank, the invoice in the words.
     const [stored] = await rows<{ payload: { type: string; cashAccount: string; lines: Array<{ account: string; amount: string }>; party: { id: string }; description: string; supplierPayment: { paymentId: string } } }>(
@@ -181,7 +184,7 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     );
     expect(entry.map((l) => [l.account_code, Number(l.debit), Number(l.credit), l.party_id])).toEqual([['331', 110, 0, o.supplier], ['1121', 0, 110, null]]);
     // A second settlement of the paid payment, and a second payment's voucher on the same line, are refused.
-    expect(await codeOf(ask(o, payment.id, await bankLine(o, '-110')))).toBe('SUPPLIER_PAYMENT_NOT_APPROVED');
+    expect(await codeOf(ask(o, payment.id, await bankLine(o, '-110', await fileDay(o, payment.id))))).toBe('SUPPLIER_PAYMENT_NOT_APPROVED');
   });
 
   it('refuses a payment that was never exported, a line of another amount, a line dated before the file and money in', async () => {
@@ -191,11 +194,12 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     const line = await bankLine(o, '-110');
     expect(await codeOf(ask(o, payment.id, line))).toBe('SUPPLIER_PAYMENT_NOT_EXPORTED');
     await exportFile(o, [payment.id]);
-    expect(await codeOf(ask(o, payment.id, await bankLine(o, '-111')))).toBe('SUPPLIER_PAYMENT_LINE_MISMATCH');
-    expect(await codeOf(ask(o, payment.id, await bankLine(o, '110')))).toBe('SUPPLIER_PAYMENT_LINE_MISMATCH');
+    const day = await fileDay(o, payment.id);
+    expect(await codeOf(ask(o, payment.id, await bankLine(o, '-111', day)))).toBe('SUPPLIER_PAYMENT_LINE_MISMATCH');
+    expect(await codeOf(ask(o, payment.id, await bankLine(o, '110', day)))).toBe('SUPPLIER_PAYMENT_LINE_MISMATCH');
     expect(await codeOf(ask(o, payment.id, await bankLine(o, '-110', '2026-01-02')))).toBe('SUPPLIER_PAYMENT_LINE_BEFORE_FILE');
-    // The file's own day is fine and the line is asked for again after the refusals (none left a proposal or a voucher).
-    expect(await codeOf(ask(o, payment.id, line))).toBe('accepted');
+    // The file's own day is fine and a line is asked for again after the refusals (none left a proposal or a voucher).
+    expect(await codeOf(ask(o, payment.id, await bankLine(o, '-110', day)))).toBe('accepted');
     expect(await rows('SELECT 1 FROM crove_finance.cash_voucher WHERE org_id = $1 AND supplier_payment_id IS NOT NULL', [o.orgId])).toHaveLength(0);
   });
 
@@ -204,13 +208,14 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     await addAccount(o, NUMBER);
     const payment = await ready(o);
     await exportFile(o, [payment.id]);
-    const wrong = await bankLine(o, '-110', today(), '9988776655');
+    const day = await fileDay(o, payment.id);
+    const wrong = await bankLine(o, '-110', day, '9988776655');
     expect(await codeOf(ask(o, payment.id, wrong))).toBe('SUPPLIER_PAYMENT_ACCOUNT_MISMATCH');
     expect(await rows('SELECT 1 FROM crove_kernel.proposal WHERE org_id = $1 AND command = $2', [o.orgId, SETTLE])).toHaveLength(0);
     // The right number (the statement keeps digits only, so the file's spaces are gone): the same account.
-    const right = await bankLine(o, '-110', today(), '012345678901');
+    const right = await bankLine(o, '-110', day, '012345678901');
     // A line with no number says nothing either way and is settled on the amount and the file.
-    const none = await bankLine(o, '-110');
+    const none = await bankLine(o, '-110', day);
     expect(await codeOf(ask(o, payment.id, none))).toBe('accepted');
     const [open] = await rows<{ id: string }>('SELECT id FROM crove_kernel.proposal WHERE org_id = $1 AND command = $2', [o.orgId, SETTLE]);
     expect(await codeOf(execute(o, 'kernel.proposal.reject', { id: open?.id, reason: 'test' }, o.admin as string))).toBe('accepted');
@@ -230,11 +235,12 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     // The reversal trigger and the unique index are in the catalog.
     const catalog = await rows<{ n: string }>("SELECT tgname AS n FROM pg_trigger WHERE tgname IN ('b_supplier_payment_reversal', 'b_cash_voucher_tag_command') UNION ALL SELECT indexname FROM pg_indexes WHERE indexname = 'cash_voucher_supplier_payment_uq'");
     expect(catalog.map((r) => r.n).sort()).toEqual(['b_cash_voucher_tag_command', 'b_supplier_payment_reversal', 'cash_voucher_supplier_payment_uq']);
-    // A voucher of the payment cannot be written by anything but the settlement's own approved proposal.
-    const line = await bankLine(o, '-110');
+    // A voucher that names a payment is a bank debit made from a line by a proposal: one with no proposal fails the table's own check (named, so another failure cannot pass for it). The tag trigger that
+    // ties the proposal to the settlement command is exercised by the approved settlement in the first test, which inserts through it.
+    const line = await bankLine(o, '-110', await fileDay(o, payment.id));
     await expect(
       admin((c) => c.query("INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, voucher_date, cash_account, description, amount, bank_line_id, legal_entity_id, supplier_payment_id) SELECT $1, 'bank_debit', '2026-11-18', '1121', 'x', 110, $2, legal_entity_id, $3 FROM crove_finance.supplier_payment WHERE id = $3", [o.orgId, line, payment.id])),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/cash_voucher_supplier_payment/);
   });
 
   it('refuses to reverse the voucher of a paid payment, when the reversal is asked for', async () => {
@@ -242,7 +248,7 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     await addAccount(o, NUMBER);
     const payment = await ready(o);
     await exportFile(o, [payment.id]);
-    const { proposalId } = await ask(o, payment.id, await bankLine(o, '-110'));
+    const { proposalId } = await ask(o, payment.id, await bankLine(o, '-110', await fileDay(o, payment.id)));
     await approve(o, proposalId, o.admin as string);
     const [entry] = await rows<{ id: string }>("SELECT e.id FROM crove_finance.journal_entry e JOIN crove_finance.cash_voucher v ON v.org_id = e.org_id AND v.id = e.source_id WHERE e.org_id = $1 AND e.source_type = 'finance.cash_voucher' AND v.supplier_payment_id = $2", [o.orgId, payment.id]);
     const code = await codeOf(execute(o, 'kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: entry?.id, entryDate: today(), reason: 'sai' } }));
@@ -253,18 +259,28 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     const o = await org(true);
     await addAccount(o, NUMBER);
     const payment = await ready(o);
+    const second = await ready(o);
     const line = await bankLine(o, '-110');
     const matchOf = (id: string) => rt.query<{ candidates: Array<{ paymentId: string; partyName: string; amount: string }> }>('finance.bank.supplier_match', { bankLineId: id }, { actor: user(o.owner), orgId: o.orgId });
     // Not exported yet: not offered.
     expect((await matchOf(line)).candidates).toEqual([]);
     await exportFile(o, [payment.id]);
-    expect((await matchOf(line)).candidates).toMatchObject([{ paymentId: payment.id, amount: '110' }]);
-    expect((await matchOf(await bankLine(o, '-111'))).candidates).toEqual([]);
-    expect((await matchOf(await bankLine(o, '110'))).candidates).toEqual([]);
-    // A line that waits on a settlement is not offered again.
-    await ask(o, payment.id, line);
-    expect((await matchOf(line)).candidates).toEqual([]);
-    expect(await codeOf(rt.query('finance.bank.supplier_match', { bankLineId: line }, { actor: user(o.member), orgId: o.orgId }))).toBe('FORBIDDEN');
+    const day = await fileDay(o, payment.id);
+    const open = await bankLine(o, '-110', day);
+    expect((await matchOf(open)).candidates).toMatchObject([{ paymentId: payment.id, amount: '110' }]);
+    expect((await matchOf(await bankLine(o, '-111', day))).candidates).toEqual([]);
+    expect((await matchOf(await bankLine(o, '110', day))).candidates).toEqual([]);
+    // A second exported payment of the same amount is offered too; the settlement asked for one holds its whole line (not offered to the other payment), while another open line still offers the other.
+    await exportFile(o, [second.id]);
+    expect((await matchOf(open)).candidates.map((c) => c.paymentId).sort()).toEqual([payment.id, second.id].sort());
+    await ask(o, payment.id, open);
+    expect((await matchOf(open)).candidates).toEqual([]);
+    const another = await bankLine(o, '-110', await fileDay(o, second.id));
+    expect((await matchOf(another)).candidates.map((c) => c.paymentId)).toEqual([second.id]);
+    // An ordinary voucher for the held line is refused too, so the settlement cannot be starved by the other approval.
+    const held = await codeOf(execute(o, 'kernel.proposal.request', { command: 'finance.voucher.record', input: { type: 'bank_debit', date: day, cashAccount: '1121', partyId: o.supplier, description: 'x', lines: [{ account: '331', amount: '110' }], bankLineId: open } }));
+    expect(held).toBe('BANK_LINE_PROPOSED');
+    expect(await codeOf(rt.query('finance.bank.supplier_match', { bankLineId: open }, { actor: user(o.member), orgId: o.orgId }))).toBe('FORBIDDEN');
   });
 
   it('judges the line against the first file: a second file moves the export time but not the first one', async () => {
@@ -278,5 +294,25 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     const after = await times();
     expect(after?.first.getTime()).toBe(before?.first.getTime());
     expect((after?.last.getTime() ?? 0) > (before?.last.getTime() ?? 0)).toBe(true);
+    // The first file was handed over two days ago and a second one now: a line of the first day is still this payment's transfer, and a line of the day before the first file is not.
+    await unguarded((c) => c.query("UPDATE crove_finance.supplier_payment SET first_exported_at = first_exported_at - interval '2 days' WHERE org_id = $1 AND id = $2", [o.orgId, payment.id]));
+    const firstDay = await fileDay(o, payment.id);
+    const matchOf = (id: string) => rt.query<{ candidates: Array<{ paymentId: string }> }>('finance.bank.supplier_match', { bankLineId: id }, { actor: user(o.owner), orgId: o.orgId });
+    expect((await matchOf(await bankLine(o, '-110', firstDay))).candidates.map((c) => c.paymentId)).toEqual([payment.id]);
+    const dayBefore = new Date(new Date(`${firstDay}T00:00:00Z`).getTime() - 86_400_000).toISOString().slice(0, 10);
+    expect((await matchOf(await bankLine(o, '-110', dayBefore))).candidates).toEqual([]);
+  });
+  it('lets the upgrade fill first_exported_at of a payment handed over before the column existed, whatever its status', async () => {
+    const o = await org(true);
+    await addAccount(o, NUMBER);
+    const payment = await ready(o);
+    await exportFile(o, [payment.id]);
+    // The legacy state: a file was handed over, the first day was not recorded. The migration's own statement runs with the guard of the table in force (the guard before it rejected the move).
+    await unguarded((c) => c.query('UPDATE crove_finance.supplier_payment SET first_exported_at = NULL WHERE org_id = $1 AND id = $2', [o.orgId, payment.id]));
+    await admin((c) => c.query('UPDATE crove_finance.supplier_payment SET first_exported_at = exported_at WHERE org_id = $1 AND id = $2 AND first_exported_at IS NULL AND exported_at IS NOT NULL', [o.orgId, payment.id]));
+    expect(await fileDay(o, payment.id)).toBe(today());
+    await unguarded((c) => c.query("UPDATE crove_finance.supplier_payment SET status = 'cancelled', cancelled_at = now(), first_exported_at = NULL WHERE org_id = $1 AND id = $2", [o.orgId, payment.id]));
+    await admin((c) => c.query('UPDATE crove_finance.supplier_payment SET first_exported_at = exported_at WHERE org_id = $1 AND id = $2 AND first_exported_at IS NULL AND exported_at IS NOT NULL', [o.orgId, payment.id]));
+    expect(await fileDay(o, payment.id)).toBe(today());
   });
 });

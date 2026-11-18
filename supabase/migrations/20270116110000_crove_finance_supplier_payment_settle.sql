@@ -19,7 +19,6 @@ SET LOCAL lock_timeout = '2s';
 -- crove_finance.supplier_payment.first_exported_at  when the first file with the payment was handed over (set by the guard with the first export; a second file moves exported_at, never this): the day
 --                                                   a settlement's line may not precede, so a re-export cannot make the transfer of the first file look older than the file.
 ALTER TABLE crove_finance.supplier_payment ADD COLUMN IF NOT EXISTS first_exported_at timestamptz;
-UPDATE crove_finance.supplier_payment SET first_exported_at = exported_at WHERE first_exported_at IS NULL AND exported_at IS NOT NULL;
 ALTER TABLE crove_finance.cash_voucher ADD COLUMN IF NOT EXISTS supplier_payment_id uuid;
 DO $$
 BEGIN
@@ -125,7 +124,9 @@ BEGIN
     WHEN p_command = 'finance.supplier_payment.settle.record' THEN EXISTS (
       SELECT 1 FROM crove_finance.cash_voucher v
       JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.cash_voucher' AND e.source_id = v.id
-      WHERE v.org_id = p_org AND v.proposal_id = p_proposal AND v.supplier_payment_id IS NOT NULL AND e.created_xact_id = v_xact AND e.created_xact_start = pg_catalog.now())
+      WHERE v.org_id = p_org AND v.proposal_id = p_proposal AND v.supplier_payment_id IS NOT NULL AND e.created_xact_id = v_xact AND e.created_xact_start = pg_catalog.now()
+        -- ... and the payment it names became `paid` in this same transaction (the handler moves it right after the voucher), so a settlement can never execute and leave its payment unpaid.
+        AND EXISTS (SELECT 1 FROM crove_finance.supplier_payment sp WHERE sp.org_id = v.org_id AND sp.id = v.supplier_payment_id AND sp.status = 'paid' AND sp.paid_at = pg_catalog.now()))
     WHEN p_command IN ('finance.journal_voucher.record', 'finance.closing.record', 'finance.depreciation.record') THEN EXISTS (
       SELECT 1 FROM crove_finance.journal_voucher v
       JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id
@@ -246,6 +247,11 @@ BEGIN
   RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION crove_finance.supplier_payment_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+
+-- Payments handed over before this column existed: the only day recorded is the latest file's (the export marker has no history of earlier handovers; it shipped in 20270116100000 the same day as this, so a
+-- payment with a second file is not expected). If one exists, its line-date check is stricter than it needs to be and refuses (never settles wrong). Done once the guard above lets first_exported_at move,
+-- which the guard of 20270116100000 did not.
+UPDATE crove_finance.supplier_payment SET first_exported_at = exported_at WHERE first_exported_at IS NULL AND exported_at IS NOT NULL;
 
 -- The settlement's own transaction may move the payment it settles. The guard still decides what the move may be (to paid only, with the file, the hold, the account and the invoice checked).
 DROP POLICY IF EXISTS supplier_payment_update ON crove_finance.supplier_payment;
