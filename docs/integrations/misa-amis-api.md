@@ -42,4 +42,5 @@ Checked by the live sandbox check after the credential handover, never assumed t
 - Order by something other than arrival: a signed `data` can be replayed later with no time or nonce in it, so an old
   `success: false` replayed after a successful push must not move a request back. Moves are forward only, keyed by
   `org_refid`, with `session_id` kept to tell results apart.
-- Treat a result with `batchError` set and no results as a failure of the batch, not as nothing to report.
+- `batchError` is not signed: it never moves the state of a request. At most it is a reason to poll for the signed results.
+- `errorMessage` and `sessionId` are MISA's untrusted text: escape them on display and keep them out of logs. Look up push rows by `org_refid` only.

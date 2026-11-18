@@ -51,6 +51,15 @@ describe('readCallback', () => {
     expect(readCallback(envelope(signed, { signature: signCallbackData(signed, CLIENT).toUpperCase() }), CLIENT)).toMatchObject({ ok: true });
   });
 
+  it('refuses a `data` with an unpaired surrogate, which would hash as the replacement character', () => {
+    const lone = `[{"org_refid":"${REF}","success":true,"voucher_type":1,"error_message":"\ud800"}]`.replace('\\ud800', '\ud800');
+    expect('\ud800'.isWellFormed()).toBe(false);
+    const bad = `["\ud800"]`;
+    expect(bad.isWellFormed()).toBe(false);
+    expect(readCallback(envelope(bad), CLIENT)).toEqual({ ok: false, reason: 'malformed' });
+    expect(lone.length).toBeGreaterThan(0);
+  });
+
   it('checks app_id against the ClientID once the signature is good', () => {
     expect(readCallback(envelope(JSON.stringify([entry()]), { app_id: 'another' }), CLIENT)).toEqual({ ok: false, reason: 'app_id' });
     expect(readCallback(envelope(JSON.stringify([entry()]), { app_id: undefined }), CLIENT)).toEqual({ ok: false, reason: 'app_id' });

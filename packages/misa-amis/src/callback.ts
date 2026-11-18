@@ -22,7 +22,7 @@ export interface AmisCallback {
   dataType: number;
   // As the (unsigned) envelope says: a hint to compare with the stored connection, never a fact.
   orgCompanyCode: string;
-  // The envelope's own error_code when it says the whole batch failed (success false) and the code is a plain word: not signed either, so only a hint. A caller that sees results: [] with this set did not get "nothing to report".
+  // The envelope's own error_code when it says the whole batch failed (success false) and the code is a plain word. NOT signed, so it never moves the state of a request: at most it is a reason to poll for the signed results.
   batchError: string | null;
   results: AmisCallbackResult[];
 }
@@ -83,7 +83,8 @@ export function readCallback(rawBody: string, clientId: string): AmisCallbackRea
   // Only these two are read before the signature is known to be good.
   const signature = fields.signature;
   const data = fields.data;
-  if (typeof signature !== 'string' || typeof data !== 'string' || data === '') return { ok: false, reason: 'malformed' };
+  // A `data` with an unpaired surrogate is refused: it would be hashed as the replacement character, the same as a text that really holds one.
+  if (typeof signature !== 'string' || typeof data !== 'string' || data === '' || !data.isWellFormed()) return { ok: false, reason: 'malformed' };
   if (!sameText(signature.toLowerCase(), signCallbackData(data, clientId))) return { ok: false, reason: 'signature' };
   if (typeof fields.app_id !== 'string' || !sameText(fields.app_id, clientId)) return { ok: false, reason: 'app_id' };
   const orgCompanyCode = fields.org_company_code;

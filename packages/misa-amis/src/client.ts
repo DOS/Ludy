@@ -26,6 +26,7 @@ export interface AmisResponse {
   body: string;
 }
 // Rejects with an AmisError: `unreachable` when nothing was sent, `timeout` or `lost_answer` when the request may have reached MISA. Any other rejection is taken as `unreachable`.
+// The transport MUST cap the size of the response it reads (a byte cap and a timeout, as the kernel's guarded egress does): the adapter parses what it is given in full.
 export type AmisTransport = (request: AmisRequest) => Promise<AmisResponse>;
 
 /** One customer's connection: the access code they made in AMIS and the code Ludy gave their data (org_company_code, free text on MISA's side). */
@@ -83,6 +84,7 @@ export interface AmisClient {
 export const AMIS_TOKEN_TTL_MS = 30 * 60 * 1000;
 const PAGE_MAX = 1000;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const TOKEN = /^[\x21-\x7e]{1,4096}$/;
 
 interface Answer {
   data: unknown;
@@ -141,7 +143,8 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
     }
     const data = answer.data;
     const token = typeof data === 'object' && data !== null ? (data as Record<string, unknown>).access_token : undefined;
-    if (typeof token !== 'string' || token === '') throw new AmisError('invalid_response');
+    // Goes into a header: printable ASCII only, so a CR or LF cannot split the header.
+    if (typeof token !== 'string' || !TOKEN.test(token)) throw new AmisError('invalid_response');
     return token;
   }
 
@@ -149,6 +152,8 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
     const key = keyOf(c);
     const hit = tokens.get(key);
     if (hit && now() < hit.until) return hit.token;
+    // Expired tokens do not stay in memory.
+    for (const [k, v] of tokens) if (now() >= v.until) tokens.delete(k);
     const inFlight = pending.get(key);
     if (inFlight) return inFlight;
     const request = fetchToken(c)
@@ -216,7 +221,10 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
         last_sync_time: query.lastSyncTime ?? null,
         branch_id: query.branchId ?? null,
       });
-      return records(asList(data));
+      const rows = records(asList(data));
+      // More rows than were asked for is not MISA's documented answer.
+      if (rows.length > query.take) throw new AmisError('invalid_response');
+      return rows;
     },
 
     async saveDictionary(c, dataType, rows) {

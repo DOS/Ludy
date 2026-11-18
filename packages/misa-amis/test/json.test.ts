@@ -29,6 +29,16 @@ describe('an AmisNumber built by hand', () => {
     const forged = amisNumber('1');
     (forged as { text: string }).text = '1}';
     expect(() => toJsonText({ amount: forged })).toThrow(expect.objectContaining({ reason: 'bad_amount' }));
+    // A getter that answers a good text to the first read and an injecting one to the next: the text is read once, so it is the good one or nothing.
+    const sly = amisNumber('1');
+    let reads = 0;
+    Object.defineProperty(sly, 'text', { get: () => (reads++ === 0 ? '1' : '1,"org_company_code":"other"') });
+    expect(toJsonText({ amount: sly })).toBe('{"amount":1}');
+    expect(reads).toBe(1);
+    reads = 0;
+    const trap = new Proxy(amisNumber('1'), { get: (target, key) => (key === 'text' ? (reads++ % 2 === 0 ? '1' : '1}') : Reflect.get(target, key)) });
+    expect(toJsonText({ amount: trap })).toBe('{"amount":1}');
+    expect(reads).toBe(1);
     const hollow = Object.create(AmisNumber.prototype) as AmisNumber;
     expect(() => toJsonText([hollow])).toThrow(expect.objectContaining({ reason: 'bad_amount' }));
     expect(toJsonText({ amount: new AmisNumber('12.5') })).toBe('{"amount":12.5}');

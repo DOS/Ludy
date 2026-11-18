@@ -30,9 +30,11 @@ const MAX_DEPTH = 32;
 export function toJsonText(value: unknown, depth = 0): string {
   if (depth > MAX_DEPTH) throw new AmisError('invalid_request', { reason: 'bad_value' });
   if (value instanceof AmisNumber) {
-    // Checked again here: the constructor takes any string and `text` is only read-only to the compiler, so the factory is not the only way in.
-    if (typeof value.text !== 'string' || !DECIMAL.test(value.text)) throw new AmisError('invalid_request', { reason: 'bad_amount' });
-    return value.text;
+    // Checked again here: the constructor takes any string and `text` is only read-only to the compiler, so the factory is not the only way in. Read ONCE: a getter or a Proxy could answer one text to
+    // the check and another to the write.
+    const text: unknown = value.text;
+    if (typeof text !== 'string' || !DECIMAL.test(text)) throw new AmisError('invalid_request', { reason: 'bad_amount' });
+    return text;
   }
   if (Array.isArray(value)) {
     const items: string[] = [];

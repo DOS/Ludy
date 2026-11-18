@@ -285,6 +285,17 @@ describe('what goes wrong', () => {
     }
   });
 
+  it('is `invalid_response` when the token could split a header, and when a catalogue answer holds more rows than asked for', async () => {
+    const { fake, client } = setup();
+    for (const token of ['abc\r\nX-Evil: 1', 'a b', 'tok\u00e9n', 'x'.repeat(4097)]) {
+      fake.rawNext(200, JSON.stringify({ Success: true, Data: { access_token: token } }));
+      expect(await fails(client.companyInfo(conn)), JSON.stringify(token).slice(0, 20)).toMatchObject({ kind: 'invalid_response' });
+    }
+    await client.companyInfo(conn);
+    fake.rawNext(200, JSON.stringify({ Success: true, Data: [{ a: 1 }, { a: 2 }, { a: 3 }] }));
+    expect(await fails(client.dictionary(conn, { dataType: AMIS_DICTIONARIES.account, skip: 0, take: 2 }))).toMatchObject({ kind: 'invalid_response' });
+  });
+
   it('is `invalid_response` when the token answer carries no token', async () => {
     const { fake, client } = setup();
     fake.rawNext(200, JSON.stringify({ Success: true, Data: { access_token: '' } }));
