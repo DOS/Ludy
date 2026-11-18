@@ -472,7 +472,7 @@ test('turns on evergreen reposting for a published post', async ({ page }) => {
     .toEqual([{ evergreen_days: null }]);
 });
 
-test('shows the latest metrics of a published channel on the post and in the Metrics tab, and in a client report', async ({ page, browser }) => {
+test('shows the latest metrics of a published channel on the post and in the report, and in a client report', async ({ page, browser }) => {
   await signInNewUser(page, newEmail('social-metrics'));
   await createOrg(page, 'Công ty Số Liệu');
   const channel = 'Trang Số Liệu';
@@ -500,10 +500,13 @@ test('shows the latest metrics of a published channel on the post and in the Met
   await expect(card.getByRole('term').filter({ hasText: 'Lượt lưu' })).toHaveCount(0);
   await expect(card.getByText(/^Số liệu lúc/)).toBeVisible();
 
-  // The Metrics tab: the window's totals and the channel's row.
+  // The report: the window's totals and the channel's row.
+  // Posts keeps one line and a link; the figures and the report tools are in Reports > Bài đăng (#3658).
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await openTool(page, 'Số liệu');
-  const panel = page.getByRole('tabpanel');
+  await expect(page.getByTestId('report-line')).toContainText('1 bài');
+  await page.getByRole('link', { name: 'Xem báo cáo' }).click();
+  await expect(page).toHaveURL(/\/reports\?area=posts$/);
+  const panel = page.getByTestId('reports-posts');
   const row = panel.getByRole('row').filter({ has: page.getByRole('link', { name: body }) });
   await expect(row.getByRole('cell')).toHaveText([new RegExp(`^${body}`), '1.234', '56', '7', '3']);
   await expect(row).toContainText(channel);
@@ -518,8 +521,7 @@ test('shows the latest metrics of a published channel on the post and in the Met
     { channel },
   );
   await page.reload();
-  await openTool(page, 'Số liệu');
-  const growth = page.getByRole('tabpanel').locator('[data-slot="card"]').filter({ hasText: 'Tăng trưởng kênh trong 30 ngày' });
+  const growth = page.getByTestId('reports-posts').locator('[data-slot="card"]').filter({ hasText: 'Tăng trưởng kênh trong 30 ngày' });
   await expect(growth).toContainText('1.080 người theo dõi');
   await expect(growth).toContainText('+80');
 
@@ -1249,9 +1251,9 @@ test('makes a client report link without the best posts and the audience, which 
      ON CONFLICT DO NOTHING`,
     { channel },
   );
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await openTool(page, 'Số liệu');
-  const panel = page.getByRole('tabpanel');
+  // The figures and the report tools are in Reports > Bài đăng (#3658).
+  await page.goto(`/o/${new URL(page.url()).pathname.split('/')[2]}/reports?area=posts`);
+  const panel = page.getByTestId('reports-posts');
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(new Date());
   await panel.getByLabel('Từ ngày', { exact: true }).fill(today);
   await panel.getByLabel('Đến ngày', { exact: true }).fill(today);
