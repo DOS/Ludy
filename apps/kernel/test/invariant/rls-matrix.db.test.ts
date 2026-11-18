@@ -1747,25 +1747,37 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
   },
   // #3113 S1: a supplier's bank account (a party's): the number is sealed ciphertext plus a keyed hash and the last four digits. Owners and admins insert and retire it (a column grant on the
-  // status), so the update probes assign the status to itself; there is no delete grant.
+  // status), so the update probes assign the status to itself; there is no delete grant. S2 (#3699) adds a deferred constraint trigger: an account inserted or retired in a transaction has its
+  // change row in that transaction, so the account is seeded with the change row of its own creation (`complete`).
   'crove_finance.supplier_bank_account': {
     update: { set: 'status = status' },
-    make: (o) => ({
-      row: {
-        org_id: o.id,
-        id: randomUUID(),
-        party_id: o.party,
-        bank_name: 'RLS matrix bank',
-        account_holder_sealed: 'crove:s1:rls-matrix-holder',
-        number_sealed: 'crove:s1:rls-matrix',
-        number_hash: randomUUID().replaceAll('-', '').repeat(2),
-        hash_key_id: 'k1',
-        last4: '1234',
-        created_by: o.owner,
-      },
-    }),
+    make: (o) => {
+      const account = randomUUID();
+      const hash = randomUUID().replaceAll('-', '').repeat(2);
+      return {
+        row: {
+          org_id: o.id,
+          id: account,
+          party_id: o.party,
+          bank_name: 'RLS matrix bank',
+          account_holder_sealed: 'crove:s1:rls-matrix-holder',
+          number_sealed: 'crove:s1:rls-matrix',
+          number_hash: hash,
+          hash_key_id: 'k1',
+          last4: '1234',
+          created_by: o.owner,
+        },
+        complete: [
+          {
+            table: 'crove_finance.supplier_bank_account_change',
+            values: { org_id: o.id, id: randomUUID(), party_id: o.party, account_id: account, kind: 'added', new_number_hash: hash, changed_by: o.owner, step_up_at: '2026-11-18T00:00:00Z' },
+          },
+        ],
+      };
+    },
   },
-  // #3113 S1: the append-only history of a supplier's bank account changes (APPEND_ONLY); it names the account row it added, so each row seeds one.
+  // #3113 S1: the append-only history of a supplier's bank account changes (APPEND_ONLY). The row is the change that retires an account; its setup is the account and the change that added it
+  // (an account never stands without its creation row in a transaction that ends, #3699).
   'crove_finance.supplier_bank_account_change': {
     make: (o) => {
       const account = randomUUID();
@@ -1776,8 +1788,12 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
             table: 'crove_finance.supplier_bank_account',
             values: { org_id: o.id, id: account, party_id: o.party, bank_name: 'RLS matrix bank', account_holder_sealed: 'crove:s1:rls-matrix-holder', number_sealed: 'crove:s1:rls-matrix', number_hash: hash, hash_key_id: 'k1', last4: '1234', created_by: o.owner },
           },
+          {
+            table: 'crove_finance.supplier_bank_account_change',
+            values: { org_id: o.id, id: randomUUID(), party_id: o.party, account_id: account, kind: 'added', new_number_hash: hash, changed_by: o.owner, step_up_at: '2026-11-18T00:00:00Z' },
+          },
         ],
-        row: { org_id: o.id, id: randomUUID(), party_id: o.party, account_id: account, kind: 'added', new_number_hash: hash, changed_by: o.owner, step_up_at: '2026-11-18T00:00:00Z' },
+        row: { org_id: o.id, id: randomUUID(), party_id: o.party, account_id: account, kind: 'retired', old_number_hash: hash, changed_by: o.owner, step_up_at: '2026-11-18T00:00:00Z' },
       };
     },
   },
