@@ -1661,6 +1661,20 @@ export interface FinanceStockPeriodTable {
   closed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
+/** crove_finance.supplier_bank_account_change */
+export interface FinanceSupplierBankAccountChangeTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  account_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  old_number_hash: ColumnType<string | null, string | null, NotGranted>;
+  new_number_hash: ColumnType<string | null, string | null, NotGranted>;
+  changed_by: ColumnType<string | null, string | null, NotGranted>;
+  changed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  step_up_at: ColumnType<Date, Date | string, NotGranted>;
+}
+
 /** crove_finance.supplier_bank_account */
 export interface FinanceSupplierBankAccountTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -1676,20 +1690,6 @@ export interface FinanceSupplierBankAccountTable {
   retired_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
-}
-
-/** crove_finance.supplier_bank_account_change */
-export interface FinanceSupplierBankAccountChangeTable {
-  org_id: ColumnType<string, string, NotGranted>;
-  id: ColumnType<string, string | undefined, NotGranted>;
-  party_id: ColumnType<string, string, NotGranted>;
-  account_id: ColumnType<string, string, NotGranted>;
-  kind: ColumnType<string, string, NotGranted>;
-  old_number_hash: ColumnType<string | null, string | null, NotGranted>;
-  new_number_hash: ColumnType<string | null, string | null, NotGranted>;
-  changed_by: ColumnType<string | null, string | null, NotGranted>;
-  changed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
-  step_up_at: ColumnType<Date, Date | string, NotGranted>;
 }
 
 /** crove_finance.vat_return_filed */
