@@ -566,7 +566,7 @@ Components come from shadcn (base-nova style on Base UI) and are themed only thr
 
 ### 4.1 Buttons
 
-- Sizes: 28px (`sm`, toolbars and table rows), 32px (`default`, app), 36px (`lg`, forms and dialogs), 40 to 44px (marketing CTAs and touch-first screens). Hit target never below 24x24px, and under the phone breakpoint (below `md`, 768px) every button, tab and link of a screen is at least 44px high: the `Button` and `TabsTrigger` sizes carry `max-md:min-h-11` (the icon sizes `min-w-11` too), padding and height only, never the font (#3588).
+- Sizes: 28px (`sm`, toolbars and table rows), 32px (`default`, app), 36px (`lg`, forms and dialogs), 40 to 44px (marketing CTAs and touch-first screens). Hit target never below 24x24px, and under the phone breakpoint (below `md`, 768px) every button and tab (and the Home app links) is at least 44px high: the `Button` and `TabsTrigger` sizes carry `max-md:min-h-11` (the icon sizes `min-w-11` too), padding and height only, never the font (#3588).
 - Variants: `default` (primary, one per view), `outline` / `secondary`, `ghost` (toolbars), `destructive` (tinted, not solid red, unless it is the confirm step of a destructive dialog), `link`.
 - Labels are verbs in sentence case that say what happens: "Duyệt bút toán", "Xuất Excel", "Gửi lời mời". The resulting toast uses the same verb: "Đã duyệt bút toán".
 - No arrow appended by default, no gradient, no glow shadow, no scale on hover. Press feedback is the existing 1px translate.
@@ -713,7 +713,7 @@ SEO trade-off: with one URL per page, search engines see one language, Vietnames
 - Contrast: 4.5:1 for body text, 3:1 for large text, icons and meaningful borders, in both themes. Field borders are measured: `field-border` against `background`, `card` and `popover` (`packages/ui/test/field-border-contrast.test.ts`, #2114).
 - Text never sits on a pattern: on a dot-grid canvas (the landing page's org chart) a label gets the chart's own surface behind it, so its contrast is against one solid color and a dot never falls behind a letter (#1657).
 - Visible `:focus-visible` ring on every interactive element, never hidden behind sticky headers or banners (2.4.11).
-- Targets at least 24x24px (2.5.8); 44px on touch-first screens, and under the phone breakpoint on every screen: buttons, tabs, chips and links (`max-md:min-h-11`, #3588).
+- Targets at least 24x24px (2.5.8); 44px on touch-first screens, and under the phone breakpoint on every screen: buttons, tabs and chips (`max-md:min-h-11`, #3588); a plain text link is raised case by case (`PHONE_TARGET`).
 - Semantic landmarks and heading order; icon-only buttons have `aria-label`; tables use real `<table>` markup.
 - Every screen has its own tab title "<screen> · <brand>" (the `PageHeader` title, or `ScreenTitle` where there is none), the first Tab stop of the signed-in shell is a "Skip to content" link that focuses `<main>`, and a navigation that changes the path moves the focus to the new screen's heading and names the screen in a polite live region, while a search-param change, the first load and back or forward do not move it (WCAG 2.4.1, 2.4.2, 2.4.3; #2115).
 - Color is never the only signal (chips have text, charts have labels).
