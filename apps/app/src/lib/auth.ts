@@ -14,6 +14,8 @@ export interface PublicConfig {
   hostedLogin?: HostedLoginConfig | null;
   aiEnabled: boolean;
   inboundEnabled: boolean;
+  // The server can verify who sent an email (INBOUND_AUTHSERV_ID, #2439); absent from an older kernel: it cannot, and the Inbox shows no "sender not confirmed" mark (#3636).
+  emailSenderCheck?: boolean;
   // The server mails invites (SMTP configured).
   mailEnabled: boolean;
   // The modules this deployment runs (CROVE_MODULES); kernel is always one of them.
@@ -62,6 +64,11 @@ export async function loadConfig(): Promise<PublicConfig> {
   if (!response.ok) throw new ClientError('common.configLoadFailed', (t) => t('common.configLoadFailed'));
   config = (await response.json()) as PublicConfig;
   return config;
+}
+
+// Whether the Inbox may warn that an email's sender is not confirmed: only a deployment that can check senders (#3636). False before the config is loaded.
+export function senderCheckEnabled(): boolean {
+  return config?.emailSenderCheck === true;
 }
 
 export function getConfig(): PublicConfig {

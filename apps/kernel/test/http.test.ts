@@ -375,6 +375,28 @@ describe('configuration guards', () => {
     expect(await config({ SUPPORT_URL: 'mailto:support@example.com' })).toBe('mailto:support@example.com');
   });
 
+  // #3636: the Inbox warns that an email's sender is not confirmed only where the deployment can check senders, so /api/config says whether it can: true only with
+  // INBOUND_AUTHSERV_ID, the shipped default (unset) is false. It is a flag; the server's name stays on the server.
+  it('says through /api/config whether the deployment can verify email senders, without the server name', async () => {
+    const read = async (env: Record<string, string>) => {
+      const app = createHttpApp({
+        config: loadConfig({ ...base, WEB_DIST: '/nonexistent', ...env }),
+        runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
+        store: {} as BlobStore,
+        authenticate: async () => {
+          throw new Error('not used');
+        },
+        pool: {} as pg.Pool,
+        aiEnabled: false,
+      });
+      return (await app.request('/api/config')).text();
+    };
+    expect(JSON.parse(await read({})).emailSenderCheck).toBe(false);
+    const on = await read({ INBOUND_AUTHSERV_ID: 'mx.example.com' });
+    expect(JSON.parse(on).emailSenderCheck).toBe(true);
+    expect(on).not.toContain('mx.example.com');
+  });
+
   // #2704: the sign-in buttons the app shows besides email and password come from AUTH_OAUTH_PROVIDERS.
   it('hands the sign-in provider ids to the app through /api/config, or none', async () => {
     const providers = async (env: Record<string, string>) => {
