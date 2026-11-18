@@ -17,7 +17,7 @@ test('an agency sees each client’s Social figures on the overview and opens th
     await page.getByLabel('Tên kênh thử').fill('Fanpage An Bình');
     await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
     await expect(page.getByText('Fanpage An Bình').first()).toBeVisible();
-    await page.getByRole('link', { name: 'Quay lại' }).click();
+    await page.getByRole('link', { name: 'Về Bài đăng' }).click();
     await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill('Khuyến mãi cuối tuần của An Bình');
     await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
