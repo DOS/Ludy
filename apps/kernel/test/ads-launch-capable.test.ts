@@ -22,6 +22,12 @@ describe('adLaunchCapable (#3675)', () => {
     expect(adLaunchCapable(sandbox, 'meta_ads')).toBe(false);
   });
 
+  it('is false for every account, known or not, when the deployment has no launch writer at all', () => {
+    expect(adLaunchCapable([], null)).toBe(false);
+    expect(adLaunchCapable([], 'meta_ads')).toBe(false);
+    expect(adLaunchCapable(providersOf({}), null)).toBe(false);
+  });
+
   it('claims nothing when the account is not known to the caller, and ignores a provider id that is not a write provider', () => {
     expect(adLaunchCapable(['sandboxwrite_ads'], null)).toBeNull();
     expect(adLaunchCapable(['sandbox_ads', 'nonsense'], 'sandbox_ads')).toBe(false);

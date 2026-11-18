@@ -8,6 +8,8 @@ import { READ_PROVIDER_OF_WRITE, isAdWriteProviderId } from '@crove/kernel-contr
 // `launchProviders`: the provider ids of the write connections this deployment has a launch writer for. `provider`: the ad account's own (read) provider id.
 // null: the account's provider is unknown to the caller (an entity-limited approver does not read the account), so nothing is claimed either way.
 export function adLaunchCapable(launchProviders: readonly string[], provider: string | null): boolean | null {
+  // No launch writer at all (the default, and the only thing a public deployment can have): no account can launch, whoever asks and whether or not they read the account.
+  if (launchProviders.length === 0) return false;
   if (provider === null) return null;
   return launchProviders.some((writeProvider) => isAdWriteProviderId(writeProvider) && READ_PROVIDER_OF_WRITE[writeProvider] === provider);
 }
