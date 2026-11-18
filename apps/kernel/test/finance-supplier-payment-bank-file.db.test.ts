@@ -327,8 +327,11 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     expect((await markers(o, first.id))?.export_count).toBe(2);
     expect(await handed()).toBe(rowsBefore + 1);
     const audit = (await auditRows(o, 'finance.supplier_payment.bank_file.export')).filter((r) => JSON.stringify(r).includes('"currency"'));
-    // One row says it was the first file, one that it was confirmed again (and for how many payments).
-    expect(audit.map((r) => JSON.stringify((r.facts as { detail: unknown }).detail)).sort()).toEqual(['{"rows":1,"again":0,"currency":"VND","reexport":false}', '{"rows":1,"again":1,"currency":"VND","reexport":true}'].sort());
+    // One row says it was the first file, one that it was confirmed again, and both name the payment (its id only).
+    const details = audit.map((r) => (r.facts as { detail: { rows: number; currency: string; reexport: boolean; paymentIds: string[]; again: string[] } }).detail);
+    expect(details.map((d) => d.paymentIds)).toEqual([[first.id], [first.id]]);
+    expect(details.find((d) => !d.reexport)?.again).toEqual([]);
+    expect(details.find((d) => d.reexport)).toMatchObject({ rows: 1, currency: 'VND', again: [first.id] });
   });
 
   it('lets only one of two racing requests hand a payment over for the first time, and refuses a payment that is no longer approved', async () => {

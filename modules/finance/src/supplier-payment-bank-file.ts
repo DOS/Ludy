@@ -173,7 +173,8 @@ export const supplierPaymentBankFileExport = defineCommand({
       if (why.voided) throw new DomainError('SUPPLIER_PAYMENT_DOCUMENT', 409, 'Hóa đơn của một khoản chi đã bị hủy; không xuất được file', { paymentId: missing });
       throw new DomainError('SUPPLIER_PAYMENT_NOT_APPROVED', 409, 'Số khoản chi không khớp danh sách đã xuất', { paymentId: missing });
     }
-    ctx.audit({ rows: input.rows, currency: input.currency, reexport, again: rows.filter((r) => r.before > 0).length });
+    // The payments the file held (ids, never a name, a number or an amount) and those among them that had a file before, so the row says which payments one file held even after a confirmed second file moves the marker.
+    ctx.audit({ rows: input.rows, currency: input.currency, reexport, paymentIds: ids, again: rows.filter((r) => r.before > 0).map((r) => r.id).sort() });
     return { rows: input.rows };
   },
 });
