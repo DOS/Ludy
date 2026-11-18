@@ -65,16 +65,18 @@ export function ContactSuggestions({ conversationId, lastSeq }: { conversationId
       <ul className="divide-y divide-border rounded-md border border-border">
         {candidates.map((c) => (
           <li key={c.partyId} className="space-y-1.5 px-2 py-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <span className="min-w-0">
-                <span className="block truncate text-foreground">{c.name}</span>
+            <div className="space-y-1.5">
+              <span className="block min-w-0">
+                <span className="block break-words text-foreground">{c.name}</span>
                 <Badge variant="outline">{t(`reason.${c.reason}`)}</Badge>
               </span>
-              <span className="flex shrink-0 gap-1">
+              {/* On their own row, wrapping: the panel is 16rem wide and a long company name must not push the buttons out of it. */}
+              <span className="flex flex-wrap gap-1">
                 <Button
                   type="button"
                   size="sm"
                   variant="outline"
+                  className="h-auto min-h-8 max-w-full whitespace-normal break-words text-left"
                   loading={link.isPending && link.variables === c.partyId}
                   data-testid="contact-suggestion-link"
                   aria-describedby={confirming === c.partyId ? `name-only-${c.partyId}` : undefined}
@@ -89,7 +91,9 @@ export function ContactSuggestions({ conversationId, lastSeq }: { conversationId
                   aria-label={t('dismissLabel', { name: c.name })}
                   data-testid="contact-suggestion-dismiss"
                   onClick={() => {
-                    setSkipped(dismissContactMatch(conversationId, c.partyId));
+                    // Added to what is on screen, not replaced by what storage returns: with storage blocked the earlier skips would come back.
+                    dismissContactMatch(conversationId, c.partyId);
+                    setSkipped((now) => [...new Set([...now, c.partyId])]);
                     setConfirming(null);
                   }}
                 >
