@@ -19,7 +19,7 @@ export function AdsProposalCard({ id, title, slug }: { id: string; title: string
   const view = useQuery(orpc.ads.proposal.queryOptions({ input: { id } }));
   const change = view.data?.change ?? null;
   const plan = useAdsPlanView(change);
-  const text = change ? adsChangeText(change, root, (amount, currency) => f.money(amount, currency)) : null;
+  const text = change ? adsChangeText(change, root, (amount, currency) => f.money(amount, currency), (day) => f.date(day)) : null;
   return (
     <Card className="block space-y-3 p-4" data-testid="ads-change">
       <p className="text-sm font-medium text-muted-foreground">{t('adsChange')}</p>

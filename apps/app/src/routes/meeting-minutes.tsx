@@ -75,7 +75,7 @@ export function MinutesSheet({ model, company, title, place, template }: { model
               <div key={s.key ?? 'all'} className="space-y-1">
                 {s.key !== null && (
                   <h3 className="font-semibold">
-                    {i + 1}. {t(`templates.sections.${template}.${s.key}` as never)}
+                    {i + 1}. {s.title ?? t(`templates.sections.${template}.${s.key}` as never)}
                   </h3>
                 )}
                 <p className="whitespace-pre-wrap">{s.text}</p>

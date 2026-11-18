@@ -5,7 +5,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { NotesPreview } from '@crove/kernel-contract';
+import type { MinutesTemplateCopy, NotesPreview } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
@@ -93,9 +93,9 @@ describe('the expansion', () => {
     },
     ...over,
   });
-  const render = (p: NotesPreview) => {
+  const render = (p: NotesPreview, copy: MinutesTemplateCopy | null = null) => {
     client.current.setQueryData(['meetings', 'results', 'enhancePreview'], p);
-    return wrap(<NotesPreviewPanel meetingId="m1" runId="r1" onCopied={() => undefined} />);
+    return wrap(<NotesPreviewPanel meetingId="m1" runId="r1" onCopied={() => undefined} minutesTemplate={copy} />);
   };
 
   it('tells the recorder\'s own lines from the lines Vy added, and gives each added line the time of its transcript line', () => {
@@ -119,6 +119,26 @@ describe('the expansion', () => {
     expect(html).toContain('2 of Vy');
     expect(html).toContain(en.meetings.results.vy.copy);
     expect(html).toContain(en.meetings.notes.copyReplaces);
+  });
+
+  // A run on an organization's template (#3578) names its sections s1, s2, ...: the headings are the titles of the meeting's copy, shown as the text they are.
+  it('heads a custom template\'s sections with the copy\'s titles as escaped text, never a message key', () => {
+    const copy: MinutesTemplateCopy = {
+      name: 'Mẫu',
+      hash: 'a'.repeat(32),
+      sections: [
+        { key: 's1', title: '<img src=x onerror=alert(1)>', hint: '' },
+        { key: 's2', title: '**bold** thật', hint: '' },
+      ],
+    };
+    const html = render(
+      preview({ template: 'custom', enhanced: { sections: [{ key: 's1', lines: [{ own: true, text: 'một', seconds: null }] }, { key: 's2', lines: [{ own: true, text: 'hai', seconds: null }] }] } }),
+      copy,
+    );
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).toContain('**bold** thật');
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('templates.sections.custom');
   });
 
   it('shows the general summary\'s one block with no heading, and no dropped note when nothing was dropped', () => {

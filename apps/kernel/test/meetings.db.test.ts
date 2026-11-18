@@ -1479,6 +1479,7 @@ suite('meetings module database integration tests (#2576)', () => {
     });
     return recordingId;
   }
+  const recordingRowCount = (connectionId: string) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.meeting_platform_recording WHERE connection_id = $1', [connectionId])).rows[0]?.n));
   const recordingRow = (id: string) =>
     admin(async (c) => (await c.query<{ status: string; meeting_id: string | null; staging_key: string | null; error_code: string | null }>('SELECT status, meeting_id, staging_key, error_code FROM crove_kernel.meeting_platform_recording WHERE id = $1', [id])).rows[0]!);
   // What the worker does: the bytes wait under the row's staging key and the row becomes staged.
@@ -1678,6 +1679,102 @@ suite('meetings module database integration tests (#2576)', () => {
     const liveMeeting = await startImport('recorder', { recordingId: live });
     expect(await refusedWith(startImport('recorder', { recordingId: live }))).toBe('MEETING_PLATFORM_STATE');
     expect(await meetingExists(liveMeeting.meetingId)).toBe(true);
+  });
+
+  it('31c. C1: dismissing a failed recording, or disconnecting its platform, removes the empty meeting of the failed try by the retry\'s rule, and only that (#3587)', async () => {
+    const fail = (id: string) => admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', staging_key = NULL, error_code = 'timeout' WHERE id = $1`, [id]));
+    const dismiss = (who: string, recordingId: string) => runtime.execute('kernel.meeting_platform.recording.dismiss', { recordingId }, { actor: asUser(who), orgId });
+    const discard = (who: string, input: Record<string, unknown>) => runtime.execute<{ removed: number }>('meetings.import.discard_empty', input, { actor: asUser(who), orgId });
+    const connectionOf = (recordingId: string) => admin(async (c) => (await c.query<{ connection_id: string }>('SELECT connection_id FROM crove_kernel.meeting_platform_recording WHERE id = $1', [recordingId])).rows[0]!.connection_id);
+    const note = (meetingId: string) => admin((c) => c.query(`INSERT INTO crove_meetings.meeting_note (org_id, meeting_id, body) VALUES ($1, $2, 'Ghi chú của tôi')`, [orgId, meetingId]));
+
+    // A failed try with an empty meeting: dismissed, then cleaned; the recording row stays as dismissed, the meeting is gone, the removal is audited as the recorder's own delete.
+    const empty = await suggest('recorder');
+    const emptyMeeting = (await startImport('recorder', { recordingId: empty })).meetingId;
+    await fail(empty);
+    await dismiss('recorder', empty);
+    expect(await meetingExists(emptyMeeting), 'dismissing alone leaves the meeting').toBe(true);
+    expect((await discard('recorder', { recordingId: empty })).removed).toBe(1);
+    expect(await meetingExists(emptyMeeting)).toBe(false);
+    expect(await recordingRow(empty)).toMatchObject({ status: 'dismissed' });
+    const audits = await admin(async (c) => ({
+      deleted: (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.delete' AND target_id = $2 AND outcome = 'ok'`, [orgId, emptyMeeting])).rowCount,
+      detail: (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.import.discard_empty' AND detail->>'recordingId' = $2`, [orgId, empty])).rows[0]?.detail,
+    }));
+    expect(audits.deleted).toBe(1);
+    expect(audits.detail).toMatchObject({ recordingId: empty, connectionId: null, removed: 1 });
+    // A second call is a no-op.
+    expect((await discard('recorder', { recordingId: empty })).removed).toBe(0);
+
+    // A meeting that holds a note, one the member edited, another member's, and a recording that is not failed or dismissed are all kept.
+    const withNote = await suggest('recorder');
+    const noteMeeting = (await startImport('recorder', { recordingId: withNote })).meetingId;
+    await note(noteMeeting);
+    await fail(withNote);
+    await dismiss('recorder', withNote);
+    expect((await discard('recorder', { recordingId: withNote })).removed).toBe(0);
+    expect(await meetingExists(noteMeeting)).toBe(true);
+    const edited = await suggest('recorder');
+    const editedMeeting = (await startImport('recorder', { recordingId: edited })).meetingId;
+    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET title = 'Tên tôi sửa', updated_at = created_at + interval '1 second' WHERE id = $1`, [editedMeeting]));
+    await fail(edited);
+    await dismiss('recorder', edited);
+    expect((await discard('recorder', { recordingId: edited })).removed).toBe(0);
+    expect(await meetingExists(editedMeeting)).toBe(true);
+    const theirs = String((await rpc('meetings/create', 'otherMember', { title: 'Của người khác', consentMethod: 'told_at_start' })).body.meetingId);
+    const pointing = await suggest('recorder');
+    await admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'failed', meeting_id = $2, error_code = 'timeout' WHERE id = $1`, [pointing, theirs]));
+    await dismiss('recorder', pointing);
+    expect((await discard('recorder', { recordingId: pointing })).removed).toBe(0);
+    expect(await meetingExists(theirs)).toBe(true);
+    const live = await suggest('recorder');
+    const liveMeeting = (await startImport('recorder', { recordingId: live })).meetingId;
+    expect((await discard('recorder', { recordingId: live })).removed, 'an importing recording is not cleaned').toBe(0);
+    expect(await meetingExists(liveMeeting)).toBe(true);
+
+    // A recording that was only suggested has no meeting: nothing to clean, no error.
+    const plain = await suggest('recorder');
+    expect((await discard('recorder', { recordingId: plain })).removed).toBe(0);
+
+    // The shape of the request and who may ask: exactly one of the two ids, a recording that is not the member's is not found, a viewer is refused.
+    expect(await refusedWith(discard('recorder', {}))).not.toBeNull();
+    expect(await refusedWith(discard('recorder', { recordingId: empty, connectionId: await connectionOf(empty) }))).not.toBeNull();
+    expect(await refusedWith(discard('otherMember', { recordingId: withNote }))).toBe('MEETING_PLATFORM_NOT_FOUND');
+    expect(await refusedWith(discard('viewer', { recordingId: withNote }))).not.toBeNull();
+    // Another member's connection id removes nothing of the recorder's, and the answer says so without saying more.
+    const foreign = await suggest('recorder');
+    const foreignMeeting = (await startImport('recorder', { recordingId: foreign })).meetingId;
+    await fail(foreign);
+    expect((await discard('otherMember', { connectionId: await connectionOf(foreign) })).removed).toBe(0);
+    expect(await meetingExists(foreignMeeting)).toBe(true);
+
+    // The disconnect: every failed or dismissed recording of the connection is looked at before its rows go with it; the empty meeting goes, the one that holds a note stays, an imported one stays.
+    const first = await suggest('recorder');
+    const connection = await connectionOf(first);
+    const second = randomUUID();
+    const third = randomUUID();
+    await admin(async (c) => {
+      for (const id of [second, third]) {
+        await c.query(
+          `INSERT INTO crove_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, title, started_at, size_bytes, has_audio) VALUES ($1, $2, $3, $4, $5, 'Họp', now() - interval '90 days', 4096, true)`,
+          [orgId, id, connection, userIds.get('recorder'), randomUUID()],
+        );
+      }
+    });
+    const firstMeeting = (await startImport('recorder', { recordingId: first })).meetingId;
+    const secondMeeting = (await startImport('recorder', { recordingId: second })).meetingId;
+    await note(secondMeeting);
+    const thirdMeeting = (await startImport('recorder', { recordingId: third })).meetingId;
+    await fail(first);
+    await fail(second);
+    await admin((c) => c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'imported', staging_key = NULL WHERE id = $1`, [third]));
+    expect((await discard('recorder', { connectionId: connection })).removed).toBe(1);
+    expect(await meetingExists(firstMeeting)).toBe(false);
+    expect(await meetingExists(secondMeeting)).toBe(true);
+    expect(await meetingExists(thirdMeeting)).toBe(true);
+    await runtime.execute('kernel.meeting_platform.disconnect', { connectionId: connection }, { actor: asUser('recorder'), orgId });
+    expect(await recordingRowCount(connection)).toBe(0);
+    expect(await meetingExists(secondMeeting), 'the meeting that holds a note outlives the connection').toBe(true);
   });
 
   it('32. C1: a meeting that is no import is untouched when its media is recorded', async () => {

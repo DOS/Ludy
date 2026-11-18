@@ -46,7 +46,7 @@ export interface BlobStore {
   delete(key: string, options?: BlobDeleteOptions): Promise<void>;
   // Starts a write whose bytes arrive in pieces and whose content address is known only at the end (sealed meeting
   // media: the key is the sha256 of the ciphertext). Memory is bounded by a piece (local disk) or a multipart part (S3),
-  // not by the blob. `directory` is the key's directory, org/<org_id>. A store without it is written through
+  // not by the blob. `directory` is the key's directory, org/<org_id> (or tmp/<org_id> for a temporary seal). A store without it is written through
   // bufferedStagedWrite, which holds the blob whole. See StagedWrite.
   beginStagedWrite?(directory: string): Promise<StagedWrite>;
   // Present when browsers transfer bytes to and from the store directly (S3 presigned URLs); absent for local
@@ -60,7 +60,7 @@ export interface BlobStore {
   // `limit` keys per call. For stores without a lifecycle rule on staging/; the worker's daily retention job calls
   // it. Absent where no staging objects exist (local disk).
   sweepStaging?(before: Date, limit: number): Promise<StagingSweep>;
-  // One page of the blobs under inbound/ or export/, in key order, starting after the key `after` (null: from the
+  // One page of the blobs under inbound/, export/ or tmp/, in key order, starting after the key `after` (null: from the
   // start) and looking at no more than `limit` keys. For the daily retention job, which decides what to delete (issue
   // #212); keys outside the prefix's pattern (temporary files, foreign objects) are never returned. Absent on a store
   // that cannot list.
@@ -83,9 +83,9 @@ export interface EvidenceHolds {
   hold(ref: BlobRef, retainUntil: Date): Promise<Date>;
 }
 
-// The prefixes the retention job sweeps: raw inbound mail and org exports. Never org/ (evidence) or staging/ (its own
+// The prefixes the retention job sweeps: raw inbound mail, org exports and the temporary sealed videos. Never org/ (evidence) or staging/ (its own
 // sweep).
-export type ListPrefix = 'inbound/' | 'export/';
+export type ListPrefix = 'inbound/' | 'export/' | 'tmp/';
 
 export interface ListedBlob {
   key: string;
@@ -293,6 +293,13 @@ export function exportKey(orgId: string, sha256: string): string {
   return `export/${orgId}/${sha256}`;
 }
 
+// The sealed ciphertext of a video uploaded as a meeting's audio (#3341, #3337): sealed under a throwaway key that exists only in the memory of one request, streamed to crove-media and deleted in
+// that request's `finally`. Content addressed like a file (the sha256 of the ciphertext) but under its own prefix per org, so a crash between the seal and the delete leaves an object the retention
+// job can find by prefix and age (it has no row and its key never looked like a recording's) and never an org/ file, even one with the same bytes. Never read after that request, never backed up.
+export function tmpKey(orgId: string, sha256: string): string {
+  return `tmp/${orgId}/${sha256}`;
+}
+
 // A part of a fiscal year's archive package (issue #922, plan §7.9): content addressed like a file, under its own
 // prefix per org and year. Never listed and never deleted by Crove: the package is kept for the legal retention period.
 export function archiveKey(orgId: string, year: number, sha256: string): string {
@@ -334,15 +341,16 @@ export function isStagingKey(key: string): boolean {
   return /^staging\/[0-9a-f]{64}$/.test(key);
 }
 
-const KEY_PATTERN = /^(?:(?:org|export|conversation)\/[0-9a-f-]{36}|archive\/[0-9a-f-]{36}\/\d{4}|inbound|staging)\/[0-9a-f]{64}$/;
+const KEY_PATTERN = /^(?:(?:org|export|conversation|tmp)\/[0-9a-f-]{36}|archive\/[0-9a-f-]{36}\/\d{4}|inbound|staging)\/[0-9a-f]{64}$/;
 // The keys a listing of each sweepable prefix returns.
 const LISTED_KEY: Record<ListPrefix, RegExp> = {
   'inbound/': /^inbound\/[0-9a-f]{64}$/,
   'export/': /^export\/[0-9a-f-]{36}\/[0-9a-f]{64}$/,
+  'tmp/': /^tmp\/[0-9a-f-]{36}\/[0-9a-f]{64}$/,
 };
 
 // Every store accepts the same keys: org/<org_id>/<sha256> (plan §7.6), export/<org_id>/<sha256>,
-// archive/<org_id>/<year>/<sha256>, conversation/<org_id>/<random id>, inbound/<random id> and staging/<random id>.
+// archive/<org_id>/<year>/<sha256>, conversation/<org_id>/<random id>, tmp/<org_id>/<sha256>, inbound/<random id> and staging/<random id>.
 export function assertStorageKey(key: string): void {
   if (!KEY_PATTERN.test(key)) throw new Error('invalid storage key');
 }
@@ -359,10 +367,10 @@ export function assertListArgs(prefix: ListPrefix, after: string | null, limit: 
   if (!Number.isInteger(limit) || limit < 1) throw new Error('invalid list limit');
 }
 
-// Org, export and archive keys are content addresses: their last segment must be the sha256 of the bytes stored under
+// Org, export, archive and tmp keys are content addresses: their last segment must be the sha256 of the bytes stored under
 // them.
 export function assertContentAddress(key: string, sha256: string): void {
-  if ((key.startsWith('org/') || key.startsWith('export/') || key.startsWith('archive/')) && !key.endsWith(`/${sha256}`)) {
+  if ((key.startsWith('org/') || key.startsWith('export/') || key.startsWith('archive/') || key.startsWith('tmp/')) && !key.endsWith(`/${sha256}`)) {
     throw new Error('storage key does not match the content sha256');
   }
 }
@@ -505,7 +513,7 @@ export class LocalDiskStore implements BlobStore {
   // filesystem without hard links the file is renamed to the key when the key is free, with the weaker guarantees put
   // documents for its own fallback. The temporary file is removed on every path; one a crash leaves is swept at startup.
   async beginStagedWrite(directory: string): Promise<StagedWrite> {
-    if (!/^(?:org|export|conversation)\/[0-9a-f-]{36}$/.test(directory)) throw new Error('invalid storage directory');
+    if (!/^(?:org|export|conversation|tmp)\/[0-9a-f-]{36}$/.test(directory)) throw new Error('invalid storage directory');
     const dir = dirname(this.path(`${directory}/${'0'.repeat(64)}`));
     await mkdir(dir, { recursive: true });
     const tmp = join(dir, `${randomBytes(32).toString('hex')}.${process.pid}.${randomUUID()}.tmp`);
@@ -629,12 +637,12 @@ export class LocalDiskStore implements BlobStore {
   }
 
   // Removes temporary files that a crashed put left behind, once they are older than maxAgeMs. It looks only where
-  // put writes (inbound/, org/<org_id>/, export/<org_id>/ and conversation/<org_id>/) and only at the names put gives its temporary files,
+  // put writes (inbound/, org/<org_id>/, export/<org_id>/, conversation/<org_id>/ and tmp/<org_id>/) and only at the names put gives its temporary files,
   // so it never touches a blob. Returns how many it removed. Called once at startup.
   async sweepTempFiles(maxAgeMs: number = STALE_TEMP_AGE_MS): Promise<number> {
     const cutoff = Date.now() - maxAgeMs;
     const dirs = [join(this.root, 'inbound')];
-    for (const top of ['org', 'export', 'conversation']) {
+    for (const top of ['org', 'export', 'conversation', 'tmp']) {
       for (const org of await entries(join(this.root, top))) {
         if (org.isDirectory() && UUID_DIR.test(org.name)) dirs.push(join(this.root, top, org.name));
       }
@@ -705,7 +713,7 @@ export class LocalDiskStore implements BlobStore {
     await rm(this.path(key), { force: true });
   }
 
-  // Lists inbound/<id> or export/<org_id>/<sha256> files in key order. The directories are walked once per call and
+  // Lists inbound/<id>, export/<org_id>/<sha256> or tmp/<org_id>/<sha256> files in key order. The directories are walked once per call and
   // only the smallest keys after `after` are kept (one more than the limit, to know whether more remain), so memory
   // stays bounded by the page however many files there are. Temporary files of put are skipped.
   async list(prefix: ListPrefix, after: string | null, limit: number): Promise<BlobListing> {
@@ -720,11 +728,13 @@ export class LocalDiskStore implements BlobStore {
     if (prefix === 'inbound/') {
       for await (const entry of walk(join(this.root, 'inbound'))) if (entry.isFile()) consider(`inbound/${entry.name}`);
     } else {
-      for await (const org of walk(join(this.root, 'export'))) {
+      // export/ and tmp/ are laid out the same way: one directory per org.
+      const top = prefix.slice(0, -1);
+      for await (const org of walk(join(this.root, top))) {
         if (!org.isDirectory() || !UUID_DIR.test(org.name)) continue;
         // Every key of a directory before the cursor's directory sorts before the cursor.
-        if (after !== null && `export/${org.name}/` < after.slice(0, 'export/'.length + 37)) continue;
-        for await (const entry of walk(join(this.root, 'export', org.name))) if (entry.isFile()) consider(`export/${org.name}/${entry.name}`);
+        if (after !== null && `${prefix}${org.name}/` < after.slice(0, prefix.length + 37)) continue;
+        for await (const entry of walk(join(this.root, top, org.name))) if (entry.isFile()) consider(`${prefix}${org.name}/${entry.name}`);
       }
     }
     page = page.sort().slice(0, keep);

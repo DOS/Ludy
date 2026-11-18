@@ -44,11 +44,12 @@ const PREFIX = '010010910';
 const VALID_TAX_CODE = `${PREFIX}${enterpriseCheckDigit(PREFIX)}`;
 const BAD_TAX_CODE = `${PREFIX}${((enterpriseCheckDigit(PREFIX) ?? 0) + 1) % 10}`;
 
-const today = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+// A fixed day inside the 8% period (and in the past), so the default 8% line below passes the rate check on any day the suite runs (#3678).
+const IN_PERIOD = '2026-11-03';
 const form = (seriesId: string | null, extra: Record<string, unknown> = {}) => ({
   draftId: null,
   legalEntityId: null,
-  date: today(),
+  date: IN_PERIOD,
   seriesId,
   buyer: { kind: 'business', partyId: null, taxCode: VALID_TAX_CODE, name: 'Công ty Mua Thử', address: '1 Phố Thử, Hà Nội', email: null },
   lines: [
@@ -492,15 +493,45 @@ suite('sales e-invoice drafts (#2500)', () => {
     expect(await ids(undefined)).toEqual([saved.id, spaced.id, consumer.id, onBranch.id].sort());
   });
 
+  it('refuses 8% outside its period by the sale date, and keeps the identity of an individual buyer masked in lists (#3678)', async () => {
+    const o = await org();
+    const [series] = (await sync(o)).series;
+    const REFUSED = 'lines.1.vatRate:LINE_VAT_RATE_REDUCED_OUTSIDE_PERIOD';
+    const eight = [{ description: 'Hàng', unit: null, quantity: '1', unitPrice: '100000', vatRate: '8%' }];
+    const codesOf = async (extra: Record<string, unknown>) => {
+      const { draftId: _draftId, legalEntityId: _entity, ...live } = form(series?.id ?? null, { lines: eight, ...extra }) as Record<string, unknown>;
+      return (await query<{ issues: Array<{ field: string; code: string }> }>(o, 'finance.einvoice_draft.check', live)).issues.map((i) => `${i.field}:${i.code}`);
+    };
+    // The last day of the period passes and the next is refused (both can also be "in the future" on the day the suite runs: that is another issue).
+    expect(await codesOf({ date: '2026-12-31' })).not.toContain(REFUSED);
+    expect(await codesOf({ date: '2027-01-01' })).toContain(REFUSED);
+    // A sale made inside the period and invoiced after it is judged on the sale date.
+    expect(await codesOf({ date: '2027-01-04', saleDate: '2026-12-30', lateReason: 'Chờ khách xác nhận' })).not.toContain(REFUSED);
+    // An individual buyer's identity: kept, masked in the list, whole in the draft, cleared for a business, refused when it is the wrong shape.
+    const individual = (identity: unknown) => ({ kind: 'individual', partyId: null, taxCode: null, name: 'Nguyễn Văn Thử', address: null, email: null, identity });
+    const saved = await execute<Draft & { buyer: { identity: { kind: string; value: string } | null } }>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: individual({ kind: 'cccd', value: ' 012345678901 ' }) }));
+    expect(saved.buyer.identity).toEqual({ kind: 'cccd', value: '012345678901' });
+    expect(saved.issues.map((i) => i.code)).not.toContain('BUYER_IDENTITY_INVALID');
+    const listed = (await query<Array<{ id: string; buyerIdentity: { kind: string; masked: string } | null }>>(o, 'finance.einvoice_draft.list', {})).find((d) => d.id === saved.id);
+    expect(listed?.buyerIdentity).toEqual({ kind: 'cccd', masked: '•••••••••901' });
+    expect(JSON.stringify(listed)).not.toContain('012345678901');
+    const business = await execute<Draft & { buyer: { identity: unknown } }>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: { ...individual({ kind: 'cccd', value: '012345678901' }), kind: 'business', taxCode: VALID_TAX_CODE, name: 'Công ty Mua', address: '1 Phố Thử' } }));
+    expect(business.buyer.identity).toBeNull();
+    const wrong = await execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: individual({ kind: 'cccd', value: '12345' }) }));
+    expect(wrong.issues.map((i) => `${i.field}:${i.code}`)).toContain('buyer.identity:BUYER_IDENTITY_INVALID');
+    const stored = await admin(async (c) => (await c.query<{ buyer_identity_kind: string | null; buyer_identity: string | null }>('SELECT buyer_identity_kind, buyer_identity FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, business.id])).rows[0]);
+    expect(stored).toEqual({ buyer_identity_kind: null, buyer_identity: null });
+  });
+
   it('audits ids and counts only, never the buyer', async () => {
     const o = await org();
     const [series] = (await sync(o)).series;
-    const saved = await execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: { kind: 'individual', partyId: null, taxCode: '012345678901', name: 'Nguyễn Văn Bí Mật', address: '9 Phố Kín', email: 'bi.mat@example.test' } }));
+    const saved = await execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: { kind: 'individual', partyId: null, taxCode: '012345678901', name: 'Nguyễn Văn Bí Mật', address: '9 Phố Kín', email: 'bi.mat@example.test', identity: { kind: 'cccd', value: '987654321098' } } }));
     await execute(o, 'finance.einvoice_draft.delete', { draftId: saved.id });
     const events = await admin(async (c) =>
       (await c.query<{ blob: string }>(`SELECT (detail::text || coalesce(target_id::text, '') || coalesce(input_sha256, '')) AS blob FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.einvoice%'`, [o.orgId])).rows.map((r) => r.blob).join(' '),
     );
-    for (const secret of ['Bí Mật', 'Phố Kín', 'bi.mat@example.test', '012345678901']) expect(events).not.toContain(secret);
-    expect(await auditOf(o, 'finance.einvoice_draft.save')).toMatchObject([{ detail: { lines: 2, total: '274000', created: true } }]);
+    for (const secret of ['Bí Mật', 'Phố Kín', 'bi.mat@example.test', '012345678901', '987654321098']) expect(events).not.toContain(secret);
+    expect(await auditOf(o, 'finance.einvoice_draft.save')).toMatchObject([{ detail: { lines: 2, total: '274000', created: true, hasIdentity: true } }]);
   });
 });

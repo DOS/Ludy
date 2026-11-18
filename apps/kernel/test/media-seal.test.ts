@@ -56,6 +56,17 @@ describe('sealMedia', () => {
     expect((await filesLeft()).filter((f) => f.endsWith('.tmp'))).toEqual([]);
   });
 
+  it('seals a temporary video under tmp/<org_id>/ and leaves org/ untouched (#3341)', async () => {
+    const plaintext = Buffer.concat([WEBM, randomBytes(5000)]);
+    const before = await filesLeft();
+    const sealed = await sealMedia({ source: onepiece(plaintext), expectedLength: plaintext.length, kind: 'video', dataKey, binding, maxBytes: 1_000_000, store, orgId, temporary: true });
+    expect(sealed.key).toBe(`tmp/${orgId}/${sealed.sha256}`);
+    expect(decryptBlobBuffer(Buffer.from(await store.get(sealed.key)), dataKey, binding).equals(plaintext)).toBe(true);
+    expect(await filesLeft()).toEqual(before);
+    expect((await readdir(join(root, 'tmp', orgId))).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+    await store.delete(sealed.key);
+  });
+
   it('takes a source in one piece and from a web stream', async () => {
     const plaintext = Buffer.concat([WEBM, randomBytes(1000)]);
     const a = await run({ source: onepiece(plaintext), length: plaintext.length });

@@ -222,6 +222,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_finance.einvoice_draft.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'crove_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'crove_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_identity': { kind: 'other', handling: 'keep_legal', reason: "The CCCD, passport number or budget-relation unit code an individual buyer gave on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)" },
   'crove_finance.einvoice_draft.buyer_email': { kind: 'email', handling: 'keep_legal', reason: 'Where the buyer asked for the invoice on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   // A sent quote (#2694): the buyer as the customer's contact was when the quote was sent. The quote is frozen once sent (a guard trigger), so the erase command cannot change it;
   // it goes with the org. The seller's own letterhead on the org's quote settings is the business's, not a person's.
@@ -347,7 +348,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_meetings.live_line.text': {
     kind: 'free_text',
     handling: 'erase',
-    reason: "A draft of what was said in a meeting being recorded, which may name or describe a person: read by its recorder alone, replaced by the transcript after the meeting and deleted with the meeting (its recorder, an owner, or the retention job)",
+    reason: "A draft of what was said in a meeting being recorded, which may name or describe a person: read by its recorder alone, replaced by the transcript after the meeting, deleted with the meeting (its recorder, an owner, or the retention job), 30 days after it was made, and 30 days after its recorder was removed (the former-member purge of their Vy data)",
   },
   // The machine translation of a meeting's summary (meetings integrations E1, issue #3184): a member's own Vy's translation of the summary, its decisions and its item titles, private to the
   // member who asked. No finder, owner or admin reads it; it goes with the meeting, with the summary it translated, and an erasure that touches the meeting DROPS it (never redacts it:
@@ -355,7 +356,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_meetings.translation.body': {
     kind: 'free_text',
     handling: 'erase',
-    reason: "A machine translation of a meeting's summary, which may name or describe a person: read by the member who asked alone, deleted with the meeting (its recorder, an owner, the retention job or the org purge) and with the summary it translated, and dropped, not redacted, by an erasure that touches the meeting",
+    reason: "A machine translation of a meeting's summary, which may name or describe a person: read by the member who asked alone, deleted with the meeting (its recorder, an owner, the retention job or the org purge), with the summary it translated, and 30 days after the member who asked was removed (the former-member purge of their Vy data), and dropped, not redacted, by an erasure that touches the meeting",
   },
   // The body of a minutes-webhook event waiting to be sent (meetings integrations A6, issue #3164): the title, summary, decisions and action items the recorder ticked, copied at publish and kept
   // only while the event waits. The database wipes it (sets it to NULL) the moment the delivery settles, and drops a waiting event, wiping it, when the meeting's title, its published summary or
@@ -856,6 +857,12 @@ export const PROJECT_WEEKLY_MAIL_DELIVERED_REASON =
   'Project weekly status mails that were already handed to their recipients (delivered, or possibly delivered) cannot be recalled: the erasure dropped the copy of the text that Crove holds, not the copies in the recipients\' mailboxes';
 export const MEMBER_VY_RESULT_REASON =
   "Answers of each member's Vy (the row count is all of the organization's, not this person's) are held privately for that member and cannot be read here; they expire on their own (at most 31 days) and are never sent anywhere";
+// What the owner is told when a member's private meeting rows are counted, not read (#3584): a member's machine translations of meetings and the live preview lines of the meetings they recorded
+// are sealed to that member, so an erasure cannot read them; they go with their meeting and, once the member is removed, in the 30-day former-member purge of their Vy data.
+export const MEMBER_TRANSLATION_REASON =
+  "Machine translations of meetings (the row count is all of the organization's, not this person's) are held privately for the member who asked and cannot be read here; they go with their meeting, and 30 days after that member is removed";
+export const MEMBER_LIVE_LINE_REASON =
+  "Live preview lines of meetings being recorded or not yet transcribed (the row count is all of the organization's, not this person's) are held privately for the recorder and cannot be read here; they are replaced by the transcript, expire 30 days after they were made, go with their meeting, and go 30 days after their recorder is removed";
 export function meetingMediaReason(kind: 'audio' | 'video', dates: readonly string[], hidden: number): string {
   const first = [...dates].sort()[0];
   const word = kind === 'audio' ? 'The audio' : 'The video';
@@ -1562,7 +1569,15 @@ export const personalDataErase = defineCommand({
     const vyResults = Number(
       (await sql<{ n: string }>`SELECT COALESCE(pg_catalog.sum(results), 0)::text AS n FROM crove_kernel.member_vy_private_counts()`.execute(ctx.trx)).rows[0]?.n ?? 0,
     );
+    const meetingCounts = (
+      await sql<{ translations: string; live_lines: string }>`SELECT COALESCE(pg_catalog.sum(translations), 0)::text AS translations, COALESCE(pg_catalog.sum(live_lines), 0)::text AS live_lines FROM crove_meetings.member_private_counts()`.execute(ctx.trx)
+    ).rows[0];
     if (vyResults > 0) kept.set('crove_kernel.member_vy_result.body', { column: 'crove_kernel.member_vy_result.body', rows: vyResults, reason: MEMBER_VY_RESULT_REASON });
+    // A member's translations of meetings and the preview lines of the meetings they recorded (#3584): private to that member, counted per org as the results are, never read.
+    const vyTranslations = Number(meetingCounts?.translations ?? 0);
+    if (vyTranslations > 0) kept.set('crove_meetings.translation.body', { column: 'crove_meetings.translation.body', rows: vyTranslations, reason: MEMBER_TRANSLATION_REASON });
+    const vyLiveLines = Number(meetingCounts?.live_lines ?? 0);
+    if (vyLiveLines > 0) kept.set('crove_meetings.live_line.text', { column: 'crove_meetings.live_line.text', rows: vyLiveLines, reason: MEMBER_LIVE_LINE_REASON });
     // Private items no notice named: counted, never listed (the finder's privateItems after the erasure).
     if (untold.notes > 0) kept.set('crove_notes.note', { column: 'crove_notes.note', rows: untold.notes, reason: UNTOLD_PRIVATE_REASON });
     if (untold.todos > 0) kept.set('crove_notes.todo', { column: 'crove_notes.todo', rows: untold.todos, reason: UNTOLD_PRIVATE_REASON });

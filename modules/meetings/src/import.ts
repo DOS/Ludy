@@ -11,7 +11,7 @@
 //   (`kernel-meeting-import-sweep handler`, apps/kernel/test/invariant/job-egress.test.ts) is justified by this command.
 // - The bytes then wait in staging; the member's own request claims, seals and records them through POST /api/meetings/:id/media, so the sealing code is the one an upload uses.
 // - No AI part: the transcript and minutes of the imported meeting are the ordinary ones, started by the member. Audit rows hold ids and the provider, never a title or a platform text.
-import { zMeetingImportStart, type MeetingLanguage } from '@crove/kernel-contract';
+import { zMeetingImportDiscarded, zMeetingImportDiscardEmpty, zMeetingImportStart, type MeetingLanguage } from '@crove/kernel-contract';
 import { DomainError, defineCommand, newStagingKey, type CommandContext } from '@crove/kernel-runtime';
 import { sql } from 'kysely';
 import { createMeetingRow } from './meeting-core.ts';
@@ -143,4 +143,48 @@ export const meetingImportStart = defineCommand({
   },
 });
 
-export const importCommands = [meetingImportStart];
+// The same clean-up as a retry, for the two paths that leave a failed try's empty meeting in the list for good (#3587): the member dismisses a failed recording, or disconnects the platform that listed
+// it (its recording rows go with the connection, so the app asks first). The kernel commands cannot reach a meeting, so the app calls this one beside them. Only the member's own failed or dismissed
+// recordings are looked at, and each meeting passes the retry's test (own, never edited, nothing hanging off it, the row locked first) before the recorder's own delete path removes it; a meeting that
+// holds anything, was edited, is not theirs or is already gone is left alone, with no error. The recording row itself is the kernel's and is not touched here. Nothing here reads a platform or a title.
+// Limits, by decision: the app calls it as a best-effort second step (a failure of it never undoes the dismissal or blocks the disconnect), so a failed call leaves the empty meeting, and the kernel's
+// sweep drops a dismissed row after 14 days; it does not run while the Meetings app is off (unlike the delete it uses), which the app-gate invariant would have to list; and the app asks before a
+// disconnect that a busy connection may still refuse, in which case the failed tries' empty meetings are already gone and their rows keep a pointer to nothing, which a retry treats as gone.
+export const meetingImportDiscardEmpty = defineCommand({
+  name: 'meetings.import.discard_empty',
+  input: zMeetingImportDiscardEmpty,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ROLES,
+  target: (input) => (input.recordingId !== undefined ? { type: 'kernel.meeting_platform_recording', id: input.recordingId } : { type: 'kernel.meeting_platform_connection', id: input.connectionId as string }),
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới dọn được bản ghi đã nhập');
+    const userId = ctx.actor.userId;
+    let q = ctx.trx
+      .selectFrom('crove_kernel.meeting_platform_recording')
+      .select(['id', 'meeting_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('user_id', '=', userId)
+      .where('status', 'in', ['failed', 'dismissed'])
+      .where('meeting_id', 'is not', null)
+      .orderBy('id');
+    q = input.recordingId !== undefined ? q.where('id', '=', input.recordingId) : q.where('connection_id', '=', input.connectionId as string);
+    const rows = await q.execute();
+    if (input.recordingId !== undefined && rows.length === 0) {
+      // A recording that is not theirs or not there is not found; one that is neither failed nor dismissed has nothing to clean.
+      const own = await readOwnRecording(ctx.trx, ctx.orgId, userId, input.recordingId);
+      if (!own) throw new DomainError('MEETING_PLATFORM_NOT_FOUND', 404, 'Không tìm thấy bản ghi này');
+    }
+    const meetingIds = [...new Set(rows.flatMap((r) => (r.meeting_id === null ? [] : [r.meeting_id])))];
+    let removed = 0;
+    for (const meetingId of meetingIds) {
+      if (!(await isEmptyOwnMeeting(ctx.trx, ctx.orgId, userId, meetingId))) continue;
+      await ctx.run('meetings.meeting.delete', { meetingId });
+      removed += 1;
+    }
+    ctx.audit({ recordingId: input.recordingId ?? null, connectionId: input.connectionId ?? null, removed });
+    return zMeetingImportDiscarded.parse({ removed });
+  },
+});
+
+export const importCommands = [meetingImportStart, meetingImportDiscardEmpty];

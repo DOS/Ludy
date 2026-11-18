@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type MeetingSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
+import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type MeetingSummaryTemplate, type MeetingVisibility, type MinutesTemplateCopy } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
@@ -36,24 +36,42 @@ const refresh = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.key() });
 };
 
-// The recorder picks the minutes template of their meeting (A4, #3162): the sections Vy fills and the sections they type under. The kernel keeps only the code.
-function TemplatePicker({ meetingId, template }: { meetingId: string; template: MeetingSummaryTemplate }) {
+// The recorder picks the minutes template of their meeting (A4, #3162): the sections Vy fills and the sections they type under. The five built-in ones, then the templates the org wrote
+// (#3578), listed by name. Picking an org template makes the meeting its own copy of it, so a later edit or archive of the template changes nothing here; picking the same one again takes
+// its current sections. The meeting's present copy, when it is one, is the selected option under its own name.
+const CURRENT_COPY = 'current-copy';
+export function TemplatePicker({ meetingId, template, copy }: { meetingId: string; template: MeetingSummaryTemplate; copy: MinutesTemplateCopy | null }) {
   const t = useTranslations('meetings');
+  const org = useQuery(orpc.meetings.template.list.queryOptions({ input: {} }));
+  const own = (org.data?.templates ?? []).filter((x) => !x.archived);
   const pick = useMutation({
-    mutationFn: (summaryTemplate: MeetingSummaryTemplate) => orpc.meetings.setTemplate.call({ meetingId, summaryTemplate }),
+    mutationFn: (value: string) =>
+      value.startsWith('org:')
+        ? orpc.meetings.setTemplate.call({ meetingId, summaryTemplate: 'custom', templateId: value.slice('org:'.length) })
+        : orpc.meetings.setTemplate.call({ meetingId, summaryTemplate: value as Exclude<MeetingSummaryTemplate, 'custom'> }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.get.key() });
     },
   });
+  // Code without a copy treats a custom meeting as the general summary (the contract), so that is what the select shows then.
+  const current = template === 'custom' ? (copy ? CURRENT_COPY : 'general') : template;
   return (
     <div className="space-y-1" data-testid="template-picker">
       <label htmlFor="minutes-template" className="text-xs font-medium text-muted-foreground">
         {t('templates.label')}
       </label>
-      <NativeSelect id="minutes-template" value={template} disabled={pick.isPending} onChange={(e) => pick.mutate(e.target.value as MeetingSummaryTemplate)}>
+      <NativeSelect id="minutes-template" value={current} disabled={pick.isPending} onChange={(e) => e.target.value !== CURRENT_COPY && pick.mutate(e.target.value)}>
         {MEETING_SUMMARY_TEMPLATES.map((code) => (
           <NativeSelectOption key={code} value={code}>
             {t(`templates.names.${code}`)}
+          </NativeSelectOption>
+        ))}
+        {template === 'custom' && copy && (
+          <NativeSelectOption value={CURRENT_COPY}>{t('templates.customCurrent', { name: copy.name })}</NativeSelectOption>
+        )}
+        {own.map((x) => (
+          <NativeSelectOption key={x.id} value={`org:${x.id}`}>
+            {t('templates.customOption', { name: x.name })}
           </NativeSelectOption>
         ))}
       </NativeSelect>
@@ -63,12 +81,22 @@ function TemplatePicker({ meetingId, template }: { meetingId: string; template: 
   );
 }
 
+// The heading of a section: an organization's template gives its own (from the meeting's copy, shown as text), a built-in one the app's words.
+export function sectionHeadingText(t: (key: never) => string, template: MeetingSummaryTemplate, copy: MinutesTemplateCopy | null, key: string): string {
+  return template === 'custom' ? (copy?.sections.find((s) => s.key === key)?.title ?? '') : t(`templates.sections.${template}.${key}` as never);
+}
+export function useSectionHeading(template: MeetingSummaryTemplate, copy: MinutesTemplateCopy | null) {
+  const tm = useTranslations('meetings');
+  return (key: string): string => sectionHeadingText(tm as unknown as (key: never) => string, template, copy, key);
+}
+
 // The recorder's draft summary and decisions (one decision per line). On a template the summary is typed section by section; the kernel makes the one text from them.
-function SummaryEditor({ meetingId, summary, decisions, template }: { meetingId: string; summary: string; decisions: string[]; template: MeetingSummaryTemplate }) {
+function SummaryEditor({ meetingId, summary, decisions, template, copy }: { meetingId: string; summary: string; decisions: string[]; template: MeetingSummaryTemplate; copy: MinutesTemplateCopy | null }) {
   const t = useTranslations('meetings.results');
   const tm = useTranslations('meetings');
-  const defs = templateSections(template);
-  const parsed = defs.length === 0 ? null : textToSections(template, summary);
+  const heading = useSectionHeading(template, copy);
+  const defs = templateSections(template, copy?.sections ?? null);
+  const parsed = defs.length === 0 ? null : textToSections(template, summary, copy?.sections ?? null);
   // Text that is not in this template's form (typed before the recorder changed the type) goes into the first section, never lost.
   const reflowed = defs.length > 0 && parsed === null && summary.trim() !== '';
   const [text, setText] = useState(summary);
@@ -96,7 +124,7 @@ function SummaryEditor({ meetingId, summary, decisions, template }: { meetingId:
           {defs.map((d) => (
             <div key={d.key} className="space-y-1">
               <label htmlFor={`section-${d.key}`} className="text-xs font-medium">
-                {tm(`templates.sections.${template}.${d.key}` as never)}
+                {heading(d.key)}
               </label>
               <Textarea id={`section-${d.key}`} value={values[d.key] ?? ''} maxLength={1200} rows={3} onChange={(e) => setValues((v) => ({ ...v, [d.key]: e.target.value }))} />
             </div>
@@ -112,11 +140,11 @@ function SummaryEditor({ meetingId, summary, decisions, template }: { meetingId:
   );
 }
 
-function SummaryText({ summary, decisions, template }: { summary: string; decisions: string[]; template: MeetingSummaryTemplate }) {
+export function SummaryText({ summary, decisions, template, copy = null }: { summary: string; decisions: string[]; template: MeetingSummaryTemplate; copy?: MinutesTemplateCopy | null }) {
   const t = useTranslations('meetings.results');
-  const tm = useTranslations('meetings');
+  const heading = useSectionHeading(template, copy);
   // A template's text is shown under its headings; text that is not in the template's form is shown whole.
-  const sections = textToSections(template, summary)?.filter((s) => s.text !== '') ?? null;
+  const sections = textToSections(template, summary, copy?.sections ?? null)?.filter((s) => s.text !== '') ?? null;
   return (
     <div className="space-y-2 text-sm">
       {sections === null ? (
@@ -124,7 +152,7 @@ function SummaryText({ summary, decisions, template }: { summary: string; decisi
       ) : (
         sections.map((s) => (
           <div key={s.key}>
-            <p className="text-xs font-medium text-muted-foreground">{tm(`templates.sections.${template}.${s.key}` as never)}</p>
+            <p className="text-xs font-medium text-muted-foreground">{heading(s.key)}</p>
             <p className="whitespace-pre-wrap">{s.text}</p>
           </div>
         ))
@@ -433,6 +461,7 @@ export function MeetingResults({
   meetingId,
   readers,
   template = 'general',
+  minutesTemplate = null,
   title = '',
   visibility,
   slug,
@@ -441,6 +470,8 @@ export function MeetingResults({
   meetingId: string;
   readers: readonly string[];
   template?: MeetingSummaryTemplate;
+  // The meeting's own copy of an organization's template (#3578): the headings of a custom meeting are read from it.
+  minutesTemplate?: MinutesTemplateCopy | null;
   title?: string;
   visibility?: MeetingVisibility;
   slug?: string;
@@ -485,7 +516,7 @@ export function MeetingResults({
         {published && (
           <section className="space-y-1">
             {isRecorder && <h3 className="text-xs font-medium text-muted-foreground">{t('publishedTitle')}</h3>}
-            <SummaryText summary={published.summary} decisions={published.decisions} template={template} />
+            <SummaryText summary={published.summary} decisions={published.decisions} template={template} copy={minutesTemplate} />
             <MeetingTranslation meetingId={meetingId} stage="published" original={{ summary: published.summary, decisions: published.decisions, items: items.filter((i) => i.stage === 'published') }} />
           </section>
         )}
@@ -496,7 +527,7 @@ export function MeetingResults({
           <MeetingZalo meetingId={meetingId} title={title} summary={published?.summary ?? null} decisions={published?.decisions ?? []} items={items.filter((i) => i.stage === 'published')} />
         )}
         {isRecorder && (published || items.some((i) => i.stage === 'published')) && <MeetingChatPost meetingId={meetingId} />}
-        {isRecorder && <TemplatePicker meetingId={meetingId} template={template} />}
+        {isRecorder && <TemplatePicker meetingId={meetingId} template={template} copy={minutesTemplate} />}
         {isRecorder && <VySummary meetingId={meetingId} hasModelDraft={(draft?.tainted ?? false) || items.some((i) => i.stage === 'draft' && i.tainted)} />}
         {isRecorder && (
           <section className="space-y-2">
@@ -505,7 +536,7 @@ export function MeetingResults({
               {draft?.tainted && <Badge variant="outline">{t('fromVy')}</Badge>}
             </h3>
             {hasDraft && <p className="text-xs text-muted-foreground">{t('draftExpiry')}</p>}
-            <SummaryEditor key={`${template}-${draft?.id ?? 'new'}`} meetingId={meetingId} summary={draft?.summary ?? ''} decisions={draft?.decisions ?? []} template={template} />
+            <SummaryEditor key={`${template}-${minutesTemplate?.hash ?? ''}-${draft?.id ?? 'new'}`} meetingId={meetingId} summary={draft?.summary ?? ''} decisions={draft?.decisions ?? []} template={template} copy={minutesTemplate} />
             {hasDraft && <MeetingTranslation meetingId={meetingId} stage="draft" original={{ summary: draft?.summary ?? '', decisions: draft?.decisions ?? [], items: items.filter((i) => i.stage === 'draft') }} />}
           </section>
         )}

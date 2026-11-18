@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { LocalDiskStore, S3BlobStore, exportKey, fileKey, inboundKey, newInboundBlobId, newStagingKey, sha256Hex, type S3Sender } from '../src/index.ts';
+import { LocalDiskStore, S3BlobStore, exportKey, fileKey, inboundKey, newInboundBlobId, newStagingKey, sha256Hex, tmpKey, type S3Sender } from '../src/index.ts';
 
 const encode = (s: string) => new TextEncoder().encode(s);
 
@@ -134,6 +134,14 @@ describe('S3BlobStore.list', () => {
   it('never lists staging or org keys, whatever the server returns', async () => {
     const { store } = fake([{ keys: [newStagingKey(), fileKey(randomUUID(), sha256Hex('x'))] }]);
     expect(await store.list('inbound/', null, 10)).toEqual({ blobs: [], next: null });
+  });
+
+  it('lists tmp/ the same way and never an org, export, staging or look-alike key the server returns (#3341)', async () => {
+    const org = randomUUID();
+    const keys = [tmpKey(org, sha256Hex('1')), tmpKey(randomUUID(), sha256Hex('2'))].sort();
+    const { store, sent } = fake([{ keys: [keys[0], `tmp/${org}/not-a-hash`, fileKey(org, sha256Hex('3')), exportKey(org, sha256Hex('4')), newStagingKey(), keys[1]] }]);
+    expect(await store.list('tmp/', null, 100)).toEqual({ blobs: keys.map((key) => ({ key, lastModified: when })), next: null });
+    expect(sent[0]?.input).toEqual({ Bucket: 'crove-files', Prefix: 'tmp/', MaxKeys: 100 });
   });
 
   it('stops on an empty page that still claims more', async () => {

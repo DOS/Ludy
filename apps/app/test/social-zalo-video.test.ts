@@ -52,7 +52,7 @@ describe('a video on a Zalo OA channel', () => {
 
   it('says the cover and size rules in Vietnamese and in English', () => {
     expect(viMessages.social.coverHint.zalo_oa).toBe(
-      'Bài viết video trên Zalo OA bắt buộc có ảnh bìa tải lên (JPG hoặc PNG, tối đa 1 MB). Video phải là MP4, tối đa 50 MB, và máy chủ cần lưu tệp trên S3 để Zalo lấy được ảnh bìa.',
+      'Bài viết video trên Zalo OA bắt buộc có ảnh bìa tải lên (JPG hoặc PNG, tối đa 1 MB). Video phải là MP4, tối đa 50 MB, và Zalo cần lấy được ảnh bìa qua đường link công khai; nếu chưa được, liên hệ người quản trị hệ thống.',
     );
     expect(en.social.coverHint.zalo_oa).toContain('MP4 of up to 50 MB');
     expect(viMessages.social.issues.COVER_REQUIRED).toContain('cần một ảnh bìa');

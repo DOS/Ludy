@@ -3,7 +3,7 @@
 // original's entry and voids its document in the same transaction, so cost, input VAT and the payable count once; an
 // adjustment is recorded with its signed difference and linked to the original, which stays in force; a correction
 // whose original is not in the books is recorded alone, with a warning. The database refuses a link to a document of
-// another invoice. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+// another invoice. The same holds when the org is the seller. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -96,6 +96,10 @@ suite('replacement and adjustment invoices (#916)', () => {
     const out = xml.replace(/<SHDon>\d+<\/SHDon>/, `<SHDon>${number}</SHDon>`).replace(/<NLap>[\d-]+<\/NLap>/, `<NLap>${date}</NLap>`);
     return original ? out.replace(/<SHDCLQuan>\d+<\/SHDCLQuan>/, `<SHDCLQuan>${original}</SHDCLQuan>`) : out;
   };
+
+  type VatDoc = { number: string; correction: { kind: string; series: string; number: string; basis: string } | null };
+  const vatWorking = (period: string) =>
+    runtime.query<{ input: { documents: VatDoc[] }; output: { available: boolean; documents: VatDoc[] } }>('finance.vat.period', { period }, { actor: asUser(owner), orgId });
 
   // The org's balance of an account (debit minus credit) over every entry.
   const balance = async (account: string) =>
@@ -210,6 +214,9 @@ suite('replacement and adjustment invoices (#916)', () => {
       c.query(`SELECT 1 FROM crove_finance.purchase_document_void WHERE org_id = $1 AND document_id = $2`, [orgId, replacement]),
     );
     expect(voided.rows).toEqual([]);
+    // The VAT working says what it adjusts, and that, as every purchase, it counts by its posting date (#916).
+    const working = await vatWorking('2026-10');
+    expect(working.input.documents.find((d) => d.number === '8003')).toMatchObject({ correction: { kind: 'adjustment', series: 'C26TAB', number: '8002', basis: 'posting_date' } });
   });
 
   it('records a correction whose original is not in the books alone, with a warning', async () => {
@@ -263,5 +270,47 @@ suite('replacement and adjustment invoices (#916)', () => {
     // 8001 is voided: an adjustment cannot link to it, and a second replacement cannot take its place.
     await expect(insert('adjustment', original, '8001')).rejects.toThrow(/a replacement corrects a voided document, an adjustment one in force/);
     await expect(insert('replacement', original, '8001')).rejects.toThrow(/purchase_document_replacement_uq/);
+  });
+
+  // The same corrections when the org is the seller: the fixtures' seller is 0101234564, so the org with that tax code reads them as sales (Dr 131, Cr 511, Cr 3331).
+  it('corrects a sale the same way: a replacement reverses and voids the original, an adjustment is linked with its signed difference, and the VAT working says so', async () => {
+    const purchaseOrg = orgId;
+    ({ orgId } = await createOrg(runtime, asUser(owner), `Org ${randomUUID().slice(0, 6)}`));
+    try {
+      await runtime.execute('kernel.org.set_tax_code', { taxCode: '0101234564' }, { actor: asMfa(owner), orgId, idempotencyKey: randomUUID() });
+      const first = await approve(await read(numbered(BASIC, '9001', '2026-09-15')));
+      expect(await balance('131')).toBe(1980000);
+      expect(await balance('3331')).toBe(-180000);
+
+      const proposal = await read(numbered(REPLACEMENT, '9002', '2026-09-20', '9001'));
+      expect((await detail(proposal)).payload.checks).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'related', status: 'pass', code: 'related.replaces' })]));
+      const replaced = await approve(proposal);
+      expect(replaced).toMatchObject({ correctsDocumentId: first.documentId, voidedDocumentId: first.documentId });
+      // One receivable and one output VAT, not two.
+      expect(await balance('131')).toBe(1980000);
+      expect(await balance('3331')).toBe(-180000);
+
+      const adjusted = await approve(await read(numbered(ADJUSTMENT, '9003', '2026-10-05', '9002')));
+      expect(adjusted.correctsDocumentId).toBe(replaced.documentId);
+      expect(adjusted.voidedDocumentId).toBeUndefined();
+      // 1,980,000 less the 220,000 adjustment, and the output VAT 180,000 less 20,000.
+      expect(await balance('131')).toBe(1760000);
+      expect(await balance('3331')).toBe(-160000);
+
+      const docs = await runtime.query<Array<{ number: string; direction: string; corrects: unknown; correctedBy: unknown[] }>>('finance.documents.list', {}, { actor: asUser(owner), orgId });
+      const byNumber = new Map(docs.map((d) => [d.number, d]));
+      expect(byNumber.get('9001')).toMatchObject({ direction: 'sale', corrects: null, correctedBy: [{ kind: 'replacement', number: '9002' }] });
+      expect(byNumber.get('9003')).toMatchObject({ direction: 'sale', corrects: { kind: 'adjustment', number: '9002', documentId: replaced.documentId } });
+
+      // The output side of the VAT working: the adjustment of October says what it adjusts, and the replacement of September what it replaces; the voided original is not listed.
+      const october = await vatWorking('2026-10');
+      expect(october.output.available).toBe(true);
+      expect(october.output.documents.find((d) => d.number === '9003')?.correction).toEqual({ kind: 'adjustment', series: 'C26TAB', number: '9002', basis: 'issue_date' });
+      const september = await vatWorking('2026-09');
+      expect(september.output.documents.map((d) => d.number)).toEqual(['9002']);
+      expect(september.output.documents[0]?.correction).toEqual({ kind: 'replacement', series: 'C26TAB', number: '9001', basis: 'issue_date' });
+    } finally {
+      orgId = purchaseOrg;
+    }
   });
 });

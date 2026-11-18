@@ -33,15 +33,8 @@ export function DisconnectView({ erase, onErase, counts, countsFailed, pending, 
   const waiting = erase && counts === null;
   return (
     <div className="space-y-2" data-testid="channel-disconnect-confirm">
-      <div className="flex flex-wrap gap-2">
-        <Button variant="destructive" size="sm" disabled={pending || waiting || (erase && countsFailed)} data-testid="channel-disconnect-yes" onClick={onConfirm}>
-          {erase && counts ? t('disconnectAndErase', counts) : t('confirmDisconnect')}
-        </Button>
-        <Button variant="ghost" size="sm" disabled={pending} onClick={onKeep}>
-          {t('keep')}
-        </Button>
-      </div>
-      <p className="text-xs text-muted-foreground">{t('disconnectHint')}</p>
+      {/* What happens comes first, then the choice, then the buttons (#3651). */}
+      <p className="text-sm text-muted-foreground">{t('disconnectHint')}</p>
       <label className="flex items-start gap-2 pt-1 text-sm text-muted-foreground">
         <Checkbox className="mt-0.5" checked={erase} disabled={pending} data-testid="channel-erase-too" onCheckedChange={(checked) => onErase(checked === true)} />
         <span>
@@ -54,6 +47,14 @@ export function DisconnectView({ erase, onErase, counts, countsFailed, pending, 
           {counts ? t('eraseWarn', counts) : countsFailed ? t('eraseCountsFailed') : t('eraseCounting')}
         </p>
       )}
+      <div className="flex flex-wrap gap-2 pt-1">
+        <Button variant="destructive" size="sm" disabled={pending || waiting || (erase && countsFailed)} data-testid="channel-disconnect-yes" onClick={onConfirm}>
+          {erase && counts ? t('disconnectAndErase', counts) : t('confirmDisconnect')}
+        </Button>
+        <Button variant="ghost" size="sm" disabled={pending} onClick={onKeep}>
+          {t('keep')}
+        </Button>
+      </div>
       {stepUp}
       {error && (
         <p className="text-sm text-destructive" role="alert">

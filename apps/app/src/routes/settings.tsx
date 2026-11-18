@@ -1,10 +1,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useSearch } from '@tanstack/react-router';
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { ConversationRetentionCard } from '../components/conversation-retention.tsx';
 import { ExtensionDevices } from '../components/extension-devices.tsx';
 import { MeetingPlatforms } from '../components/meeting-platforms.tsx';
+import { MinutesTemplatesCard } from '../components/minutes-templates.tsx';
 import { OrgAppsCard } from '../components/org-apps.tsx';
 import { OrgExtensionDevices } from '../components/org-extension-devices.tsx';
 import { MemberSessions, MySessions } from '../components/sessions.tsx';
@@ -30,6 +31,7 @@ import { EventTypesCard } from './event-types.tsx';
 import { MemberPrivateNotes, usePrivateNotes } from '../components/notes-panel.tsx';
 import { CardSkeleton, ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, isEmailAddress, PageHeader, PageSkeleton, RowsSkeleton, Spinner, useFieldErrors } from '../components/ui.tsx';
 import { apiFetch, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { BOOKING_EVENT_TYPES_ID, BOOKING_SETTINGS_ID } from '../lib/booking.ts';
 import { getConfig } from '../lib/auth.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../lib/members.ts';
@@ -1109,6 +1111,29 @@ export function SettingsPage() {
   const org = useQuery(orpc.org.get.queryOptions());
   const me = useQuery(orpc.me.get.queryOptions());
   const search: { invite?: string } = useSearch({ strict: false });
+  // "Cài đặt lịch hẹn" and "Tạo loại lịch hẹn" on Lịch hẹn link to a card of this page (#3643). The cards come in as the reads answer (the org, the member, then the
+  // cards above grow with their own lists), so the jump waits for the card, then keeps the card at the top while the page settles, and lets go at the first touch,
+  // wheel or key of the person, or after five seconds.
+  const bookingAnchorReady = org.data !== undefined && me.data !== undefined;
+  useEffect(() => {
+    const id = [BOOKING_SETTINGS_ID, BOOKING_EVENT_TYPES_ID].find((candidate) => window.location.hash === `#${candidate}`);
+    const first = id ? document.getElementById(id) : null;
+    if (!bookingAnchorReady || !id || !first) return;
+    const align = () => document.getElementById(id)?.scrollIntoView({ block: 'start' });
+    align();
+    first.focus({ preventScroll: true });
+    const observer = new ResizeObserver(align);
+    if (first.parentElement) observer.observe(first.parentElement);
+    const events = ['wheel', 'touchmove', 'keydown', 'mousedown'] as const;
+    const stop = () => {
+      observer.disconnect();
+      clearTimeout(timer);
+      for (const type of events) window.removeEventListener(type, stop);
+    };
+    const timer = setTimeout(stop, 5000);
+    for (const type of events) window.addEventListener(type, stop, { passive: true });
+    return stop;
+  }, [bookingAnchorReady]);
   // Role assignments (#1279): owners and admins see who holds which role; owners give and take them back.
   const managesMembers = org.data?.role === 'owner' || org.data?.role === 'admin';
   const memberRoles = useQuery({ ...orpc.org.memberRoles.queryOptions(), enabled: managesMembers });
@@ -1242,7 +1267,7 @@ export function SettingsPage() {
         {org.data && <WorkingHoursCard key={`working-hours:${org.data.slug}`} canEdit={org.data.role !== 'viewer'} />}
         {/* The booking pages' event types (#1314), with the crm module. */}
         {installedModules().includes('crm') && org.data && me.data && (
-          <EventTypesCard key={`event-types:${org.data.slug}`} members={org.data.members} me={me.data.userId} role={org.data.role} />
+          <EventTypesCard key={`event-types:${org.data.slug}`} slug={org.data.slug} members={org.data.members} me={me.data.userId} role={org.data.role} />
         )}
         {/* The legal entities the books are kept for (#1278), with the finance module; owners and admins only. */}
         {installedModules().includes('finance') && canManage && <LegalEntitiesCard key={`legal-entities:${org.data?.slug}`} />}
@@ -1262,6 +1287,8 @@ export function SettingsPage() {
         {installedModules().includes('meetings') && <ExtensionDevices />}
         {/* The member's own meeting platform connections (C1, #3173): the recordings they hold are suggested on the Meetings tab. */}
         {installedModules().includes('meetings') && <MeetingPlatforms canConnect={org.data !== undefined && org.data.role !== 'viewer'} />}
+        {/* The minutes templates the org writes (#3578): owners and admins write them, every member picks one in a meeting. */}
+        {installedModules().includes('meetings') && canManage && org.data && (org.data.role === 'owner' || org.data.role === 'admin') && <MinutesTemplatesCard key={`minutes-templates:${org.data.slug}`} />}
         {/* The other members' extension devices (#2868), with the meetings module; owners and admins. */}
         {installedModules().includes('meetings') && canManage && org.data && me.data && (org.data.role === 'owner' || org.data.role === 'admin') && (
           <OrgExtensionDevices key={`org-extension-devices:${org.data.slug}`} members={org.data.members} viewerRole={org.data.role} me={me.data.userId} />

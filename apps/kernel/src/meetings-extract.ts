@@ -103,7 +103,7 @@ export interface VideoExtraction {
 // length enforced while it streams) under a throwaway key that exists only in this call's memory: it is never wrapped, never written to
 // media_key, and zeroed at the end. That decouples the member's upload speed from crove-media's own body deadline, and the video plaintext
 // reaches crove-media straight from memory (decrypted a window at a time), never the kernel's disk. The sealed video never gets a row and is
-// deleted when this call ends, on success and on every refusal; a crash leaves only ciphertext whose key existed only in memory.
+// deleted when this call ends, on success and on every refusal; a crash leaves only ciphertext whose key existed only in memory, under tmp/<org_id>/, which the daily retention job deletes once it is a few hours old (#3341).
 export async function extractAudioFromVideo(input: VideoExtraction): Promise<{ audio: Uint8Array; durationSeconds: number }> {
   const key = (input.newKey ?? (() => randomBytes(32)))();
   const binding: BlobMediaBinding = { orgId: input.orgId, meetingId: input.meetingId, kind: 'video' };
@@ -118,6 +118,8 @@ export async function extractAudioFromVideo(input: VideoExtraction): Promise<{ a
       maxBytes: input.maxBytes,
       store: input.store,
       orgId: input.orgId,
+      // Under tmp/, so a crash before the `finally` leaves an object the retention job sweeps (#3341).
+      temporary: true,
     });
     stored = sealed;
     return await input.extractor.extract(decryptedWindows(input.store, { storageKey: sealed.key, generation: sealed.generation, sizeBytes: sealed.size }, key, binding));
