@@ -686,7 +686,7 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
                 <p className="mt-1" data-testid="invoice-correction-rate-reason">{proposal.reason}</p>
                 {proposal.explanation && (
                   <p className="mt-1 text-subtle-foreground" data-testid="invoice-correction-rate-explanation">
-                    <span className="font-medium">{t('correction.rateCoworker')}: </span>
+                    <span className="font-medium">{t('ai.rateCoworker')}: </span>
                     {proposal.explanation}
                   </p>
                 )}

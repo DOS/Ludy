@@ -1970,7 +1970,6 @@ export const en = {
       rateChange: 'Lines at {from} become {to}',
       rateByCorrectionDate: 'Judged on the date of the correcting invoice ({date}).',
       rateByOriginal: 'Judged on the date of the original invoice ({date}).',
-      rateCoworker: 'The accounting coworker explains',
       rateLoading: 'Working out the VAT rate...',
       rateError: 'The proposed VAT rate could not be worked out. Try again.',
       rateConfirm: 'I have read and confirm how the VAT rate is worked out',
@@ -2070,6 +2069,7 @@ export const en = {
     issueSent: 'Approved. The invoice is being sent to the provider.',
     // The finance coworker on a draft (#2505): lines, the VAT rate the text states and the buyer, proposed from a text a person typed or pasted.
     ai: {
+      rateCoworker: '{finance} explains',
       label: 'Ask {finance} to draft from a sales message',
       placeholder: 'For example: sold 10 boxes of cake A at 120k to Nam, VAT 8%',
       button: 'Ask {finance} to draft',
@@ -12585,6 +12585,9 @@ export const en = {
       EINVOICE_CORRECTION_METHOD: 'Later corrections must use the same method as the first: once adjusted, keep adjusting; once replaced, keep replacing.',
       EINVOICE_REASON_CODE_INVALID: 'The reason code is not valid, or the list of reason codes has not been entered yet, so the correction cannot be started.',
       EINVOICE_AGREEMENT_REQUIRED: 'The buyer is a business: attach the agreement signed by both sides before adjusting or replacing.',
+      EINVOICE_RATE_BASIS_MISMATCH: 'How the VAT rate is worked out no longer matches the kind of error chosen. Reload the screen and confirm again.',
+      EINVOICE_BUYER_NATIONALITY_REQUIRED: 'A buyer with a passport must give a nationality (a two-letter code such as US, KR, JP).',
+      EINVOICE_BUYER_NATIONALITY_INVALID: 'The nationality is a two-letter capital code, for example US, KR, JP.',
       EINVOICE_AGREEMENT_FILE_NOT_FOUND: 'The agreement file was not found.',
       EINVOICE_SERIES_NOT_FOUND: 'This invoice series was not found.',
       EINVOICE_SERIES_ENTITY: 'This invoice series belongs to another legal entity. Choose a series of the entity you are working in.',
@@ -13502,6 +13505,7 @@ export const en = {
       },
       einvoice: {
         correction_options: 'View the reason codes for adjusting or replacing an invoice',
+        correction_rate: 'View the VAT rate proposed for an adjusting or replacing invoice',
         draft_from_order: 'Make a sales invoice draft from a sales order',
         issue: 'Issue a sales invoice',
         issue_request: 'View the request to issue a sales invoice',

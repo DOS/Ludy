@@ -1968,7 +1968,6 @@ export const vi = {
       rateChange: 'Dòng {from} chuyển thành {to}',
       rateByCorrectionDate: 'Tính theo ngày lập hóa đơn điều chỉnh ({date}).',
       rateByOriginal: 'Tính theo ngày hóa đơn gốc ({date}).',
-      rateCoworker: 'Trợ lý kế toán giải thích',
       rateLoading: 'Đang tính thuế suất...',
       rateError: 'Chưa tính được thuế suất đề xuất. Hãy thử lại.',
       rateConfirm: 'Tôi đã đọc và xác nhận cách tính thuế suất này',
@@ -2068,6 +2067,7 @@ export const vi = {
     issueSent: 'Đã duyệt. Hóa đơn đang được gửi tới nhà cung cấp.',
     // The finance coworker on a draft (#2505): lines, the VAT rate the text states and the buyer, proposed from a text a person typed or pasted.
     ai: {
+      rateCoworker: '{finance} giải thích',
       label: 'Nhờ {finance} soạn từ lời nhắn bán hàng',
       placeholder: 'Ví dụ: bán 10 hộp bánh A giá 120k cho anh Nam, thuế 8%',
       button: 'Nhờ {finance} soạn',
@@ -12585,6 +12585,9 @@ export const vi = {
       EINVOICE_REASON_CODE_INVALID: 'Mã lý do điều chỉnh hoặc thay thế chưa hợp lệ, hoặc danh sách mã lý do chưa được nhập nên chưa lập được.',
       EINVOICE_AGREEMENT_REQUIRED: 'Người mua là doanh nghiệp: hãy đính kèm biên bản thỏa thuận đã ký của hai bên trước khi điều chỉnh hoặc thay thế.',
       EINVOICE_AGREEMENT_FILE_NOT_FOUND: 'Không tìm thấy tệp biên bản thỏa thuận.',
+      EINVOICE_RATE_BASIS_MISMATCH: 'Cách tính thuế suất không khớp với loại sai sót đã chọn. Hãy tải lại màn hình và xác nhận lại.',
+      EINVOICE_BUYER_NATIONALITY_REQUIRED: 'Người mua dùng hộ chiếu thì phải ghi quốc tịch (mã hai chữ cái, ví dụ US, KR, JP).',
+      EINVOICE_BUYER_NATIONALITY_INVALID: 'Quốc tịch ghi bằng mã hai chữ cái viết hoa, ví dụ US, KR, JP.',
       EINVOICE_SERIES_NOT_FOUND: 'Không tìm thấy ký hiệu hóa đơn này.',
       EINVOICE_SERIES_ENTITY: 'Ký hiệu hóa đơn này thuộc về pháp nhân khác. Hãy chọn ký hiệu của pháp nhân đang làm việc.',
       EINVOICE_ENTITY_FIXED: 'Bản nháp thuộc về một pháp nhân và không đổi sang pháp nhân khác được.',
@@ -13501,6 +13504,7 @@ export const vi = {
       },
       einvoice: {
         correction_options: 'Xem danh sách mã lý do điều chỉnh hoặc thay thế hóa đơn',
+        correction_rate: 'Xem thuế suất đề xuất cho hóa đơn điều chỉnh hoặc thay thế',
         draft_from_order: 'Lập bản nháp hóa đơn bán ra từ đơn bán hàng',
         issue: 'Phát hành hóa đơn bán ra',
         issue_request: 'Xem đề nghị phát hành hóa đơn bán ra',
