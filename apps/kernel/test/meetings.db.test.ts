@@ -1914,6 +1914,14 @@ suite('meetings module database integration tests (#2576)', () => {
     await expect(insert('microsoft_teams', false)).rejects.toThrow(/MEETINGS_TAINT_FORBIDDEN/);
     await expect(insert('zoom', true)).rejects.toThrow(/transcript_segment_source_check/);
     await expect(admin((c) => c.query(`UPDATE crove_meetings.transcript_segment SET source = 'google_meet' WHERE meeting_id = $1`, [meetingId]))).rejects.toThrow(/MEETINGS_TAINT_FORBIDDEN/);
+    // A provider with no transcript path (Zoom) is refused and writes nothing: it is never labelled as another platform's.
+    const zoomMeeting = String((await rpc('meetings/create', 'recorder', { title: 'Họp Zoom', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start' })).body.meetingId);
+    const zoomRecording = await suggest('recorder', { hasAudio: false, hasTranscript: true, provider: 'zoom' });
+    await admin((c) =>
+      c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'claimed', meeting_id = $2, staging_key = $3, length_seconds = 600 WHERE id = $1`, [zoomRecording, zoomMeeting, `staging/${randomBytes(32).toString('hex')}`]),
+    );
+    expect(await refusedWith(runtime.execute('meetings.import.take_transcript', { meetingId: zoomMeeting, segments }, { actor: asUser('recorder'), orgId }))).toBe('IMPORT_NOT_CLAIMED');
+    expect(await admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.transcript_segment WHERE meeting_id = $1', [zoomMeeting])).rows[0]?.n))).toBe(0);
   });
 
   it('35. #3337: a video uploaded with extract=audio keeps only the extracted Opus, whatever the shape of the upload', async () => {
