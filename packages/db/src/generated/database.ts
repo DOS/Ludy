@@ -218,6 +218,8 @@ export interface CroveMeetingsSchema {
 export interface CroveNotesSchema {
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
+  'crove_notes.note_template': NotesNoteTemplateTable;
+  'crove_notes.note_version': NotesNoteVersionTable;
   'crove_notes.todo': NotesTodoTable;
   'crove_notes.todo_list': NotesTodoListTable;
 }
@@ -3338,6 +3340,35 @@ export interface NotesNoteTable {
   archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   summary_run_ids: Generated<string[]>;
+}
+
+/** crove_notes.note_template */
+export interface NotesNoteTemplateTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  visibility: Generated<string>;
+  name: string;
+  title: Generated<string>;
+  body: Generated<string>;
+  tags: Generated<string[]>;
+  revision: Generated<number>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_notes.note_version */
+export interface NotesNoteVersionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  note_id: ColumnType<string, string, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  revision: ColumnType<number, number, NotGranted>;
+  title: ColumnType<string, string | undefined, NotGranted>;
+  body: ColumnType<string, string | undefined, NotGranted>;
+  tags: ColumnType<string[], string[] | undefined, NotGranted>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_notes.todo_list */

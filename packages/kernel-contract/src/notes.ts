@@ -17,6 +17,8 @@ export type NoteListView = (typeof NOTE_LIST_VIEWS)[number];
 
 export const NOTE_TITLE_MAX = 200;
 export const NOTE_BODY_MAX = 100_000;
+export const NOTE_TEMPLATE_NAME_MAX = 120;
+export const NOTE_VERSION_RETENTION = 20;
 export const NOTE_CLIP_SOURCE_URL_MAX = 2048;
 export const NOTE_TAGS_MAX = 20;
 export const NOTE_TAG_MAX = 40;
@@ -164,6 +166,74 @@ export type Note = z.infer<typeof zNote>;
 // How many private notes a member has, for an owner or admin before removing them (ADR-0037 §4). No text.
 export const zNotePrivateCount = z.object({ userId: z.string(), notes: z.number().int() });
 export type NotePrivateCount = z.infer<typeof zNotePrivateCount>;
+
+// Quick note templates and rolling 20-snapshot version history (#3562, Notes v2 E3).
+const zTemplateName = z.string().trim().min(1).max(NOTE_TEMPLATE_NAME_MAX);
+const zTemplateTitle = z.string().trim().max(NOTE_TITLE_MAX);
+
+export const zNoteTemplateCreate = z.strictObject({
+  name: zTemplateName,
+  title: zTemplateTitle.default(''),
+  body: zBody.default(''),
+  tags: zTags.default([]),
+  visibility: z.enum(NOTE_VISIBILITIES).default('private'),
+});
+export type NoteTemplateCreateInput = z.input<typeof zNoteTemplateCreate>;
+
+export const zNoteTemplateUpdate = z.strictObject({
+  templateId: zId,
+  revision: z.number().int().positive(),
+  name: zTemplateName,
+  title: zTemplateTitle,
+  body: zBody,
+  tags: zTags,
+  visibility: z.enum(NOTE_VISIBILITIES),
+});
+export type NoteTemplateUpdateInput = z.input<typeof zNoteTemplateUpdate>;
+
+export const zNoteTemplateRef = z.strictObject({ templateId: zId });
+export type NoteTemplateRefInput = z.input<typeof zNoteTemplateRef>;
+
+export const zNoteTemplateWritten = z.object({ templateId: z.string(), revision: z.number().int() });
+export type NoteTemplateWritten = z.infer<typeof zNoteTemplateWritten>;
+
+export const zNoteTemplateDeleted = z.object({ templateId: z.string() });
+export type NoteTemplateDeleted = z.infer<typeof zNoteTemplateDeleted>;
+
+export const zNoteTemplate = z.object({
+  id: z.string(),
+  authorUserId: z.string(),
+  mine: z.boolean(),
+  visibility: z.enum(NOTE_VISIBILITIES),
+  name: z.string(),
+  title: z.string(),
+  body: z.string(),
+  tags: z.array(z.string()),
+  revision: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type NoteTemplate = z.infer<typeof zNoteTemplate>;
+
+export const zNoteVersion = z.object({
+  id: z.string(),
+  noteId: z.string(),
+  authorUserId: z.string(),
+  revision: z.number().int(),
+  title: z.string(),
+  body: z.string(),
+  tags: z.array(z.string()),
+  tainted: z.boolean(),
+  createdAt: z.string(),
+});
+export type NoteVersion = z.infer<typeof zNoteVersion>;
+
+export const zNoteRestoreVersion = z.strictObject({
+  noteId: zId,
+  revision: z.number().int().positive(),
+  versionId: zId,
+});
+export type NoteRestoreVersionInput = z.input<typeof zNoteRestoreVersion>;
 
 // ---------------------------------------------------------------------------
 // Personal to-dos (#1673, notes.md §3.2, §3.8 and step N4): a member's own list, always private (ADR-0037). A to-do
@@ -807,6 +877,20 @@ export const zNotesExport = z.object({
       deletedAt: z.string().nullable(),
     }),
   ),
+  templates: z
+    .array(
+      z.object({
+        id: z.string(),
+        visibility: z.enum(NOTE_VISIBILITIES),
+        name: z.string(),
+        title: z.string(),
+        body: z.string(),
+        tags: z.array(z.string()),
+        createdAt: z.string(),
+        updatedAt: z.string(),
+      }),
+    )
+    .optional(),
   truncated: z.boolean(),
 });
 export type NotesExport = z.infer<typeof zNotesExport>;

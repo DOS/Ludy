@@ -14,6 +14,7 @@ import {
   formatClippedNoteBody,
   NOTE_BODY_MAX,
   NOTE_TITLE_MAX,
+  NOTE_VERSION_RETENTION,
   zId,
   zNoteClip,
   zNoteCreate,
@@ -22,8 +23,12 @@ import {
   zNoteList,
   zNoteLinkTarget,
   zNoteRef,
+  zNoteRestoreVersion,
   zNoteSearch,
   zNoteSetVisibility,
+  zNoteTemplateCreate,
+  zNoteTemplateRef,
+  zNoteTemplateUpdate,
   zNoteUpdate,
   type MeetingDetail,
   type Note,
@@ -31,6 +36,10 @@ import {
   type NotePrivateCount,
   type NoteRecordPanel,
   type NoteSummary,
+  type NoteTemplate,
+  type NoteTemplateDeleted,
+  type NoteTemplateWritten,
+  type NoteVersion,
   type NoteVisibility,
   type NoteWritten,
 } from '@crove/kernel-contract';
@@ -48,6 +57,7 @@ const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const NOTE = notesManifest.tables.crove_notes.note;
+const NOTE_TEMPLATE = notesManifest.tables.crove_notes.note_template;
 
 const SUMMARY = ['id', 'author_user_id', 'visibility', 'title', 'tags', 'pinned', 'tainted', 'revision', 'created_at', 'updated_at', 'archived_at', 'deleted_at'] as const;
 
@@ -145,6 +155,38 @@ async function touch(ctx: CommandContext, noteId: string): Promise<void> {
   await ctx.trx.updateTable('crove_notes.note').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', noteId).execute();
 }
 const target = (input: { noteId: string }) => ({ type: 'notes.note', id: input.noteId });
+
+// Saves the pre-edit state of a note into crove_notes.note_version (#3562, Notes v2 E3). A database trigger on
+// crove_notes.note_version automatically prunes snapshots beyond the newest NOTE_VERSION_RETENTION (20) per note.
+export async function recordNoteVersionSnapshot(
+  ctx: CommandContext,
+  before: {
+    id: string;
+    author_user_id: string;
+    revision: number;
+    title: string;
+    body: string;
+    tags: string[];
+    tainted: boolean;
+    updated_at: Date | string;
+  },
+): Promise<void> {
+  await ctx.trx
+    .insertInto('crove_notes.note_version')
+    .values({
+      org_id: ctx.orgId,
+      note_id: before.id,
+      author_user_id: before.author_user_id,
+      revision: before.revision,
+      title: before.title,
+      body: before.body,
+      tags: before.tags,
+      tainted: before.tainted,
+      created_at: new Date(before.updated_at),
+    })
+    .onConflict((oc) => oc.columns(['org_id', 'note_id', 'revision']).doNothing())
+    .execute();
+}
 
 export const noteCreate = defineCommand({
   name: 'notes.note.create',
@@ -254,13 +296,17 @@ export const noteUpdate = defineCommand({
       throw new DomainError('NOTE_REVISION_CONFLICT', 409, 'Ghi chú vừa được sửa ở nơi khác; hãy tải lại trước khi lưu', { revision: before.revision });
     }
     const contentEdited = before.title !== input.title || before.body !== input.body;
+    const tagsChanged = before.tags.join('\u0000') !== input.tags.join('\u0000');
     const clearTaint = before.tainted && contentEdited;
     const changed = [
       ...(before.title !== input.title ? ['title'] : []),
       ...(before.body !== input.body ? ['body'] : []),
-      ...(before.tags.join('\u0000') !== input.tags.join('\u0000') ? ['tags'] : []),
+      ...(tagsChanged ? ['tags'] : []),
       ...(clearTaint ? ['tainted'] : []),
     ];
+    if (contentEdited || tagsChanged) {
+      await recordNoteVersionSnapshot(ctx, before);
+    }
     const row = await ctx.trx
       .updateTable('crove_notes.note')
       .set({
@@ -561,5 +607,310 @@ export const privateCounts = defineQuery({
   },
 });
 
-export const noteCommands = [noteCreate, noteClip, notesExtensionExchanged, noteFromMeetingSummary, noteUpdate, noteSetVisibility, notePin, noteUnpin, noteArchive, noteRestore, noteDelete, linkAdd, linkRemove];
-export const noteQueries = [noteList, noteGet, noteSearch, recordPanel, privateCounts];
+// ---------------------------------------------------------------------------
+// Rolling 20-snapshot version history (#3562, Notes v2 E3)
+// ---------------------------------------------------------------------------
+
+export const noteVersions = defineQuery({
+  name: 'notes.note.versions',
+  input: zNoteRef,
+  access: READERS,
+  handler: async (ctx, input): Promise<NoteVersion[]> => {
+    userOf(ctx.actor);
+    const note = await ctx.trx
+      .selectFrom('crove_notes.note')
+      .select(['id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.noteId)
+      .executeTakeFirst();
+    if (!note) throw notFound();
+    const rows = await ctx.trx
+      .selectFrom('crove_notes.note_version')
+      .select(['id', 'note_id', 'author_user_id', 'revision', 'title', 'body', 'tags', 'tainted', 'created_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('note_id', '=', input.noteId)
+      .orderBy('revision', 'desc')
+      .orderBy('id', 'desc')
+      .limit(NOTE_VERSION_RETENTION)
+      .execute();
+    return rows.map((r) => ({
+      id: r.id,
+      noteId: r.note_id,
+      authorUserId: r.author_user_id,
+      revision: r.revision,
+      title: r.title,
+      body: r.body,
+      tags: r.tags,
+      tainted: r.tainted,
+      createdAt: new Date(r.created_at).toISOString(),
+    }));
+  },
+});
+
+export const noteRestoreVersion = defineCommand({
+  name: 'notes.note.restore_version',
+  input: zNoteRestoreVersion,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target,
+  handler: async (ctx, input): Promise<NoteWritten> => {
+    const userId = userOf(ctx.actor);
+    const before = await loadForChange(ctx, input.noteId, (row) => assertAuthor(row, userId));
+    assertNotInTrash(before);
+    if (before.revision !== input.revision) {
+      throw new DomainError('NOTE_REVISION_CONFLICT', 409, 'Ghi chú vừa được sửa ở nơi khác; hãy tải lại trước khi khôi phục', {
+        revision: before.revision,
+      });
+    }
+    const version = await ctx.trx
+      .selectFrom('crove_notes.note_version')
+      .select(['id', 'revision', 'title', 'body', 'tags', 'tainted'])
+      .where('org_id', '=', ctx.orgId)
+      .where('note_id', '=', input.noteId)
+      .where('id', '=', input.versionId)
+      .executeTakeFirst();
+    if (!version) {
+      throw new DomainError('NOTE_VERSION_NOT_FOUND', 404, 'Không tìm thấy phiên bản ghi chú này');
+    }
+    const contentDiffers =
+      before.title !== version.title ||
+      before.body !== version.body ||
+      before.tags.join('\u0000') !== version.tags.join('\u0000');
+    if (contentDiffers) {
+      await recordNoteVersionSnapshot(ctx, before);
+    }
+    // Never clear taint on restore: a tainted note stays tainted until a human edits its text, and restoring a tainted
+    // snapshot re-marks the note tainted so Vy does not read unreviewed AI/clipped text as clean.
+    const nextTainted = before.tainted || version.tainted;
+    const changed = [
+      ...(before.title !== version.title ? ['title'] : []),
+      ...(before.body !== version.body ? ['body'] : []),
+      ...(before.tags.join('\u0000') !== version.tags.join('\u0000') ? ['tags'] : []),
+      ...(nextTainted !== before.tainted ? ['tainted'] : []),
+    ];
+    const row = await ctx.trx
+      .updateTable('crove_notes.note')
+      .set({
+        title: version.title,
+        body: version.body,
+        tags: version.tags,
+        tainted: nextTainted,
+        revision: before.revision + 1,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.noteId)
+      .returning(['id', 'revision'])
+      .executeTakeFirstOrThrow();
+    ctx.audit({
+      noteId: row.id,
+      revision: row.revision,
+      restoredVersionId: version.id,
+      restoredFromRevision: version.revision,
+      changed,
+      ...(nextTainted !== before.tainted ? { tainted: nextTainted } : {}),
+    });
+    return written(row);
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Quick note templates (#3562, Notes v2 E3, ADR-0037)
+// ---------------------------------------------------------------------------
+
+interface TemplateRow {
+  id: string;
+  author_user_id: string;
+  visibility: NoteVisibility;
+  name: string;
+  title: string;
+  body: string;
+  tags: string[];
+  revision: number;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+const TEMPLATE_COLUMNS = ['id', 'author_user_id', 'visibility', 'name', 'title', 'body', 'tags', 'revision', 'created_at', 'updated_at'] as const;
+
+const templateNotFound = () => new DomainError('TEMPLATE_NOT_FOUND', 404, 'Không tìm thấy mẫu ghi chú này');
+
+function templateView(r: TemplateRow, userId: string): NoteTemplate {
+  return {
+    id: r.id,
+    authorUserId: r.author_user_id,
+    mine: r.author_user_id === userId,
+    visibility: r.visibility,
+    name: r.name,
+    title: r.title,
+    body: r.body,
+    tags: r.tags,
+    revision: r.revision,
+    createdAt: new Date(r.created_at).toISOString(),
+    updatedAt: new Date(r.updated_at).toISOString(),
+  };
+}
+
+async function loadTemplate(ctx: Pick<QueryContext, 'trx' | 'orgId'>, templateId: string, lock: boolean): Promise<TemplateRow> {
+  let q = ctx.trx.selectFrom('crove_notes.note_template').select(TEMPLATE_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', templateId);
+  if (lock) q = q.forUpdate();
+  const row = await q.executeTakeFirst();
+  if (!row) throw templateNotFound();
+  return row as TemplateRow;
+}
+
+async function loadTemplateForChange(ctx: CommandContext, templateId: string, check: (row: TemplateRow) => void): Promise<TemplateRow> {
+  check(await loadTemplate(ctx, templateId, false));
+  return loadTemplate(ctx, templateId, true);
+}
+
+function assertMayManageTemplate(ctx: CommandContext, row: TemplateRow, userId: string): void {
+  if (row.author_user_id === userId) return;
+  if (row.visibility === 'org' && ctx.role !== null && MANAGERS.includes(ctx.role)) return;
+  throw new DomainError('TEMPLATE_AUTHOR_ONLY', 403, 'Chỉ người tạo mẫu, hoặc chủ sở hữu và quản trị viên với mẫu dùng chung, mới sửa hoặc xóa được mẫu này');
+}
+
+const templateTarget = (input: { templateId: string }) => ({ type: 'notes.template', id: input.templateId });
+
+export const noteTemplateList = defineQuery({
+  name: 'notes.template.list',
+  input: z.strictObject({}),
+  access: READERS,
+  handler: async (ctx): Promise<NoteTemplate[]> => {
+    const userId = userOf(ctx.actor);
+    const rows = await ctx.trx
+      .selectFrom('crove_notes.note_template')
+      .select(TEMPLATE_COLUMNS)
+      .where('org_id', '=', ctx.orgId)
+      .orderBy('updated_at', 'desc')
+      .orderBy('id')
+      .limit(200)
+      .execute();
+    return rows.map((r) => templateView(r as TemplateRow, userId));
+  },
+});
+
+export const noteTemplateCreate = defineCommand({
+  name: 'notes.template.create',
+  input: zNoteTemplateCreate,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  handler: async (ctx, input): Promise<NoteTemplateWritten> => {
+    const userId = userOf(ctx.actor);
+    const row = await ctx.trx
+      .insertInto('crove_notes.note_template')
+      .values({
+        org_id: ctx.orgId,
+        author_user_id: userId,
+        visibility: input.visibility,
+        name: input.name,
+        title: input.title,
+        body: input.body,
+        tags: input.tags,
+        created_at: ctx.now,
+        updated_at: ctx.now,
+      })
+      .returning(['id', 'visibility', 'revision'])
+      .executeTakeFirstOrThrow();
+    ctx.audit({
+      templateId: row.id,
+      visibility: row.visibility,
+      name: auditValue(NOTE_TEMPLATE, 'name', input.name),
+      title: auditValue(NOTE_TEMPLATE, 'title', input.title),
+      tags: auditValue(NOTE_TEMPLATE, 'tags', input.tags.length > 0 ? input.tags : null),
+    });
+    return { templateId: row.id, revision: row.revision };
+  },
+});
+
+export const noteTemplateUpdate = defineCommand({
+  name: 'notes.template.update',
+  input: zNoteTemplateUpdate,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: templateTarget,
+  handler: async (ctx, input): Promise<NoteTemplateWritten> => {
+    const userId = userOf(ctx.actor);
+    const before = await loadTemplateForChange(ctx, input.templateId, (row) => {
+      assertMayManageTemplate(ctx, row, userId);
+      if (row.author_user_id !== userId && input.visibility !== 'org') {
+        throw new DomainError('TEMPLATE_AUTHOR_ONLY', 403, 'Chỉ người tạo mẫu mới chuyển được mẫu dùng chung về riêng tư');
+      }
+    });
+    if (before.revision !== input.revision) {
+      throw new DomainError('TEMPLATE_REVISION_CONFLICT', 409, 'Mẫu ghi chú vừa được sửa ở nơi khác; hãy tải lại trước khi lưu', {
+        revision: before.revision,
+      });
+    }
+    const changed = [
+      ...(before.name !== input.name ? ['name'] : []),
+      ...(before.title !== input.title ? ['title'] : []),
+      ...(before.body !== input.body ? ['body'] : []),
+      ...(before.tags.join('\u0000') !== input.tags.join('\u0000') ? ['tags'] : []),
+      ...(before.visibility !== input.visibility ? ['visibility'] : []),
+    ];
+    const row = await ctx.trx
+      .updateTable('crove_notes.note_template')
+      .set({
+        name: input.name,
+        title: input.title,
+        body: input.body,
+        tags: input.tags,
+        visibility: input.visibility,
+        revision: before.revision + 1,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.templateId)
+      .returning(['id', 'revision'])
+      .executeTakeFirstOrThrow();
+    ctx.audit({
+      templateId: row.id,
+      revision: row.revision,
+      visibility: input.visibility,
+      ...(before.visibility !== input.visibility ? { previousVisibility: before.visibility } : {}),
+      changed,
+    });
+    return { templateId: row.id, revision: row.revision };
+  },
+});
+
+export const noteTemplateDelete = defineCommand({
+  name: 'notes.template.delete',
+  input: zNoteTemplateRef,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: templateTarget,
+  handler: async (ctx, input): Promise<NoteTemplateDeleted> => {
+    const userId = userOf(ctx.actor);
+    const before = await loadTemplateForChange(ctx, input.templateId, (row) => assertMayManageTemplate(ctx, row, userId));
+    await ctx.trx.deleteFrom('crove_notes.note_template').where('org_id', '=', ctx.orgId).where('id', '=', input.templateId).execute();
+    ctx.audit({ templateId: input.templateId, visibility: before.visibility, authorUserId: before.author_user_id });
+    return { templateId: input.templateId };
+  },
+});
+
+export const noteCommands = [
+  noteCreate,
+  noteClip,
+  notesExtensionExchanged,
+  noteFromMeetingSummary,
+  noteUpdate,
+  noteRestoreVersion,
+  noteSetVisibility,
+  notePin,
+  noteUnpin,
+  noteArchive,
+  noteRestore,
+  noteDelete,
+  linkAdd,
+  linkRemove,
+  noteTemplateCreate,
+  noteTemplateUpdate,
+  noteTemplateDelete,
+];
+export const noteQueries = [noteList, noteGet, noteVersions, noteSearch, recordPanel, privateCounts, noteTemplateList];

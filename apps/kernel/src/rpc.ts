@@ -1078,6 +1078,8 @@ export function createRpcHandler(
         inNotes(context, (orgId, actor) => saveMeetingSummaryAsNote(runtime, orgId, actor, input)),
       ),
       update: os.notes.update.handler(notesCommand('notes.note.update')),
+      versions: os.notes.versions.handler(notesQuery('notes.note.versions')),
+      restoreVersion: os.notes.restoreVersion.handler(notesCommand('notes.note.restore_version')),
       setVisibility: os.notes.setVisibility.handler(notesCommand('notes.note.set_visibility')),
       pin: os.notes.pin.handler(notesCommand('notes.note.pin')),
       unpin: os.notes.unpin.handler(notesCommand('notes.note.unpin')),
@@ -1105,6 +1107,12 @@ export function createRpcHandler(
         inNotes(context, (orgId, actor) => readNotesVyResults({ runtime }, orgId, actor, input.noteId)),
       ),
       acceptSummary: os.notes.acceptSummary.handler(notesCommand('notes.note.accept_summary')),
+      templates: {
+        list: os.notes.templates.list.handler(notesQuery('notes.template.list')),
+        create: os.notes.templates.create.handler(notesCommand('notes.template.create')),
+        update: os.notes.templates.update.handler(notesCommand('notes.template.update')),
+        delete: os.notes.templates.delete.handler(notesCommand('notes.template.delete')),
+      },
       // A member's own to-dos (#1673).
       todos: {
         list: os.notes.todos.list.handler(notesQuery('notes.todo.list')),

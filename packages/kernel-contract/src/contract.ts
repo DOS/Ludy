@@ -349,6 +349,7 @@ import {
   zNotePrivateCount,
   zNoteRecordPanelView,
   zNoteRef,
+  zNoteRestoreVersion,
   zNoteSearch,
   zNoteSetVisibility,
   zNoteSuggestTodosInput,
@@ -356,7 +357,14 @@ import {
   zNoteSummarizeInput,
   zNoteSummarizeResult,
   zNoteSummary,
+  zNoteTemplate,
+  zNoteTemplateCreate,
+  zNoteTemplateDeleted,
+  zNoteTemplateRef,
+  zNoteTemplateUpdate,
+  zNoteTemplateWritten,
   zNoteUpdate,
+  zNoteVersion,
   zNoteVyResults,
   zNoteVyStatus,
   zNoteWritten,
@@ -1157,6 +1165,15 @@ export const contract = {
     delete: oc.input(zNoteRef).output(zNoteWritten),
     linkAdd: oc.input(zNoteLinkAdd).output(zNoteLinkWritten),
     linkRemove: oc.input(zNoteLinkRemove).output(zNoteLinkWritten),
+    // Rolling 20-snapshot version history and custom templates (#3562, Notes v2 E3).
+    versions: oc.input(zNoteRef).output(z.array(zNoteVersion)),
+    restoreVersion: oc.input(zNoteRestoreVersion).output(zNoteWritten),
+    templates: {
+      list: oc.input(z.strictObject({})).output(z.array(zNoteTemplate)),
+      create: oc.input(zNoteTemplateCreate).output(zNoteTemplateWritten),
+      update: oc.input(zNoteTemplateUpdate).output(zNoteTemplateWritten),
+      delete: oc.input(zNoteTemplateRef).output(zNoteTemplateDeleted),
+    },
     // How many private notes each member has, for an owner or admin before removing one; no text.
     privateCounts: oc.input(z.strictObject({})).output(z.array(zNotePrivateCount)),
     // The caller's own notes and to-dos, whole, for their download (#1678): never anyone else's.

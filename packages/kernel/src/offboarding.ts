@@ -178,7 +178,9 @@ export const EXPORT_TABLES = {
   // each author had (crove_notes.private_counts(), a definer that answers counts only).
   'notes.note': { from: 'crove_notes.note', omit: ['search'] },
   'notes.link': { from: 'crove_notes.link', omit: [] },
+  'notes.note_template': { from: 'crove_notes.note_template', omit: [] },
   'notes.private_count': { from: 'crove_notes.private_counts()', omit: [] },
+  'notes.private_template_count': { from: 'crove_notes.private_template_counts()', omit: [] },
   // Members' own to-dos (#1673) are private by nature, so none is exported; todo_count records how many each member
   // had (crove_notes.todo_counts(), counts only).
   'notes.todo_count': { from: 'crove_notes.todo_counts()', omit: [] },

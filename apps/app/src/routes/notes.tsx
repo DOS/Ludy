@@ -17,6 +17,7 @@ import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
 import { NoteTaskProposals } from '../components/note-task-proposals.tsx';
+import { NewFromTemplateButton, NoteVersionHistoryButton, SaveAsTemplateButton } from '../components/note-templates-history.tsx';
 import { NoteVyPanel } from '../components/note-vy-panel.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { VisibilityBadge, refreshNotes } from '../components/notes-panel.tsx';
@@ -503,28 +504,62 @@ function Editor({
         </div>
       )}
 
-      {mayManage && (
+      {(mayManage || (!inTrash && role !== undefined)) && (
         <div className="flex flex-wrap gap-2 border-t pt-3">
           {inTrash ? (
-            <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate('restore')}>
-              {t('restore')}
-            </Button>
+            mayManage && (
+              <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate('restore')}>
+                {t('restore')}
+              </Button>
+            )
           ) : (
             <>
-              {note.mine && !confirmShare && (
-                <Button size="sm" variant="outline" disabled={blocked} onClick={() => (note.visibility === 'org' ? act.mutate('unshare') : setConfirmShare(true))}>
-                  {note.visibility === 'org' ? t('makePrivate') : t('makeShared')}
-                </Button>
+              {role !== undefined && (
+                <NoteVersionHistoryButton
+                  slug={slug}
+                  note={note}
+                  currentTitle={editable ? values.title : note.title}
+                  currentBody={editable ? values.body : note.body}
+                  currentTags={editable ? parseTags(values.tags) : note.tags}
+                  canRestore={editable && !locked && state !== 'conflict' && state !== 'error'}
+                  disabled={blocked}
+                  beforeOpen={editable ? () => saver.settle() : undefined}
+                  getCurrentRevision={editable ? () => saver.revision() : undefined}
+                  onRestored={async () => {
+                    await reload();
+                    await refreshNotes();
+                  }}
+                />
               )}
-              <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate(note.pinned ? 'unpin' : 'pin')}>
-                {note.pinned ? t('unpin') : t('pin')}
-              </Button>
-              <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate(note.archivedAt ? 'restore' : 'archive')}>
-                {note.archivedAt ? t('restore') : t('archive')}
-              </Button>
-              <Button size="sm" variant="ghost" disabled={blocked} onClick={() => act.mutate('delete')}>
-                {t('delete')}
-              </Button>
+              {writer && (
+                <SaveAsTemplateButton
+                  slug={slug}
+                  title={editable ? values.title : note.title}
+                  body={editable ? values.body : note.body}
+                  tags={editable ? parseTags(values.tags) : note.tags}
+                  defaultVisibility={note.visibility}
+                  disabled={blocked}
+                  beforeOpen={editable ? () => saver.settle() : undefined}
+                />
+              )}
+              {mayManage && (
+                <>
+                  {note.mine && !confirmShare && (
+                    <Button size="sm" variant="outline" disabled={blocked} onClick={() => (note.visibility === 'org' ? act.mutate('unshare') : setConfirmShare(true))}>
+                      {note.visibility === 'org' ? t('makePrivate') : t('makeShared')}
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate(note.pinned ? 'unpin' : 'pin')}>
+                    {note.pinned ? t('unpin') : t('pin')}
+                  </Button>
+                  <Button size="sm" variant="outline" disabled={blocked} onClick={() => act.mutate(note.archivedAt ? 'restore' : 'archive')}>
+                    {note.archivedAt ? t('restore') : t('archive')}
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={blocked} onClick={() => act.mutate('delete')}>
+                    {t('delete')}
+                  </Button>
+                </>
+              )}
             </>
           )}
           {act.isPending && <Spinner />}
@@ -598,6 +633,7 @@ export function NotesPage() {
       notes: t('export.notes'),
       todos: t('export.todos'),
       todoLists: t('export.todoLists'),
+      templates: t('export.templates'),
       private: t('export.private'),
       shared: t('export.shared'),
       tags: t('export.tags'),
@@ -627,6 +663,14 @@ export function NotesPage() {
         <Button loading={exportMine.isPending && exportMine.variables === 'json'} variant="outline" disabled={exportMine.isPending} onClick={() => void download('json').catch(() => undefined)}>
           {t('export.json')}
         </Button>
+        <NewFromTemplateButton
+          slug={slug}
+          role={role}
+          onCreated={(noteId) => {
+            setCreated(noteId);
+            go({ list: 'mine', note: noteId });
+          }}
+        />
         {newButton}
       </div>
     ) : undefined;
