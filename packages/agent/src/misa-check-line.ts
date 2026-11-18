@@ -74,7 +74,12 @@ const CLAIMS: readonly RegExp[] = [
   /\b(toi|chung toi|minh)\s+(da|vua|se)\b/,
   /\b(i|we)\s+(have|had|will|did)\b/,
 ];
-const claimsDone = (text: string): boolean => CLAIMS.some((re) => re.test(fold(text).replace(STILL_TO_COME, ' ')));
+// A promise about what MISA will do, or a word that says the download is held back: the line never promises and the download is never blocked.
+const PROMISES: readonly RegExp[] = [/\bwill\s+(?:import|accept|work|pass|succeed|be\s+accepted)\b/, /\b(?:accepts?|accepted|sorted)\b/, /\bblock(?:s|ed|ing)?\b/, /\bse\s+(?:nhap|duoc|thanh\s+cong|chap\s+nhan)\b/, /\bchan\b/];
+const claimsDone = (text: string): boolean => {
+  const folded = fold(text);
+  return CLAIMS.some((re) => re.test(folded.replace(STILL_TO_COME, ' '))) || PROMISES.some((re) => re.test(folded));
+};
 
 // A Vietnamese number word before the units this line counts ("hai dòng", "ba tài khoản") is a count the digits check cannot see; refused whatever the number, since the counts are given in digits.
 const COUNT_WORDS_VI = /(?<![\p{L}])(?:một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười|mươi|mốt|lăm|mấy|vài)(?:\s+(?:mươi|mốt|lăm|mười|một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín))?\s+(?:dòng|ô|mã|tài khoản|lỗi|điểm|chỗ|rows?|cells?|codes?|accounts?|texts?)(?![\p{L}])/iu;
@@ -89,7 +94,8 @@ type Cue = 'rows' | 'codes' | 'required' | 'vat' | 'accounts' | 'tooLong';
 const CUES: ReadonlyArray<readonly [Cue, RegExp]> = [
   ['rows', /\b(dong|rows?|lines?)\b/g],
   ['codes', /\b(ma|codes?)\b/g],
-  ['required', /\b(bat\s*buoc|required|trong|empty|blank)\b/g],
+  // Not the bare "trong" (Vietnamese "in", as in "Trong 120 dòng"): an empty cell is "ô trống", "còn trống" or "bỏ trống".
+  ['required', /\b(bat\s*buoc|required|o\s+trong|con\s+trong|bo\s+trong|empty|blank)\b/g],
   ['vat', /\b(thue|vat|rates?)\b/g],
   ['accounts', /\b(tai\s*khoan|accounts?|chart|he\s*thong)\b/g],
   ['tooLong', /\b(dai|long|ky\s*tu|characters?|chars?)\b/g],
@@ -133,7 +139,8 @@ function bindingProblem(facts: MisaCheckLineFacts, text: string): boolean {
     const at = match.index ?? 0;
     const { before, after } = clause(read, at, at + match[0].length);
     const cue = nearestCue(before, after);
-    if (cue === null || !(meaning[token] ?? []).includes(cue)) return true;
+    // "Rows" (Vietnamese "dòng") also says the flagged items ("fix the VAT of 3 rows"): beside it a number may be any count, not only the rows of the file.
+    if (cue === null || !(meaning[token] ?? []).length || (cue !== 'rows' && !(meaning[token] ?? []).includes(cue))) return true;
   }
   return false;
 }

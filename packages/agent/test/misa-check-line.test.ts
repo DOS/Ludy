@@ -40,6 +40,10 @@ describe('a sentence that explains the counts as given', () => {
     [EN, 'Fill in the catalog code of 12 cells before you import, and add 2 accounts to your chart or change the account on the voucher.'],
     [EN, 'Of 40 rows, 3 VAT rate cells are wrong or empty and 5 texts are too long: fix the rate and shorten the text in Ludy.'],
     [EN, 'The 3 VAT rates need to be fixed in Ludy before you export again.'],
+    // The natural Vietnamese opener: "Trong" is "in", not "empty".
+    [VI, 'Trong 40 dòng, có 12 ô mã cần điền: hãy điền mã trước khi nhập vào MISA.'],
+    [VI, 'Hãy sửa thuế suất GTGT của 3 dòng hóa đơn trong Ludy.'],
+    [EN, 'Fix the VAT rate on 3 rows in Ludy, then export again.'],
   ])('is kept: %#', (facts, sentence) => {
     expect(check(facts, sentence)).toEqual({ kind: 'sentence', text: sentence });
   });
@@ -70,6 +74,8 @@ describe('a sentence that is refused, not repaired', () => {
     refused(VI, 'Có 5 ô thuế suất GTGT sai.', 'BINDING');
     // A number with no word beside it names nothing.
     refused(EN, 'Check 12 now.', 'BINDING');
+    // A number that is none of the counts, even beside "rows".
+    refused(EN, 'Fix 99 rows in Ludy.', 'FIGURES');
   });
 
   it('carries a link, says something was done, or uses a script of another alphabet', () => {
@@ -82,6 +88,12 @@ describe('a sentence that is refused, not repaired', () => {
     refused(EN, 'The file was imported with 2 accounts missing.', 'CLAIM');
     refused(EN, '5 texts were shortened and the file downloaded.', 'CLAIM');
     refused(VI, 'Đã sửa 3 ô thuế suất GTGT.', 'CLAIM');
+    // A promise about MISA, or a word that says the download is held back.
+    refused(EN, 'Fix 12 code cells; the file will import fine afterwards.', 'CLAIM');
+    refused(EN, 'Fill 12 code cells, then MISA accepts the file.', 'CLAIM');
+    refused(EN, 'The download is blocked until you fix 12 code cells.', 'CLAIM');
+    refused(VI, 'Hãy điền 12 ô mã, khi đó file sẽ nhập được.', 'CLAIM');
+    refused(VI, 'Việc tải bị chặn cho đến khi bạn điền 12 ô mã.', 'CLAIM');
     refused(VI, 'Có 12 ô mã cần điền, mình ѕẽ điền giúp.', 'SCRIPT');
   });
 
