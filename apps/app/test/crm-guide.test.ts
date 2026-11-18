@@ -29,7 +29,7 @@ describe('crmGuide', () => {
       vi.quotes.send.revoke,
       vi.quotes.row.pdf,
       vi.quotes.row.revise,
-      vi.quotes.settings.open,
+      vi.quotes.settings.card,
       vi.quotes.status.superseded,
       vi.quotes.decision.accept,
       vi.quotes.decision.acceptYes,

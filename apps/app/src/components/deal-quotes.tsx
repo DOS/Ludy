@@ -5,6 +5,7 @@
 // off. The sales coworker's suggested lines (#2698) are a read the person asks for: each comes marked as the coworker's, with its price empty when no source
 // holds one, and a person uses or drops it; a used line is only a line in this editor until the person saves.
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import {
@@ -27,13 +28,15 @@ import {
 import { computeLineTotals, sumLineTotals } from '@crove/l10n-vn';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@crove/ui/components/dropdown-menu';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
-import { DealOrders, QuoteDecision } from './deal-orders.tsx';
+import { DealOrders, QuoteDecisionPanel, canDecideQuote, type QuoteDecisionMode } from './deal-orders.tsx';
 import { QuoteDealOffers } from './quote-deal-offers.tsx';
-import { NewLink, QuoteLinks, QuoteSendPanel, QuoteSettingsForm, quoteLabel, refreshQuoteQueries } from './quote-send.tsx';
+import { QUOTE_SETTINGS_ID } from './quote-settings-card.tsx';
+import { NewLink, QuoteLinks, QuoteSendPanel, quoteLabel, refreshQuoteQueries } from './quote-send.tsx';
 import { QuoteSignHandoff, signEnvelopePollMs, useSignAppEnabled } from './quote-sign-handoff.tsx';
 import { ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
@@ -370,9 +373,23 @@ function QuoteEditor({ quote, canEdit, sent, onSent, onClose }: { quote: Quote; 
             {t('editor.save')}
           </Button>
         )}
-        <Button type="button" variant="ghost" onClick={onClose}>
-          {readOnly ? t('editor.close') : t('editor.cancel')}
-        </Button>
+        {dirty && !readOnly ? (
+          <ConfirmDialog
+            render={<Button type="button" variant="ghost" />}
+            title={t('editor.discardTitle')}
+            description={t('editor.discardDescription')}
+            confirm={t('editor.discardYes')}
+            cancel={t('editor.discardKeep')}
+            destructive
+            onConfirm={onClose}
+          >
+            {t('editor.cancel')}
+          </ConfirmDialog>
+        ) : (
+          <Button type="button" variant="ghost" onClick={onClose}>
+            {readOnly ? t('editor.close') : t('editor.cancel')}
+          </Button>
+        )}
       </div>
     </form>
   );
@@ -398,6 +415,11 @@ function QuoteRow({
   const remove = useMutation(orpc.crm.quotes.deleteDraft.mutationOptions({ onSuccess: refreshQuotes }));
   const revise = useMutation(orpc.crm.quotes.revise.mutationOptions({ onSuccess: refreshQuotes }));
   const label = quote.number ? quoteLabel(quote) : t('draftLabel');
+  const decisionWords = useTranslations('quotes.decision');
+  const [decision, setDecision] = useState<QuoteDecisionMode | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const canDecide = canDecideQuote(quote, canEdit);
+  const editing = quote.status === 'draft' && canEdit;
   // The quote as a PDF (#2695), for anyone who may read it: the same quote the screen shows, made by the server.
   const pdf = useMutation({
     mutationFn: async () => {
@@ -424,45 +446,54 @@ function QuoteRow({
         <p className="text-xs text-muted-foreground">{t('row.meta', { date: formatDate(quote.validUntil, locale), count: String(quote.lineCount), total: formatMoney(quote.total, locale, 'VND') })}</p>
         {(remove.error || revise.error || pdf.error) && <ErrorText>{errorMessage(remove.error ?? revise.error ?? pdf.error)}</ErrorText>}
       </div>
-      <div className="flex flex-wrap gap-1">
-        <Button size="sm" variant="outline" onClick={onOpen}>
-          {quote.status === 'draft' && canEdit ? t('row.edit') : t('row.view')}
-        </Button>
-        <Button size="sm" variant="outline" loading={pdf.isPending} onClick={() => pdf.mutate()}>
-          {t('row.pdf')}
-        </Button>
-        {canEdit && quote.status === 'draft' && (
-          <ConfirmDialog
-            render={
-              <Button size="sm" variant="outline">
-                {t('row.delete')}
-              </Button>
-            }
-            title={t('row.deleteTitle')}
-            description={t('row.deleteDescription')}
-            confirm={t('row.deleteYes')}
-            destructive
-            onConfirm={() => remove.mutate({ quoteId: quote.id })}
-          >
-            {t('row.delete')}
-          </ConfirmDialog>
-        )}
-        <QuoteDecision quote={quote} canEdit={canEdit} />
-        {signEnabled && (
-          <QuoteSignHandoff
-            quote={quote}
-            canEdit={canEdit}
-            envelope={signEnvelope}
-            envelopeLoading={signLoading}
-            signEnabled={signEnabled}
-          />
-        )}
-        {canEdit && (quote.status === 'sent' || quote.status === 'declined') && (
-          <Button size="sm" variant="outline" loading={revise.isPending} onClick={() => revise.mutate({ quoteId: quote.id })}>
-            {t('row.revise')}
+      <div className="flex flex-wrap items-center gap-1">
+        {/* One primary action by the quote's state, the rest in the menu (#3645): a sent quote's next step is the customer's answer. */}
+        {canDecide ? (
+          <Button size="sm" onClick={() => setDecision((d) => (d === 'accept' ? null : 'accept'))} aria-expanded={decision === 'accept'} data-testid="quote-accept-open">
+            {decisionWords('accept')}
+          </Button>
+        ) : (
+          <Button size="sm" variant={editing ? 'default' : 'outline'} onClick={onOpen}>
+            {editing ? t('row.edit') : t('row.view')}
           </Button>
         )}
+        {signEnabled && (
+          <QuoteSignHandoff quote={quote} canEdit={canEdit} envelope={signEnvelope} envelopeLoading={signLoading} signEnabled={signEnabled} />
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button size="sm" variant="outline" aria-label={t('row.more', { label })} data-testid="quote-row-menu" />} disabled={pdf.isPending}>
+            <span aria-hidden="true">⋯</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {canDecide && <DropdownMenuItem onClick={onOpen}>{t('row.view')}</DropdownMenuItem>}
+            <DropdownMenuItem onClick={() => pdf.mutate()}>{t('row.pdf')}</DropdownMenuItem>
+            {canDecide && (
+              <DropdownMenuItem onClick={() => setDecision((d) => (d === 'decline' ? null : 'decline'))} data-testid="quote-decline-open">
+                {decisionWords('decline')}
+              </DropdownMenuItem>
+            )}
+            {canEdit && (quote.status === 'sent' || quote.status === 'declined') && (
+              <DropdownMenuItem onClick={() => revise.mutate({ quoteId: quote.id })}>{t('row.revise')}</DropdownMenuItem>
+            )}
+            {editing && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setConfirmDelete(true)}>{t('row.delete')}</DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <ConfirmDialog
+          open={confirmDelete}
+          onOpenChange={setConfirmDelete}
+          title={t('row.deleteTitle')}
+          description={t('row.deleteDescription')}
+          confirm={t('row.deleteYes')}
+          destructive
+          onConfirm={() => remove.mutate({ quoteId: quote.id })}
+        />
       </div>
+      {decision && canDecide && <QuoteDecisionPanel quote={quote} mode={decision} onDone={() => setDecision(null)} />}
     </li>
   );
 }
@@ -473,9 +504,12 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
   const quotes = useQuery(orpc.crm.quotes.byDeal.queryOptions({ input: { dealId: deal.id } }));
   const [openId, setOpenId] = useState<string | null>(null);
   const [sentFor, setSentFor] = useState<({ quoteId: string } & SentState) | null>(null);
-  const [settings, setSettings] = useState(false);
   const org = useQuery(orpc.org.get.queryOptions());
   const canManage = org.data?.role === 'owner' || org.data?.role === 'admin';
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  // The letterhead is the org's, set once in Settings (#3645); here a hint while there is neither a logo nor a phone or email to print.
+  const letterhead = useQuery({ ...orpc.crm.quotes.setting.queryOptions({ input: {} }), enabled: canManage });
+  const bare = canManage && letterhead.data !== undefined && letterhead.data.logoFileId === null && !letterhead.data.phone && !letterhead.data.email;
   const signEnabled = useSignAppEnabled();
   const signQuoteIds = (quotes.data ?? []).map((q) => q.id);
   const signIdChunks: string[][] = [];
@@ -513,11 +547,6 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-base font-medium">{t('title', { deal: deal.title })}</h3>
         <div className="flex flex-wrap gap-2">
-          {canManage && (
-            <Button size="sm" variant="outline" onClick={() => setSettings((v) => !v)} aria-expanded={settings}>
-              {t('settings.open')}
-            </Button>
-          )}
           {canEdit && (
             <Button size="sm" loading={create.isPending} onClick={() => create.mutate({ dealId: deal.id, lines: [] })}>
               {t('create')}
@@ -530,7 +559,14 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
           )}
         </div>
       </div>
-      {settings && canManage && <QuoteSettingsForm onDone={() => setSettings(false)} />}
+      {bare && (
+        <p className="text-sm text-muted-foreground" data-testid="quote-letterhead-hint">
+          {t('settings.bare')}{' '}
+          <Link to="/o/$slug/settings" params={{ slug }} hash={QUOTE_SETTINGS_ID} className="text-link underline">
+            {t('settings.setUp')}
+          </Link>
+        </p>
+      )}
       {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
       {quotes.data && <QuoteDealOffers dealId={deal.id} quotes={quotes.data} canEdit={canEdit} />}
       {quotes.error ? (

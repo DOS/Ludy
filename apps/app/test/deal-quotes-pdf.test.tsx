@@ -10,6 +10,11 @@ import { setActiveLocale } from '../src/i18n/runtime.ts';
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 const requested = vi.hoisted(() => [] as string[]);
 
+vi.mock('@tanstack/react-router', () => ({
+  useParams: () => ({ slug: 'acme' }),
+  Link: ({ children, ...rest }: { children?: unknown }) => <a {...(rest as object)}>{children as never}</a>,
+}));
+
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
   client.current = new QC();
@@ -59,8 +64,9 @@ const summary = (n: number, over: Record<string, unknown>) => ({
   ...over,
 });
 
-function render(canEdit: boolean): string {
+function render(canEdit: boolean, seed?: () => void): string {
   setActiveLocale('vi');
+  seed?.();
   client.current.setQueryData(['crm', 'quotes', 'byDeal'], [summary(1, {}), summary(2, { number: 'BG-2026-0002', status: 'sent' })]);
   return renderToStaticMarkup(
     <QueryClientProvider client={client.current}>
@@ -71,23 +77,59 @@ function render(canEdit: boolean): string {
   );
 }
 
-describe('the PDF button on a deal\'s quotes (#2695)', () => {
+// The row of a quote shows one primary action and a "⋯" menu (#3645); the menu's items (Tải PDF, the decline, the revision, delete a draft) are mounted when it opens, so
+// the server render holds the primary actions and the menu buttons, and the e2e opens the menu.
+const row = (html: string, n: number) => html.split('data-testid="quote-row"')[n] ?? '';
+
+describe('the row of a deal\'s quotes (#2695, #3645)', () => {
   beforeEach(() => {
     client.current.clear();
     requested.length = 0;
   });
 
-  it('is on every quote, a draft and a sent one, and asks for nothing until it is pressed', () => {
+  it('has one primary action and a menu on every quote, and asks for nothing until the PDF is pressed', () => {
     const html = render(true);
     expect(html.split('data-testid="quote-row"').length - 1).toBe(2);
-    expect(html.split('Tải PDF').length - 1).toBe(2);
+    // The draft: "Sửa". The sent quote: the customer's answer, "Ghi nhận khách đồng ý".
+    expect(row(html, 1)).toContain('>Sửa<');
+    expect(row(html, 1)).not.toContain('quote-accept-open');
+    expect(row(html, 2)).toContain('>Ghi nhận khách đồng ý<');
+    expect(row(html, 2)).toContain('data-testid="quote-accept-open"');
+    // Every other action is behind the menu, named for its quote.
+    expect(html.split('data-testid="quote-row-menu"').length - 1).toBe(2);
+    expect(row(html, 2)).toContain('aria-label="Thêm thao tác cho BG-2026-0002"');
+    for (const word of ['Tải PDF', 'Ghi nhận khách từ chối', 'Tạo bản sửa đổi', 'Xóa nháp', 'Khách đã đồng ý', 'Khách từ chối']) expect(html).not.toContain(word);
     expect(requested).toEqual([]);
   });
 
-  it('is there for a viewer too, who can only read: no edit and no delete, but the PDF', () => {
+  it('gives a viewer, who can only read, "Xem" and the menu (the PDF), and no way to decide or edit', () => {
     const html = render(false);
-    expect(html.split('Tải PDF').length - 1).toBe(2);
-    expect(html).not.toContain('Xóa nháp');
-    expect(html).not.toContain('Tạo bản sửa đổi');
+    expect(row(html, 1)).toContain('>Xem<');
+    expect(row(html, 2)).toContain('>Xem<');
+    expect(html).not.toContain('quote-accept-open');
+    expect(html.split('data-testid="quote-row-menu"').length - 1).toBe(2);
+    expect(html).not.toContain('Ghi nhận khách đồng ý');
+  });
+});
+
+describe('the letterhead hint of a deal\'s quotes (#3645)', () => {
+  beforeEach(() => client.current.clear());
+  const setting = (over: Record<string, unknown>) => ({ validDays: 30, defaultVat: '10%', defaultTerms: null, phone: null, email: null, bankNote: null, logoFileId: null, ...over });
+  const seed = (role: string, over: Record<string, unknown>) => () => {
+    client.current.setQueryData(['org', 'get'], { role });
+    client.current.setQueryData(['crm', 'quotes', 'setting'], setting(over));
+  };
+
+  it('says there is no logo or contact on the quotes and links to the Settings card, for an owner, and holds no settings form', () => {
+    const html = render(true, seed('owner', {}));
+    expect(html).toContain('Chưa có logo và thông tin liên hệ trên báo giá.');
+    expect(html).toContain('>Thiết lập<');
+    expect(html).not.toContain('data-testid="quote-settings"');
+    expect(html).not.toContain('Thông tin trên báo giá');
+  });
+
+  it('is quiet once a logo, a phone or an email is set, and for a member, who does not set it', () => {
+    expect(render(true, seed('owner', { phone: '0901 234 567' }))).not.toContain('quote-letterhead-hint');
+    expect(render(true, seed('member', {}))).not.toContain('quote-letterhead-hint');
   });
 });
