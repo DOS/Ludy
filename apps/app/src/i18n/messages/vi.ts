@@ -14219,6 +14219,10 @@ export const vi = {
         start: 'Nhờ Vy viết vài câu chuẩn bị trước một cuộc họp',
         status: 'Xem Vy có viết được phần chuẩn bị cho cuộc họp không',
       },
+      mcp: {
+        list: 'Cho ứng dụng AI xem danh sách các cuộc họp đã công bố biên bản và chia sẻ cho cả công ty',
+        minutes: 'Cho ứng dụng AI đọc biên bản đã công bố của một cuộc họp chia sẻ cho cả công ty',
+      },
       hook: {
         clear: 'Gỡ địa chỉ nhận biên bản của bạn',
         delivery: 'Đọc một sự kiện biên bản đang chờ gửi',

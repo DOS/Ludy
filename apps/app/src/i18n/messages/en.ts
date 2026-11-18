@@ -14220,6 +14220,10 @@ export const en = {
         start: 'Ask Vy to write a few sentences to prepare for a meeting',
         status: 'See whether Vy can write the preparation for a meeting',
       },
+      mcp: {
+        list: 'Let an AI app list the meetings with published minutes shared with the whole company',
+        minutes: 'Let an AI app read the published minutes of a meeting shared with the whole company',
+      },
       hook: {
         clear: 'Remove your address for minutes',
         delivery: 'Read a minutes event waiting to be sent',
