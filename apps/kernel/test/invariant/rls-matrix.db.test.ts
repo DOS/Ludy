@@ -97,6 +97,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_ads.ad_manage_change',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
+  'crove_finance.misa_amis_connection',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -247,6 +248,7 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
   ['crove_finance.einvoice_notice', ['update']],
   ['crove_finance.einvoice_series', ['update', 'delete']],
   ['crove_finance.marketplace_connection', ['update', 'delete']],
+  ['crove_finance.misa_amis_connection', ['update', 'delete']],
   ['crove_finance.stock_alias', ['delete']],
   ['crove_finance.stock_count', ['update']],
   ['crove_finance.stock_count_line', ['update']],
@@ -1603,6 +1605,22 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_kernel.party', values: { org_id: o.id, id: party, kind: 'organization', name: `RLS matrix platform ${tag()}` } }],
         row: { org_id: o.id, id: randomUUID(), platform: `p${marketplacePartySeq++}`, party_id: party },
+      };
+    },
+  },
+  // #3875 (S2 of #3854): an entity's connection to MISA AMIS Kế toán: the channel connection that holds the sealed access code and the entity it is for (one connection per entity, so each row
+  // takes an entity of its own). Tenant roles update only the result of the last connection test (a column grant), so the update probes assign the state to itself.
+  'crove_finance.misa_amis_connection': {
+    update: { set: 'last_test_state = last_test_state' },
+    make: (o) => {
+      const entity = randomUUID();
+      const connection = { ...channelConnectionRow(o), provider: 'accounting_misa_amis' };
+      return {
+        setup: [
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: `RLS matrix AMIS entity ${tag()}`, kind: 'branch', created_by: o.owner } },
+          { table: 'crove_kernel.channel_connection', values: connection },
+        ],
+        row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, channel_connection_id: connection.id },
       };
     },
   },

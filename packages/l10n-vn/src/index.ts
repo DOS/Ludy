@@ -12,6 +12,7 @@ export * from './invoice-lookup.ts';
 export * from './payroll/index.ts';
 export * from './line-totals.ts';
 export * from './banks.ts';
+export * from './bank-account.ts';
 export * from './labor-contracts.ts';
 export * from './recruiting.ts';
 export * from './todo-quick-add.ts';

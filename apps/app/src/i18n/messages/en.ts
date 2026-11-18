@@ -1996,6 +1996,18 @@ export const en = {
       methodReplacement: 'replacement',
       reason: 'Reason',
       reasonPick: 'Pick a reason',
+      reasonNote: 'Describe the error to get a proposed reason (optional)',
+      reasonNotePlaceholder: 'For example: the buyer address was written wrong',
+      reasonSuggest: 'Suggest a reason',
+      reasonState: {
+        no_list: 'The list of reason codes has not been entered yet, so nothing can be proposed.',
+        no_note: 'Describe the error first.',
+        off: 'AI is off, so nothing can be proposed; pick the reason above.',
+        busy: 'You are asking a little fast; wait a few seconds and try again.',
+        budget: "This month's AI budget is spent; pick the reason above.",
+        failed: 'Nothing could be proposed right now; pick the reason above.',
+        refused: 'No code in the list clearly matches the description; pick the reason above.',
+      },
       optionsRetry: 'Try again',
       optionsRetryHint: 'The list of reason codes could not be loaded. Check your connection and try again.',
       orgChanged: 'You switched to another organization while the agreement was uploading, so no draft was made. Open the invoice again in the right organization and start over.',
@@ -2118,6 +2130,7 @@ export const en = {
     // The finance coworker on a draft (#2505): lines, the VAT rate the text states and the buyer, proposed from a text a person typed or pasted.
     ai: {
       rateCoworker: '{finance} explains',
+      reasonWhy: '{finance} proposes this reason because: {why} You can change it before the draft is made.',
       label: 'Ask {finance} to draft from a sales message',
       placeholder: 'For example: sold 10 boxes of cake A at 120k to Nam, VAT 8%',
       button: 'Ask {finance} to draft',
@@ -8592,6 +8605,7 @@ export const en = {
       finance_stock_reorder: 'Wording a reorder message to a supplier',
       finance_einvoice_draft: 'Drafting the lines, VAT rate and buyer of a sales invoice draft',
       finance_einvoice_rate_explain: 'Explaining the VAT rate proposed for an adjusting or replacing invoice',
+      finance_einvoice_reason_suggest: 'Proposing the reason code for an adjusting or replacing invoice',
       finance_payroll_prepare: 'Suggesting what may change when a pay month is opened',
       finance_payroll_flag: 'Putting each payroll anomaly in one sentence',
       finance_payroll_explain: 'Explaining a payslip from its stored components',
@@ -13903,6 +13917,7 @@ export const en = {
       einvoice: {
         correction_options: 'View the reason codes for adjusting or replacing an invoice',
         correction_rate: 'View the VAT rate proposed for an adjusting or replacing invoice',
+        reason_source: 'Read the lines of the original invoice to propose a reason code for adjusting or replacing it',
         draft_from_order: 'Make a sales invoice draft from a sales order',
         issue: 'Issue a sales invoice',
         issue_request: 'View the request to issue a sales invoice',
