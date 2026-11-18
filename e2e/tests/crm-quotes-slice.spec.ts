@@ -46,6 +46,13 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
     await line.getByLabel('Đơn giá (trước thuế)').fill('1500000');
     // The totals are the server's rule, shown while typing: 1.500.000 + 10% VAT.
     await expect(editor.getByTestId('quote-totals')).toContainText('1.650.000');
+    // #3645: closing an editor with unsaved changes asks first, and "Tiếp tục sửa" keeps them.
+    await editor.getByRole('button', { name: 'Hủy', exact: true }).click();
+    const discard = page.getByRole('dialog', { name: 'Bỏ thay đổi?' });
+    await expect(discard).toBeVisible();
+    await discard.getByRole('button', { name: 'Tiếp tục sửa' }).click();
+    await expect(editor).toBeVisible();
+    await expect(line.getByLabel('Đơn giá (trước thuế)')).toHaveValue('1500000');
     await editor.getByRole('button', { name: 'Lưu báo giá' }).click();
     await expect(page.getByTestId('quote-row')).toHaveCount(1);
   });
@@ -55,8 +62,10 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
     await page.getByTestId('quote-row').getByRole('button', { name: 'Sửa', exact: true }).click();
     const editor = page.getByTestId('quote-editor');
     await expect(editor.getByTestId('quote-send')).toBeVisible();
-    await editor.getByTestId('quote-send').getByRole('button', { name: 'Gửi và tạo liên kết' }).click();
+    await editor.getByTestId('quote-send').getByRole('button', { name: 'Tạo liên kết và đánh dấu đã gửi' }).click();
     await expect(page.getByTestId('quote-new-link')).toBeVisible();
+    // #3645: the result says what happened: a link was made and the quote is marked sent; nothing says the customer received it.
+    await expect(page.getByTestId('quote-new-link')).toContainText('Đã tạo liên kết. Báo giá chuyển sang Đã gửi; bạn dán liên kết vào Zalo hoặc email để khách nhận được.');
     link = await page.getByTestId('quote-new-link').getByLabel('Liên kết báo giá').inputValue();
     expect(link).toMatch(/^https?:\/\//);
     const scan = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze();
@@ -114,6 +123,13 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
     await page.goto(`/o/${slug}/deals`);
     await dealCard().getByRole('button', { name: 'Báo giá' }).click();
     await expect(page.getByTestId('quote-row')).toHaveCount(1);
+    // #3645: a sent quote's row has one primary action, the customer's answer; the rest are in its menu.
+    const row = page.getByTestId('quote-row');
+    await expect(row.getByRole('button', { name: 'Ghi nhận khách đồng ý' })).toBeVisible();
+    await expect(row.getByRole('button', { name: 'Tải PDF' })).toHaveCount(0);
+    await row.getByTestId('quote-row-menu').click();
+    for (const name of ['Xem', 'Tải PDF', 'Ghi nhận khách từ chối', 'Tạo bản sửa đổi']) await expect(page.getByRole('menuitem', { name })).toBeVisible();
+    await page.keyboard.press('Escape');
     await page.getByTestId('quote-accept-open').click();
     const panel = page.getByTestId('quote-accept');
     await expect(panel).toBeVisible();
@@ -149,5 +165,25 @@ test('a deal becomes a quote, is sent by link, opens on the public page, is acce
     await expect(page.getByRole('heading', { name: 'Báo giá theo trạng thái' })).toBeVisible();
     await expect(page.getByRole('cell', { name: 'Đã chấp nhận', exact: true })).toBeVisible();
     await expect(page.getByText('1.650.000').first()).toBeVisible();
+  });
+
+  await test.step('the quote details are set once in Settings, not in each deal (#3645)', async () => {
+    await page.goto(`/o/${slug}/deals`);
+    await dealCard().getByRole('button', { name: 'Báo giá' }).click();
+    await expect(page.getByTestId('deal-quotes').getByRole('button', { name: 'Thông tin trên báo giá' })).toHaveCount(0);
+    await expect(page.getByTestId('quote-settings')).toHaveCount(0);
+    await expect(page.getByTestId('quote-letterhead-hint')).toContainText('Chưa có logo và thông tin liên hệ trên báo giá.');
+    await page.getByTestId('quote-letterhead-hint').getByRole('link', { name: 'Thiết lập' }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/settings#quote-settings$`));
+    const settings = page.getByTestId('quote-settings');
+    await expect(settings).toBeVisible();
+    await settings.getByLabel('Điện thoại in trên báo giá').fill('0901 234 567');
+    await settings.getByRole('button', { name: 'Lưu', exact: true }).click();
+    await expect(settings.getByText('Đã lưu.')).toBeVisible();
+    // With a phone on the letterhead the hint is gone from the deal.
+    await page.goto(`/o/${slug}/deals`);
+    await dealCard().getByRole('button', { name: 'Báo giá' }).click();
+    await expect(page.getByTestId('deal-quotes')).toBeVisible();
+    await expect(page.getByTestId('quote-letterhead-hint')).toHaveCount(0);
   });
 });
