@@ -474,7 +474,7 @@ export function MessageRow({ message: m, detail, members, userId, canWrite, cont
             </Badge>
           )}
           {m.sendErrorCode && (m.sendState === 'failed' || m.sendState === 'unknown') && (
-            <span className="text-muted-foreground">{isKnownSendError(m.sendErrorCode) ? t(`sendError.${m.sendErrorCode}`) : t('sendErrorGeneric')}</span>
+            <span className="text-muted-foreground">{isKnownSendError(m.sendErrorCode) ? t(`sendError.${m.sendErrorCode}`) : t(m.sendState === 'unknown' ? 'sendErrorUnknownGeneric' : 'sendErrorGeneric')}</span>
           )}
           {canWrite && (m.sendState === 'failed' || m.sendState === 'unknown') && (
             <>

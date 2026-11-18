@@ -111,14 +111,22 @@ describe('a failed send (IN-10)', () => {
     expect(row(failed({ sendErrorCode: 'ADAPTER_ERROR_77' }), 'en')).toContain('Could not send. Try again or contact support.');
   });
 
+  it('says an unclear send with no known code is unclear, never that it was not sent, so nobody sends it twice', () => {
+    const vi = row(failed({ sendState: 'unknown', sendErrorCode: 'ADAPTER_ERROR_77' }), 'vi');
+    expect(vi).toContain('Chưa rõ tin đã gửi hay chưa. Hãy xem lại trên nền tảng trước khi gửi lại.');
+    expect(vi).not.toContain('Chưa gửi được. Hãy thử lại');
+    expect(vi).not.toContain('ADAPTER_ERROR_77');
+    expect(row(failed({ sendState: 'unknown', sendErrorCode: 'ADAPTER_ERROR_77' }), 'en')).toContain('Not clear whether the message was sent');
+  });
+
   it('shows no code when hiding a comment failed', () => {
     const html = row(failed({ sendState: 'sent', hideErrorCode: 'FB_190_TOKEN_EXPIRED' }), 'vi');
-    expect(html).toContain('Chưa đổi được. Hãy thử lại.');
+    expect(html).toContain('Chưa đổi được.');
     expect(html).not.toContain('FB_190');
   });
 
   // The whole catalog: a sentence for a shop owner, never a provider's scope, product or API, a numeric error code, a field name or "máy chủ".
-  const INTERNALS = /whatsapp_business_messaging|Cloud API|Business Suite|\bAPI\b|\btoken\b|\bID\b|\bids?\b|\b\d{5,}\b|[A-Z]{2,}_[A-Z_]{2,}|mã truy cập|mã bot|mã tin nhắn|mã bài|mã người nhận|mã trang|mã số|mã bình luận|mã trả lời|máy chủ|\bserver\b/i;
+  const INTERNALS = /whatsapp_business_messaging|Cloud API|Business Suite|\bAPI\b|\btoken\b|\bID\b|\bids?\b|\b\d{5,}\b|[A-Z]{2,}_[A-Z_]{2,}|mã truy cập|mã bot|mã tin nhắn|mã bài|mã người nhận|mã trang|mã số|mã bình luận|mã trả lời|máy chủ|\bserver\b|\bMeta\b|\bGraph\b|OAuth|webhook/i;
   for (const locale of ['vi', 'en'] as const) {
     it(`words every send error of the catalog in ${locale} without provider internals`, () => {
       const c = catalog(locale).conversations as unknown as { sendError: Record<string, string>; replyBlocked: Record<string, string>; hideFailed: string };
