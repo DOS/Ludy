@@ -5008,12 +5008,22 @@ export const vi = {
 
   ads: {
     title: 'Quảng cáo',
-    subtitle: 'Chi phí và kết quả quảng cáo do nền tảng báo, chỉ để xem, đặt cạnh sổ sách.',
+    subtitle: 'Chi phí và kết quả quảng cáo của bạn, cạnh sổ sách. Muốn chạy quảng cáo từ Ludy, bật ở Cài đặt quảng cáo.',
     emptyTitle: 'Chưa có tài khoản quảng cáo nào',
     emptyHint:
-      'Màn hình này cho thấy mỗi ngày bạn chi bao nhiêu cho quảng cáo, nhận được bao nhiêu kết quả và mỗi kết quả tốn bao nhiêu, đặt cạnh số liệu trong sổ sách. {brand} chỉ đọc số liệu: không tạo, sửa hay tắt chiến dịch nào, và không lưu thông tin cá nhân của người xem quảng cáo.',
+      'Màn hình này cho thấy mỗi ngày bạn chi bao nhiêu cho quảng cáo, nhận được bao nhiêu kết quả và mỗi kết quả tốn bao nhiêu, đặt cạnh số liệu trong sổ sách. {brand} chỉ đọc số liệu cho tới khi bạn tự bật chạy quảng cáo, và không lưu thông tin cá nhân của người xem quảng cáo.',
     emptyMembers: 'Chủ sở hữu hoặc quản trị viên sẽ kết nối tài khoản quảng cáo.',
-    noPlatform: 'Máy chủ này chưa thiết lập nền tảng quảng cáo nào, nên chưa kết nối được tài khoản quảng cáo.',
+    noPlatform: 'Hệ thống này chưa bật nền tảng quảng cáo nào, nên chưa kết nối được tài khoản. Hãy nhờ người quản trị hệ thống bật Meta, Google hoặc tài khoản thử.',
+    adsSettings: {
+      title: 'Cài đặt quảng cáo',
+      subtitle: 'Kết nối tài khoản, ngưỡng cảnh báo, chạy quảng cáo từ Ludy và cách tính kết quả của từng tài khoản.',
+      link: 'Cài đặt quảng cáo',
+      back: 'Quay lại số liệu',
+      open: 'Mở cài đặt',
+      status: { on: 'Chạy quảng cáo: đang bật', off: 'Chạy quảng cáo: đang tắt' },
+      campaignsOff: 'Chạy quảng cáo đang tắt, nên kế hoạch được duyệt chưa tạo chiến dịch nào trên nền tảng.',
+      retry: 'Thử lại',
+    },
     connectTitle: 'Kết nối tài khoản quảng cáo thử',
     testNote: 'Nền tảng quảng cáo thử của máy chủ này tạo ra số liệu mẫu, không phải số liệu thật của bạn.',
     connectName: 'Tên tài khoản quảng cáo',

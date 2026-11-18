@@ -28,7 +28,8 @@ import { accountOffToastText, disableConfirmText, disabledToastText, writeConnec
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
-import { ErrorText, Field } from './ui.tsx';
+import { AdsCardError } from './ads-card-error.tsx';
+import { CardSkeleton, ErrorText, Field } from './ui.tsx';
 
 // A lowered cap changes the spend flags too.
 const refresh = () =>
@@ -73,8 +74,8 @@ export function AdsWriteCard({
   // Switching off closes every connection that can run ads: the toast says how the platform still holds the permission.
   const disable = useMutation(orpc.ads.writeDisable.mutationOptions({ onSuccess: async (done) => (toast(disabledToastText(root, accounts, done.connectionsClosed, done.readConnectionsClosed)), refresh()) }));
   const pauseAll = useMutation(orpc.ads.pauseAll.mutationOptions({ onSuccess: async () => (toast(t('pausedToast')), refresh()) }));
-  if (state.error) return <ErrorText>{errorMessage(state.error)}</ErrorText>;
-  if (!state.data) return null;
+  if (state.error) return <AdsCardError message={errorMessage(state.error)} onRetry={() => void state.refetch()} />;
+  if (!state.data) return <CardSkeleton />;
   const { writeEnabled, launchesBlocked, caps, pending, tokenRevokes } = state.data;
   const capOf = (scope: 'org' | 'account', adAccountId: string | null, period: 'daily' | 'monthly') => caps.find((c) => capKey(c) === capKey({ scope, adAccountId, period }));
   const orgCapCurrency = caps.find((c) => c.scope === 'org')?.currency ?? 'VND';
@@ -236,8 +237,9 @@ function PendingRow({ p, slug }: { p: AdsWriteState['pending'][number]; slug: st
   );
 }
 
-export function useWriteState() {
-  return useQuery({ ...orpc.ads.writeState.queryOptions(), refetchInterval: (query) => (query.state.data?.tokenRevokes.some((r) => r.state === 'pending') ? 60_000 : false) });
+// `enabled: false` for a member or viewer: the read is the owners' and admins', so it is not asked for.
+export function useWriteState(enabled = true) {
+  return useQuery({ ...orpc.ads.writeState.queryOptions(), enabled, refetchInterval: (query) => (query.state.data?.tokenRevokes.some((r) => r.state === 'pending') ? 60_000 : false) });
 }
 
 // The same notice for a screen with no ad account (the last one was erased after a disconnect): the card above is not drawn there, and a person told nothing
