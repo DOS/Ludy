@@ -41,6 +41,8 @@ Read this before you run `pnpm test:e2e`.
 
 `pnpm test:e2e` runs Playwright against a stack started with `pnpm --filter @crove/e2e stack:up` (compose project `crove-e2e`, port 8080; `stack:down` removes it with its volumes). Against your own stack set both `E2E_BASE_URL` and `E2E_COMPOSE_PROJECT`; the database helpers throw if only the URL is set, so they never touch the shared `crove-e2e` stack. Install the browser once with `pnpm --filter @crove/e2e exec playwright install chromium`.
 
+Specs that need a model live in `e2e/tests-ai/` and run only in the AI job of `e2e.yml`, on a second stack: `stack:up:ai` adds `e2e/compose.ai.yml` (the recorder's Vy summary on, and a fake OpenAI-compatible service with a fixed answer, `e2e/fake-model`, that reaches no other host), then `pnpm --filter @crove/e2e test:ai` runs them and `stack:down:ai` removes the stack. The default stack stays AI off, because many specs assert it; never put model settings in `compose.e2e.yml`.
+
 ## Migration versions
 
 Read this before you add a migration, and again right before you merge a PR that adds one (#1492).

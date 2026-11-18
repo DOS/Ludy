@@ -1464,12 +1464,12 @@ suite('meetings module database integration tests (#2576)', () => {
   const refusedWith = (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => (error as { code?: string }).code ?? 'ERR');
   const meetingExists = (id: string) => admin(async (c) => (await c.query('SELECT 1 FROM crove_meetings.meeting WHERE id = $1', [id])).rowCount === 1);
   // A suggested recording of a member's own connection, as the sweep leaves it (the table owner writes it: the sweep's definer needs the worker login).
-  async function suggest(who: string, over: { title?: string; startedAt?: string; sizeBytes?: number | null; hasAudio?: boolean; hasVideo?: boolean; hasTranscript?: boolean } = {}) {
+  async function suggest(who: string, over: { title?: string; startedAt?: string; sizeBytes?: number | null; hasAudio?: boolean; hasVideo?: boolean; hasTranscript?: boolean; provider?: string } = {}) {
     const recordingId = randomUUID();
     await admin(async (c) => {
       const connection = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.meeting_platform_connection (org_id, user_id, provider, external_account, display_name) VALUES ($1, $2, 'sandbox', $3, 'Sandbox') RETURNING id`,
-        [orgId, userIds.get(who), `${who}-${randomUUID()}@sandbox.test`],
+        `INSERT INTO crove_kernel.meeting_platform_connection (org_id, user_id, provider, external_account, display_name) VALUES ($1, $2, $4, $3, 'Sandbox') RETURNING id`,
+        [orgId, userIds.get(who), `${who}-${randomUUID()}@sandbox.test`, over.provider ?? 'sandbox'],
       );
       await c.query(
         `INSERT INTO crove_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, title, started_at, size_bytes, has_audio, has_video, has_transcript)
@@ -1909,6 +1909,38 @@ suite('meetings module database integration tests (#2576)', () => {
     await expect(admin((c) => c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text, source, tainted) VALUES ($1, $2, 0, 1, 'x', 'someone_else', true)`, [orgId, meetingId]))).rejects.toThrow(/transcript_segment_source_check/);
     // Taken once: the row is imported now, so the same call is refused.
     expect(await refusedWith(take('recorder', { meetingId, segments }))).toBe('IMPORT_NOT_CLAIMED');
+  });
+
+
+  it('34d. C4: a transcript taken through a Teams connection is labelled Microsoft\'s, tainted and unchangeable; a maker the table does not know is refused (#3176)', async () => {
+    const segments = [{ startSeconds: 1, endSeconds: 4, speakerLabel: 'Trần Thị Lan', text: 'Chào mọi người, ta bắt đầu họp.' }];
+    const meetingId = String((await rpc('meetings/create', 'recorder', { title: 'Họp Teams', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start' })).body.meetingId);
+    const recordingId = await suggest('recorder', { hasAudio: false, hasTranscript: true, provider: 'microsoft_teams' });
+    await admin((c) =>
+      c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'claimed', meeting_id = $2, staging_key = $3, length_seconds = 600 WHERE id = $1`, [recordingId, meetingId, `staging/${randomBytes(32).toString('hex')}`]),
+    );
+    expect(await runtime.execute('meetings.import.take_transcript', { meetingId, segments }, { actor: asUser('recorder'), orgId })).toEqual({ meetingId, stored: 1 });
+    const rows = await admin(async (c) => (await c.query<{ source: string; tainted: boolean }>('SELECT source, tainted FROM crove_meetings.transcript_segment WHERE meeting_id = $1', [meetingId])).rows);
+    expect(rows).toEqual([{ source: 'microsoft_teams', tainted: true }]);
+    const read = await rpc('meetings/transcript/get', 'recorder', { meetingId });
+    expect((read.body as { segments: { source: string }[] }).segments.map((x) => x.source)).toEqual(['microsoft_teams']);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.import.take_transcript' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
+    expect(audit).toMatchObject({ meetingId, recordingId, stored: 1, source: 'microsoft_teams' });
+    expect(JSON.stringify(audit)).not.toContain('Chào mọi người');
+    // The database still backs the label: a Teams line untainted is refused, its source never changes, and an unknown maker is refused by the CHECK.
+    const insert = (source: string, tainted: boolean) =>
+      admin((c) => c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text, source, tainted) VALUES ($1, $2, 0, 1, 'x', $3, $4)`, [orgId, meetingId, source, tainted]));
+    await expect(insert('microsoft_teams', false)).rejects.toThrow(/MEETINGS_TAINT_FORBIDDEN/);
+    await expect(insert('zoom', true)).rejects.toThrow(/transcript_segment_source_check/);
+    await expect(admin((c) => c.query(`UPDATE crove_meetings.transcript_segment SET source = 'google_meet' WHERE meeting_id = $1`, [meetingId]))).rejects.toThrow(/MEETINGS_TAINT_FORBIDDEN/);
+    // A provider with no transcript path (Zoom) is refused and writes nothing: it is never labelled as another platform's.
+    const zoomMeeting = String((await rpc('meetings/create', 'recorder', { title: 'Họp Zoom', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start' })).body.meetingId);
+    const zoomRecording = await suggest('recorder', { hasAudio: false, hasTranscript: true, provider: 'zoom' });
+    await admin((c) =>
+      c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = 'claimed', meeting_id = $2, staging_key = $3, length_seconds = 600 WHERE id = $1`, [zoomRecording, zoomMeeting, `staging/${randomBytes(32).toString('hex')}`]),
+    );
+    expect(await refusedWith(runtime.execute('meetings.import.take_transcript', { meetingId: zoomMeeting, segments }, { actor: asUser('recorder'), orgId }))).toBe('IMPORT_NOT_CLAIMED');
+    expect(await admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_meetings.transcript_segment WHERE meeting_id = $1', [zoomMeeting])).rows[0]?.n))).toBe(0);
   });
 
   it('35. #3337: a video uploaded with extract=audio keeps only the extracted Opus, whatever the shape of the upload', async () => {

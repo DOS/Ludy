@@ -11,7 +11,7 @@ import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wa
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, EInvoiceReasonSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -65,12 +65,13 @@ import { generateRecruitingBrief, type RecruitingBriefAi, type RecruitingBriefPo
 import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot } from '@crove/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { einvoiceRateAi, explainCorrectionRate } from './einvoice-rate-ai.ts';
+import { einvoiceReasonAi, suggestCorrectionReason } from './einvoice-reason-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
-import { briefStatusOf, runMeetingBrief, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
+import { briefStatusOf, runMeetingBrief, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -78,6 +79,7 @@ import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
 import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
 import { misaCheck } from './misa-check.ts';
+import { explainMisaCheckLine, misaCheckLineAi } from './finance-misa-check-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -434,6 +436,7 @@ export function createRpcHandler(
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeSupplierPayableLineAi = supplierPayableLineAi(conversationReader?.supplierPayableLineSentence ? { supplierPayableLineSentence: conversationReader.supplierPayableLineSentence.bind(conversationReader) } : null, suggestionBudget());
+  const financeMisaCheckLineAi = misaCheckLineAi(conversationReader?.misaCheckLineSentence ? { misaCheckLineSentence: conversationReader.misaCheckLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker on payroll (#2534, #2815): the same reader and model, independent budgets per action so `Promise.all([prepare, flag])` in the UI does not self-contend on `running`.
   const payrollPrepareBudget = suggestionBudget();
   const payrollAi: PayrollAi = {
@@ -476,6 +479,9 @@ export function createRpcHandler(
   // The accounting coworker's explanation of the VAT rate a correcting e-invoice proposes (#3709): the same reader and model, a budget of its own. Code decides the rate and the basis (the finance
   // query); the model is told the nature, two dates and the rates only, and what it writes only explains. With AI off the screen shows the code's own reason.
   const einvoiceRateCoworker = einvoiceRateAi(conversationReader?.einvoiceRateExplanation ? { einvoiceRateExplanation: conversationReader.einvoiceRateExplanation.bind(conversationReader) } : null, suggestionBudget());
+  // The accounting coworker's proposal of the reason code of an adjusting or replacing e-invoice (#3690): the same reader and model, a budget of its own. It is told the list of codes, the buyer's kind, the
+  // original's lines without a price and the person's note (never stored or logged); the code it answers is picked from the list by number and checked in code, and a person confirms it.
+  const einvoiceReasonCoworker = einvoiceReasonAi(conversationReader?.einvoiceReasonSuggestion ? { einvoiceReasonSuggestion: conversationReader.einvoiceReasonSuggestion.bind(conversationReader) } : null, suggestionBudget());
 
   // The sales coworker on the lines of a quote (#2698): the same reader and model, a budget of its own. It is told the deal, the customer's latest words (only while the org's switch for AI on customers'
   // words is on) and the earlier quotes to them, and what it answers only fills the editor as proposals that a person applies or drops.
@@ -1306,6 +1312,11 @@ export function createRpcHandler(
         // The table of contents of a meeting (#3844).
         chaptersGet: os.meetings.results.chaptersGet.handler(meetingsQuery('meetings.chapters.get')),
         chaptersSave: os.meetings.results.chaptersSave.handler(meetingsCommand('meetings.chapters.save')),
+        chaptersStatus: os.meetings.results.chaptersStatus.handler(meetingsQuery('meetings.chapters.status')),
+        chaptersCopy: os.meetings.results.chaptersCopy.handler(meetingsCommand('meetings.chapters.copy_result')),
+        chaptersRun: os.meetings.results.chaptersRun.handler(({ context, input }) =>
+          inOrg(context, (orgId, actor) => runMeetingChapters({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
         enhance: os.meetings.results.enhance.handler(({ context, input }) =>
           inOrg(context, (orgId, actor) => runNotesEnhance({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
         ),
@@ -2992,6 +3003,14 @@ export function createRpcHandler(
       misaCheck: os.vouchers.misaCheck.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => misaCheck((name, query) => runtime.query(name, query, { actor, orgId }), input)),
       ),
+      // The check is run again here, so what the model is told comes from the books, never from the caller; the sentence is a read and changes no voucher.
+      misaCheckLine: os.vouchers.misaCheckLine.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const check = await misaCheck((name, query) => runtime.query(name, query, { actor, orgId }), ask);
+          return explainMisaCheckLine(financeMisaCheckLineAi, orgId, actor.userId, check, lang ?? 'vi');
+        }),
+      ),
     },
     openingBalance: {
       preview: os.openingBalance.preview.handler(({ context, input }) =>
@@ -3213,6 +3232,13 @@ export function createRpcHandler(
           inFinance(context, async (orgId, actor) => {
             const proposal = await runtime.query<EInvoiceCorrectionRate>('finance.einvoice.correction_rate', input, { actor, orgId });
             return explainCorrectionRate(einvoiceRateCoworker, orgId, actor.userId, proposal);
+          }),
+        ),
+        // The coworker's proposal of the reason code (#3690): the source is read in the member's own transaction, the model is asked outside any transaction; the note typed is not stored.
+        suggestReason: os.einvoice.drafts.suggestReason.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            const source = await runtime.query<EInvoiceReasonSource>('finance.einvoice.reason_source', { originalDraftId: input.originalDraftId }, { actor, orgId });
+            return suggestCorrectionReason(einvoiceReasonCoworker, orgId, actor.userId, source, input);
           }),
         ),
         correctionOptions: os.einvoice.drafts.correctionOptions.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.correction_options', input, { actor, orgId }))),

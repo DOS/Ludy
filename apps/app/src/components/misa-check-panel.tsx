@@ -4,8 +4,8 @@
 // names a supplier, an invoice or an amount: a row is told by Crove's voucher number and the line.
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useId, useState } from 'react';
-import { useTranslations } from 'use-intl';
-import type { MisaCheck, MisaCheckFormat } from '@crove/kernel-contract';
+import { useLocale, useTranslations } from 'use-intl';
+import type { MisaCheck, MisaCheckCounts, MisaCheckFormat, MisaCheckLine } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
@@ -15,21 +15,35 @@ import { ErrorText } from './ui.tsx';
 // How many example rows a group shows on screen (the server sends up to 20).
 const SHOWN = 5;
 
+// The findings of each kind summed over the groups, as the server counts them for the coworker's line (apps/kernel finance-misa-check-line-ai.ts): the line is shown only beside the list it was written from.
+function misaCheckCounts(check: MisaCheck): MisaCheckCounts {
+  const of = (kind: MisaCheck['groups'][number]['kind']) => check.groups.filter((g) => g.kind === kind).reduce((sum, g) => sum + g.count, 0);
+  return { rows: check.rows, codes: of('MISSING_CODE'), required: of('MISSING_REQUIRED'), vat: of('VAT_CODE'), accounts: of('ACCOUNT_NOT_IN_CHART'), tooLong: of('TOO_LONG') };
+}
+const sameCounts = (a: MisaCheckCounts, b: MisaCheckCounts) => a.rows === b.rows && a.codes === b.codes && a.required === b.required && a.vat === b.vat && a.accounts === b.accounts && a.tooLong === b.tooLong;
+
 export function MisaCheckPanel({ formats, from, to, legalEntityId }: { formats: readonly MisaCheckFormat[]; from: string; to: string; legalEntityId: string | undefined }) {
   const t = useTranslations('misaCheck');
+  const lang = useLocale() === 'en' ? 'en' : 'vi';
   const [format, setFormat] = useState<MisaCheckFormat>(formats[0] as MisaCheckFormat);
   const id = useId();
   // The answer belongs to the file kind and range it was asked for; a new kind or new dates clear it, so an old list is never read beside new dates.
   const check = useMutation<MisaCheck>({
     mutationFn: () => client.vouchers.misaCheck({ format, ...(from ? { from } : {}), ...(to ? { to } : {}), ...(legalEntityId === undefined ? {} : { legalEntityId }) }),
   });
+  // The coworker's one line about the findings (slice B): asked only when something is flagged, after the list is on screen; with AI off or a refused text the list stands alone.
+  const line = useMutation<MisaCheckLine>({
+    mutationFn: () => client.vouchers.misaCheckLine({ format, lang, ...(from ? { from } : {}), ...(to ? { to } : {}), ...(legalEntityId === undefined ? {} : { legalEntityId }) }),
+  });
   const asked = `${format}|${from}|${to}|${legalEntityId ?? ''}`;
   const [answeredFor, setAnsweredFor] = useState<string | null>(null);
   // A new file kind or new dates clear the answer and any error of the old ask.
   const { reset } = check;
+  const { reset: resetLine } = line;
   useEffect(() => {
     reset();
-  }, [asked, reset]);
+    resetLine();
+  }, [asked, reset, resetLine]);
   const result = check.data && answeredFor === asked ? check.data : null;
   return (
     <details className="mb-4 rounded-md border border-border p-3 text-sm print:hidden" data-testid="misa-check">
@@ -52,7 +66,14 @@ export function MisaCheckPanel({ formats, from, to, legalEntityId }: { formats: 
           type="button"
           variant="outline"
           loading={check.isPending}
-          onClick={() => check.mutate(undefined, { onSuccess: () => setAnsweredFor(asked) })}
+          onClick={() =>
+            check.mutate(undefined, {
+              onSuccess: (data) => {
+                setAnsweredFor(asked);
+                if (data.findings > 0) line.mutate();
+              },
+            })
+          }
           data-testid="misa-check-run"
         >
           {t('run')}
@@ -63,12 +84,12 @@ export function MisaCheckPanel({ formats, from, to, legalEntityId }: { formats: 
           <ErrorText>{errorMessage(check.error)}</ErrorText>
         </div>
       )}
-      {result && <MisaCheckResult result={result} />}
+      {result && <MisaCheckResult result={result} line={line.data && sameCounts(line.data.counts, misaCheckCounts(result)) ? line.data : null} />}
     </details>
   );
 }
 
-export function MisaCheckResult({ result }: { result: MisaCheck }) {
+export function MisaCheckResult({ result, line = null }: { result: MisaCheck; line?: MisaCheckLine | null }) {
   const t = useTranslations('misaCheck');
   if (result.rows === 0) {
     return (
@@ -89,6 +110,16 @@ export function MisaCheckResult({ result }: { result: MisaCheck }) {
       <p className="mb-2 text-foreground" data-testid="misa-check-summary">
         {t('summary', { findings: String(result.findings), rows: String(result.rows) })}
       </p>
+      {line?.ai === 'used' && line.text && (
+        <p className="mb-2 text-muted-foreground" data-testid="misa-check-line-text">
+          {line.text}
+        </p>
+      )}
+      {(line?.ai === 'busy' || line?.ai === 'budget' || line?.ai === 'failed') && (
+        <p className="mb-2 text-subtle-foreground" data-testid="misa-check-line-ai-state">
+          {t(`lineAi.${line.ai}`)}
+        </p>
+      )}
       <ul className="space-y-3">
         {result.groups.map((g) => {
           const shown = Math.min(g.examples.length, SHOWN);

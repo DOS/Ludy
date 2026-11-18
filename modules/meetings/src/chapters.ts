@@ -14,6 +14,7 @@ const TITLE_MESSAGES = {
   empty: 'A chapter needs a title',
   too_long: 'A chapter title is too long',
   multiline: 'A chapter title is one line',
+  control: 'A chapter title holds a character that cannot be shown',
   contact: 'A chapter title holds no email address or phone number',
 } as const;
 
@@ -46,12 +47,40 @@ export const chaptersSave = defineCommand({
       const anchored = new Set(found.rows.map((r) => r.second));
       if (seconds.some((s) => !anchored.has(s))) throw new DomainError('CHAPTER_NOT_ANCHORED', 422, 'A chapter must start at a line of the transcript');
     }
-    // The draft set is replaced whole.
+    // The draft set is replaced whole. A chapter that starts at the second of a chapter the model wrote, or that carries its title, keeps the mark (and the run it came from) even when the other is edited: only the recorder's review
+    // (meetings.draft.review) clears it, never a save. A chapter at any other second is the recorder's own.
+    const marked = await ctx.trx
+      .selectFrom('crove_meetings.meeting_chapter')
+      .select(['start_seconds', 'title', 'source_run_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .where('stage', '=', 'draft')
+      .where('tainted', '=', true)
+      .execute();
+    const runBySecond = new Map(marked.map((m) => [m.start_seconds, m.source_run_id]));
+    const runByTitle = new Map(marked.map((m) => [m.title, m.source_run_id]));
+    // The mark follows the chapter by its second or by its title: moving a chapter to another line, or changing only its title, never clears it.
+    const markOf = (c: { title: string; startSeconds: number }): { marked: boolean; fromRunId: string | null } => {
+      const bySecond = runBySecond.has(c.startSeconds);
+      const byTitle = runByTitle.has(c.title);
+      return { marked: bySecond || byTitle, fromRunId: bySecond ? (runBySecond.get(c.startSeconds) ?? null) : (runByTitle.get(c.title) ?? null) };
+    };
     await ctx.trx.deleteFrom('crove_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').execute();
     if (chapters.length > 0) {
       await ctx.trx
         .insertInto('crove_meetings.meeting_chapter')
-        .values(chapters.map((c, i) => ({ org_id: ctx.orgId, meeting_id: input.meetingId, stage: 'draft' as const, position: i + 1, title: c.title, start_seconds: c.startSeconds })))
+        .values(
+          chapters.map((c, i) => ({
+            org_id: ctx.orgId,
+            meeting_id: input.meetingId,
+            stage: 'draft' as const,
+            position: i + 1,
+            title: c.title,
+            start_seconds: c.startSeconds,
+            tainted: markOf(c).marked,
+            source_run_id: markOf(c).fromRunId,
+          })),
+        )
         .execute();
     }
     ctx.audit({ meetingId: input.meetingId, chapters: chapters.length });
