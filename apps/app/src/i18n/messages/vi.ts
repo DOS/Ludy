@@ -5322,6 +5322,7 @@ export const vi = {
       launchRetriedToast: 'Đã yêu cầu chạy lại lần chạy này.',
       launchObjectsTitle: 'Đã tạo trên nền tảng quảng cáo',
       launchObjectDetails: 'Chi tiết',
+      launchObjectDetailsOf: 'Chi tiết của {name}',
       launchObjectId: 'Mã trên nền tảng: {id}',
       statesReadOk: 'Đã hỏi {platform} lúc {time}',
       statesReadFailed: 'Không hỏi được {platform} lúc {time}; đang hiện trạng thái đã biết gần nhất',

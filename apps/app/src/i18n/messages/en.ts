@@ -5324,6 +5324,7 @@ export const en = {
       launchRetriedToast: 'Asked to run the launch again.',
       launchObjectsTitle: 'Created on the ad platform',
       launchObjectDetails: 'Details',
+      launchObjectDetailsOf: 'Details of {name}',
       launchObjectId: 'Platform id: {id}',
       statesReadOk: 'Asked {platform} at {time}',
       statesReadFailed: 'Could not ask {platform} at {time}; showing the last known state',

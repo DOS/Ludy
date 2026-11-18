@@ -647,14 +647,16 @@ function LaunchObjectsList({ launch, title, root }: { launch: AdsLaunchView; tit
       <ul className="space-y-1 text-xs text-muted-foreground" data-testid="campaign-launch-objects">
         {launch.objects.map((o) => (
           <li key={o.slot} className="flex flex-wrap items-center justify-between gap-2">
-            <span>
+            <div>
               {launchObjectLevelText(o.level, root)}: <span className="font-medium text-foreground">{o.name}</span>
               {/* The platform's own id is for support and for finding the object in its manager: behind a link, not in the line (AD-11, #3659). */}
               <details className="mt-0.5">
-                <summary className="cursor-pointer text-subtle-foreground">{t('campaigns.launchObjectDetails')}</summary>
+                <summary className="cursor-pointer text-subtle-foreground" aria-label={t('campaigns.launchObjectDetailsOf', { name: o.name })}>
+                  {t('campaigns.launchObjectDetails')}
+                </summary>
                 <span className="block font-mono">{t('campaigns.launchObjectId', { id: o.externalId })}</span>
               </details>
-            </span>
+            </div>
             <Badge variant={launchObjectStatusVariant(o, launch)}>
               {launchObjectStatusText(o, launch, root)}
             </Badge>
