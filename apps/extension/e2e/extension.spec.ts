@@ -532,6 +532,56 @@ test('Notes Quick Capture saves private note and to-do with zero optional permis
     await expect.poll(() => fake.todos.length).toBe(1);
     expect(fake.todos[0]).toEqual({ title: 'Việc nhanh e2e', details: 'Chi tiết việc' });
     await expect(page.locator('#notes-status')).toContainText('Đã lưu việc cá nhân');
+
+    // Enabling Web Clipper explicitly requests activeTab + scripting and allows 1-click Clip; turning it OFF revokes them.
+    await page.evaluate(() => {
+      const held = new Set<string>();
+      const events: { requested: string[][]; removed: string[][] } = { requested: [], removed: [] };
+      (window as unknown as { clipperEvents: typeof events }).clipperEvents = events;
+      (chrome.permissions as { contains: unknown }).contains = async ({ permissions = [] }: { permissions?: string[] }) =>
+        permissions.every((p) => held.has(p));
+      (chrome.permissions as { request: unknown }).request = async ({ permissions = [] }: { permissions?: string[] }) => {
+        events.requested.push([...permissions]);
+        for (const p of permissions) held.add(p);
+        return true;
+      };
+      (chrome.permissions as { remove: unknown }).remove = async ({ permissions = [] }: { permissions?: string[] }) => {
+        events.removed.push([...permissions]);
+        for (const p of permissions) held.delete(p);
+        return true;
+      };
+      (chrome.tabs as { query: unknown }).query = async () => [{ id: 42, url: 'https://example.com/clip-target' }];
+      (chrome as unknown as { scripting: { executeScript: unknown } }).scripting = {
+        executeScript: async () => [
+          {
+            result: {
+              url: 'https://example.com/clip-target',
+              title: 'Trang tin mẫu',
+              selectedHtml: '',
+              selectedText: '',
+              contentHtml: '<h1>Tiêu đề bài viết</h1><p>Đoạn trích sạch</p>',
+              textFallback: 'Tiêu đề bài viết Đoạn trích sạch',
+            },
+          },
+        ],
+      };
+    });
+
+    await page.locator('#clipper-toggle').check();
+    await expect(page.locator('#clip-now')).toBeVisible();
+    await page.locator('#clip-now').click();
+    await expect.poll(() => fake.clips.length).toBe(2);
+    expect(fake.clips[1]).toEqual({
+      title: 'Trang tin mẫu',
+      body: '# Tiêu đề bài viết\n\nĐoạn trích sạch',
+      sourceUrl: 'https://example.com/clip-target',
+    });
+
+    await page.locator('#clipper-toggle').uncheck();
+    await expect(page.locator('#clip-now')).toHaveCount(0);
+    const permEvents = await page.evaluate(() => (window as unknown as { clipperEvents: { requested: string[][]; removed: string[][] } }).clipperEvents);
+    expect(permEvents.requested).toEqual([['activeTab', 'scripting']]);
+    expect(permEvents.removed).toEqual([['activeTab', 'scripting']]);
   } finally {
     fake.scopes = ['meetings'];
     fake.features = { meetings: true, notes: false };
