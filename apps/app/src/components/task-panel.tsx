@@ -19,7 +19,7 @@ import { useDebounced } from '../lib/use-debounced.ts';
 import { DateInput } from './date-input.tsx';
 import { DuplicateHint, FormPanel } from './form-panel.tsx';
 import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
-import { ErrorText, FieldError, ListSkeleton, fieldControl } from './ui.tsx';
+import { ErrorText, FieldError, fieldControl } from './ui.tsx';
 
 type Chart = Awaited<ReturnType<typeof orpc.chart.get.call>>;
 type TaskDetail = Awaited<ReturnType<typeof orpc.tasks.get.call>>['task'];
@@ -163,10 +163,11 @@ export function EditTaskPanel({ taskId, chart, onClose }: { taskId: string; char
     }
     return <EditTaskForm key={fresh.task.id} task={fresh.task} chart={chart} onClose={onClose} />;
   }
+  // While the task is on its way nothing is drawn: a panel that is swapped for the form a moment later would lose the focus the form sets.
+  if (!detail.error) return null;
   return (
     <FormPanel
       title={t('editTask')}
-      busy={false}
       onClose={onClose}
       footer={
         <Button type="button" variant="outline" onClick={onClose}>
@@ -174,7 +175,7 @@ export function EditTaskPanel({ taskId, chart, onClose }: { taskId: string; char
         </Button>
       }
     >
-      {detail.error ? <ErrorText>{errorMessage(detail.error)}</ErrorText> : <ListSkeleton />}
+      <ErrorText>{errorMessage(detail.error)}</ErrorText>
     </FormPanel>
   );
 }

@@ -16,17 +16,6 @@ export function isSaveShortcut(event: { key: string; metaKey: boolean; ctrlKey: 
   return event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.isComposing;
 }
 
-// The element that had focus when a panel was opened. A panel that swaps one FormPanel for another (a loading state, then the form)
-// mounts the second while focus sits inside the first, and that must not become the element to return to.
-let lastOpener: Element | null = null;
-function currentOpener(): Element | null {
-  if (typeof document === 'undefined') return null;
-  const active = document.activeElement;
-  if (lastOpener?.isConnected && active?.closest('[data-slot="sheet-content"]')) return lastOpener;
-  lastOpener = active;
-  return active;
-}
-
 export function FormPanel({
   title,
   description,
@@ -60,7 +49,7 @@ export function FormPanel({
   const formRef = useRef<HTMLFormElement>(null);
   // The panel is mounted when its button is pressed and unmounted when it closes, so the dialog does not know what opened it: the
   // element that had focus at that moment is remembered and gets focus back when the panel goes away (keyboard users land where they were).
-  const [opener] = useState(currentOpener);
+  const [opener] = useState(() => (typeof document === 'undefined' ? null : document.activeElement));
   useEffect(
     () => () => {
       window.setTimeout(() => {
