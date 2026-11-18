@@ -4787,7 +4787,7 @@ export const en = {
     vatCutAnswerNo: 'No, not eligible',
     vatCutProfile: 'VAT cut (Decree 174)',
     vatCutLine: 'VAT cut {percent}% (Decree 174)',
-    vatCutPayable: 'VAT to pay after the cut',
+    vatCutPayable: 'VAT after the cut at the period percentage (for reference)',
     vatCutIfEligible: 'The profile has not answered the VAT cut question (Decree 174), so the figures are computed without the cut. If the household is eligible, the VAT would be {vat} (cut by {cut}). Answer the question in the profile to have the book use it.',
     cnkdUnconfirmedThreshold: 'The yearly revenue threshold below which no tax is owed, from {date}',
     cnkdUnconfirmedPitReduction: 'The personal income tax cut, from {date}',

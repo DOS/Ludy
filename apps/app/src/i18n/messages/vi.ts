@@ -4785,7 +4785,7 @@ export const vi = {
     vatCutAnswerNo: 'Không được giảm',
     vatCutProfile: 'Giảm thuế GTGT (Nghị định 174)',
     vatCutLine: 'Giảm thuế GTGT {percent}% theo Nghị định 174',
-    vatCutPayable: 'Thuế GTGT phải nộp sau giảm',
+    vatCutPayable: 'Thuế GTGT sau giảm theo tỷ lệ của kỳ (tham khảo)',
     vatCutIfEligible: 'Hồ sơ chưa trả lời câu hỏi giảm thuế GTGT (Nghị định 174), nên số liệu tính không giảm. Nếu hộ thuộc diện được giảm, thuế GTGT sẽ là {vat} (giảm {cut}). Trả lời câu hỏi trong hồ sơ để sổ tính theo.',
     cnkdUnconfirmedThreshold: 'Ngưỡng doanh thu năm không chịu thuế, từ {date}',
     cnkdUnconfirmedPitReduction: 'Mức giảm thuế thu nhập cá nhân, từ {date}',

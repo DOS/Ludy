@@ -250,7 +250,7 @@ describe('the Decree 174 VAT cut on the 01/CNKD screen and in the profile (#3710
     });
     expect(html).toContain('data-testid="household-cnkd-vatcut"');
     expect(text(html)).toContain('VAT cut 20.0000% (Decree 174) ₫3,200');
-    expect(text(html)).toContain('VAT to pay after the cut ₫12,800');
+    expect(text(html)).toContain('VAT after the cut at the period percentage (for reference) ₫12,800');
   });
 
   it('says what the VAT would be if eligible when the profile has not answered', () => {

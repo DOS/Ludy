@@ -193,7 +193,7 @@ describe('the Decree 174 VAT cut on the S2a screen (#3710 slice 2)', () => {
     expect(html).toContain('data-testid="household-s2a-vatcut"');
     const text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
     expect(text).toContain('VAT cut 20.0000% (Decree 174) ₫5,000');
-    expect(text).toContain('VAT to pay after the cut ₫20,000');
+    expect(text).toContain('VAT after the cut at the period percentage (for reference) ₫20,000');
     expect(html).not.toContain('data-testid="household-s2a-vatcut-ask"');
   });
 
