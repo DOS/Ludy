@@ -4995,12 +4995,22 @@ export const en = {
 
   ads: {
     title: 'Ads',
-    subtitle: 'The spend and results your ad platforms report, read only, next to your books.',
+    subtitle: 'The cost and results of your ads, next to your books. To run ads from Ludy, turn it on in Ads settings.',
     emptyTitle: 'No ad account yet',
     emptyHint:
-      'This screen shows how much you spend on ads each day, how many results you get and what each result costs, next to the figures in your books. {brand} only reads the figures: it never creates, edits or pauses a campaign, and it keeps no personal data of the people who see your ads.',
+      'This screen shows how much you spend on ads each day, how many results you get and what each result costs, next to the figures in your books. Connect an account to start. {brand} only reads the figures until you turn on running ads yourself, and it keeps no personal data of the people who see your ads.',
     emptyMembers: 'An owner or admin connects the ad account.',
-    noPlatform: 'No ad platform is set up on this server yet, so no ad account can be connected.',
+    noPlatform: 'No ad platform is turned on in this system yet, so no ad account can be connected. Ask whoever runs the system to turn on Meta, Google or the test account.',
+    adsSettings: {
+      title: 'Ads settings',
+      subtitle: 'Connect accounts, alert thresholds, running ads from Ludy and how each account counts results.',
+      link: 'Ads settings',
+      back: 'Back to the figures',
+      open: 'Open settings',
+      status: { on: 'Running ads: on', off: 'Running ads: off' },
+      campaignsOff: 'Running ads is off, so an approved plan creates no campaign at the platform yet.',
+      retry: 'Try again',
+    },
     connectTitle: 'Connect a test ad account',
     testNote: 'The test ad platform of this server makes up sample figures; they are not your real numbers.',
     connectName: 'Ad account name',

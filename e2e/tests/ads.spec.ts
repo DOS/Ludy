@@ -48,6 +48,15 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
   const totals = page.getByRole('region', { name: 'Tổng cộng' });
   const settings = page.getByRole('form', { name: 'Cài đặt tài khoản quảng cáo' });
   const books = page.getByRole('region', { name: 'So với sổ sách' });
+  // The switches and forms are in the Ads settings, apart from the figures (#3640): one link opens them, one leads back.
+  const toSettings = async () => {
+    await page.getByTestId('ads-settings-link').click();
+    await expect(page.getByRole('heading', { name: 'Cài đặt quảng cáo', level: 1 })).toBeVisible();
+  };
+  const toFigures = async () => {
+    await page.getByTestId('ads-settings-back').click();
+    await expect(totals).toBeVisible();
+  };
 
   await test.step('Ads is an item of the Marketing group of the Engage app on the rail', async () => {
     await nav.getByRole('link', { name: 'Engage' }).click();
@@ -60,7 +69,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
 
   await test.step('with no account yet it says what Ads shows and offers a test account', async () => {
     await expect(page.getByText('Chưa có tài khoản quảng cáo nào')).toBeVisible();
-    await expect(page.getByText('không tạo, sửa hay tắt chiến dịch nào', { exact: false })).toBeVisible();
+    await expect(page.getByText('chỉ đọc số liệu cho tới khi bạn tự bật chạy quảng cáo', { exact: false })).toBeVisible();
     await expect(page.getByRole('form', { name: 'Kết nối tài khoản quảng cáo thử' })).toBeVisible();
     // Nothing is asked of a name left empty: the form says what is missing and nothing is connected.
     await page.getByRole('button', { name: 'Kết nối tài khoản thử' }).click();
@@ -108,9 +117,13 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
   });
 
   await test.step('choose purchases as the result: the results and the cost per result appear', async () => {
+    // The prompt takes the owner to the settings, where the result kind is chosen; the figures are read again on the way back.
+    await totals.getByRole('button', { name: 'Chọn loại kết quả' }).click();
+    await expect(settings).toBeVisible();
     await settings.getByLabel('Loại kết quả được tính').selectOption('purchase');
     await settings.getByRole('button', { name: 'Lưu cài đặt' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Đã lưu cài đặt tài khoản quảng cáo.' })).toBeVisible();
+    await toFigures();
     await expect(stat(totals, 'Kết quả')).toHaveText(/[1-9]/);
     await expect(totals.getByText('Mua hàng', { exact: true })).toBeVisible();
     await expect(stat(totals, 'Chi phí mỗi kết quả')).toHaveText(/[1-9]/);
@@ -125,6 +138,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
   });
 
   await test.step('a code that is not an account is refused on the spot', async () => {
+    await toSettings();
     await settings.getByLabel('Tài khoản chi phí quảng cáo trong sổ').fill('64');
     await settings.getByRole('button', { name: 'Lưu cài đặt' }).click();
     await expect(settings.getByText('Mã tài khoản gồm 3 đến 10 chữ số', { exact: false })).toBeVisible();
@@ -133,6 +147,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
   await test.step('with the advertising expense account, each month with spend sits beside the books, and the difference is shown', async () => {
     await settings.getByLabel('Tài khoản chi phí quảng cáo trong sổ').fill('6421');
     await settings.getByRole('button', { name: 'Lưu cài đặt' }).click();
+    await toFigures();
     await expect(books.getByRole('columnheader', { name: 'Nền tảng báo' })).toBeVisible();
     await expect(books.getByRole('columnheader', { name: 'Đã ghi sổ' })).toBeVisible();
     await expect(books.getByRole('columnheader', { name: 'Chênh lệch' })).toBeVisible();
@@ -222,20 +237,25 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
 
   await test.step('a second test account, in dollars, is not set beside the books in dong', async () => {
     await page.goto(`/o/${slug}/ads`);
+    await toSettings();
     await page.getByRole('button', { name: 'Kết nối tài khoản thử khác' }).click();
     const form = page.getByRole('form', { name: 'Kết nối tài khoản quảng cáo thử' });
     await form.getByLabel('Tên tài khoản quảng cáo').fill('Quảng cáo bằng đô la');
     await form.getByLabel('Đơn vị tiền').selectOption('USD');
     await form.getByRole('button', { name: 'Kết nối tài khoản thử' }).click();
-    await expect(page).toHaveURL(/\/ads\?account=[0-9a-f-]{36}/);
+    // The new account is shown, still in the settings; the figures are one click back.
+    await expect(page).toHaveURL(/\/ads\?.*account=[0-9a-f-]{36}/);
+    await toFigures();
     await expect(page.getByText('Tiền tệ USD, múi giờ America/Los_Angeles')).toBeVisible({ timeout: 90_000 });
     // Each account is picked from the list, and the address keeps the pick.
     const picker = page.getByLabel('Tài khoản quảng cáo', { exact: true });
     await expect(picker.locator('option')).toHaveCount(2);
     await page.getByLabel('Khoảng thời gian').selectOption('last13Months');
     await expect(stat(totals, 'Chi phí quảng cáo')).toHaveText(/[1-9]/, { timeout: 60_000 });
+    await toSettings();
     await settings.getByLabel('Tài khoản chi phí quảng cáo trong sổ').fill('6421');
     await settings.getByRole('button', { name: 'Lưu cài đặt' }).click();
+    await toFigures();
     await expect(books.getByText('Sổ sách ghi bằng đồng, còn tài khoản này tính bằng USD', { exact: false })).toBeVisible();
     await expect(books.getByRole('table')).toHaveCount(0);
     // Back to the account in dong: its comparison is there again.

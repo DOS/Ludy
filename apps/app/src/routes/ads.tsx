@@ -10,12 +10,12 @@
 // spend sits beside the ledger's advertising expense (components/ads-books-strip.tsx). The server and the row policies
 // decide each rule; the screen only offers what can succeed and shows the server's reason otherwise.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { ADS_SANDBOX_CURRENCIES, type AdAccountView, type AdsSummary, type LegalEntity } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
+import { Button, buttonVariants } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
@@ -23,6 +23,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AdsBooksStrip } from '../components/ads-books-strip.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { AdsFlagSettingsCard } from '../components/ads-flag-settings.tsx';
+import { AdsRunStatus } from '../components/ads-run-status.tsx';
 import { AdsCommittedStrip } from '../components/ads-committed.tsx';
 import { AdsFlagsCard } from '../components/ads-flags.tsx';
 import { AdsWeeklyNoteCard } from '../components/ads-weekly-note.tsx';
@@ -94,7 +95,7 @@ const H2 = 'text-base font-semibold text-foreground';
 // Connecting a test ad account
 
 // Owners and admins only; the caller draws it where the deployment offers the sandbox ad platform (/api/config ads).
-export function ConnectSandboxForm({ entities, onConnected, onCancel }: { entities: readonly LegalEntity[]; onConnected: (adAccountId: string) => void; onCancel?: () => void }) {
+export function ConnectSandboxForm({ entities, onConnected, onCancel, quiet = false }: { entities: readonly LegalEntity[]; onConnected: (adAccountId: string) => void; onCancel?: () => void; quiet?: boolean }) {
   const t = useTranslations('ads');
   const common = useTranslations('common');
   const headingId = useId();
@@ -176,7 +177,7 @@ export function ConnectSandboxForm({ entities, onConnected, onCancel }: { entiti
         )}
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button loading={connect.isPending} type="submit" size="lg">
+        <Button loading={connect.isPending} type="submit" size="lg" variant={quiet ? 'outline' : 'default'}>
           {t('connect')}
         </Button>
         {onCancel && (
@@ -194,7 +195,7 @@ export function ConnectSandboxForm({ entities, onConnected, onCancel }: { entiti
 // which finishes the attempt for the org it was started in. Owners and admins only; the caller draws it where the
 // deployment has its Meta ads app (`meta_ads` among /api/config's channels.oauth). It says in plain words what Ludy asks
 // Meta for: only to read reports. `another` is the short form for an org that already has an ad account.
-export function ConnectMeta({ slug, another = false, reconnect = false }: { slug: string; another?: boolean; reconnect?: boolean }) {
+export function ConnectMeta({ slug, another = false, reconnect = false, quiet = false }: { slug: string; another?: boolean; reconnect?: boolean; quiet?: boolean }) {
   const t = useTranslations('ads');
   const headingId = useId();
   const start = useAdOAuthStart(slug, 'meta_ads');
@@ -208,7 +209,7 @@ export function ConnectMeta({ slug, another = false, reconnect = false }: { slug
       <p className="text-sm text-muted-foreground">{t('connectMeta.note')}</p>
       <p className="text-xs text-subtle-foreground">{t('connectMeta.expiry')}</p>
       <div>
-        <Button loading={start.isPending} type="button" variant={another ? 'outline' : 'default'} size="lg" onClick={() => start.mutate()}>
+        <Button loading={start.isPending} type="button" variant={another || quiet ? 'outline' : 'default'} size="lg" onClick={() => start.mutate()}>
           {reconnect ? t('connectMeta.reconnect') : another ? t('connectMeta.another') : t('connectMeta.action')}
         </Button>
       </div>
@@ -221,7 +222,7 @@ export function ConnectMeta({ slug, another = false, reconnect = false }: { slug
 // Drawn only when the deployment has CHANNEL_GOOGLE_ADS_CLIENT_ID and CHANNEL_GOOGLE_ADS_CLIENT_SECRET configured
 // (`google_ads` among /api/config's channels.oauth). States clearly that Google's single adwords scope grants read and
 // write on Google's side while Ludy calls only the read endpoints.
-export function ConnectGoogle({ slug, another = false, reconnect = false }: { slug: string; another?: boolean; reconnect?: boolean }) {
+export function ConnectGoogle({ slug, another = false, reconnect = false, quiet = false }: { slug: string; another?: boolean; reconnect?: boolean; quiet?: boolean }) {
   const t = useTranslations('ads');
   const headingId = useId();
   const start = useAdOAuthStart(slug, 'google_ads');
@@ -235,7 +236,7 @@ export function ConnectGoogle({ slug, another = false, reconnect = false }: { sl
       <p className="text-sm text-muted-foreground">{t('connectGoogle.note')}</p>
       <p className="text-xs text-subtle-foreground">{t('connectGoogle.expiry')}</p>
       <div>
-        <Button loading={start.isPending} type="button" variant={another ? 'outline' : 'default'} size="lg" onClick={() => start.mutate()}>
+        <Button loading={start.isPending} type="button" variant={another || quiet ? 'outline' : 'default'} size="lg" onClick={() => start.mutate()}>
           {reconnect ? t('connectGoogle.reconnect') : another ? t('connectGoogle.another') : t('connectGoogle.action')}
         </Button>
       </div>
@@ -268,11 +269,15 @@ export function AdsEmpty({
     <div className="space-y-6">
       <Empty title={t('emptyTitle')} hint={t('emptyHint')} />
       {!sandbox && !meta && !google ? (
-        <p className="text-sm text-muted-foreground" role="status">
-          {t('noPlatform')}
-        </p>
+        // Only an owner or an admin can do anything about a deployment with no ad platform; a member is told nothing they cannot act on.
+        canManage && (
+          <p className="text-sm text-muted-foreground" role="status">
+            {t('noPlatform')}
+          </p>
+        )
       ) : canManage ? (
         <div className="space-y-4">
+          {/* One primary action: the first platform the deployment offers; the others are outline buttons (#3640). */}
           {meta && (
             <Card className="block p-4">
               <ConnectMeta slug={meta.slug} />
@@ -280,12 +285,12 @@ export function AdsEmpty({
           )}
           {google && (
             <Card className="block p-4">
-              <ConnectGoogle slug={google.slug} />
+              <ConnectGoogle slug={google.slug} quiet={Boolean(meta)} />
             </Card>
           )}
           {sandbox && (
             <Card className="block p-4">
-              <ConnectSandboxForm entities={entities} onConnected={onConnected} />
+              <ConnectSandboxForm entities={entities} onConnected={onConnected} quiet={Boolean(meta || google)} />
             </Card>
           )}
         </div>
@@ -511,7 +516,8 @@ function Stat({ label, note, children }: { label: string; note?: string | undefi
 
 // The period's totals. With no result kind chosen there is nothing to call a result, so the two figures that depend on it
 // give way to a prompt: owners and admins are taken to the setting, the others are told who chooses.
-export function Totals({ summary, currency, canManage }: { summary: AdsSummary; currency: string; canManage: boolean }) {
+// `onChooseResult`: where the prompt takes an owner (the Ads settings, where the result kind is set); without it the field on this screen is focused.
+export function Totals({ summary, currency, canManage, onChooseResult }: { summary: AdsSummary; currency: string; canManage: boolean; onChooseResult?: () => void }) {
   const t = useTranslations('ads');
   const f = useFormat();
   const kindName = useKindName();
@@ -533,7 +539,7 @@ export function Totals({ summary, currency, canManage }: { summary: AdsSummary; 
               <dd className="space-y-2 text-sm text-muted-foreground">
                 <span className="block">{canManage ? t('chooseResultKind') : t('chooseResultKindOther')}</span>
                 {canManage && (
-                  <Button type="button" variant="outline" size="lg" onClick={() => document.getElementById(RESULT_KIND_FIELD)?.focus()}>
+                  <Button type="button" variant="outline" size="lg" onClick={() => (onChooseResult ? onChooseResult() : document.getElementById(RESULT_KIND_FIELD)?.focus())}>
                     {t('chooseResultKindAction')}
                   </Button>
                 )}
@@ -846,6 +852,8 @@ function AccountPanel({
   reconnect,
   googleReconnect,
   onRequested,
+  section = 'figures',
+  onOpenSettings,
 }: {
   account: AdAccountView;
   range: AdsRangeKind;
@@ -859,6 +867,9 @@ function AccountPanel({
   // Where a paused Google Ads account is connected again (#2220).
   googleReconnect?: { slug: string } | undefined;
   onRequested: () => void;
+  // The figures (the working screen) or the account's own settings (the Ads settings, #3640); and how an owner gets from the first to the second.
+  section?: 'figures' | 'settings';
+  onOpenSettings?: () => void;
 }) {
   const t = useTranslations('ads');
   const canManage = role === 'owner' || role === 'admin';
@@ -875,6 +886,9 @@ function AccountPanel({
   const currency = account.currency ?? '';
   // An active connection that ends soon (a Meta token of 60 days): owners and admins reconnect it before it does, as for a paused one.
   const endsSoon = connectionEndsSoon(account, Date.now());
+  if (section === 'settings') {
+    return canManage ? <AdsSettingsCard key={`${account.id}:${account.resultKind}:${account.expenseAccountCode}:${account.legalEntityId}`} account={account} entities={entities} /> : null;
+  }
   return (
     <div className="space-y-8">
       <AccountHeader account={account} canRefresh={canRefresh} onRequested={onRequested} />
@@ -911,7 +925,7 @@ function AccountPanel({
             </div>
           ) : (
             <>
-              <Totals summary={summary.data} currency={currency} canManage={canManage} />
+              <Totals summary={summary.data} currency={currency} canManage={canManage} {...(onOpenSettings ? { onChooseResult: onOpenSettings } : {})} />
               {canManage && <AdsCommittedStrip account={account} month={todayIn(account.timeZone, now).slice(0, 7)} />}
               {summary.data.days.length === 0 ? (
                 <Empty title={t('noSpend')} hint={t('noSpendHint')} />
@@ -924,9 +938,6 @@ function AccountPanel({
             </>
           )}
         </>
-      )}
-      {canManage && (
-        <AdsSettingsCard key={`${account.id}:${account.resultKind}:${account.expenseAccountCode}:${account.legalEntityId}`} account={account} entities={entities} />
       )}
       <SyncRuns account={account} />
     </div>
@@ -968,26 +979,41 @@ export function AdsPage() {
   const entities = useQuery({ ...orpc.legalEntities.list.queryOptions(), enabled: canManage });
   const list = accounts.data ?? [];
   const account = list.find((a) => a.id === search.account) ?? list[0];
-  const go = (next: AdsSearch) => void navigate({ to: '/o/$slug/ads', params: { slug }, search: next });
+  // The Ads settings (#3640) are for owners and admins; anyone else asking for them gets the figures.
+  const inSettings = canManage && search.settings === true;
+  const go = (next: AdsSearch) => void navigate({ to: '/o/$slug/ads', params: { slug }, search: { ...(inSettings ? { settings: true as const } : {}), ...next } });
+  const openSettings = () => void navigate({ to: '/o/$slug/ads', params: { slug }, search: { settings: true, ...(account ? { account: account.id } : {}) } });
   const range = search.range ?? DEFAULT_ADS_RANGE;
   const connected = (adAccountId: string) => {
     setAdding(false);
     go({ account: adAccountId, ...(search.range ? { range: search.range } : {}) });
   };
-  const connectAnother = canManage && sandbox && list.length > 0 && !adding;
+  const connectAnother = inSettings && sandbox && list.length > 0 && !adding;
   return (
     <div>
       <PageHeader
-        title={t('title')}
-        subtitle={t('subtitle')}
+        title={inSettings ? t('adsSettings.title') : t('title')}
+        subtitle={inSettings ? t('adsSettings.subtitle') : t('subtitle')}
         actions={
-          connectAnother ? (
-            <Button variant="outline" size="lg" onClick={() => setAdding(true)}>
-              {t('addAnother')}
-            </Button>
+          inSettings ? (
+            <div className="flex flex-wrap gap-2">
+              {connectAnother && (
+                <Button variant="outline" size="lg" onClick={() => setAdding(true)}>
+                  {t('addAnother')}
+                </Button>
+              )}
+              <Link to="/o/$slug/ads" params={{ slug }} search={account ? { account: account.id } : {}} className={buttonVariants({ variant: 'outline', size: 'lg' })} data-testid="ads-settings-back">
+                {t('adsSettings.back')}
+              </Link>
+            </div>
+          ) : canManage && list.length > 0 ? (
+            <Link to="/o/$slug/ads" params={{ slug }} search={{ settings: true, ...(account ? { account: account.id } : {}) }} className={buttonVariants({ variant: 'outline', size: 'lg' })} data-testid="ads-settings-link">
+              {t('adsSettings.link')}
+            </Link>
           ) : undefined
         }
       />
+      {!inSettings && list.length > 0 && <AdsRunStatus slug={slug} canManage={canManage} />}
       {accounts.error ? (
         <ErrorText>{errorMessage(accounts.error)}</ErrorText>
       ) : !accounts.data || me.isPending ? (
@@ -1004,17 +1030,18 @@ export function AdsPage() {
         </div>
       ) : (
         <div className="space-y-8">
-          {adding && (
+          {inSettings && adding && (
             <Card className="block p-4">
               <ConnectSandboxForm entities={entities.data ?? []} onConnected={connected} onCancel={() => setAdding(false)} />
             </Card>
           )}
-          {canManage && metaOffered && <ConnectMeta slug={slug} another />}
-          {canManage && googleOffered && <ConnectGoogle slug={slug} another />}
-          <AdsWeeklyNoteCard />
-          {canManage && <AdsFlagsCard />}
-          {canManage && <AdsFlagSettingsCard />}
-          {canManage && <AdsWriteCard role={role} accounts={list} slug={slug} offer={writeOffer} />}
+          {inSettings && metaOffered && <ConnectMeta slug={slug} another />}
+          {inSettings && googleOffered && <ConnectGoogle slug={slug} another />}
+          {/* The working screen keeps the figures, the flags and the weekly note; the switches and forms are in the Ads settings (#3640). */}
+          {!inSettings && <AdsWeeklyNoteCard />}
+          {!inSettings && canManage && <AdsFlagsCard />}
+          {inSettings && <AdsFlagSettingsCard />}
+          {inSettings && <AdsWriteCard role={role} accounts={list} slug={slug} offer={writeOffer} />}
           {list.length > 1 && (
             <Field label={t('accountLabel')} className="max-w-sm">
               {(control) => (
@@ -1040,6 +1067,8 @@ export function AdsPage() {
             reconnect={metaOffered ? { slug } : undefined}
             googleReconnect={googleOffered ? { slug } : undefined}
             onRequested={() => setWatchUntil(Date.now() + REFRESH_WATCH_MS)}
+            section={inSettings ? 'settings' : 'figures'}
+            onOpenSettings={openSettings}
           />
         </div>
       )}
