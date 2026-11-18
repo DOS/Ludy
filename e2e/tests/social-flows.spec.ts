@@ -1187,15 +1187,16 @@ test('draws a post on six channels as one chip, and "+9" opens every post of the
   const [seventh] = sql<{ id: string }>(`SELECT id FROM crove_social.post WHERE body = 'Bài số 7' AND org_id = (SELECT org_id FROM crove_social.post WHERE id = :'six')`, { six });
   await expect(page).toHaveURL(new RegExp(`/social/${seventh?.id ?? 'missing'}$`));
 
-  // At phone width the month and the day's list fit the screen, and "+9" still opens it.
+  // At phone width the month and the day's list fit the screen: the day shows dots, not chips (#3655), and a tap on them opens the list.
   await page.setViewportSize({ width: 360, height: 780 });
   await page.goto(`/o/${slug}/social?tab=calendar`);
   await cell.scrollIntoViewIfNeeded();
   const inside = (box: { x: number; width: number } | null) => box !== null && box.x >= 0 && box.x + box.width <= 360;
   expect(inside(await cell.locator('xpath=..').boundingBox())).toBe(true);
-  const narrowMore = cell.getByRole('button', { name: /^\+9 bài nữa/ });
-  expect(inside(await narrowMore.boundingBox())).toBe(true);
-  await narrowMore.click();
+  await expect(cell.getByTestId('calendar-chip').first()).toBeHidden();
+  const dots = cell.getByTestId('calendar-day-dots');
+  expect(inside(await dots.boundingBox())).toBe(true);
+  await dots.click();
   await expect(dialog).toBeVisible();
   expect(inside(await dialog.boundingBox())).toBe(true);
   await dialog.getByRole('button', { name: 'Đóng' }).click();
