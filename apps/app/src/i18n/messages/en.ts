@@ -12433,6 +12433,7 @@ export const en = {
       SUPPLIER_PAYMENT_CHANGED: 'The account or the invoice changed since the request; ask again.',
       SUPPLIER_PAYMENT_NOT_APPROVED: 'This payment is no longer approved.',
       SUPPLIER_PAYMENT_ALREADY_CONFIRMED: 'This payment already records the supplier confirming the account.',
+      SUPPLIER_PAYMENT_WAITING: 'This supplier still has a payment waiting for approval or to be paid; cancel or settle it first.',
       EINVOICE_ORIGINAL_NOT_ISSUED: 'Only an issued invoice can be adjusted or replaced.',
       EINVOICE_ORIGINAL_IS_ADJUSTMENT: 'This is an adjusting invoice; adjust or replace the invoice it adjusts instead.',
       EINVOICE_ORIGINAL_REPLACED: 'This invoice has been replaced; adjust or replace the invoice that replaced it.',

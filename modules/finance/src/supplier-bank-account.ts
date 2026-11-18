@@ -233,6 +233,11 @@ export const supplierBankAccountErase = defineCommand({
   handler: async (ctx, input): Promise<SupplierBankAccountErased> => {
     const partyId = input.partyId.toLowerCase();
     await requireSupplier(ctx.trx, ctx.orgId, partyId);
+    // A payment waiting (approved, or a request not decided yet) names this supplier's account: it is cancelled or decided first, so no approver is left holding a request for an account that is gone.
+    const waiting = await sql<{ n: number }>`
+      SELECT (SELECT count(*) FROM crove_finance.supplier_payment p WHERE p.org_id = ${ctx.orgId}::uuid AND p.party_id = ${partyId}::uuid AND p.status = 'approved')
+           + (SELECT count(*) FROM crove_kernel.proposal q WHERE q.org_id = ${ctx.orgId}::uuid AND q.command = 'finance.supplier_payment.record' AND q.status = 'pending' AND pg_catalog.lower(q.payload->>'partyId') = ${partyId}) AS n`.execute(ctx.trx);
+    if (Number(waiting.rows[0]?.n ?? 0) > 0) throw new DomainError('SUPPLIER_PAYMENT_WAITING', 409, 'Nhà cung cấp này còn khoản chi đang chờ duyệt hoặc chờ chi; hãy hủy hoặc xử lý trước khi xóa dữ liệu ngân hàng');
     const active = await ctx.trx
       .selectFrom('crove_finance.supplier_bank_account')
       .select(['id', 'number_hash'])

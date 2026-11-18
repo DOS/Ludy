@@ -12432,6 +12432,7 @@ export const vi = {
       SUPPLIER_PAYMENT_CHANGED: 'Tài khoản hoặc hóa đơn đã thay đổi từ lúc đề xuất; hãy tạo đề xuất mới.',
       SUPPLIER_PAYMENT_NOT_APPROVED: 'Khoản chi này không còn ở trạng thái đã duyệt.',
       SUPPLIER_PAYMENT_ALREADY_CONFIRMED: 'Khoản chi này đã được ghi nhận xác nhận với nhà cung cấp.',
+      SUPPLIER_PAYMENT_WAITING: 'Nhà cung cấp này còn khoản chi đang chờ duyệt hoặc chờ chi; hãy hủy hoặc xử lý trước.',
       EINVOICE_ORIGINAL_NOT_ISSUED: 'Chỉ điều chỉnh hoặc thay thế được hóa đơn đã phát hành.',
       EINVOICE_ORIGINAL_IS_ADJUSTMENT: 'Đây là hóa đơn điều chỉnh; hãy điều chỉnh hoặc thay thế hóa đơn mà nó điều chỉnh.',
       EINVOICE_ORIGINAL_REPLACED: 'Hóa đơn này đã được thay thế; hãy điều chỉnh hoặc thay thế hóa đơn thay thế nó.',
