@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The household business kind (#2517, plan stock-and-marketplaces.md section 8.5), on PostgreSQL 17: the profile of an entity of kind household (a new dated row, never an edit; refused inside a
 // locked period, for another kind of entity and for a group and method that do not fit), the books each method requires, and the law as dated data (a new row changes the periods from its
-// date and none before; every seed row is still `commentary` until the accountant confirms it, #2520). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
+// date and none before; the seed rows the research of 2026-11-18 confirmed are `confirmed`, the rest still `commentary`, #3710). Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -374,7 +374,8 @@ suite('household business profile and rules (#2517)', () => {
     const book = await s1a(o, '2026-09');
     expect(book.period).toEqual({ period: '2026-09', from: '2026-09-01', to: '2026-09-30' });
     expect(book.household).toEqual({ name: 'Hộ kinh doanh Nguyễn Văn A', taxCode: null, representativeName: 'Nguyễn Văn A', openedOn: '2026-01-01' });
-    expect(book.form).toMatchObject({ book: 'S1a', status: 'commentary' });
+    // Confirmed since #3710 (the research of 2026-11-18, B5): the book of group 1 no longer carries the provisional label.
+    expect(book.form).toMatchObject({ book: 'S1a', status: 'confirmed' });
     expect(book.rows.map((r) => [r.date, r.description, r.amount, r.reversal, r.reference])).toEqual([
       ['2026-09-05', 'Bán có hóa đơn', '100000', false, '1C26TAA-00000042'],
       ['2026-09-12', 'Bán hàng lẻ', '60000', false, null],
