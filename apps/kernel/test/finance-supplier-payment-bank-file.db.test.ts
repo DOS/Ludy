@@ -342,7 +342,7 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     expect((await markers(o, first.id))?.export_count).toBe(1);
     // A payment that was cancelled is not marked, even with the confirmation.
     await execute(o, 'finance.supplier_payment.cancel', { paymentId: first.id, reason: 'test' });
-    expect(await refusal(exportOf(o, [first.id], { reexport: true }))).toBe('SUPPLIER_PAYMENT_ALREADY_EXPORTED');
+    expect(await refusal(exportOf(o, [first.id], { reexport: true }))).toBe('SUPPLIER_PAYMENT_NOT_APPROVED');
     expect((await markers(o, first.id))?.export_count).toBe(1);
   });
 
@@ -361,5 +361,19 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     expect((marked as { exported_at: Date }).exported_at.getFullYear()).toBeGreaterThanOrEqual(2026);
     await expect(touch('export_count = 3')).rejects.toThrow(/SUPPLIER_PAYMENT_STATE/);
     await expect(touch('export_count = 0')).rejects.toThrow(/SUPPLIER_PAYMENT_STATE|supplier_payment_export_ck/);
+  });
+
+  it('refuses the hand-over without a fresh second factor, for a held payment and for a payment whose invoice was voided after the read', async () => {
+    const o = await org(false);
+    await addAccount(o, NUMBER);
+    const held = await pay(o, await invoice(o));
+    // Still in its 24 hour hold (a new account, one owner): the command refuses it even though a caller skipped the query.
+    expect(await refusal(exportOf(o, [held.id]))).toBe('SUPPLIER_PAYMENT_HELD');
+    await released(o, held.id);
+    expect(await refusal(execute(o, 'finance.supplier_payment.bank_file.export', { paymentIds: [held.id], rows: 1, currency: 'VND' }, o.owner, false))).toBe('STEP_UP_REQUIRED');
+    expect((await markers(o, held.id))?.export_count).toBe(0);
+    await unguarded((c) => c.query("INSERT INTO crove_finance.purchase_document_void (org_id, document_id, reversal_entry_id, voided_by, reason) SELECT org_id, purchase_document_id, gen_random_uuid(), $3, 'test' FROM crove_finance.supplier_payment WHERE org_id = $1 AND id = $2", [o.orgId, held.id, o.owner]));
+    expect(await refusal(exportOf(o, [held.id]))).toBe('SUPPLIER_PAYMENT_DOCUMENT');
+    expect((await markers(o, held.id))?.export_count).toBe(0);
   });
 });

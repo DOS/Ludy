@@ -135,16 +135,43 @@ export const supplierPaymentBankFileExport = defineCommand({
   access: MANAGERS,
   handler: async (ctx, input): Promise<{ rows: number }> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ một chủ sở hữu hoặc quản trị viên mới xuất file chuyển khoản');
-    const ids = [...new Set(input.paymentIds.map((id) => id.toLowerCase()))];
+    // The hand-over needs the same second factor as the read it follows: the command is not a way to mark payments without it.
+    if (!hasFreshMfa(ctx.actor)) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
+    const ids = [...new Set(input.paymentIds.map((id) => id.toLowerCase()))].sort();
     const reexport = input.reexport === true;
-    // Marks each payment still approved (and, without the confirmation, never exported); the guard stamps the time and counts. A payment that is not marked is named.
+    // Marks each payment that is still approved, past its hold, with its pinned account still the supplier's active one and its invoice not voided (the read's checks again, on the rows locked now, so
+    // a change between the read and this step is caught), and never exported unless confirmed. Rows are locked in id order, so two overlapping files cannot deadlock. The guard stamps the time and counts.
     const { rows } = await sql<{ id: string; before: number }>`
+      WITH picked AS (
+        SELECT p.id FROM crove_finance.supplier_payment p
+         WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ANY (${ids}::uuid[]) AND p.status = 'approved' AND (${reexport}::boolean OR p.export_count = 0)
+           AND (p.payable_after IS NULL OR p.payable_after <= pg_catalog.now())
+           AND EXISTS (SELECT 1 FROM crove_finance.supplier_bank_account a WHERE a.org_id = p.org_id AND a.id = p.bank_account_id AND a.status = 'active' AND a.number_hash = p.number_hash AND a.hash_key_id = p.hash_key_id)
+           AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id)
+         ORDER BY p.id FOR UPDATE OF p)
       UPDATE crove_finance.supplier_payment p SET exported_by = ${ctx.actor.userId}::uuid, export_count = p.export_count + 1
-       WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ANY (${ids}::uuid[]) AND p.status = 'approved' AND (${reexport}::boolean OR p.export_count = 0)
+        FROM picked WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = picked.id
       RETURNING p.id, (p.export_count - 1) AS before`.execute(ctx.trx);
     if (rows.length !== ids.length || input.rows !== ids.length) {
       const marked = new Set(rows.map((r) => r.id));
-      throw new DomainError('SUPPLIER_PAYMENT_ALREADY_EXPORTED', 409, 'Một khoản chi đã được xuất file hoặc không còn ở trạng thái đã duyệt', { paymentId: ids.find((id) => !marked.has(id)) ?? null });
+      const missing = ids.find((id) => !marked.has(id)) ?? null;
+      // Which rule stopped it, so the page says the true reason (the status is read as the refusal, not guessed).
+      const why = missing
+        ? (
+            await sql<{ status: string; export_count: number; ready: boolean; account_ok: boolean; voided: boolean }>`
+              SELECT p.status, p.export_count, (p.payable_after IS NULL OR p.payable_after <= pg_catalog.now()) AS ready,
+                     EXISTS (SELECT 1 FROM crove_finance.supplier_bank_account a WHERE a.org_id = p.org_id AND a.id = p.bank_account_id AND a.status = 'active' AND a.number_hash = p.number_hash AND a.hash_key_id = p.hash_key_id) AS account_ok,
+                     EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = p.org_id AND v.document_id = p.purchase_document_id) AS voided
+                FROM crove_finance.supplier_payment p WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ${missing}::uuid`.execute(ctx.trx)
+          ).rows[0]
+        : undefined;
+      if (!why) throw new DomainError('SUPPLIER_PAYMENT_NOT_FOUND', 404, 'Không tìm thấy một khoản chi trong danh sách', { paymentId: missing });
+      if (why.status !== 'approved') throw new DomainError('SUPPLIER_PAYMENT_NOT_APPROVED', 409, 'Một khoản chi không còn ở trạng thái đã duyệt; không xuất được file', { paymentId: missing });
+      if (why.export_count > 0 && !reexport) throw new DomainError('SUPPLIER_PAYMENT_ALREADY_EXPORTED', 409, 'Một khoản chi đã có file chuyển khoản; xác nhận xuất lại nếu thật sự cần', { paymentId: missing });
+      if (!why.ready) throw new DomainError('SUPPLIER_PAYMENT_HELD', 409, 'Một khoản chi còn trong thời gian giữ 24 giờ; chưa xuất được file', { paymentId: missing });
+      if (!why.account_ok) throw new DomainError('SUPPLIER_PAYMENT_ACCOUNT_CHANGED', 409, 'Tài khoản ngân hàng của một nhà cung cấp đã thay đổi từ lúc duyệt; hãy tạo đề xuất chi mới', { paymentId: missing });
+      if (why.voided) throw new DomainError('SUPPLIER_PAYMENT_DOCUMENT', 409, 'Hóa đơn của một khoản chi đã bị hủy; không xuất được file', { paymentId: missing });
+      throw new DomainError('SUPPLIER_PAYMENT_NOT_APPROVED', 409, 'Số khoản chi không khớp danh sách đã xuất', { paymentId: missing });
     }
     ctx.audit({ rows: input.rows, currency: input.currency, reexport, again: rows.filter((r) => r.before > 0).length });
     return { rows: input.rows };
