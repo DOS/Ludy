@@ -71,7 +71,7 @@ function sameAccount(ctx: Pick<CommandContext, 'keyedHash' | 'keyedHashKeyId'>, 
   try {
     return ctx.keyedHash(HASH_PURPOSE, digits, row.hash_key_id) === row.number_hash;
   } catch (error) {
-    if (error instanceof DomainError && error.code === 'BROKER_NOT_CONFIGURED') return false;
+    if (error instanceof DomainError && error.code === 'KEYED_HASH_KEY_RETIRED') return false;
     throw error;
   }
 }
