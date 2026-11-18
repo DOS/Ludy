@@ -266,12 +266,14 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     expect((await matchOf(line)).candidates).toEqual([]);
     await exportFile(o, [payment.id]);
     const day = await fileDay(o, payment.id);
-    const open = await bankLine(o, '-110', day);
-    expect((await matchOf(open)).candidates).toMatchObject([{ paymentId: payment.id, amount: '110' }]);
+    const early = await bankLine(o, '-110', day);
+    expect((await matchOf(early)).candidates).toMatchObject([{ paymentId: payment.id, amount: '110' }]);
     expect((await matchOf(await bankLine(o, '-111', day))).candidates).toEqual([]);
     expect((await matchOf(await bankLine(o, '110', day))).candidates).toEqual([]);
     // A second exported payment of the same amount is offered too; the settlement asked for one holds its whole line (not offered to the other payment), while another open line still offers the other.
     await exportFile(o, [second.id]);
+    // Dated on the later of the two file days, so a run across Vietnam midnight offers both.
+    const open = await bankLine(o, '-110', [day, await fileDay(o, second.id)].sort().at(-1) as string);
     expect((await matchOf(open)).candidates.map((c) => c.paymentId).sort()).toEqual([payment.id, second.id].sort());
     await ask(o, payment.id, open);
     expect((await matchOf(open)).candidates).toEqual([]);
@@ -308,11 +310,12 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     const payment = await ready(o);
     await exportFile(o, [payment.id]);
     // The legacy state: a file was handed over, the first day was not recorded. The migration's own statement runs with the guard of the table in force (the guard before it rejected the move).
+    const exportedDay = (await rows<{ day: string }>("SELECT (exported_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS day FROM crove_finance.supplier_payment WHERE org_id = $1 AND id = $2", [o.orgId, payment.id]))[0]?.day;
     await unguarded((c) => c.query('UPDATE crove_finance.supplier_payment SET first_exported_at = NULL WHERE org_id = $1 AND id = $2', [o.orgId, payment.id]));
     await admin((c) => c.query('UPDATE crove_finance.supplier_payment SET first_exported_at = exported_at WHERE org_id = $1 AND id = $2 AND first_exported_at IS NULL AND exported_at IS NOT NULL', [o.orgId, payment.id]));
-    expect(await fileDay(o, payment.id)).toBe(today());
+    expect(await fileDay(o, payment.id)).toBe(exportedDay);
     await unguarded((c) => c.query("UPDATE crove_finance.supplier_payment SET status = 'cancelled', cancelled_at = now(), first_exported_at = NULL WHERE org_id = $1 AND id = $2", [o.orgId, payment.id]));
     await admin((c) => c.query('UPDATE crove_finance.supplier_payment SET first_exported_at = exported_at WHERE org_id = $1 AND id = $2 AND first_exported_at IS NULL AND exported_at IS NOT NULL', [o.orgId, payment.id]));
-    expect(await fileDay(o, payment.id)).toBe(today());
+    expect(await fileDay(o, payment.id)).toBe(exportedDay);
   });
 });
