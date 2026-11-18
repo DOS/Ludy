@@ -52,6 +52,7 @@ import { MEETINGS_SERIES_NUDGE_CRON, runMeetingsSeriesNudgeSweep } from './meeti
 import { MEETING_HOOK_SWEEP_CRON, MEETING_HOOK_SWEEP_EXPIRE_SECONDS, runMeetingHookSweep } from './meeting-hook-sweep.ts';
 import type { MediaAudioExtractor } from './meetings-extract.ts';
 import { MEETINGS_IMPORT_CONCURRENCY, MEETINGS_IMPORT_EXPIRE_SECONDS, MEETINGS_IMPORT_RETRY_LIMIT, runMeetingsImport, type MeetingsImportJob } from './meetings-import.ts';
+import { meetingPlatformRefreshCommand } from './meeting-platform-credential.ts';
 import { MEETINGS_IMPORT_SWEEP_CRON, MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS, runMeetingsImportSweep } from './meetings-import-sweep.ts';
 import { CHAT_JOB_EXPIRE_SECONDS, CHAT_RETRY_DELAY_SECONDS, CHAT_RETRY_LIMIT, runMeetingChat, type ChatJob } from './meeting-chat-job.ts';
 import { MEETING_CHAT_SWEEP_CRON, MEETING_CHAT_SWEEP_EXPIRE_SECONDS, runMeetingChatSweep } from './meeting-chat-sweep.ts';
@@ -1463,6 +1464,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // key (a token can only be opened with it) and at least one platform adapter.
   const meetingPlatforms = deps.channels?.meetingPlatforms;
   if (deps.runtime.installed('meetings') && meetingPlatforms && Object.keys(meetingPlatforms).length > 0 && wakeBroker && wakeBroker.id !== 'none') {
+    // The renewal of a token that is about to expire (issue #3878): a command that closes over this worker's broker and adapters, so only this runtime registers it.
+    deps.runtime.register({ commands: [meetingPlatformRefreshCommand({ broker: wakeBroker, adapters: meetingPlatforms })] });
     const importDeps = { runtime: deps.runtime, broker: wakeBroker, store: deps.store, adapters: meetingPlatforms, extractor: deps.meetingsImportExtractor ?? null };
     await boss.work<MeetingsImportJob>(QUEUES.meetingsImport, { batchSize: 1, localConcurrency: MEETINGS_IMPORT_CONCURRENCY, includeMetadata: true }, async ([job]) => {
       if (!job) return;

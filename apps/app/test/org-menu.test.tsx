@@ -44,7 +44,7 @@ describe('OrgMenu', () => {
     expect(html).toContain(`<span class="sr-only">${viMessages.nav.org}: </span>`);
     expect(html).toContain('Công ty TNHH Thương mại và Dịch vụ Hoa Sen Miền Bắc');
     // A long name is cut off with an ellipsis, not wrapped under the chevron.
-    expect(html).toMatch(/<span class="[^"]*truncate[^"]*">Công ty TNHH/);
+    expect(html).toMatch(/<span class="[^"]*truncate[^"]*"[^>]*>Công ty TNHH/);
     expect(html).not.toContain('<select');
     expect(html).not.toContain('DOS');
   });

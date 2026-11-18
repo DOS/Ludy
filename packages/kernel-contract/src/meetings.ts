@@ -604,7 +604,8 @@ export const zActionItemDeleted = z.strictObject({ itemId: zId, deleted: z.liter
 
 // The one click that shows the drafts to the meeting's readers: `confirmed: true` is the person's own click, never defaulted.
 export const zResultPublish = z.strictObject({ meetingId: zId, confirmed: z.literal(true) });
-export const zResultPublished = z.strictObject({ meetingId: zId, results: z.number().int().min(0), items: z.number().int().min(0) });
+// `chapters` (#3844): how many chapters of the meeting's table of contents were published with them.
+export const zResultPublished = z.strictObject({ meetingId: zId, results: z.number().int().min(0), items: z.number().int().min(0), chapters: z.number().int().min(0) });
 
 // Accepting an item makes a team task from it. The person confirms the title, picks the date and the seat (never picked for them when the attendee holds
 // none or several); a task is read by every member, and the transcript is never copied into it.
