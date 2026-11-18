@@ -150,7 +150,8 @@ async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Pr
   return items;
 }
 
-// Pending finance proposals with a failed check (block) or a warning (warn), by entity: what to fix before approving.
+// Pending finance proposals with a failed check (block) or a warning (warn), by entity: what to fix before approving. They are the same proposals
+// waitingProposals counts, so each flag annotates those items (a chip on them) and is not counted again.
 async function flaggedProposals(ctx: QueryContext, to: Link): Promise<TodayItem[]> {
   const check = (status: string) => sql`EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(coalesce(p.payload -> 'checks', '[]'::jsonb)) c WHERE c ->> 'status' = ${status})`;
   const { rows } = await sql<FlagRow>`
@@ -165,8 +166,8 @@ async function flaggedProposals(ctx: QueryContext, to: Link): Promise<TodayItem[
   for (const r of rows) {
     const failed = Number(r.failed);
     const warned = Number(r.warned);
-    if (failed > 0) items.push({ kind: 'flag', app: 'finance', id: `checks-failed:${r.entity}`, title: { key: 'financeChecksFailed', params: { count: failed } }, count: failed, severity: 'block', href: to('/inbox', r.entity) });
-    if (warned > 0) items.push({ kind: 'flag', app: 'finance', id: `checks-warn:${r.entity}`, title: { key: 'financeChecksWarn', params: { count: warned } }, count: warned, severity: 'warn', href: to('/inbox', r.entity) });
+    if (failed > 0) items.push({ kind: 'flag', app: 'finance', id: `checks-failed:${r.entity}`, title: { key: 'financeChecksFailed', params: { count: failed } }, count: failed, severity: 'block', annotates: 'proposal', href: to('/inbox', r.entity) });
+    if (warned > 0) items.push({ kind: 'flag', app: 'finance', id: `checks-warn:${r.entity}`, title: { key: 'financeChecksWarn', params: { count: warned } }, count: warned, severity: 'warn', annotates: 'proposal', href: to('/inbox', r.entity) });
   }
   return items;
 }

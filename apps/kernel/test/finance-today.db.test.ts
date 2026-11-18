@@ -189,6 +189,8 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     expect(warned?.count ?? 0).toBe(Number(counts?.warned));
     expect(Number(counts?.failed) + Number(counts?.warned)).toBeGreaterThan(0);
     if (failed) expect(failed).toMatchObject({ severity: 'block', href: expect.stringMatching(/^\/inbox\?entity=/) });
+    // They are the proposals the waiting groups count, so they annotate those and add nothing to the count of what needs the member (#3591).
+    for (const f of [failed, warned]) if (f) expect(f.annotates).toBe('proposal');
     // A flag shows no money.
     for (const f of flags) expect(f.amount).toBeUndefined();
   });

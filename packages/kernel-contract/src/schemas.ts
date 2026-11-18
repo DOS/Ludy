@@ -1007,6 +1007,9 @@ export const zNotifications = z.object({
     }),
   ),
   unread: z.number().int().nonnegative(),
+  // How many of `unread` are "a proposal waits for your approval". Those proposals are what Home and the Inbox badge already count, so the
+  // bell and Home's own notice count use `unread - unreadApprovals` and one thing is not counted by two numbers.
+  unreadApprovals: z.number().int().nonnegative(),
   muted: z.array(zNotificationKind),
 });
 export type Notifications = z.infer<typeof zNotifications>;

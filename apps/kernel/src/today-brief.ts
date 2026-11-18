@@ -3,7 +3,7 @@
 // proposals' amounts per currency and the nearest due dates. Nothing of an item's title, id or link goes further: the brief
 // is told numbers and dates only (packages/agent/src/today.ts).
 import { Decimal } from '@crove/l10n-vn';
-import { VIETNAM_TIME_ZONE, todayCurrency, type TodayBrief, type TodayItem } from '@crove/kernel-contract';
+import { VIETNAM_TIME_ZONE, isTodayAnnotation, todayCurrency, type TodayBrief, type TodayItem } from '@crove/kernel-contract';
 import { type DraftTicket } from './ai-draft-limit.ts';
 import { AiBudgetExhaustedError, templateBrief, type BriefFacts, type BriefResult } from '@crove/agent';
 
@@ -16,6 +16,7 @@ export function vietnamDay(iso: string): string {
 }
 
 export function briefFactsOf(items: readonly TodayItem[], language: 'vi' | 'en', today: string): BriefFacts {
+  // An annotation is the same things as the items it marks (a failed check on a waiting proposal), so it adds to no total but "blocking".
   const sum = (pick: (item: TodayItem) => boolean) => items.filter(pick).reduce((n, item) => n + (item.count ?? 1), 0);
   const amounts = new Map<string, InstanceType<typeof Decimal>>();
   for (const item of items) {
@@ -28,7 +29,7 @@ export function briefFactsOf(items: readonly TodayItem[], language: 'vi' | 'en',
     language,
     today,
     dueDates,
-    flags: sum((i) => i.kind === 'flag'),
+    flags: sum((i) => i.kind === 'flag' && !isTodayAnnotation(i)),
     blocking: sum((i) => i.kind === 'flag' && i.severity === 'block'),
     proposals: sum((i) => i.kind === 'proposal'),
     messages: sum((i) => i.kind === 'message'),

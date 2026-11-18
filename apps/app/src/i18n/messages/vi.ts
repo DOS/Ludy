@@ -204,6 +204,10 @@ export const vi = {
     emptyHint: 'Cảnh báo, đề xuất chờ duyệt, tin nhắn chưa trả lời và hạn sắp đến sẽ hiện ở đây khi có.',
     kinds: { flag: 'Cảnh báo', proposal: 'Chờ bạn duyệt', message: 'Tin nhắn chưa trả lời', deadline: 'Sắp đến hạn' },
     severity: { block: 'Đang chặn', warn: 'Cần xem', info: 'Lưu ý' },
+    // On the proposals' heading: how many of them carry a failed check or a warning (#3591).
+    chip: { block: '{count, plural, other {# đang chặn}}', warn: '{count, plural, other {# cần xem}}', info: '{count, plural, other {# có lưu ý}}' },
+    showAll: 'Xem tất cả ({count, number})',
+    showLess: 'Thu gọn',
     count: '{count, plural, other {# mục}}',
     due: 'Hạn {when}',
     open: 'Mở',
@@ -333,32 +337,29 @@ export const vi = {
     // One card per installed app (#1528).
     apps: {
       title: 'Ứng dụng',
+      // The apps with no figure to show are one line of links, not a card each (#3591).
+      others: 'Mở ứng dụng khác',
       open: 'Mở {app}',
       failed: 'Chưa tải được số liệu.',
       retry: 'Thử lại',
       accounting: {
         vatDue: '{days, plural, other {ngày nữa}} đến hạn tờ khai GTGT {period}',
         vatOverdue: '{days, plural, other {ngày}} quá hạn tờ khai GTGT {period}',
-        noPeriod: 'Chưa chọn kỳ khai GTGT',
       },
       social: { scheduled: '{count, plural, other {bài đăng lên lịch trong 7 ngày tới}}' },
       crm: { upcoming: '{count, plural, other {lịch hẹn sắp tới của bạn}}' },
     },
+    // What waits for the member and "Hôm nay cần bạn" does not already count (#3591): one thing is counted once.
     waiting: {
-      title: 'Đang chờ bạn',
-      empty: 'Không có việc gì đang chờ bạn',
-      emptyHint: 'Hóa đơn được chuyển tới hoặc tải lên sẽ thành đề xuất bút toán ở Chứng từ chờ duyệt, và hiện ở đây khi cần bạn xem.',
-      proposals: { label: '{count, plural, other {đề xuất bút toán chờ duyệt}}', hint: 'Kiểm tra từng hóa đơn rồi duyệt để ghi sổ', open: 'Mở Chứng từ chờ duyệt' },
-      socialReviews: { label: '{count, plural, other {bài đăng chờ bạn duyệt}}', hint: 'Bài đăng mạng xã hội cần bạn xem trước khi lên lịch', open: 'Mở màn duyệt bài' },
+      title: 'Việc khác đang chờ bạn',
       failedFiles: { label: '{count, plural, other {tệp không đọc được}}', hint: 'Xem lý do rồi tải lên tệp khác', open: 'Mở Chứng từ chờ duyệt' },
-      notifications: { label: '{count, plural, other {thông báo chưa đọc}}', hint: 'Đề xuất, tệp lỗi, sao kê và kỳ sắp đến hạn nộp', open: 'Xem thông báo' },
+      notifications: { label: '{count, plural, other {thông báo chưa đọc}}', hint: 'Tệp lỗi, sao kê, nhắc việc và kỳ sắp đến hạn nộp', open: 'Xem thông báo' },
       tasks: { label: '{count, plural, other {việc đang giao cho bạn}}', hint: 'Việc chưa xong của bạn hoặc của vị trí bạn giữ', open: 'Xem công việc' },
-      bankLines: { label: '{count, plural, other {dòng sao kê chưa có chứng từ}}', hint: 'Lập phiếu thu, phiếu chi hoặc báo Nợ, báo Có cho từng dòng', open: 'Mở sao kê ngân hàng' },
     },
   },
   // The Tổng quan of the Kế toán app (#2631): the first screen of the app.
   financeOverview: {
-    title: 'Tổng quan',
+    title: 'Tổng quan tài chính',
     subtitle: 'Tiền, lợi nhuận, công nợ phải thu và phải trả của pháp nhân đang chọn, so với kỳ cùng loại trước đó.',
     retry: 'Thử lại',
     period: 'Kỳ này: {from} đến {to}. Kỳ so sánh: {previousFrom} đến {previousTo}.',
@@ -2323,6 +2324,7 @@ export const vi = {
       privateOnly: 'Chỉ mình tôi xem',
       save: 'Lưu ghi chú',
       empty: 'Ghi lại điều cần nhớ về khách hàng này',
+      emptyOrg: 'Ghi nhanh một việc cần nhớ',
       emptyRecord: 'Ghi lại điều cần nhớ về bản ghi này',
       toggleOf: 'Ghi chú về {name}',
       todosTitle: 'Việc riêng của tôi',

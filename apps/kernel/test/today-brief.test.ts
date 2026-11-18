@@ -32,6 +32,23 @@ describe('briefFactsOf', () => {
     expect(facts.dueDates).toEqual(['2026-11-20']);
   });
 
+  it('says seven for seven pending invoices that also carry a warning: the flag annotates them and counts nothing (#3591)', () => {
+    // What finance.today returns for seven pending invoices of two vendors, all with a warning: the groups, and the flag over the same seven.
+    const facts = briefFactsOf(
+      [
+        item({ id: 'proposals:a', count: 4 }),
+        item({ id: 'proposals:b', count: 3 }),
+        item({ id: 'checks-warn:e', kind: 'flag', severity: 'warn', count: 7, annotates: 'proposal' }),
+      ],
+      'vi',
+      '2026-11-02',
+    );
+    expect(facts).toMatchObject({ proposals: 7, flags: 0, messages: 0, deadlines: 0 });
+    expect(templateBrief(facts)[0]).toBe('Hôm nay có 7 việc cần bạn: 7 đề xuất chờ duyệt.');
+    // A failed check still reaches the brief as "blocking", a fact about the same seven.
+    expect(briefFactsOf([item({ id: 'p', count: 7 }), item({ id: 'f', kind: 'flag', severity: 'block', count: 2, annotates: 'proposal' })], 'vi', '2026-11-02')).toMatchObject({ proposals: 7, flags: 0, blocking: 2 });
+  });
+
   it('names the nearest three due days, in Vietnam time, once each', () => {
     // 20:00 UTC on the 3rd is already the 4th in Vietnam.
     expect(vietnamDay('2026-11-03T20:00:00Z')).toBe('2026-11-04');

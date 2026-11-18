@@ -439,7 +439,7 @@ export const notificationList = defineQuery({
   name: 'kernel.notification.list',
   input: z.object({}),
   access: ALL,
-  handler: async (ctx): Promise<{ items: NotificationItem[]; unread: number; muted: string[] }> => {
+  handler: async (ctx): Promise<{ items: NotificationItem[]; unread: number; unreadApprovals: number; muted: string[] }> => {
     const me = requireUser(ctx);
     const settled = sql<boolean>`(n.kind = ${APPROVAL_WAITING} AND NOT EXISTS (
       SELECT 1 FROM crove_kernel.proposal p WHERE p.org_id = n.org_id AND p.id = n.subject_id AND p.status = 'pending'))`;
@@ -488,6 +488,13 @@ export const notificationList = defineQuery({
         WHERE n.org_id = ${ctx.orgId} AND n.user_id = ${me} AND n.read_at IS NULL AND NOT ${settled}
         LIMIT ${NOTIFICATION_UNREAD_CAP + 1}
       ) u`.execute(ctx.trx);
+    // The same cap and rule, for the approvals alone: the proposals they are about are counted as proposals (Home's list, the Inbox badge).
+    const unreadApprovals = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM (
+        SELECT 1 FROM crove_kernel.notification n
+        WHERE n.org_id = ${ctx.orgId} AND n.user_id = ${me} AND n.read_at IS NULL AND n.kind = ${APPROVAL_WAITING} AND NOT ${settled}
+        LIMIT ${NOTIFICATION_UNREAD_CAP + 1}
+      ) u`.execute(ctx.trx);
     const muted = await ctx.trx.selectFrom('crove_kernel.notification_mute').select('kind').where('org_id', '=', ctx.orgId).where('user_id', '=', me).orderBy('kind').execute();
     return {
       items: rows.map((r) => {
@@ -508,6 +515,7 @@ export const notificationList = defineQuery({
         };
       }),
       unread: unread.rows[0]?.n ?? 0,
+      unreadApprovals: unreadApprovals.rows[0]?.n ?? 0,
       muted: muted.map((m) => m.kind),
     };
   },

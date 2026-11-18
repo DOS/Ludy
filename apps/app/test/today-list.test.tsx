@@ -135,23 +135,24 @@ describe('TodayList', () => {
   });
 
   // Vy plan C1a (#3265): who raised each item, by the name the org gave the coworker now.
-  const ROWS = (['finance', 'crm', 'conversations', 'social', 'ads', 'notes'] as const).map((app) => ({ ...base, app, kind: 'proposal', id: app, title: { key: 'finance.unbalanced' } }));
+  const ROWS = (['ads', 'conversations', 'crm', 'finance', 'notes', 'social'] as const).map((app) => ({ ...base, app, kind: 'proposal', id: app, title: { key: 'finance.unbalanced' } }));
   const labels = (html: string) => [...html.matchAll(/data-testid="today-coworker">([^<]*)</g)].map((m) => m[1]);
+  // Home lists five rows before "Xem tất cả" (#3591), so the six apps are read in two halves; the rows keep the list's order (same kind and
+  // severity: by app, then id), which ROWS already is.
+  const allLabels = (coworkers: typeof NAMES, locale?: 'en' | 'vi') =>
+    [ROWS.slice(0, 3), ROWS.slice(3)].flatMap((items) => labels(render({ data: { items, coworkers, dropped: 0 }, ...(locale ? { locale } : {}) })));
 
   it('names the coworker on each item: Ly for finance, Dy for CRM and conversations, Uy for Social and Ads, Vy for the rest', () => {
-    const html = render({ data: { items: ROWS, coworkers: NAMES, dropped: 0 } });
-    // The rows keep the list's order (same kind and severity: by app, then id): ads, conversations, crm, finance, notes, social.
-    expect(labels(html)).toEqual(['From Uy', 'From Dy', 'From Dy', 'From Ly', 'From Vy', 'From Uy']);
+    expect(allLabels(NAMES)).toEqual(['From Uy', 'From Dy', 'From Dy', 'From Ly', 'From Vy', 'From Uy']);
   });
 
   it('shows a renamed coworker under its new name, and only on the items of its apps', () => {
-    const html = render({ data: { items: ROWS, coworkers: { gm: 'Vy', finance: 'Lan', sales: 'Dy', marketing: 'Uy' }, dropped: 0 } });
-    expect(labels(html)).toEqual(['From Uy', 'From Dy', 'From Dy', 'From Lan', 'From Vy', 'From Uy']);
-    expect(labels(render({ data: { items: ROWS, coworkers: { gm: 'Vy', finance: 'Ly', sales: 'Minh', marketing: 'Uy' }, dropped: 0 } }))).toEqual(['From Uy', 'From Minh', 'From Minh', 'From Ly', 'From Vy', 'From Uy']);
+    expect(allLabels({ gm: 'Vy', finance: 'Lan', sales: 'Dy', marketing: 'Uy' })).toEqual(['From Uy', 'From Dy', 'From Dy', 'From Lan', 'From Vy', 'From Uy']);
+    expect(allLabels({ gm: 'Vy', finance: 'Ly', sales: 'Minh', marketing: 'Uy' })).toEqual(['From Uy', 'From Minh', 'From Minh', 'From Ly', 'From Vy', 'From Uy']);
   });
 
   it('names the coworker in Vietnamese too', () => {
-    expect(labels(render({ data: { items: ROWS, coworkers: NAMES, dropped: 0 }, locale: 'vi' }))).toEqual(['Từ Uy', 'Từ Dy', 'Từ Dy', 'Từ Ly', 'Từ Vy', 'Từ Uy']);
+    expect(allLabels(NAMES, 'vi')).toEqual(['Từ Uy', 'Từ Dy', 'Từ Dy', 'Từ Ly', 'Từ Vy', 'Từ Uy']);
   });
 
   it('says Vy on the summary line, written by the model or built from the figures, and her new name once renamed', () => {
@@ -193,6 +194,37 @@ describe('TodayList', () => {
     expect(html).toContain(en.today.fallback.proposal);
     expect(html).toContain(en.today.fallback.message);
     expect(html).not.toContain('today.items');
+  });
+
+  // #3591: seven pending invoices of two vendors that all carry a warning, as finance.today answers them.
+  const SEVEN = [
+    { ...base, id: 'proposals:a', count: 4, kind: 'proposal', title: { key: 'finance.byVendor', params: { vendor: 'Phú Thịnh' } } },
+    { ...base, id: 'proposals:b', count: 3, kind: 'proposal', title: { key: 'finance.byVendor', params: { vendor: 'An Phát' } } },
+    { ...base, id: 'checks-warn:e', kind: 'flag', severity: 'warn', count: 7, annotates: 'proposal', title: { key: 'finance.unbalanced' } },
+  ];
+
+  it('says seven for seven invoices with a warning: one group, one number beside the title, the warning as a chip', () => {
+    const html = render({ data: { items: SEVEN, coworkers: NAMES, dropped: 0 } });
+    expect([...html.matchAll(/<h3[^>]*>([^<]*)</g)].map((m) => m[1])).toEqual(['Waiting for your approval']);
+    expect(html).toMatch(/data-testid="today-total"[^>]*>7</);
+    expect(html).toMatch(/Waiting for your approval<span[^>]*>7</);
+    expect(html).toMatch(/data-testid="today-chip"[^>]*>7 to look at</);
+    // Two rows (the vendors), and the flag is not one of them.
+    expect([...html.matchAll(/<li>/g)]).toHaveLength(2);
+    expect(html).not.toContain('A voucher does not balance');
+    // Vietnamese says the same count.
+    expect(render({ data: { items: SEVEN, coworkers: NAMES, dropped: 0 }, locale: 'vi' })).toMatch(/data-testid="today-total"[^>]*>7</);
+  });
+
+  it('lists five rows and offers the rest behind "Show all"', () => {
+    const many = Array.from({ length: 8 }, (_, i) => ({ ...base, id: `p${i}`, kind: 'proposal', title: { key: 'finance.byVendor', params: { vendor: `V${i}` } } }));
+    const html = render({ data: { items: many, coworkers: NAMES, dropped: 0 } });
+    expect([...html.matchAll(/<li>/g)]).toHaveLength(5);
+    expect(html).toMatch(/data-testid="today-toggle"[^>]*>Show all \(8\)</);
+    // The heading still counts all eight: hiding rows does not change the count.
+    expect(html).toMatch(/Waiting for your approval<span[^>]*>8</);
+    // Five or fewer: no button.
+    expect(render({ data: { items: many.slice(0, 5), coworkers: NAMES, dropped: 0 } })).not.toContain('today-toggle');
   });
 
   it('shows the empty state when no line has anything, and a skeleton while it loads', () => {
