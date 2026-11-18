@@ -134,6 +134,7 @@ export function liveApprovalCommands(): string[] {
 // 12: the posting of a stored marketplace settlement (finance.marketplace_settlement.record, #2516) was given its approval policy.
 // 13: the posting of a platform's payout (finance.marketplace_payout.record, #2516) was given its approval policy.
 // 14: the clearing of a platform's waiting fees by its invoice (finance.marketplace_fee_clearing.record, #2516) was given its approval policy.
+// 15: the payment of a supplier invoice to the supplier's bank account (finance.supplier_payment.record, #3699) was given its approval policy.
 export const APPROVAL_POLICY_VERSION = 15;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the

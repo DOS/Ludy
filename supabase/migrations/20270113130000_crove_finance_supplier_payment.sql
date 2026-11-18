@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS crove_finance.supplier_payment (
 );
 -- One live payment per invoice: a stale or cancelled one does not hold it, so the invoice can be asked for again.
 CREATE UNIQUE INDEX IF NOT EXISTS supplier_payment_live_uq ON crove_finance.supplier_payment (org_id, purchase_document_id) WHERE status IN ('approved', 'paid');
+CREATE INDEX IF NOT EXISTS supplier_payment_document_idx ON crove_finance.supplier_payment (org_id, purchase_document_id);
 CREATE UNIQUE INDEX IF NOT EXISTS supplier_payment_proposal_uq ON crove_finance.supplier_payment (org_id, proposal_id);
 CREATE INDEX IF NOT EXISTS supplier_payment_entity_idx ON crove_finance.supplier_payment (legal_entity_id, org_id);
 CREATE INDEX IF NOT EXISTS supplier_payment_party_idx ON crove_finance.supplier_payment (org_id, party_id, status);
