@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Chapters } from '@crove/kernel-contract';
+import type { Chapters, PersonalDataErasure, PersonalDataResult } from '@crove/kernel-contract';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
@@ -278,5 +278,33 @@ suite('the chapters of a meeting (#3844)', () => {
     }
     expect((await rowsOf(old)).map((r) => [r.stage, r.title])).toEqual([['published', 'Đã công bố']]);
     expect((await rowsOf(fresh)).map((r) => r.title)).toEqual(['Nháp mới']);
+  });
+  // A title may name a person: the finder and the erasure reach it as they reach the title of a meeting, whatever the command lets in (the rows below are written past the command, as a rule
+  // that changed later or an import would).
+  it('finds a value in a chapter title where the owner reads it, counts it per recorder where they cannot, and an erasure redacts the readable one only', async () => {
+    const email = 'chuong.rieng@congty.example';
+    const chapter = (meetingId: string, stage: 'draft' | 'published', title: string) =>
+      sqlAdmin(`INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, stage, position, title, start_seconds) VALUES ($1, $2, $3, 1, $4, 0)`, [orgId, meetingId, stage, title]);
+    // Readable by the owner: a meeting shared with the org, with a published chapter.
+    const shared = await seedMeeting('recorder', ['reader']);
+    await sqlAdmin(`UPDATE crove_meetings.meeting SET visibility = 'org' WHERE org_id = $1 AND id = $2`, [orgId, shared]);
+    await chapter(shared, 'published', `Gửi hợp đồng cho ${email}`);
+    // Not readable by the owner: an attendees-only meeting, with a draft chapter.
+    const hidden = await seedMeeting('recorder', ['reader']);
+    await chapter(hidden, 'draft', `Việc riêng ${email}`);
+    const find = (who = 'owner') => runtime.execute<PersonalDataResult>('kernel.personal_data.find', { value: email }, { actor: asUser(who), orgId, idempotencyKey: randomUUID() });
+    const found = await find();
+    expect(found.matches.filter((m) => m.column.startsWith('crove_meetings.')).map((m) => m.column)).toEqual(['crove_meetings.meeting_chapter.title']);
+    // The hidden one is counted for its recorder, as a title of a meeting that holds the value; never its text or meeting.
+    expect(found.meetingText).toEqual([{ recorderUserId: users.recorder, meetings: 1, lines: 0, results: 0, items: 0, titles: 1 }]);
+    expect(JSON.stringify(found)).not.toContain('Việc riêng');
+    const mfa = { type: 'user' as const, userId: users.owner as string, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
+    const erased = await runtime.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: mfa, orgId, idempotencyKey: randomUUID() });
+    expect(JSON.stringify(erased)).not.toContain('Việc riêng');
+    expect((await rowsOf(shared)).map((r) => r.title)).toEqual(['Gửi hợp đồng cho [đã xóa]']);
+    // The draft of the meeting the owner cannot read stays as written, and is counted as what is kept.
+    expect((await rowsOf(hidden)).map((r) => r.title)).toEqual([`Việc riêng ${email}`]);
+    expect(erased.kept.find((k) => k.column === 'crove_meetings.text')).toMatchObject({ rows: 1 });
+    expect((await find()).meetingText).toEqual([{ recorderUserId: users.recorder, meetings: 1, lines: 0, results: 0, items: 0, titles: 1 }]);
   });
 });

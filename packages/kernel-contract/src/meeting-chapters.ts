@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Chapters ("Mục lục") of a meeting (#3844, ADR-0049 stage A): a short title and the second of the transcript line it starts at. Typed by the recorder (the recorder's own Vy fills the same table
-// in a later step), shown to the meeting's readers once published. A title is plain text of one line: at most 80 characters, no email address and no run of eight or more digits, so a title can
-// never be the value a personal-data search probes for (the finder reads emails and runs of 8 to 20 digits).
+// in a later step), shown to the meeting's readers once published. A title is plain text of one line: at most 80 characters, and no email address or run of eight or more digits (a chapter names a part of the
+// meeting, not a person's contact). The personal-data finder and erasure reach a title anyway, as they reach the title of a meeting: nothing there rests on this rule.
 import { z } from 'zod';
 import { zId } from './schemas.ts';
 
