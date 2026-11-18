@@ -83,7 +83,7 @@ async function prepare(page: Page, tag: string): Promise<Screen[]> {
   ];
 
   await test.step('the template settings card, then its form open, are scanned too', async () => {
-    await page.goto(`/o/${slug}/settings`);
+    await page.goto(`/o/${slug}/settings/apps`);
     const card = page.getByTestId('minutes-templates-card');
     await expect(card).toBeVisible();
     await card.getByRole('button', { name: 'Thêm mẫu' }).click();
@@ -98,7 +98,7 @@ async function prepare(page: Page, tag: string): Promise<Screen[]> {
     await card.getByRole('button', { name: 'Thêm mẫu' }).click();
     screens.push({
       name: 'settings (template form open)',
-      path: `/o/${slug}/settings`,
+      path: `/o/${slug}/settings/apps`,
       ready: async (p) => {
         const c = p.getByTestId('minutes-templates-card');
         await expect(c).toBeVisible();

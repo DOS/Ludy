@@ -12,6 +12,7 @@ import { exec, sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
 import { confirmUnverifiedSignature } from '../lib/inbox.ts';
 import { nextTotp } from '../lib/totp.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 const FIXTURE = readFileSync(fileURLToPath(new URL('../../apps/extract/test/fixtures/einvoice-basic.xml', import.meta.url)), 'utf8');
 const SELLER = 'CÔNG TY TNHH DỊCH VỤ MẪU';
@@ -131,6 +132,7 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
     }
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
     await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+    await openSettingsTab(page, 'accounting');
     const card = page.locator('[aria-label="Quy tắc định khoản đã học"]');
     const row = card.getByRole('listitem');
     await expect(row).toHaveCount(1);
