@@ -5,6 +5,7 @@ import { useTranslations } from 'use-intl';
 import {
   HR_LEAVE_CATEGORIES,
   HR_LEAVE_ENTRY_KINDS,
+  HR_UNPAID_LEAVE_PRECISION_RE,
   vietnamToday,
   type HrLeaveBalanceAsk,
   type HrLeaveCategory,
@@ -28,6 +29,15 @@ const DAYS_RE = /^\d{1,3}(\.\d{1,2})?$/;
 
 export function normalizeLeaveDaysInput(raw: string): string {
   return raw.replace(/,/g, '.').replace(/[^\d.]/g, '');
+}
+
+export function isValidLeaveDaysInput(kind: HrLeaveEntryKind, raw: string): boolean {
+  if (!DAYS_RE.test(raw)) return false;
+  if (kind === 'unpaid_leave' && !HR_UNPAID_LEAVE_PRECISION_RE.test(raw)) return false;
+  const [wholeRaw = '0', fracRaw = ''] = raw.split('.');
+  const hundredths = Number(wholeRaw) * 100 + Number(fracRaw.padEnd(2, '0').slice(0, 2));
+  const maxHundredths = kind === 'opening_balance' ? 36600 : 3100;
+  return Number.isSafeInteger(hundredths) && hundredths <= maxHundredths;
 }
 
 export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
@@ -67,7 +77,7 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
 
   const parsedYear = Number(yearInput);
   const yearValid = /^\d{4}$/.test(yearInput) && parsedYear >= 2000 && parsedYear <= 2100;
-  const formValid = MONTH_RE.test(month) && DAYS_RE.test(days) && Number(days) <= 366;
+  const formValid = MONTH_RE.test(month) && isValidLeaveDaysInput(kind, days);
   const data = q.data;
 
   return (
@@ -222,6 +232,7 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
                   id={`hr-leave-days-${employeeId}`}
                   className="w-24"
                   inputMode="decimal"
+                  step={kind === 'opening_balance' ? '0.01' : '0.5'}
                   value={days}
                   onChange={(ev) => setDays(normalizeLeaveDaysInput(ev.target.value))}
                   data-testid="hr-leave-days"

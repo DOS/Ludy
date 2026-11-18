@@ -39,7 +39,12 @@ export const hrManifest = defineModule({
         ['org_id', 'id', 'legal_entity_id', 'employee_id', 'effective_from', 'contract_type', 'contract_form', 'term_months', 'contract_end_on', 'fixed_term_sequence', 'probation_role_tier', 'probation_end_on', 'region', 'pay_function', 'created_by', 'created_at'],
         { base_wage: 'sensitive', probation_wage: 'sensitive' },
       ),
-      // Monthly employee leave ledger (#3394, #2540 slice 1c-2): opening balance, annual leave, personal paid leave, unpaid leave. Internal metadata columns like payroll_run.working_days; raw days are omitted from audit facts.
+      // Monthly employee leave ledger (#3394, #3411, #2540 slice 1c-2): opening balance, annual leave, personal paid leave and unpaid leave.
+      // Kept `internal` (unlike `payroll_line.inputs`, which holds VND pay amounts): `days` holds plain day counts (0..366) with no money, PII or free text,
+      // `leaveSet` and `leaveDelete` omit raw day counts from `ctx.audit` facts so they never enter WORM `audit_event`, database RLS (`owner_admin`, `le_scope`)
+      // and `sensitive: true` read queries (`hr.payroll.leave.balance`, `hr.payroll.run.sheet`) restrict access to owners and admins, offboarding uses
+      // `OWNER_RUN_EXPORT_TABLES`, and under Accounting Law 88/2015 Art. 41 (`HR_RETENTION_YEARS = 10`) rows stay as anonymized day counts once
+      // `hr.payroll.employee.erase` clears employee PII and shreds `subject_key` (and `org_purge` deletes them on org closure).
       payroll_leave_entry: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'month', 'kind', 'days', 'approved', 'created_by', 'created_at', 'updated_at']),
       // The pay run (#2531): one month of one legal entity, and a line per person. The wage figures, the month's inputs and the breakdown are sensitive like the wage they come from; the
       // approval record holds the totals, so it is too. The ids, the status and the dates are internal.

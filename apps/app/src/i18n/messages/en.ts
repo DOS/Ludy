@@ -11999,6 +11999,8 @@ export const en = {
       HR_INTERVIEW_SLOT_TAKEN: 'This time slot conflicts with an existing calendar event',
       HR_LEAVE_BALANCE_UNAVAILABLE: 'Unable to calculate the annual leave balance for the selected options',
       HR_LEAVE_DAYS_OUT_OF_RANGE: 'Unpaid leave days synced to payroll support at most 1 decimal place and range from 0 to 99.9 days',
+      HR_LEAVE_AFTER_END: 'The leave month cannot be after the employee termination month',
+      HR_LEAVE_BASELINE_INVALID: 'The standard annual leave days cannot be below the statutory minimum for this work category',
       HR_RUN_NOT_APPROVED: 'Only an approved pay run can be posted',
       HR_POSTING_OPEN: 'This pay run already has a posting proposal waiting for approval',
       HR_POSTING_DONE: 'This pay run is already posted',
