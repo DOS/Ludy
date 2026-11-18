@@ -274,7 +274,7 @@ export function DealsPage() {
   const rows = deals.data?.pages.flatMap((p) => p.items) ?? [];
   // An org with no deal sees one action, the empty state's: the header's "Thêm cơ hội" waits until there is a deal (#3647). The board's answer is the one DealBoard reads.
   const plainBoard = useQuery({ ...orpc.crm.deals.board.queryOptions({ input: {} }), enabled: view === 'board' });
-  const noDeals = view === 'board' ? !filtered && isEmptyBoard(plainBoard.data) : view === 'list' && !filtered && !deals.isPending && !stages.isPending && !deals.error && rows.length === 0;
+  const noDeals = view === 'board' ? !filtered && !plainBoard.error && isEmptyBoard(plainBoard.data) : view === 'list' && !filtered && !deals.isPending && !stages.isPending && !deals.error && !stages.error && rows.length === 0;
   const head = [t('columns.title'), t('columns.party'), t('columns.stage'), t('columns.amount'), t('columns.expectedClose'), t('columns.owner'), ...(canEdit ? [''] : [])];
   const stageList = stages.data ?? [];
 
