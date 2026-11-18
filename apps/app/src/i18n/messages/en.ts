@@ -12454,6 +12454,12 @@ export const en = {
       SUPPLIER_PAYMENT_NOT_APPROVED: 'This payment is no longer approved.',
       SUPPLIER_PAYMENT_ALREADY_CONFIRMED: 'This payment already records the supplier confirming the account.',
       SUPPLIER_PAYMENT_WAITING: 'This supplier still has a payment waiting for approval or to be paid; cancel or settle it first.',
+      SUPPLIER_PAYMENT_HELD: 'This payment is still in its 24 hour hold; it cannot be exported or paid yet.',
+      SUPPLIER_PAYMENT_ACCOUNT_CHANGED: 'The supplier bank account changed since the approval; ask for a new payment.',
+      SUPPLIER_PAYMENT_DOCUMENT: 'The invoice of this payment is no longer valid (voided or not matching).',
+      SUPPLIER_PAYMENT_AMOUNT_MISMATCH: 'The amount of this payment differs from the amount approved; the file cannot be made.',
+      SUPPLIER_PAYMENT_CURRENCY_MIXED: 'One file holds payments in a single currency.',
+      SUPPLIER_PAYMENT_ACCOUNT_ERASED: 'The supplier bank data was erased or cannot be read; the file cannot be made.',
       EINVOICE_ORIGINAL_NOT_ISSUED: 'Only an issued invoice can be adjusted or replaced.',
       EINVOICE_ORIGINAL_IS_ADJUSTMENT: 'This is an adjusting invoice; adjust or replace the invoice it adjusts instead.',
       EINVOICE_ORIGINAL_REPLACED: 'This invoice has been replaced; adjust or replace the invoice that replaced it.',
@@ -13181,6 +13187,10 @@ export const en = {
         supplier_payments_waiting: 'Read which suppliers have a payment waiting for approval or to be paid, to warn when they change their account',
       },
       supplier_payment: {
+        bank_file: {
+          export: 'Record that a supplier payment bank file was downloaded',
+          get: 'Get the bank file for supplier payments (needs a second factor)',
+        },
         cancel: 'Cancel an approved supplier payment',
         confirm_account: 'Record that the supplier confirmed the bank account',
         list: 'Read the approved supplier payments',

@@ -12453,6 +12453,12 @@ export const vi = {
       SUPPLIER_PAYMENT_NOT_APPROVED: 'Khoản chi này không còn ở trạng thái đã duyệt.',
       SUPPLIER_PAYMENT_ALREADY_CONFIRMED: 'Khoản chi này đã được ghi nhận xác nhận với nhà cung cấp.',
       SUPPLIER_PAYMENT_WAITING: 'Nhà cung cấp này còn khoản chi đang chờ duyệt hoặc chờ chi; hãy hủy hoặc xử lý trước.',
+      SUPPLIER_PAYMENT_HELD: 'Khoản chi này còn trong thời gian giữ 24 giờ; chưa xuất file hoặc chi được.',
+      SUPPLIER_PAYMENT_ACCOUNT_CHANGED: 'Tài khoản ngân hàng của nhà cung cấp đã thay đổi từ lúc duyệt; hãy tạo đề xuất chi mới.',
+      SUPPLIER_PAYMENT_DOCUMENT: 'Hóa đơn của khoản chi này không còn hợp lệ (đã hủy hoặc không khớp).',
+      SUPPLIER_PAYMENT_AMOUNT_MISMATCH: 'Số tiền của khoản chi không khớp số tiền đã duyệt; không xuất được file.',
+      SUPPLIER_PAYMENT_CURRENCY_MIXED: 'Một file chỉ gồm các khoản chi cùng một loại tiền.',
+      SUPPLIER_PAYMENT_ACCOUNT_ERASED: 'Dữ liệu ngân hàng của nhà cung cấp đã bị xóa hoặc không đọc được; không xuất được file.',
       EINVOICE_ORIGINAL_NOT_ISSUED: 'Chỉ điều chỉnh hoặc thay thế được hóa đơn đã phát hành.',
       EINVOICE_ORIGINAL_IS_ADJUSTMENT: 'Đây là hóa đơn điều chỉnh; hãy điều chỉnh hoặc thay thế hóa đơn mà nó điều chỉnh.',
       EINVOICE_ORIGINAL_REPLACED: 'Hóa đơn này đã được thay thế; hãy điều chỉnh hoặc thay thế hóa đơn thay thế nó.',
@@ -13180,6 +13186,10 @@ export const vi = {
         supplier_payments_waiting: 'Xem nhà cung cấp nào đang có khoản chi chờ duyệt hoặc chờ chi, để cảnh báo khi họ đổi tài khoản',
       },
       supplier_payment: {
+        bank_file: {
+          export: 'Ghi nhận một file chuyển khoản chi nhà cung cấp đã được tải về',
+          get: 'Lấy file chuyển khoản chi cho nhà cung cấp (cần xác thực hai lớp)',
+        },
         cancel: 'Hủy một khoản chi nhà cung cấp đã duyệt',
         confirm_account: 'Ghi nhận nhà cung cấp đã xác nhận tài khoản ngân hàng',
         list: 'Xem các khoản chi nhà cung cấp đã duyệt',

@@ -60,3 +60,27 @@ export const zSupplierPaymentList = z.array(zSupplierPayment);
 export const zSupplierPaymentWaiting = z.strictObject({ partyId: z.uuid(), state: z.enum(['pending', 'approved']), since: z.string().regex(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) });
 export type SupplierPaymentWaiting = z.infer<typeof zSupplierPaymentWaiting>;
 export const zSupplierPaymentsWaiting = z.array(zSupplierPaymentWaiting);
+
+// The bank file of approved supplier payments (#3113 S3, #3700). `finance.supplier_payment.bank_file.get` is a sensitive query in the requesting owner's or admin's own context: its audit row is
+// committed before it reads, it needs a second factor used in the last 5 minutes, and it opens the sealed holder and number of each payment's pinned account there and nowhere else. The answer is
+// returned to the caller and never stored. One file holds the payments the caller names, all in one currency; a payment the file cannot carry refuses the whole file, naming the payment (never a number).
+export const SUPPLIER_PAYMENT_BANK_FILE_MAX = 200;
+export const zSupplierPaymentBankFileQuery = z.strictObject({ paymentIds: z.array(z.uuid()).min(1).max(SUPPLIER_PAYMENT_BANK_FILE_MAX) });
+export type SupplierPaymentBankFileQuery = z.infer<typeof zSupplierPaymentBankFileQuery>;
+export const zSupplierPaymentBankFileRow = z.strictObject({
+  seq: z.string(),
+  holder: z.string(),
+  account: z.string(),
+  bank: z.string(),
+  amount: zAmount,
+  content: z.string(),
+});
+export const zSupplierPaymentBankFile = z.strictObject({
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  rows: z.array(zSupplierPaymentBankFileRow),
+  total: zAmount,
+});
+export type SupplierPaymentBankFile = z.infer<typeof zSupplierPaymentBankFile>;
+// The audit row of a handed-over file: a count and the currency, never a name, a number or an amount.
+export const zSupplierPaymentBankFileExport = z.strictObject({ rows: z.number().int().min(1).max(SUPPLIER_PAYMENT_BANK_FILE_MAX), currency: z.string().regex(/^[A-Z]{3}$/) });
+export type SupplierPaymentBankFileExport = z.infer<typeof zSupplierPaymentBankFileExport>;
