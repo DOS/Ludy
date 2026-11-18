@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { STOCK_LOW_MAX, STOCK_REORDER_HINT_MAX, STOCK_REORDER_ITEMS_MAX, STOCK_SUGGEST_LINES_MAX, type StockAiState, type StockItem, type StockLowItem, type StockUnassignedLine } from '@crove/kernel-contract';
+import { STOCK_LOW_MAX, STOCK_REORDER_HINT_MAX, STOCK_REORDER_ITEMS_MAX, STOCK_SUGGEST_LINES_MAX, type MarketplaceUnassignedLine, type StockAiState, type StockItem, type StockLowItem, type StockUnassignedLine } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -66,19 +66,52 @@ export function useLineSuggestions(lines: readonly StockUnassignedLine[], items:
   return { suggestionOf: current, isAsked, state, pending: ask.isPending, error: ask.error, send: () => ask.mutate(next), canAsk: next.length > 0, remaining: todo.length };
 }
 
-export function SuggestBar({ suggestions }: { suggestions: ReturnType<typeof useLineSuggestions> }) {
+/** The coworker's suggestions for the unassigned marketplace order lines (#2686), on the same rules as the invoice lines': asked ten lines of one entity at a time and only when a person clicks, a line it
+ * gave nothing for is remembered as asked, an ask that came back busy, over budget or failed leaves its lines to be asked again, and a suggestion whose item is no longer in use is dropped with its mark.
+ * A line with neither a product name nor a SKU is never asked about. It only fills the item picker of the row: the person's own assign writes. */
+export function useMarketplaceSuggestions(lines: readonly MarketplaceUnassignedLine[], items: readonly StockItem[]) {
+  const lang = useLocale() === 'en' ? 'en' : 'vi';
+  const [found, setFound] = useState<ReadonlyMap<string, Suggestion>>(new Map());
+  const [asked, setAsked] = useState<ReadonlySet<string>>(new Set());
+  const [state, setState] = useState<'usedNone' | 'usedSome' | Exclude<StockAiState, 'used'> | null>(null);
+  const active = new Set(items.filter((i) => i.active).map((i) => i.id));
+  const current = (key: string): Suggestion | undefined => {
+    const suggestion = found.get(key);
+    return suggestion !== undefined && active.has(suggestion.itemId) ? suggestion : undefined;
+  };
+  const isAsked = (key: string) => asked.has(key) && (!found.has(key) || current(key) !== undefined);
+  const todo = lines.filter((l) => ((l.itemName ?? '').trim() !== '' || (l.sku ?? '').trim() !== '') && !isAsked(l.lineId));
+  const first = todo[0];
+  const next = first ? todo.filter((l) => l.legalEntityId === first.legalEntityId).slice(0, STOCK_SUGGEST_LINES_MAX) : [];
+  const ask = useMutation({
+    mutationFn: (asking: readonly MarketplaceUnassignedLine[]) => client.marketplace.suggest({ legalEntityId: asking[0]?.legalEntityId as string, lineIds: asking.map((l) => l.lineId), lang }),
+    onSuccess: (answer, asking) => {
+      if (answer.ai !== 'used' && answer.ai !== 'quiet') {
+        setState(answer.ai);
+        return;
+      }
+      const keys = asking.map((l) => l.lineId);
+      setAsked((was) => new Set([...was, ...keys]));
+      setFound((was) => new Map([...[...was].filter(([key]) => !keys.includes(key)), ...answer.suggestions.map((s): [string, Suggestion] => [s.lineId, { itemId: s.itemId, reason: s.reason }])]));
+      setState(answer.ai === 'quiet' ? 'quiet' : answer.suggestions.length > 0 ? 'usedSome' : 'usedNone');
+    },
+  });
+  return { suggestionOf: current, isAsked, state, pending: ask.isPending, error: ask.error, send: () => ask.mutate(next), canAsk: next.length > 0, remaining: todo.length };
+}
+
+export function SuggestBar({ suggestions, testId = 'stock-suggest' }: { suggestions: Pick<ReturnType<typeof useLineSuggestions>, 'pending' | 'error' | 'send' | 'state' | 'canAsk' | 'remaining'>; testId?: string }) {
   const t = useTranslations('stock.suggest');
   const { pending, error, send, state, canAsk, remaining } = suggestions;
   return (
-    <div className="mb-3 space-y-1" data-testid="stock-suggest-bar">
+    <div className="mb-3 space-y-1" data-testid={`${testId}-bar`}>
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" loading={pending} disabled={!canAsk || pending} onClick={send} data-testid="stock-suggest">
+        <Button variant="outline" size="sm" loading={pending} disabled={!canAsk || pending} onClick={send} data-testid={testId}>
           {t('button')}
         </Button>
         {remaining > 0 && <span className="text-xs text-subtle-foreground">{t('remaining', { count: remaining })}</span>}
       </div>
       {state && (
-        <p className="text-xs text-subtle-foreground" role="status" data-testid="stock-suggest-state">
+        <p className="text-xs text-subtle-foreground" role="status" data-testid={`${testId}-state`}>
           {t(`state.${state}`)}
         </p>
       )}
@@ -88,19 +121,19 @@ export function SuggestBar({ suggestions }: { suggestions: ReturnType<typeof use
 }
 
 /** The suggestion under a line: the item and the coworker's reason, as an AI proposal nobody approved (a dashed outline and the proposal badge). It only fills in the item picker. */
-export function SuggestionChip({ suggestion, asked, items, onUse }: { suggestion: Suggestion | undefined; asked: boolean; items: readonly StockItem[]; onUse: () => void }) {
+export function SuggestionChip({ suggestion, asked, items, onUse, testId = 'stock-suggestion' }: { suggestion: Suggestion | undefined; asked: boolean; items: readonly StockItem[]; onUse: () => void; testId?: string }) {
   const t = useTranslations('stock.suggest');
   if (!suggestion) return asked ? <p className="mb-2 text-xs text-subtle-foreground">{t('none')}</p> : null;
   const item = items.find((i) => i.id === suggestion.itemId && i.active);
   if (!item) return null;
   return (
-    <div className="mb-2 space-y-1 rounded-lg border border-dashed border-proposal/60 p-2" data-testid="stock-suggestion">
+    <div className="mb-2 space-y-1 rounded-lg border border-dashed border-proposal/60 p-2" data-testid={testId}>
       <Badge variant="proposal">{t('badge')}</Badge>
       <p className="text-sm text-foreground">
         {item.code} {item.name}
       </p>
       <p className="text-xs text-muted-foreground">{suggestion.reason}</p>
-      <Button type="button" size="sm" variant="outline" onClick={onUse} data-testid="stock-suggestion-use">
+      <Button type="button" size="sm" variant="outline" onClick={onUse} data-testid={`${testId}-use`}>
         {t('use')}
       </Button>
     </div>

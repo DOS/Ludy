@@ -103,9 +103,13 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     // what it ran: the invoice's posting, which names the proposal. The invoice's reading, whose object is the file, is
     // not listed.
     const rows = page.getByRole('row').filter({ has: page.getByRole('cell') });
-    await expect(rows.filter({ hasText: 'kernel.proposal.approve' })).toHaveCount(2);
-    await expect(rows.filter({ hasText: 'finance.purchase.record' })).toHaveCount(1);
-    await expect(rows.filter({ hasText: 'kernel.extraction.record' })).toHaveCount(0);
+    // The log speaks in sentences (#3595): the refused approval says it was tried, the approval says it was done, and no command
+    // name is in the list.
+    await expect(rows.filter({ hasText: 'Đã thử duyệt đề xuất' })).toHaveCount(1);
+    await expect(rows.filter({ hasText: 'Đã duyệt đề xuất' })).toHaveCount(1);
+    await expect(rows.filter({ hasText: 'Đã ghi sổ hóa đơn mua vào' })).toHaveCount(1);
+    await expect(rows.filter({ hasText: 'Đã ghi kết quả đọc tệp' })).toHaveCount(0);
+    await expect(rows.filter({ hasText: 'kernel.' })).toHaveCount(0);
     await page.goBack();
     await page.goBack();
   });

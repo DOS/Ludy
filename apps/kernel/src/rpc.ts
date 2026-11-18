@@ -11,7 +11,7 @@ import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wa
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -71,11 +71,13 @@ import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-wee
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
 import { briefStatusOf, runMeetingBrief, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
-import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
-import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
+import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
+import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
+import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
+import { misaCheck } from './misa-check.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -419,6 +421,7 @@ export function createRpcHandler(
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
+  const financeSupplierPayableLineAi = supplierPayableLineAi(conversationReader?.supplierPayableLineSentence ? { supplierPayableLineSentence: conversationReader.supplierPayableLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker on payroll (#2534, #2815): the same reader and model, independent budgets per action so `Promise.all([prepare, flag])` in the UI does not self-contend on `running`.
   const payrollPrepareBudget = suggestionBudget();
   const payrollAi: PayrollAi = {
@@ -2915,6 +2918,10 @@ export function createRpcHandler(
       list: os.vouchers.list.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.vouchers.list', input, { actor, orgId })),
       ),
+      // What MISA's import will refuse or cut in one of the seven exports (#3848): a read over the rows the file is built from, in the caller's own context. The export is unchanged and never waits for it.
+      misaCheck: os.vouchers.misaCheck.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => misaCheck((name, query) => runtime.query(name, query, { actor, orgId }), input)),
+      ),
     },
     openingBalance: {
       preview: os.openingBalance.preview.handler(({ context, input }) =>
@@ -2977,6 +2984,13 @@ export function createRpcHandler(
     },
     supplierPayment: {
       payable: os.supplierPayment.payable.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_payment.payable', input, { actor, orgId }))),
+      // The facts are summed here from the list read in the caller's own transaction, so what the model is told comes from the books, never from the caller; the sentence is a read and asks for nothing.
+      payableLine: os.supplierPayment.payableLine.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const list = await runtime.query<SupplierPayableList>('finance.supplier_payment.payable', {}, { actor, orgId });
+          return explainSupplierPayableLine(financeSupplierPayableLineAi, orgId, actor.userId, list, input.lang ?? 'vi');
+        }),
+      ),
       list: os.supplierPayment.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_payment.list', input, { actor, orgId }))),
       confirmAccount: os.supplierPayment.confirmAccount.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.confirm_account', input, { actor, orgId }))),
       cancel: os.supplierPayment.cancel.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.cancel', input, { actor, orgId }))),
@@ -3279,6 +3293,14 @@ export function createRpcHandler(
         inFinance(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('finance.marketplace.assign', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // The coworker's proposal of the item of unassigned lines (#2686): the source (product name and SKU text, the entity's items) is read in the member's own transaction, the model is asked outside any
+      // transaction through the same stock coworker, budget and cache. Nothing is written; the person assigns.
+      suggest: os.marketplace.suggest.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const source = await runtime.query<MarketplaceSuggestSource>('finance.marketplace.suggest_source', input, { actor, orgId });
+          return suggestMarketplaceItems(stockCoworker, orgId, actor.userId, source, input.lang ?? 'vi');
         }),
       ),
       unassign: os.marketplace.unassign.handler(({ context, input }) =>
@@ -3712,6 +3734,16 @@ export function createRpcHandler(
         inAds(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('ads.campaign.draft_save', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // Boost a published Social post (W3, #3834): the options, the newest boost of each of some posts, and drafting one (the same draft the builder makes; asking for
+      // approval is requestChange, the same approval and launch as any plan).
+      boostOptions: os.ads.boostOptions.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.boost.options', {}, { actor, orgId }))),
+      boostStates: os.ads.boostStates.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.boost.states', input, { actor, orgId }))),
+      draftBoost: os.ads.draftBoost.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.boost.draft', rest, { actor, orgId, idempotencyKey });
         }),
       ),
       discardCampaignDraft: os.ads.discardCampaignDraft.handler(({ context, input }) =>
