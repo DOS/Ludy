@@ -265,11 +265,11 @@ BEGIN
    WHERE v.org_id = NEW.org_id
      AND v.note_id = NEW.note_id
      AND v.id IN (
-       SELECT old.id
-         FROM crove_notes.note_version old
-        WHERE old.org_id = NEW.org_id
-          AND old.note_id = NEW.note_id
-        ORDER BY old.revision DESC, old.created_at DESC, old.id DESC
+       SELECT kept.id
+         FROM crove_notes.note_version kept
+        WHERE kept.org_id = NEW.org_id
+          AND kept.note_id = NEW.note_id
+        ORDER BY kept.revision DESC, kept.created_at DESC, kept.id DESC
         OFFSET 20
      );
   RETURN NULL;
