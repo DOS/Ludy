@@ -274,15 +274,92 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     expect(await refusalOf(fileOf(o, [first.id]))).toEqual({ code: 'SUPPLIER_PAYMENT_ACCOUNT_ERASED', paymentId: first.id });
   });
 
-  it('writes the audit row of a handed-over file with a count and the currency only, for an owner or an admin', async () => {
+  const exportOf = (o: Org, ids: string[], extra: { reexport?: boolean } = {}, who: string = o.owner) =>
+    execute(o, 'finance.supplier_payment.bank_file.export', { paymentIds: ids, rows: ids.length, currency: 'VND', ...extra }, who);
+  const markers = (o: Org, id: string) => rows<{ exported_at: Date | null; exported_by: string | null; export_count: number }>('SELECT exported_at, exported_by, export_count FROM crove_finance.supplier_payment WHERE org_id = $1 AND id = $2', [o.orgId, id]).then((r) => r[0]);
+
+  it('marks each payment and writes the audit row of a handed-over file in one step, with a count and the currency only, for an owner or an admin', async () => {
     const o = await org(true);
+    await addAccount(o, NUMBER);
+    const first = await pay(o, await invoice(o));
+    await released(o, first.id);
+    expect(await markers(o, first.id)).toMatchObject({ exported_at: null, exported_by: null, export_count: 0 });
     const before = (await auditRows(o, 'finance.supplier_payment.bank_file.export')).length;
-    await execute(o, 'finance.supplier_payment.bank_file.export', { rows: 2, currency: 'VND' }, o.admin as string);
+    await exportOf(o, [first.id], {}, o.admin as string);
     const rowsAfter = await auditRows(o, 'finance.supplier_payment.bank_file.export');
     expect(rowsAfter.length).toBe(before + 1);
     const text = JSON.stringify(rowsAfter);
     expect(text).toContain('VND');
-    expect(await refusal(execute(o, 'finance.supplier_payment.bank_file.export', { rows: 2, currency: 'VND' }, o.member))).toBe('FORBIDDEN');
-    expect(await refusal(execute(o, 'finance.supplier_payment.bank_file.export', { rows: 0, currency: 'VND' }))).not.toBe('accepted');
+    for (const secret of ['012345678901', HOLDER, '110']) expect(text).not.toContain(secret);
+    const marked = await markers(o, first.id);
+    expect(marked?.export_count).toBe(1);
+    expect(marked?.exported_by).toBe(o.admin);
+    expect(marked?.exported_at).not.toBeNull();
+    expect(await refusal(exportOf(o, [first.id], { reexport: true }, o.member))).toBe('FORBIDDEN');
+    expect(await refusal(execute(o, 'finance.supplier_payment.bank_file.export', { paymentIds: [first.id], rows: 0, currency: 'VND' }))).not.toBe('accepted');
+  });
+
+  it('refuses a second file for a payment already handed over unless the caller confirms it, and says so in the audit row', async () => {
+    const o = await org(true);
+    await addAccount(o, NUMBER);
+    const first = await pay(o, await invoice(o));
+    await released(o, first.id);
+    await exportOf(o, [first.id]);
+    const firstAt = (await markers(o, first.id))?.exported_at as Date;
+    // The query names the payment and the time of the first file.
+    const asked = await fileOf(o, [first.id]).then(
+      () => null,
+      (error: { code?: string; details?: { paymentId?: string; exportedAt?: string } }) => error,
+    );
+    expect(asked?.code).toBe('SUPPLIER_PAYMENT_ALREADY_EXPORTED');
+    expect(asked?.details?.paymentId).toBe(first.id);
+    expect(new Date(asked?.details?.exportedAt as string).getTime()).toBe(firstAt.getTime());
+    // The command refuses too (a request that skipped the query): the refusal is audited as a denied row, but no hand-over row (the ones that carry the currency) is written and the count stays.
+    const handed = async () => (await auditRows(o, 'finance.supplier_payment.bank_file.export')).filter((r) => JSON.stringify(r).includes('"currency"')).length;
+    const rowsBefore = await handed();
+    expect(await refusal(exportOf(o, [first.id]))).toBe('SUPPLIER_PAYMENT_ALREADY_EXPORTED');
+    expect(await handed()).toBe(rowsBefore);
+    expect((await markers(o, first.id))?.export_count).toBe(1);
+    // Confirmed: the file is made, the count grows and the audit row says it was a second file.
+    const again = await rt.query<BankFile>('finance.supplier_payment.bank_file.get', { paymentIds: [first.id], reexport: true }, { actor: user(o.owner), orgId: o.orgId });
+    expect(again.rows).toHaveLength(1);
+    await exportOf(o, [first.id], { reexport: true });
+    expect((await markers(o, first.id))?.export_count).toBe(2);
+    expect(await handed()).toBe(rowsBefore + 1);
+    const audit = (await auditRows(o, 'finance.supplier_payment.bank_file.export')).filter((r) => JSON.stringify(r).includes('"currency"'));
+    // One row says it was the first file, one that it was confirmed again (and for how many payments).
+    expect(audit.map((r) => JSON.stringify((r.facts as { detail: unknown }).detail)).sort()).toEqual(['{"rows":1,"again":0,"currency":"VND","reexport":false}', '{"rows":1,"again":1,"currency":"VND","reexport":true}'].sort());
+  });
+
+  it('lets only one of two racing requests hand a payment over for the first time, and refuses a payment that is no longer approved', async () => {
+    const o = await org(true);
+    await addAccount(o, NUMBER);
+    const first = await pay(o, await invoice(o));
+    await released(o, first.id);
+    const results = await Promise.all([refusal(exportOf(o, [first.id])), refusal(exportOf(o, [first.id]))]);
+    expect(results.filter((r) => r === 'accepted')).toHaveLength(1);
+    expect(results.filter((r) => r === 'SUPPLIER_PAYMENT_ALREADY_EXPORTED')).toHaveLength(1);
+    expect((await markers(o, first.id))?.export_count).toBe(1);
+    // A payment that was cancelled is not marked, even with the confirmation.
+    await execute(o, 'finance.supplier_payment.cancel', { paymentId: first.id, reason: 'test' });
+    expect(await refusal(exportOf(o, [first.id], { reexport: true }))).toBe('SUPPLIER_PAYMENT_ALREADY_EXPORTED');
+    expect((await markers(o, first.id))?.export_count).toBe(1);
+  });
+
+  it('keeps the marker in the database: the count grows by one, the time is the database clock, and nothing else moves it', async () => {
+    const o = await org(true);
+    await addAccount(o, NUMBER);
+    const first = await pay(o, await invoice(o));
+    const touch = (set: string) => admin((c) => c.query(`UPDATE crove_finance.supplier_payment SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, first.id]));
+    await expect(touch('export_count = 5')).rejects.toThrow(/SUPPLIER_PAYMENT_STATE|supplier_payment_export_ck/);
+    await expect(touch("exported_at = '2020-01-01'")).rejects.toThrow(/SUPPLIER_PAYMENT_STATE|supplier_payment_export_ck/);
+    await expect(touch(`export_count = 1`)).rejects.toThrow(/SUPPLIER_PAYMENT_STATE/);
+    await touch(`export_count = 1, exported_by = '${o.owner}', exported_at = '2020-01-01'`);
+    const marked = await markers(o, first.id);
+    expect(marked?.export_count).toBe(1);
+    // Stamped by the database clock, never by what the writer sent.
+    expect((marked as { exported_at: Date }).exported_at.getFullYear()).toBeGreaterThanOrEqual(2026);
+    await expect(touch('export_count = 3')).rejects.toThrow(/SUPPLIER_PAYMENT_STATE/);
+    await expect(touch('export_count = 0')).rejects.toThrow(/SUPPLIER_PAYMENT_STATE|supplier_payment_export_ck/);
   });
 });

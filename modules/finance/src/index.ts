@@ -142,6 +142,7 @@ import { yearArchiveCommands, yearArchiveQueries } from './year-archive.ts';
 export * from './domain/portal-reconcile.ts';
 export { foldVietnamese, portalStatus } from './domain/portal-status.ts';
 export { buildJournalWorkbook } from './export.ts';
+export { buildSupplierPaymentBankFileWorkbook } from './supplier-payment-bank-file-xlsx.ts';
 export { buildVatWorkbook, VAT_RATE_LABELS, VAT_WARNING_LABELS } from './vat-export.ts';
 export { buildVat01Xml, xmlCarryForward, type XmlCarryForwardSource } from './vat-xml.ts';
 export { buildLedgerWorkbook } from './ledger-export.ts';

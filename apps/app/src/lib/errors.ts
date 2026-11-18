@@ -14,13 +14,18 @@ export class ApiError extends Error {
   readonly status: number;
   // The kernel's own message (written in Vietnamese), or null when the answer had none.
   readonly serverMessage: string | null;
+  // The refusals of the supplier bank file name the payment they are about (never a holder, a number or an amount), and the time of an earlier file.
+  readonly paymentId: string | null;
+  readonly exportedAt: string | null;
 
-  constructor(code: string, status: number, serverMessage: string | null) {
+  constructor(code: string, status: number, serverMessage: string | null, paymentId: string | null = null, exportedAt: string | null = null) {
     super(serverMessage ?? `HTTP ${status}`);
     this.name = 'ApiError';
     this.code = code;
     this.status = status;
     this.serverMessage = serverMessage;
+    this.paymentId = paymentId;
+    this.exportedAt = exportedAt;
   }
 }
 
@@ -39,10 +44,10 @@ export class ClientError extends Error {
 // The kernel answers non-RPC errors as JSON `{ code, message }`. A body that is not JSON, or lacks a field, still
 // gives an ApiError with the HTTP status, so the checks below never depend on the body.
 export async function apiErrorFromResponse(response: Response): Promise<ApiError> {
-  const body = (await response.json().catch(() => null)) as { code?: unknown; message?: unknown } | null;
+  const body = (await response.json().catch(() => null)) as { code?: unknown; message?: unknown; paymentId?: unknown; exportedAt?: unknown } | null;
   const code = typeof body?.code === 'string' && body.code ? body.code : `HTTP_${response.status}`;
   const message = typeof body?.message === 'string' && body.message ? body.message : null;
-  return new ApiError(code, response.status, message);
+  return new ApiError(code, response.status, message, typeof body?.paymentId === 'string' ? body.paymentId : null, typeof body?.exportedAt === 'string' ? body.exportedAt : null);
 }
 
 function serverMessageOf(error: unknown): string | null {
