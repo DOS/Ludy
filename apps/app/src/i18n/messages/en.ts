@@ -14489,6 +14489,10 @@ export const en = {
         get: 'Read the summary and the action items of a meeting',
         publish: 'Share the summary and the action items with the meeting\'s attendees',
       },
+      chapters: {
+        get: 'Read the chapters (table of contents) of a meeting',
+        save: 'Save the recorder\'s draft chapters of a meeting',
+      },
       notes: {
         get: 'Read the recorder\'s own notes of a meeting',
         preview: 'Read Vy\'s expansion of the recorder\'s notes',
