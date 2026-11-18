@@ -23,7 +23,7 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
 // The most items the model is offered for the lines of one call (packages/agent STOCK_MATCH_ITEMS_MAX).
-const OFFERED_ITEMS_MAX = 60;
+export const OFFERED_ITEMS_MAX = 60;
 
 type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
 

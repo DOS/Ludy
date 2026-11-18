@@ -132,3 +132,25 @@ export type BankSupplierCandidate = z.infer<typeof zBankSupplierCandidate>;
 export const zBankSupplierMatch = z.strictObject({ bankLineId: zId, date: zLocalDate, candidates: z.array(zBankSupplierCandidate) });
 export type BankSupplierMatch = z.infer<typeof zBankSupplierMatch>;
 
+
+// The facts behind the finance coworker's one line above the invoices to pay (#3113 S4c), summed by code from the list above and nothing else: how many invoices, their total in dong, the oldest invoice
+// date, how many are of a supplier whose bank account changed recently, and the invoice suggested first (the oldest invoice date among those a person can ask for now; null when none can be asked
+// for). They are null when there is no line to give: nothing waits, the list was cut short (`more`) or an invoice is not in dong, so a total or an "oldest" would not be the books' own.
+export const zSupplierPayableFacts = z.strictObject({
+  invoices: z.number().int().min(1).max(SUPPLIER_PAYABLE_MAX),
+  total: zAmount,
+  oldestDate: zLocalDate,
+  onChangedAccount: z.number().int().min(0).max(SUPPLIER_PAYABLE_MAX),
+  suggestedPurchaseDocumentId: z.uuid().nullable(),
+});
+export type SupplierPayableFacts = z.infer<typeof zSupplierPayableFacts>;
+// The line the screen shows: the facts always when there are any (the core works with AI off), and the coworker's sentence when there is one. `ai` says why there is no sentence: `off` (no model),
+// `busy` (too frequent), `budget` (the AI budget is spent), `failed` (the call failed or its text was refused; the reason is logged as a code, never the words) or `none` (there is nothing to say).
+export const zSupplierPayableLineAsk = z.strictObject({ lang: z.enum(['vi', 'en']).optional() });
+export type SupplierPayableLineAsk = z.infer<typeof zSupplierPayableLineAsk>;
+export const zSupplierPayableLine = z.strictObject({
+  facts: zSupplierPayableFacts.nullable(),
+  ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']),
+  text: z.string().nullable(),
+});
+export type SupplierPayableLine = z.infer<typeof zSupplierPayableLine>;

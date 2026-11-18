@@ -200,6 +200,14 @@ describe('the risk of the commands of running ads (#2294)', () => {
     }
   });
 
+  it('keeps the boost of a published post (W3, #3834) an R1 internal draft of owners, admins and members with no agent: the launch it leads to is still the R3 proposal command', () => {
+    expect(byName().get('ads.boost.draft')).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner', 'admin', 'member'] });
+    expect(byName().get('ads.boost.draft')?.agent).toBeUndefined();
+    // The boost has no launch of its own: it writes the same draft and the same proposal command runs it.
+    expect([...byName().keys()].filter((name) => name.startsWith('ads.boost.'))).toEqual(['ads.boost.draft']);
+    expect(byName().get('ads.campaign.launch')).toMatchObject({ risk: 'R3', sideEffect: 'financial', access: 'proposal' });
+  });
+
   it('keeps the issue of a sales e-invoice (#2502) an R3 legal proposal command asked for through an R1 preparer of owners, admins and members, and no agent either', () => {
     expect(byName().get('finance.einvoice.issue')).toMatchObject({ risk: 'R3', sideEffect: 'legal', access: 'proposal' });
     expect(byName().get('finance.einvoice.prepare_issue')).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner', 'admin', 'member'] });
