@@ -40,8 +40,8 @@
       "ignoreDependencies": ["postcss-load-config"]
     },
     "e2e": {
-      // The fake tax portal runs in its own container (e2e/compose.e2e.yml).
-      "entry": ["fake-tax-portal/main.ts"]
+      // The fake tax portal runs in its own container (e2e/compose.e2e.yml), and so does the fake model of the AI job (e2e/compose.ai.yml).
+      "entry": ["fake-tax-portal/main.ts", "fake-model/main.ts"]
     }
   },
   // A finished spike (ADR on DBOS, #275), kept for the record and outside the pnpm workspace.
