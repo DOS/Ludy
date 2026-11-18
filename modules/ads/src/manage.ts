@@ -147,7 +147,18 @@ export async function manageCapsProblems(ctx: Db & Pick<CommandContext, 'now'>, 
   return committedProblems({ adAccountId: launch.ad_account_id, currency: launch.currency, dailyBudget: budget, startOn: from, endOn: window }, [...others, ...history], base.caps);
 }
 
+// A change that can raise spend is judged only against caps in the launch's own currency (nothing is converted), and needs one: a cap that was set in another currency since the
+// launch leaves no cap that applies, which must never read as "within the cap" (plan 3.3, ADS_CAP_CURRENCY).
+export async function capCurrencyProblem(ctx: Db, control: Pick<Control, 'launch' | 'account'>): Promise<'cap_currency' | 'no_cap' | null> {
+  const caps = (await contextBase(ctx, control.account.id)).caps;
+  if (caps.some((c) => c.currency !== control.launch.currency)) return 'cap_currency';
+  return caps.length === 0 ? 'no_cap' : null;
+}
+
 async function refuseOverCaps(ctx: Db & Pick<CommandContext, 'now'>, control: Control, budget: string, endOn: string): Promise<void> {
+  const currency = await capCurrencyProblem(ctx, control);
+  if (currency === 'cap_currency') throw refuse('ADS_CAP_CURRENCY', 409, 'Hạn mức đang áp dụng không cùng đơn vị tiền với tài khoản quảng cáo nên chưa kiểm tra được; hãy đặt lại hạn mức cùng đơn vị tiền');
+  if (currency === 'no_cap') throw refuse('ADS_SPEND_CAP_NOT_SET', 409, 'Chưa đặt hạn mức chi tiêu nên chưa tăng được chi tiêu');
   const problems = await manageCapsProblems(ctx, control, budget, endOn);
   if (problems.length === 0) return;
   const first = problems[0] as (typeof problems)[number];
@@ -653,6 +664,8 @@ export const adsManageBegin = defineCommand({
     if (OPENING_KINDS.includes(change.kind) && !begun) {
       const held = heldValues({ dailyBudget: lockedLaunchRow.daily_budget, endOn: lockedLaunchRow.end_text }, changes);
       if (held.endOn < todayIn(zone, ctx.now)) return settle('cancelled', 'flight_over');
+      const currencyProblem = await capCurrencyProblem(ctx, { launch: lockedLaunchRow, account });
+      if (currencyProblem) return settle('cancelled', currencyProblem);
       const problems = await manageCapsProblems(ctx, { launch: lockedLaunchRow, account }, held.dailyBudget, held.endOn);
       if (problems.length > 0) {
         return settle('cancelled', 'cap_lowered', { problems: problems.slice(0, 5).map((p) => `${p.scope}:${p.period}:${p.day ?? p.month ?? ''}:${p.cap}:${p.committed}:${p.plan}`) });
@@ -745,6 +758,7 @@ export const adsManageRecord = defineCommand({
         // refusing it now changes nothing there.
         const held = heldValues({ dailyBudget: launch.daily_budget, endOn: launch.end_text }, await changesOf(ctx, launch.id));
         if (!zoneKnown(found.account.time_zone) || held.endOn < todayIn(found.account.time_zone as string, ctx.now)) why = 'flight_over';
+        else if ((await capCurrencyProblem(ctx, { launch, account: found.account })) !== null) why = 'cap_currency';
         else if ((await manageCapsProblems(ctx, { launch, account: found.account }, held.dailyBudget, held.endOn)).length > 0) why = 'cap_lowered';
       }
       if (why !== null) {

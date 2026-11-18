@@ -2932,6 +2932,18 @@ suite('ads on PostgreSQL (#2217)', () => {
               await row(`DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND id = $2`, [orgId, capId]);
             });
 
+            it('refuses a raise while a cap in another currency applies: nothing is converted, and "no compatible cap" never reads as within the cap (ADS_CAP_CURRENCY)', async () => {
+              const w = new SandboxAdWriter();
+              const { launch } = await live('Hạn mức khác đơn vị tiền', w);
+              const usd = randomUUID();
+              await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by) VALUES ($1, $2, 'org', 'daily', '9000', 'USD', $3)`, [orgId, usd, owner.userId]);
+              expect(await askRaise(launch.id, '150000')).toMatchObject({ status: 409, body: { code: 'ADS_CAP_CURRENCY' } });
+              expect(await askExtend(launch.id, inDays(8))).toMatchObject({ status: 409, body: { code: 'ADS_CAP_CURRENCY' } });
+              // What only reduces spend is still allowed.
+              expect((await lower(owner, launch.id, '90000')).status).toBe(200);
+              await row(`DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND id = $2`, [orgId, usd]);
+            });
+
             it('judges a raise again before it is called once more after a lost answer: a cap lowered meanwhile fails it as cap_lowered, the platform is not asked again and nothing stays held', async () => {
               const w = new SandboxAdWriter();
               const rig = rigOf(w);

@@ -308,7 +308,7 @@ BEGIN
     CROSS JOIN LATERAL (
       SELECT CASE WHEN l.state = 'stopped' AND l.started_at IS NOT NULL AND l.wound_down_at IS NULL THEN GREATEST(l.commit_until, h.end_on)
                   -- A stopped launch whose schedule was extended: the days it ran past its first end still count (up to the day it stopped, the latest any zone can be on).
-                  WHEN l.state = 'stopped' AND EXISTS (SELECT 1 FROM crove_ads.ad_manage_change x WHERE x.org_id = l.org_id AND x.launch_id = l.id AND x.kind = 'schedule_extend' AND x.state IN ('applied', 'unclear'))
+                  WHEN l.state = 'stopped' AND EXISTS (SELECT 1 FROM crove_ads.ad_manage_change x WHERE x.org_id = l.org_id AND x.launch_id = l.id AND x.kind = 'schedule_extend' AND x.state IN ('applied', 'unclear', 'queued'))
                     THEN GREATEST(l.commit_until, LEAST(h.end_on, (l.finished_at AT TIME ZONE 'UTC')::date + 1))
                   WHEN l.state IN ('stopped', 'failed', 'cancelled') THEN l.commit_until
                   ELSE h.end_on END AS until
