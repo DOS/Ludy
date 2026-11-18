@@ -1316,6 +1316,36 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueOn: '2026-11-18',
       dueTime: '09:00',
     });
+
+    // Bare recurrence words before date phrases ("daily tomorrow 9am", "daily on friday") and "[vào] buổi <period> <clock>"
+    expect(parseTodoQuickAdd('Send report daily tomorrow 9am', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Send report',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    expect(parseTodoQuickAdd('Send report daily on friday', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Send report',
+      dueOn: '2026-11-20',
+      dueTime: null,
+      recurrence: { freq: 'daily', interval: 1 },
+    });
+    expect(parseTodoQuickAdd('Daily report tomorrow 9am', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Daily report',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+      recurrence: null,
+    });
+    expect(parseTodoQuickAdd('Họp vào buổi chiều 3h', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-17',
+      dueTime: '15:00',
+    });
+    expect(parseTodoQuickAdd('Họp buổi chiều 3h', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Họp',
+      dueOn: '2026-11-17',
+      dueTime: '15:00',
+    });
   });
 
   it('stays linear on 50k-character adversarial --, %, and tab inputs without ReDoS', () => {

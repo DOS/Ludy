@@ -1310,39 +1310,24 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         continue;
       }
     }
-    if (w0.nfcLower === 'daily' || w0.nfcLower === 'everyday' || w0.nfcLower === 'weekly' || w0.nfcLower === 'monthly') {
-      if (isWordPhraseEndAvailable(w0)) {
-        if (w0.nfcLower === 'weekly' && w1?.nfcLower === 'on' && w2 && contiguous(i, i + 2)) {
-          const wd = matchWeekday(input, words, i + 2, true);
-          if (wd) {
-            const endIdx = i + 1 + wd.consumed;
-            const span = spanOf(endIdx);
-            if (isWordPhraseEndAvailable(span)) {
-              recordRecurrence(
-                { freq: 'weekly', interval: 1, byWeekday: wd.weekday },
-                nextOccurrenceOfWeekday(today, wd.weekday, true),
-                span.start,
-                span.end,
-              );
-              i = endIdx;
-              continue;
-            }
-          }
-        }
-        // Only treat bare "daily"/"weekly"/"monthly" as recurrence when not used as a pre-nominal adjective ("Weekly review").
-        const tail = input.slice(w0.end).trimStart();
-        const atClauseEdge =
-          /^(?:$|[,.;:)!#/\n]|(?:at|lúc|luc)\s+\d|\d{1,2}(?::\d{2}\b|\s*(?:am|pm|h|g|giờ|gio)\b))/i.test(tail) ||
-          (w1 !== undefined && !isAvailable(w1));
-        if (atClauseEdge || w0.nfcLower === 'everyday') {
-          const freq = w0.nfcLower === 'weekly' ? 'weekly' : w0.nfcLower === 'monthly' ? 'monthly' : 'daily';
-          recordRecurrence({ freq, interval: 1 }, today, w0.start, w0.end);
+    if (w0.nfcLower === 'weekly' && w1?.nfcLower === 'on' && w2 && contiguous(i, i + 2) && isWordPhraseEndAvailable(w0)) {
+      const wd = matchWeekday(input, words, i + 2, true);
+      if (wd) {
+        const endIdx = i + 1 + wd.consumed;
+        const span = spanOf(endIdx);
+        if (isWordPhraseEndAvailable(span)) {
+          recordRecurrence(
+            { freq: 'weekly', interval: 1, byWeekday: wd.weekday },
+            nextOccurrenceOfWeekday(today, wd.weekday, true),
+            span.start,
+            span.end,
+          );
+          i = endIdx;
+          continue;
         }
       }
     }
   }
-  const recurrence = recurrenceState.rule;
-  const recurrenceDerivedDueOn = recurrenceState.derivedDueOn;
 
   // 5. Explicit numeric dates (yyyy-mm-dd, dd/mm/yyyy, dd/mm)
   let explicitDueOn: string | null = null;
@@ -2124,7 +2109,11 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     if (!hasCleanRightBoundary(tc)) continue;
 
     const startBeforeAt = start;
-    start = expandConnectorBefore(input, words, start, [['vào', 'lúc'], ['vào'], ['lúc'], ['at']], occupied);
+    const connectorSequences =
+      resolvedClock.start < tc.start
+        ? ([['vào', 'buổi'], ['buổi'], ['vào'], ['lúc']] as const)
+        : ([['vào', 'lúc'], ['vào'], ['lúc'], ['at']] as const);
+    start = expandConnectorBefore(input, words, start, connectorSequences, occupied);
     const usedEnglishAt = start < startBeforeAt && /^at\b/i.test(input.slice(start));
     const adjustedHour = tc.hasAmPm ? tc.hour : adjustHourForPeriod(tc.hour, period);
     parsedTime = { hour: adjustedHour, minute: tc.minute, explicitClock: true, hasAmPm: tc.hasAmPm, period };
@@ -2151,7 +2140,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
   }
 
   // 8. Period adjacent to an already-matched explicit date, weekday recurrence, or dismissed date chip ("sáng mai", "tomorrow morning")
-  const recurrenceAnchorSpans = recurrenceDerivedDueOn !== null ? tokens.filter((t) => t.kind === 'recurrence') : [];
+  const recurrenceAnchorSpans = recurrenceState.derivedDueOn !== null ? tokens.filter((t) => t.kind === 'recurrence') : [];
   const dismissedDateAnchorSpans = dismissedList.filter((t) => t.kind === 'date');
   for (const ds of [...dateSpans, ...recurrenceAnchorSpans, ...dismissedDateAnchorSpans]) {
     const beforeW = findAdjacentWordBefore(input, words, ds.start, occupied);
@@ -2253,6 +2242,28 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       period: contextPeriod,
     };
   }
+
+  // Resolve bare clause-edge "daily"/"everyday"/"weekly"/"monthly" after dates & clocks are claimed
+  // so "Send report daily tomorrow 9am" matches while pre-nominal "Daily report tomorrow" stays an adjective.
+  for (let i = 0; i < words.length; i++) {
+    const w0 = words[i];
+    if (!w0) continue;
+    if (w0.nfcLower !== 'daily' && w0.nfcLower !== 'everyday' && w0.nfcLower !== 'weekly' && w0.nfcLower !== 'monthly') {
+      continue;
+    }
+    if (!isWordSpanAvailable(w0)) continue;
+    const w1 = words[i + 1];
+    const tail = input.slice(w0.end).trimStart();
+    const atClauseEdge =
+      /^(?:$|[,.;:)!#/\n]|(?:at|lúc|luc)\s+\d|\d{1,2}(?::\d{2}\b|\s*(?:am|pm|h|g|giờ|gio)\b))/i.test(tail) ||
+      (w1 !== undefined && !isAvailable(w1));
+    if (atClauseEdge || w0.nfcLower === 'everyday') {
+      const freq = w0.nfcLower === 'weekly' ? 'weekly' : w0.nfcLower === 'monthly' ? 'monthly' : 'daily';
+      recordRecurrence({ freq, interval: 1 }, today, w0.start, w0.end);
+    }
+  }
+  const recurrence = recurrenceState.rule;
+  const recurrenceDerivedDueOn = recurrenceState.derivedDueOn;
 
   // 9. Resolve final dueOn, dueTime, dueAt, remindAt
   let dueOn: string | null = explicitDueOn ?? recurrenceDerivedDueOn;
