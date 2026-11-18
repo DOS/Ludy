@@ -16,6 +16,7 @@ import { EXTRACT_LIMITS } from '@crove/extract-contract';
 import { tableWrite, zId } from '@crove/kernel-contract';
 import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
+import { signDirectPublicCommands } from './direct-public.ts';
 import { signManifest } from './manifest.ts';
 import { signPublicCommands } from './public-commands.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
@@ -1319,7 +1320,7 @@ export const envelopeSealComplete = defineCommand({
 
     const recipientRows = await ctx.trx
       .selectFrom('crove_sign.signer')
-      .select(['signer_role', 'email'])
+      .select(['signer_role', 'email', 'delivery_mode'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
       .execute();
@@ -1329,7 +1330,7 @@ export const envelopeSealComplete = defineCommand({
     const seenEmails = new Set<string>();
     const emailRecipients = [
       ...senderProfiles.map((p) => p.email),
-      ...recipientRows.map((r) => r.email),
+      ...recipientRows.filter((r) => r.delivery_mode === 'email').map((r) => r.email),
     ]
       .map((rawEmail) => rawEmail?.trim().toLowerCase() ?? '')
       .filter((addr) => {
@@ -1464,13 +1465,14 @@ export const orgCleanup = defineCommand({
   writes: [
     tableWrite(signManifest.tables, 'crove_sign', 'signing_otp', ['id']),
     tableWrite(signManifest.tables, 'crove_sign', 'signing_token', ['id']),
+    tableWrite(signManifest.tables, 'crove_sign', 'template_direct_link', ['id']),
   ],
   handler: async (ctx, input) => {
     assertSystem(ctx);
     const otpCutoff = new Date(ctx.now.getTime() - input.otpRetentionHours * 3_600_000);
     const tokenCutoff = new Date(ctx.now.getTime() - input.tokenRetentionDays * 86_400_000);
     const { rows } = await sql<{
-      counts: { otps: number; tokens: number; drafts: number; draftEvents: number };
+      counts: { otps: number; tokens: number; directLinks?: number; drafts: number; draftEvents: number };
     }>`
       SELECT crove_sign.cleanup_org_secrets(${otpCutoff}::timestamptz, ${tokenCutoff}::timestamptz) AS counts
     `.execute(ctx.trx);
@@ -1478,6 +1480,7 @@ export const orgCleanup = defineCommand({
     ctx.audit({
       otps: counts.otps,
       tokens: counts.tokens,
+      directLinks: counts.directLinks ?? 0,
       drafts: counts.drafts,
       draftEvents: counts.draftEvents,
       otpCutoff: otpCutoff.toISOString(),
@@ -1503,5 +1506,6 @@ export const signCommands = [
   envelopeExpireSweep,
   orgCleanup,
   ...signPublicCommands,
+  ...signDirectPublicCommands,
   ...signTemplateCommands,
 ];
