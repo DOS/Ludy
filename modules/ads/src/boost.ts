@@ -10,6 +10,7 @@
 // boost is refused while ad writing is off for the org or the account, or launches are blocked, so with writing off there is no boost at all (the screen
 // shows no button); a plain draft stays possible then, as W1 says, because a draft spends nothing. Ads reads no Social table: the post's words and link
 // arrive in the command's input, copied by the app, and only the post's id is kept (an opaque reference).
+import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
 import {
@@ -31,7 +32,7 @@ import { currentSetting } from './write.ts';
 const DRAFTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
 // A launch in one of these states is over: its post may be boosted again. Every other state is a boost still going or waiting.
-const OVER: readonly AdsLaunchState[] = ['stopped', 'failed', 'cancelled'];
+const OVER: readonly AdsBoostState[] = ['stopped', 'failed', 'cancelled', 'ended'];
 
 // What stops a boost before it is a draft, each its own code the screen words (written out as DomainError calls so the screen's table of codes finds each).
 function refused(reason: BoostRefusal): DomainError {
@@ -45,9 +46,16 @@ function refused(reason: BoostRefusal): DomainError {
   }
 }
 
+// A boost that is waiting for approval or still going (approved and its launch not over): it holds its post.
+const isGoing = (b: { row: DraftRow; state: AdsBoostState }): boolean => b.state === 'waiting_approval' || (b.row.status === 'approved' && !OVER.includes(b.state));
+
 // Where a boost stands, from its draft and its launch: waiting in the Inbox, a draft, or the state of the launch an approved plan left.
-function stateOf(row: DraftRow, waiting: boolean, launchState: AdsLaunchState | null): AdsBoostState {
-  if (row.status === 'approved') return launchState ?? 'queued';
+// A launch whose last day has passed in the account's own time is over whatever its row says (a flight that runs out is not a stop): 'ended'.
+function stateOf(row: DraftRow, waiting: boolean, launch: { state: AdsLaunchState; endOn: string } | null, today: string): AdsBoostState {
+  if (row.status === 'approved') {
+    if (launch !== null && launch.endOn < today && !OVER.includes(launch.state)) return 'ended';
+    return launch?.state ?? 'queued';
+  }
   return waiting ? 'waiting_approval' : 'draft';
 }
 
@@ -59,10 +67,17 @@ async function boostsOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, postIds: reado
     list.filter((r) => r.status === 'approved').map((r) => r.id),
   );
   const out: Array<{ row: DraftRow; state: AdsBoostState; proposalId: string | null; launch: ReturnType<typeof launches.get> }> = [];
+  const zones = new Map<string, string>();
+  const now = new Date();
   for (const row of list) {
     const proposalId = row.status === 'draft' ? await pendingProposal(ctx, row.id) : null;
     const launch = launches.get(row.id);
-    out.push({ row, state: stateOf(row, proposalId !== null, launch?.state ?? null), proposalId, launch });
+    let zone = zones.get(row.ad_account_id);
+    if (zone === undefined) {
+      zone = (await accountOf(ctx, row.ad_account_id)).timeZone ?? 'UTC';
+      zones.set(row.ad_account_id, zone);
+    }
+    out.push({ row, state: stateOf(row, proposalId !== null, launch ? { state: launch.state, endOn: launch.endOn } : null, todayIn(zone, now)), proposalId, launch });
   }
   return out;
 }
@@ -80,22 +95,30 @@ export const adsBoostDraft = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tạo được bản nháp đẩy bài');
     const adAccountId = input.adAccountId.toLowerCase();
     const postId = input.postId.toLowerCase();
+    // One boost of a post at a time, whatever the tab or the account asking: the post's own transaction advisory lock (the family the org's switches use), so two drafts of
+    // one post made at the same moment queue and the second sees the first. It makes no row and touches no switch.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.ads.boost:${ctx.orgId}:${postId}`}, 0))`.execute(ctx.trx);
     const account = await accountOf(ctx, adAccountId, true);
     // A boost spends money once approved, so the switches are checked now, not only at the approval: with writing off, no boost is drafted.
     const setting = await currentSetting(ctx);
     if (!setting?.write_enabled) throw new DomainError('ADS_BOOST_OFF', 409, 'Việc chạy quảng cáo đang tắt cho tổ chức nên chưa đẩy bài được');
     if (!account.writeEnabled) throw new DomainError('ADS_BOOST_ACCOUNT_OFF', 409, 'Tài khoản quảng cáo này chưa được bật để chạy quảng cáo');
     if (setting.launches_blocked) throw new DomainError('ADS_BOOST_BLOCKED', 409, 'Việc chạy quảng cáo đang bị chặn; chủ sở hữu cần mở lại trước');
-    if (account.currency === null) throw new DomainError('ADS_BOOST_ACCOUNT_NOT_READY', 409, 'Tài khoản quảng cáo này chưa đọc được đơn vị tiền; hãy làm mới số liệu trước');
+    // The currency and the time zone are read together by the account's first update; a launch cannot start without the zone (the flight's days are the account's own).
+    if (account.currency === null || account.timeZone === null) throw new DomainError('ADS_BOOST_ACCOUNT_NOT_READY', 409, 'Tài khoản quảng cáo này chưa đọc được đơn vị tiền hoặc múi giờ; hãy làm mới số liệu trước');
     // The post's earlier boosts: one waiting for approval or still going refuses a second; an open draft of this account is the one edited.
     const earlier = await boostsOf(ctx, [postId]);
-    const busy = earlier.find((b) => b.state === 'waiting_approval' || (b.row.status === 'approved' && !OVER.includes(b.state as AdsLaunchState)));
+    const busy = earlier.find(isGoing);
     if (busy) throw new DomainError('ADS_BOOST_EXISTS', 409, 'Bài này đã có một lượt đẩy đang chờ duyệt hoặc đang chạy', { draftId: busy.row.id, state: busy.state });
     const open = earlier.find((b) => b.state === 'draft' && b.row.ad_account_id === adAccountId);
+    // A draft of this post left open in another account is dropped when it is boosted from this one, so a post never has two drafts to send (a draft spends nothing).
+    for (const stale of earlier.filter((b) => b.state === 'draft' && b.row.ad_account_id !== adAccountId)) {
+      await ctx.trx.updateTable('crove_ads.ad_campaign_draft').set({ status: 'discarded' }).where('org_id', '=', ctx.orgId).where('id', '=', stale.row.id).execute();
+    }
     // Every ad runs as a Page: it must be an active Facebook Page of this org (the launch stops a plan without one, so say it now, before an approval is asked for).
     const page = await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['provider', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', input.pageConnectionId.toLowerCase()).executeTakeFirst();
     if (!page || page.provider !== 'facebook_page' || page.status !== 'active') throw refused('page_needed');
-    const today = todayIn(account.timeZone ?? 'UTC', ctx.now);
+    const today = todayIn(account.timeZone, ctx.now);
     const made = boostPlan({ ...input, adAccountId, postId }, { today, currency: account.currency });
     if ('refusal' in made) throw refused(made.refusal);
     // The very same save as the builder's, so the draft is checked by the same rules and the database holds it the same way. The audit row names the boost
@@ -121,6 +144,7 @@ export const adsBoostOptions = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .where('write_enabled', '=', true)
       .where('currency', 'is not', null)
+      .where('time_zone', 'is not', null)
       .orderBy('name')
       .orderBy('id')
       .execute();
@@ -149,7 +173,9 @@ export const adsBoostStates = defineQuery({
     const wanted = [...new Set(input.postIds.map((id) => id.toLowerCase()))];
     const all = await boostsOf(ctx, wanted);
     const newest = new Map<string, (typeof all)[number]>();
-    // The list is newest change first: the first of each post is its boost.
+    // The list is newest change first. A boost that is waiting or going is the post's boost whatever was drafted after it (a draft made from the same post in the
+    // builder must not hide it); otherwise the newest is.
+    for (const b of all) if (b.row.source_post_id !== null && isGoing(b) && !newest.has(b.row.source_post_id)) newest.set(b.row.source_post_id, b);
     for (const b of all) if (b.row.source_post_id !== null && !newest.has(b.row.source_post_id)) newest.set(b.row.source_post_id, b);
     const cache = new Map<string, Awaited<ReturnType<typeof accountOf>>>();
     const views: AdsBoostStateView[] = [];
@@ -166,6 +192,7 @@ export const adsBoostStates = defineQuery({
         adAccountName: b.row.account_name,
         currency: account.currency,
         state: b.state,
+        objective: b.row.objective as AdsBoostStateView['objective'],
         proposalId: b.proposalId,
         launchId: b.launch?.id ?? null,
         step: b.launch?.step ?? null,

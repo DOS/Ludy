@@ -69,6 +69,7 @@ const boost = (state: AdsBoostState, over: Partial<AdsBoostStateView> = {}): Ads
   adAccountName: 'Quảng cáo cửa hàng',
   currency: 'VND',
   state,
+  objective: 'messenger',
   proposalId: state === 'waiting_approval' ? '22222222-2222-4222-8222-222222222222' : null,
   launchId: null,
   step: null,
@@ -143,7 +144,7 @@ describe('the boost card on a published post', () => {
   it('offers to continue a draft and to boost again once a boost is over, and nothing while one is waiting or running', () => {
     seed('owner', options(), [boost('draft')]);
     expect(card()).toContain('Continue the draft');
-    for (const state of ['stopped', 'failed', 'cancelled'] as const) {
+    for (const state of ['stopped', 'failed', 'cancelled', 'ended'] as const) {
       seed('owner', options(), [boost(state)]);
       expect(card(), state).toContain('Boost again');
     }

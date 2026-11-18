@@ -5431,6 +5431,7 @@ export const en = {
         stopped: 'Stopped',
         failed: 'Could not start',
         cancelled: 'Cancelled',
+        ended: 'Finished',
       },
       stateLine: 'The most it can spend is {amount} over {days, plural, one {# day} other {# days}}, from {start} to {end}.',
       panelTitle: 'Boost this post',

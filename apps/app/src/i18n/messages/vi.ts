@@ -5429,6 +5429,7 @@ export const vi = {
         stopped: 'Đã dừng',
         failed: 'Không bắt đầu được',
         cancelled: 'Đã hủy',
+        ended: 'Đã chạy xong',
       },
       stateLine: 'Tối đa có thể chi {amount} trong {days, plural, other {# ngày}}, từ {start} đến {end}.',
       panelTitle: 'Đẩy bài này',

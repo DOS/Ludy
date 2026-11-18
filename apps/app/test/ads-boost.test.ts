@@ -16,6 +16,7 @@ import {
   boostPage,
   boostStateText,
   boostStateTone,
+  continueDraft,
   boostableVariants,
   engagementOf,
   goalHintText,
@@ -92,6 +93,14 @@ describe('what the post gives the ad', () => {
   });
 });
 
+describe('continuing a draft', () => {
+  it('starts from the draft’s account, goal, amount and days, and the default days when the draft’s are not offered', () => {
+    expect(continueDraft({ adAccountId: 'a2', objective: 'messenger', maxSpend: '299997', days: 3 })).toEqual({ accountId: 'a2', prefill: { goal: 'messages', budget: '299997', days: 3 } });
+    expect(continueDraft({ adAccountId: 'a1', objective: 'traffic', maxSpend: null, days: 4 })).toEqual({ accountId: 'a1', prefill: { goal: 'traffic' } });
+    expect(continueDraft({ adAccountId: 'a1', objective: 'engagement', maxSpend: '100000', days: 30 }).prefill).toMatchObject({ goal: 'engagement', days: 30 });
+  });
+});
+
 describe('the posts the AI coworker suggests', () => {
   const posts = [
     post({ id: 'quiet', variants: [variant({ publishedAt: ago(1) })] }),
@@ -161,7 +170,7 @@ describe('the words', () => {
     expect(boostStateText('launching', 'paused', en)).toBe('Created, starts on its first day');
     expect(boostStateText('launching', 'ad_set', en)).toBe('Being created at the ad platform');
     expect(boostStateText('waiting_approval', null, translatorFor('vi'))).toBe('Chờ duyệt');
-    expect(ADS_BOOST_STATES.filter(boostOver)).toEqual(['stopped', 'failed', 'cancelled']);
+    expect(ADS_BOOST_STATES.filter(boostOver)).toEqual(['stopped', 'failed', 'cancelled', 'ended']);
     expect(boostStateTone('live')).toBe('success');
     expect(boostStateTone('failed')).toBe('destructive');
     expect(boostStateTone('waiting_approval')).toBe('warning');

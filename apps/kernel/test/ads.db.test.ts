@@ -3194,16 +3194,81 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect((await boostStates(member, [post]))[0]).toMatchObject({ draftId: next.draft.id, state: 'draft', maxSpend: '150000' });
             });
 
-            it('keeps another org’s posts out and reads only the posts it is asked for', async () => {
+            it('keeps another org out: its posts, its accounts and its Pages, through the API as that org and with its real ids', async () => {
               const account = await ready('Đẩy bài riêng tổ chức');
               const [a, b] = [randomUUID(), randomUUID()];
               await boosted(member, account, a);
               await boosted(member, account, b, { goal: 'engagement' });
               expect((await boostStates(member, [a])).map((s) => s.postId)).toEqual([a]);
               expect((await boostStates(member, [a, b, randomUUID()])).map((s) => s.postId).sort()).toEqual([a, b].sort());
-              // Another org has none of this org's boosts, even given the very ids.
-              const mine = (await boostStates(member, [a]))[0];
-              expect(await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND id = $2`, [otherOrgId, mine?.draftId])).toEqual([{ n: '0' }]);
+              // The other org, asking as its own owner with these very post ids, sees none of them.
+              const theirs = await rpc('ads/boostStates', await tokenFor(outsider), { postIds: [a, b] }, otherSlug);
+              expect(theirs).toMatchObject({ status: 200, body: [] });
+              // Its real account and Page: this org's member cannot boost with them, and their owner cannot boost with ours.
+              const [theirConnection, theirAccount, theirPage] = [randomUUID(), randomUUID(), randomUUID()];
+              await row(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Của tổ chức khác', $4), ($1, $5, 'facebook_page', $6, 'Trang tổ chức khác', $4)`, [otherOrgId, theirConnection, `act-${randomUUID().slice(0, 8)}`, outsider.userId, theirPage, String(100_000_000 + Math.floor(Math.random() * 899_999_999))]);
+              await row(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, currency, time_zone) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản tổ chức khác', '2025-10-01', 'VND', 'Asia/Ho_Chi_Minh')`, [otherOrgId, theirAccount, theirConnection, `act-${randomUUID().slice(0, 8)}`]);
+              expect((await boost(member, theirAccount, randomUUID())).status).toBe(404);
+              expect(await boost(member, account, randomUUID(), { pageConnectionId: theirPage })).toMatchObject({ status: 422, body: { code: 'ADS_BOOST_PAGE_NEEDED' } });
+              expect((await rpc('ads/draftBoost', await tokenFor(outsider), boostBody(account, randomUUID()), otherSlug)).status).toBe(404);
+              expect((await rpc('ads/boostOptions', await tokenFor(outsider), undefined, otherSlug)).body).toMatchObject({ enabled: false });
+            });
+
+            it('keeps a post to one boost: two drafts made at the same moment make one, and a draft left in another account is dropped when it is boosted from this one', async () => {
+              const first = await ready('Đẩy bài tài khoản một');
+              const second = await ready('Đẩy bài tài khoản hai');
+              // Two tabs at once: the post's lock queues them, the second edits the first's draft in place.
+              const post = randomUUID();
+              const both = await Promise.all([boost(member, first, post), boost(adminAccount, first, post, { budget: '150000' })]);
+              expect(both.map((r) => r.status)).toEqual([200, 200]);
+              expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND source_post_id = $2 AND status <> 'discarded'`, [orgId, post]))[0]?.n).toBe('1');
+              expect(both.filter((r) => (r.body as { edited: boolean }).edited)).toHaveLength(1);
+              // Boosted from another account: the open draft of the first account is discarded and the post has one draft, in the second.
+              const moved = await boosted(member, second, post);
+              expect(moved.edited).toBe(false);
+              const open = await row<{ ad_account_id: string; status: string }>(`SELECT ad_account_id, status FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND source_post_id = $2 ORDER BY created_at`, [orgId, post]);
+              expect(open.map((d) => [d.ad_account_id, d.status])).toEqual([[first, 'discarded'], [second, 'draft']]);
+              expect((await boostStates(member, [post]))[0]).toMatchObject({ draftId: moved.draft.id, adAccountId: second });
+            });
+
+            it('keeps a waiting boost as the post’s boost when a draft is made from the same post in the builder afterwards, and says which goal a draft continues with', async () => {
+              const account = await ready('Đẩy bài và trình tạo');
+              const post = randomUUID();
+              const made = await boosted(member, account, post);
+              expect((await boostStates(member, [post]))[0]).toMatchObject({ draftId: made.draft.id, state: 'draft', objective: 'traffic', adAccountId: account });
+              const id = proposalId(await submitBoost(owner, made.draft.id));
+              // A newer draft of the same post from the campaign builder does not hide the boost that is waiting for approval.
+              const builder = await callAs(member, 'ads/saveCampaignDraft', { idempotencyKey: key(), adAccountId: account, plan: { name: 'Từ trình tạo', objective: 'traffic', sourcePostId: post } });
+              expect(builder.status, JSON.stringify(builder.body)).toBe(200);
+              expect(await boostStates(member, [post])).toEqual([expect.objectContaining({ draftId: made.draft.id, state: 'waiting_approval', proposalId: id })]);
+              expect(await boost(member, account, post)).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_EXISTS' } });
+            });
+
+            it('shows a boost whose last day has passed as ended, so the post may be boosted again without stopping a launch that simply ran out', async () => {
+              const account = await ready('Đẩy bài hết lịch');
+              const post = randomUUID();
+              const made = await boosted(member, account, post);
+              expect((await approve(adminAccount, proposalId(await submitBoost(owner, made.draft.id)))).status).toBe(200);
+              expect((await boostStates(member, [post]))[0]).toMatchObject({ state: 'queued' });
+              expect(await boost(member, account, post)).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_EXISTS' } });
+              // Its flight moves ten days into the past (the ledger's guard lifted for the statement, as the ledger's own tests do): live, but over.
+              await setLaunch(`UPDATE crove_ads.ad_launch SET start_on = start_on - 10, end_on = end_on - 10, commit_until = commit_until - 10, state = 'live', step = 'live' WHERE org_id = $1 AND draft_id = $2`, [orgId, made.draft.id]);
+              expect((await boostStates(member, [post]))[0]).toMatchObject({ state: 'ended', draftId: made.draft.id });
+              const again = await boosted(member, account, post, { budget: '150000' });
+              expect(again.draft.id).not.toBe(made.draft.id);
+              expect((await boostStates(member, [post]))[0]).toMatchObject({ state: 'draft', draftId: again.draft.id });
+            });
+
+            it('does not offer an account whose time zone is not read yet, and refuses it: a launch cannot start without the zone', async () => {
+              const account = await ready('Đẩy bài chưa có múi giờ');
+              await row(`UPDATE crove_ads.ad_account SET time_zone = NULL WHERE org_id = $1 AND id = $2`, [orgId, account]);
+              try {
+                const options = await callAs(member, 'ads/boostOptions', undefined);
+                expect((options.body as { accounts: Array<{ id: string }> }).accounts.some((a) => a.id === account)).toBe(false);
+                expect(await boost(member, account, randomUUID())).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_ACCOUNT_NOT_READY' } });
+              } finally {
+                await row(`UPDATE crove_ads.ad_account SET time_zone = 'Asia/Ho_Chi_Minh' WHERE org_id = $1 AND id = $2`, [orgId, account]);
+              }
             });
           });
         });

@@ -4,7 +4,7 @@
 // kill switch and launch job as any other plan follow. There is no second launch path: a boost is a draft whose creative came from a post, so it ends in the
 // proposal `ads.campaign.launch` and the launch ledger of W2. Money is a decimal string in the account's currency, never a number.
 import { z } from 'zod';
-import { ADS_LAUNCH_STATES, zAdsAdVariant, zAdsBudget, ADS_PLAN_LIMITS, zAdsCampaignDraftView } from './ads-campaign.ts';
+import { ADS_LAUNCH_STATES, ADS_OBJECTIVES, zAdsAdVariant, zAdsBudget, ADS_PLAN_LIMITS, zAdsCampaignDraftView } from './ads-campaign.ts';
 import { zId } from './schemas.ts';
 
 // What the person wants from the boost, in the words of a small business. Each goal is one of the objectives of the first slice (owner Q4).
@@ -42,8 +42,9 @@ export type AdsBoostDraft = z.infer<typeof zAdsBoostDraft>;
 export const zAdsBoostDraftCall = zAdsBoostDraft.extend({ idempotencyKey: zId });
 export const ADS_BOOST_LIMITS = { headlineMax: ADS_PLAN_LIMITS.headlineMax, primaryTextMax: ADS_PLAN_LIMITS.primaryTextMax } as const;
 
-// Where a boost stands, the state the post shows: a draft (not asked for yet), waiting for approval in the Inbox, or the state of its launch.
-export const ADS_BOOST_STATES = ['draft', 'waiting_approval', ...ADS_LAUNCH_STATES] as const;
+// Where a boost stands, the state the post shows: a draft (not asked for yet), waiting for approval in the Inbox, the state of its launch, or ended (its last day has
+// passed in the account's own time, whatever the launch row still says: nothing moves a live launch to stopped when its flight simply runs out).
+export const ADS_BOOST_STATES = ['draft', 'waiting_approval', ...ADS_LAUNCH_STATES, 'ended'] as const;
 export type AdsBoostState = (typeof ADS_BOOST_STATES)[number];
 
 // Whether boosting is possible at all for the caller, and with which ad accounts: the button is shown only when it is, so with ad writing off there is none.
@@ -76,6 +77,8 @@ export const zAdsBoostStateView = z.object({
   adAccountName: z.string(),
   currency: z.string().regex(/^[A-Z]{3}$/).nullable(),
   state: z.enum(ADS_BOOST_STATES),
+  // The objective of its plan, so a draft reopened in the panel starts from its own goal.
+  objective: z.enum(ADS_OBJECTIVES),
   // The Inbox item of the request for approval, while it waits.
   proposalId: zId.nullable(),
   launchId: zId.nullable(),

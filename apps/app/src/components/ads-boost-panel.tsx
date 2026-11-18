@@ -51,6 +51,7 @@ export function BoostPanel({
   options,
   canManage,
   prefill,
+  accountId: startAccountId,
   suggestedBy = false,
   onClose,
 }: {
@@ -60,6 +61,8 @@ export function BoostPanel({
   canManage: boolean;
   // What the form starts with, when something (the AI coworker's suggestion) chose it; else the defaults for the post.
   prefill?: Partial<BoostDefaults>;
+  // The ad account to start with: the one a draft being continued belongs to (else the first).
+  accountId?: string;
   // Whether the AI coworker suggested this post, so the panel says so.
   suggestedBy?: boolean;
   onClose: () => void;
@@ -68,7 +71,7 @@ export function BoostPanel({
   const root = useTranslations();
   const f = useFormat();
   const accounts = options.accounts;
-  const [accountId, setAccountId] = useState(accounts[0]?.id ?? '');
+  const [accountId, setAccountId] = useState(accounts.find((a) => a.id === startAccountId)?.id ?? accounts[0]?.id ?? '');
   const account = accounts.find((a) => a.id === accountId) ?? accounts[0];
   const currency = account?.currency ?? 'VND';
   const start = { ...boostDefaults(post, currency), ...prefill };

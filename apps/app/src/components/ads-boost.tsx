@@ -15,7 +15,7 @@ import { Card } from '@crove/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { orpc } from '../lib/api.ts';
 import { cutAt } from '../lib/ads-campaigns.ts';
-import { boostBlock, boostOver, boostStateText, boostStateTone, suggestBoosts, type BoostPost } from '../lib/ads-boost.ts';
+import { boostBlock, boostOver, continueDraft, boostStateText, boostStateTone, suggestBoosts, type BoostPost } from '../lib/ads-boost.ts';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 import { BoostPanel } from './ads-boost-panel.tsx';
 import { RowsSkeleton } from './ui.tsx';
@@ -102,7 +102,7 @@ export function BoostCard({ slug, post }: { slug: string; post: BoostPost }) {
           </div>
         )}
       </Card>
-      {open && options.data && <BoostPanel slug={slug} post={post} options={options.data} canManage={canManage} onClose={() => setOpen(false)} />}
+      {open && options.data && <BoostPanel slug={slug} post={post} options={options.data} canManage={canManage} {...(state?.state === 'draft' ? continueDraft(state) : {})} onClose={() => setOpen(false)} />}
     </>
   );
 }

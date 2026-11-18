@@ -3,7 +3,7 @@
 // words, its link, the Facebook Page it went out on), the defaults of the panel, the words for where a boost stands, and the posts the AI coworker suggests. The
 // server decides every rule (the switches, the caps, the plan); these only choose what to offer and what to send. Ads reads no Social table: the post is read here,
 // through Social's own query, and its words are copied into the request. Money is a decimal string, never a number.
-import { ADS_BOOST_AUDIENCES, ADS_BOOST_GOALS, ADS_PLAN_LIMITS, type AdsBoostAudience, type AdsBoostGoal, type AdsBoostState } from '@crove/kernel-contract';
+import { ADS_BOOST_AUDIENCES, ADS_BOOST_GOALS, ADS_PLAN_LIMITS, type AdsBoostAudience, type AdsBoostGoal, type AdsBoostState, type AdsObjective } from '@crove/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
 import { cutAt } from './ads-campaigns.ts';
 
@@ -84,6 +84,17 @@ export function boostDefaults(post: BoostPost, currency: string): BoostDefaults 
 }
 
 export const BOOST_DAYS = [1, 2, 3, 5, 7, 14, 30] as const;
+
+const GOAL_OF_OBJECTIVE: Readonly<Record<AdsObjective, AdsBoostGoal>> = { traffic: 'traffic', engagement: 'engagement', messenger: 'messages' };
+
+// What the panel starts with when it continues a draft of this post: its account, its goal, the most it can spend (the daily budget was rounded down from the
+// person's budget, so this is never above it) and its days when the panel offers them. The audience is not kept in a form the panel can read back, so it starts as the default.
+export function continueDraft(state: { adAccountId: string; objective: AdsObjective; maxSpend: string | null; days: number | null }): { accountId: string; prefill: Partial<BoostDefaults> } {
+  const prefill: Partial<BoostDefaults> = { goal: GOAL_OF_OBJECTIVE[state.objective] };
+  if (state.maxSpend !== null) prefill.budget = state.maxSpend;
+  if (state.days !== null && (BOOST_DAYS as readonly number[]).includes(state.days)) prefill.days = state.days;
+  return { accountId: state.adAccountId, prefill };
+}
 export const BOOST_AUDIENCES = ADS_BOOST_AUDIENCES;
 
 // ---- What the AI coworker suggests ----
@@ -144,6 +155,8 @@ export function boostStateText(state: AdsBoostState, step: string | null, t: Tra
       return t('ads.boost.state.failed');
     case 'cancelled':
       return t('ads.boost.state.cancelled');
+    case 'ended':
+      return t('ads.boost.state.ended');
   }
 }
 
@@ -151,7 +164,7 @@ export const boostStateTone = (state: AdsBoostState): 'success' | 'warning' | 'd
   state === 'live' ? 'success' : state === 'needs_attention' || state === 'waiting_approval' ? 'warning' : state === 'failed' ? 'destructive' : 'outline';
 
 // A boost in one of these states is over: the post may be boosted again.
-export const boostOver = (state: AdsBoostState): boolean => state === 'stopped' || state === 'failed' || state === 'cancelled';
+export const boostOver = (state: AdsBoostState): boolean => state === 'stopped' || state === 'failed' || state === 'cancelled' || state === 'ended';
 
 export const goalText = (goal: AdsBoostGoal, t: Translate): string => {
   switch (goal) {
