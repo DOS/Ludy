@@ -3493,6 +3493,9 @@ export function createRpcHandler(
       payrollMatch: os.bank.payrollMatch.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.payroll_match', input, { actor, orgId })),
       ),
+      supplierMatch: os.bank.supplierMatch.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.supplier_match', input, { actor, orgId })),
+      ),
       // The candidates are read again here in the owner's or admin's own transaction, so the facts the model is told come from the books and the line, never from the caller.
       payrollExplain: os.bank.payrollExplain.handler(({ context, input }) =>
         inFinance(context, async (orgId, actor) => {

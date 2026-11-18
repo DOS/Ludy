@@ -3,6 +3,7 @@
 // the bank-line match (S3) follow. The request for approval is a proposal (finance.supplier_payment.record, asked for through kernel.proposal.request with `purchaseDocumentId`); its payload names
 // the account the approver sees (the bank, the last four digits, the day it was added) so a changed account makes the request stale. No number, holder or hash crosses any of these.
 import { z } from 'zod';
+import { zCashVoucherProposal, zId, zLocalDate } from './schemas.ts';
 
 export const SUPPLIER_PAYMENT_COMMAND = 'finance.supplier_payment.record';
 export const SUPPLIER_PAYMENT_KIND = 'finance.supplier_payment';
@@ -93,3 +94,27 @@ export const zSupplierPaymentBankFileExport = z.strictObject({
   reexport: z.boolean().optional(),
 });
 export type SupplierPaymentBankFileExport = z.infer<typeof zSupplierPaymentBankFileExport>;
+
+// The settlement of an approved payment (#3113 S3c, #3700): a bank statement line that is the transfer of the payment records it as a payment voucher (giấy báo Nợ, Dr 331 with the supplier, Cr the
+// bank account of the line) and the payment becomes `paid`, in one approved step. Ludy never moves money: the voucher records a transfer the business made. The request is a proposal
+// (`finance.supplier_payment.settle.record`, asked for through kernel.proposal.request with the payment and the line); its payload is a voucher that names the payment, and the server builds every
+// line and the amount from the payment, never from the requester.
+export const SUPPLIER_PAYMENT_SETTLE_COMMAND = 'finance.supplier_payment.settle.record';
+export const zSupplierPaymentSettlePrepare = z.strictObject({ paymentId: z.uuid(), bankLineId: zId });
+export const zSupplierPaymentSettleProposal = zCashVoucherProposal.extend({ supplierPayment: z.strictObject({ paymentId: zId }) });
+export type SupplierPaymentSettleProposal = z.infer<typeof zSupplierPaymentSettleProposal>;
+// The payments an open money-out line may be: approved, exported, past the hold, of the line's amount and entity, with the line not before the day of the file. Code decides, by the amount; the
+// description's words only rank. The beneficiary account is compared when the settlement is asked for (the refusal SUPPLIER_PAYMENT_ACCOUNT_MISMATCH), never here.
+export const zBankSupplierCandidate = z.strictObject({
+  paymentId: zId,
+  partyId: zId,
+  partyName: z.string(),
+  invoiceNumber: z.string(),
+  amount: zAmount,
+  exportedAt: z.string(),
+  reason: z.enum(['amount', 'amount_note']),
+});
+export type BankSupplierCandidate = z.infer<typeof zBankSupplierCandidate>;
+export const zBankSupplierMatch = z.strictObject({ bankLineId: zId, date: zLocalDate, candidates: z.array(zBankSupplierCandidate) });
+export type BankSupplierMatch = z.infer<typeof zBankSupplierMatch>;
+

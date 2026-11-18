@@ -279,8 +279,14 @@ export const prepareVoucher = defineCommand({
   handler: (ctx, input) => buildVoucherProposal(ctx, input, [], { plainVoucher: true }),
 });
 
-// A stored voucher proposal checked again and posted: shared by finance.voucher.record and finance.payroll_payment.record, which names the pay run and what it pays on the voucher (`payroll`).
-export async function recordVoucherPayload(ctx: CommandContext, payload: CashVoucherProposal, payroll: { runId: string; kind: string } | null = null) {
+// A stored voucher proposal checked again and posted: shared by finance.voucher.record, finance.payroll_payment.record, which names the pay run and what it pays on the voucher (`payroll`), and
+// finance.supplier_payment.settle.record, which names the supplier payment it settles (`supplierPaymentId`).
+export async function recordVoucherPayload(
+  ctx: CommandContext,
+  payload: CashVoucherProposal,
+  payroll: { runId: string; kind: string } | null = null,
+  supplierPaymentId: string | null = null,
+) {
   if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
   const partyId = payload.party?.id ?? null;
   // The stored payload is checked as if new: a sub-account deactivated or a party gone since it was asked for is
@@ -329,6 +335,7 @@ export async function recordVoucherPayload(ctx: CommandContext, payload: CashVou
       proposal_id: ctx.proposalId,
       bank_line_id: payload.bankLineId ?? null,
       ...(payroll ? { payroll_run_id: payroll.runId, payroll_payment_kind: payroll.kind } : {}),
+      ...(supplierPaymentId ? { supplier_payment_id: supplierPaymentId } : {}),
       created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
     })
     .returning(['id', 'number'])

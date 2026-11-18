@@ -16,6 +16,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { cn } from '@crove/ui/lib/utils';
 import { BankMatchGroups } from '../components/bank-match-groups.tsx';
 import { BankPayrollLine } from '../components/bank-payroll-line.tsx';
+import { BankSupplierLine } from '../components/bank-supplier-line.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, Notice, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
@@ -314,7 +315,7 @@ export function BankPage() {
     enabled: entity.ready && account !== null && /^\d{4}-\d{2}$/.test(month),
   });
   // The first open money-out lines of the month, for owners and admins: the ones that are asked what payroll payment they may be.
-  const payrollLines = new Set(
+  const openOutflowLines = new Set(
     canManageAccounts
       ? (lines.data?.lines ?? [])
           .filter((l) => l.amount.startsWith('-') && l.state.status === 'open')
@@ -410,7 +411,8 @@ export function BankPage() {
                         {t('status.ambiguous')}
                       </Badge>
                     )}
-                    {payrollLines.has(line.id) && <BankPayrollLine slug={slug} line={line} bankAccount={account} />}
+                    {openOutflowLines.has(line.id) && <BankPayrollLine slug={slug} line={line} bankAccount={account} />}
+                    {openOutflowLines.has(line.id) && <BankSupplierLine slug={slug} line={line} />}
                   </TableCell>
                   <TableCell className={NUM}>{line.amount.startsWith('-') ? '' : f.money(line.amount)}</TableCell>
                   <TableCell className={NUM}>{line.amount.startsWith('-') ? f.money(line.amount.slice(1)) : ''}</TableCell>
