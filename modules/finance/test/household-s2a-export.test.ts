@@ -174,7 +174,7 @@ describe('the S2a-HKD workbook and the Decree 174 VAT cut (#3710)', () => {
   it('writes the cut and the tax after it when the profile answered yes', async () => {
     const { rows } = await rowsOf(book({ vatCut: { answer: 'yes', percent: '20.0000', applied: true, lines: cutLines, total: { cut: '6200', vatPayable: '24800' }, ifEligible: null } }));
     expect(find(rows, 'Giảm thuế GTGT 20.0000% theo Nghị định 174')).toContain('6200');
-    expect(find(rows, 'Thuế GTGT phải nộp sau giảm')).toContain('24800');
+    expect(find(rows, 'Thuế GTGT sau giảm (tham khảo theo tỷ lệ của kỳ)')).toContain('24800');
     // The tax total follows: VAT payable 24800 plus the PIT 13500.
     expect(find(rows, 'Tổng thuế GTGT và TNCN sau giảm')).toContain('38300');
     expect(find(rows, 'Tổng thuế GTGT và TNCN')).toBeUndefined();
@@ -189,7 +189,7 @@ describe('the S2a-HKD workbook and the Decree 174 VAT cut (#3710)', () => {
   it('says what the VAT would be if eligible when the profile has no answer, without applying the cut', async () => {
     const { rows } = await rowsOf(book({ vatCut: { answer: null, percent: '20.0000', applied: false, lines: [{ trade: 'goods', cut: '0', vatPayable: '11000' }, { trade: 'services', cut: '0', vatPayable: '20000' }], total: { cut: '0', vatPayable: '31000' }, ifEligible: { cut: '6200', vatPayable: '24800' } } }));
     expect(rows.flat().some((t) => t.includes('nếu thuộc diện được giảm, thuế GTGT sẽ là 24800 đồng (giảm 6200 đồng)'))).toBe(true);
-    expect(find(rows, 'Thuế GTGT phải nộp sau giảm')).toBeUndefined();
+    expect(find(rows, 'Thuế GTGT sau giảm (tham khảo theo tỷ lệ của kỳ)')).toBeUndefined();
     expect(find(rows, 'Tổng thuế GTGT và TNCN')).toContain('44500');
   });
 });

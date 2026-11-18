@@ -21,7 +21,7 @@ import { pickInForce } from './domain/household-rules.ts';
 import { splitAmount, taxOn, type SplitBucket, type SplitWeight } from './domain/household-tax.ts';
 import { householdBookWindow, householdSalesRows, type HouseholdBookWindow } from './household-books.ts';
 import { yearToDateBlock, type YearRevenue } from './household-annual.ts';
-import { salesEntriesOf } from './household-year-sales.ts';
+import { salesEntriesOf, tradesDifferEarlierInYear } from './household-year-sales.ts';
 import { vatCutBlock, vatCutInForce, vatCutUnconfirmed } from './household-vat-cut.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -130,16 +130,27 @@ async function yearRevenue(ctx: QueryContext, w: HouseholdBookWindow, trades: re
   const toDate = new Map<string, ReturnType<typeof money>>();
   const before = new Map<string, ReturnType<typeof money>>();
   let unassignedGross = money(0);
+  let unassignedToDate = money(0);
+  let unassignedBefore = money(0);
   for (const e of entries) {
     const parts = trades.length === 1 ? [{ bucket: trades[0]! as SplitBucket, amount: e.amount }] : splitAmount(e.amount, weights.get(e.entryId) ?? []);
     for (const p of parts) {
       toDate.set(p.bucket, (toDate.get(p.bucket) ?? money(0)).plus(p.amount));
       if (e.date < w.from) before.set(p.bucket, (before.get(p.bucket) ?? money(0)).plus(p.amount));
-      if (p.bucket === 'unassigned') unassignedGross = unassignedGross.plus(money(p.amount).abs());
+      if (p.bucket === 'unassigned') {
+        unassignedGross = unassignedGross.plus(money(p.amount).abs());
+        unassignedToDate = unassignedToDate.plus(p.amount);
+        if (e.date < w.from) unassignedBefore = unassignedBefore.plus(p.amount);
+      }
     }
   }
+  // The unassigned part is counted apart (it has no trade), so the per-trade maps carry only the trades.
+  toDate.delete('unassigned');
+  before.delete('unassigned');
+  // One trade puts all the year on it, so an earlier profile with other trades makes the sales before the book ambiguous: held, not guessed.
+  const ambiguous = trades.length === 1 && (await tradesDifferEarlierInYear(ctx, w.entity, year, w.from, trades));
   const text = (m: Map<string, ReturnType<typeof money>>) => new Map([...m.entries()].map(([k, v]) => [k, toMoney(v)]));
-  return { toDate: text(toDate), before: text(before), unassignedHeld: !unassignedGross.isZero() };
+  return { toDate: text(toDate), before: text(before), unassigned: { toDate: toMoney(unassignedToDate), before: toMoney(unassignedBefore) }, unassignedHeld: !unassignedGross.isZero() || ambiguous };
 }
 
 export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow, book: 'S2a' | 'S2b', deductionTrade?: HouseholdTrade) {

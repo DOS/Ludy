@@ -17,9 +17,11 @@ export const THRESHOLD_CODE = 'no_tax_revenue';
 
 // The revenue of the year by trade, from 1 January: `toDate` through the period's last day, `before` up to the day before the book's first day. `unassigned` is revenue with no trade; `unassignedHeld` says an unassigned
 // part with an amount (gross, so two that cancel still count) is in either window, which holds the payable back.
+// `unassigned` is the net amount of the parts with no trade in each window (a return is negative): the year's totals and the threshold test count it, though the tax waits for it to have a trade.
 export interface YearRevenue {
   toDate: ReadonlyMap<string, string>;
   before: ReadonlyMap<string, string>;
+  unassigned: { toDate: string; before: string };
   unassignedHeld: boolean;
 }
 
@@ -56,23 +58,31 @@ export async function yearToDateBlock(
 
   const rates = new Map(args.trades.map((t) => [t, { vatPercent: args.rates.get(t)!.vat_percent, pitPercent: args.rates.get(t)!.pit_percent }]));
   const byTrade = (revenue: ReadonlyMap<string, string>) => new Map(HOUSEHOLD_TRADES.filter((t) => args.trades.includes(t)).map((t) => [t, revenue.get(t) ?? '0'] as [HouseholdTrade, string]));
-  const run = (revenue: ReadonlyMap<string, string>) =>
+  const runWith = (revenue: ReadonlyMap<string, string>, pick: HouseholdTrade | null) =>
     annualTax({
       revenue: byTrade(revenue),
       rates,
       threshold,
       vatCutPercent,
       pitCut: args.pitApplies && pitCut ? { percent: pitCut.percent, ceiling: pitCut.ceiling } : null,
-      deductionTrade: args.deductionTrade ?? null,
+      deductionTrade: pick,
       pitApplies: args.pitApplies,
     });
+  const run = (revenue: ReadonlyMap<string, string>) => runWith(revenue, args.deductionTrade ?? null);
   const end = run(args.revenue.toDate);
   const before = run(args.revenue.before);
-  const total = (revenue: ReadonlyMap<string, string>) => toMoney(sum([...revenue.values()]));
+  const total = (revenue: ReadonlyMap<string, string>, unassigned: string) => toMoney(sum([...revenue.values()]).plus(money(unassigned)));
+  const totalToDate = total(args.revenue.toDate, args.revenue.unassigned.toDate);
+  const totalBefore = total(args.revenue.before, args.revenue.unassigned.before);
   const payable = args.revenue.unassignedHeld ? null : periodTax(end, before);
   // No trade reaches the threshold at the end of the period, or the side before it could not be worked out (a pick too small then): the deduction rule is the accountant's, so the household is not asked again.
-  const deductionShort = !args.revenue.unassignedHeld && (end.held === 'short' || (end.held === null && before.held !== null));
-  const pitCutApplied = !!pitCut && args.pitApplies && end.crossed && end.held === null && money(pitCut.percent).gt(0) && (pitCut.ceiling === null || money(end.revenue).lte(money(pitCut.ceiling)));
+  // A pick that works at the end but not before it (the other trade held the revenue then): if another trade is usable on both sides the household is asked again; only when none is, it is the accountant's.
+  const pickFails = !args.revenue.unassignedHeld && end.held === null && before.held !== null;
+  const otherUsable = pickFails && args.trades.some((t) => t !== args.deductionTrade && runWith(args.revenue.toDate, t).held === null && runWith(args.revenue.before, t).held === null);
+  const deductionShort = !args.revenue.unassignedHeld && (end.held === 'short' || (pickFails && !otherUsable));
+  // The PIT cut counts as used when either side of the period used it: a year that goes above the ceiling reverses it, and the signed difference is in the payable.
+  const cutUsed = (r: typeof end) => !!pitCut && args.pitApplies && r.crossed && r.held === null && money(pitCut.percent).gt(0) && (pitCut.ceiling === null || money(r.revenue).lte(money(pitCut.ceiling)));
+  const pitCutApplied = cutUsed(end) || cutUsed(before);
 
   const unconfirmed: YearUnconfirmed[] = [];
   if (thresholdRow && thresholdRow.status !== 'confirmed') unconfirmed.push({ kind: 'threshold', key: THRESHOLD_CODE, effectiveFrom: thresholdRow.effective_from });
@@ -81,13 +91,13 @@ export async function yearToDateBlock(
   return {
     block: {
       year: Number(args.to.slice(0, 4)),
-      revenueToDate: total(args.revenue.toDate),
-      revenueBefore: total(args.revenue.before),
+      revenueToDate: totalToDate,
+      revenueBefore: totalBefore,
       threshold: thresholdRow ? { amount: threshold, effectiveFrom: thresholdRow.effective_from, status: thresholdRow.status } : null,
       // With revenue that has no trade yet the rule cannot run per trade, but the year's total still tells whether the threshold is crossed.
-      crossed: args.revenue.unassignedHeld ? money(total(args.revenue.toDate)).gt(money(threshold)) : end.crossed,
+      crossed: args.revenue.unassignedHeld ? money(totalToDate).gt(money(threshold)) : end.crossed,
       deductionTrade: end.deduction,
-      deductionNeeded: end.held === 'deduction',
+      deductionNeeded: end.held === 'deduction' || otherUsable,
       deductionShort,
       payable,
       pitCut: pitCut && args.pitApplies ? { percent: pitCut.percent, ceiling: pitCut.ceiling, applied: pitCutApplied } : null,

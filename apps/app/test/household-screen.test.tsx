@@ -305,6 +305,26 @@ describe('the yearly threshold on the 01/CNKD screen (#3710 slice 3)', () => {
     expect(html).not.toContain('household-cnkd-ytd-pit"');
   });
 
+  it('shows "Not worked out yet" and not a zero when the amount due is not known', () => {
+    const html = page('owner', {
+      profile: percentage(['goods', 'services']),
+      cnkd: cnkd({ due: null, overpaid: null, yearToDate: { ...base, revenueToDate: '1200000000', revenueBefore: '0', crossed: true, deductionNeeded: true, deductionShort: false, payable: null } }),
+    });
+    const t = text(html);
+    expect(t).toContain('Left to pay Not worked out yet');
+    expect(t).not.toContain('Left to pay ₫0');
+  });
+
+  it('shows the VAT cut and a reversed PIT cut that the payable used', () => {
+    const html = page('owner', {
+      profile: percentage(['goods', 'services']),
+      cnkd: cnkd({ yearToDate: { ...base, revenueToDate: '1300000000', crossed: true, deductionTrade: 'goods', deductionNeeded: false, payable: { vatBefore: '13000000', vatCut: '2600000', vat: '10400000', pitBefore: '1500000', pitCut: '-150000', pit: '1650000' }, pitCut: { percent: '30.0000', ceiling: '10000000000', applied: true } } }),
+    });
+    const t = text(html);
+    expect(t).toContain('VAT cut deducted ₫2,600,000');
+    expect(t).toContain('PIT cut 30.0000% -₫150,000');
+  });
+
   it('says the PIT is held back for the accountant when no trade reaches the threshold', () => {
     const html = page('owner', {
       profile: percentage(['goods', 'services']),

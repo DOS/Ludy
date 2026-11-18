@@ -383,6 +383,28 @@ suite('the yearly rule of the household tax (#3710 slice 3)', () => {
       const missing = await cnkd(o, 3, { split: quarter, deductionTrade: 'services' });
       expect(missing.yearToDate.payable).toBeNull();
       expect(missing.due).toBeNull();
+      // The year's totals are the ledger's whatever the household has split: the revenue before the quarter shows even with no split (the screen needs it to ask for one), and the threshold is judged on it.
+      expect(missing.yearToDate).toMatchObject({ revenueBefore: '600000000', revenueToDate: '2000000000', crossed: true });
+      expect((await cnkd(o, 3, { split: quarter })).yearToDate).toMatchObject({ revenueBefore: '600000000', revenueToDate: '2000000000', crossed: true, payable: null });
+    });
+
+    it('holds the tax back, and says so, when net returns or an earlier profile with other trades leave revenue that no split can place', async () => {
+      // Two trades; 1.2 billion before, then 300 million of returns in Q2 that no trade takes: the year is 900 million, but the returns have no trade, so nothing is exported on 1.2 billion.
+      const returns = await org();
+      await setProfile(returns, {});
+      await revenue(returns, '2026-02-10', 1.2 * BILLION);
+      await entry(returns, '2026-05-10', 'Hàng trả lại', [['511', 0.3 * BILLION, 0], ['111', 0, 0.3 * BILLION]]);
+      const q2 = await cnkd(returns, 2, { splitBefore: [{ trade: 'goods', revenue: String(1.2 * BILLION) }], deductionTrade: 'goods' });
+      expect(q2.yearToDate).toMatchObject({ revenueToDate: '900000000', revenueBefore: '1200000000', payable: null });
+      await expect(cnkd(returns, 2, { splitBefore: [{ trade: 'goods', revenue: String(1.2 * BILLION) }], deductionTrade: 'goods', forExport: true })).rejects.toMatchObject({ code: 'HOUSEHOLD_SPLIT_INVALID' });
+      // One trade now, two before: the sales before the quarter were made under the old profile, so they are not put on the new sole trade.
+      const changed = await org();
+      await setProfile(changed, { effectiveFrom: '2026-01-01' });
+      await goodsOnly(changed, { effectiveFrom: '2026-07-01' });
+      await revenue(changed, '2026-02-10', 1.2 * BILLION);
+      await revenue(changed, '2026-08-12', 0.1 * BILLION);
+      expect((await cnkd(changed, 3)).yearToDate).toMatchObject({ revenueToDate: '1300000000', crossed: true, payable: null });
+      // The same single-trade household that never changed trades is not held (the test above).
     });
 
     it('refuses a split of the revenue before the quarter that no household of one trade needs, or that is not valid', async () => {

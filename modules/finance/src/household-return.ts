@@ -22,7 +22,7 @@ import { pickInForce } from './domain/household-rules.ts';
 import { taxOn } from './domain/household-tax.ts';
 import { householdProfileView } from './household.ts';
 import { yearToDateBlock } from './household-annual.ts';
-import { salesEntriesOf } from './household-year-sales.ts';
+import { salesEntriesOf, tradesDifferEarlierInYear } from './household-year-sales.ts';
 import { vatCutBlock, vatCutInForce, vatCutUnconfirmed } from './household-vat-cut.ts';
 import { accountLedgerOf } from './ledger-reports.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -173,6 +173,10 @@ export const householdCnkd = defineQuery({
     if (trades.length > 1 && money(sum([...beforeGiven.values()])).gt(beforeSplittable)) throw invalid('Tổng doanh thu đã chia theo ngành của các kỳ trước trong năm vượt doanh thu trên sổ cái');
     // Not clamped: net returns before the quarter (a negative figure) with no trade to put them on also hold the tax back.
     const beforeUnassigned = trades.length === 1 ? money(0) : money(beforeRevenue).minus(sum([...beforeGiven.values()]));
+    // The quarter's own unassigned amount, not clamped: net returns with no trade to take them hold the tax back too, and every unassigned amount is counted in the year's totals.
+    const quarterUnassigned = trades.length === 1 ? money(0) : money(revenue).minus(sum([...given.values()]));
+    // One trade takes the whole year, so an earlier profile of the year with other trades makes the revenue before the quarter ambiguous: held for the accountant.
+    const ambiguousBefore = trades.length === 1 && (await tradesDifferEarlierInYear(ctx, entity, String(input.year), from, trades));
     const toDate = new Map<string, string>(trades.map((t) => [t, toMoney(money(beforeGiven.get(t) ?? '0').plus(given.get(t) ?? '0'))]));
     const year = await yearToDateBlock(ctx, {
       to,
@@ -181,7 +185,12 @@ export const householdCnkd = defineQuery({
       answer: profile.vatCutEligible,
       pitApplies: true,
       deductionTrade: input.deductionTrade,
-      revenue: { toDate, before: beforeGiven, unassignedHeld: !complete || !beforeUnassigned.isZero() },
+      revenue: {
+        toDate,
+        before: beforeGiven,
+        unassigned: { toDate: toMoney(quarterUnassigned.plus(beforeUnassigned)), before: toMoney(beforeUnassigned) },
+        unassignedHeld: !complete || !quarterUnassigned.isZero() || !beforeUnassigned.isZero() || ambiguousBefore,
+      },
     });
     const owed = year.block.payable ? money(year.block.payable.vat).plus(year.block.payable.pit) : null;
 
@@ -196,7 +205,17 @@ export const householdCnkd = defineQuery({
     unconfirmed.push(...year.unconfirmed);
     const commentary = unconfirmed.length > 0;
     if (input.forExport && !totals) throw invalid('Chưa chia hết doanh thu theo ngành nghề nên chưa xuất được tờ khai');
-    if (input.forExport && !year.block.payable) throw invalid(year.block.deductionNeeded ? 'Chưa chọn ngành nghề được trừ ngưỡng doanh thu nên chưa tính được thuế năm và chưa xuất được tờ khai' : 'Chưa chia hết doanh thu các kỳ trước trong năm theo ngành nghề nên chưa xuất được tờ khai');
+    if (input.forExport && !year.block.payable) {
+      // Revenue that no split can place (net returns, or an earlier profile with other trades) is the accountant's; the rest the household can finish.
+      const accountants = money(beforeRevenue).lt(0) || (!quarterUnassigned.isZero() && money(revenue).lt(0)) || ambiguousBefore;
+      throw invalid(
+        year.block.deductionNeeded
+          ? 'Chưa chọn ngành nghề được trừ ngưỡng doanh thu nên chưa tính được thuế năm và chưa xuất được tờ khai'
+          : accountants
+            ? 'Doanh thu thuần âm hoặc hồ sơ đổi ngành nghề trong năm nên chưa gắn được ngành nghề cho doanh thu; nhờ kế toán lập tờ khai'
+            : 'Chưa chia hết doanh thu các kỳ trước trong năm theo ngành nghề nên chưa xuất được tờ khai',
+      );
+    }
 
     const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirstOrThrow();
     return zHouseholdCnkd.parse({

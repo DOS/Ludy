@@ -314,7 +314,7 @@ async function buildTradeWorkbook(book: TradeBookView, brand: string, opts: { sh
   const cutOf = new Map(book.vatCut.lines.map((l) => [l.trade, l]));
   if (book.vatCut.applied) {
     perLine(`Giảm thuế GTGT ${book.vatCut.percent}% theo Nghị định 174`, (l) => cutOf.get(l.trade)?.cut ?? '0', book.vatCut.total?.cut, 'money');
-    perLine('Thuế GTGT phải nộp sau giảm', (l) => cutOf.get(l.trade)?.vatPayable ?? l.vat, book.vatCut.total?.vatPayable, 'money');
+    perLine('Thuế GTGT sau giảm (tham khảo theo tỷ lệ của kỳ)', (l) => cutOf.get(l.trade)?.vatPayable ?? l.vat, book.vatCut.total?.vatPayable, 'money');
   }
   if (opts.pit) {
     perLine('Tỷ lệ thuế TNCN (%)', (l) => l.pitPercent ?? '', undefined, 'text');

@@ -5,7 +5,7 @@
 // never asked for an account or a book: the profile decides which books it sees. The law behind a book is data still waiting for the accountant (#2520) and the screen says so. Owners and admins
 // change the profile; every role reads the books.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { HOUSEHOLD_EXPENSE_GROUPS, HOUSEHOLD_TRADES, vietnamToday, type HouseholdProfileSet, type HouseholdS2a, type HouseholdS2b, type HouseholdVatCut, type HouseholdYearToDate } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
@@ -130,7 +130,7 @@ function S1aBook({ entityId }: { entityId: string }) {
 // ledger (the total is account 511's movement) and downloaded as Excel. A trade comes from what each entry is built from (a sale document's items); an entry with no item is "chưa phân ngành" and holds the
 // tax total back, never guessed. While a row behind the figures is unconfirmed (#2520) every figure that depends on it carries "Số liệu tạm, kế toán chưa xác nhận tỷ lệ" and so does the Excel file; the
 // label goes when the rows are confirmed, with no code change. Ludy files nothing.
-function S2aBook({ entityId, variant = 'S2a', trades = [] }: { entityId: string; variant?: 'S2a' | 'S2b'; trades?: readonly string[] }) {
+function S2aBook({ entityId, variant = 'S2a' }: { entityId: string; variant?: 'S2a' | 'S2b' }) {
   const p = variant === 'S2a' ? 's2a' : 's2b';
   const withPit = variant === 'S2a';
   const t = useTranslations('household');
@@ -301,7 +301,7 @@ function S2aBook({ entityId, variant = 'S2a', trades = [] }: { entityId: string;
             </dl>
           )}
           <VatCutNotes cut={data.vatCut} prefix={`household-${p}`} mark={provisional} />
-          <YearToDateNotes ytd={data.yearToDate} prefix={`household-${p}-ytd`} mark={provisional} withPit={withPit} trades={trades} picked={deductionTrade} onPick={setDeductionTrade} />
+          <YearToDateNotes ytd={data.yearToDate} prefix={`household-${p}-ytd`} mark={provisional} withPit={withPit} trades={data.lines.map((l) => l.trade)} picked={deductionTrade} onPick={setDeductionTrade} />
         </>
       )}
     </Card>
@@ -493,6 +493,8 @@ function S2cBook({ entityId }: { entityId: string }) {
 const EXPENSE_GROUP_KEYS = Object.fromEntries(HOUSEHOLD_EXPENSE_GROUPS.map((g) => [g, true])) as Record<(typeof HOUSEHOLD_EXPENSE_GROUPS)[number], true>;
 
 const MONEY_INPUT = /^\d{1,16}(\.\d{1,4})?$/;
+// A decimal string that is zero (the amounts are strings, never numbers).
+const isZeroAmount = (value: string) => /^-?0+(\.0+)?$/.test(value);
 
 // The quarterly worksheet 01/CNKD (#2518): a household with one trade has all revenue on it; with several it types the split, which the screen keeps for the ask only and the server never stores.
 // While a row behind the figures is unconfirmed (#2520) every figure that depends on it carries "Số liệu tạm, kế toán chưa xác nhận tỷ lệ" and the Excel file says the same; the label goes when the rows are
@@ -506,6 +508,16 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
   const [split, setSplit] = useState<Record<string, string>>({});
   const [splitBefore, setSplitBefore] = useState<Record<string, string>>({});
   const [deductionTrade, setDeductionTrade] = useState('');
+  // The drafts belong to the period they were typed for: another year or quarter starts from empty (a split of Q3 sent for Q2 would assign revenue to the wrong trade).
+  const changePeriod = (nextYear: string, nextQuarter: 1 | 2 | 3 | 4) => {
+    setYear(nextYear);
+    setQuarter(nextQuarter);
+    setSplit({});
+    setSplitBefore({});
+  };
+  // The ledger's revenue before the quarter, remembered for the period so the fields to split it stay mounted while the sheet recalculates or refuses a split.
+  const [seenBefore, setSeenBefore] = useState<{ key: string; amount: string } | null>(null);
+  const periodKey = `${year}-${quarter}`;
   const valid = /^20\d{2}$/.test(year) && Number(year) >= 2026;
   const parts = trades.length > 1 ? trades.filter((x) => MONEY_INPUT.test((split[x] ?? '').trim())).map((x) => ({ trade: x, revenue: (split[x] ?? '').trim() })) : [];
   const badSplit = trades.length > 1 && trades.some((x) => (split[x] ?? '').trim() !== '' && !MONEY_INPUT.test((split[x] ?? '').trim()));
@@ -545,6 +557,11 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
     },
   });
   const data = sheet.data;
+  const dataBefore = data?.yearToDate.revenueBefore;
+  useEffect(() => {
+    if (dataBefore !== undefined) setSeenBefore({ key: periodKey, amount: dataBefore });
+  }, [dataBefore, periodKey]);
+  const beforeAmount = seenBefore && seenBefore.key === periodKey ? seenBefore.amount : (dataBefore ?? null);
   // The label under a figure that depends on the rows still waiting for the accountant; nothing once they are confirmed.
   const provisional = data?.commentary ? (
     <span className="block text-xs text-muted-foreground" data-testid="household-cnkd-provisional">
@@ -560,11 +577,11 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <div className="space-y-1">
           <Label htmlFor="cnkd-year">{t('kinds.year')}</Label>
-          <Input id="cnkd-year" className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => setYear(e.target.value)} />
+          <Input id="cnkd-year" className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => changePeriod(e.target.value, quarter)} />
         </div>
         <div className="space-y-1">
           <Label htmlFor="cnkd-quarter">{t('kinds.quarter')}</Label>
-          <NativeSelect id="cnkd-quarter" value={String(quarter)} onChange={(e) => setQuarter(Number(e.target.value) as 1 | 2 | 3 | 4)}>
+          <NativeSelect id="cnkd-quarter" value={String(quarter)} onChange={(e) => changePeriod(year, Number(e.target.value) as 1 | 2 | 3 | 4)}>
             {['1', '2', '3', '4'].map((q) => (
               <NativeSelectOption key={q} value={q}>{`Q${q}`}</NativeSelectOption>
             ))}
@@ -593,10 +610,10 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
           </div>
         </fieldset>
       )}
-      {askBefore && data && !/^0+(\.0+)?$/.test(data.yearToDate.revenueBefore) && (
+      {askBefore && beforeAmount !== null && !/^0+(\.0+)?$/.test(beforeAmount) && (
         <fieldset className="mb-3" data-testid="household-cnkd-split-before">
           <legend className="mb-1 text-xs text-subtle-foreground">{t('splitBeforeTitle')}</legend>
-          <p className="mb-2 text-xs text-muted-foreground">{t('splitBeforeHint', { amount: f.money(data.yearToDate.revenueBefore) })}</p>
+          <p className="mb-2 text-xs text-muted-foreground">{t('splitBeforeHint', { amount: f.money(beforeAmount) })}</p>
           {badBefore && (
             <p className="mb-2 text-xs text-destructive" role="alert" data-testid="household-cnkd-split-before-invalid">
               {t('splitInvalid')}
@@ -671,8 +688,8 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
               </dd>
               <dt className="font-medium text-foreground">{t('cnkdDue')}</dt>
               <dd className="font-medium tabular-nums" data-testid="household-cnkd-due">
-                {f.money(data.due ?? '0')}
-                {provisional}
+                {data.due === null ? t('cnkdDuePending') : f.money(data.due)}
+                {data.due === null ? null : provisional}
               </dd>
               {data.overpaid && data.overpaid !== '0' && (
                 <>
@@ -761,7 +778,7 @@ function YearToDateNotes({ ytd, prefix, mark, withPit, trades, picked, onPick }:
       <p className="mt-1 text-sm text-muted-foreground" data-testid={`${prefix}-state`}>
         {ytd.crossed ? t(withPit ? 'ytdCrossed' : 'ytdCrossedVat') : t('ytdBelow')}
       </p>
-      {withPit && ytd.deductionNeeded && (
+      {withPit && (ytd.deductionNeeded || picked !== '') && (
         <div className="mt-2 space-y-1" data-testid={`${prefix}-deduction`}>
           <Label htmlFor={`${prefix}-deduction-trade`}>{t('ytdDeductionQuestion', { amount })}</Label>
           <NativeSelect id={`${prefix}-deduction-trade`} value={picked} onChange={(e) => onPick(e.target.value)}>
@@ -787,6 +804,15 @@ function YearToDateNotes({ ytd, prefix, mark, withPit, trades, picked, onPick }:
             {f.money(pay.vat)}
             {mark}
           </dd>
+          {!isZeroAmount(pay.vatCut) && (
+            <>
+              <dt className="text-subtle-foreground">{t('ytdVatCut')}</dt>
+              <dd className="tabular-nums" data-testid={`${prefix}-vatcut`}>
+                {f.money(pay.vatCut)}
+                {mark}
+              </dd>
+            </>
+          )}
           {withPit && (
             <>
               <dt className="text-subtle-foreground">{t('ytdPitPayable')}</dt>
@@ -796,7 +822,7 @@ function YearToDateNotes({ ytd, prefix, mark, withPit, trades, picked, onPick }:
               </dd>
             </>
           )}
-          {withPit && ytd.pitCut?.applied && (
+          {withPit && ytd.pitCut && (ytd.pitCut.applied || !isZeroAmount(pay.pitCut)) && (
             <>
               <dt className="text-subtle-foreground">{t('ytdPitCut', { percent: ytd.pitCut.percent })}</dt>
               <dd className="tabular-nums" data-testid={`${prefix}-pitcut`}>
@@ -1025,7 +1051,7 @@ export function HouseholdPage() {
           )}
           <ProfileCard key={entity.id} entityId={entity.id} canEdit={canEdit} />
           {hasS1a && <S1aBook key={entity.id} entityId={entity.id} />}
-          {hasS2a && <S2aBook key={entity.id} entityId={entity.id} trades={view.data?.profile?.trades ?? []} />}
+          {hasS2a && <S2aBook key={entity.id} entityId={entity.id} />}
           {hasS2b && <S2aBook key={`${entity.id}-s2b`} entityId={entity.id} variant="S2b" />}
           {hasS2c && <S2cBook key={entity.id} entityId={entity.id} />}
           {cnkdTrades && <CnkdReturn key={entity.id} entityId={entity.id} trades={cnkdTrades} />}
