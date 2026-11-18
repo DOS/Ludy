@@ -192,14 +192,14 @@ suite('Zoom connect through the HTTP rpc (meetings integrations C3, #3175)', () 
     const verifier = token?.body?.get('code_verifier') ?? '';
     expect(createHash('sha256').update(verifier).digest('base64url')).toBe(challenge);
     expect(stub.seen.find((s) => s.url === 'https://api.zoom.us/v2/users/me')?.authorization).toBe('Bearer zoom-access-not-real-0001');
-    // The connection is the member's, named by the Zoom address in lower case, with the scopes and the expiry Zoom gave.
+    // The connection is the member's, keyed by the Zoom user id (lower case), with the scopes and the expiry Zoom gave.
     const rows = await connections();
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ id: done.body.connectionId, external_account: 'linh.zoom@example.test', display_name: 'Linh Nguyen', status: 'active', scopes: ['cloud_recording:read:list_user_recordings', 'user:read:user'] });
+    expect(rows[0]).toMatchObject({ id: done.body.connectionId, external_account: 'synthetic-user-id-0001', display_name: 'Linh Nguyen', status: 'active', scopes: ['cloud_recording:read:list_user_recordings', 'user:read:user'] });
     expect(new Date(String(rows[0]?.expires_at)).getTime()).toBeGreaterThan(Date.now() + 3_000_000);
     // The worker's read of the sealed bytes opens under the binding of this org, provider and account, and parses to a credential with an expiry (the refresh and the sweep depend on it).
     const sealed = (await sqlAdmin<{ key_id: string; envelope: Buffer }>('SELECT key_id, envelope FROM crove_kernel.meeting_platform_credential WHERE id = $1', [done.body.connectionId])).rows[0];
-    const secret = vault.open({ keyId: String(sealed?.key_id), envelope: sealed?.envelope as Buffer }, meetingPlatformBinding(org.orgId, 'zoom', 'linh.zoom@example.test'));
+    const secret = vault.open({ keyId: String(sealed?.key_id), envelope: sealed?.envelope as Buffer }, meetingPlatformBinding(org.orgId, 'zoom', 'synthetic-user-id-0001'));
     const credential = parseCredential(secret);
     expect(credential).toMatchObject({ accessToken: 'zoom-access-not-real-0001', refreshToken: 'zoom-refresh-not-real-0001' });
     expect(credential.expiresAt?.getTime()).toBeGreaterThan(Date.now() + 3_000_000);
@@ -223,6 +223,7 @@ suite('Zoom connect through the HTTP rpc (meetings integrations C3, #3175)', () 
   });
 
   it('uses the attempt up even when Zoom refuses, says so in a fixed text without Zoom\'s words, and stores nothing', async () => {
+    const connectionsBefore = (await connections()).length;
     const started = await start(other);
     stub.setTokenStatus(400);
     const refused = await finish(other, started.body.state as string);
@@ -238,14 +239,21 @@ suite('Zoom connect through the HTTP rpc (meetings integrations C3, #3175)', () 
     const noAddress = await start(other);
     expect(await finish(other, noAddress.body.state as string)).toMatchObject({ status: 400, body: { code: 'OAUTH_CODE_REJECTED' } });
     stub.setProfile({ id: 'synthetic-user-id-0001', display_name: 'Linh Nguyen', email: 'Linh.Zoom@example.test' });
-    expect((await connections()).every((c) => c.external_account === 'linh.zoom@example.test')).toBe(true);
+    // None of the refused attempts stored a connection.
+    expect(await connections()).toHaveLength(connectionsBefore);
   });
 
-  it('a second member connecting the same Zoom account gets a row of their own, and a deployment without Zoom finishes nothing', async () => {
+  it('a second member connecting the same Zoom account gets a row of their own, a changed email is still the same connection, and a deployment without Zoom finishes nothing', async () => {
     const started = await start(other);
     const done = await finish(other, started.body.state as string);
     expect(done.status).toBe(200);
     expect(done.body.reconnected).toBe(false);
+    expect(await connections()).toHaveLength(2);
+    // The member's Zoom address changed: the Zoom user id is the key, so it is a reconnect of the same row with the new name.
+    stub.setProfile({ id: 'synthetic-user-id-0001', display_name: 'Linh Nguyen (new address)', email: 'linh.new@example.test' });
+    const renamed = await start(member);
+    const again = await finish(member, renamed.body.state as string);
+    expect(again.body).toMatchObject({ reconnected: true, displayName: 'Linh Nguyen (new address)' });
     expect(await connections()).toHaveLength(2);
     const lost = await start(member);
     expect(await finish(member, lost.body.state as string, 'code-not-real-0002', 'noZoom')).toMatchObject({ status: 404, body: { code: 'CHANNEL_PROVIDER_DISABLED' } });

@@ -14,9 +14,11 @@ import { takeOAuthAttempt } from '../lib/oauth.ts';
 type Callback = { kind: 'finish'; slug: string; state: string; code: string } | { kind: 'cancelled'; slug: string | null } | { kind: 'lost' };
 
 // Read once per page load: the address bar is cleaned right after, so a reload never replays the code.
-function readCallback(): Callback {
+function readCallback(known: boolean): Callback {
   const params = new URLSearchParams(window.location.search);
   window.history.replaceState(null, '', window.location.pathname);
+  // An address with a platform name this app does not connect finishes nothing: the same words as a lost attempt, and nothing is taken out of the browser's storage.
+  if (!known) return { kind: 'lost' };
   const state = params.get('state') ?? '';
   const slug = state ? takeOAuthAttempt(state) : null;
   if (params.get('error')) return { kind: 'cancelled', slug };
@@ -31,13 +33,13 @@ export function MeetingPlatformOAuthCallbackPage() {
   // Read in an effect, not during render: reading takes the entry out of sessionStorage and cleans the address bar. The ref keeps the first read when Strict Mode runs the effect twice.
   const read = useRef<Callback | null>(null);
   const [callback, setCallback] = useState<Callback | null>(null);
-  useEffect(() => {
-    read.current ??= readCallback();
-    setCallback(read.current);
-  }, []);
-  const started = useRef(false);
   // The platforms with a connect dialog are a fixed list in the contract; an address with any other name finishes nothing.
   const known = zMeetingPlatformConnectProvider.safeParse(provider);
+  useEffect(() => {
+    read.current ??= readCallback(known.success);
+    setCallback(read.current);
+  }, [known.success]);
+  const started = useRef(false);
   const finish = useMutation({
     mutationFn: (c: Extract<Callback, { kind: 'finish' }>) => {
       if (!known.success) throw new Error('unknown provider');

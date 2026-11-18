@@ -261,7 +261,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     await expect(o.exec(o.lan, 'kernel.meeting_platform.oauth_consume', { provider: 'zoom', stateHash: late })).rejects.toMatchObject({ code: 'OAUTH_STATE_EXPIRED' });
     // A viewer starts none; a platform that has no connect dialog (the sandbox) is not a provider of the command.
     await expect(o.exec(o.viewer, 'kernel.meeting_platform.oauth_begin', { provider: 'zoom', stateHash: `sha256:${randomBytes(32).toString('hex')}`, codeVerifier: null })).rejects.toMatchObject({ status: 403 });
-    await expect(o.exec(o.lan, 'kernel.meeting_platform.oauth_begin', { provider: 'sandbox', stateHash: `sha256:${randomBytes(32).toString('hex')}`, codeVerifier: null })).rejects.toBeDefined();
+    await expect(o.exec(o.lan, 'kernel.meeting_platform.oauth_begin', { provider: 'sandbox', stateHash: `sha256:${randomBytes(32).toString('hex')}`, codeVerifier: null })).rejects.toMatchObject({ code: expect.stringMatching(/VALIDATION|INVALID/) });
     // The audit rows name the attempt and the provider, never the hash or the verifier.
     const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.meeting_platform.oauth_%' AND outcome = 'ok'", [o.orgId]);
     expect(audit.rows.length).toBeGreaterThanOrEqual(3);

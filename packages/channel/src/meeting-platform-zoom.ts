@@ -229,7 +229,7 @@ export class ZoomMeetingPlatform implements MeetingPlatformAdapter, MeetingPlatf
   }
 
   // The code grant, then the one read of who the grant belongs to. A code Zoom refuses (used, expired, a redirect address that is not the app's) or a client it does not know is `platform_refused`; a platform
-  // that did not answer is `platform_unavailable`. The account is named by the Zoom user's email, lowercased: it is the connection's key and a Zoom account has exactly one.
+  // that did not answer is `platform_unavailable`. The account is keyed by the Zoom user's id (stable when the email changes), lowercased because the connection's key is stored lowercased and the tokens are sealed for that exact key; the email is the display name.
   async exchange(input: { code: string; redirectUri: string; codeVerifier: string | null }, signal?: AbortSignal): Promise<MeetingPlatformAccount> {
     const basic = Buffer.from(`${this.config.clientId}:${this.config.clientSecret}`).toString('base64');
     const form = new URLSearchParams({ grant_type: 'authorization_code', code: input.code, redirect_uri: input.redirectUri });
@@ -248,8 +248,9 @@ export class ZoomMeetingPlatform implements MeetingPlatformAdapter, MeetingPlatf
       throw error;
     }
     const accessToken = text(grant.access_token);
-    if (accessToken === '') throw new MeetingPlatformError('platform_unavailable');
     const refreshToken = text(grant.refresh_token);
+    // Zoom always sends a refresh token; without one the connection would die an hour later, so the member is told now.
+    if (accessToken === '' || refreshToken === '') throw new MeetingPlatformError('platform_unavailable');
     const seconds = Number(grant.expires_in);
     const expiresAt = new Date(this.now().getTime() + (Number.isFinite(seconds) && seconds > 0 ? seconds : 3600) * 1000);
     let me: Record<string, unknown>;
@@ -260,19 +261,20 @@ export class ZoomMeetingPlatform implements MeetingPlatformAdapter, MeetingPlatf
       throw error;
     }
     const email = text(me.email).trim().toLowerCase();
-    // No address means the app lacks the permission to read the profile: nothing identifies the account, so nothing is stored.
-    if (email === '' || email.length > 200) throw new MeetingPlatformError('platform_refused', 'Zoom did not return the account address');
+    // No address or id means the app lacks the permission to read the profile: nothing identifies the account, so nothing is stored.
+    const id = text(me.id).trim().toLowerCase();
+    if (email === '' || email.length > 200 || id === '' || id.length > 200) throw new MeetingPlatformError('platform_refused', 'Zoom did not return the account address or id');
     const name = [text(me.display_name), `${text(me.first_name)} ${text(me.last_name)}`.trim(), email].find((n) => n.trim() !== '') ?? email;
     const scopes = text(grant.scope)
       .split(/\s+/)
       .filter((s) => s !== '' && s.length <= 200)
       .slice(0, 20);
     return {
-      externalAccount: email,
+      externalAccount: id,
       displayName: name.trim().slice(0, 200),
       scopes,
       expiresAt,
-      secret: JSON.stringify({ accessToken, ...(refreshToken ? { refreshToken } : {}), expiresAt: expiresAt.toISOString() }),
+      secret: JSON.stringify({ accessToken, refreshToken, expiresAt: expiresAt.toISOString() }),
     };
   }
 

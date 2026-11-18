@@ -341,7 +341,7 @@ export interface RpcChannels {
 function meetingPlatformConnectFailure(error: unknown): DomainError {
   if (error instanceof MeetingPlatformError && error.code === 'platform_refused') {
     console.warn(`[meeting-platform] connect refused: ${error.message}`);
-    return new DomainError('OAUTH_CODE_REJECTED', 400, 'Nền tảng từ chối mã cấp quyền (đã dùng hoặc hết hạn) hoặc chưa cấp đủ quyền đọc bản ghi, hãy kết nối lại và chấp nhận mọi quyền');
+    return new DomainError('OAUTH_CODE_REJECTED', 400, 'Nền tảng từ chối mã cấp quyền (đã dùng hoặc hết hạn) hoặc không cho đọc địa chỉ tài khoản, hãy kết nối lại và chấp nhận mọi quyền');
   }
   console.error('[meeting-platform] connect failed', error instanceof MeetingPlatformError ? error.code : error instanceof Error ? error.name : typeof error);
   return new DomainError('OAUTH_PROVIDER_FAILED', 503, 'Nền tảng không phản hồi đúng, hãy thử lại sau');

@@ -9,7 +9,7 @@ A member connects their own Zoom account in Settings and Ludy then lists the clo
 
 1. In the [Zoom App Marketplace](https://marketplace.zoom.us/) (Develop, Build App) create an **OAuth** app of the **User-managed** kind. A user-managed app reads only the recordings of the Zoom user who connected it. Do not use an account-level or Server-to-Server app: it could read every user's recordings, and a recording in Ludy belongs to the member who imported it.
 2. Set the **Redirect URL for OAuth** to `APP_URL/meetings/oauth/zoom/callback` and add the same address to the app's allow list. `APP_URL` is the address of the web app (the same value the calendar connections use; see [split-app-api.md](split-app-api.md)), not the API's.
-3. Give the app these scopes (granular names; Zoom's older "classic" names for the same read access also work): `cloud_recording:read:list_user_recordings`, `cloud_recording:read:list_recording_files` and `user:read:user`. The last one lets Ludy read the member's Zoom email address, which names the connection. Nothing that writes or deletes is asked for.
+3. Give the app these scopes (granular names; Zoom's older "classic" names for the same read access also work): `cloud_recording:read:list_user_recordings`, `cloud_recording:read:list_recording_files` and `user:read:user`. The last one lets Ludy read the member's Zoom profile: the connection is keyed by the Zoom user id (so it survives a change of email) and named by the email address. Nothing that writes or deletes is asked for.
 4. Put the app's Client ID and Client Secret in the settings of the API **and** the worker (the worker needs them to renew tokens): `ZOOM_OAUTH_CLIENT_ID` and `ZOOM_OAUTH_CLIENT_SECRET`. Set both or neither; the server refuses to start with one. `CREDENTIAL_KEY` must be set too ([credential-key.md](credential-key.md)), or the connect answers 503 before a member leaves for Zoom.
 5. A private app in your own Zoom account needs no Zoom review and works for the people in that account at once. A public listing goes through Zoom's own review, which has no published length; that is the operator's choice and not needed for one company.
 
@@ -32,9 +32,9 @@ A member connects their own Zoom account in Settings and Ludy then lists the clo
 | What the member sees | Likely cause | What to do |
 |---|---|---|
 | Zoom says the redirect address is invalid | The Redirect URL in the Marketplace app is not exactly `APP_URL/meetings/oauth/zoom/callback`, or is not on the allow list | Fix it in the Marketplace app; no Ludy change |
-| "The platform refused the code ... or did not give enough permission" (`OAUTH_CODE_REJECTED`) | The code was used or expired, the redirect address differs, the client secret is wrong, or the app lacks `user:read:user` | Check the app's scopes and the two settings, then connect again |
+| "The platform refused the code ... or does not let Ludy read the account address" (`OAUTH_CODE_REJECTED`) | The code was used or expired, the redirect address differs, the client secret is wrong, or the app lacks `user:read:user`. Ludy does not check the recording scopes at connect: a missing `cloud_recording` scope shows later as an empty or failing list | Check the app's scopes and the two settings, then connect again |
 | "The platform is not answering" (`OAUTH_PROVIDER_FAILED`) | Zoom was unreachable or answered something unexpected | Try again; the log line names a short code, never a token |
-| No "Kết nối Zoom" button | One of the two settings is missing, `CREDENTIAL_KEY` is not set, or the Meetings module is off | Check the settings of the API |
+| No "Kết nối Zoom" button | One of the two settings is missing, `CREDENTIAL_KEY` is not set, or the Meetings screens are hidden (the Meetings module is off, so Settings does not show the card) | Check the settings of the API |
 | "Connection expired: connect again" | Zoom would not renew the grant | The member connects again; it is the same row |
 | The list stays empty | A free Zoom plan, cloud recording off, no recording in the last 14 days, or the files are still processing | Nothing in Ludy to fix |
 
