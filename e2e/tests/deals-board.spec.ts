@@ -55,7 +55,7 @@ test('a member adds deals, moves them between stages and the board keeps its ord
   });
 
   const column = (name: string) => board.getByRole('region', { name });
-  const titles = (name: string) => column(name).getByTestId('deal-card').locator('p.font-medium').allTextContents();
+  const titles = (name: string) => column(name).getByTestId('deal-card').getByTestId('deal-title').allTextContents();
 
   await test.step('adds three deals, each in the first stage', async () => {
     for (const [title, amount] of [['Gói kế toán năm', '15000000'], ['Tư vấn thuế', '4000000'], ['Báo cáo tài chính', '9500000']] as const) {
@@ -88,6 +88,38 @@ test('a member adds deals, moves them between stages and the board keeps its ord
     await expect(page.getByRole('button', { name: 'Bộ lọc khác' })).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByLabel('Phụ trách')).toBeVisible();
     await expect(page.getByLabel('Từ số tiền')).toHaveCount(0);
+  });
+
+  await test.step('a card opens the deal in a side sheet with its details, quotes and bookings; Esc closes it and focus returns to the card (#3648)', async () => {
+    const open = column('Mới').getByTestId('deal-card').filter({ hasText: 'Tư vấn thuế' }).getByTestId('deal-card-open');
+    await expect(column('Mới').getByTestId('deal-card').filter({ hasText: 'Tư vấn thuế' }).getByTestId('deal-card-owner')).toBeVisible();
+    await open.click();
+    const sheet = page.getByTestId('deal-sheet');
+    await expect(sheet).toBeVisible();
+    await expect(sheet.getByRole('heading', { name: 'Tư vấn thuế' })).toBeVisible();
+    for (const name of ['Thông tin cơ hội', 'Báo giá', 'Lịch hẹn']) await expect(sheet.getByRole('heading', { name, exact: true }).first()).toBeVisible();
+    await expect(sheet.getByRole('form', { name: 'Sửa cơ hội' }).getByLabel('Tên cơ hội')).toHaveValue('Tư vấn thuế');
+    await expect(sheet.getByRole('button', { name: 'Tạo báo giá' })).toBeVisible();
+    // Focus moved into the sheet; Escape closes it and gives the focus back to the card.
+    expect(await sheet.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect(sheet).toHaveCount(0);
+    await expect(open).toBeFocused();
+  });
+
+  await test.step('editing in the sheet saves the deal and closes it', async () => {
+    await column('Mới').getByTestId('deal-card').filter({ hasText: 'Tư vấn thuế' }).getByTestId('deal-card-open').click();
+    const form = page.getByTestId('deal-sheet').getByRole('form', { name: 'Sửa cơ hội' });
+    await form.getByLabel('Tên cơ hội').fill('Tư vấn thuế quý');
+    await form.getByRole('button', { name: 'Lưu', exact: true }).click();
+    await expect(page.getByTestId('deal-sheet')).toHaveCount(0);
+    await expect(column('Mới').getByTestId('deal-card').filter({ hasText: 'Tư vấn thuế quý' })).toBeVisible();
+    // Put the name back for the steps below.
+    await column('Mới').getByTestId('deal-card').filter({ hasText: 'Tư vấn thuế quý' }).getByTestId('deal-card-open').click();
+    const again = page.getByTestId('deal-sheet').getByRole('form', { name: 'Sửa cơ hội' });
+    await again.getByLabel('Tên cơ hội').fill('Tư vấn thuế');
+    await again.getByRole('button', { name: 'Lưu', exact: true }).click();
+    await expect(column('Mới').getByTestId('deal-card').filter({ hasText: 'Tư vấn thuế' })).toBeVisible();
   });
 
   await test.step('the stage menu moves a card to another column', async () => {

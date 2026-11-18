@@ -3568,6 +3568,8 @@ export const vi = {
     none: 'Chưa có',
     deals: {
       title: 'Cơ hội',
+      openTitle: 'Cơ hội đang mở',
+      emptyOpen: 'Khách này chưa có cơ hội đang mở. Bấm Thêm cơ hội để tạo.',
       open: 'Mở màn Cơ hội',
       empty: 'Liên hệ này chưa có cơ hội nào. Bấm Thêm cơ hội để tạo.',
       emptyRead: 'Liên hệ này chưa có cơ hội nào.',
@@ -4277,6 +4279,12 @@ export const vi = {
     emptyHint: 'Thêm cơ hội đầu tiên: chọn khách hàng, nhập số tiền và ngày dự kiến chốt.',
     loadMore: 'Xem thêm',
     importFile: 'Nhập khách hàng từ tệp',
+    openDeal: 'Mở cơ hội {title}',
+    editOf: 'Sửa cơ hội {title}',
+    sheet: {
+      newHint: 'Chọn khách hàng, nhập số tiền và ngày dự kiến chốt.',
+      details: 'Thông tin cơ hội',
+    },
     editStages: 'Sửa giai đoạn',
     edit: 'Sửa',
     delete: 'Xóa',
@@ -4328,6 +4336,8 @@ export const vi = {
     },
     board: {
       loading: 'Đang tải bảng cơ hội...',
+      owner: 'Phụ trách: {name}',
+      noOwner: 'Chưa có người phụ trách',
       emptyTitle: 'Bảng chưa có cơ hội nào.',
       emptyHint: 'Thêm cơ hội đầu tiên, hoặc nhập khách hàng từ tệp trước. Cơ hội đã đóng hơn 30 ngày trước xem ở dạng Danh sách.',
       closeOn: 'Dự kiến chốt {date}',

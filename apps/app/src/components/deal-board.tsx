@@ -14,9 +14,7 @@ import { Button, buttonVariants } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { Skeleton } from '@crove/ui/components/skeleton';
-import { DealForm, DealPartyDuplicate, refreshDeals, type Member } from './deal-form.tsx';
-import { DealBookings } from './booking-deal.tsx';
-import { DealQuotes } from './deal-quotes.tsx';
+import { DealPartyDuplicate, refreshDeals, type Member } from './deal-form.tsx';
 import { Empty, ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -61,6 +59,12 @@ function BoardSkeleton({ label }: { label: string }) {
   );
 }
 
+// The deal's owner by name, or by email where the member has none; null for a deal nobody owns.
+const ownerNameOf = (members: readonly Member[], deal: Deal): string | null => {
+  const owner = members.find((m) => m.userId === deal.ownerUserId);
+  return owner ? (owner.displayName ?? owner.email) : null;
+};
+
 interface MoveInput {
   dealId: string;
   version: number;
@@ -73,34 +77,31 @@ function Card({
   deal,
   columns,
   canEdit,
+  ownerName,
   onDragStart,
   onDragEnd,
   onDragOver,
   onMove,
-  onEdit,
-  onQuotes,
-  onBookings,
-  bookingsOpen,
+  onOpen,
   dragging,
   dropBefore,
 }: {
   deal: Deal;
   columns: readonly BoardColumn[];
   canEdit: boolean;
+  ownerName: string | null;
   onDragStart: () => void;
   onDragEnd: () => void;
   onDragOver: (e: DragEvent<HTMLElement>) => void;
   onMove: (stageId: string) => void;
-  onEdit: () => void;
-  onQuotes: () => void;
-  onBookings: () => void;
-  bookingsOpen: boolean;
+  onOpen: () => void;
   dragging: boolean;
   dropBefore: boolean;
 }) {
   const t = useTranslations('deals');
   const { locale } = useLocaleSetting();
   const overdue = deal.stageKind === 'open' && deal.expectedClose !== null && deal.expectedClose < new Date().toISOString().slice(0, 10);
+  const step = deal.followUp ? nextStepLine(deal.followUp.reason) : null;
   return (
     <li
       data-testid="deal-card"
@@ -113,21 +114,34 @@ function Card({
       }}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
-      className={`rounded-lg border border-border bg-card p-3 text-sm ${dragging ? 'opacity-40' : ''} ${dropBefore ? 'border-t-2 border-t-primary' : ''}`}
+      className={`rounded-lg border border-border bg-card text-sm ${dragging ? 'opacity-40' : ''} ${dropBefore ? 'border-t-2 border-t-primary' : ''}`}
     >
-      <p className="font-medium text-foreground">{deal.title}</p>
-      {deal.followUp && (
-        <Badge variant="warning" className="mt-1" data-testid="follow-up-badge">
-          {t('followUp')}
-        </Badge>
-      )}
-      <p className="text-xs text-muted-foreground">{deal.partyName}</p>
-      <DealPartyDuplicate deal={deal} canEdit={canEdit} />
-      <p className="mt-1 tabular-nums">{formatMoney(deal.amount, locale, deal.currency)}</p>
-      {deal.expectedClose && <p className={`text-xs ${overdue ? 'text-destructive' : 'text-muted-foreground'}`}>{t('board.closeOn', { date: deal.expectedClose })}</p>}
-      {deal.lostReason && <p className="text-xs text-muted-foreground">{t('lostReason', { reason: deal.lostReason })}</p>}
-      {canEdit && (
-        <div className="mt-2 flex flex-wrap items-center gap-1">
+      {/* The card is one click target: it opens the deal's sheet (details, quotes, bookings), and everything there is one tap from the card (#3648). */}
+      <button type="button" data-testid="deal-card-open" aria-label={t('openDeal', { title: deal.title })} onClick={onOpen} className="block w-full rounded-lg p-3 text-left outline-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50">
+        <span data-testid="deal-title" className="block font-medium text-foreground">
+          {deal.title}
+        </span>
+        {deal.followUp && (
+          <Badge variant="warning" className="mt-1" data-testid="follow-up-badge">
+            {t('followUp')}
+          </Badge>
+        )}
+        <span className="block text-xs text-muted-foreground">{deal.partyName}</span>
+        <span className="mt-1 block tabular-nums">{formatMoney(deal.amount, locale, deal.currency)}</span>
+        {deal.expectedClose && <span className={`block text-xs ${overdue ? 'text-destructive' : 'text-muted-foreground'}`}>{t('board.closeOn', { date: deal.expectedClose })}</span>}
+        {step && deal.followUp && (
+          <span className="mt-1 block text-xs text-foreground" data-testid="deal-card-next">
+            {t(`nextSteps.${step}`, { date: deal.followUp.sinceOn })}
+          </span>
+        )}
+        {deal.lostReason && <span className="block text-xs text-muted-foreground">{t('lostReason', { reason: deal.lostReason })}</span>}
+      </button>
+      <div className="space-y-1 px-3 pb-3">
+        <DealPartyDuplicate deal={deal} canEdit={canEdit} />
+        <p className="text-xs text-muted-foreground" data-testid="deal-card-owner">
+          {ownerName ? t('board.owner', { name: ownerName }) : t('board.noOwner')}
+        </p>
+        {canEdit && (
           <NativeSelect size="sm" aria-label={t('stageOf', { title: deal.title })} value={deal.stageId} onChange={(e) => onMove(e.target.value)}>
             {columns.map((c) => (
               <option key={c.stage.id} value={c.stage.id}>
@@ -135,20 +149,15 @@ function Card({
               </option>
             ))}
           </NativeSelect>
-          <Button type="button" size="sm" variant="ghost" onClick={onEdit}>
-            {t('edit')}
-          </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={onQuotes}>
-            {t('quotes')}
-          </Button>
-          <Button type="button" size="sm" variant="ghost" onClick={onBookings} aria-expanded={bookingsOpen} data-testid="deal-card-bookings">
-            {t('bookings')}
-          </Button>
-        </div>
-      )}
+        )}
+      </div>
     </li>
   );
 }
+
+// The words of a card's next step, by the reason the server gave (the same lines as the next steps list).
+const NEXT_STEP = { no_activity: 'noActivity', past_close: 'pastClose', quote_unanswered: 'quoteUnanswered', quote_expiring: 'quoteExpiring' } as const;
+const nextStepLine = (reason: keyof typeof NEXT_STEP) => NEXT_STEP[reason];
 
 // How close to an edge of the board a drag starts to scroll it, and how far each dragover scrolls.
 const EDGE = 80;
@@ -160,11 +169,14 @@ export function DealBoard({
   filters,
   onShowAll,
   onAdd,
+  onOpen,
 }: {
   members: readonly Member[];
   canEdit: boolean;
   // Opens the screen's "Thêm cơ hội"; the empty board offers it.
   onAdd: () => void;
+  // Opens a deal's sheet.
+  onOpen: (deal: Deal) => void;
   filters?: FilterAst | undefined;
   // Opens the list of every won or lost deal, not only the last days the board shows (the closed columns' "Xem tất cả").
   onShowAll?: ((kind: 'won' | 'lost') => void) | undefined;
@@ -177,9 +189,6 @@ export function DealBoard({
   const board = useQuery(orpc.crm.deals.board.queryOptions({ input: boardInput }));
   const [dragging, setDragging] = useState<Deal | null>(null);
   const [over, setOver] = useState<Drop | null>(null);
-  const [editing, setEditing] = useState<Deal | null>(null);
-  const [quoting, setQuoting] = useState<Deal | null>(null);
-  const [booking, setBooking] = useState<Deal | null>(null);
   // A move into a lost stage waits for its reason.
   const [losing, setLosing] = useState<{ deal: Deal; drop: Drop } | null>(null);
   const [reason, setReason] = useState('');
@@ -257,9 +266,6 @@ export function DealBoard({
 
   return (
     <div className="space-y-3">
-      {booking && <DealBookings key={booking.id} deal={booking} canEdit={canEdit} />}
-      {quoting && <DealQuotes key={quoting.id} deal={quoting} canEdit={canEdit} onClose={() => setQuoting(null)} />}
-      {editing && <DealForm key={editing.version} deal={editing} members={members} onDone={() => setEditing(null)} />}
       {losing && (
         <form
           className="flex flex-wrap items-end gap-2 rounded-lg border border-border p-3"
@@ -335,6 +341,7 @@ export function DealBoard({
                   deal={deal}
                   columns={columns}
                   canEdit={canEdit}
+                  ownerName={ownerNameOf(members, deal)}
                   dragging={dragging?.id === deal.id}
                   dropBefore={over?.stageId === column.stage.id && over.beforeDealId === deal.id && dragging?.id !== deal.id}
                   onDragStart={() => setDragging(deal)}
@@ -344,10 +351,7 @@ export function DealBoard({
                   }}
                   onDragOver={(e) => (dragging ? onDragOverCard(e, column.stage.id, column.cards, deal) : undefined)}
                   onMove={(stageId) => place(deal, { stageId, beforeDealId: null })}
-                  onEdit={() => setEditing(deal)}
-                  onQuotes={() => setQuoting(deal)}
-                  onBookings={() => setBooking((b) => (b?.id === deal.id ? null : deal))}
-                  bookingsOpen={booking?.id === deal.id}
+                  onOpen={() => onOpen(deal)}
                 />
               ))}
             </ul>
