@@ -154,6 +154,8 @@ function TemplateRow({ template }: { template: MinutesTemplateView }) {
     onSuccess: () => {
       refresh();
       toast(t('archivedDone'), 'success');
+      // Its Edit and Archive buttons are gone: the focus goes to the template's name.
+      focusLater(`mt-name-text-${template.id}`);
     },
   });
   return (
@@ -161,7 +163,7 @@ function TemplateRow({ template }: { template: MinutesTemplateView }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           {/* React renders the name as text: markup typed into it is shown as typed. */}
-          <p id={`mt-name-text-${template.id}`} className="text-sm font-medium">{template.name}</p>
+          <p id={`mt-name-text-${template.id}`} tabIndex={-1} className="text-sm font-medium outline-none">{template.name}</p>
           <p className="text-xs text-muted-foreground">{t('sectionCount', { count: template.sections.length })}</p>
         </div>
         {template.archived ? (
@@ -290,7 +292,7 @@ export function MinutesTemplatesCard() {
           ) : (
             <ul className="mt-3 divide-y">
               {templates.map((tpl) => (
-                <TemplateRow key={`${tpl.id}:${tpl.updatedAt}`} template={tpl} />
+                <TemplateRow key={tpl.id} template={tpl} />
               ))}
             </ul>
           )}

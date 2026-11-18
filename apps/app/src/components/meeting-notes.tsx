@@ -39,7 +39,7 @@ export function NotesPreviewPanel({ meetingId, runId, onCopied, minutesTemplate 
       <p className="text-sm">{t('notes.ready')}</p>
       {enhanced.sections.map((section) => (
         <div key={section.key ?? 'all'} className="space-y-1">
-          {section.key !== null && <h4 className="text-xs font-medium text-muted-foreground">{sectionHeadingText(t as unknown as (key: never) => string, template, minutesTemplate, section.key)}</h4>}
+          {section.key !== null && <h3 className="text-xs font-medium text-muted-foreground">{sectionHeadingText(t as unknown as (key: never) => string, template, minutesTemplate, section.key)}</h3>}
           <ul className="space-y-1 text-sm">
             {section.lines.map((line, i) => (
               <li key={`${i}-${line.text}`} className={line.own ? 'text-foreground' : 'rounded border border-dashed px-2 py-1 italic text-muted-foreground'} data-own={line.own ? 'true' : 'false'}>

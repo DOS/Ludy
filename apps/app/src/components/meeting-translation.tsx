@@ -131,7 +131,7 @@ export function MeetingTranslation({ meetingId, stage, original }: { meetingId: 
         {blocked === null && cost !== null && <span className="text-xs text-muted-foreground">{t('estimate', { cost: f.aiAmount(cost) })}</span>}
       </div>
       {/* Always in the page: the progress of the translation is announced when it starts and when it ends. */}
-      <div role="status" aria-live="polite">
+      <div role="status" aria-live="polite" className="empty:mb-0">
         {ask.isPending && <p className="text-xs">{t('running')}</p>}
       </div>
       {failure && <ErrorText>{`${t('failed')} ${t(`codes.${failure}`)}`}</ErrorText>}

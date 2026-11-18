@@ -39,9 +39,10 @@ async function problemsOf(page: Page, label: string): Promise<string[]> {
   return problems;
 }
 
-test('every Meetings route with data passes axe and fits the screen, in light and dark, at desktop and phone width (#3805)', async ({ page }) => {
-  test.setTimeout(420_000);
-  const email = newEmail('meetings-a11y');
+// A user with a meeting that has a published result and a draft editor, and a template of the org: the screens the scans open. Each width runs in its own test with its own user, so
+// both fit the 180 second budget and one width failing does not hide the other.
+async function prepare(page: Page, tag: string): Promise<Screen[]> {
+  const email = newEmail(tag);
   await signInNewUser(page, email);
   const slug = await createOrg(page, 'Công ty Họp Dễ Dùng');
   let meetingId = '';
@@ -107,25 +108,35 @@ test('every Meetings route with data passes axe and fits the screen, in light an
     });
   });
 
+  return screens;
+}
+
+// Every screen in light and dark at one width: what fails is listed together, so one problem does not hide the others.
+async function scanAt(page: Page, screens: Screen[], width: number, height: number): Promise<string[]> {
   const problems: string[] = [];
-  for (const [width, height] of [
-    [1280, 800],
-    [360, 780],
-  ] as const) {
-    await page.setViewportSize({ width, height });
-    for (const theme of ['light', 'dark'] as const) {
-      // The theme the app reads at load (lib/theme.ts), from this browser only.
-      await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
-      for (const screen of screens) {
-        await page.goto(screen.path);
-        await page.waitForLoadState('networkidle');
-        await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b)/);
-        await screen.ready(page);
-        problems.push(...(await problemsOf(page, `${theme} ${width}px ${screen.name}`)));
-      }
+  await page.setViewportSize({ width, height });
+  for (const theme of ['light', 'dark'] as const) {
+    // The theme the app reads at load (lib/theme.ts), from this browser only.
+    await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+    for (const screen of screens) {
+      await page.goto(screen.path);
+      await page.waitForLoadState('networkidle');
+      await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b)/);
+      await screen.ready(page);
+      problems.push(...(await problemsOf(page, `${theme} ${width}px ${screen.name}`)));
     }
   }
-  expect(problems).toEqual([]);
+  return problems;
+}
+
+test('every Meetings route with data passes axe and fits the screen at desktop width, in light and dark (#3805)', async ({ page }) => {
+  const screens = await prepare(page, 'meetings-a11y-wide');
+  expect(await scanAt(page, screens, 1280, 800)).toEqual([]);
+});
+
+test('every Meetings route with data passes axe and fits the screen at 360px, in light and dark (#3805)', async ({ page }) => {
+  const screens = await prepare(page, 'meetings-a11y-phone');
+  expect(await scanAt(page, screens, 360, 780)).toEqual([]);
 });
 
 // How many chunks the recorder has kept on the device, read through the page's own IndexedDB (one every 5 seconds, as in meeting-record.spec.ts).

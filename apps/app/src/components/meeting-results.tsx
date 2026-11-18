@@ -328,7 +328,7 @@ export function SpeakerSuggestions({ meetingId, runId }: { meetingId: string; ru
           </li>
         ))}
       </ul>
-      <p role="status">{name.isSuccess ? t('vy.speakers.done', { name: name.data.name, count: String(name.data.lines) }) : null}</p>
+      <p role="status" className="empty:mb-0">{name.isSuccess ? t('vy.speakers.done', { name: name.data.name, count: String(name.data.lines) }) : null}</p>
       {name.error && <ErrorText>{errorMessage(name.error)}</ErrorText>}
     </div>
   );
@@ -363,7 +363,7 @@ function VySummary({ meetingId, hasModelDraft }: { meetingId: string; hasModelDr
       <p className="text-sm font-medium">{t('vy.title')}</p>
       <p className="text-xs text-muted-foreground">{t('vy.desc')}</p>
       {/* One live region that is always in the page, so the changes are announced (a region added together with its text often is not): the run's progress, the draft that is ready, the copy that was made. */}
-      <div role="status" aria-live="polite" className="space-y-2" data-testid="vy-live">
+      <div role="status" aria-live="polite" className="space-y-2 empty:mb-0" data-testid="vy-live">
         {ask.isPending && <p>{t('vy.running')}</p>}
         {answer?.state === 'ready' && !copy.isSuccess && <p data-testid="vy-ready">{t('vy.ready')}</p>}
         {copy.isSuccess && <p>{t('vy.copied')}</p>}
@@ -488,14 +488,16 @@ export function MeetingResults({
   const hasPublished = query.data?.published != null;
   useEffect(() => {
     if (focusPublished && hasPublished && publishedHeading.current) {
-      publishedHeading.current.focus();
+      // Only when the focus was lost with the button: a person who has moved on to another field keeps it.
+      if (document.activeElement === null || document.activeElement === document.body) publishedHeading.current.focus();
       setFocusPublished(false);
     }
   }, [focusPublished, hasPublished]);
   const publish = useMutation({
     mutationFn: () => orpc.meetings.results.publish.call({ meetingId, confirmed: true }),
-    onSuccess: () => {
-      refresh();
+    // Waits for the results to be read again, so the heading is the one of the result that was just shared.
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: orpc.meetings.results.key() });
       setFocusPublished(true);
     },
   });
