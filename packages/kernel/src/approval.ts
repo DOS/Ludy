@@ -69,6 +69,8 @@ const ADS: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEy
 // Issuing a sales e-invoice (ADR-0044 point 3, #2502): a legal document that posts nothing to the ledger (the sale is posted later, from the signed XML). Owners and admins approve,
 // with four-eyes and the one-person path (P10), judged on the members now: the same rule as the ads commands.
 const EINVOICE: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEyes: true, live: true };
+// A payment to a supplier (#3113 S2): posts nothing to the ledger (Ludy moves no money). Owners and admins approve, with four-eyes and the one-person path (P10), judged on the members now.
+const SUPPLIER_PAYMENT: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEyes: true, live: true };
 const POLICIES: Record<string, CommandPolicy> = {
   'finance.purchase.record': LEDGER,
   // A reversal is itself a posting (#138): the same roles approve it, with four-eyes.
@@ -105,6 +107,7 @@ const POLICIES: Record<string, CommandPolicy> = {
   // The launch of a drafted campaign (ADR-0043, #2295, W1): the plan and its largest amount are what the approver signs; the same rule.
   'ads.campaign.launch': ADS,
   'finance.einvoice.issue': EINVOICE,
+  'finance.supplier_payment.record': SUPPLIER_PAYMENT,
 };
 
 const NOBODY: CommandPolicy = { roles: [], permission: null, fourEyes: true };
@@ -131,7 +134,7 @@ export function liveApprovalCommands(): string[] {
 // 12: the posting of a stored marketplace settlement (finance.marketplace_settlement.record, #2516) was given its approval policy.
 // 13: the posting of a platform's payout (finance.marketplace_payout.record, #2516) was given its approval policy.
 // 14: the clearing of a platform's waiting fees by its invoice (finance.marketplace_fee_clearing.record, #2516) was given its approval policy.
-export const APPROVAL_POLICY_VERSION = 14;
+export const APPROVAL_POLICY_VERSION = 15;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).
