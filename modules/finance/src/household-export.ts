@@ -179,7 +179,7 @@ export async function buildS2aWorkbook(book: HouseholdS2a, brand = 'Ludy'): Prom
 }
 
 export async function buildS2bWorkbook(book: HouseholdS2b, brand = 'Ludy'): Promise<Uint8Array> {
-  return buildTradeWorkbook({ ...book, lines: book.lines, totals: book.totals }, brand, { sheet: 'S2b-HKD', pit: false });
+  return buildTradeWorkbook(book, brand, { sheet: 'S2b-HKD', pit: false });
 }
 
 async function buildTradeWorkbook(book: TradeBookView, brand: string, opts: { sheet: string; pit: boolean }): Promise<Uint8Array> {
