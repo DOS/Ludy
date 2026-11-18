@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Reusable Quick Add input with live dismissible natural-language preview chips and
-// global Alt+Q Quick Capture modal (#3556). Zero AI calls; parses 100% deterministically offline.
-import { useMutation } from '@tanstack/react-query';
+// global Alt+Q Quick Capture modal (#3556, #3558). Zero AI calls; parses 100% deterministically offline.
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useLocation, useNavigate } from '@tanstack/react-router';
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
 import { useTranslations } from 'use-intl';
@@ -18,7 +18,13 @@ import { RepeatIcon } from '@crove/ui/components/repeat-icon';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { browserTimeZone } from '../lib/my-work.ts';
-import { buildTodoCreatePayload, formatQuickAddRecurrenceLabel, shiftDismissedTokens } from '../lib/quick-add.ts';
+import {
+  buildTodoCreatePayload,
+  formatQuickAddRecurrenceLabel,
+  matchQuickAddList,
+  shiftDismissedTokens,
+  type TodoQuickAddListOption,
+} from '../lib/quick-add.ts';
 import { toast } from '../lib/toast.ts';
 import { ErrorText } from './ui.tsx';
 
@@ -66,6 +72,10 @@ export interface TodoQuickAddBarProps {
   inputRef?: RefObject<HTMLInputElement | null> | undefined;
   ariaLabel?: string | undefined;
   placeholder?: string | undefined;
+  lists?: readonly TodoQuickAddListOption[] | undefined;
+  listId?: string | null | undefined;
+  sectionId?: string | null | undefined;
+  testIdPrefix?: string | undefined;
   autoFocus?: boolean | undefined;
   blurOnEscape?: boolean | undefined;
   showInlineSubmit?: boolean | undefined;
@@ -81,6 +91,10 @@ export function TodoQuickAddBar({
   inputRef,
   ariaLabel,
   placeholder,
+  lists,
+  listId = null,
+  sectionId = null,
+  testIdPrefix,
   autoFocus = false,
   blurOnEscape = true,
   showInlineSubmit = true,
@@ -127,7 +141,16 @@ export function TodoQuickAddBar({
     [value, currentNow, timeZone, dismissed],
   );
 
-  const payloadPreview = useMemo(() => buildTodoCreatePayload(value, parsed, currentNow), [value, parsed, currentNow]);
+  const payloadPreview = useMemo(
+    () =>
+      buildTodoCreatePayload(value, parsed, {
+        now: currentNow,
+        lists,
+        defaultListId: listId,
+        defaultSectionId: sectionId,
+      }),
+    [value, parsed, currentNow, lists, listId, sectionId],
+  );
 
   const create = useMutation({
     mutationFn: async (v: { payload: TodoCreateInput; sentValue: string; draftVersion: number }) => {
@@ -178,8 +201,13 @@ export function TodoQuickAddBar({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const submitNow = nowOverride ?? new Date();
-    // Submit the exact parsed date/time chips the user previewed (only anchor `reminder` past-check against `submitNow`).
-    const payload = buildTodoCreatePayload(value, parsed, submitNow);
+    // Submit the exact parsed chips the user previewed (only anchor `reminder` past-check against `submitNow`).
+    const payload = buildTodoCreatePayload(value, parsed, {
+      now: submitNow,
+      lists,
+      defaultListId: listId,
+      defaultSectionId: sectionId,
+    });
     if (!payload) {
       if (value.trim() !== '') setEmptyWarning(true);
       return;
@@ -267,8 +295,9 @@ export function TodoQuickAddBar({
         };
       }
       case 'list': {
+        const matched = matchQuickAddList(listTokenLabel(tok.raw), lists);
         return {
-          label: t('quickAddList', { name: listTokenLabel(tok.raw) }),
+          label: t('quickAddList', { name: matched ? matched.name : listTokenLabel(tok.raw) }),
           variant: 'secondary',
           icon: <ProjectIcon name="list" className="size-3 shrink-0" />,
         };
@@ -286,6 +315,7 @@ export function TodoQuickAddBar({
   const labelText = ariaLabel ?? t('quickAdd');
   const placeholderText = placeholder ?? t('quickAdd');
   const canSubmit = payloadPreview !== null;
+  const tid = (base: string) => (testIdPrefix ? `${testIdPrefix}-${base}` : base);
 
   return (
     <form id={formId} onSubmit={submit} className="space-y-2">
@@ -302,7 +332,7 @@ export function TodoQuickAddBar({
             if (blurOnEscape && e.key === 'Escape') e.currentTarget.blur();
           }}
           className="min-w-0 flex-1"
-          data-testid="todo-quick-add-input"
+          data-testid={tid('todo-quick-add-input')}
         />
         {showInlineSubmit && (
           <Button
@@ -311,7 +341,7 @@ export function TodoQuickAddBar({
             loading={create.isPending}
             disabled={!value.trim() || create.isPending}
             aria-label={t('quickAddButtonAria')}
-            data-testid="todo-quick-add-submit"
+            data-testid={tid('todo-quick-add-submit')}
           >
             {t('quickAddButton')}
           </Button>
@@ -322,14 +352,14 @@ export function TodoQuickAddBar({
         <ul
           className="flex flex-wrap items-center gap-1.5"
           aria-label={t('quickAddChipsLabel')}
-          data-testid="quick-add-chips"
+          data-testid={tid('quick-add-chips')}
         >
           {chips.map(({ tok, label, variant, icon }) => (
             <li key={`${tok.kind}:${tok.start}:${tok.end}`} className="max-w-full">
               <Badge
                 variant={variant}
                 className="h-auto min-h-6 max-w-full gap-1 py-0 pr-0.5 pl-2"
-                data-testid={`quick-add-chip-${tok.kind}`}
+                data-testid={tid(`quick-add-chip-${tok.kind}`)}
               >
                 {icon}
                 <span className="truncate">{label}</span>
@@ -337,7 +367,7 @@ export function TodoQuickAddBar({
                   type="button"
                   onClick={() => handleDismiss(tok)}
                   aria-label={t('quickAddDismiss', { label })}
-                  data-testid={`quick-add-dismiss-${tok.kind}`}
+                  data-testid={tid(`quick-add-dismiss-${tok.kind}`)}
                   className="ml-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full hover:bg-foreground/10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:outline-none"
                 >
                   <ProjectIcon name="remove" className="size-3.5" />
@@ -349,19 +379,19 @@ export function TodoQuickAddBar({
       )}
 
       {chips.length > 0 && payloadPreview !== null && payloadPreview.title !== value.trim() && (
-        <p className="truncate text-xs text-subtle-foreground" data-testid="quick-add-preview">
+        <p className="truncate text-xs text-subtle-foreground" data-testid={tid('quick-add-preview')}>
           {t('quickAddPreviewTitle', { title: payloadPreview.title })}
         </p>
       )}
 
       {chips.length === 0 && showHint && (
-        <p className="text-xs text-subtle-foreground" data-testid="quick-add-hint">
+        <p className="text-xs text-subtle-foreground" data-testid={tid('quick-add-hint')}>
           {t('quickAddHint')}
         </p>
       )}
 
       {emptyWarning && (
-        <p role="alert" className="text-xs text-destructive" data-testid="quick-add-empty-warning">
+        <p role="alert" className="text-xs text-destructive" data-testid={tid('quick-add-empty-warning')}>
           {t('quickAddNeedTitle')}
         </p>
       )}
@@ -387,6 +417,10 @@ export function QuickCaptureDialog({
   const common = useTranslations('common');
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const listsQuery = useQuery({
+    ...orpc.notes.todos.lists.list.queryOptions({ input: {} }),
+    enabled: open,
+  });
 
   const onMyWork = pathname.toLowerCase().endsWith('/my-work');
 
@@ -403,6 +437,7 @@ export function QuickCaptureDialog({
             blurOnEscape={false}
             showInlineSubmit={false}
             showHint
+            lists={listsQuery.data?.lists}
             onCreated={(createdTitle, meta) => {
               if (meta.cleared) onOpenChange(false);
               if (onMyWork) {

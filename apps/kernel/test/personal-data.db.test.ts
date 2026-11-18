@@ -291,7 +291,7 @@ suite('finding a person in the org (#923)', () => {
     await expect(notify(org.member)).rejects.toMatchObject({ status: 403 });
     // The member turned this kind off; the notice reaches them anyway.
     await admin((c) => c.query(`INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'kernel.personal_data_notice')`, [org.orgId, org.member]));
-    const notice = await notify();
+    const notice = await rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value }, { actor: asMfa(org.owner), orgId: org.orgId, idempotencyKey: randomUUID() });
     expect(notice.told).toBe(2);
     expect(byAuthor(notice.authors)).toEqual(
       byAuthor([
@@ -404,6 +404,113 @@ suite('finding a person in the org (#923)', () => {
       private_deleted: { notes: [...memberNotes].sort(), todos: [adminTodo] },
     });
     expect(JSON.stringify(erasedAudit)).not.toContain('thu.ky');
+  });
+
+  it('finds, notifies and erases PII in personal todo_list name, sections and todo.tags after 24h notice (#3558)', async () => {
+    const value = 'list-pii@khach.example';
+    const [memberList, adminList, survivingTodo, taggedTodo] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO crove_notes.todo_list (org_id, id, owner_user_id, name, sections, sort_key) VALUES
+           ($1, $2, $4, 'Danh sách của list-pii@khach.example', '[{"id": "s1", "name": "Bình thường"}]'::jsonb, 'c0'),
+           ($1, $3, $5, 'Riêng tư', '[{"id": "s2", "name": "Hỏi list-pii@khach.example"}]'::jsonb, 'c1')`,
+        [org.orgId, memberList, adminList, org.member, org.admin],
+      );
+      await c.query(
+        `INSERT INTO crove_notes.todo (org_id, id, owner_user_id, title, tags, list_id, section_id, sort_key) VALUES
+           ($1, $2, $4, 'Việc không chứa PII', '{}'::text[], $5, 's1', 'c0'),
+           ($1, $3, $4, 'Việc gắn nhãn PII', ARRAY['list-pii@khach.example'], NULL, NULL, 'c1')`,
+        [org.orgId, survivingTodo, taggedTodo, org.member, memberList],
+      );
+    });
+
+    const found = await find(value);
+    expect([...(found.privateItems ?? [])].sort((a, b) => a.authorUserId.localeCompare(b.authorUserId))).toEqual(
+      [
+        { authorUserId: org.member, notes: 0, todos: 2 },
+        { authorUserId: org.admin, notes: 0, todos: 1 },
+      ].sort((a, b) => a.authorUserId.localeCompare(b.authorUserId)),
+    );
+
+    const notice = await rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value }, { actor: asMfa(org.owner), orgId: org.orgId, idempotencyKey: randomUUID() });
+    expect(notice.told).toBe(2);
+    const audit = (
+      await admin((c) =>
+        c.query<{ detail: { todo_lists?: string[]; todos?: string[] } }>(
+          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`,
+          [org.orgId],
+        ),
+      )
+    ).rows[0];
+    expect([...(audit?.detail.todo_lists ?? [])].sort()).toEqual([`${memberList}:1`, `${adminList}:1`].sort());
+    expect(audit?.detail.todos ?? []).toEqual([`${taggedTodo}:1`]);
+
+    await workerRt.execute('kernel.notification.dispatch', { eventId: (await admin((c) => c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`, [org.orgId]))).rows[0]?.id }, { actor: { type: 'system', component: 'test' }, orgId: org.orgId });
+
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [org.orgId]);
+      await c.query(`UPDATE crove_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [org.orgId]);
+      await c.query('COMMIT');
+    });
+
+    const erased = await erase(value);
+    expect(Object.fromEntries(erased.erased.filter((e) => e.column.startsWith('crove_notes.')).map((e) => [e.column, e.rows]))).toEqual({
+      'crove_notes.todo': 3,
+    });
+    const remainingLists = await admin((c) => c.query(`SELECT id FROM crove_notes.todo_list WHERE id = ANY($1::uuid[])`, [[memberList, adminList]]));
+    expect(remainingLists.rows).toEqual([]);
+    const survivingRow = await admin((c) => c.query<{ list_id: string | null; section_id: string | null }>(`SELECT list_id, section_id FROM crove_notes.todo WHERE id = $1`, [survivingTodo]));
+    expect(survivingRow.rows).toEqual([{ list_id: null, section_id: null }]);
+    expect((await admin((c) => c.query(`SELECT id FROM crove_notes.todo WHERE id = $1`, [taggedTodo]))).rows).toEqual([]);
+
+    // Concurrent private_erase vs todo.update on a matched todo inside a matched todo_list locks todo_list -> todo
+    // in the same order without Postgres 40P01 deadlock.
+    const raceValue = 'race-pii@khach.example';
+    const [raceList, raceTodo] = [randomUUID(), randomUUID()];
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO crove_notes.todo_list (org_id, id, owner_user_id, name, sections, sort_key) VALUES
+           ($1, $2, $3, 'Danh sách race-pii@khach.example', '[{"id": "s1", "name": "Mục 1"}]'::jsonb, 'd0')`,
+        [org.orgId, raceList, org.member],
+      );
+      await c.query(
+        `INSERT INTO crove_notes.todo (org_id, id, owner_user_id, title, tags, list_id, section_id, sort_key) VALUES
+           ($1, $2, $3, 'Việc race', ARRAY['race-pii@khach.example'], $4, 's1', 'd0')`,
+        [org.orgId, raceTodo, org.member, raceList],
+      );
+    });
+    await rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value: raceValue }, { actor: asMfa(org.owner), orgId: org.orgId, idempotencyKey: randomUUID() });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [org.orgId]);
+      await c.query('COMMIT');
+    });
+    const [eraseOutcome, updateOutcome] = await Promise.allSettled([
+      erase(raceValue),
+      rt.execute(
+        'notes.todo.update',
+        {
+          todoId: raceTodo,
+          revision: 1,
+          title: 'Cập nhật song song',
+          details: '',
+          checklist: [],
+          dueOn: null,
+          dueTime: null,
+          timeZone: 'Asia/Ho_Chi_Minh',
+          listId: raceList,
+          sectionId: 's1',
+        },
+        { actor: asUser(org.member), orgId: org.orgId, idempotencyKey: randomUUID() },
+      ),
+    ]);
+    expect(eraseOutcome.status).toBe('fulfilled');
+    if (updateOutcome.status === 'rejected') {
+      expect(updateOutcome.reason).toMatchObject({ status: 404 });
+    }
   });
 
   it("finds the legal entities the org keeps books for, kept by law, and the default one as the org's own (#1312)", async () => {

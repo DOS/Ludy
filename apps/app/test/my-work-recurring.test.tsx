@@ -73,6 +73,10 @@ const TASK_2 = '55555555-5555-4555-8555-555555555555';
 function makeTodo(overrides: Partial<TodoSummary> & { id: string; title: string }): TodoSummary {
   return {
     status: 'open',
+    priority: 4,
+    tags: [],
+    listId: null,
+    sectionId: null,
     dueOn: null,
     dueAt: null,
     dueTime: null,

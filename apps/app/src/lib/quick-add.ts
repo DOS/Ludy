@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Pure Quick Add helpers for personal to-dos (#3556): payload building, dismissed-span tracking,
+// Pure Quick Add helpers for personal to-dos (#3556, #3558): payload building, dismissed-span tracking,
 // recurrence chip labels, and the global Alt+Q capture shortcut guard.
-import { TODO_TITLE_MAX, type TodoCreateInput } from '@crove/kernel-contract';
+import { NOTE_TAGS_MAX, NOTE_TAG_MAX, TODO_TITLE_MAX, type TodoCreateInput, type TodoPriority } from '@crove/kernel-contract';
 import {
   buildTitleWithoutSpans,
   type TodoQuickAddRecurrence,
@@ -133,19 +133,61 @@ export function shiftDismissedTokens(
   return nextDismissed;
 }
 
+export interface TodoQuickAddListOption {
+  id: string;
+  name: string;
+}
+
+export interface BuildTodoCreateOptions {
+  now?: Date | undefined;
+  lists?: readonly TodoQuickAddListOption[] | undefined;
+  defaultListId?: string | null | undefined;
+  defaultSectionId?: string | null | undefined;
+  defaultPriority?: TodoPriority | undefined;
+}
+
+function normalizeListLookup(name: string): string {
+  return name.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+}
+
+/** Finds the personal to-do list matching a parsed `/List` token case-insensitively, or `null` when unmatched. */
+export function matchQuickAddList(
+  listName: string | null,
+  lists?: readonly TodoQuickAddListOption[] | undefined,
+): TodoQuickAddListOption | null {
+  if (!listName || !lists || lists.length === 0) return null;
+  const target = normalizeListLookup(listName);
+  if (!target) return null;
+  return lists.find((list) => normalizeListLookup(list.name) === target) ?? null;
+}
+
 /**
  * Builds the `notes.todos.create` payload from a parsed Quick Add input.
  *
- * Maps parsed `dueOn`, `dueTime`, `reminder`, and `recurrence` into `zTodoCreate`, stripping
- * `'date'`, `'time'`, and `'recurrence'` spans from `title` while keeping `#3558` tokens
- * (`priority`, `#tag`, `/List`) intact in `title` until those DB columns land.
+ * Maps parsed `dueOn`, `dueTime`, `reminder`, `recurrence`, `priority`, `#tags`, and matched
+ * `/List` into `zTodoCreate`. Unmatched `/List` tokens stay intact in `title` so no text is lost.
  */
 export function buildTodoCreatePayload(
   input: string,
   parsed: TodoQuickAddResult,
-  now: Date = new Date(),
+  nowOrOptions: Date | BuildTodoCreateOptions = new Date(),
 ): TodoCreateInput | null {
-  const consumedSpans = parsed.tokens.filter((t) => t.kind === 'date' || t.kind === 'time' || t.kind === 'recurrence');
+  const opts: BuildTodoCreateOptions = nowOrOptions instanceof Date ? { now: nowOrOptions } : nowOrOptions;
+  const now = opts.now ?? new Date();
+  const matchedList = matchQuickAddList(parsed.listName, opts.lists);
+  const tagSet = new Set(parsed.tags);
+
+  const consumedSpans = parsed.tokens.filter((t) => {
+    if (t.kind === 'date' || t.kind === 'time' || t.kind === 'recurrence') return true;
+    if (t.kind === 'priority') return parsed.priority !== null;
+    if (t.kind === 'tag') {
+      const normalized = t.raw.slice(1).normalize('NFC').toLowerCase().slice(0, NOTE_TAG_MAX);
+      return parsed.tags.length > 0 && tagSet.has(normalized);
+    }
+    if (t.kind === 'list') return matchedList !== null;
+    return false;
+  });
+
   const title = buildTitleWithoutSpans(input, consumedSpans).slice(0, TODO_TITLE_MAX).trim();
   if (title === '') return null;
 
@@ -157,12 +199,24 @@ export function buildTodoCreatePayload(
       ? { at: parsed.remindAt }
       : 'auto';
 
+  const priority = parsed.priority ?? opts.defaultPriority;
+  const tags = parsed.tags.slice(0, NOTE_TAGS_MAX);
+  const listId = matchedList ? matchedList.id : (opts.defaultListId ?? null);
+  const sectionId =
+    listId !== null && opts.defaultSectionId != null && (matchedList === null || matchedList.id === opts.defaultListId)
+      ? opts.defaultSectionId
+      : null;
+
   return {
     title,
     dueOn,
     dueTime,
     timeZone: parsed.timeZone,
     reminder,
+    ...(priority !== undefined ? { priority } : {}),
+    ...(tags.length > 0 ? { tags } : {}),
+    ...(listId !== null ? { listId } : {}),
+    ...(sectionId !== null ? { sectionId } : {}),
     ...(parsed.recurrence !== null ? { recurrence: parsed.recurrence } : {}),
   };
 }

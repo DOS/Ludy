@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { zonedDate, type Todo, type TodoCount, type TodoSummary, type TodoWritten } from '@crove/kernel-contract';
+import { zonedDate, type MyWork, type NotesExport, type Todo, type TodoCompleteResult, type TodoCount, type TodoListWritten, type TodoListsResponse, type TodoSummary, type TodoWritten } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { notesCommands, notesQueries } from '@crove/mod-notes';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -272,5 +272,250 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
     expect(await worker.execute('notes.member_items.purge', { userId: o.mine, eventId: event }, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
     const left = await admin((c) => c.query<{ owner_user_id: string }>(`SELECT owner_user_id FROM crove_notes.todo WHERE org_id = $1`, [o.orgId]));
     expect(left.rows).toEqual([{ owner_user_id: o.other }]);
+  });
+
+  it('manages personal lists, sections, P1-P4 priorities, #tags, filters, sorting, privacy and purge (#3558)', async () => {
+    const o = await org();
+    // 1. Default Inbox works with zero lists.
+    const inboxTodo = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', { title: 'Việc trong Hộp thu' });
+    expect((await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: inboxTodo.todoId }))).toMatchObject({
+      priority: 4,
+      tags: [],
+      listId: null,
+      sectionId: null,
+    });
+
+    // 2. Create personal list with color and sections; viewer cannot create lists.
+    await expect(o.exec(o.viewer, 'notes.todo_list.create', { name: 'Bị từ chối' })).rejects.toMatchObject({ status: 403 });
+    const createdList = await o.exec<TodoListWritten>(o.mine, 'notes.todo_list.create', {
+      name: 'Thuế tháng 11',
+      color: 'blue',
+      sections: [{ name: 'Đầu tuần' }, { id: 'sec-cuoi', name: 'Cuối tuần' }],
+    });
+    const listView = await o.query<TodoListsResponse>(o.mine, 'notes.todo_list.list');
+    expect(listView.inboxCount).toBe(1);
+    expect(listView.lists).toHaveLength(1);
+    const list = listView.lists[0]!;
+    expect(list).toMatchObject({ id: createdList.listId, name: 'Thuế tháng 11', color: 'blue', openCount: 0, revision: 1 });
+    const secFirstId = list.sections[0]!.id;
+
+    // 3. Create todos inside sections with priority and normalized #tags; reject invalid section/foreign list.
+    const p3Todo = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Kiểm tra bảng kê',
+      priority: 3,
+      tags: ['  THUE ', 'Bang-Ke', 'thue'],
+      listId: list.id,
+      sectionId: secFirstId,
+    });
+    const p1Todo = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Nộp tờ khai khẩn',
+      priority: 1,
+      tags: ['thue', 'khan-cap'],
+      listId: list.id,
+      sectionId: 'sec-cuoi',
+    });
+    await expect(
+      o.exec(o.mine, 'notes.todo.create', { title: 'Sai mục', listId: list.id, sectionId: 'khong-ton-tai' }),
+    ).rejects.toMatchObject({ code: 'TODO_SECTION_NOT_FOUND', status: 400 });
+    await expect(
+      o.exec(o.mine, 'notes.todo.update', {
+        todoId: inboxTodo.todoId,
+        revision: 1,
+        title: 'Việc trong Hộp thu',
+        details: '',
+        checklist: [],
+        dueOn: null,
+        dueTime: null,
+        timeZone: 'Asia/Ho_Chi_Minh',
+        sectionId: 'sec-cuoi',
+      }),
+    ).rejects.toMatchObject({ code: 'TODO_SECTION_NOT_FOUND', status: 400 });
+
+    // Privacy: another member, owner, admin, viewer get 404/empty and cannot attach todos or edit lists.
+    for (const caller of [o.other, o.owner, o.admin, o.viewer]) {
+      expect((await o.query<TodoListsResponse>(caller, 'notes.todo_list.list')).lists).toEqual([]);
+      if (caller !== o.viewer) {
+        await expect(o.exec(caller, 'notes.todo_list.update', { listId: list.id, revision: 1, name: 'Cướp', color: null, sections: [] })).rejects.toMatchObject({
+          code: 'TODO_LIST_NOT_FOUND',
+          status: 404,
+        });
+        await expect(o.exec(caller, 'notes.todo_list.delete', { listId: list.id })).rejects.toMatchObject({ code: 'TODO_LIST_NOT_FOUND', status: 404 });
+        await expect(o.exec(caller, 'notes.todo.create', { title: 'Chèn trộm', listId: list.id })).rejects.toMatchObject({
+          code: 'TODO_LIST_NOT_FOUND',
+          status: 404,
+        });
+      }
+    }
+
+    // 4. Filter by listId / 'inbox', tag, priority, unaccented tag search, and priority sort.
+    const counts = await o.query<TodoListsResponse>(o.mine, 'notes.todo_list.list');
+    expect(counts.inboxCount).toBe(1);
+    expect(counts.lists[0]!.openCount).toBe(2);
+
+    const prioritySorted = await o.query<TodoSummary[]>(o.mine, 'notes.todo.list', { view: 'open', listId: list.id, sort: 'priority' });
+    expect(prioritySorted.map((t) => [t.id, t.priority])).toEqual([
+      [p1Todo.todoId, 1],
+      [p3Todo.todoId, 3],
+    ]);
+    const myWorkSorted = await o.query<MyWork>(o.mine, 'notes.my_work', { timeZone: 'Asia/Ho_Chi_Minh', listId: list.id, sort: 'priority', tag: 'THUE' });
+    expect(myWorkSorted.todos.map((t) => t.id)).toEqual([p1Todo.todoId, p3Todo.todoId]);
+    const tagSearch = await o.query<TodoSummary[]>(o.mine, 'notes.todo.list', { view: 'open', q: 'khan-cap' });
+    expect(tagSearch.map((t) => t.id)).toEqual([p1Todo.todoId]);
+    const inboxOnly = await o.query<TodoSummary[]>(o.mine, 'notes.todo.list', { view: 'open', listId: 'inbox' });
+    expect(inboxOnly.map((t) => t.id)).toEqual([inboxTodo.todoId]);
+
+    // 5. Same listId with uppercase or lowercase hex preserves sectionId; updating list removes a dropped section cleanly without orphaning its todo; revision conflict guarded.
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.update', {
+      todoId: p3Todo.todoId,
+      revision: 1,
+      title: 'Kiểm tra bảng kê',
+      details: '',
+      checklist: [],
+      dueOn: null,
+      dueTime: null,
+      timeZone: 'Asia/Ho_Chi_Minh',
+      listId: list.id.toUpperCase(),
+    });
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: p3Todo.todoId })).toMatchObject({
+      listId: list.id,
+      sectionId: secFirstId,
+      revision: 2,
+    });
+    await o.exec<TodoWritten>(o.mine, 'notes.todo.update', {
+      todoId: p3Todo.todoId,
+      revision: 2,
+      title: 'Kiểm tra bảng kê',
+      details: '',
+      checklist: [],
+      dueOn: null,
+      dueTime: null,
+      timeZone: 'Asia/Ho_Chi_Minh',
+      listId: list.id.toLowerCase(),
+    });
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: p3Todo.todoId })).toMatchObject({
+      listId: list.id,
+      sectionId: secFirstId,
+      revision: 3,
+    });
+
+    await expect(
+      o.exec(o.mine, 'notes.todo_list.update', { listId: list.id, revision: 99, name: 'Lệch', color: null, sections: [] }),
+    ).rejects.toMatchObject({ code: 'TODO_LIST_REVISION_CONFLICT', status: 409 });
+    await o.exec<TodoListWritten>(o.mine, 'notes.todo_list.update', {
+      listId: list.id,
+      revision: 1,
+      name: 'Thuế đã cập nhật',
+      color: 'emerald',
+      sections: [{ id: 'sec-cuoi', name: 'Cuối tuần (gấp)' }],
+    });
+    const clearedSectionTodo = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: p3Todo.todoId });
+    expect(clearedSectionTodo).toMatchObject({ listId: list.id, sectionId: null, revision: 4 });
+
+    // 6. Export includes priority, tags, listId, sectionId, and todoLists; audit facts hold zero PII text.
+    const exported = await o.query<NotesExport>(o.mine, 'notes.mine.export');
+    const expP1 = exported.todos.find((t) => t.id === p1Todo.todoId);
+    expect(expP1).toMatchObject({ priority: 1, tags: ['thue', 'khan-cap'], listId: list.id, sectionId: 'sec-cuoi' });
+    expect(exported.todoLists).toEqual([
+      expect.objectContaining({
+        id: list.id,
+        name: 'Thuế đã cập nhật',
+        color: 'emerald',
+        sections: [{ id: 'sec-cuoi', name: 'Cuối tuần (gấp)' }],
+      }),
+    ]);
+    const auditText = await admin(async (c) =>
+      JSON.stringify(
+        (
+          await c.query(
+            `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo%'`,
+            [o.orgId],
+          )
+        ).rows,
+      ),
+    );
+    expect(auditText).not.toContain('Thuế tháng 11');
+    expect(auditText).not.toContain('Cuối tuần');
+    expect(auditText).not.toContain('khan-cap');
+
+    // 7. Deleting the list returns its todos back to Inbox safely, concurrent completion + list delete never deadlocks, and trash_empty purges aged trashed lists.
+    await o.exec<TodoListWritten>(o.mine, 'notes.todo_list.delete', { listId: list.id });
+    expect((await o.query<TodoListsResponse>(o.mine, 'notes.todo_list.list')).lists).toEqual([]);
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: p1Todo.todoId })).toMatchObject({ listId: null, sectionId: null, revision: 2 });
+
+    const concurrentList = await o.exec<TodoListWritten>(o.mine, 'notes.todo_list.create', {
+      name: 'Danh sách đồng thời',
+      color: null,
+      sections: [{ id: 'sec-conc', name: 'Mục đồng thời' }],
+    });
+    const concurrentTodo = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Hoàn thành song song xóa danh sách',
+      listId: concurrentList.listId,
+      sectionId: 'sec-conc',
+    });
+    await Promise.all([
+      o.exec(o.mine, 'notes.todo.complete', { todoId: concurrentTodo.todoId }),
+      o.exec(o.mine, 'notes.todo_list.delete', { listId: concurrentList.listId }),
+    ]);
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: concurrentTodo.todoId })).toMatchObject({
+      status: 'done',
+      listId: null,
+      sectionId: null,
+    });
+
+    // Recurring completion preserves priority, #tags, listId, and sectionId on the next occurrence.
+    const recList = await o.exec<TodoListWritten>(o.mine, 'notes.todo_list.create', {
+      name: 'Danh sách lặp lại',
+      color: 'amber',
+      sections: [{ id: 'sec-rec', name: 'Mục định kỳ' }],
+    });
+    const recTodo = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', {
+      title: 'Kê khai định kỳ',
+      priority: 2,
+      tags: ['thue', 'lap-lai'],
+      listId: recList.listId,
+      sectionId: 'sec-rec',
+      dueOn: '2027-02-01',
+      recurrence: { freq: 'monthly', interval: 1 },
+    });
+    const completedRec = await o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', { todoId: recTodo.todoId });
+    expect(completedRec.nextTodoId).toBeTruthy();
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: completedRec.nextTodoId! })).toMatchObject({
+      priority: 2,
+      tags: ['thue', 'lap-lai'],
+      listId: recList.listId,
+      sectionId: 'sec-rec',
+      dueOn: '2027-03-01',
+      status: 'open',
+    });
+
+    // Multi-occurrence stopSeries concurrent with todo_list.delete locks rows in canonical id ASC order without deadlock,
+    // and uppercase UUID todoId still returns the single incremented revision cleanly.
+    await o.exec(o.mine, 'notes.todo.reopen', { todoId: recTodo.todoId });
+    const [stoppedRec] = await Promise.all([
+      o.exec<TodoCompleteResult>(o.mine, 'notes.todo.complete', {
+        todoId: completedRec.nextTodoId!.toUpperCase(),
+        stopSeries: true,
+      }),
+      o.exec(o.mine, 'notes.todo_list.delete', { listId: recList.listId }),
+    ]);
+    expect(stoppedRec.stoppedSiblings).toEqual([{ todoId: recTodo.todoId, recurrence: { freq: 'monthly', interval: 1 } }]);
+    const doneNext = await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: completedRec.nextTodoId! });
+    expect(doneNext).toMatchObject({
+      status: 'done',
+      recurrence: null,
+      listId: null,
+      sectionId: null,
+      revision: 3,
+    });
+    expect([2, 3]).toContain(stoppedRec.revision);
+    expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: recTodo.todoId })).toMatchObject({
+      status: 'open',
+      recurrence: null,
+      listId: null,
+      sectionId: null,
+    });
+
+    await admin((c) => c.query(`UPDATE crove_notes.todo_list SET deleted_at = now() - interval '31 days' WHERE id = $1`, [list.id]));
+    expect(await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
   });
 });

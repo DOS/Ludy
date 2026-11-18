@@ -119,7 +119,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_notes.note_template',
   'crove_notes.note_version',
   'crove_notes.notebook',
-  'crove_notes.todo_list',
   'crove_sign.ca_connection',
   'crove_sign.ca_signing_request',
 ]);

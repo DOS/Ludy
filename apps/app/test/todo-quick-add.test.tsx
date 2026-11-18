@@ -164,20 +164,79 @@ describe('Alt+Q global Quick Capture shortcut guard (#3556)', () => {
   });
 });
 
-describe('Quick Add payload builder & dismissed-span shifting (#3556)', () => {
-  it('wires dueOn, dueTime, timeZone, reminder, and recurrence into zTodoCreate while preserving #3558 tokens', () => {
+describe('Quick Add payload builder & dismissed-span shifting (#3556, #3558)', () => {
+  const KE_TOAN_LIST_ID = '10000000-0000-4000-8000-000000000001';
+  const OTHER_LIST_ID = '10000000-0000-4000-8000-000000000002';
+
+  it('wires dueOn, dueTime, timeZone, reminder, recurrence, priority, tags, and matched listId into zTodoCreate', () => {
     const input = 'Gửi báo cáo ngày mai 9h mỗi tuần !p1 #thue /KeToan';
     const parsed = parseTodoQuickAdd(input, { now: NOW, timeZone: TZ });
-    const payload = buildTodoCreatePayload(input, parsed, NOW);
-    expect(payload).not.toBeNull();
-    expect(payload?.dueOn).toBe('2026-11-18');
-    expect(payload?.dueTime).toBe('09:00');
-    expect(payload?.timeZone).toBe(TZ);
-    expect(payload?.reminder).toEqual({ at: '2026-11-18T08:30:00+07:00' });
-    expect(payload?.recurrence).toEqual({ freq: 'weekly', interval: 1 });
-    // Non-date tokens from #3558 stay intact in title until their DB columns land
-    expect(payload?.title).toBe('Gửi báo cáo !p1 #thue /KeToan');
-    expect(zTodoCreate.safeParse(payload).success).toBe(true);
+
+    // Without a matching personal list, priority and #tags populate structured fields while unmatched /List stays in title
+    const unmatchedPayload = buildTodoCreatePayload(input, parsed, NOW);
+    expect(unmatchedPayload).not.toBeNull();
+    expect(unmatchedPayload?.dueOn).toBe('2026-11-18');
+    expect(unmatchedPayload?.dueTime).toBe('09:00');
+    expect(unmatchedPayload?.timeZone).toBe(TZ);
+    expect(unmatchedPayload?.reminder).toEqual({ at: '2026-11-18T08:30:00+07:00' });
+    expect(unmatchedPayload?.recurrence).toEqual({ freq: 'weekly', interval: 1 });
+    expect(unmatchedPayload?.priority).toBe(1);
+    expect(unmatchedPayload?.tags).toEqual(['thue']);
+    expect(unmatchedPayload?.listId).toBeUndefined();
+    expect(unmatchedPayload?.title).toBe('Gửi báo cáo /KeToan');
+    expect(zTodoCreate.safeParse(unmatchedPayload).success).toBe(true);
+
+    // With a matching personal list (case-insensitive), /List routes to listId and strips /KeToan from title
+    const matchedPayload = buildTodoCreatePayload(input, parsed, {
+      now: NOW,
+      lists: [{ id: KE_TOAN_LIST_ID, name: 'ketoan' }],
+    });
+    expect(matchedPayload).toMatchObject({
+      title: 'Gửi báo cáo',
+      priority: 1,
+      tags: ['thue'],
+      listId: KE_TOAN_LIST_ID,
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+      recurrence: { freq: 'weekly', interval: 1 },
+    });
+    expect(matchedPayload?.sectionId).toBeUndefined();
+    expect(zTodoCreate.safeParse(matchedPayload).success).toBe(true);
+
+    // Switching to another /List inside a section drops the old sectionId so sectionId never mismatches listId
+    const overridePayload = buildTodoCreatePayload(input, parsed, {
+      now: NOW,
+      lists: [
+        { id: KE_TOAN_LIST_ID, name: 'KeToan' },
+        { id: OTHER_LIST_ID, name: 'Khac' },
+      ],
+      defaultListId: OTHER_LIST_ID,
+      defaultSectionId: 'sec-1',
+    });
+    expect(overridePayload?.listId).toBe(KE_TOAN_LIST_ID);
+    expect(overridePayload?.sectionId).toBeUndefined();
+    expect(zTodoCreate.safeParse(overridePayload).success).toBe(true);
+
+    // Typing inside a section without /List preserves defaultListId and defaultSectionId
+    const sameSectionInput = 'Nộp tờ khai !p2 #vat';
+    const sectionPayload = buildTodoCreatePayload(
+      sameSectionInput,
+      parseTodoQuickAdd(sameSectionInput, { now: NOW, timeZone: TZ }),
+      {
+        now: NOW,
+        lists: [{ id: KE_TOAN_LIST_ID, name: 'KeToan' }],
+        defaultListId: KE_TOAN_LIST_ID,
+        defaultSectionId: 'sec-1',
+      },
+    );
+    expect(sectionPayload).toMatchObject({
+      title: 'Nộp tờ khai',
+      priority: 2,
+      tags: ['vat'],
+      listId: KE_TOAN_LIST_ID,
+      sectionId: 'sec-1',
+    });
+    expect(zTodoCreate.safeParse(sectionPayload).success).toBe(true);
 
     const dailyInput = 'Gọi khách mỗi ngày 9h';
     const dailyPayload = buildTodoCreatePayload(dailyInput, parseTodoQuickAdd(dailyInput, { now: NOW, timeZone: TZ }), NOW);
@@ -191,6 +250,13 @@ describe('Quick Add payload builder & dismissed-span shifting (#3556)', () => {
 
     const recurrenceOnly = 'mỗi ngày';
     expect(buildTodoCreatePayload(recurrenceOnly, parseTodoQuickAdd(recurrenceOnly, { now: NOW, timeZone: TZ }), NOW)).toBeNull();
+    const metadataOnly = '!p1 #thue /KeToan';
+    expect(
+      buildTodoCreatePayload(metadataOnly, parseTodoQuickAdd(metadataOnly, { now: NOW, timeZone: TZ }), {
+        now: NOW,
+        lists: [{ id: KE_TOAN_LIST_ID, name: 'KeToan' }],
+      }),
+    ).toBeNull();
   });
 
   it('falls back to auto reminder when remindAt is already past and rejects empty titles', () => {
@@ -246,6 +312,19 @@ describe('TodoQuickAddBar & ShellNav SSR rendering (#3556)', () => {
     expect(viHtml).toContain('min-h-6');
     expect(viHtml).toContain('size-6');
     expect(viHtml).toContain('data-testid="quick-add-preview"');
+    expect(viHtml).toContain('Sẽ lưu thành: Gửi báo cáo /KeToan');
+
+    const matchedHtml = renderInApp(
+      'vi',
+      <TodoQuickAddBar
+        initialValue="Gửi báo cáo ngày mai 9h !p1 #thue /KeToan"
+        lists={[{ id: '10000000-0000-4000-8000-000000000001', name: 'KeToan' }]}
+        nowOverride={NOW}
+        timeZoneOverride={TZ}
+      />,
+    );
+    expect(matchedHtml).toContain('Sẽ lưu thành: Gửi báo cáo</p>');
+    expect(matchedHtml).not.toContain('Sẽ lưu thành: Gửi báo cáo /KeToan');
     expect(buildTodoCreatePayload('vào buổi tối nay', parseTodoQuickAdd('vào buổi tối nay', { now: NOW, timeZone: TZ }), NOW)).toBeNull();
 
     const enHtml = renderInApp(

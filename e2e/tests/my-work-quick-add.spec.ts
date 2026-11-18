@@ -42,11 +42,13 @@ test('natural-language Quick Add parses chips, restores dismissed tokens, and Al
     await expect(page.getByTestId('quick-capture-dialog')).toBeHidden();
   });
 
-  await test.step('My Work shows captured todo with due time and supports dismissing a chip to restore text', async () => {
+  await test.step('My Work shows captured todo with priority, tags, due time, list matching, and chip dismissal', async () => {
     await page.goto(`/o/${slug}/my-work`);
-    const savedRow = page.getByTestId('todo-row').filter({ hasText: 'Gọi anh Nam !p1 #sales /CongViec' });
+    const savedRow = page.getByTestId('todo-row').filter({ hasText: 'Gọi anh Nam /CongViec' });
     await expect(savedRow).toBeVisible();
     await expect(savedRow.getByTestId('todo-due')).toContainText('09:00');
+    await expect(savedRow.getByTestId('todo-priority-badge')).toContainText('P1');
+    await expect(savedRow.getByTestId('todo-tag-chip')).toContainText('#sales');
 
     const quickInput = page.getByRole('textbox', { name: 'Thêm việc, Enter để lưu' });
     await quickInput.fill('Đọc lại kế hoạch ngày mai 9h');
@@ -69,6 +71,23 @@ test('natural-language Quick Add parses chips, restores dismissed tokens, and Al
     const recurringRow = page.getByTestId('todo-row').filter({ hasText: 'Kiểm tra kho' });
     await expect(recurringRow).toBeVisible();
     await expect(recurringRow.getByTestId('todo-recurrence-badge')).toContainText('Hàng ngày');
+
+    // Create a personal list and verify /ketoan routes case-insensitively into it with priority and #tags stripped from title.
+    await page.getByTestId('new-list-button').click();
+    await page.getByTestId('list-dialog-name').fill('KeToan');
+    await page.getByTestId('list-dialog-save').click();
+    await expect(page.getByTestId('selected-list-header')).toContainText('KeToan');
+    await page.getByTestId('list-nav-all').click();
+
+    await quickInput.fill('Kê khai quý ngày mai 9h !p2 #thue /ketoan');
+    await expect(page.getByTestId('quick-add-preview')).toContainText('Sẽ lưu thành: Kê khai quý');
+    await quickInput.press('Enter');
+    const matchedRow = page.getByTestId('todo-row').filter({ hasText: 'Kê khai quý' });
+    await expect(matchedRow).toBeVisible();
+    await expect(matchedRow).not.toContainText('/ketoan');
+    await expect(matchedRow.getByTestId('todo-priority-badge')).toContainText('P2');
+    await expect(matchedRow.getByTestId('todo-tag-chip')).toContainText('#thue');
+    await expect(matchedRow.getByTestId('todo-list-badge')).toContainText('KeToan');
   });
 
   await test.step('360px phone layout fits with zero horizontal scroll and passes axe in light and dark', async () => {

@@ -373,6 +373,11 @@ import {
   zTodoLinkRemove,
   zTodoLinkWritten,
   zTodoList,
+  zTodoListCreate,
+  zTodoListRef,
+  zTodoListUpdate,
+  zTodoListWritten,
+  zTodoListsResponse,
   zTodoRef,
   zTodoReopen,
   zTodoReorder,
@@ -1178,6 +1183,13 @@ export const contract = {
       myWork: oc.input(zMyWorkInput).output(zMyWork),
       // How many to-dos each member has, for an owner or admin before removing one; no text.
       counts: oc.input(z.strictObject({})).output(z.array(zTodoCount)),
+      // Personal to-do lists and inline sections (#3558).
+      lists: {
+        list: oc.input(z.strictObject({})).output(zTodoListsResponse),
+        create: oc.input(zTodoListCreate).output(zTodoListWritten),
+        update: oc.input(zTodoListUpdate).output(zTodoListWritten),
+        delete: oc.input(zTodoListRef).output(zTodoListWritten),
+      },
     },
   },
   // AI Meeting Notes (issue #2576, ADR-0047, meetings plan M2).
