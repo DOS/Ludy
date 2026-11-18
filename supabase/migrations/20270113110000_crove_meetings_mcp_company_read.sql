@@ -7,7 +7,8 @@
 -- Everything else stays out of the context's reach, as today: the transcript, notes, drafts, translations, live lines, readers, consent records and every other table of the module have no such branch,
 -- an attendees-only meeting is not read even when the grantor recorded it, a member grant (kind `mcp_member`) has no branch at all, and no write policy changes. The kind is read inline from the sealed
 -- context (`ctx_verified() ->> 'kind'`), so no function names it (the invariant of mcp-company-context holds); the existing branch for a person is kept unchanged inside each policy. The
--- three policies are named, exactly, in the net of member-vy-background.db.test.ts that looks for a policy reading the sealed member (the role list of the person branch holds the string 'member').
+-- net of member-vy-background.db.test.ts that looks for a policy reading the sealed member names meeting_read alone, exactly (the role list of its person branch holds the string 'member'); the other two
+-- policies hold no such string and pass that net unchanged.
 -- Idempotent (drop and create, as the first migration of these policies did). Pinned first in test/invariant/mcp-meetings-company.db.test.ts.
 SET LOCAL lock_timeout = '2s';
 
