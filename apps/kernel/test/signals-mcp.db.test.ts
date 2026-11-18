@@ -187,7 +187,7 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     for (const rule of RULES) expect(await run(branch, rule), rule).toEqual([]);
   });
 
-  it('answers kernel.mcp.signals with the items of the rules and says what it could not check: nothing for a whole-org grant, partial_view for a branch-limited one, rule 3 never checked yet', async () => {
+  it('answers kernel.mcp.signals with the items of the rules and says what it could not check: nothing for a whole-org grant, partial_view for a branch-limited one, rule 3 checked since #3113 S1', async () => {
     const whole = mcp(users.owner, await grant(users.owner), 'company');
     const answer = (await run(whole, 'kernel.mcp.signals')) as unknown as { items: Array<{ id: string }>; checked: string[]; unchecked: Array<{ rule: string; reason: string }> };
     expect(answer.items.map((i) => i.id).sort()).toEqual([
@@ -195,17 +195,16 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
       ...((await run(whole, 'kernel.signals.receivable_with_open_deal')) as Array<{ id: string }>),
     ].map((i) => i.id).sort());
     expect(answer.items).toHaveLength(2);
-    expect(answer.checked).toEqual(['deal_without_invoice', 'receivable_with_open_deal']);
-    expect(answer.unchecked).toEqual([{ rule: 'supplier_bank_changed', reason: 'not_available' }, { rule: 'conversation_unanswered', reason: 'not_available' }]);
-    // A branch-limited member's grant gets no item, and is told in so many words that two rules could not be checked: an empty list is never "all clear".
+    expect(answer.checked).toEqual(['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed']);
+    expect(answer.unchecked).toEqual([{ rule: 'conversation_unanswered', reason: 'not_available' }]);
+    // A branch-limited member's grant gets no item, and is told in so many words that the two CRM rules could not be checked: an empty list is never "all clear". Rule 3 reads the org's bank changes (ids and days, no branch scope), so it is checked.
     const branch = mcp(users.branchMember, await grant(users.branchMember, { kind: 'member' }), 'member');
     const limited = (await run(branch, 'kernel.mcp.signals')) as unknown as { items: unknown[]; checked: string[]; unchecked: Array<{ rule: string; reason: string }> };
     expect(limited.items).toEqual([]);
-    expect(limited.checked).toEqual([]);
+    expect(limited.checked).toEqual(['supplier_bank_changed']);
     expect(limited.unchecked).toEqual([
       { rule: 'deal_without_invoice', reason: 'partial_view' },
       { rule: 'receivable_with_open_deal', reason: 'partial_view' },
-      { rule: 'supplier_bank_changed', reason: 'not_available' },
       { rule: 'conversation_unanswered', reason: 'not_available' },
     ]);
   });
