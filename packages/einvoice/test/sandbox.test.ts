@@ -75,6 +75,20 @@ describe('the offline e-invoice provider', () => {
     expect(xml).not.toContain('A & B <x>');
   });
 
+  it('echoes a passport with the buyer\'s nationality, and the consumer label it was given (#3709)', async () => {
+    const { provider } = createSandboxEInvoiceProvider();
+    const passport = await provider.issue(secret, request('66666666-6666-4666-8666-666666666666', { buyer: { kind: 'individual', taxCode: null, name: 'John Smith', address: null, email: null, identity: { kind: 'passport', value: 'B1234567', nationality: 'US' } } }));
+    if (passport.state !== 'issued') throw new Error('not issued');
+    const xml = new TextDecoder().decode((await provider.files(secret, passport.ref)).xml);
+    expect(xml).toContain('<DDanh Loai="passport" QTich="US">B1234567</DDanh>');
+    const other = await provider.issue(secret, request('77777777-7777-4777-8777-777777777777', { buyer: { kind: 'individual', taxCode: null, name: 'A', address: null, email: null, identity: { kind: 'cccd', value: '012345678901' } } }));
+    if (other.state !== 'issued') throw new Error('not issued');
+    expect(new TextDecoder().decode((await provider.files(secret, other.ref)).xml)).toContain('<DDanh Loai="cccd">012345678901</DDanh>');
+    const consumer = await provider.issue(secret, request('88888888-8888-4888-8888-888888888888', { buyer: { kind: 'consumer', taxCode: null, name: 'Bán cho người tiêu dùng', address: null, email: null } }));
+    if (consumer.state !== 'issued') throw new Error('not issued');
+    expect(new TextDecoder().decode((await provider.files(secret, consumer.ref)).xml)).toContain('<NMua><Ten>Bán cho người tiêu dùng</Ten>');
+  });
+
   it('dedupes on Ludy\'s key: the same key is the same invoice', async () => {
     const { provider } = createSandboxEInvoiceProvider();
     const a = await provider.issue(secret, request('55555555-5555-4555-8555-555555555555'));

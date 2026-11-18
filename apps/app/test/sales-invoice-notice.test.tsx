@@ -107,6 +107,19 @@ describe('the notice panel of an issued invoice', () => {
     expect(step('invoice-notice-step-form')).not.toContain('<button');
   });
 
+  it('hints at 04/SS-HĐĐT in the words of Circular 91: promptly, before the VAT return, never with a correction, and no day count (#3709)', () => {
+    const vi = render(<NoticeAction draft={draft} openWith />, list());
+    expect(vi).toContain('trước khi nộp tờ khai GTGT của kỳ này');
+    expect(vi).toContain('không nộp kèm hóa đơn điều chỉnh hay thay thế');
+    expect(vi).toContain('không thuộc nội dung chính');
+    expect(vi).not.toContain('chưa xác nhận');
+    const en = render(<NoticeAction draft={draft} openWith />, list(), 'en');
+    expect(en).toContain('before the VAT return of this period');
+    expect(en).toContain('never together with an adjusting or replacing invoice');
+    // The hint gives no number of days.
+    for (const html of [vi, en]) expect(html.split('data-testid="invoice-notice"')[1] ?? html).not.toMatch(/\b\d+\s*(ngày|days?)\b/);
+  });
+
   it('reads in English too', () => {
     const html = render(<NoticeAction draft={draft} openWith />, list(), 'en');
     expect(html).toContain('Any other mistake needs an adjustment or a replacement');
