@@ -263,11 +263,13 @@ export const stockMoveReverse = defineCommand({
   handler: async (ctx, input): Promise<{ id: string }> => {
     const move = await ctx.trx
       .selectFrom('crove_finance.stock_move')
-      .select(['id', 'item_id', 'quantity', 'source_type'])
+      .select(['id', 'item_id', 'quantity', 'source_type', 'return_of_move_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.moveId)
       .executeTakeFirst();
     if (!move) throw new DomainError('STOCK_MOVE_NOT_FOUND', 404, 'Không tìm thấy phát sinh kho này');
+    // The undo of a return and the cascade that undoes the returns of a sale take the sale's lock first, so each sees what the other committed.
+    await lockSaleReturns(ctx, move.return_of_move_id ?? move.id);
     if (move.source_type === 'reversal') throw new DomainError('STOCK_MOVE_IS_REVERSAL', 409, 'Đây đã là một phát sinh đảo, không đảo thêm được');
     // The stock an order line moved follows the line's own stage (a return brings it back); reversing it alone would leave the line shipped with nothing to move again.
     if (move.source_type === 'count') throw new DomainError('STOCK_MOVE_COUNT', 409, 'Phát sinh này là điều chỉnh của một lần kiểm kê nên không đảo được; hãy kiểm kê lại');
@@ -331,25 +333,33 @@ export const stockItemList = defineQuery({
 });
 
 // The returns of a sale move that are still live (not undone by a reversal): their ids and quantities, oldest first.
-export async function liveReturnsOf(ctx: Ctx, moveId: string): Promise<Array<{ id: string; itemId: string; quantity: string }>> {
+export async function liveReturnsOf(ctx: Ctx, moveId: string): Promise<Array<{ id: string; itemId: string; quantity: string; date: string }>> {
   const rows = await ctx.trx
     .selectFrom('crove_finance.stock_move as q')
-    .select(['q.id', 'q.item_id', 'q.quantity'])
+    .select(['q.id', 'q.item_id', 'q.quantity', 'q.move_date'])
     .where('q.org_id', '=', ctx.orgId)
     .where('q.return_of_move_id', '=', moveId)
     .where('q.source_type', '=', 'sale_return')
     .where((eb) => eb.not(eb.exists(eb.selectFrom('crove_finance.stock_move as r').select('r.id').whereRef('r.org_id', '=', 'q.org_id').whereRef('r.reverses_move_id', '=', 'q.id'))))
     .orderBy('q.id')
     .execute();
-  return rows.map((r) => ({ id: r.id, itemId: r.item_id, quantity: plainQuantity(r.quantity) }));
+  return rows.map((r) => ({ id: r.id, itemId: r.item_id, quantity: plainQuantity(r.quantity), date: typeof r.move_date === 'string' ? r.move_date : new Date(r.move_date).toISOString().slice(0, 10) }));
+}
+
+// The one lock every writer that touches the returns of a sale takes first: a new return, the undo of one, and the cascade that undoes them all before the sale is reversed. It is the lock the
+// database guard takes (stock_move_return_guard), taken here before the returns are listed, so what is listed is what stands when the cascade writes. Transaction-level, so it ends with the command.
+export async function lockSaleReturns(ctx: Ctx, saleMoveId: string): Promise<void> {
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_finance.stock_move_return:${ctx.orgId}:${saleMoveId}`}, 0))`.execute(ctx.trx);
 }
 
 // Undoes the live returns of a sale move, each by the reversal move of its own item, on `date`. The sale move itself cannot be reversed while a return of it is live (the database holds the rule),
 // so every flow that reverses a sale move (the void of its document, the return of a delivered CRM order line) calls this first. The goods that really came back are returned again by a person
 // against whatever replaces the sale.
 export async function reverseLiveReturns(ctx: CommandContext, moveId: string, date: string): Promise<number> {
+  await lockSaleReturns(ctx, moveId);
   const live = await liveReturnsOf(ctx, moveId);
-  for (const back of live) await writeStockMove(ctx, { itemId: back.itemId, date, quantity: oppositeQuantity(back.quantity), source: { type: 'reversal', reversesMoveId: back.id } });
+  // An undo is never dated before the return it undoes (a void dated in October of a sale returned in November would leave October with a move that cancels nothing there).
+  for (const back of live) await writeStockMove(ctx, { itemId: back.itemId, date: back.date > date ? back.date : date, quantity: oppositeQuantity(back.quantity), source: { type: 'reversal', reversesMoveId: back.id } });
   return live.length;
 }
 
@@ -372,6 +382,7 @@ export const stockMoveReturn = defineCommand({
       .where('id', '=', input.moveId)
       .executeTakeFirst();
     if (!move) throw new DomainError('STOCK_MOVE_NOT_FOUND', 404, 'Không tìm thấy phát sinh kho này');
+    await lockSaleReturns(ctx, move.id);
     if (!isSaleOut({ source: move.source_type, quantity: move.quantity })) {
       throw new DomainError('STOCK_RETURN_NOT_SALE', 409, 'Chỉ ghi nhận hàng trả lại cho một lần xuất bán hàng');
     }

@@ -359,6 +359,10 @@ suite('stock from document lines (#2512)', () => {
     const list = await moves(o, item);
     expect(list.filter((m) => m.source === 'sale_return').every((m) => m.reversed)).toBe(true);
     expect(list.find((m) => m.source === 'document_line')?.reversed).toBe(true);
+    // The void is dated 20 October, before the return was written (today): the undo of the return is never dated before the return itself.
+    const back = list.find((m) => m.source === 'sale_return') as Move;
+    const undo = list.find((m) => m.source === 'reversal' && m.quantity === '-1') as Move;
+    expect(undo.date >= back.date).toBe(true);
     expect(await onHand(o, item)).toBe('0');
   });
 
