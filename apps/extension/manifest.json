@@ -10,7 +10,7 @@
   "background": { "service_worker": "background.js", "type": "module" },
   "permissions": ["storage", "identity"],
   "host_permissions": ["https://app.ludy.vn/*"],
-  "optional_permissions": ["tabCapture", "offscreen"],
+  "optional_permissions": ["tabCapture", "offscreen", "activeTab", "scripting"],
   "optional_host_permissions": ["https://*/*", "http://localhost/*"],
   "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'self'" }
 }

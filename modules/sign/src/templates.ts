@@ -22,6 +22,7 @@ import {
 import { tableWrite } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
+import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
 import { signManifest } from './manifest.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
 import {
@@ -56,6 +57,9 @@ const TEMPLATE_DIRECT_LINK_WRITE = tableWrite(signManifest.tables, 'crove_sign',
   'token_sha256',
   'enabled',
   'require_email_otp',
+  'max_uses',
+  'uses_count',
+  'expires_at',
   'revoked_at',
   'revoked_by',
   'last_rotated_at',
@@ -71,6 +75,9 @@ interface DirectLinkMutationSqlResult {
   id: string | null;
   enabled: boolean;
   requireEmailOtp: boolean;
+  maxUses: number | null;
+  usesCount: number;
+  expiresAt: string | null;
   minted: boolean;
   revokedCount: number;
   lastRotatedAt: string | null;
@@ -84,6 +91,9 @@ function parseDirectLinkJson(raw: unknown): DirectLinkDetail | null {
     id: obj.id,
     enabled: obj.enabled,
     requireEmailOtp: Boolean(obj.requireEmailOtp),
+    maxUses: typeof obj.maxUses === 'number' ? obj.maxUses : null,
+    usesCount: typeof obj.usesCount === 'number' ? obj.usesCount : 0,
+    expiresAt: typeof obj.expiresAt === 'string' ? obj.expiresAt : null,
     lastRotatedAt: typeof obj.lastRotatedAt === 'string' ? obj.lastRotatedAt : null,
     createdAt: typeof obj.createdAt === 'string' ? obj.createdAt : new Date(String(obj.createdAt)).toISOString(),
     updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : new Date(String(obj.updatedAt)).toISOString(),
@@ -95,6 +105,9 @@ function toDirectLinkSummary(detail: DirectLinkDetail | null): DirectLinkSummary
   return {
     enabled: detail.enabled,
     requireEmailOtp: detail.requireEmailOtp,
+    maxUses: detail.maxUses ?? null,
+    usesCount: detail.usesCount ?? 0,
+    expiresAt: detail.expiresAt ?? null,
     lastRotatedAt: detail.lastRotatedAt,
   };
 }
@@ -507,6 +520,8 @@ export const templateCreate = defineCommand({
         .selectFrom('crove_sign.envelope')
         .select([
           'id',
+          'source_kind',
+          'created_by',
           'routing_mode',
           'subject',
           'message',
@@ -524,6 +539,14 @@ export const templateCreate = defineCommand({
         .forShare()
         .executeTakeFirst();
       if (!env) throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Source envelope not found');
+      assertCanAccessEnvelopeRow(ctx, env, 'Source envelope not found');
+      if (env.source_kind === 'hr_contract') {
+        throw new DomainError(
+          'SIGN_FORBIDDEN',
+          403,
+          'Confidential HR contract envelopes cannot be converted into organization-wide templates',
+        );
+      }
       if (env.inspect_status === 'failed') {
         throw new DomainError('SIGN_INSPECT_FAILED', 409, 'Source envelope PDF inspection failed');
       }
@@ -556,6 +579,21 @@ export const templateCreate = defineCommand({
       };
     } else {
       const file = await requireSignSourceFile(ctx, input.sourceFileId!);
+      const existingHrEnv = await ctx.trx
+        .selectFrom('crove_sign.envelope')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('source_kind', '=', 'hr_contract')
+        .where('source_file_id', '=', file.id)
+        .limit(1)
+        .executeTakeFirst();
+      if (existingHrEnv) {
+        throw new DomainError(
+          'SIGN_FORBIDDEN',
+          403,
+          'Confidential HR contract documents cannot be converted into organization-wide templates',
+        );
+      }
       const reused = await findPassedInspectForFile(ctx, file);
       sourceMeta = {
         sourceFileId: file.id,
@@ -849,6 +887,7 @@ export const templateUpdate = defineCommand({
       'updated_at',
     ]),
     TEMPLATE_DIRECT_LINK_WRITE,
+    SIGNING_OTP_INVALIDATE_WRITE,
   ],
   handler: async (ctx, input) => {
     userIdOf(ctx);
@@ -909,6 +948,7 @@ export const templateRolesSet = defineCommand({
     tableWrite(signManifest.tables, 'crove_sign', 'template_field', ['id']),
     tableWrite(signManifest.tables, 'crove_sign', 'template', ['version', 'updated_at']),
     TEMPLATE_DIRECT_LINK_WRITE,
+    SIGNING_OTP_INVALIDATE_WRITE,
   ],
   handler: async (ctx, input) => {
     userIdOf(ctx);
@@ -1201,6 +1241,7 @@ export const templateArchive = defineCommand({
   writes: [
     tableWrite(signManifest.tables, 'crove_sign', 'template', ['status', 'archived_at', 'archived_by', 'version', 'updated_at']),
     TEMPLATE_DIRECT_LINK_WRITE,
+    SIGNING_OTP_INVALIDATE_WRITE,
   ],
   handler: async (ctx, input) => {
     const userId = userIdOf(ctx);
@@ -1242,7 +1283,7 @@ export const templateDirectLinkSet = defineCommand({
   // Returns raw direct signing link capability token once on enable; never store plaintext in idempotency replay records.
   noIdempotency: true,
   target: templateTarget,
-  writes: [TEMPLATE_DIRECT_LINK_WRITE],
+  writes: [TEMPLATE_DIRECT_LINK_WRITE, SIGNING_OTP_INVALIDATE_WRITE],
   handler: async (ctx, input) => {
     userIdOf(ctx);
     if (!input.enabled) {
@@ -1261,10 +1302,19 @@ export const templateDirectLinkSet = defineCommand({
         templateId: input.templateId,
         enabled: false,
         requireEmailOtp: false,
+        maxUses: null,
+        usesCount: 0,
+        expiresAt: null,
         url: null,
         token: null,
         lastRotatedAt: null,
       };
+    }
+
+    const parsedExpiresAt =
+      input.expiresAt !== undefined ? (input.expiresAt ? new Date(input.expiresAt) : null) : undefined;
+    if (parsedExpiresAt && parsedExpiresAt.getTime() <= ctx.now.getTime()) {
+      throw new DomainError('SIGN_INVALID_EXPIRY', 422, 'expiresAt must be in the future');
     }
 
     await assertDirectLinkEligible(ctx, input.templateId);
@@ -1276,12 +1326,30 @@ export const templateDirectLinkSet = defineCommand({
 
     if (existingState?.enabled) {
       const nextOtp = input.requireEmailOtp ?? existingState.requireEmailOtp;
+      const updateLimits = input.maxUses !== undefined || input.expiresAt !== undefined;
+      const nextMaxUses = input.maxUses !== undefined ? input.maxUses : (existingState.maxUses ?? null);
+      const nextExpiresAt =
+        parsedExpiresAt !== undefined
+          ? parsedExpiresAt
+          : existingState.expiresAt
+            ? new Date(existingState.expiresAt)
+            : null;
+      if (nextMaxUses !== null && nextMaxUses < (existingState.usesCount ?? 0)) {
+        throw new DomainError(
+          'SIGN_DIRECT_LINK_MAX_USES_EXCEEDED',
+          422,
+          'maxUses cannot be lower than current usesCount',
+        );
+      }
       const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-        SELECT crove_sign.template_direct_link_set(
+        SELECT crove_sign.template_direct_link_set_v2(
           ${input.templateId}::uuid,
           true,
           ${nextOtp},
-          NULL::text
+          NULL::text,
+          ${nextMaxUses}::integer,
+          ${nextExpiresAt}::timestamptz,
+          ${updateLimits}::boolean
         ) AS res
       `.execute(ctx.trx);
       const res = rows[0]?.res;
@@ -1290,6 +1358,9 @@ export const templateDirectLinkSet = defineCommand({
         templateId: input.templateId,
         enabled: true,
         requireEmailOtp: nextOtp,
+        maxUses: res?.maxUses ?? nextMaxUses,
+        usesCount: res?.usesCount ?? existingState.usesCount ?? 0,
+        expiresAt: res?.expiresAt ?? (nextExpiresAt ? nextExpiresAt.toISOString() : null),
         url: null,
         token: null,
         lastRotatedAt: res?.lastRotatedAt ?? existingState.lastRotatedAt,
@@ -1299,12 +1370,17 @@ export const templateDirectLinkSet = defineCommand({
     const rawToken = generateRawSigningToken();
     const tokenHash = hashSigningToken(rawToken);
     const nextOtp = input.requireEmailOtp ?? false;
+    const nextMaxUses = input.maxUses ?? null;
+    const nextExpiresAt = parsedExpiresAt ?? null;
     const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-      SELECT crove_sign.template_direct_link_set(
+      SELECT crove_sign.template_direct_link_set_v2(
         ${input.templateId}::uuid,
         true,
         ${nextOtp},
-        ${tokenHash}
+        ${tokenHash},
+        ${nextMaxUses}::integer,
+        ${nextExpiresAt}::timestamptz,
+        true
       ) AS res
     `.execute(ctx.trx);
     const res = rows[0]?.res;
@@ -1313,6 +1389,9 @@ export const templateDirectLinkSet = defineCommand({
       templateId: input.templateId,
       enabled: true,
       requireEmailOtp: nextOtp,
+      maxUses: res?.maxUses ?? nextMaxUses,
+      usesCount: res?.usesCount ?? 0,
+      expiresAt: res?.expiresAt ?? (nextExpiresAt ? nextExpiresAt.toISOString() : null),
       url: `${SIGN_DIRECT_PAGE_PATH}#${rawToken}`,
       token: rawToken,
       lastRotatedAt: res?.lastRotatedAt ?? null,
@@ -1329,18 +1408,39 @@ export const templateDirectLinkRotate = defineCommand({
   // Returns rotated raw direct signing link capability token once; never persist plaintext tokens.
   noIdempotency: true,
   target: templateTarget,
-  writes: [TEMPLATE_DIRECT_LINK_WRITE],
+  writes: [TEMPLATE_DIRECT_LINK_WRITE, SIGNING_OTP_INVALIDATE_WRITE],
   handler: async (ctx, input) => {
     userIdOf(ctx);
+    const parsedExpiresAt =
+      input.expiresAt !== undefined ? (input.expiresAt ? new Date(input.expiresAt) : null) : undefined;
+    if (parsedExpiresAt && parsedExpiresAt.getTime() <= ctx.now.getTime()) {
+      throw new DomainError('SIGN_INVALID_EXPIRY', 422, 'expiresAt must be in the future');
+    }
     await assertDirectLinkEligible(ctx, input.templateId);
+
+    const { rows: existingRows } = await sql<{ state: unknown }>`
+      SELECT crove_sign.template_direct_link_state(${input.templateId}::uuid) AS state
+    `.execute(ctx.trx);
+    const existingState = parseDirectLinkJson(existingRows[0]?.state ?? null);
+    const updateLimits = input.maxUses !== undefined || input.expiresAt !== undefined;
+    const nextMaxUses = input.maxUses !== undefined ? input.maxUses : (existingState?.maxUses ?? null);
+    const nextExpiresAt =
+      parsedExpiresAt !== undefined
+        ? parsedExpiresAt
+        : existingState?.expiresAt
+          ? new Date(existingState.expiresAt)
+          : null;
 
     const rawToken = generateRawSigningToken();
     const tokenHash = hashSigningToken(rawToken);
     const { rows } = await sql<{ res: DirectLinkMutationSqlResult }>`
-      SELECT crove_sign.template_direct_link_rotate(
+      SELECT crove_sign.template_direct_link_rotate_v2(
         ${input.templateId}::uuid,
         ${tokenHash},
-        ${input.requireEmailOtp ?? null}::boolean
+        ${input.requireEmailOtp ?? null}::boolean,
+        ${nextMaxUses}::integer,
+        ${nextExpiresAt}::timestamptz,
+        ${updateLimits}::boolean
       ) AS res
     `.execute(ctx.trx);
     const res = rows[0]?.res;
@@ -1349,6 +1449,9 @@ export const templateDirectLinkRotate = defineCommand({
       templateId: input.templateId,
       enabled: true,
       requireEmailOtp: Boolean(res?.requireEmailOtp),
+      maxUses: res?.maxUses ?? nextMaxUses,
+      usesCount: res?.usesCount ?? 0,
+      expiresAt: res?.expiresAt ?? (nextExpiresAt ? nextExpiresAt.toISOString() : null),
       url: `${SIGN_DIRECT_PAGE_PATH}#${rawToken}`,
       token: rawToken,
       lastRotatedAt: res?.lastRotatedAt ?? ctx.now.toISOString(),
@@ -1430,6 +1533,16 @@ export const templateInstantiate = defineCommand({
   ],
   handler: async (ctx, input) => {
     const userId = userIdOf(ctx);
+    const sourceKind = input.sourceKind ?? 'standalone';
+    const sourceId = input.sourceId ?? null;
+    if (sourceKind === 'standalone' && sourceId !== null) {
+      throw new DomainError('SIGN_INVALID_SOURCE', 422, 'Standalone envelopes cannot specify sourceId');
+    }
+    if (sourceKind !== 'standalone' && sourceId === null) {
+      throw new DomainError('SIGN_INVALID_SOURCE', 422, 'Linked envelopes require sourceId');
+    }
+    assertCanCreateEnvelopeForSource(ctx, sourceKind);
+
     const tpl = await ctx.trx
       .selectFrom('crove_sign.template')
       .selectAll()
@@ -1542,8 +1655,8 @@ export const templateInstantiate = defineCommand({
         message: input.message === undefined ? tpl.message : input.message,
         status: 'draft',
         routing_mode: tpl.routing_mode,
-        source_kind: 'standalone',
-        source_id: null,
+        source_kind: sourceKind,
+        source_id: sourceId,
         source_file_id: tpl.source_file_id,
         source_storage_key: tpl.source_storage_key,
         source_generation: tpl.source_generation,
@@ -1565,7 +1678,12 @@ export const templateInstantiate = defineCommand({
       actorId: userId,
       actorLabel: actorLabelOfCtx(ctx),
       documentSha256: env.source_sha256,
-      payloadJson: { routingMode: env.routing_mode, sourceKind: 'standalone', templateId: tpl.id },
+      payloadJson: {
+        routingMode: env.routing_mode,
+        sourceKind,
+        ...(sourceId ? { sourceId } : {}),
+        templateId: tpl.id,
+      },
       occurredAt: ctx.now,
     });
 

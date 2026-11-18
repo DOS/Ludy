@@ -58,6 +58,7 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
       'crm.quote.revoke_link',
       'finance.marketplace_retention.apply',
       'hr.payroll.employee.erase',
+      'hr.recruiting.candidate.erase',
       'meetings.chat.reseal',
       'meetings.media.discard',
       'meetings.media_key.reseal',

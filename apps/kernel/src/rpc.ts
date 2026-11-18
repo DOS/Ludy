@@ -614,8 +614,10 @@ export function createRpcHandler(
     record: (kind, checked) => runtime.execute('hr.payroll.labor_check.audit', { kind, checked }, { actor, orgId }),
   });
   const recruitingBriefPorts = (orgId: string, actor: UserActor): RecruitingBriefPorts => ({
-    read: (candidateId, lang) => runtime.query<HrRecruitingBriefSnapshot>('hr.recruiting.brief.read', { candidateId, lang }, { actor, orgId }),
-    record: (candidateId, aiReason) => runtime.execute('hr.recruiting.brief.audit', { candidateId, aiReason }, { actor, orgId }),
+    read: (candidateId, lang, includeNotes) =>
+      runtime.query<HrRecruitingBriefSnapshot>('hr.recruiting.brief.read', { candidateId, lang, includeNotes }, { actor, orgId }),
+    record: (candidateId, aiReason, includeNotes) =>
+      runtime.execute('hr.recruiting.brief.audit', { candidateId, aiReason, includeNotes }, { actor, orgId }),
   });
   const hrQuery =
     (name: string) =>
@@ -1071,6 +1073,7 @@ export function createRpcHandler(
       search: os.notes.search.handler(notesQuery('notes.note.search')),
       panel: os.notes.panel.handler(notesQuery('notes.record.panel')),
       create: os.notes.create.handler(notesCommand('notes.note.create')),
+      clip: os.notes.clip.handler(notesCommand('notes.note.clip')),
       fromMeetingSummary: os.notes.fromMeetingSummary.handler(({ context, input }) =>
         inNotes(context, (orgId, actor) => saveMeetingSummaryAsNote(runtime, orgId, actor, input)),
       ),
@@ -1107,6 +1110,7 @@ export function createRpcHandler(
         list: os.notes.todos.list.handler(notesQuery('notes.todo.list')),
         get: os.notes.todos.get.handler(notesQuery('notes.todo.get')),
         create: os.notes.todos.create.handler(notesCommand('notes.todo.create')),
+        quickCapture: os.notes.todos.quickCapture.handler(notesCommand('notes.todo.quick_capture')),
         acceptSuggestions: os.notes.todos.acceptSuggestions.handler(notesCommand('notes.todo.accept_suggestions')),
         update: os.notes.todos.update.handler(notesCommand('notes.todo.update')),
         complete: os.notes.todos.complete.handler(notesCommand('notes.todo.complete')),
@@ -2945,6 +2949,18 @@ export function createRpcHandler(
           return explainOverview(financeOverviewAi, orgId, actor.userId, overview, lang ?? 'vi');
         }),
       ),
+    },
+    supplierBank: {
+      list: os.supplierBank.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_bank_account.list', input, { actor, orgId }))),
+      add: os.supplierBank.add.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.add', input, { actor, orgId }))),
+      replace: os.supplierBank.replace.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.replace', input, { actor, orgId }))),
+      retire: os.supplierBank.retire.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.retire', input, { actor, orgId }))),
+      erase: os.supplierBank.erase.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.erase', input, { actor, orgId }))),
+    },
+    supplierPayment: {
+      list: os.supplierPayment.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_payment.list', input, { actor, orgId }))),
+      confirmAccount: os.supplierPayment.confirmAccount.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.confirm_account', input, { actor, orgId }))),
+      cancel: os.supplierPayment.cancel.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.cancel', input, { actor, orgId }))),
     },
     paymentReminders: {
       list: os.paymentReminders.list.handler(({ context, input }) =>

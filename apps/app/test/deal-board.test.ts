@@ -3,7 +3,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Board, Deal, PipelineStage } from '@crove/kernel-contract';
 import { dealFilterToAst } from '../src/lib/deal-filter.ts';
-import { isEmptyBoard, moveCard, readDealView, showAllClosed, withDealView } from '../src/lib/deal-board.ts';
+import { vietnamToday } from '@crove/kernel-contract';
+import { isDealOverdue, isEmptyBoard, moveCard, readDealView, showAllClosed, withDealView } from '../src/lib/deal-board.ts';
 
 const stage = (id: string, kind: PipelineStage['kind'], position: number): PipelineStage => ({ id, name: id, kind, position });
 const deal = (id: string, stageId: string, stageKind: Deal['stageKind'] = 'open'): Deal => ({
@@ -106,5 +107,21 @@ describe('isEmptyBoard', () => {
     expect(isEmptyBoard({ columns: [] })).toBe(false);
     expect(isEmptyBoard({ columns: board().columns.map((c) => ({ ...c, count: 0, total: '0', cards: [] })) })).toBe(true);
     expect(isEmptyBoard(board())).toBe(false);
+  });
+});
+
+describe('isDealOverdue (#3649)', () => {
+  it('is by the calendar day in Vietnam: at 03:00 on 18 November there, a deal due on the 17th is overdue, though the UTC date is still the 17th', () => {
+    const night = new Date('2026-11-17T20:00:00.000Z');
+    expect(vietnamToday(night)).toBe('2026-11-18');
+    expect(isDealOverdue({ stageKind: 'open', expectedClose: '2026-11-17' }, vietnamToday(night))).toBe(true);
+    // Due today is not overdue yet.
+    expect(isDealOverdue({ stageKind: 'open', expectedClose: '2026-11-18' }, vietnamToday(night))).toBe(false);
+  });
+
+  it('is never for a closed deal or one with no date', () => {
+    expect(isDealOverdue({ stageKind: 'won', expectedClose: '2020-01-01' }, '2026-11-18')).toBe(false);
+    expect(isDealOverdue({ stageKind: 'lost', expectedClose: '2020-01-01' }, '2026-11-18')).toBe(false);
+    expect(isDealOverdue({ stageKind: 'open', expectedClose: null }, '2026-11-18')).toBe(false);
   });
 });

@@ -641,7 +641,7 @@ The home page is `/`, in either language (6.5). The picks of 2026-10-19 (see the
 3. Product tour: an example Ludy screen (Documents pending approval in Ludy Tài chính, invoice detail, command palette) with example data.
 4. How it works: the real sequence (receive, check, propose, approve), each step with a fragment of real UI.
 5. Agents (the org chart and the R0 to R3 approval matrix) and the owner's phone.
-6. Apps: one card for each of the five apps of the regrouped shell in switcher order (Ludy Cộng tác, Ludy Tài chính, Ludy Engage, Ludy Nhân sự, Ludy AI; Ludy AI is the team's settings, not a coworker). The Ludy Cộng tác, Ludy Tài chính and Ludy Engage cards link to their app pages (6.4).
+6. Apps: one card for each of the six apps of the regrouped shell in switcher order (Ludy Cộng tác, Ludy Tài chính, Ludy Engage, Ludy Nhân sự, Ludy eSign, Ludy AI; Ludy AI is the team's settings, not a coworker). Every app except Ludy AI links to its app page (6.4).
 7. Trust: AI proposes and people approve, the audit log, tenant isolation, open source with the `docker compose up` command (the `#tu-host` anchor).
 8. Pricing: only what is decided. No invented prices or discounts.
 9. FAQ (three to six questions), footer with the app pages, the license and the repository link.
@@ -665,7 +665,7 @@ The home page is `/`, in either language (6.5). The picks of 2026-10-19 (see the
 
 ### 6.4 App pages
 
-Each app that has its own public page on ludy.vn (the page of one product, the way 6.1 is the page of the suite), in the switcher's order: Ludy Cộng tác, Ludy Tài chính and Ludy Engage ([#2280](https://github.com/DOS/Ludy/issues/2280), [#2281](https://github.com/DOS/Ludy/issues/2281), [#2282](https://github.com/DOS/Ludy/issues/2282), [#2440](https://github.com/DOS/Ludy/issues/2440), [#3235](https://github.com/DOS/Ludy/issues/3235)). Ludy Cộng tác brings together My work, Team tasks, Notes (the former Ludy Notes) and Meetings; Ludy Tài chính keeps its `/ke-toan` address; Ludy Engage presents the Inbox, CRM (the former Ludy CRM), Marketing and Reports; Ludy Nhân sự and Ludy AI have cards on the home page and no separate page yet.
+Each app that has its own public page on ludy.vn (the page of one product, the way 6.1 is the page of the suite), in the switcher's order: Ludy Cộng tác, Ludy Tài chính, Ludy Engage, Ludy Nhân sự and Ludy eSign ([#2280](https://github.com/DOS/Ludy/issues/2280), [#2281](https://github.com/DOS/Ludy/issues/2281), [#2282](https://github.com/DOS/Ludy/issues/2282), [#2440](https://github.com/DOS/Ludy/issues/2440), [#3235](https://github.com/DOS/Ludy/issues/3235), [#3536](https://github.com/DOS/Ludy/issues/3536), [#3550](https://github.com/DOS/Ludy/issues/3550)). Ludy Cộng tác brings together My work, Team tasks, Projects, Notes (the former Ludy Notes) and Meetings; Ludy Tài chính keeps its `/ke-toan` address; Ludy Engage presents the Inbox, CRM (the former Ludy CRM), Marketing and Reports; Ludy Nhân sự presents Employees & Departments, Recruiting, Monthly Payroll (with the Bank salary templates tab) and Declarations; Ludy eSign presents Envelopes, Templates and Verify PDF; Ludy AI has a card on the home page and no separate page.
 
 **Routes and the registry.** One public address per page, the same in both languages (6.5), with its own title, description, canonical and social preview image named with the app. The English copy is served at the same address; inside the app it is a route under `/en` that the proxy rewrites to and nobody links to:
 
@@ -674,6 +674,8 @@ Each app that has its own public page on ludy.vn (the page of one product, the w
 | Ludy Cộng tác | `/cong-tac` | `/en/teamwork` |
 | Ludy Tài chính | `/ke-toan` | `/en/accounting` |
 | Ludy Engage | `/engage` | `/en/engage` |
+| Ludy Nhân sự | `/nhan-su` | `/en/hrm` |
+| Ludy eSign | `/esign` | `/en/esign` |
 
 **Retired pages.** Ludy CRM had a page at `/crm` until it folded into Ludy Engage (2026-11-03), and Ludy Notes had a page at `/notes` until it became part of Ludy Cộng tác (2026-11-14). `RETIRED_PAGES` in `site.ts` maps each old address to the page that replaced it (`/crm` to `/engage`, `/notes` to `/cong-tac`); the proxy answers it, and the old `/en` twin, with a permanent redirect (301) that keeps the query, so links and search results keep working. The sitemap lists only live pages.
 
@@ -681,7 +683,7 @@ Each app that has its own public page on ludy.vn (the page of one product, the w
 
 **The template.** `AppPage` (`apps/web/src/components/apps/app-page.tsx`) renders, in order: a breadcrumb; the hero (the promise in one sentence, a lead, two actions, the note line and the app's product visual); the numbered steps of the job, each with the outcome it leaves behind as a chip; the feature groups (text and bullets on one side, a fragment of the real product on the other, alternating); "coming soon" when there is something to say; what Vy does here and does not do; who it is for; the FAQ; the call to action. It is server-rendered with no client JavaScript of its own. An app supplies its copy as `AppPageCopy` (`apps/web/src/content/app-page.ts`: `<app>-vi.ts`, with `<app>-en.ts` typed from it so a missing English string fails typecheck), its hero and one visual per feature group (`components/apps/<app>-visuals.tsx`) and `<app>-page.tsx`.
 
-**The call to action.** The two actions are "self-host" (the `#tu-host` anchor of the home page) and "sign in". The line under the hero names what is true about where the app runs: an app that is not on Ludy Cloud yet says "Ludy Engage is in the self-hosted edition. On Ludy Cloud: coming soon." ("Ludy Engage có trong bản tự cài đặt. Trên Ludy Cloud: sắp ra mắt."). All three app pages use this line, with the app's own name. It names no plan, tier or price (Frontend PO ruling, 2026-11-01), and the page names no feature that is not built: the FAQ does not answer for work that does not exist.
+**The call to action.** The two actions are "self-host" (the `#tu-host` anchor of the home page) and "sign in". The line under the hero names what is true about where the app runs: an app that is not on Ludy Cloud yet says "Ludy Engage is in the self-hosted edition. On Ludy Cloud: coming soon." ("Ludy Engage có trong bản tự cài đặt. Trên Ludy Cloud: sắp ra mắt."). Every app page uses this line, with the app's own name. It names no plan, tier or price (Frontend PO ruling, 2026-11-01), and the page names no feature that is not built: the FAQ does not answer for work that does not exist.
 
 **The claim table.** Every claim on an app page is backed by a merged PR and a code path on `main`, and the PR that adds or changes the page carries a table of them (claim, PR numbers, code path), checked by a reviewer with fresh context against the code. What is not yet accepted is stated plainly on the page, not implied: an export the tax authority's or an accounting package's own software has not yet been seen to take, a table of due dates no accountant has confirmed, statements that are drafts. Planned work appears only under the "coming soon" strip, labelled as such. As everywhere (6.2): no price, customer, logo, statistic or testimonial, and example data is fictional and marked "Dữ liệu mẫu" once per fragment.
 
@@ -689,7 +691,7 @@ Each app that has its own public page on ludy.vn (the page of one product, the w
 
 ### 6.5 Language and addresses
 
-Both languages share one URL per page (`/`, `/cong-tac`, `/ke-toan`, `/engage`, `/privacy`); the address never carries a language ([#2360](https://github.com/DOS/Ludy/issues/2360), owner request 2026-11-02). The pages stay static, one tree per language, and `apps/web/src/proxy.ts` (the file Next.js 16 calls `proxy`, the former middleware) picks the tree for each request with the rules in `apps/web/src/lib/language.ts`:
+Both languages share one URL per page (`/`, `/cong-tac`, `/ke-toan`, `/engage`, `/nhan-su`, `/esign`, `/privacy`); the address never carries a language ([#2360](https://github.com/DOS/Ludy/issues/2360), owner request 2026-11-02). The pages stay static, one tree per language, and `apps/web/src/proxy.ts` (the file Next.js 16 calls `proxy`, the former middleware) picks the tree for each request with the rules in `apps/web/src/lib/language.ts`:
 
 1. The cookie `ludy-lang` (`vi` or `en`, one year, `SameSite=Lax`, `Secure` on https, set only by the toggle and the old-link redirect) decides.
 2. Without it, the browser's `Accept-Language` decides: the first of `vi` or `en` in its order of preference, English when it names neither, and Vietnamese when there is no header at all, an empty one or `*` (crawlers are served Vietnamese).

@@ -31,6 +31,24 @@ export const HR_RELATIONS = ['child', 'spouse', 'parent', 'other'] as const;
 export type HrRelation = (typeof HR_RELATIONS)[number];
 export const HR_STATUSES = ['active', 'ended'] as const;
 export type HrStatus = (typeof HR_STATUSES)[number];
+export const HR_LEAVE_CATEGORIES = ['standard', 'heavy', 'special_heavy'] as const;
+export type HrLeaveCategory = (typeof HR_LEAVE_CATEGORIES)[number];
+
+// Contractual or policy annual leave baseline days/year (>= 12 statutory floor, <= 366, at most 2 decimals).
+export const zHrAnnualLeaveBaseline = z
+  .string()
+  .trim()
+  .regex(
+    /^(?:366(?:\.0{1,2})?|36[0-5](?:\.\d{1,2})?|3[0-5]\d(?:\.\d{1,2})?|[12]\d{2}(?:\.\d{1,2})?|[2-9]\d(?:\.\d{1,2})?|1[2-9](?:\.\d{1,2})?)$/,
+    'annual leave baseline 12..366',
+  );
+
+export function leaveBaselineMeetsCategoryFloor(category: HrLeaveCategory, baselineDays: string): boolean {
+  const floor = category === 'standard' ? 12 : category === 'heavy' ? 14 : 16;
+  const [wholeRaw = '0', fracRaw = ''] = baselineDays.trim().split('.');
+  const hundredths = Number(wholeRaw) * 100 + Number(fracRaw.padEnd(2, '0').slice(0, 2));
+  return Number.isSafeInteger(hundredths) && hundredths >= floor * 100;
+}
 
 // Years an ended employee's payroll records stay before an erasure may delete the person's key: the ten years the Accounting Law (88/2015, Art. 41) keeps accounting
 // records, payroll being accounting evidence. An erasure cannot run earlier. A lawyer's later answer (payroll plan, row 22) may lengthen it, never shorten it.

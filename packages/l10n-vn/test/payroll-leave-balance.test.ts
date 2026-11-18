@@ -622,4 +622,57 @@ describe('calculateLeaveBalance (#3348)', () => {
     expect(viaSchedule).toMatchObject({ eligibleMonths: 6, entitlementDays: '6' });
     expect(viaWorked).toMatchObject({ eligibleMonths: 6, entitlementDays: '6' });
   });
+
+  it('supports default standard category, higher standardAnnualDays baselines, and statutory floor validation (#3411)', () => {
+    const defaulted = calculateLeaveBalance({ year: '2026', hireDate: '2025-01-01' });
+    expect(defaulted.entitlementDays).toBe('12');
+
+    const policyBaseline = calculateLeaveBalance({
+      year: '2026',
+      hireDate: '2025-01-01',
+      standardAnnualDays: '15',
+      entries: [{ kind: 'annual_leave', month: '2026-06', days: '13.5' }],
+    });
+    expect(policyBaseline).toMatchObject({
+      eligibleMonths: 12,
+      entitlementDays: '15',
+      totalEntitlementDays: '15',
+      takenAnnualDays: '13.5',
+      remainingAnnualDays: '1.5',
+      exceededAnnualDays: '0',
+    });
+
+    const proratedHeavyOverride = calculateLeaveBalance({
+      year: '2026',
+      category: 'heavy',
+      standardAnnualDays: '18',
+      hireDate: '2026-07-01',
+      entries: [{ kind: 'annual_leave', month: '2026-10', days: '8.5' }],
+    });
+    expect(proratedHeavyOverride).toMatchObject({
+      eligibleMonths: 6,
+      entitlementDays: '9',
+      remainingAnnualDays: '0.5',
+      exceededAnnualDays: '0',
+    });
+
+    const refusal = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch (e) {
+        if (e instanceof PayrollRefusedError) return e;
+        throw e;
+      }
+      throw new Error('expected PayrollRefusedError');
+    };
+
+    expect(refusal(() => calculateLeaveBalance({ year: '2026', hireDate: '2025-01-01', standardAnnualDays: '11.5' })).code).toBe('invalid_input');
+    expect(refusal(() => calculateLeaveBalance({ year: '2026', category: 'heavy', hireDate: '2025-01-01', standardAnnualDays: '13' })).code).toBe(
+      'invalid_input',
+    );
+    expect(
+      refusal(() => calculateLeaveBalance({ year: '2026', category: 'special_heavy', hireDate: '2025-01-01', standardAnnualDays: '15' })).code,
+    ).toBe('invalid_input');
+    expect(refusal(() => calculateLeaveBalance({ year: '2026', hireDate: '2025-01-01', standardAnnualDays: '367' })).code).toBe('invalid_input');
+  });
 });

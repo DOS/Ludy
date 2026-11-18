@@ -14,7 +14,7 @@ import { NativeSelect } from '@crove/ui/components/native-select';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
-import { formatMoney } from '../lib/format.ts';
+import { formatDate, formatMoney } from '../lib/format.ts';
 import { refreshDeals } from './deal-form.tsx';
 import { FollowupDraftAction } from './followup-draft.tsx';
 import { Empty, ErrorText } from './ui.tsx';
@@ -46,7 +46,7 @@ function Row({ step, canEdit, picked, busy, onPick, onDone, onSnooze }: { step: 
           {step.partyName} · {step.stageName} · <span className="tabular-nums">{formatMoney(step.amount, locale, step.currency)}</span>
           {step.assigneeUserId === null && <> · {t('unowned')}</>}
         </p>
-        <p className="text-xs text-foreground">{t(REASON[step.reason], { date: step.sinceOn })}</p>
+        <p className="text-xs text-foreground">{t(REASON[step.reason], { date: formatDate(step.sinceOn, locale) })}</p>
       </div>
       {canEdit && (
         <div className="flex flex-wrap items-center gap-1">

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   HR_CANDIDATE_STAGES,
   HR_JOB_OPENING_STATUSES,
+  HR_RECRUITING_BRIEF_REASONS,
   type HrCandidateView,
   type HrDepartmentView,
   type HrOpeningView,
@@ -24,6 +25,18 @@ vi.mock('../src/lib/api.ts', async () => {
     new Proxy(() => undefined, {
       get: (_t, prop: string) => {
         if (prop === 'queryOptions') return (opts?: { input?: unknown }) => ({ queryKey: [...path, opts?.input ?? {}], queryFn: () => Promise.reject(new Error('not fetched')) });
+        if (prop === 'infiniteOptions') {
+          return (opts: {
+            input: (pageParam: unknown) => unknown;
+            initialPageParam: unknown;
+            getNextPageParam: (lastPage: unknown, allPages: unknown[]) => unknown;
+          }) => ({
+            queryKey: [...path, 'infinite', opts.input(opts.initialPageParam)],
+            initialPageParam: opts.initialPageParam,
+            queryFn: () => Promise.reject(new Error('not fetched')),
+            getNextPageParam: opts.getNextPageParam,
+          });
+        }
         if (prop === 'key') return () => path;
         return node([...path, prop]);
       },
@@ -46,6 +59,7 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 const {
+  CANDIDATE_PAGE_SIZE,
   CandidateDetailPanel,
   CandidateForm,
   HireCandidatePanel,
@@ -53,8 +67,10 @@ const {
   OpeningForm,
   RecruitingBriefPanel,
   buildHireDefaults,
+  flattenCandidatePages,
   formatLocalDateTimeInput,
   mergeHireDraft,
+  nextCandidateCursor,
   parseSkillsInput,
 } = await import('../src/routes/hr-recruiting.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
@@ -180,6 +196,11 @@ describe('HR recruiting UI (#3425)', () => {
       expect(describeError(err, translatorFor('vi'), 'vi')).toBe(viMessages.kernelErrors.codes[code]);
       expect(describeError(err, translatorFor('en'), 'en')).toBe(en.kernelErrors.codes[code]);
     }
+
+    for (const reason of HR_RECRUITING_BRIEF_REASONS) {
+      expect(viMessages.hrRecruiting.ly.aiStatus[reason]).toBeTruthy();
+      expect(en.hrRecruiting.ly.aiStatus[reason]).toBeTruthy();
+    }
   });
 
   it('renders page, forms, candidate detail, 1-click hire, and Ly screening panels cleanly in VI and EN', () => {
@@ -230,6 +251,54 @@ describe('HR recruiting UI (#3425)', () => {
 
     const lyHtml = wrap(<RecruitingBriefPanel candidateId={CANDIDATE_ID} candidateVersion={NOW_ISO} />, 'vi');
     expect(lyHtml).toContain(viMessages.hrRecruiting.ly.run);
+    expect(lyHtml).toContain('hr-recruiting-ly-include-notes');
+    expect(lyHtml).toContain(viMessages.hrRecruiting.ly.includeNotes);
+    expect(lyHtml).not.toMatch(/checked=""[^>]*data-testid="hr-recruiting-ly-include-notes"|data-testid="hr-recruiting-ly-include-notes"[^>]*checked/);
+
+    const lyHtmlEn = wrap(<RecruitingBriefPanel candidateId={CANDIDATE_ID} candidateVersion={NOW_ISO} />, 'en');
+    expect(lyHtmlEn).toContain(en.hrRecruiting.ly.includeNotes);
+    expect(lyHtmlEn).not.toMatch(/checked=""[^>]*data-testid="hr-recruiting-ly-include-notes"|data-testid="hr-recruiting-ly-include-notes"[^>]*checked/);
+  });
+
+  it('paginates >200 candidates deterministically and renders Load more + overflow indicator in VI and EN (#3447)', () => {
+    expect(CANDIDATE_PAGE_SIZE).toBe(200);
+    const makeRow = (n: number): HrCandidateView => ({
+      ...sampleCandidate,
+      id: `00000000-0000-7000-8000-${String(n).padStart(12, '0')}`,
+      displayName: `Ứng viên ${n}`,
+    });
+    const page1 = Array.from({ length: 200 }, (_, i) => makeRow(i + 1));
+    const page2 = Array.from({ length: 5 }, (_, i) => makeRow(201 + i));
+
+    // Full 200-row page always yields the 200th candidate's ID as cursor (even if a separate cached opening count is stale at 200).
+    expect(nextCandidateCursor(page1, 200)).toBe(page1[199]?.id);
+    // Partial page (< pageSize) stops pagination cleanly.
+    expect(nextCandidateCursor(page2, 200)).toBeUndefined();
+    expect(nextCandidateCursor([], 200)).toBeUndefined();
+
+    // flattenCandidatePages preserves order and deduplicates overlapping rows across pages.
+    const flattened = flattenCandidatePages([page1, [page1[199]!, ...page2]]);
+    expect(flattened).toHaveLength(205);
+    expect(flattened.map((r) => r.id)).toEqual([...page1, ...page2].map((r) => r.id));
+
+    // Seed TanStack Query cache with 200 loaded candidates (full first page, more available) and verify VI + EN controls.
+    cache.current.setQueryData(['hr', 'recruiting', 'openings', 'list', { status: 'all', limit: 200 }], [
+      { ...sampleOpening, candidateCount: 205 },
+    ]);
+    cache.current.setQueryData(['hr', 'recruiting', 'candidates', 'list', 'infinite', { limit: 200 }], {
+      pages: [page1],
+      pageParams: [undefined],
+    });
+
+    const htmlVi = wrap(<HrRecruitingPage />, 'vi');
+    expect(htmlVi).toContain('hr-candidate-pagination');
+    expect(htmlVi).toContain('hr-candidate-load-more');
+    expect(htmlVi).toContain('Tải thêm ứng viên');
+    expect(htmlVi).toContain('200');
+
+    const htmlEn = wrap(<HrRecruitingPage />, 'en');
+    expect(htmlEn).toContain('hr-candidate-load-more');
+    expect(htmlEn).toContain('Load more candidates');
   });
 
   it('syncs late-arriving opening/department defaults while preserving dirty user edits in HireCandidatePanel', () => {

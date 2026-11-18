@@ -102,7 +102,7 @@ export const accountingVi = {
   },
   coworker: {
     title: `${N.finance} làm gì trong Ludy Tài chính`,
-    lead: `${N.finance} là giám đốc tài chính AI, đồng nghiệp của bạn trong Ludy Tài chính (và rà biến động lương trong Ludy Nhân sự), làm việc dưới sự điều phối của ${N.gm}. ${N.finance} làm phần đọc; quyết định đúng sai là của quy tắc cố định và của người.`,
+    lead: `${N.finance} là giám đốc tài chính AI, đồng nghiệp của bạn trong Ludy Tài chính (và rà biến động lương, hạn hợp đồng, hồ sơ ứng viên trong Ludy Nhân sự), làm việc dưới sự điều phối của ${N.gm}. ${N.finance} làm phần đọc; quyết định đúng sai là của quy tắc cố định và của người.`,
     doesTitle: `${N.finance} làm`,
     does: [
       'Đọc PDF và ảnh chụp hoá đơn thành số liệu có cấu trúc',
@@ -147,7 +147,7 @@ export const accountingVi = {
       },
       {
         q: 'Hóa đơn bán ra, Hàng hóa và tính lương hôm nay tới đâu?',
-        a: 'Màn Hóa đơn bán ra tạo bản nháp và chạy thử trong sandbox tích hợp sẵn, chưa nối nhà cung cấp hoá đơn điện tử thật để phát hành mã cơ quan thuế. Màn Hàng hóa tính tồn kho bình quân gia quyền tạm tính đến khi khoá tháng và nhập bảng đối soát sàn. Lương và nhân sự nằm ở ứng dụng Ludy Nhân sự riêng trong thanh chuyển ứng dụng, hiện tạo kỳ lương nháp trong khi chờ kế toán xác nhận quy tắc tính lương theo luật. Chưa có báo cáo lưu chuyển tiền tệ.',
+        a: 'Màn Hóa đơn bán ra tạo bản nháp và chạy thử trong sandbox tích hợp sẵn, chưa nối nhà cung cấp hoá đơn điện tử thật để phát hành mã cơ quan thuế. Màn Hàng hóa tính tồn kho bình quân gia quyền tạm tính đến khi khoá tháng và nhập bảng đối soát sàn. Lương và nhân sự nằm ở ứng dụng Ludy Nhân sự riêng (/nhan-su) với hồ sơ nhân viên, phòng ban, hợp đồng lao động, chấm công và phép năm, tuyển dụng gọn và kỳ lương nháp; việc duyệt kỳ lương chính thức để chuyển bút toán tổng hợp sang Ludy Tài chính đang chờ kế toán đối tác xác nhận bộ quy tắc tính theo luật. Chưa có báo cáo lưu chuyển tiền tệ.',
       },
       {
         q: 'Dữ liệu sang MISA như thế nào?',

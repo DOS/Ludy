@@ -13,6 +13,7 @@ import { NativeSelect } from '@crove/ui/components/native-select';
 import { ErrorText } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { shownIntent } from '../lib/conversation-intent.ts';
+import { TOUCH_BUTTON, TOUCH_SELECT } from '../lib/conversation-touch.ts';
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
 // A suggestion is read again only for a new message (the server keeps what the model said for an hour), so the screen's poll costs nothing. An answer
@@ -76,7 +77,7 @@ export function IntentBar({ conversation: c }: { conversation: ConversationSumma
   const shown = shownIntent({ id: c.id, intent: c.intent }, new Map([[c.id, suggested]]));
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="intent-bar">
-      <NativeSelect size="sm" aria-label={t('applied')} value={c.intent ?? ''} disabled={set.isPending} data-testid="intent-select" onChange={(e) => set.mutate(e.target.value === '' ? null : (e.target.value as ConversationIntent))}>
+      <NativeSelect size="sm" className={TOUCH_SELECT} aria-label={t('applied')} value={c.intent ?? ''} disabled={set.isPending} data-testid="intent-select" onChange={(e) => set.mutate(e.target.value === '' ? null : (e.target.value as ConversationIntent))}>
         <option value="">{t('none')}</option>
         {CONVERSATION_INTENTS.map((intent) => (
           <option key={intent} value={intent}>
@@ -87,7 +88,7 @@ export function IntentBar({ conversation: c }: { conversation: ConversationSumma
       {shown && !shown.applied && (
         <>
           <IntentBadge intent={shown.intent} applied={false} />
-          <Button type="button" size="sm" variant="outline" loading={set.isPending} data-testid="intent-apply" aria-label={t('applyLabel', { intent: t(`label.${shown.intent}`) })} onClick={() => set.mutate(shown.intent)}>
+          <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" loading={set.isPending} data-testid="intent-apply" aria-label={t('applyLabel', { intent: t(`label.${shown.intent}`) })} onClick={() => set.mutate(shown.intent)}>
             {t('apply')}
           </Button>
         </>

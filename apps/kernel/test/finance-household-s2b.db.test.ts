@@ -75,6 +75,16 @@ suite('the S2b-HKD revenue book of a household business (#2517 slice 2c)', () =>
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
     await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    // The seeded law rows are `confirmed` from #3710 (finance-household.db.test.ts checks that). This file exercises the provisional label, so it starts from the rows as they were before:
+    // `commentary`, restored here as the database owner (the law tables are read-only to every tenant login).
+    // The yearly revenue threshold and the PIT cut are set to 0 here: these files test the books' rows, splits, labels and Excel with small revenues, so every revenue is above the threshold and the tax is the plain
+    // percentage of it, as before the yearly rule (#3710 slice 3). That rule has its own file, finance-household-annual.db.test.ts, on the real rows (1 billion VND, PIT cut 30%).
+    const restore = new pg.Client({ connectionString: adminUrl });
+    await restore.connect();
+    await restore.query(
+      "UPDATE crove_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE crove_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE crove_finance.household_trade_rate SET status = 'commentary'; UPDATE crove_finance.household_form_version SET status = 'commentary'; UPDATE crove_finance.household_return_form_version SET status = 'commentary'",
+    );
+    await restore.end();
     const app = new URL(adminUrl);
     app.username = 'crove_app';
     app.password = 'test-app-pw';
@@ -326,6 +336,32 @@ suite('the S2b-HKD revenue book of a household business (#2517 slice 2c)', () =>
     expect(october.commentary).toBe(true);
   });
 
+  it('refuses a period whose profiles name different trades, and gives the parts on either side of the change (#3714)', async () => {
+    const o = await org();
+    await setProfile(o);
+    const shirt = await item(o, 'AO', 'goods');
+    const repair = await item(o, 'SUA', 'services');
+    await entry(o, '2026-09-05', 'Bán hàng và sửa chữa', [['111', 1000000, 0], ['511', 0, 1000000]], { sale: [{ amount: 600000, item: shirt }, { amount: 400000, item: repair }] });
+    await entry(o, '2026-09-20', 'Bán lẻ', [['111', 200000, 0], ['511', 0, 200000]], { sale: [{ amount: 200000, item: shirt }] });
+    // From 16 September the household drops its service line: one month then has two trade lists, and the book never applies the later one to the earlier sales.
+    await setProfile(o, { effectiveFrom: '2026-09-16', trades: ['goods'] });
+    await expect(s2b(o, '2026-09')).rejects.toMatchObject({ code: 'HOUSEHOLD_TRADES_CHANGED' });
+    await expect(s2b(o, '2026-Q3')).rejects.toMatchObject({ code: 'HOUSEHOLD_TRADES_CHANGED' });
+    // The parts on either side of the change are not refused: August is under the first profile, October under the second.
+    const august = await s2b(o, '2026-08');
+    expect(august.lines.map((l) => l.trade)).toEqual(['goods', 'services']);
+    const october = await s2b(o, '2026-10');
+    expect(october.lines.map((l) => l.trade)).toEqual(['goods']);
+  });
+
+  it('does not refuse a period whose profiles change but keep the same trades', async () => {
+    const o = await org();
+    await setProfile(o);
+    await entry(o, '2026-09-05', 'Bán', [['111', 100000, 0], ['511', 0, 100000]]);
+    await setProfile(o, { effectiveFrom: '2026-09-16', einvoiceRegistered: true });
+    await expect(s2b(o, '2026-09')).resolves.toMatchObject({ total: '100000' });
+  });
+
   it('refuses an entity that is not a household, has no profile, is on group 1 or on the percentage method, and lets a viewer read the book', async () => {
     const o = await org();
     await expect(s2b(o, '2026-09')).rejects.toMatchObject({ code: 'HOUSEHOLD_BOOK_NOT_REQUIRED' });
@@ -339,5 +375,52 @@ suite('the S2b-HKD revenue book of a household business (#2517 slice 2c)', () =>
     await setProfile(reader, { trades: ['goods'] });
     await entry(reader, '2026-09-12', 'Bán', [['111', 100000, 0], ['511', 0, 100000]]);
     await expect(s2b(reader, '2026-09', reader.household, reader.viewer)).resolves.toMatchObject({ total: '100000' });
+  });
+
+  describe('the Decree 174 VAT cut behind the profile answer (#3710 slice 2)', () => {
+    // Goods 600 000 (VAT 1% = 6 000) and services 400 000 (VAT 5% = 20 000): the cut of 20% takes 1 200 and 4 000.
+    async function sale(o: Org) {
+      const shirt = await item(o, 'AO', 'goods');
+      const repair = await item(o, 'SUA', 'services');
+      await entry(o, '2026-09-05', 'Bán hàng và sửa chữa', [['111', 1000000, 0], ['511', 0, 1000000]], { sale: [{ amount: 600000, item: shirt }, { amount: 400000, item: repair }] });
+    }
+
+    it('applies the cut by line when the profile answered yes, and leaves the VAT column as it was before the cut', async () => {
+      const o = await org();
+      await setProfile(o, { vatCutEligible: 'yes' });
+      await sale(o);
+      const book = await s2b(o, '2026-09');
+      expect(book.lines.map((l) => [l.trade, l.vat])).toEqual([['goods', '6000'], ['services', '20000']]);
+      expect(book.totals).toEqual({ revenue: '1000000', vat: '26000' });
+      expect(book.vatCut).toEqual({
+        answer: 'yes',
+        percent: '20',
+        applied: true,
+        lines: [{ trade: 'goods', cut: '1200', vatPayable: '4800' }, { trade: 'services', cut: '4000', vatPayable: '16000' }],
+        total: { cut: '5200', vatPayable: '20800' },
+        ifEligible: null,
+      });
+    });
+
+    it('applies no cut when the profile answered no, and computes without it but shows the VAT if eligible when there is no answer', async () => {
+      const no = await org();
+      await setProfile(no, { vatCutEligible: 'no' });
+      await sale(no);
+      expect((await s2b(no, '2026-09')).vatCut).toMatchObject({ answer: 'no', applied: false, total: { cut: '0', vatPayable: '26000' }, ifEligible: null });
+      const none = await org();
+      await setProfile(none);
+      await sale(none);
+      expect((await s2b(none, '2026-09')).vatCut).toMatchObject({ answer: null, applied: false, total: { cut: '0', vatPayable: '26000' }, ifEligible: { cut: '5200', vatPayable: '20800' } });
+    });
+
+    it('refuses a period whose profiles answer the question differently, and gives the parts on either side of the change', async () => {
+      const o = await org();
+      await setProfile(o, { vatCutEligible: 'yes' });
+      await sale(o);
+      await setProfile(o, { effectiveFrom: '2026-09-16', vatCutEligible: null });
+      await expect(s2b(o, '2026-09')).rejects.toMatchObject({ code: 'HOUSEHOLD_VAT_CUT_CHANGED' });
+      expect((await s2b(o, '2026-08')).vatCut.answer).toBe('yes');
+      expect((await s2b(o, '2026-10')).vatCut.answer).toBeNull();
+    });
   });
 });

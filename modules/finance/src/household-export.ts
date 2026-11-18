@@ -4,7 +4,8 @@
 // checks it against the appendix of the circular (#2520), and the file says so while the book's row is still `commentary`. Same cell rules as the other exports (export.ts): amounts exact,
 // text never read as a formula. Labels stay Vietnamese in every locale.
 import ExcelJS from 'exceljs';
-import { HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a, type HouseholdS2b, type HouseholdS2c } from '@crove/kernel-contract';
+import { HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a, type HouseholdS2b, type HouseholdS2c, type HouseholdYearToDate } from '@crove/kernel-contract';
+import { money as decimal, toMoney } from '@crove/l10n-vn';
 import { setMoneyCell, setTextCell } from './export.ts';
 
 const dateLabel = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}`;
@@ -67,8 +68,57 @@ const TRADE_LABEL: Readonly<Record<string, string>> = {
   goods: 'Phân phối, cung cấp hàng hóa',
   services: 'Dịch vụ',
   catering: 'Ăn uống, sản xuất, xây dựng có bao thầu nguyên vật liệu',
+  digital_content: 'Nội dung số (trò chơi, phim, ảnh, nhạc, quảng cáo số)',
   other: 'Hoạt động kinh doanh khác',
 };
+
+// The line that names a row behind the figures which the accountant has not confirmed (#2520).
+function unconfirmedLine(u: { kind: 'form' | 'rate' | 'reduction' | 'threshold'; key: string; effectiveFrom: string }): string {
+  if (u.kind === 'form') return `  Chưa xác nhận: mẫu ${u.key}, hiệu lực từ ${dateLabel(u.effectiveFrom)}`;
+  if (u.kind === 'threshold') return `  Chưa xác nhận: ngưỡng doanh thu năm, từ ${dateLabel(u.effectiveFrom)}`;
+  if (u.kind === 'reduction') {
+    return u.key === 'pit'
+      ? `  Chưa xác nhận: mức giảm thuế TNCN theo Nghị định 398, từ ${dateLabel(u.effectiveFrom)}`
+      : `  Chưa xác nhận: mức giảm thuế GTGT theo Nghị định 174, từ ${dateLabel(u.effectiveFrom)}`;
+  }
+  return `  Chưa xác nhận: tỷ lệ thuế của ngành "${TRADE_LABEL[u.key] ?? u.key}", từ ${dateLabel(u.effectiveFrom)}`;
+}
+
+// The yearly part of a household's tax (#3710 slice 3): the year's revenue to date, the threshold, and this period's tax by the yearly rule. `text` writes a sentence, `money` a labelled exact amount (the caller
+// marks the amount rows while the book is provisional). The PIT is never guessed: while the household has not chosen the trade that takes the deduction the file asks, and writes no PIT figure.
+function writeYearToDate(
+  ytd: HouseholdYearToDate,
+  pit: boolean,
+  put: { text: (label: string, bold?: boolean) => void; money: (label: string, value: string) => void },
+): void {
+  put.text(`THUẾ THEO DOANH THU CẢ NĂM ${ytd.year}`, true);
+  put.money('Doanh thu lũy kế từ đầu năm', ytd.revenueToDate);
+  if (ytd.threshold) {
+    put.money(`Ngưỡng doanh thu năm ${ytd.year} (từ ${dateLabel(ytd.threshold.effectiveFrom)}): ${ytd.crossed ? 'đã vượt' : 'chưa vượt'}`, ytd.threshold.amount);
+  }
+  if (!ytd.crossed) put.text(`Doanh thu lũy kế của năm chưa vượt ngưỡng nên chưa phải nộp thuế GTGT${pit ? ' và thuế TNCN' : ''}.`);
+  if (ytd.deductionNeeded && pit) {
+    put.text('Hộ có nhiều ngành nghề: hãy chọn ngành nghề được trừ phần doanh thu dưới ngưỡng để tính thuế TNCN. Chưa chọn nên chưa tính thuế TNCN.');
+    return;
+  }
+  if (ytd.deductionShort && pit) {
+    put.text(`Chưa ngành nghề nào có doanh thu đạt ngưỡng ${ytd.threshold?.amount ?? ''} đồng nên thuế TNCN tạm giữ lại: quy định cho trường hợp này đang chờ kế toán xác nhận. Thuế của kỳ chưa được tính.`);
+    return;
+  }
+  const pay = ytd.payable;
+  if (!pay) {
+    put.text('Doanh thu của năm chưa được gán hết cho ngành nghề nên chưa tính thuế phải nộp theo doanh thu cả năm; gán ngành cho mặt hàng đã bán rồi lập lại sổ.');
+    return;
+  }
+  put.money('Thuế GTGT của kỳ theo doanh thu cả năm (trước giảm)', pay.vatBefore);
+  if (decimal(pay.vatCut).gt(0)) put.money('Giảm thuế GTGT theo Nghị định 174', pay.vatCut);
+  put.money('Thuế GTGT phải nộp của kỳ', pay.vat);
+  if (pit) {
+    put.money('Thuế TNCN của kỳ theo doanh thu cả năm (trước giảm)', pay.pitBefore);
+    if (ytd.pitCut?.applied) put.money(`Giảm thuế TNCN ${ytd.pitCut.percent}% theo Nghị định 398`, pay.pitCut);
+    put.money('Thuế TNCN phải nộp của kỳ', pay.pit);
+  }
+}
 
 // Excel export of the 01/CNKD return worksheet (#2518): the household's name and tax code, the form and the quarter, revenue by trade with VAT and PIT by the percentages in force, the total, the tax the
 // platforms already withheld (one line per settlement), what is left to pay (or paid too much) and a place for the representative's signature. It says on its face that it is a worksheet to file from
@@ -109,7 +159,7 @@ export async function buildCnkdWorkbook(sheetData: HouseholdCnkd, brand = 'Ludy'
   line('Đây là bảng tính để kê khai trên cổng thuế hoặc eTax Mobile. Ludy không nộp tờ khai và không gửi dữ liệu cho cơ quan thuế.');
   if (provisional) {
     line(HOUSEHOLD_PROVISIONAL_LABEL.toUpperCase(), true);
-    for (const u of sheetData.unconfirmed) line(u.kind === 'form' ? `  Chưa xác nhận: mẫu ${u.key}, hiệu lực từ ${dateLabel(u.effectiveFrom)}` : `  Chưa xác nhận: tỷ lệ thuế của ngành "${TRADE_LABEL[u.key] ?? u.key}", từ ${dateLabel(u.effectiveFrom)}`);
+    for (const u of sheetData.unconfirmed) line(unconfirmedLine(u));
   }
   sheet.addRow([]);
   const head = sheet.addRow([]);
@@ -147,7 +197,20 @@ export async function buildCnkdWorkbook(sheetData: HouseholdCnkd, brand = 'Ludy'
     if (labelled) mark(row);
     if (bold) row.font = { bold: true };
   };
-  money('Tổng thuế GTGT và TNCN theo tỷ lệ', totals?.tax ?? '0', false, true);
+  money('Tổng thuế GTGT và TNCN theo tỷ lệ trên doanh thu của kỳ, chưa xét ngưỡng năm', totals?.tax ?? '0', false, true);
+  // The Decree 174 VAT cut, only where the household's profile answered yes (#3710): the cut and the tax after it. With no answer, the file says what the VAT would be if the household were eligible.
+  const cut = sheetData.vatCut;
+  if (cut.applied && cut.total) {
+    money(`Giảm thuế GTGT ${cut.percent}% theo Nghị định 174 (theo tỷ lệ của kỳ, tham khảo)`, cut.total.cut, false, true);
+    money('Tổng thuế GTGT và TNCN sau giảm, theo tỷ lệ trên doanh thu của kỳ, chưa xét ngưỡng năm', toMoney(decimal(cut.total.vatPayable).plus(totals?.pit ?? '0')), false, true);
+  }
+  if (cut.ifEligible) line(`Chưa trả lời câu hỏi giảm thuế GTGT (Nghị định 174) trong hồ sơ: nếu thuộc diện được giảm, thuế GTGT sẽ là ${cut.ifEligible.vatPayable} đồng (giảm ${cut.ifEligible.cut} đồng), tính theo tỷ lệ của kỳ để tham khảo; thuế phải nộp theo quy tắc doanh thu cả năm.`);
+  sheet.addRow([]);
+  writeYearToDate(sheetData.yearToDate, true, {
+    text: (label, bold) => void line(label, bold),
+    money: (label, value) => money(label, value, false, true),
+  });
+  sheet.addRow([]);
   line('Thuế sàn thương mại điện tử đã khấu trừ và nộp thay (theo từng kỳ đối soát):', true);
   for (const w of sheetData.withheld.settlements) money(`  ${w.platform}, ${dateLabel(w.periodStart)} - ${dateLabel(w.periodEnd)}`, w.taxWithheld);
   money('Cộng thuế đã khấu trừ', sheetData.withheld.total);
@@ -159,7 +222,7 @@ export async function buildCnkdWorkbook(sheetData: HouseholdCnkd, brand = 'Ludy'
   sheet.addRow([]);
   line(sheetData.household.representativeName ?? '');
   sheet.addRow([]);
-  line('Ghi chú: chưa trừ phần doanh thu được miễn thuế trong năm; kế toán đối chiếu với quy định hiện hành (#2520).');
+  line('Ghi chú: phần doanh thu được trừ theo ngưỡng được tính ở mục thuế theo doanh thu cả năm, từ doanh thu lũy kế từ đầu năm; Ludy không nộp tờ khai thay hộ kinh doanh.');
   return new Uint8Array(await workbook.xlsx.writeBuffer());
 }
 
@@ -210,7 +273,7 @@ async function buildTradeWorkbook(book: TradeBookView, brand: string, opts: { sh
   line('Đây là sổ kế toán của hộ kinh doanh. Ludy không nộp tờ khai và không gửi dữ liệu cho cơ quan thuế.');
   if (provisional) {
     line(HOUSEHOLD_PROVISIONAL_LABEL.toUpperCase(), true);
-    for (const u of book.unconfirmed) line(u.kind === 'form' ? `  Chưa xác nhận: mẫu ${u.key}, hiệu lực từ ${dateLabel(u.effectiveFrom)}` : `  Chưa xác nhận: tỷ lệ thuế của ngành "${TRADE_LABEL[u.key] ?? u.key}", từ ${dateLabel(u.effectiveFrom)}`);
+    for (const u of book.unconfirmed) line(unconfirmedLine(u));
   }
   sheet.addRow([]);
   const head = sheet.addRow([]);
@@ -247,16 +310,40 @@ async function buildTradeWorkbook(book: TradeBookView, brand: string, opts: { sh
   };
   perLine('Tỷ lệ thuế GTGT (%)', (l) => l.vatPercent, undefined, 'text');
   perLine('Thuế GTGT', (l) => l.vat, book.totals?.vat, 'money');
+  // The Decree 174 VAT cut, only where the household's profile answered yes (#3710).
+  const cutOf = new Map(book.vatCut.lines.map((l) => [l.trade, l]));
+  if (book.vatCut.applied) {
+    perLine(`Giảm thuế GTGT ${book.vatCut.percent}% theo Nghị định 174 (theo tỷ lệ của kỳ, tham khảo)`, (l) => cutOf.get(l.trade)?.cut ?? '0', book.vatCut.total?.cut, 'money');
+    perLine('Thuế GTGT sau giảm (tham khảo theo tỷ lệ của kỳ)', (l) => cutOf.get(l.trade)?.vatPayable ?? l.vat, book.vatCut.total?.vatPayable, 'money');
+  }
   if (opts.pit) {
     perLine('Tỷ lệ thuế TNCN (%)', (l) => l.pitPercent ?? '', undefined, 'text');
     perLine('Thuế TNCN', (l) => l.pit ?? '0', book.totals?.pit, 'money');
   }
   const tax = sheet.addRow([]);
-  setTextCell(tax.getCell('description'), opts.pit ? 'Tổng thuế GTGT và TNCN' : 'Tổng thuế GTGT');
+  setTextCell(tax.getCell('description'), `${opts.pit ? 'Tổng thuế GTGT và TNCN' : 'Tổng thuế GTGT'}${book.vatCut.applied ? ' sau giảm' : ''}`);
   // No total while revenue has no business line yet: the cell stays blank, never a 0 that does not exist.
-  if (book.totals) setMoneyCell(tax.getCell('total'), (opts.pit ? book.totals.tax : book.totals.vat) ?? '0');
+  if (book.totals) {
+    const before = (opts.pit ? book.totals.tax : book.totals.vat) ?? '0';
+    // After the cut when it applies: the VAT payable (plus the PIT on S2a).
+    setMoneyCell(tax.getCell('total'), book.vatCut.applied && book.vatCut.total ? toMoney(decimal(book.vatCut.total.vatPayable).plus(opts.pit ? (book.totals.pit ?? '0') : '0')) : before);
+  }
   mark(tax);
   tax.font = { bold: true };
+  if (book.vatCut.ifEligible) {
+    sheet.addRow([]);
+    line(`Chưa trả lời câu hỏi giảm thuế GTGT (Nghị định 174) trong hồ sơ: nếu thuộc diện được giảm, thuế GTGT sẽ là ${book.vatCut.ifEligible.vatPayable} đồng (giảm ${book.vatCut.ifEligible.cut} đồng), tính theo tỷ lệ của kỳ để tham khảo; thuế phải nộp theo quy tắc doanh thu cả năm.`);
+  }
+  sheet.addRow([]);
+  writeYearToDate(book.yearToDate, opts.pit, {
+    text: (label, bold) => void line(label, bold),
+    money: (label, value) => {
+      const row = sheet.addRow([]);
+      setTextCell(row.getCell('description'), label);
+      setMoneyCell(row.getCell('total'), value);
+      mark(row);
+    },
+  });
   if (!book.totals) {
     sheet.addRow([]);
     line('Ghi chú: còn doanh thu chưa phân ngành nên chưa tính tổng thuế; gán ngành cho mặt hàng đã bán rồi lập lại sổ.');

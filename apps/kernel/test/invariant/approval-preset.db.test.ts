@@ -294,8 +294,9 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
       eligible_approvers: 1,
     });
     // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
-    // 10: the payment of a pay run's net pay or a remittance was given its approval policy (#2532). 11: a payroll posting or payment is verified from the run's totals, so a member chief accountant approves (#2751). 12: the posting of a stored marketplace settlement was given its approval policy (#2516). 13: the posting of a platform's payout was given its approval policy (#2516). 14: the clearing of a platform's waiting fees by its invoice was given its approval policy (#2516).
-    expect((approvedAudit as { policy_version?: unknown }).policy_version).toBe(14);
+    // 10: the payment of a pay run's net pay or a remittance was given its approval policy (#2532). 11: a payroll posting or payment is verified from the run's totals, so a member chief accountant approves (#2751). 12: the posting of a stored marketplace settlement was given its approval policy (#2516). 13: the posting of a platform's payout was given its approval policy (#2516). 14: the clearing of a platform's waiting fees by its invoice was given its approval policy (#2516).  15: the payment of a supplier invoice to the supplier bank account was given its approval policy (#3699).
+    // Two-step for the bump to 16 (#3700 S3c): this accepts 15 (main) and 16 (the supplier payment settlement policy); the PR that raises it pins 16, then a follow-up pins 16 only.
+    expect([15, 16]).toContain((approvedAudit as { policy_version?: unknown }).policy_version);
 
     // Back on founder, the owner approves the earlier proposal again (it is in its snapshot), flagged with the version.
     await o.setPreset(asMfa(o.owner), 'founder');
