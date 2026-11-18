@@ -7,9 +7,10 @@
 // a stored one.
 //
 // What is not stored yet is not guessed: the payment method of a person and the registration of a dependent are not in the stored run, so those findings are not
-// raised (the sheet says nothing the data does not show). Everything is read, never written: nothing here stores a text, changes a run or approves. When there is no model, the AI
-// budget is spent, the member's calls are too frequent, the call fails or its text is refused, the answer names the state (`ai`), and every finding code made is still in it (its facts, with the
-// names put back by code); the model's sentence is attached to a finding only when it passed the checks.
+// raised (the sheet says nothing the data does not show). Everything is read, never written: nothing here stores a text, changes a run or approves. Caller authorization runs first without
+// burning a rate ticket; when AI is on, the rate ticket is taken before the sensitive audited reads (so a rate-limited caller triggers zero audited reads) and refunded when deterministic checks
+// find nothing (`quiet`). When AI is off, out of budget, failed or its text is refused, every finding code made is still returned (its facts, with the names put back by code); the model's
+// sentence is attached to a finding only when it passed the checks.
 // A failure is named, never quoted: neither the sheet nor the model's answer is logged.
 import {
   AiBudgetExhaustedError,
@@ -26,17 +27,22 @@ import {
 } from '@crove/agent';
 import { Decimal } from '@crove/l10n-vn';
 import type { HrCoworkerExplained, HrCoworkerFlagged, HrCoworkerPrepared, HrLineView, HrPayslip, HrRunSheet, HrRunSummary } from '@crove/kernel-contract';
+import { DomainError } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface PayrollAi {
   reader: Pick<InboxReader, 'payrollPrepare' | 'payrollFlag' | 'payrollExplain'> | null;
   budget: DraftBudget;
+  prepareBudget?: DraftBudget;
+  flagBudget?: DraftBudget;
+  explainBudget?: DraftBudget;
 }
 
-/** The audited reads the coworker is built on, each run in the member's own authority. */
+/** The owner/admin access check and the audited reads the coworker is built on, each run in the member's own authority. */
 export interface PayrollReads {
+  authorize?: () => Promise<unknown>;
   sheet(runId: string): Promise<HrRunSheet>;
-  runs(): Promise<HrRunSummary[]>;
+  runs(legalEntityId: string): Promise<HrRunSummary[]>;
   payslip(lineId: string): Promise<HrPayslip>;
 }
 
@@ -69,11 +75,11 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
   const sheet = await reads.sheet(runId);
   // The sheet's header: the pay run it is about. Read by key, since the job-egress scan reads any `.run` of this server as a call to the job runner.
   const header = sheet['run'];
-  const runs = await reads.runs();
+  const runs = await reads.runs(header.legalEntityId);
   const earlier = async (back: number): Promise<HrRunSheet | null> => {
     const month = monthBefore(header.month, back);
-    const run = runs.find((r) => r.legalEntityId === header.legalEntityId && r.month === month);
-    return run ? reads.sheet(run.id) : null;
+    const found = runs.find((r) => r.legalEntityId === header.legalEntityId && r.month === month);
+    return found ? reads.sheet(found.id) : null;
   };
   const one = await earlier(1);
   const two = one ? await earlier(2) : null;
@@ -116,26 +122,24 @@ export async function payrollSource(reads: PayrollReads, runId: string): Promise
 
 type State = HrCoworkerExplained['ai'];
 
-// One model call for this member of this org, in the order the other coworkers use: no reader is off, a spent rate budget is busy, a spent AI budget is budget, anything else failed.
-async function guarded<T>(ai: PayrollAi, orgId: string, userId: string, label: string, run: () => Promise<T>): Promise<{ state: Exclude<State, 'used' | 'quiet'> } | { value: T }> {
-  if (!ai.reader) return { state: 'off' };
-  const ticket = ai.budget.take(orgId, userId);
-  if (!ticket.allowed) return { state: 'busy' };
+async function runModel<T>(label: string, call: () => Promise<T>): Promise<{ state: 'budget' | 'failed' } | { value: T }> {
   try {
-    return { value: await run() };
+    return { value: await call() };
   } catch (error: unknown) {
     if (error instanceof AiBudgetExhaustedError) return { state: 'budget' };
     console.error(`[payroll-coworker-ai] ${label} failed`, error instanceof Error ? error.name : typeof error);
     return { state: 'failed' };
-  } finally {
-    ticket.release();
   }
+}
+
+function isForbiddenError(error: unknown): boolean {
+  return error instanceof DomainError && error.status === 403;
 }
 
 const forbiddenOf = (source: PayrollSource): string[] => [...source.names.values(), source.employerName].filter((v) => v.trim() !== '');
 
-// The findings are what CODE found in the stored run (plan 6.7: "code finds the anomalies"), written by code with the people's names put back. They come back in every state of `ai`: with
-// AI off, busy, out of budget, failed or a sentence refused, the owner still sees each one. The model's sentence is attached to a finding only when it passed the checks.
+// The findings are what CODE found in the stored run (plan 6.7: "code finds the anomalies"), written by code with the people's names put back. Once the sheet has been read (AI off, out of
+// budget, failed or a sentence refused), the owner still sees each one; a rate-limited call (`busy`) stops before reading the sheet so repeated calls trigger zero sensitive audited reads.
 const KIND_ORDER: readonly string[] = [...PAYROLL_ANOMALY_KINDS, ...PAYROLL_SIGNAL_KINDS];
 const byKindThenFacts = <T extends { kind: string; facts: string }>(a: T, b: T) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || (a.facts < b.facts ? -1 : a.facts > b.facts ? 1 : 0);
 
@@ -144,62 +148,142 @@ function namesOf(source: PayrollSource, aliases: ReadonlyMap<string, string>): M
 }
 
 export async function prepareMonth(ai: PayrollAi, reads: PayrollReads, orgId: string, userId: string, runId: string, language: 'vi' | 'en'): Promise<HrCoworkerPrepared> {
-  const source = await payrollSource(reads, runId);
-  const { sheet, aliases } = pseudonymizeSheet(source.lines, { language, blockingRules: source.blockingRules });
-  const signals = findSignals(sheet);
-  if (signals.length === 0) return { ai: 'quiet', items: [] };
-  const named = namesOf(source, aliases);
-  const itemsOf = (proposals: ReadonlyMap<string, { field: HrCoworkerPrepared['items'][number]['field']; note: string }>): HrCoworkerPrepared['items'] =>
-    signals
-      .map((s) => {
-        const p = proposals.get(s.id);
-        return { id: s.id, kind: s.kind, employeeId: aliases.get(s.alias) ?? null, facts: restoreAliases(s.facts, named), field: p?.field ?? null, text: p ? restoreAliases(p.note, named) : null };
-      })
-      .sort(byKindThenFacts);
-  if (!ai.reader) return { ai: 'off', items: itemsOf(new Map()) };
-  const reader = ai.reader;
-  const answer = await guarded(ai, orgId, userId, 'prepare', () => reader.payrollPrepare(sheet, { forbidden: forbiddenOf(source) }));
-  if ('state' in answer) return { ai: answer.state, items: itemsOf(new Map()) };
-  if (answer.value.kind === 'none') {
-    console.error(`[payroll-coworker-ai] prepare refused: ${answer.value.code}`);
-    return { ai: 'failed', items: itemsOf(new Map()) };
+  await reads.authorize?.();
+  if (!ai.reader) {
+    const source = await payrollSource(reads, runId);
+    const { sheet, aliases } = pseudonymizeSheet(source.lines, { language, blockingRules: source.blockingRules });
+    const signals = findSignals(sheet);
+    if (signals.length === 0) return { ai: 'quiet', items: [] };
+    const named = namesOf(source, aliases);
+    return {
+      ai: 'off',
+      items: signals
+        .map((s) => ({ id: s.id, kind: s.kind, employeeId: aliases.get(s.alias) ?? null, facts: restoreAliases(s.facts, named), field: null, text: null }))
+        .sort(byKindThenFacts),
+    };
   }
-  return { ai: 'used', items: itemsOf(new Map(answer.value.items.map((i) => [i.id, { field: i.field, note: i.note }]))) };
+  const reader = ai.reader;
+  const ticket = (ai.prepareBudget ?? ai.budget).take(orgId, userId);
+  if (!ticket.allowed) return { ai: 'busy', items: [] };
+  try {
+    let source: PayrollSource;
+    try {
+      source = await payrollSource(reads, runId);
+    } catch (error: unknown) {
+      if (isForbiddenError(error)) ticket.refund?.();
+      throw error;
+    }
+    const { sheet, aliases } = pseudonymizeSheet(source.lines, { language, blockingRules: source.blockingRules });
+    const signals = findSignals(sheet);
+    if (signals.length === 0) {
+      ticket.refund?.();
+      return { ai: 'quiet', items: [] };
+    }
+    const named = namesOf(source, aliases);
+    const itemsOf = (proposals: ReadonlyMap<string, { field: HrCoworkerPrepared['items'][number]['field']; note: string }>): HrCoworkerPrepared['items'] =>
+      signals
+        .map((s) => {
+          const p = proposals.get(s.id);
+          return { id: s.id, kind: s.kind, employeeId: aliases.get(s.alias) ?? null, facts: restoreAliases(s.facts, named), field: p?.field ?? null, text: p ? restoreAliases(p.note, named) : null };
+        })
+        .sort(byKindThenFacts);
+    const answer = await runModel('prepare', () => reader.payrollPrepare(sheet, { forbidden: forbiddenOf(source) }));
+    if ('state' in answer) return { ai: answer.state, items: itemsOf(new Map()) };
+    if (answer.value.kind === 'none') {
+      if (answer.value.code === 'QUIET') {
+        ticket.refund?.();
+        return { ai: 'quiet', items: [] };
+      }
+      console.error(`[payroll-coworker-ai] prepare refused: ${answer.value.code}`);
+      return { ai: 'failed', items: itemsOf(new Map()) };
+    }
+    return { ai: 'used', items: itemsOf(new Map(answer.value.items.map((i) => [i.id, { field: i.field, note: i.note }]))) };
+  } finally {
+    ticket.release();
+  }
 }
 
 export async function flagMonth(ai: PayrollAi, reads: PayrollReads, orgId: string, userId: string, runId: string, language: 'vi' | 'en'): Promise<HrCoworkerFlagged> {
-  const source = await payrollSource(reads, runId);
-  const { sheet, aliases } = pseudonymizeSheet(source.lines, { language, blockingRules: source.blockingRules });
-  const anomalies = findAnomalies(sheet);
-  if (anomalies.length === 0) return { ai: 'quiet', items: [] };
-  const named = namesOf(source, aliases);
-  const itemsOf = (sentences: ReadonlyMap<string, string>): HrCoworkerFlagged['items'] =>
-    anomalies
-      .map((a) => ({ id: a.id, kind: a.kind, employeeId: a.alias === null ? null : (aliases.get(a.alias) ?? null), facts: restoreAliases(a.facts, named), text: sentences.has(a.id) ? restoreAliases(sentences.get(a.id) as string, named) : null }))
-      .sort(byKindThenFacts);
-  if (!ai.reader) return { ai: 'off', items: itemsOf(new Map()) };
-  const reader = ai.reader;
-  const answer = await guarded(ai, orgId, userId, 'flag', () => reader.payrollFlag(sheet, { forbidden: forbiddenOf(source) }));
-  if ('state' in answer) return { ai: answer.state, items: itemsOf(new Map()) };
-  if (answer.value.kind === 'none') {
-    console.error(`[payroll-coworker-ai] flag refused: ${answer.value.code}`);
-    return { ai: 'failed', items: itemsOf(new Map()) };
+  await reads.authorize?.();
+  if (!ai.reader) {
+    const source = await payrollSource(reads, runId);
+    const { sheet, aliases } = pseudonymizeSheet(source.lines, { language, blockingRules: source.blockingRules });
+    const anomalies = findAnomalies(sheet);
+    if (anomalies.length === 0) return { ai: 'quiet', items: [] };
+    const named = namesOf(source, aliases);
+    return {
+      ai: 'off',
+      items: anomalies
+        .map((a) => ({ id: a.id, kind: a.kind, employeeId: a.alias === null ? null : (aliases.get(a.alias) ?? null), facts: restoreAliases(a.facts, named), text: null }))
+        .sort(byKindThenFacts),
+    };
   }
-  return { ai: 'used', items: itemsOf(new Map(answer.value.items.map((i) => [i.id, i.text]))) };
+  const reader = ai.reader;
+  const ticket = (ai.flagBudget ?? ai.budget).take(orgId, userId);
+  if (!ticket.allowed) return { ai: 'busy', items: [] };
+  try {
+    let source: PayrollSource;
+    try {
+      source = await payrollSource(reads, runId);
+    } catch (error: unknown) {
+      if (isForbiddenError(error)) ticket.refund?.();
+      throw error;
+    }
+    const { sheet, aliases } = pseudonymizeSheet(source.lines, { language, blockingRules: source.blockingRules });
+    const anomalies = findAnomalies(sheet);
+    if (anomalies.length === 0) {
+      ticket.refund?.();
+      return { ai: 'quiet', items: [] };
+    }
+    const named = namesOf(source, aliases);
+    const itemsOf = (sentences: ReadonlyMap<string, string>): HrCoworkerFlagged['items'] =>
+      anomalies
+        .map((a) => ({ id: a.id, kind: a.kind, employeeId: a.alias === null ? null : (aliases.get(a.alias) ?? null), facts: restoreAliases(a.facts, named), text: sentences.has(a.id) ? restoreAliases(sentences.get(a.id) as string, named) : null }))
+        .sort(byKindThenFacts);
+    const answer = await runModel('flag', () => reader.payrollFlag(sheet, { forbidden: forbiddenOf(source) }));
+    if ('state' in answer) return { ai: answer.state, items: itemsOf(new Map()) };
+    if (answer.value.kind === 'none') {
+      if (answer.value.code === 'QUIET') {
+        ticket.refund?.();
+        return { ai: 'quiet', items: [] };
+      }
+      console.error(`[payroll-coworker-ai] flag refused: ${answer.value.code}`);
+      return { ai: 'failed', items: itemsOf(new Map()) };
+    }
+    return { ai: 'used', items: itemsOf(new Map(answer.value.items.map((i) => [i.id, i.text]))) };
+  } finally {
+    ticket.release();
+  }
 }
 
 export async function explainPayslip(ai: PayrollAi, reads: PayrollReads, orgId: string, userId: string, lineId: string, language: 'vi' | 'en'): Promise<HrCoworkerExplained> {
-  const slip = await reads.payslip(lineId);
+  await reads.authorize?.();
   const none = (state: State): HrCoworkerExplained => ({ ai: state, text: null });
-  if (!ai.reader) return none('off');
-  const reader = ai.reader;
-  const request = { language, figures: payrollFiguresOf(slip.figures, slip.breakdown), dependentsCounted: dependentsCountedOf(slip.breakdown) };
-  const forbidden = [slip.employeeName, slip.employerName].filter((v) => v.trim() !== '');
-  const answer = await guarded(ai, orgId, userId, 'explain', () => reader.payrollExplain(request, { forbidden }));
-  if ('state' in answer) return none(answer.state);
-  if (answer.value.kind === 'none') {
-    console.error(`[payroll-coworker-ai] explanation refused: ${answer.value.code}`);
-    return none('failed');
+  if (!ai.reader) {
+    await reads.payslip(lineId);
+    return none('off');
   }
-  return { ai: 'used', text: answer.value.text };
+  const reader = ai.reader;
+  const ticket = (ai.explainBudget ?? ai.budget).take(orgId, userId);
+  if (!ticket.allowed) return none('busy');
+  try {
+    let slip: HrPayslip;
+    try {
+      slip = await reads.payslip(lineId);
+    } catch (error: unknown) {
+      if (isForbiddenError(error)) ticket.refund?.();
+      throw error;
+    }
+    const request = { language, figures: payrollFiguresOf(slip.figures, slip.breakdown), dependentsCounted: dependentsCountedOf(slip.breakdown) };
+    const forbidden = [slip.employeeName, slip.employerName].filter((v) => v.trim() !== '');
+    const answer = await runModel('explain', () => reader.payrollExplain(request, { forbidden }));
+    if ('state' in answer) return none(answer.state);
+    if (answer.value.kind === 'none') {
+      console.error(`[payroll-coworker-ai] explanation refused: ${answer.value.code}`);
+      return none('failed');
+    }
+    return { ai: 'used', text: answer.value.text };
+  } finally {
+    ticket.release();
+  }
 }

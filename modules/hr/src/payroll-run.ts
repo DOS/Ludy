@@ -20,6 +20,7 @@ import {
   auditValue,
   leaveBaselineMeetsCategoryFloor,
   tableWrite,
+  zHrCoworkerAccess,
   zHrLineAdjust,
   zHrLineInputsSet,
   zHrPayrollInputs,
@@ -1088,6 +1089,7 @@ export const runList = defineQuery({
       .selectFrom('crove_hr.payroll_run')
       .select(['id', 'legal_entity_id', 'month', 'status', 'working_days', 'approved_at'])
       .where('org_id', '=', ctx.orgId)
+      .$if(input.legalEntityId !== undefined, (q) => q.where('legal_entity_id', '=', input.legalEntityId as string))
       .orderBy('month', 'desc')
       .orderBy('id')
       .limit(input.limit)
@@ -1392,5 +1394,16 @@ export const runThirteenthMonthPreview = defineQuery({
   },
 });
 
+// Lightweight non-sensitive access gate for the payroll coworker: checks session, per-org HR app enablement and owner/admin role without reading payroll tables or writing a sensitive-read audit row.
+export const coworkerAccess = defineQuery({
+  name: 'hr.payroll.coworker.access',
+  input: zHrCoworkerAccess,
+  access: MANAGERS,
+  handler: async (ctx): Promise<{ ok: true }> => {
+    userOf(ctx.actor);
+    return { ok: true };
+  },
+});
+
 export const hrPayrollCommands = [runOpen, runRecalculate, lineInputsSet, runImportTimekeeping, runApplyThirteenthMonth, runSyncLeave, lineAdjust, runApprove];
-export const hrPayrollQueries = [runList, runSheet, linePayslip, runThirteenthMonthPreview];
+export const hrPayrollQueries = [runList, runSheet, linePayslip, runThirteenthMonthPreview, coworkerAccess];

@@ -6,7 +6,7 @@
 //
 // An empty `items` means nothing was found among `checked`, never that everything was looked at. A rule that could not look is named in `unchecked` with why: `partial_view` (a line refused because the caller's
 // books are only in part in view, such as a branch-limited accountant) or `not_available` (a line has no read, refuses the caller, or answered outside its contract). Rule 3 (a supplier's account changed while
-// a payment waits) is `not_available` until the data it reads exists. Rule 4 (a customer conversation unanswered on an open deal, #3124) is always `not_available` here: a grant's context reads no conversation. A rule whose answer is outside its contract fails the whole call, as on Home, instead of reading as "all clear".
+// a payment waits, #3113) is checked; it is `partial_view` only when a change is in the last 30 days and the caller sees only part of the books. Rule 4 (a customer conversation unanswered on an open deal, #3124) is always `not_available` here: a grant's context reads no conversation. A rule whose answer is outside its contract fails the whole call, as on Home, instead of reading as "all clear".
 //
 // It reads no audit table and writes nothing. Every item counts against the grant's daily row budget (the endpoint charges one row per item), and the endpoint's audit row names the tool.
 import { z } from 'zod';
