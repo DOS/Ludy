@@ -339,6 +339,17 @@ suite('the yearly rule of the household tax (#3710 slice 3)', () => {
       expect(w.overpaid).toBe('0');
     });
 
+    it('never holds a household of one trade back for revenue with no sale document: vouchers before and in the quarter all land on its trade, with no split asked', async () => {
+      const o = await org();
+      await goodsOnly(o, { vatCutEligible: 'yes', taxGroup: 2, pitMethod: 'percentage' });
+      await revenue(o, '2026-02-10', 0.7 * BILLION);
+      await revenue(o, '2026-08-12', 0.5 * BILLION);
+      const w = await cnkd(o, 3);
+      expect(w.yearToDate).toMatchObject({ revenueToDate: '1200000000', revenueBefore: '700000000', crossed: true, deductionNeeded: false, deductionTrade: 'goods', payable: EXAMPLE });
+      const book = await s2a(o, '2026-08');
+      expect(book.yearToDate.payable).toEqual(EXAMPLE);
+    });
+
     it('owes nothing in a quarter under the threshold, and the quarter that crosses it carries the catch-up of the year', async () => {
       const o = await org();
       await goodsOnly(o, { vatCutEligible: 'yes' });
