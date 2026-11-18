@@ -2,7 +2,7 @@
 -- Finance #3875 (S2 of #3854): crove_kernel.org_purge also deletes crove_finance.misa_amis_connection (an entity's MISA AMIS connection), beside the other finance connections and ahead of the channel connection it references (the sealed access code goes with crove_kernel.credential, already in the list).
 -- This is the body of 20270115150000 (the newest restatement) with ONE change: that table joins the first list. Its signature, owner, grants and every other list and step are unchanged.
 -- (Previous header, for the record: Finance #3113 S2: crove_kernel.org_purge also deletes crove_finance.supplier_payment (the payments approved to a supplier), ahead of the bank account change history and the accounts it names.
--- This is the body of 20270112110000 (the newest restatement, the supplier bank accounts) with ONE change: that delete joins the finance block. Its signature, owner, grants and every other list and step are unchanged.
+-- This is the body of 20270112110000 (the newest restatement, the supplier bank accounts) with ONE change: that delete joins the finance block. Its signature, owner, grants and every other list and step are unchanged.)
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)

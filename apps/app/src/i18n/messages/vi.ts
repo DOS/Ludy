@@ -5175,7 +5175,7 @@ export const vi = {
     connectTitle: 'Kết nối AMIS',
     entity: 'Pháp nhân',
     accessCode: 'Mã kết nối lấy từ AMIS',
-    accessCodeNote: 'Mã kết nối do người có quyền quản trị dữ liệu kết nối trong AMIS tạo. Mã vừa nhập được mã hóa ngay khi gửi đi và không hiển thị lại.',
+    accessCodeNote: 'Mã kết nối do người có quyền quản trị dữ liệu kết nối trong AMIS tạo. Mã vừa nhập được mã hóa khi lưu và không hiển thị lại.',
     connect: 'Kết nối',
     connectedSince: 'Đã kết nối từ {when}',
     disconnect: 'Ngắt kết nối',

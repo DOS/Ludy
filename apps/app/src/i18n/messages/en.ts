@@ -5177,7 +5177,7 @@ export const en = {
     connectTitle: 'Connect AMIS',
     entity: 'Legal entity',
     accessCode: 'Connection code from AMIS',
-    accessCodeNote: 'The connection code is made in AMIS by someone with rights over the connection data. What you type is encrypted as it is sent and is never shown again.',
+    accessCodeNote: 'The connection code is made in AMIS by someone with rights over the connection data. What you type is encrypted when it is saved and is never shown again.',
     connect: 'Connect',
     connectedSince: 'Connected since {when}',
     disconnect: 'Disconnect',

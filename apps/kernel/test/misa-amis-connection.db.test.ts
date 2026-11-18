@@ -198,6 +198,13 @@ suite('MISA AMIS connections (#3875)', () => {
     // The audit row of the connect names the entity and the channel connection and nothing of the code.
     const audit = await rows<{ command: string }>("SELECT command FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.misa_amis_connection.connect'", [orgId]);
     expect(audit.length).toBeGreaterThan(0);
+    // The company code MISA is given is a stable name of the org, not a secret, but it belongs to the connection row alone: no audit or outbox row repeats it.
+    const [stored] = await rows<{ org_company_code: string }>('SELECT org_company_code FROM crove_finance.misa_amis_connection WHERE org_id = $1', [orgId]);
+    expect(stored?.org_company_code).toMatch(/^ludy-[0-9a-f]{32}$/);
+    for (const table of ['crove_kernel.audit_event', 'crove_kernel.outbox_event']) {
+      const hit = await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text LIKE '%' || $2 || '%'`, [orgId, stored?.org_company_code]);
+      expect(hit, table).toEqual([]);
+    }
   });
 
   it('files one connection per entity: a second connect is the same connection, and another org gets its own', async () => {
