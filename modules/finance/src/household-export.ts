@@ -5,6 +5,7 @@
 // text never read as a formula. Labels stay Vietnamese in every locale.
 import ExcelJS from 'exceljs';
 import { HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a, type HouseholdS2b, type HouseholdS2c } from '@crove/kernel-contract';
+import { money as decimal, toMoney } from '@crove/l10n-vn';
 import { setMoneyCell, setTextCell } from './export.ts';
 
 const dateLabel = (date: string) => `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}`;
@@ -110,7 +111,7 @@ export async function buildCnkdWorkbook(sheetData: HouseholdCnkd, brand = 'Ludy'
   line('Đây là bảng tính để kê khai trên cổng thuế hoặc eTax Mobile. Ludy không nộp tờ khai và không gửi dữ liệu cho cơ quan thuế.');
   if (provisional) {
     line(HOUSEHOLD_PROVISIONAL_LABEL.toUpperCase(), true);
-    for (const u of sheetData.unconfirmed) line(u.kind === 'form' ? `  Chưa xác nhận: mẫu ${u.key}, hiệu lực từ ${dateLabel(u.effectiveFrom)}` : `  Chưa xác nhận: tỷ lệ thuế của ngành "${TRADE_LABEL[u.key] ?? u.key}", từ ${dateLabel(u.effectiveFrom)}`);
+    for (const u of sheetData.unconfirmed) line(u.kind === 'form' ? `  Chưa xác nhận: mẫu ${u.key}, hiệu lực từ ${dateLabel(u.effectiveFrom)}` : u.kind === 'reduction' ? `  Chưa xác nhận: mức giảm thuế GTGT theo Nghị định 174, từ ${dateLabel(u.effectiveFrom)}` : `  Chưa xác nhận: tỷ lệ thuế của ngành "${TRADE_LABEL[u.key] ?? u.key}", từ ${dateLabel(u.effectiveFrom)}`);
   }
   sheet.addRow([]);
   const head = sheet.addRow([]);
@@ -149,6 +150,13 @@ export async function buildCnkdWorkbook(sheetData: HouseholdCnkd, brand = 'Ludy'
     if (bold) row.font = { bold: true };
   };
   money('Tổng thuế GTGT và TNCN theo tỷ lệ', totals?.tax ?? '0', false, true);
+  // The Decree 174 VAT cut, only where the household's profile answered yes (#3710): the cut and the tax after it. With no answer, the file says what the VAT would be if the household were eligible.
+  const cut = sheetData.vatCut;
+  if (cut.applied && cut.total) {
+    money(`Giảm thuế GTGT ${cut.percent}% theo Nghị định 174`, cut.total.cut, false, true);
+    money('Tổng thuế GTGT và TNCN sau giảm', toMoney(decimal(cut.total.vatPayable).plus(totals?.pit ?? '0')), false, true);
+  }
+  if (cut.ifEligible) line(`Chưa trả lời câu hỏi giảm thuế GTGT (Nghị định 174) trong hồ sơ: nếu thuộc diện được giảm, thuế GTGT sẽ là ${cut.ifEligible.vatPayable} đồng (giảm ${cut.ifEligible.cut} đồng).`);
   line('Thuế sàn thương mại điện tử đã khấu trừ và nộp thay (theo từng kỳ đối soát):', true);
   for (const w of sheetData.withheld.settlements) money(`  ${w.platform}, ${dateLabel(w.periodStart)} - ${dateLabel(w.periodEnd)}`, w.taxWithheld);
   money('Cộng thuế đã khấu trừ', sheetData.withheld.total);
@@ -211,7 +219,7 @@ async function buildTradeWorkbook(book: TradeBookView, brand: string, opts: { sh
   line('Đây là sổ kế toán của hộ kinh doanh. Ludy không nộp tờ khai và không gửi dữ liệu cho cơ quan thuế.');
   if (provisional) {
     line(HOUSEHOLD_PROVISIONAL_LABEL.toUpperCase(), true);
-    for (const u of book.unconfirmed) line(u.kind === 'form' ? `  Chưa xác nhận: mẫu ${u.key}, hiệu lực từ ${dateLabel(u.effectiveFrom)}` : `  Chưa xác nhận: tỷ lệ thuế của ngành "${TRADE_LABEL[u.key] ?? u.key}", từ ${dateLabel(u.effectiveFrom)}`);
+    for (const u of book.unconfirmed) line(u.kind === 'form' ? `  Chưa xác nhận: mẫu ${u.key}, hiệu lực từ ${dateLabel(u.effectiveFrom)}` : u.kind === 'reduction' ? `  Chưa xác nhận: mức giảm thuế GTGT theo Nghị định 174, từ ${dateLabel(u.effectiveFrom)}` : `  Chưa xác nhận: tỷ lệ thuế của ngành "${TRADE_LABEL[u.key] ?? u.key}", từ ${dateLabel(u.effectiveFrom)}`);
   }
   sheet.addRow([]);
   const head = sheet.addRow([]);
@@ -248,6 +256,12 @@ async function buildTradeWorkbook(book: TradeBookView, brand: string, opts: { sh
   };
   perLine('Tỷ lệ thuế GTGT (%)', (l) => l.vatPercent, undefined, 'text');
   perLine('Thuế GTGT', (l) => l.vat, book.totals?.vat, 'money');
+  // The Decree 174 VAT cut, only where the household's profile answered yes (#3710).
+  const cutOf = new Map(book.vatCut.lines.map((l) => [l.trade, l]));
+  if (book.vatCut.applied) {
+    perLine(`Giảm thuế GTGT ${book.vatCut.percent}% theo Nghị định 174`, (l) => cutOf.get(l.trade)?.cut ?? '0', book.vatCut.total?.cut, 'money');
+    perLine('Thuế GTGT phải nộp sau giảm', (l) => cutOf.get(l.trade)?.vatPayable ?? l.vat, book.vatCut.total?.vatPayable, 'money');
+  }
   if (opts.pit) {
     perLine('Tỷ lệ thuế TNCN (%)', (l) => l.pitPercent ?? '', undefined, 'text');
     perLine('Thuế TNCN', (l) => l.pit ?? '0', book.totals?.pit, 'money');
@@ -255,9 +269,17 @@ async function buildTradeWorkbook(book: TradeBookView, brand: string, opts: { sh
   const tax = sheet.addRow([]);
   setTextCell(tax.getCell('description'), opts.pit ? 'Tổng thuế GTGT và TNCN' : 'Tổng thuế GTGT');
   // No total while revenue has no business line yet: the cell stays blank, never a 0 that does not exist.
-  if (book.totals) setMoneyCell(tax.getCell('total'), (opts.pit ? book.totals.tax : book.totals.vat) ?? '0');
+  if (book.totals) {
+    const before = (opts.pit ? book.totals.tax : book.totals.vat) ?? '0';
+    // After the cut when it applies: the VAT payable (plus the PIT on S2a).
+    setMoneyCell(tax.getCell('total'), book.vatCut.applied && book.vatCut.total ? toMoney(decimal(book.vatCut.total.vatPayable).plus(opts.pit ? (book.totals.pit ?? '0') : '0')) : before);
+  }
   mark(tax);
   tax.font = { bold: true };
+  if (book.vatCut.ifEligible) {
+    sheet.addRow([]);
+    line(`Chưa trả lời câu hỏi giảm thuế GTGT (Nghị định 174) trong hồ sơ: nếu thuộc diện được giảm, thuế GTGT sẽ là ${book.vatCut.ifEligible.vatPayable} đồng (giảm ${book.vatCut.ifEligible.cut} đồng).`);
+  }
   if (!book.totals) {
     sheet.addRow([]);
     line('Ghi chú: còn doanh thu chưa phân ngành nên chưa tính tổng thuế; gán ngành cho mặt hàng đã bán rồi lập lại sổ.');

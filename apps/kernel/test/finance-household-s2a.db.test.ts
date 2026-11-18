@@ -375,4 +375,100 @@ suite('the S2a-HKD revenue book of a household business (#2517 slice 2a)', () =>
     await entry(reader, '2026-09-12', 'Bán', [['111', 100000, 0], ['511', 0, 100000]]);
     await expect(s2a(reader, '2026-09', reader.household, reader.viewer)).resolves.toMatchObject({ total: '100000' });
   });
+
+  describe('the Decree 174 VAT cut behind the profile answer (#3710 slice 2)', () => {
+    // One sale of goods 600 000 (VAT 1% = 6 000) and services 400 000 (VAT 5% = 20 000): the cut of 20% takes 1 200 and 4 000.
+    async function sale(o: Org, date = '2026-09-05') {
+      const shirt = await item(o, 'AO', 'goods');
+      const repair = await item(o, 'SUA', 'services');
+      await entry(o, date, 'Bán hàng và sửa chữa', [['111', 1000000, 0], ['511', 0, 1000000]], { sale: [{ amount: 600000, item: shirt }, { amount: 400000, item: repair }] });
+    }
+
+    it('applies the cut by line when the profile answered yes, and leaves the VAT column as it was before the cut', async () => {
+      const o = await org();
+      await setProfile(o, { vatCutEligible: 'yes' });
+      await sale(o);
+      const book = await s2a(o, '2026-09');
+      expect(book.lines.map((l) => [l.trade, l.vat])).toEqual([['goods', '6000'], ['services', '20000']]);
+      expect(book.totals).toMatchObject({ vat: '26000', pit: '11000', tax: '37000' });
+      expect(book.vatCut).toEqual({
+        answer: 'yes',
+        percent: '20',
+        applied: true,
+        lines: [{ trade: 'goods', cut: '1200', vatPayable: '4800' }, { trade: 'services', cut: '4000', vatPayable: '16000' }],
+        total: { cut: '5200', vatPayable: '20800' },
+        ifEligible: null,
+      });
+    });
+
+    it('applies no cut when the profile answered no, and shows no "if eligible" figure', async () => {
+      const o = await org();
+      await setProfile(o, { vatCutEligible: 'no' });
+      await sale(o);
+      const book = await s2a(o, '2026-09');
+      expect(book.vatCut).toMatchObject({ answer: 'no', applied: false, total: { cut: '0', vatPayable: '26000' }, ifEligible: null });
+      expect(book.vatCut.lines.map((l) => l.cut)).toEqual(['0', '0']);
+    });
+
+    it('computes without the cut when the profile has no answer, and shows what the VAT would be if eligible', async () => {
+      const o = await org();
+      await setProfile(o);
+      await sale(o);
+      const book = await s2a(o, '2026-09');
+      expect(book.vatCut).toMatchObject({ answer: null, applied: false, total: { cut: '0', vatPayable: '26000' }, ifEligible: { cut: '5200', vatPayable: '20800' } });
+      // The answer is stored as null, and a profile written with an explicit null reads the same.
+      const explicit = await org();
+      await setProfile(explicit, { vatCutEligible: null });
+      expect((await query<HouseholdProfileView>(explicit, 'finance.household.profile_get', { legalEntityId: explicit.household })).profile?.vatCutEligible).toBeNull();
+    });
+
+    it('holds the cut totals back while a part has no trade, like the tax totals', async () => {
+      const o = await org();
+      await setProfile(o, { vatCutEligible: 'yes' });
+      await entry(o, '2026-09-12', 'Đối soát sàn', [['111', 300000, 0], ['511', 0, 300000]]);
+      const book = await s2a(o, '2026-09');
+      expect(book.totals).toBeNull();
+      expect(book.vatCut).toMatchObject({ applied: true, total: null, ifEligible: null });
+    });
+
+    it('cuts nothing in a period after the cut ends (the dated row of 0 from 2027-01-01), whatever the answer', async () => {
+      const o = await org();
+      await setProfile(o, { vatCutEligible: 'yes' });
+      await sale(o, '2027-01-10');
+      const book = await s2a(o, '2027-01');
+      expect(book.vatCut).toMatchObject({ answer: 'yes', percent: '0', applied: false, total: { cut: '0', vatPayable: '26000' }, ifEligible: null });
+      // The same sale in December 2026 is cut.
+      const december = await org();
+      await setProfile(december, { vatCutEligible: 'yes' });
+      await sale(december, '2026-12-10');
+      expect((await s2a(december, '2026-12')).vatCut).toMatchObject({ percent: '20', applied: true, total: { cut: '5200', vatPayable: '20800' } });
+    });
+
+    it('refuses a period whose profiles answer the question differently, and gives the parts on either side of the change', async () => {
+      const o = await org();
+      await setProfile(o, { vatCutEligible: 'yes' });
+      await sale(o);
+      await setProfile(o, { effectiveFrom: '2026-09-16', vatCutEligible: 'no' });
+      await expect(s2a(o, '2026-09')).rejects.toMatchObject({ code: 'HOUSEHOLD_VAT_CUT_CHANGED' });
+      await expect(s2a(o, '2026-Q3')).rejects.toMatchObject({ code: 'HOUSEHOLD_VAT_CUT_CHANGED' });
+      expect((await s2a(o, '2026-08')).vatCut.answer).toBe('yes');
+      expect((await s2a(o, '2026-10')).vatCut.answer).toBe('no');
+    });
+
+    it('does not refuse a period whose profiles change but keep the same answer, including no answer', async () => {
+      const o = await org();
+      await setProfile(o);
+      await entry(o, '2026-09-05', 'Bán', [['111', 100000, 0], ['511', 0, 100000]]);
+      await setProfile(o, { effectiveFrom: '2026-09-16', einvoiceRegistered: true });
+      await expect(s2a(o, '2026-09')).resolves.toMatchObject({ total: '100000' });
+    });
+
+    it('makes the book provisional only while the cut row it relies on is unconfirmed', async () => {
+      const o = await org();
+      await setProfile(o, { vatCutEligible: 'yes' });
+      await sale(o);
+      // Every row is `commentary` here (restored in beforeAll) except the cut: it is confirmed, so it adds no entry.
+      expect((await s2a(o, '2026-09')).unconfirmed.map((u) => u.kind)).toEqual(['form', 'rate', 'rate']);
+    });
+  });
 });

@@ -1235,6 +1235,7 @@ export interface FinanceHouseholdProfileTable {
   representative_name: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  vat_cut_eligible: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.household_return_form_version */

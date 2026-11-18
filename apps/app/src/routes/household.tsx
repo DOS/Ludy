@@ -7,7 +7,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { HOUSEHOLD_EXPENSE_GROUPS, HOUSEHOLD_TRADES, vietnamToday, type HouseholdProfileSet, type HouseholdS2a, type HouseholdS2b } from '@crove/kernel-contract';
+import { HOUSEHOLD_EXPENSE_GROUPS, HOUSEHOLD_TRADES, vietnamToday, type HouseholdProfileSet, type HouseholdS2a, type HouseholdS2b, type HouseholdVatCut } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -218,7 +218,7 @@ function S2aBook({ entityId, variant = 'S2a' }: { entityId: string; variant?: 'S
                 {t('s2aDraft')}
                 <ul className="mt-1 list-disc pl-5">
                   {data.unconfirmed.map((u) => (
-                    <li key={`${u.kind}-${u.key}`}>{u.kind === 'form' ? t('cnkdUnconfirmedForm', { key: u.key, date: f.date(u.effectiveFrom) }) : t('cnkdUnconfirmedRate', { trade: tradeName(u.key), date: f.date(u.effectiveFrom) })}</li>
+                    <li key={`${u.kind}-${u.key}`}>{u.kind === 'form' ? t('cnkdUnconfirmedForm', { key: u.key, date: f.date(u.effectiveFrom) }) : u.kind === 'reduction' ? t('cnkdUnconfirmedReduction', { date: f.date(u.effectiveFrom) }) : t('cnkdUnconfirmedRate', { trade: tradeName(u.key), date: f.date(u.effectiveFrom) })}</li>
                   ))}
                 </ul>
               </AlertDescription>
@@ -294,6 +294,7 @@ function S2aBook({ entityId, variant = 'S2a' }: { entityId: string; variant?: 'S
               </dd>
             </dl>
           )}
+          <VatCutNotes cut={data.vatCut} prefix={`household-${p}`} />
         </>
       )}
     </Card>
@@ -580,7 +581,7 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
                 {t('cnkdDraft')}
                 <ul className="mt-1 list-disc pl-5">
                   {data.unconfirmed.map((u) => (
-                    <li key={`${u.kind}-${u.key}`}>{u.kind === 'form' ? t('cnkdUnconfirmedForm', { key: u.key, date: f.date(u.effectiveFrom) }) : t('cnkdUnconfirmedRate', { trade: t(`tradeNames.${u.key as (typeof HOUSEHOLD_TRADES)[number]}`), date: f.date(u.effectiveFrom) })}</li>
+                    <li key={`${u.kind}-${u.key}`}>{u.kind === 'form' ? t('cnkdUnconfirmedForm', { key: u.key, date: f.date(u.effectiveFrom) }) : u.kind === 'reduction' ? t('cnkdUnconfirmedReduction', { date: f.date(u.effectiveFrom) }) : t('cnkdUnconfirmedRate', { trade: t(`tradeNames.${u.key as (typeof HOUSEHOLD_TRADES)[number]}`), date: f.date(u.effectiveFrom) })}</li>
                   ))}
                 </ul>
               </AlertDescription>
@@ -639,6 +640,7 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
               )}
             </dl>
           )}
+          <VatCutNotes cut={data.vatCut} prefix="household-cnkd" />
           <p className="mt-3 text-xs text-muted-foreground">{t('cnkdWithheldHint')}</p>
           {data.withheld.settlements.length > 0 && (
             <ul className="mt-1 list-disc pl-5 text-sm">
@@ -654,6 +656,33 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
   );
 }
 
+// The Decree 174 VAT cut under the totals of a book (#3710): the cut and the VAT payable when the profile answered yes, and when it did not answer, what the VAT would be if the household were eligible.
+function VatCutNotes({ cut, prefix }: { cut: HouseholdVatCut; prefix: string }) {
+  const t = useTranslations('household');
+  const f = useFormat();
+  return (
+    <>
+      {cut.applied && cut.total && (
+        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm" data-testid={`${prefix}-vatcut`}>
+          <dt className="text-subtle-foreground">{t('vatCutLine', { percent: cut.percent })}</dt>
+          <dd className="tabular-nums" data-testid={`${prefix}-vatcut-amount`}>
+            {f.money(cut.total.cut)}
+          </dd>
+          <dt className="text-subtle-foreground">{t('vatCutPayable')}</dt>
+          <dd className="tabular-nums" data-testid={`${prefix}-vatcut-payable`}>
+            {f.money(cut.total.vatPayable)}
+          </dd>
+        </dl>
+      )}
+      {cut.ifEligible && (
+        <Alert className="mt-3" data-testid={`${prefix}-vatcut-ask`}>
+          <AlertDescription>{t('vatCutIfEligible', { vat: f.money(cut.ifEligible.vatPayable), cut: f.money(cut.ifEligible.cut) })}</AlertDescription>
+        </Alert>
+      )}
+    </>
+  );
+}
+
 const GROUPS = [1, 2, 3] as const;
 
 function ProfileForm({ entityId, onDone }: { entityId: string; onDone: () => void }) {
@@ -663,6 +692,7 @@ function ProfileForm({ entityId, onDone }: { entityId: string; onDone: () => voi
   const [method, setMethod] = useState<'percentage' | 'income'>('percentage');
   const [trades, setTrades] = useState<string[]>(['goods']);
   const [einvoice, setEinvoice] = useState(false);
+  const [vatCut, setVatCut] = useState<'' | 'yes' | 'no'>('');
   const [name, setName] = useState('');
   // One key per request is not needed: a profile row is refused when it repeats a date, so a retry cannot add a second one.
   const pitMethod: HouseholdProfileSet['pitMethod'] = taxGroup === 1 ? null : taxGroup === 3 ? 'income' : method;
@@ -676,6 +706,7 @@ function ProfileForm({ entityId, onDone }: { entityId: string; onDone: () => voi
         trades: HOUSEHOLD_TRADES.filter((x) => trades.includes(x)),
         einvoiceRegistered: einvoice,
         representativeName: name.trim() === '' ? null : name.trim(),
+        vatCutEligible: vatCut === '' ? null : vatCut,
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries();
@@ -729,6 +760,15 @@ function ProfileForm({ entityId, onDone }: { entityId: string; onDone: () => voi
         <input type="checkbox" checked={einvoice} onChange={(e) => setEinvoice(e.target.checked)} />
         {t('einvoice')}
       </label>
+      <div className="space-y-1">
+        <Label htmlFor="hh-vatcut">{t('vatCutQuestion')}</Label>
+        <NativeSelect id="hh-vatcut" value={vatCut} onChange={(e) => setVatCut(e.target.value as '' | 'yes' | 'no')} data-testid="household-profile-vatcut">
+          <NativeSelectOption value="">{t('vatCutAnswerNone')}</NativeSelectOption>
+          <NativeSelectOption value="yes">{t('vatCutAnswerYes')}</NativeSelectOption>
+          <NativeSelectOption value="no">{t('vatCutAnswerNo')}</NativeSelectOption>
+        </NativeSelect>
+        <p className="max-w-xl text-xs text-muted-foreground">{t('vatCutHint')}</p>
+      </div>
       <div className="space-y-1">
         <Label htmlFor="hh-name">{t('representative')}</Label>
         <Input id="hh-name" className="max-w-sm" maxLength={200} value={name} onChange={(e) => setName(e.target.value)} />
@@ -784,6 +824,8 @@ function ProfileCard({ entityId, canEdit }: { entityId: string; canEdit: boolean
           <dd>{p.trades.map((x) => t(`tradeNames.${x}`)).join(', ')}</dd>
           <dt className="text-subtle-foreground">{t('einvoice')}</dt>
           <dd>{p.einvoiceRegistered ? t('yes') : t('no')}</dd>
+          <dt className="text-subtle-foreground">{t('vatCutProfile')}</dt>
+          <dd data-testid="household-profile-vatcut-answer">{p.vatCutEligible === 'yes' ? t('vatCutAnswerYes') : p.vatCutEligible === 'no' ? t('vatCutAnswerNo') : t('vatCutAnswerNone')}</dd>
           {p.representativeName && (
             <>
               <dt className="text-subtle-foreground">{t('representative')}</dt>

@@ -9,6 +9,8 @@
 //   (a marketplace settlement, a manual voucher) and any item whose trade the profile does not list is `unassigned`. any `unassigned` part holds the totals back (`totals` is null), as in the CNKD.
 // - While the form or a percentage in use is `commentary` (the accountant has not confirmed it, #2520) the book is still given, with `commentary` and the list of unconfirmed rows, so the screen
 //   and the Excel file label every figure "Số liệu tạm, kế toán chưa xác nhận tỷ lệ"; the label goes by itself when later dated `confirmed` rows exist (owner's direction of 2026-11-17).
+// - The Decree 174 VAT cut is not applied to all revenue (#3710): the profile's answer decides (yes applies it, no applies none, not answered computes without it and shows the VAT if eligible). `vatCut`
+//   carries the cut by line; `vat` stays the VAT before the cut. A profile whose answer changes inside the period is refused (HOUSEHOLD_VAT_CUT_CHANGED), like a change of trades.
 // Amounts are decimal strings through decimal.js, never JS numbers.
 import type { HouseholdS2a, HouseholdS2aRow } from '@crove/kernel-contract';
 import { HOUSEHOLD_TRADES, zHouseholdS2a, zHouseholdS2aGet, type HouseholdTrade } from '@crove/kernel-contract';
@@ -18,6 +20,7 @@ import { money, sum, toMoney } from '@crove/l10n-vn';
 import { pickInForce } from './domain/household-rules.ts';
 import { splitAmount, taxOn, type SplitBucket, type SplitWeight } from './domain/household-tax.ts';
 import { householdBookWindow, householdSalesRows, type HouseholdBookWindow } from './household-books.ts';
+import { vatCutBlock, vatCutInForce, vatCutUnconfirmed } from './household-vat-cut.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const CHUNK = 500;
@@ -160,6 +163,10 @@ export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow
       })()
     : null;
 
+  // The Decree 174 VAT cut on the period's last day, applied only as the household's profile answer says (#3710); the books carry it as a block next to the VAT, which stays the VAT before the cut.
+  const cutRow = await vatCutInForce(ctx, w.to);
+  const vatCut = vatCutBlock({ answer: w.profile.vatCutEligible, cut: cutRow, lines, complete: totals !== null });
+
   const unconfirmed: HouseholdS2a['unconfirmed'] = [];
   // The layout of the book in force on the period's last day, from its own row (the book rule of the profile view carries no date), so the label follows the same day as the rates.
   const formRows = await ctx.trx.selectFrom('crove_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'status']).where('book', '=', book).where('effective_from', '<=', w.to).execute();
@@ -172,6 +179,9 @@ export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow
     if (rate.status !== 'confirmed') unconfirmed.push({ kind: 'rate', key: t, effectiveFrom: rate.effective_from });
   }
 
+  const cutUnconfirmed = vatCutUnconfirmed(w.profile.vatCutEligible, cutRow);
+  if (cutUnconfirmed) unconfirmed.push(cutUnconfirmed);
+
   const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();
   return {
     period: { period: w.ledger.period.period, from: w.from, to: w.to },
@@ -183,6 +193,7 @@ export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow
     unassigned,
     unassignedGross,
     totals,
+    vatCut,
     unconfirmed,
     commentary: unconfirmed.length > 0,
   };

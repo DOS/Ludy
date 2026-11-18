@@ -513,6 +513,8 @@ export const STOCK_TRADES = ['goods', 'services', 'catering', 'digital_content',
 export type StockTrade = (typeof STOCK_TRADES)[number];
 // The household business kind (#2517): the fixed sets its CHECK constraints keep.
 export const HOUSEHOLD_PIT_METHODS = ['percentage', 'income'] as const;
+export const HOUSEHOLD_VAT_CUT_ANSWERS = ['yes', 'no'] as const;
+export type HouseholdVatCutAnswer = (typeof HOUSEHOLD_VAT_CUT_ANSWERS)[number];
 export const HOUSEHOLD_RULE_STATUSES = ['commentary', 'confirmed'] as const;
 export const HOUSEHOLD_EXPENSE_GROUPS = ['materials_goods', 'wages_insurance', 'depreciation', 'outside_services', 'interest', 'other'] as const;
 export const HOUSEHOLD_BOOKS = ['S1a', 'S2a', 'S2b', 'S2c', 'S2d', 'S2e', 'S3a'] as const;
@@ -533,7 +535,7 @@ export type StockAliasTable = Refine<G.FinanceStockAliasTable, { legal_entity_id
 // The household business kind (#2517): the profile of an entity of kind household, and the law as dated rows (global, read-only for every org).
 export type HouseholdProfileTable = Refine<
   G.FinanceHouseholdProfileTable,
-  { pit_method: HouseholdPitMethod | null; trades: StockTrade[]; legal_entity_id: LegalEntityColumn },
+  { pit_method: HouseholdPitMethod | null; trades: StockTrade[]; vat_cut_eligible: ColumnType<HouseholdVatCutAnswer | null, HouseholdVatCutAnswer | null, G.NotGranted>; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
 export type HouseholdThresholdTable = Refine<G.FinanceHouseholdThresholdTable, { status: HouseholdRuleStatus }>;

@@ -34,13 +34,13 @@ const E2 = '00000000-0000-4000-8000-000000000002';
 
 const income = (): HouseholdProfileView => ({
   date: '2026-11-09',
-  profile: { effectiveFrom: '2026-01-01', taxGroup: 3, pitMethod: 'income', trades: ['goods', 'services'], einvoiceRegistered: false, representativeName: 'Nguyễn Văn A' },
+  profile: { effectiveFrom: '2026-01-01', taxGroup: 3, pitMethod: 'income', trades: ['goods', 'services'], einvoiceRegistered: false, representativeName: 'Nguyễn Văn A', vatCutEligible: null },
   books: [{ book: 'S2b', version: '2026.1', name: 'Sổ doanh thu bán hàng hóa, dịch vụ (S2b-HKD)', status: 'commentary' }],
   commentary: true,
 });
 const group1 = (): HouseholdProfileView => ({
   date: '2026-11-09',
-  profile: { effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, representativeName: null },
+  profile: { effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, representativeName: null, vatCutEligible: null },
   books: [{ book: 'S1a', version: '2026.1', name: 'Sổ doanh thu bán hàng hóa, dịch vụ (S1a-HKD)', status: 'commentary' }],
   commentary: true,
 });
@@ -67,6 +67,7 @@ const book = (over: Partial<HouseholdS2b> = {}): HouseholdS2b => ({
   unassigned: '0',
   unassignedGross: '0',
   totals: { revenue: '900000', vat: '25000' },
+  vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [], total: null, ifEligible: null },
   unconfirmed: [
     { kind: 'form', key: 'S2b 2026.1', effectiveFrom: '2026-01-01' },
     { kind: 'rate', key: 'goods', effectiveFrom: '2026-01-01' },

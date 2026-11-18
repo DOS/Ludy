@@ -149,7 +149,7 @@ suite('household business profile and rules (#2517)', () => {
       await expect(setProfile(o, bad)).rejects.toMatchObject({ code: 'HOUSEHOLD_PROFILE_METHOD' });
     }
     await expect(setProfile(o, { legalEntityId: o.company })).rejects.toMatchObject({ code: 'HOUSEHOLD_NOT_HOUSEHOLD' });
-    for (const bad of [{ taxGroup: 4 }, { taxGroup: 0 }, { trades: [] }, { trades: ['cars'] }, { trades: ['goods', 'goods'] }, { effectiveFrom: '2026-13-01' }, { representativeName: '' }]) {
+    for (const bad of [{ taxGroup: 4 }, { taxGroup: 0 }, { trades: [] }, { trades: ['cars'] }, { trades: ['goods', 'goods'] }, { effectiveFrom: '2026-13-01' }, { representativeName: '' }, { vatCutEligible: 'maybe' }]) {
       await expect(setProfile(o, bad)).rejects.toMatchObject({ code: 'VALIDATION' });
     }
     // The database holds the kind rule too, for a writer that skips the command.
@@ -249,8 +249,26 @@ suite('household business profile and rules (#2517)', () => {
     for (const who of [o.owner, o.admin, o.member, o.viewer]) expect((await profileAt(o, '2026-06-30', who)).profile?.taxGroup).toBe(1);
     const rows = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.household.profile_set' AND outcome = 'ok'`, [o.orgId])).rows);
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.detail).toMatchObject({ legalEntityId: o.household, effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false });
+    expect(rows[0]?.detail).toMatchObject({ legalEntityId: o.household, effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, vatCutEligible: null });
     expect(JSON.stringify(rows[0]?.detail)).not.toContain('Nguyễn');
+  });
+
+  it('keeps the household answer on the Decree 174 VAT cut as part of its profile: not answered by default, yes or no from a date, never edited in place (#3710)', async () => {
+    const o = await org();
+    // Not answered: null, whether the field is left out or sent as null.
+    const first = await setProfile(o);
+    expect(first.profile?.vatCutEligible).toBeNull();
+    // A change is a new row from its date; the earlier date still reads the earlier answer.
+    const yes = await setProfile(o, { effectiveFrom: '2026-07-01', vatCutEligible: 'yes' });
+    expect(yes.profile?.vatCutEligible).toBe('yes');
+    await setProfile(o, { effectiveFrom: '2026-10-01', vatCutEligible: 'no' });
+    expect((await profileAt(o, '2026-06-30')).profile?.vatCutEligible).toBeNull();
+    expect((await profileAt(o, '2026-08-15')).profile?.vatCutEligible).toBe('yes');
+    expect((await profileAt(o, '2026-12-31')).profile?.vatCutEligible).toBe('no');
+    // The audit row holds the answer (it is not personal data), and the table refuses a value outside the two.
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.household.profile_set' AND outcome = 'ok' ORDER BY detail->>'effectiveFrom'`, [o.orgId])).rows);
+    expect(audit.map((r) => r.detail.vatCutEligible)).toEqual([null, 'yes', 'no']);
+    await expect(admin((c) => c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, vat_cut_eligible) VALUES ($1, $2, '2027-01-01', 1, 'maybe')", [o.orgId, o.household]))).rejects.toMatchObject({ code: '23514' });
   });
 
   it("shows another org's household nothing", async () => {

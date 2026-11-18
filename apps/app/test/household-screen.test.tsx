@@ -29,7 +29,7 @@ const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
 const profile = (over: Partial<HouseholdProfileView> = {}): HouseholdProfileView => ({
   date: '2026-11-09',
-  profile: { effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, representativeName: 'Nguyễn Văn A' },
+  profile: { effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, representativeName: 'Nguyễn Văn A', vatCutEligible: null },
   books: [{ book: 'S1a', version: '2026.1', name: 'Sổ doanh thu bán hàng hóa, dịch vụ (S1a-HKD)', status: 'commentary' }],
   commentary: true,
   ...over,
@@ -51,6 +51,7 @@ const cnkd = (over: Partial<HouseholdCnkd> = {}): HouseholdCnkd => ({
   lines: [{ trade: 'goods', revenue: '1600000', vatPercent: '1', pitPercent: '0.5', vat: '16000', pit: '8000' }],
   unassigned: '0',
   totals: { revenue: '1600000', vat: '16000', pit: '8000', tax: '24000' },
+  vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [], total: null, ifEligible: null },
   withheld: { total: '4200', settlements: [{ id: '00000000-0000-4000-8000-0000000000a1', platform: 'shopee', periodStart: '2026-10-01', periodEnd: '2026-10-15', taxWithheld: '4200' }] },
   due: '19800',
   overpaid: '0',
@@ -63,7 +64,7 @@ const cnkd = (over: Partial<HouseholdCnkd> = {}): HouseholdCnkd => ({
 });
 const percentage = (trades: Array<'goods' | 'services'> = ['goods']): HouseholdProfileView =>
   profile({
-    profile: { effectiveFrom: '2026-01-01', taxGroup: 2, pitMethod: 'percentage', trades, einvoiceRegistered: false, representativeName: 'Nguyễn Văn A' },
+    profile: { effectiveFrom: '2026-01-01', taxGroup: 2, pitMethod: 'percentage', trades, einvoiceRegistered: false, representativeName: 'Nguyễn Văn A', vatCutEligible: null },
     books: [{ book: 'S2a', version: '2026.1', name: 'Sổ doanh thu bán hàng hóa, dịch vụ (S2a-HKD)', status: 'commentary' }],
   });
 const entity = { id: '00000000-0000-4000-8000-0000000000e1', name: 'Hộ kinh doanh Nguyễn Văn A', kind: 'household', taxCode: null, isDefault: false };
@@ -114,7 +115,7 @@ describe('the household books screen (#2517)', () => {
   it('shows no S1a for a method that keeps other books, and says the others are not built yet', () => {
     const html = page('owner', {
       profile: profile({
-        profile: { effectiveFrom: '2026-01-01', taxGroup: 3, pitMethod: 'income', trades: ['goods', 'services'], einvoiceRegistered: true, representativeName: null },
+        profile: { effectiveFrom: '2026-01-01', taxGroup: 3, pitMethod: 'income', trades: ['goods', 'services'], einvoiceRegistered: true, representativeName: null, vatCutEligible: null },
         books: [{ book: 'S2d', version: '2026.1', name: 'Sổ chi tiết vật liệu, dụng cụ, sản phẩm, hàng hóa (S2d-HKD)', status: 'commentary' }],
       }),
     });
@@ -220,7 +221,7 @@ describe('the household books screen (#2517)', () => {
     it('shows no worksheet for group 1 or the income method, and every role reads it', () => {
       expect(page('owner')).not.toContain('data-testid="household-cnkd"');
       cache.current.clear();
-      const income = profile({ profile: { effectiveFrom: '2026-01-01', taxGroup: 3, pitMethod: 'income', trades: ['goods'], einvoiceRegistered: false, representativeName: null }, books: [] });
+      const income = profile({ profile: { effectiveFrom: '2026-01-01', taxGroup: 3, pitMethod: 'income', trades: ['goods'], einvoiceRegistered: false, representativeName: null, vatCutEligible: null }, books: [] });
       expect(page('owner', { profile: income })).not.toContain('data-testid="household-cnkd"');
       for (const role of ['admin', 'member', 'viewer'] as const) {
         cache.current.clear();
@@ -236,3 +237,35 @@ describe('the household books screen (#2517)', () => {
     });
   });
 });
+
+describe('the Decree 174 VAT cut on the 01/CNKD screen and in the profile (#3710 slice 2)', () => {
+  beforeEach(() => cache.current.clear());
+  const text = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+
+  it('shows the cut and the VAT to pay after it when the profile answered yes', () => {
+    const html = page('owner', {
+      profile: percentage(),
+      cnkd: cnkd({ vatCut: { answer: 'yes', percent: '20.0000', applied: true, lines: [{ trade: 'goods', cut: '3200', vatPayable: '12800' }], total: { cut: '3200', vatPayable: '12800' }, ifEligible: null } }),
+    });
+    expect(html).toContain('data-testid="household-cnkd-vatcut"');
+    expect(text(html)).toContain('VAT cut 20.0000% (Decree 174) ₫3,200');
+    expect(text(html)).toContain('VAT to pay after the cut ₫12,800');
+  });
+
+  it('says what the VAT would be if eligible when the profile has not answered', () => {
+    const html = page('owner', {
+      profile: percentage(),
+      cnkd: cnkd({ vatCut: { answer: null, percent: '20.0000', applied: false, lines: [], total: { cut: '0', vatPayable: '16000' }, ifEligible: { cut: '3200', vatPayable: '12800' } } }),
+    });
+    expect(html).toContain('data-testid="household-cnkd-vatcut-ask"');
+    expect(text(html)).toContain('If the household is eligible, the VAT would be ₫12,800 (cut by ₫3,200)');
+  });
+
+  it('shows the profile answer on the profile card, in each state', () => {
+    const p = (answer: 'yes' | 'no' | null) => profile({ profile: { effectiveFrom: '2026-01-01', taxGroup: 2, pitMethod: 'percentage', trades: ['goods'], einvoiceRegistered: false, representativeName: null, vatCutEligible: answer } });
+    expect(text(page('owner', { profile: p('yes') }))).toContain('VAT cut (Decree 174) Yes, eligible for the cut');
+    expect(text(page('owner', { profile: p('no') }))).toContain('VAT cut (Decree 174) No, not eligible');
+    expect(text(page('owner', { profile: p(null) }))).toContain('VAT cut (Decree 174) Not answered');
+  });
+});
+

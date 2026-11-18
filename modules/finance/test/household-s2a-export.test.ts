@@ -27,6 +27,7 @@ const book = (over: Partial<HouseholdS2a> = {}): HouseholdS2a => ({
   unassigned: '0',
   unassignedGross: '0',
   totals: { revenue: '1500000', vat: '31000', pit: '13500', tax: '44500' },
+  vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [{ trade: 'goods', cut: '0', vatPayable: '11000' }, { trade: 'services', cut: '0', vatPayable: '20000' }], total: { cut: '0', vatPayable: '31000' }, ifEligible: null },
   unconfirmed: [
     { kind: 'form', key: 'S2a 2026.1', effectiveFrom: '2026-01-01' },
     { kind: 'rate', key: 'goods', effectiveFrom: '2026-01-01' },
@@ -163,5 +164,30 @@ describe('the S2a-HKD workbook', () => {
     const dump: string[] = [];
     sheet.eachRow((row) => row.eachCell((cell) => dump.push(String(cell.value))));
     expect(dump).toContain('=HYPERLINK("http://evil")');
+  });
+});
+
+describe('the S2a-HKD workbook and the Decree 174 VAT cut (#3710)', () => {
+  const cutLines = [{ trade: 'goods' as const, cut: '2200', vatPayable: '8800' }, { trade: 'services' as const, cut: '4000', vatPayable: '16000' }];
+
+  it('writes the cut and the tax after it when the profile answered yes', async () => {
+    const { rows } = await rowsOf(book({ vatCut: { answer: 'yes', percent: '20.0000', applied: true, lines: cutLines, total: { cut: '6200', vatPayable: '24800' }, ifEligible: null } }));
+    expect(find(rows, 'Giảm thuế GTGT 20.0000% theo Nghị định 174')).toContain('6200');
+    expect(find(rows, 'Thuế GTGT phải nộp sau giảm')).toContain('24800');
+    // The tax total follows: VAT payable 24800 plus the PIT 13500.
+    expect(find(rows, 'Tổng thuế GTGT và TNCN')).toContain('38300');
+  });
+
+  it('writes no cut row and no "if eligible" line when the answer is no', async () => {
+    const { rows } = await rowsOf(book());
+    expect(rows.flat().some((t) => t.includes('Nghị định 174'))).toBe(false);
+    expect(find(rows, 'Tổng thuế GTGT và TNCN')).toContain('44500');
+  });
+
+  it('says what the VAT would be if eligible when the profile has no answer, without applying the cut', async () => {
+    const { rows } = await rowsOf(book({ vatCut: { answer: null, percent: '20.0000', applied: false, lines: [{ trade: 'goods', cut: '0', vatPayable: '11000' }, { trade: 'services', cut: '0', vatPayable: '20000' }], total: { cut: '0', vatPayable: '31000' }, ifEligible: { cut: '6200', vatPayable: '24800' } } }));
+    expect(rows.flat().some((t) => t.includes('nếu thuộc diện được giảm, thuế GTGT sẽ là 24800 đồng (giảm 6200 đồng)'))).toBe(true);
+    expect(find(rows, 'Thuế GTGT phải nộp sau giảm')).toBeUndefined();
+    expect(find(rows, 'Tổng thuế GTGT và TNCN')).toContain('44500');
   });
 });

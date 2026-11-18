@@ -34,13 +34,13 @@ const E2 = '00000000-0000-4000-8000-000000000002';
 
 const percentage = (): HouseholdProfileView => ({
   date: '2026-11-09',
-  profile: { effectiveFrom: '2026-01-01', taxGroup: 2, pitMethod: 'percentage', trades: ['goods', 'services'], einvoiceRegistered: false, representativeName: 'Nguyễn Văn A' },
+  profile: { effectiveFrom: '2026-01-01', taxGroup: 2, pitMethod: 'percentage', trades: ['goods', 'services'], einvoiceRegistered: false, representativeName: 'Nguyễn Văn A', vatCutEligible: null },
   books: [{ book: 'S2a', version: '2026.1', name: 'Sổ doanh thu theo ngành nghề (S2a-HKD)', status: 'commentary' }],
   commentary: true,
 });
 const group1 = (): HouseholdProfileView => ({
   date: '2026-11-09',
-  profile: { effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, representativeName: null },
+  profile: { effectiveFrom: '2026-01-01', taxGroup: 1, pitMethod: null, trades: ['goods'], einvoiceRegistered: false, representativeName: null, vatCutEligible: null },
   books: [{ book: 'S1a', version: '2026.1', name: 'Sổ doanh thu bán hàng hóa, dịch vụ (S1a-HKD)', status: 'commentary' }],
   commentary: true,
 });
@@ -67,6 +67,7 @@ const book = (over: Partial<HouseholdS2a> = {}): HouseholdS2a => ({
   unassigned: '0',
   unassignedGross: '0',
   totals: { revenue: '900000', vat: '25000', pit: '10500', tax: '35500' },
+  vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [], total: null, ifEligible: null },
   unconfirmed: [
     { kind: 'form', key: 'S2a 2026.1', effectiveFrom: '2026-01-01' },
     { kind: 'rate', key: 'goods', effectiveFrom: '2026-01-01' },
@@ -178,3 +179,39 @@ describe('the S2a-HKD book on the household screen (#2517 slice 2a)', () => {
     expect(html).toContain('Hàng hóa');
   });
 });
+
+describe('the Decree 174 VAT cut on the S2a screen (#3710 slice 2)', () => {
+  beforeEach(() => cache.current.clear());
+  const lines = [
+    { trade: 'goods' as const, cut: '1000', vatPayable: '4000' },
+    { trade: 'services' as const, cut: '4000', vatPayable: '16000' },
+  ];
+
+  it('shows the cut and the VAT to pay after it when the profile answered yes', () => {
+    const html = page({ s2a: book({ vatCut: { answer: 'yes', percent: '20.0000', applied: true, lines, total: { cut: '5000', vatPayable: '20000' }, ifEligible: null } }) });
+    expect(html).toContain('data-testid="household-s2a-vatcut"');
+    const text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+    expect(text).toContain('VAT cut 20.0000% (Decree 174) ₫5,000');
+    expect(text).toContain('VAT to pay after the cut ₫20,000');
+    expect(html).not.toContain('data-testid="household-s2a-vatcut-ask"');
+  });
+
+  it('says what the VAT would be if eligible when the profile has not answered, and shows no cut row', () => {
+    const html = page({ s2a: book({ vatCut: { answer: null, percent: '20.0000', applied: false, lines: [], total: { cut: '0', vatPayable: '25000' }, ifEligible: { cut: '5000', vatPayable: '20000' } } }) });
+    expect(html).toContain('data-testid="household-s2a-vatcut-ask"');
+    const text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ');
+    expect(text).toContain('If the household is eligible, the VAT would be ₫20,000 (cut by ₫5,000)');
+    expect(html).not.toContain('data-testid="household-s2a-vatcut"');
+  });
+
+  it('shows nothing about the cut when the answer is no', () => {
+    const html = page();
+    expect(html).not.toContain('household-s2a-vatcut');
+  });
+
+  it('lists the unconfirmed cut among the rows behind a provisional book', () => {
+    const html = page({ s2a: book({ unconfirmed: [{ kind: 'reduction', key: 'vat', effectiveFrom: '2026-01-01' }] }) });
+    expect(html.replace(/<[^>]*>/g, ' ')).toContain('The VAT cut of Decree 174, from');
+  });
+});
+
