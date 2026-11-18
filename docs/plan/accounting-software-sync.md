@@ -82,12 +82,15 @@ Fast Accounting desktop, Fast Accounting Online and Fast Business Online:
 ## What belongs in open source and what in Crove Cloud
 
 - **Ludy, open source, with no vendor approval:** Excel exports in another product's import template. AMIS and Fast fall here once a person obtains the real template files.
-- **Crove Cloud, a private connector:** the AMIS and ASP APIs.
-  - The `ClientID` is issued to one registered company (DOS) and is a secret. It also signs the callbacks, so it cannot ship in an AGPL repository.
-  - The callback needs a public address.
-  - Each customer's `access_code` would be stored sealed, under the customer's subject key, as the supplier bank numbers are.
-  - Ludy's core keeps the voucher model and the "what would be sent" preview. The Cloud connector does the push.
-  - This follows AGENTS.md: anything DOS-specific belongs in the private Crove Cloud layer.
+- **Ludy, open source, with the integrator's credentials in the deployment's own config:** the AMIS and ASP API connectors. Revised 2026-11-18, after the owner confirmed that DOS already holds approved MISA apps for the products with an open API.
+  - The adapter is generic, like the MISA meInvoice adapter already in `packages/einvoice`. Nothing in it is DOS-specific.
+  - The integrator's `ClientID` and secret are deployment secrets, read from the environment and never committed. The same secret signs the callbacks.
+    - Crove Cloud sets DOS's credentials.
+    - A self-hoster registers their own MISA app and sets theirs.
+    - Without credentials, the connector is off and the Excel exports still work.
+  - The callback endpoint is on Ludy's public edge. It verifies the HMAC before reading the body. The callback answers only the request's own record.
+  - Each customer's `access_code` is stored sealed, under the org's subject key, as the supplier bank numbers are. It is never shown again after it is saved.
+  - Live calls against MISA's sandbox follow the secret procedure in docs/contributing.md: the owner hands the credentials over by that procedure, never in a chat or an issue.
 
 ## The AI part (product gate)
 
@@ -104,9 +107,9 @@ AI never decides what is sent:
 |---|---|---|---|---|
 | 1 | Keep the MISA SME exports; finish #317's acceptance (one real import by the partner) | Ludy | the partner's accountant (#61) | M2, P0 (as now) |
 | 2 | AMIS Kế toán Excel export for the 7 voucher kinds Ludy already exports to MISA SME, sharing the MISA SME mappers where columns match | Ludy | the 7 AMIS template files, downloaded by a person with an AMIS account (a trial account is enough) | M3, P2 |
-| 3 | Register a product on developer.misa.vn for AMIS Kế toán and MISA ASP, and ask MISA in writing about fees, rate limits and whether a contract is needed | owner | the owner: an account, the business registration certificate, an approval wait of unknown length | M3, P2, `owner-action` |
-| 4 | AMIS API connector: push the vouchers as "đề nghị sinh chứng từ", read results by callback with a polling fallback, match parties and items | Crove Cloud | step 3 | M3, P2 |
-| 5 | MISA ASP API connector: the same, against ASP's read-only catalogues | Crove Cloud | step 3 | GA gate, P2 |
+| 3 | MISA apps for AMIS Kế toán and MISA ASP. Done: the owner confirmed on 2026-11-18 that DOS holds them; the credentials are handed over by the secret procedure when a live sandbox call is needed | owner | the handover only | M3, P2, `owner-action` |
+| 4 | AMIS API connector: push the vouchers as "đề nghị sinh chứng từ", read results by callback with a polling fallback, match parties and items | Ludy | none for the build, which is tested against a fake MISA server; the live sandbox check waits on the handover | M3, P2 |
+| 5 | MISA ASP API connector: the same, against ASP's read-only catalogues | Ludy | step 4 | GA gate, P2 |
 | 6 | Fast Excel export | Ludy | the real Fast import templates (a firm or the partner on Fast) | Icebox, P3 until a pilot firm uses Fast |
 | 7 | BRAVO, Effect, SAS Innova, Smart Pro, Base, 1C, KiotViet | none | not a fit, or nothing confirmed | Icebox, P3 |
 
@@ -116,8 +119,12 @@ Steps 2 and 6 follow the MISA SME pattern exactly:
 - a route and button per voucher kind;
 - an audit format per export.
 
-No new kernel surface is needed. Step 4 needs a design of its own: the sealed `access_code`, the callback endpoint in
-Cloud, idempotency through MISA's own reference field, and how a refused voucher shows in Ludy.
+No new kernel surface is needed for steps 2 and 6. Step 4 needs a design of its own:
+- the sealed `access_code`;
+- the callback route on the public edge (`http.ts`, which is a protected path and shared core);
+- idempotency through MISA's own `org_refid`;
+- how a refused voucher shows in Ludy;
+- the fact that MISA takes amounts as JSON numbers while Ludy keeps decimal strings.
 
 ## Decisions for the owner
 
@@ -125,10 +132,7 @@ Cloud, idempotency through MISA's own reference field, and how a refused voucher
    - If it is AMIS or ASP, steps 2 to 4 move ahead of other M3 work.
    - If it is MISA SME, as #317 assumed, the order stays as above.
    - Recommendation: ask the partner. Until then, keep the order above.
-2. **Register on MISA's developer portal (step 3)?**
-   - Only the owner can do it, because it needs the company's account and documents.
-   - Recommendation: yes, now. It is the slowest step and costs nothing to start, as far as the public pages say.
-   - Without it, the API connectors (steps 4 and 5) cannot start, and the Excel exports still work.
+2. **Register on MISA's developer portal (step 3)?** Answered 2026-11-18: DOS already holds the MISA apps. The owner hands over the key and secret when they are needed. The connectors therefore move into Ludy, with the credentials in deployment config (see above).
 3. **Who gets the AMIS templates (step 2)?**
    - Recommendation: the partner's accountant, if they use AMIS. Otherwise the owner, on a free AMIS trial.
    - Without them, step 2 waits.
