@@ -180,7 +180,23 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     const audit = await auditRows(o, 'finance.supplier_payment.bank_file.get');
     expect(audit.length).toBeGreaterThanOrEqual(1);
     const text = JSON.stringify(audit);
-    for (const secret of ['012345678901', HOLDER, 'Canary', OTHER, '330', '110']) expect(text).not.toContain(secret);
+    for (const secret of ['012345678901', HOLDER, 'Canary', OTHER]) expect(text).not.toContain(secret);
+    // The amounts are short digit strings, so a substring check would match inside a random id or a timestamp (".110Z"): walk the leaf values and the keys instead (#3779).
+    const leaves: unknown[] = [];
+    const keys: string[] = [];
+    const walk = (value: unknown): void => {
+      if (Array.isArray(value)) value.forEach(walk);
+      else if (value !== null && typeof value === 'object') {
+        for (const [key, inner] of Object.entries(value)) {
+          keys.push(key);
+          walk(inner);
+        }
+      } else leaves.push(value);
+    };
+    walk(audit);
+    expect(leaves.length).toBeGreaterThan(0);
+    for (const amount of ['330', '110', 330, 110]) expect(leaves).not.toContain(amount);
+    for (const key of ['amount', 'total']) expect(keys).not.toContain(key);
     // The same file twice: the same answer (the file is not stored, nothing is marked).
     expect(await fileOf(o, all.map((p) => p.id))).toEqual(file);
   });
