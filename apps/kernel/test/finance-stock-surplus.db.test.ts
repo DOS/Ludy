@@ -76,7 +76,8 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
     if (extraShortage) {
       const a = await makeItem(o, `A${randomUUID().slice(0, 4)}`);
       await move(o, a, '2026-09-05', '4');
-      lines.push({ itemId: a, countedQuantity: '4' });
+      // Four on the books, three counted, at a cost typed for it: a shortage of one (worth 10), beside the surplus of 150, so the surplus must not net it.
+      lines.push({ itemId: a, countedQuantity: '3', unitCost: '10' });
     }
     const countId = await count(o, '2026-09-30', lines);
     await approve(o, (await askCount(o, countId)).proposalId);
@@ -217,10 +218,10 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
     expect(none?.n).toBe('0');
   });
 
-  it('keeps the tag in the database: a voucher naming a count needs an executing finance.journal_voucher.record proposal, and a count is named by one voucher', async () => {
+  it('keeps the tag in the table: a voucher naming a count must name its proposal and no other kind of voucher (the check constraint; the trigger that ties it to finance.journal_voucher.record is the same rule for the application role, which these superuser inserts are exempt from)', async () => {
     const o = await org();
     const countId = await confirmedCount(o);
-    // Written as the application role would write it, with no proposal behind it: refused by the constraint (it must name its proposal) before any row exists.
+    // Written with no proposal behind it: refused by the constraint (it must name its proposal) before any row exists.
     await expect(
       rows(
         `INSERT INTO crove_finance.journal_voucher (org_id, legal_entity_id, voucher_date, description, surplus_count_id)

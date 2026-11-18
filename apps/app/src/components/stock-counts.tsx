@@ -182,7 +182,10 @@ function SurplusResolution({ count, canWrite, slug }: { count: StockCount; canWr
             <div className="mt-2 flex flex-col gap-2">
               <Label className="text-xs">
                 {t('surplusChoose')}
-                <NativeSelect className="mt-1 w-full" value={account} onChange={(e) => setAccount(e.target.value as SurplusAccount)} data-testid="stock-surplus-account">
+                <NativeSelect className="mt-1 w-full" value={account} onChange={(e) => {
+                    setAccount(e.target.value as SurplusAccount);
+                    setIdempotencyKey(crypto.randomUUID());
+                  }} data-testid="stock-surplus-account">
                   {SURPLUS_ACCOUNTS.map((a) => (
                     <NativeSelectOption key={a} value={a}>
                       {t(`surplusAccount${a}`)}
@@ -193,7 +196,10 @@ function SurplusResolution({ count, canWrite, slug }: { count: StockCount; canWr
               {account === '331' && (
                 <Label className="text-xs">
                   {t('surplusParty')}
-                  <NativeSelect className="mt-1 w-full" value={partyId} onChange={(e) => setPartyId(e.target.value)} data-testid="stock-surplus-party">
+                  <NativeSelect className="mt-1 w-full" value={partyId} onChange={(e) => {
+                      setPartyId(e.target.value);
+                      setIdempotencyKey(crypto.randomUUID());
+                    }} data-testid="stock-surplus-party">
                     <NativeSelectOption value="">{t('surplusChooseParty')}</NativeSelectOption>
                     {(parties.data ?? []).map((p) => (
                       <NativeSelectOption key={p.id} value={p.id}>

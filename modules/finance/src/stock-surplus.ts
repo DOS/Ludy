@@ -67,7 +67,10 @@ function refuseUnresolvable(count: CountSurplus): void {
 // The request of the voucher a person asked for: the lines from the count, never from the requester; dated today (the voucher's own guards refuse a locked period). Called by the voucher's
 // preparer, which builds the proposal from it as for any voucher and then tags it with the count.
 export async function surplusVoucherRequest(ctx: Ctx, request: SurplusResolutionRequest): Promise<{ request: JournalVoucherRequest; surplusCountId: string }> {
-  const { countId, account, partyId } = request.surplus;
+  // An id is compared and locked as text below: the lower-case form, whatever case the requester wrote (a uuid is accepted in both).
+  const countId = request.surplus.countId.toLowerCase();
+  const { account } = request.surplus;
+  const partyId = request.surplus.partyId?.toLowerCase();
   if (account === '331' && !partyId) throw new DomainError('STOCK_SURPLUS_PARTY_REQUIRED', 422, 'Ghi nhận vào 331 cần chọn nhà cung cấp là chủ của số hàng thừa');
   if (account !== '331' && partyId) throw new DomainError('STOCK_SURPLUS_PARTY_UNEXPECTED', 422, 'Chỉ chọn nhà cung cấp khi ghi nhận vào 331');
   const count = await countSurplus(ctx, countId, true);
