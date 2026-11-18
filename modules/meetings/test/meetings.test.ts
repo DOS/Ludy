@@ -201,6 +201,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.hook.get',
       'meetings.hook.delivery',
       'meetings.hook.target',
+      'meetings.mcp.list',
+      'meetings.mcp.minutes',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');
