@@ -380,6 +380,15 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "The recorder's own rough notes of a meeting, which may name or describe a person: read by the recorder alone; the owner's erasure edits the value out of every recorder's notes and counts them per recorder; deleted with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge)",
   },
+  // The chapters (table of contents) of a meeting (#3844): a short title and the second of the transcript line it starts at, typed by the recorder (or copied from a run of their own Vy, tainted until
+  // they review it), a draft that only the recorder reads until they publish it with the minutes, then read by the readers of the meeting. A title holds no email address and no run of eight or more
+  // digits (kernel-contract chapterTitleProblem, checked on every write), so the finder's probes (an email, 8 to 20 digits) cannot match it: there is no finder and no redaction of a value inside it.
+  // It is derived from the transcript, so it goes with the transcript: with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge), as a draft after 30 days.
+  'crove_meetings.meeting_chapter.title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "A chapter title of a meeting, which may name or describe a person: it has no email address or number of 8 digits or more by construction, so no search can find a value in it; read by the recorder alone until published, then by the meeting's readers; deleted with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge), and a draft 30 days after it was made",
+  },
   // The title of an event of a member's own Google Calendar (meetings B1, issue #3165): an 8-day cache (1 day back to 7 ahead) kept only while the member's switch "Cho Ludy đọc tên và giờ
   // cuộc họp trong lịch" is on. Read by that member alone (row security: an owner, an admin, another member, an agent and the system context read none), so there is no finder and no
   // erasure of a value inside it: a request is answered the way it is for the live preview, by the member turning the read off, which deletes it at once, or by disconnecting the calendar.

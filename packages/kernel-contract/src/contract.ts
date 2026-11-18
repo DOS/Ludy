@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
+import { zChapters, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
   zBulkApproveItems,
   SOCIAL_REVIEW_CHECKS_MAX,
@@ -1338,6 +1339,9 @@ export const contract = {
       // as the summary), `enhancePreview` the finished expansion with their own lines and Vy's told apart, copied into the draft by `copySummary`.
       notesGet: oc.input(zMeetingRef).output(zNotes),
       notesSave: oc.input(zNotesSave).output(zNotesSaved),
+      // The table of contents (#3844): `chaptersGet` the recorder's draft and published chapters, or a reader's published ones; `chaptersSave` the recorder's own set, replacing their draft.
+      chaptersGet: oc.input(zMeetingRef).output(zChapters),
+      chaptersSave: oc.input(zChaptersSave).output(zChaptersSaved),
       enhance: oc.input(zSummaryRef).output(zSummarized),
       enhancePreview: oc.input(zNotesPreviewInput).output(zNotesPreview),
       // Speaker names (#3502): the recorder's Vy may suggest which attendee a speaker label is; `speakerSuggestions` is what a finished summary run suggested and still applies,

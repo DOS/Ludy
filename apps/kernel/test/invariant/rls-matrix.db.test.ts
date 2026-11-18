@@ -110,7 +110,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
-  'crove_meetings.meeting_chapter',
   'crove_meetings.meeting_link',
   'crove_notes.attachment',
   'crove_notes.link',
@@ -2868,7 +2867,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     }),
   },
   // #3844 (meetings chapters): one chapter of a meeting's table of contents, a title and the second of the transcript line it starts at; a draft (born tainted when it comes from a run of the recorder's
-  // Vy) that only the recorder reads, and a published row that the readers of the meeting read too. Lands before its table (PENDING_TABLES).
+  // Vy) that only the recorder reads, and a published row that the readers of the meeting read too. The table is in main now.
   'crove_meetings.meeting_chapter': {
     make: (o) => {
       const meeting = meetingsMeetingRow(o);

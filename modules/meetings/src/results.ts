@@ -293,7 +293,9 @@ export const resultPublish = defineCommand({
       .where('tainted', '=', true)
       .unionAll(ctx.trx.selectFrom('crove_meetings.action_item').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('status', '=', 'suggested').where('tainted', '=', true))
       .executeTakeFirst();
-    if (unread) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
+    // The same for the draft chapters (#3844); the database refuses a tainted draft chapter too.
+    const unreadChapter = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).executeTakeFirst();
+    if (unread || unreadChapter) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
     // The draft is locked first: the nightly expiry (meetings.retention.shred, kind 'draft') then waits for this publish, or has already deleted the draft, in which
     // case none is found here and the summary published before it is not replaced by nothing.
     const draft = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().executeTakeFirst();
@@ -321,7 +323,23 @@ export const resultPublish = defineCommand({
       .where('status', '=', 'suggested')
       .returning(['id', 'title', 'who_drafted', 'when_parsed'])
       .execute();
-    if (results === 0 && items.length === 0) throw new DomainError('NOTHING_TO_PUBLISH', 409, 'There is no draft to share');
+    // The draft chapters (#3844) replace the chapters published before them, as the summary does. The meeting row is held, as meetings.chapters.save holds it, so a save and this publish are one after the other.
+    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forNoKeyUpdate().execute();
+    const draftChapters = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().execute();
+    let chapters = 0;
+    if (draftChapters.length > 0) {
+      await ctx.trx.deleteFrom('crove_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
+      const flipped = await ctx.trx
+        .updateTable('crove_meetings.meeting_chapter')
+        .set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` })
+        .where('org_id', '=', ctx.orgId)
+        .where('meeting_id', '=', input.meetingId)
+        .where('stage', '=', 'draft')
+        .returning('id')
+        .execute();
+      chapters = flipped.length;
+    }
+    if (results === 0 && items.length === 0 && chapters === 0) throw new DomainError('NOTHING_TO_PUBLISH', 409, 'There is no draft to share');
     // The recorder's own webhook (A6, #3164): when they have one that stands, the event for this publish is stored in this same transaction, and nowhere else. No model, no other reader.
     await enqueueMinutesHook(ctx, {
       meetingId: input.meetingId,
@@ -330,8 +348,8 @@ export const resultPublish = defineCommand({
       decisions: published && Array.isArray(published.decisions) ? published.decisions.filter((d): d is string => typeof d === 'string') : null,
       items: items.slice(0, 100).map((i) => ({ title: i.title, whoDrafted: i.who_drafted, whenParsed: i.when_parsed })),
     });
-    ctx.audit({ meetingId: input.meetingId, results, items: items.length });
-    return { meetingId: input.meetingId, results, items: items.length };
+    ctx.audit({ meetingId: input.meetingId, results, items: items.length, chapters });
+    return { meetingId: input.meetingId, results, items: items.length, chapters };
   },
 });
 
