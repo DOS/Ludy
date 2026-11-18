@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { serializeTaskChecklist, type TaskChecklistStep } from '@crove/kernel-contract';
+import { TASK_CHECKLIST_STEP_MAX, TASK_CHECKLIST_STEPS_MAX, serializeTaskChecklist, type TaskChecklistStep } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
@@ -136,18 +136,22 @@ export function NewTaskPanel({ chart, onClose }: { chart: Chart | undefined; onC
 // the description), then shows the form.
 export function EditTaskPanel({ taskId, chart, onClose }: { taskId: string; chart: Chart | undefined; onClose: () => void }) {
   const t = useTranslations('tasks');
+  // What had focus when the panel was asked for: the form appears after the read, and focus goes back to this when it closes.
+  const [opener] = useState(() => (typeof document === 'undefined' ? null : document.activeElement));
   // The task is read afresh each time the panel opens, and the form is built from that answer only: a copy left in the cache from an
   // earlier visit would show an old title or assignee, and the form keeps the values it starts from.
   const detail = useQuery({ ...orpc.tasks.get.queryOptions({ input: { id: taskId } }), refetchOnMount: 'always' });
   const [fresh, setFresh] = useState<{ task: TaskDetail } | null>(null);
   useEffect(() => {
-    if (!fresh && detail.data && !detail.isFetching) setFresh({ task: detail.data.task });
-  }, [fresh, detail.data, detail.isFetching]);
+    // A refetch that failed leaves the old copy in the cache: it is not shown as the task, the error is.
+    if (!fresh && detail.data && !detail.isFetching && !detail.isError) setFresh({ task: detail.data.task });
+  }, [fresh, detail.data, detail.isFetching, detail.isError]);
   if (fresh) {
     // An AI coworker holds the task: nothing can be changed until it lets go, so the panel says so and offers no form.
     if (fresh.task.checkedOut) {
       return (
         <FormPanel
+          opener={opener}
           title={t('editTask')}
           description={fresh.task.title}
           onClose={onClose}
@@ -161,12 +165,13 @@ export function EditTaskPanel({ taskId, chart, onClose }: { taskId: string; char
         </FormPanel>
       );
     }
-    return <EditTaskForm key={fresh.task.id} task={fresh.task} chart={chart} onClose={onClose} />;
+    return <EditTaskForm key={fresh.task.id} task={fresh.task} chart={chart} opener={opener} onClose={onClose} />;
   }
   // While the task is on its way nothing is drawn: a panel that is swapped for the form a moment later would lose the focus the form sets.
   if (!detail.error) return null;
   return (
     <FormPanel
+      opener={opener}
       title={t('editTask')}
       onClose={onClose}
       footer={
@@ -180,7 +185,7 @@ export function EditTaskPanel({ taskId, chart, onClose }: { taskId: string; char
   );
 }
 
-function EditTaskForm({ task, chart, onClose }: { task: TaskDetail; chart: Chart | undefined; onClose: () => void }) {
+function EditTaskForm({ task, chart, opener, onClose }: { task: TaskDetail; chart: Chart | undefined; opener: Element | null; onClose: () => void }) {
   const t = useTranslations('tasks');
   const tz = browserTimeZone();
   const [initial] = useState(task);
@@ -200,7 +205,11 @@ function EditTaskForm({ task, chart, onClose }: { task: TaskDetail; chart: Chart
   // What differs from the task as it was opened: the patch the server gets, and what a close would throw away.
   const nextTitle = title.trim();
   const nextAssignee = assignee || null;
-  const nextChecklist = normalizeChecklistSteps(checklist);
+  // A step typed in the new-step box and not added yet is saved with the form: pressing Save is the intent, not a reason to lose it.
+  const pending = stepDraft.trim();
+  const nextChecklist = normalizeChecklistSteps(
+    pending && checklist.length < TASK_CHECKLIST_STEPS_MAX ? [...checklist, { text: pending.slice(0, TASK_CHECKLIST_STEP_MAX), done: false }] : checklist,
+  );
   const patch = {
     ...(nextTitle !== '' && nextTitle !== initial.title ? { title: nextTitle } : {}),
     ...(description !== (initial.description ?? '') ? { description: description.trim() ? description.trim() : null } : {}),
@@ -236,6 +245,7 @@ function EditTaskForm({ task, chart, onClose }: { task: TaskDetail; chart: Chart
   };
   return (
     <FormPanel
+      opener={opener}
       title={t('editTask')}
       description={initial.title}
       busy={update.isPending}

@@ -22,6 +22,7 @@ export function FormPanel({
   label,
   wide = false,
   busy = false,
+  opener: openerProp,
   dirty = false,
   onClose,
   onSubmit,
@@ -35,6 +36,8 @@ export function FormPanel({
   // A form with a row of columns (the voucher's lines) takes a wider column from sm up.
   wide?: boolean;
   busy?: boolean;
+  // The element to give focus back to on close, for a panel that opens a moment after the press (it reads something first); by default the element focused when the panel mounts.
+  opener?: Element | null;
   // The form holds input that has not been saved: closing it asks first, and says what is lost.
   dirty?: boolean;
   onClose: () => void;
@@ -49,7 +52,8 @@ export function FormPanel({
   const formRef = useRef<HTMLFormElement>(null);
   // The panel is mounted when its button is pressed and unmounted when it closes, so the dialog does not know what opened it: the
   // element that had focus at that moment is remembered and gets focus back when the panel goes away (keyboard users land where they were).
-  const [opener] = useState(() => (typeof document === 'undefined' ? null : document.activeElement));
+  const [ownOpener] = useState(() => (typeof document === 'undefined' ? null : document.activeElement));
+  const opener = openerProp ?? ownOpener;
   useEffect(
     () => () => {
       window.setTimeout(() => {
@@ -76,16 +80,26 @@ export function FormPanel({
     // A field that already took the key (the new-step box adds its step on Enter) has had its say: saving too would read a form the add has not reached yet.
     if (event.defaultPrevented || !isSaveShortcut({ key: event.key, metaKey: event.metaKey, ctrlKey: event.ctrlKey, isComposing: event.nativeEvent.isComposing })) return;
     event.preventDefault();
-    if (!busy) event.currentTarget.requestSubmit();
+    // Not while the discard question is up (the keys then answer that question), and not while a save is on its way.
+    if (!busy && !asking) event.currentTarget.requestSubmit();
   };
   const content = (
     <>
-      <SheetBody className="space-y-4">{children}</SheetBody>
+      <SheetBody className="space-y-4">
+        {/* While a save is on its way the fields are locked, so what is typed after pressing Save is not silently dropped when the panel closes. */}
+        {onSubmit ? (
+          <fieldset disabled={busy} className="m-0 min-w-0 space-y-4 border-0 p-0">
+            {children}
+          </fieldset>
+        ) : (
+          children
+        )}
+      </SheetBody>
       {asking ? (
         <div role="alert" data-testid="panel-discard" className="space-y-3 border-t border-border bg-muted/50 p-4">
           <p className="text-sm text-foreground">{root('common.discardAsk')}</p>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button type="button" variant="destructive" onClick={onClose}>
+            <Button type="button" variant="destructive" disabled={busy} onClick={onClose}>
               {root('common.discard')}
             </Button>
             <Button type="button" autoFocus onClick={keepEditing}>

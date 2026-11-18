@@ -38,6 +38,14 @@ describe('FormPanel closing', () => {
     expect(source).toContain('document.activeElement');
     expect(source).toContain('opener.focus()');
   });
+  it('locks the fields while a save is on its way and does not save or discard then', () => {
+    expect(source).toContain('<fieldset disabled={busy}');
+    expect(source).toContain('if (!busy && !asking) event.currentTarget.requestSubmit()');
+    expect(source).toContain('variant="destructive" disabled={busy}');
+  });
+  it('can be told what to give focus back to', () => {
+    expect(source).toContain('opener: openerProp');
+  });
   it('puts focus on "keep editing" and back on the first field afterwards', () => {
     expect(source).toMatch(/<Button type="button" autoFocus onClick=\{keepEditing\}>/);
     expect(source).toContain("querySelector<HTMLElement>('input:not([type=hidden]), textarea, select')?.focus()");
