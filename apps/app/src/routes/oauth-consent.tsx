@@ -107,6 +107,7 @@ export function OauthConsentPage({ uid }: { uid: string }) {
             <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
               <li>{t(draftOn ? 'scope.readDraftOn' : 'scope.read')}</li>
               {draftOn && <li>{t('scope.draft')}</li>}
+              {kind === 'company' && <li data-testid="oauth-consent-meetings">{t('scope.meetings')}</li>}
               <li>{t(draftOn ? 'limitsDraft' : 'limits')}</li>
               <li>{t('actsAs')}</li>
               <li>{t('revokeHint', { days: details.data.expiresInDays })}</li>
