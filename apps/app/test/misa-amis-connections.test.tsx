@@ -64,12 +64,17 @@ describe('MisaAmisConnectionsCard', () => {
     expect(html).toContain(`>${en.misaAmisConnections.title}<`);
     expect(html).toContain(en.misaAmisConnections.noConnections);
     expect(html).toContain(`aria-label="${en.misaAmisConnections.connectTitle}"`);
-    expect(html).toMatch(/<input[^>]*type="password"[^>]*aria-label="Connection code from AMIS"/);
+    // A visible label above the field, tied to it, not a placeholder.
+    const id = /<label for="([^"]+)"[^>]*>Connection code from AMIS<\/label>/.exec(html)?.[1];
+    expect(id).toBeTruthy();
+    expect(html).toMatch(new RegExp(`<input[^>]*id="${id}"[^>]*type="password"|<input[^>]*type="password"[^>]*id="${id}"`));
+    expect(html).not.toContain('placeholder=');
     expect(html).toContain('autoComplete="off"');
     expect(html).not.toMatch(/<input[^>]*value="[^"]/);
     expect(html).toContain('never shown again');
     // One entity: nothing to choose.
-    expect(html).not.toContain(`aria-label="${en.misaAmisConnections.entity}"`);
+    expect(html).not.toContain(`>${en.misaAmisConnections.entity}</label>`);
+    expect(html).not.toContain('misa-amis-target');
   });
 
   it('lists a connection with "connected since" and its status, shows a disconnect button to an owner, and never carries the access code or any value of it', () => {
@@ -94,10 +99,19 @@ describe('MisaAmisConnectionsCard', () => {
     const entities = [entity('e1', 'Công ty TNHH Mẫu', true), entity('e2', 'Chi nhánh Hà Nội', false), entity('e3', 'Chi nhánh Đà Nẵng', false)];
     const html = card('admin', { entities, connections: [connection({ legalEntityId: 'e2' })] });
     expect(html).toContain('Chi nhánh Hà Nội</span>');
-    const select = /<select[^>]*aria-label="Legal entity"[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? '';
+    expect(html).toContain(`>${en.misaAmisConnections.entity}</label>`);
+    const select = /<select[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? '';
     expect(select).toContain('Công ty TNHH Mẫu');
     expect(select).toContain('Chi nhánh Đà Nẵng');
     expect(select).not.toContain('Chi nhánh Hà Nội');
+  });
+
+  it('names the one entity left to connect when the org has several, since there is no selector to show it', () => {
+    const entities = [entity('e1', 'Công ty TNHH Mẫu', true), entity('e2', 'Chi nhánh Hà Nội', false)];
+    const html = card('owner', { entities, connections: [connection({ legalEntityId: 'e1' })] });
+    expect(html).toContain('data-testid="misa-amis-target"');
+    expect(html).toMatch(/misa-amis-target[^>]*>[^<]*Legal entity[^<]*: [^<]*Chi nhánh Hà Nội/);
+    expect(html).not.toContain('<select');
   });
 
   it('says the connector is off, with no form, where the deployment does not offer it but an org still has a connection', () => {

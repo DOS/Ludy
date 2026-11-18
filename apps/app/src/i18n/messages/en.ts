@@ -5247,9 +5247,9 @@ export const en = {
     keep: 'Keep',
     status: {
       active: 'Connected',
-      expired: 'Expired, connect again',
+      expired: 'Expired, disconnect, then connect again',
       revoked: 'Disconnected',
-      error: 'Error, connect again',
+      error: 'Error, disconnect, then connect again',
     },
   },
   bankFeeds: {

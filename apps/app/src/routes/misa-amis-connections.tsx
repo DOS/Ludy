@@ -61,12 +61,13 @@ function ConnectionItem({ connection, entities, canManage }: { connection: MisaA
 }
 
 // Connect: the entity (when the org has several without a connection) and the access code. What is typed goes to the server once, sealed there, and is cleared here at once.
-function ConnectForm({ entities }: { entities: readonly LegalEntity[] }) {
+function ConnectForm({ entities, namesEntity }: { entities: readonly LegalEntity[]; namesEntity: boolean }) {
   const t = useTranslations('misaAmisConnections');
   const defaultEntity = entities.find((e) => e.isDefault) ?? entities[0];
   const [entityId, setEntityId] = useState(defaultEntity?.id ?? '');
   const [accessCode, setAccessCode] = useState('');
   const entityKey = useId();
+  const codeKey = useId();
   const entity = entities.find((e) => e.id === entityId) ?? defaultEntity;
   const connect = useMutation(
     orpc.misaAmis.connections.connect.mutationOptions({
@@ -83,17 +84,35 @@ function ConnectForm({ entities }: { entities: readonly LegalEntity[] }) {
   return (
     <form className="mt-4 space-y-2" onSubmit={submit} aria-label={t('connectTitle')} noValidate>
       <p className="text-xs font-medium text-muted-foreground">{t('connectTitle')}</p>
-      <div className="flex flex-wrap gap-2">
-        {entities.length > 1 && (
-          <NativeSelect id={entityKey} className="min-w-48" aria-label={t('entity')} value={entity?.id ?? ''} onChange={(e) => setEntityId(e.target.value)}>
-            {entities.map((e) => (
-              <NativeSelectOption key={e.id} value={e.id}>
-                {e.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
+      <div className="flex flex-wrap items-end gap-2">
+        {entities.length > 1 ? (
+          <div className="flex flex-col gap-1">
+            <label htmlFor={entityKey} className="text-xs text-muted-foreground">
+              {t('entity')}
+            </label>
+            <NativeSelect id={entityKey} className="min-w-48" value={entity?.id ?? ''} onChange={(e) => setEntityId(e.target.value)}>
+              {entities.map((e) => (
+                <NativeSelectOption key={e.id} value={e.id}>
+                  {e.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+        ) : (
+          // One entity left to connect: no choice to make, but when the org has several, the one that is connected is named.
+          namesEntity &&
+          entity && (
+            <p className="self-center text-xs text-muted-foreground" data-testid="misa-amis-target">
+              {t('entity')}: {entity.name}
+            </p>
+          )
         )}
-        <Input className="min-w-48" maxLength={500} autoComplete="off" type="password" placeholder={t('accessCode')} aria-label={t('accessCode')} value={accessCode} onChange={(e) => setAccessCode(e.target.value)} />
+        <div className="flex flex-col gap-1">
+          <label htmlFor={codeKey} className="text-xs text-muted-foreground">
+            {t('accessCode')}
+          </label>
+          <Input id={codeKey} className="min-w-48" maxLength={500} autoComplete="off" type="password" value={accessCode} onChange={(e) => setAccessCode(e.target.value)} />
+        </div>
         <Button loading={connect.isPending} disabled={accessCode.trim() === ''} type="submit" variant="outline" size="sm">
           {t('connect')}
         </Button>
@@ -140,7 +159,7 @@ export function MisaAmisConnectionsCard({ role }: { role: Role }) {
               ))}
             </ul>
           )}
-          {canManage && offered && free.length > 0 && <ConnectForm key={free.map((e) => e.id).join(',')} entities={free} />}
+          {canManage && offered && free.length > 0 && <ConnectForm key={free.map((e) => e.id).join(',')} entities={free} namesEntity={(entities.data ?? []).length > 1} />}
         </>
       )}
     </Card>

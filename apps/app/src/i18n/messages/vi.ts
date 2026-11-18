@@ -5245,9 +5245,9 @@ export const vi = {
     keep: 'Giữ lại',
     status: {
       active: 'Đang kết nối',
-      expired: 'Đã hết hạn, hãy kết nối lại',
+      expired: 'Đã hết hạn, hãy ngắt kết nối rồi kết nối lại',
       revoked: 'Đã ngắt',
-      error: 'Có lỗi, hãy kết nối lại',
+      error: 'Có lỗi, hãy ngắt kết nối rồi kết nối lại',
     },
   },
   bankFeeds: {
