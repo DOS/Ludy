@@ -2366,7 +2366,7 @@ export const contract = {
     cnkd: oc.input(zHouseholdCnkdGet).output(zHouseholdCnkd),
     // S2a-HKD, the revenue book of a household that pays a percentage of revenue: S1a split by business line, with VAT and PIT per line (#2517 slice 2a); labelled provisional while its rows are unconfirmed.
     s2a: oc.input(zHouseholdS2aGet).output(zHouseholdS2a),
-    // S2b-HKD, the revenue book of a household that pays PIT on income: the S2a split by business line with the VAT per line and no PIT column (#2517 slice 2c);
+    // S2b-HKD, the revenue book of a household that pays PIT on income: the S2a split by business line with the VAT per line and no PIT column, labelled provisional while its rows are `commentary` (#2517 slice 2c).
     s2b: oc.input(zHouseholdS2bGet).output(zHouseholdS2b),
     // S2c-HKD, the revenue and expense detail of a household that pays PIT on income: expenses by the dated account-to-group map, unmapped ones apart (#2517 slice 2b); labelled provisional while its rows are unconfirmed.
     s2c: oc.input(zHouseholdS2cGet).output(zHouseholdS2c),
