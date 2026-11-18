@@ -237,8 +237,9 @@ function PendingRow({ p, slug }: { p: AdsWriteState['pending'][number]; slug: st
   );
 }
 
-export function useWriteState() {
-  return useQuery({ ...orpc.ads.writeState.queryOptions(), refetchInterval: (query) => (query.state.data?.tokenRevokes.some((r) => r.state === 'pending') ? 60_000 : false) });
+// `enabled: false` for a member or viewer: the read is the owners' and admins', so it is not asked for.
+export function useWriteState(enabled = true) {
+  return useQuery({ ...orpc.ads.writeState.queryOptions(), enabled, refetchInterval: (query) => (query.state.data?.tokenRevokes.some((r) => r.state === 'pending') ? 60_000 : false) });
 }
 
 // The same notice for a screen with no ad account (the last one was erased after a disconnect): the card above is not drawn there, and a person told nothing

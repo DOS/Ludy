@@ -4998,7 +4998,7 @@ export const en = {
     subtitle: 'The cost and results of your ads, next to your books. To run ads from Ludy, turn it on in Ads settings.',
     emptyTitle: 'No ad account yet',
     emptyHint:
-      'This screen shows how much you spend on ads each day, how many results you get and what each result costs, next to the figures in your books. Connect an account to start. {brand} only reads the figures until you turn on running ads yourself, and it keeps no personal data of the people who see your ads.',
+      'This screen shows how much you spend on ads each day, how many results you get and what each result costs, next to the figures in your books. {brand} only reads the figures until you turn on running ads yourself, and it keeps no personal data of the people who see your ads.',
     emptyMembers: 'An owner or admin connects the ad account.',
     noPlatform: 'No ad platform is turned on in this system yet, so no ad account can be connected. Ask whoever runs the system to turn on Meta, Google or the test account.',
     adsSettings: {

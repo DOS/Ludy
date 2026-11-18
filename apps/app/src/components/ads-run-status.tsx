@@ -9,7 +9,7 @@ import { useWriteState } from './ads-write.tsx';
 
 export function AdsRunStatus({ slug, canManage, variant = 'status' }: { slug: string; canManage: boolean; variant?: 'status' | 'campaigns' }) {
   const t = useTranslations('ads.adsSettings');
-  const state = useWriteState();
+  const state = useWriteState(canManage);
   if (!canManage || !state.data) return null;
   const on = state.data.writeEnabled;
   // On the campaign page only the "off" case matters: a plan approved there cannot reach the platform until it is on.

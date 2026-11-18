@@ -4996,7 +4996,7 @@ export const vi = {
     subtitle: 'Chi phí và kết quả quảng cáo của bạn, cạnh sổ sách. Muốn chạy quảng cáo từ Ludy, bật ở Cài đặt quảng cáo.',
     emptyTitle: 'Chưa có tài khoản quảng cáo nào',
     emptyHint:
-      'Màn hình này cho thấy mỗi ngày bạn chi bao nhiêu cho quảng cáo, nhận được bao nhiêu kết quả và mỗi kết quả tốn bao nhiêu, đặt cạnh số liệu trong sổ sách. Kết nối một tài khoản để bắt đầu. {brand} chỉ đọc số liệu cho tới khi bạn tự bật chạy quảng cáo, và không lưu thông tin cá nhân của người xem quảng cáo.',
+      'Màn hình này cho thấy mỗi ngày bạn chi bao nhiêu cho quảng cáo, nhận được bao nhiêu kết quả và mỗi kết quả tốn bao nhiêu, đặt cạnh số liệu trong sổ sách. {brand} chỉ đọc số liệu cho tới khi bạn tự bật chạy quảng cáo, và không lưu thông tin cá nhân của người xem quảng cáo.',
     emptyMembers: 'Chủ sở hữu hoặc quản trị viên sẽ kết nối tài khoản quảng cáo.',
     noPlatform: 'Hệ thống này chưa bật nền tảng quảng cáo nào, nên chưa kết nối được tài khoản. Hãy nhờ người quản trị hệ thống bật Meta, Google hoặc tài khoản thử.',
     adsSettings: {

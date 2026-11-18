@@ -982,7 +982,9 @@ export function AdsPage() {
   // The Ads settings (#3640) are for owners and admins; anyone else asking for them gets the figures.
   const inSettings = canManage && search.settings === true;
   const go = (next: AdsSearch) => void navigate({ to: '/o/$slug/ads', params: { slug }, search: { ...(inSettings ? { settings: true as const } : {}), ...next } });
-  const openSettings = () => void navigate({ to: '/o/$slug/ads', params: { slug }, search: { settings: true, ...(account ? { account: account.id } : {}) } });
+  // The account and the period travel to the settings and back, so a trip there does not reset the figures the owner was reading.
+  const keep: AdsSearch = { ...(account ? { account: account.id } : {}), ...(search.range ? { range: search.range } : {}) };
+  const openSettings = () => void navigate({ to: '/o/$slug/ads', params: { slug }, search: { settings: true, ...keep } });
   const range = search.range ?? DEFAULT_ADS_RANGE;
   const connected = (adAccountId: string) => {
     setAdding(false);
@@ -1002,12 +1004,12 @@ export function AdsPage() {
                   {t('addAnother')}
                 </Button>
               )}
-              <Link to="/o/$slug/ads" params={{ slug }} search={account ? { account: account.id } : {}} className={buttonVariants({ variant: 'outline', size: 'lg' })} data-testid="ads-settings-back">
+              <Link to="/o/$slug/ads" params={{ slug }} search={keep} className={buttonVariants({ variant: 'outline', size: 'lg' })} data-testid="ads-settings-back">
                 {t('adsSettings.back')}
               </Link>
             </div>
           ) : canManage && list.length > 0 ? (
-            <Link to="/o/$slug/ads" params={{ slug }} search={{ settings: true, ...(account ? { account: account.id } : {}) }} className={buttonVariants({ variant: 'outline', size: 'lg' })} data-testid="ads-settings-link">
+            <Link to="/o/$slug/ads" params={{ slug }} search={{ settings: true, ...keep }} className={buttonVariants({ variant: 'outline', size: 'lg' })} data-testid="ads-settings-link">
               {t('adsSettings.link')}
             </Link>
           ) : undefined
