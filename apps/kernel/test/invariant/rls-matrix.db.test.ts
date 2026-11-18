@@ -110,6 +110,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
+  'crove_meetings.meeting_chapter',
   'crove_meetings.meeting_link',
   'crove_notes.attachment',
   'crove_notes.link',
@@ -196,6 +197,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.live_chunk', () => 'false'], // The recorder's own live pieces, read by the recorder, a user (ADR-0052 L4a, #3109).
   ['crove_meetings.live_line', () => 'false'], // The live preview of a recording, read by the recorder, a user (ADR-0052 L4a, #3110).
   ['crove_meetings.meeting', () => 'false'], // As above.
+  ['crove_meetings.meeting_chapter', () => 'false'], // The chapters of a meeting, read by the recorder and, once published, the readers of the meeting, users (meetings chapters, #3844).
   ['crove_meetings.meeting_link', () => 'false'], // As above (a link is read through its meeting's readers, L1 #2587).
   ['crove_meetings.meeting_note', () => 'false'], // The recorder's own rough notes, read by the recorder, a user (meetings integrations A5, #3163).
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
@@ -293,6 +295,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.live_line', 'false'],
   // Meeting records (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting', 'false'],
+  // The chapters of a meeting (meetings chapters, #3844): the recorder reads every stage and the readers the published ones, users; worker system context reads and writes nothing.
+  ['crove_meetings.meeting_chapter', 'false'],
   // Meeting readers (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_link', 'false'],
   // The recorder's own rough notes (meetings integrations A5, #3163): the recorder's alone; worker system context reads and writes nothing.
@@ -2862,6 +2866,17 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       setup: [{ table: 'crove_meetings.meeting', values: meetingsMeetingRow(o, 'org') }],
       row: meetingsMeetingRow(o, 'attendees'),
     }),
+  },
+  // #3844 (meetings chapters): one chapter of a meeting's table of contents, a title and the second of the transcript line it starts at; a draft (born tainted when it comes from a run of the recorder's
+  // Vy) that only the recorder reads, and a published row that the readers of the meeting read too. Lands before its table (PENDING_TABLES).
+  'crove_meetings.meeting_chapter': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, stage: 'draft', position: 1, title: 'RLS matrix chapter', start_seconds: 0, tainted: 'true' },
+      };
+    },
   },
   // #2587 (L1): a meeting's link to a deal (the CRM module is reached through ctx.query, so the deal id has no foreign key).
   'crove_meetings.meeting_link': {
