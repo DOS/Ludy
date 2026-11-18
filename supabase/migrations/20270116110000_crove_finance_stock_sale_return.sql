@@ -36,7 +36,7 @@ ALTER TABLE crove_finance.stock_move ADD CONSTRAINT stock_move_source_ck CHECK (
 
 ALTER TABLE crove_finance.stock_move DROP CONSTRAINT IF EXISTS stock_move_return_of_fk;
 ALTER TABLE crove_finance.stock_move ADD CONSTRAINT stock_move_return_of_fk FOREIGN KEY (org_id, return_of_move_id) REFERENCES crove_finance.stock_move (org_id, id) NOT VALID;
--- The index on return_of_move_id is built concurrently in 20270116120000, so no scan of the table runs under the lock this file holds.
+-- The index on return_of_move_id is built concurrently in 20270116130000, so no scan of the table runs under the lock this file holds.
 
 -- What a return may be, and when a sale move may be reversed. Held apart from stock_move_guard (20261123030000), which stays as it is. One writer at a time per sale move (a transaction-level
 -- advisory lock), so two returns at once cannot both take the last pieces: the second sees the first's row. A sale move is a stock-out (a document line or a delivered CRM order line); the return is of the same item, the sale move is not reversed, and the live returns (those not reversed) plus this one stay within what was sold. A sale move with a live
