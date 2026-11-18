@@ -30,6 +30,12 @@ vi.mock('@tanstack/react-router', async () => {
   return { Link: ({ to, children }: { to: string; children?: import('react').ReactNode }) => createElement('a', { href: to }, children) };
 });
 
+vi.mock('../src/components/social-metrics.tsx', () => ({ SocialMetrics: () => 'stub:metrics' }));
+vi.mock('../src/components/social-goals.tsx', () => ({ GoalsCard: () => 'stub:goals' }));
+vi.mock('../src/components/social-team-report.tsx', () => ({ TeamReport: () => 'stub:team' }));
+vi.mock('../src/components/social-report-links.tsx', () => ({ ReportLinks: () => 'stub:links' }));
+vi.mock('../src/components/social-report-schedules.tsx', () => ({ ReportSchedules: () => 'stub:schedules' }));
+
 const { AdsPanel, ConversationsPanel, PostsPanel, SalesPanel } = await import('../src/components/report-panels.tsx');
 
 function render(ui: import('react').ReactElement): string {
@@ -81,13 +87,15 @@ describe('the report panels', () => {
     expect(html).toContain('href="/o/$slug/deals"');
   });
 
-  it('shows the posts of the last 30 days, and a period before with no figure for a metric does not break it', () => {
-    client.current.setQueryData(['social', 'metrics', 'totals', { days: 30 }], { posts: 0, metrics: {}, previous: { posts: 0, metrics: {} } });
-    expect(render(<PostsPanel slug="acme" />)).toContain(T.posts.empty);
-    client.current.setQueryData(['social', 'metrics', 'totals', { days: 30 }], { posts: 4, metrics: { reach: 1200 }, previous: { posts: 0, metrics: {} } });
+  it('holds all the post report output in one place, with the figures only once (#3658)', () => {
     const html = render(<PostsPanel slug="acme" />);
-    expect(html).not.toContain(T.posts.empty);
-    expect(html).toContain(formatNumber(1200, activeLocale()));
+    expect(html).toContain(T.posts.title);
+    // The figures, the goals, the team report, the links for clients and the e-mail schedules, in this order.
+    const order = ['stub:metrics', 'stub:goals', 'stub:team', 'stub:links', 'stub:schedules'].map((m) => html.indexOf(m));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((x, y) => x - y)).toEqual(order);
+    // No figure card of its own beside the figures of the report.
+    expect(html).not.toContain('<dl');
     expect(html).toContain('href="/o/$slug/social"');
   });
 

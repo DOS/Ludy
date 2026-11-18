@@ -20,6 +20,8 @@ test('the push option is hidden on a deployment without VAPID keys', async ({ pa
   await signInNewUser(page, newEmail('social-push-off'));
   const slug = await createOrg(page, 'Công ty Không Đẩy');
   await page.goto(`/o/${slug}/social/notifications`);
+  // The settings are one disclosure (#3658): opened first.
+  await page.getByText('Nhận thông báo về...', { exact: true }).click();
   await expect(page.getByText('Bản tin hằng tuần')).toBeVisible();
   await expect(page.getByText('Thông báo đẩy trên thiết bị này')).toHaveCount(0);
 });
@@ -78,6 +80,7 @@ test('a member turns push on for this device and off again; the worker registers
   });
 
   await page.goto(`/o/${slug}/social/notifications`);
+  await page.getByText('Nhận thông báo về...', { exact: true }).click();
   const toggle = page.getByRole('checkbox', { name: /Thông báo đẩy trên thiết bị này/ });
   await expect(toggle).not.toBeChecked();
   await toggle.click();
