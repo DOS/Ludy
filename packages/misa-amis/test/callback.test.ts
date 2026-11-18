@@ -52,12 +52,11 @@ describe('readCallback', () => {
   });
 
   it('refuses a `data` with an unpaired surrogate, which would hash as the replacement character', () => {
-    const lone = `[{"org_refid":"${REF}","success":true,"voucher_type":1,"error_message":"\ud800"}]`.replace('\\ud800', '\ud800');
-    expect('\ud800'.isWellFormed()).toBe(false);
-    const bad = `["\ud800"]`;
+    const bad = '["\ud800"]';
     expect(bad.isWellFormed()).toBe(false);
     expect(readCallback(envelope(bad), CLIENT)).toEqual({ ok: false, reason: 'malformed' });
-    expect(lone.length).toBeGreaterThan(0);
+    // The same text with a real replacement character is well formed and reads as data (a list of one string is not results).
+    expect(readCallback(envelope('["\ufffd"]'), CLIENT)).toEqual({ ok: false, reason: 'data' });
   });
 
   it('checks app_id against the ClientID once the signature is good', () => {
