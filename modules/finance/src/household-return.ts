@@ -22,6 +22,7 @@ import { pickInForce } from './domain/household-rules.ts';
 import { taxOn } from './domain/household-tax.ts';
 import { householdProfileView } from './household.ts';
 import { yearToDateBlock } from './household-annual.ts';
+import { salesEntriesOf } from './household-year-sales.ts';
 import { vatCutBlock, vatCutInForce, vatCutUnconfirmed } from './household-vat-cut.ts';
 import { accountLedgerOf } from './ledger-reports.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -154,9 +155,8 @@ export const householdCnkd = defineQuery({
     const vatCut = vatCutBlock({ answer: profile.vatCutEligible, cut: cutRow, lines, complete });
     // The yearly rule (#3710 slice 3): the year's revenue so far decides whether anything is owed. What is owed in the quarter is the year-to-date tax at its last day less the year-to-date tax before it.
     // The revenue before the quarter comes from the ledger; with several trades the household enters its split (`splitBefore`, per ask, nothing stored) and what is not given a trade holds the tax back.
-    const yearLedger = await accountLedgerOf(ctx, String(input.year), entity, SALES_ACCOUNT);
-    const beforeLines = yearLedger.lines.filter((l) => l.entryDate < from);
-    const beforeRevenue = toMoney(sum(beforeLines.map((l) => l.credit)).minus(sum(beforeLines.map((l) => l.debit))));
+    const beforeEntries = from > `${input.year}-01-01` ? await salesEntriesOf(ctx, entity, { from: `${input.year}-01-01`, before: from }) : [];
+    const beforeRevenue = toMoney(sum(beforeEntries.map((e) => e.amount)));
     const beforeGiven = new Map<string, string>();
     if (trades.length === 1) {
       if (input.splitBefore && input.splitBefore.length > 0) throw invalid('Hộ chỉ có một ngành nghề nên không chia doanh thu');
@@ -171,7 +171,8 @@ export const householdCnkd = defineQuery({
     }
     const beforeSplittable = money(beforeRevenue).gt(0) ? money(beforeRevenue) : money(0);
     if (trades.length > 1 && money(sum([...beforeGiven.values()])).gt(beforeSplittable)) throw invalid('Tổng doanh thu đã chia theo ngành của các kỳ trước trong năm vượt doanh thu trên sổ cái');
-    const beforeUnassigned = trades.length === 1 ? money(0) : beforeSplittable.minus(sum([...beforeGiven.values()]));
+    // Not clamped: net returns before the quarter (a negative figure) with no trade to put them on also hold the tax back.
+    const beforeUnassigned = trades.length === 1 ? money(0) : money(beforeRevenue).minus(sum([...beforeGiven.values()]));
     const toDate = new Map<string, string>(trades.map((t) => [t, toMoney(money(beforeGiven.get(t) ?? '0').plus(given.get(t) ?? '0'))]));
     const year = await yearToDateBlock(ctx, {
       to,

@@ -300,7 +300,8 @@ suite('the 01/CNKD return worksheet of a household business (#2518)', () => {
     await confirmFromQ4();
     await entry(o.household, o.orgId, '2026-11-12', 'Bán hàng và dịch vụ', [['111', 400000, 0], ['511', 0, 400000]]);
     await expect(cnkd(o, 4, { forExport: true })).rejects.toMatchObject({ code: 'HOUSEHOLD_SPLIT_INVALID' });
-    expect((await cnkd(o, 4, { forExport: true, split: [{ trade: 'goods', revenue: '400000' }] })).totals?.tax).toBe('6000');
+    // The August revenue is before this quarter in the same year, so the yearly rule (#3710 slice 3) also needs its split: all of it was goods.
+    expect((await cnkd(o, 4, { forExport: true, split: [{ trade: 'goods', revenue: '400000' }], splitBefore: [{ trade: 'goods', revenue: '1600000' }] })).totals?.tax).toBe('6000');
   });
 
   it('refuses the entities and profiles that file no quarterly worksheet', async () => {

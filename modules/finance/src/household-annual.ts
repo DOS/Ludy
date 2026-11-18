@@ -70,11 +70,13 @@ export async function yearToDateBlock(
   const before = run(args.revenue.before);
   const total = (revenue: ReadonlyMap<string, string>) => toMoney(sum([...revenue.values()]));
   const payable = args.revenue.unassignedHeld ? null : periodTax(end, before);
-  const pitCutApplied = !!pitCut && args.pitApplies && money(pitCut.percent).gt(0) && (pitCut.ceiling === null || money(end.revenue).lte(money(pitCut.ceiling)));
+  // No trade reaches the threshold at the end of the period, or the side before it could not be worked out (a pick too small then): the deduction rule is the accountant's, so the household is not asked again.
+  const deductionShort = !args.revenue.unassignedHeld && (end.held === 'short' || (end.held === null && before.held !== null));
+  const pitCutApplied = !!pitCut && args.pitApplies && end.crossed && end.held === null && money(pitCut.percent).gt(0) && (pitCut.ceiling === null || money(end.revenue).lte(money(pitCut.ceiling)));
 
   const unconfirmed: YearUnconfirmed[] = [];
   if (thresholdRow && thresholdRow.status !== 'confirmed') unconfirmed.push({ kind: 'threshold', key: THRESHOLD_CODE, effectiveFrom: thresholdRow.effective_from });
-  if (pitCut && pitCut.status !== 'confirmed' && end.crossed && pitCutApplied) unconfirmed.push({ kind: 'reduction', key: 'pit', effectiveFrom: pitCut.effectiveFrom });
+  if (pitCut && pitCut.status !== 'confirmed' && pitCutApplied) unconfirmed.push({ kind: 'reduction', key: 'pit', effectiveFrom: pitCut.effectiveFrom });
 
   return {
     block: {
@@ -86,6 +88,7 @@ export async function yearToDateBlock(
       crossed: args.revenue.unassignedHeld ? money(total(args.revenue.toDate)).gt(money(threshold)) : end.crossed,
       deductionTrade: end.deduction,
       deductionNeeded: end.held === 'deduction',
+      deductionShort,
       payable,
       pitCut: pitCut && args.pitApplies ? { percent: pitCut.percent, ceiling: pitCut.ceiling, applied: pitCutApplied } : null,
     },

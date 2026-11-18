@@ -167,7 +167,8 @@ suite('the 01/CNKD worksheet download (#2518)', () => {
     const open = await download(`legalEntityId=${several}&year=2026&quarter=4`);
     expect(open.status).toBe(422);
     expect(await open.json()).toMatchObject({ code: 'HOUSEHOLD_SPLIT_INVALID' });
-    const response = await download(`legalEntityId=${several}&year=2026&quarter=4&split=goods:1000000,services:600000`);
+    // Two trades with revenue: the yearly rule (#3710 slice 3) also needs the trade that takes the threshold deduction.
+    const response = await download(`legalEntityId=${several}&year=2026&quarter=4&split=goods:1000000,services:600000&deductionTrade=goods`);
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe(XLSX);
     expect(Buffer.from(await response.arrayBuffer()).subarray(0, 2).toString()).toBe('PK');

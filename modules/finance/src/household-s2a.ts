@@ -21,7 +21,7 @@ import { pickInForce } from './domain/household-rules.ts';
 import { splitAmount, taxOn, type SplitBucket, type SplitWeight } from './domain/household-tax.ts';
 import { householdBookWindow, householdSalesRows, type HouseholdBookWindow } from './household-books.ts';
 import { yearToDateBlock, type YearRevenue } from './household-annual.ts';
-import { accountLedgerOf } from './ledger-reports.ts';
+import { salesEntriesOf } from './household-year-sales.ts';
 import { vatCutBlock, vatCutInForce, vatCutUnconfirmed } from './household-vat-cut.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -123,21 +123,18 @@ export async function saleDocumentWeights(ctx: Ctx, entryIds: readonly string[],
 // every part to have a trade, and the rows behind the figures that the accountant has not confirmed. One code path, so the two books cannot disagree on a row, a split or a rounding. S2b drops the PIT.
 // The year's revenue by trade from 1 January, split by the same rule as the book's rows (a sale document's lines by their stock item's trade; one trade takes everything; anything else is unassigned): through the period's
 // last day, and up to the day before the book's first day. The household's yearly threshold is its own, so entries before its first profile count here though the book does not list them (#3710 slice 3).
-const YEAR_ROW_LIMIT = 500_000;
 async function yearRevenue(ctx: QueryContext, w: HouseholdBookWindow, trades: readonly HouseholdTrade[]): Promise<YearRevenue> {
   const year = w.to.slice(0, 4);
-  const ledger = await accountLedgerOf(ctx, year, w.entity, '511');
-  const lines = ledger.lines.filter((l) => l.entryDate <= w.to);
-  const rows = householdSalesRows(lines, `${year}-01-01`, YEAR_ROW_LIMIT);
-  const weights = trades.length > 1 ? await saleDocumentWeights(ctx, rows.map((r) => r.entryId), trades) : new Map<string, SplitWeight[]>();
+  const entries = await salesEntriesOf(ctx, w.entity, { from: `${year}-01-01`, to: w.to });
+  const weights = trades.length > 1 ? await saleDocumentWeights(ctx, entries.map((e) => e.entryId), trades) : new Map<string, SplitWeight[]>();
   const toDate = new Map<string, ReturnType<typeof money>>();
   const before = new Map<string, ReturnType<typeof money>>();
   let unassignedGross = money(0);
-  for (const r of rows) {
-    const parts = trades.length === 1 ? [{ bucket: trades[0]! as SplitBucket, amount: r.amount }] : splitAmount(r.amount, weights.get(r.entryId) ?? []);
+  for (const e of entries) {
+    const parts = trades.length === 1 ? [{ bucket: trades[0]! as SplitBucket, amount: e.amount }] : splitAmount(e.amount, weights.get(e.entryId) ?? []);
     for (const p of parts) {
       toDate.set(p.bucket, (toDate.get(p.bucket) ?? money(0)).plus(p.amount));
-      if (r.date < w.from) before.set(p.bucket, (before.get(p.bucket) ?? money(0)).plus(p.amount));
+      if (e.date < w.from) before.set(p.bucket, (before.get(p.bucket) ?? money(0)).plus(p.amount));
       if (p.bucket === 'unassigned') unassignedGross = unassignedGross.plus(money(p.amount).abs());
     }
   }

@@ -101,6 +101,10 @@ function writeYearToDate(
     put.text('Hộ có nhiều ngành nghề: hãy chọn ngành nghề được trừ phần doanh thu dưới ngưỡng để tính thuế TNCN. Chưa chọn nên chưa tính thuế TNCN.');
     return;
   }
+  if (ytd.deductionShort && pit) {
+    put.text(`Chưa ngành nghề nào có doanh thu đạt ngưỡng ${ytd.threshold?.amount ?? ''} đồng nên thuế TNCN tạm giữ lại: quy định cho trường hợp này đang chờ kế toán xác nhận. Thuế của kỳ chưa được tính.`);
+    return;
+  }
   const pay = ytd.payable;
   if (!pay) {
     put.text('Doanh thu của năm chưa được gán hết cho ngành nghề nên chưa tính thuế phải nộp theo doanh thu cả năm; gán ngành cho mặt hàng đã bán rồi lập lại sổ.');
@@ -193,12 +197,12 @@ export async function buildCnkdWorkbook(sheetData: HouseholdCnkd, brand = 'Ludy'
     if (labelled) mark(row);
     if (bold) row.font = { bold: true };
   };
-  money('Tổng thuế GTGT và TNCN theo tỷ lệ', totals?.tax ?? '0', false, true);
+  money('Tổng thuế GTGT và TNCN theo tỷ lệ trên doanh thu của kỳ, chưa xét ngưỡng năm', totals?.tax ?? '0', false, true);
   // The Decree 174 VAT cut, only where the household's profile answered yes (#3710): the cut and the tax after it. With no answer, the file says what the VAT would be if the household were eligible.
   const cut = sheetData.vatCut;
   if (cut.applied && cut.total) {
     money(`Giảm thuế GTGT ${cut.percent}% theo Nghị định 174`, cut.total.cut, false, true);
-    money('Tổng thuế GTGT và TNCN sau giảm', toMoney(decimal(cut.total.vatPayable).plus(totals?.pit ?? '0')), false, true);
+    money('Tổng thuế GTGT và TNCN sau giảm, theo tỷ lệ trên doanh thu của kỳ, chưa xét ngưỡng năm', toMoney(decimal(cut.total.vatPayable).plus(totals?.pit ?? '0')), false, true);
   }
   if (cut.ifEligible) line(`Chưa trả lời câu hỏi giảm thuế GTGT (Nghị định 174) trong hồ sơ: nếu thuộc diện được giảm, thuế GTGT sẽ là ${cut.ifEligible.vatPayable} đồng (giảm ${cut.ifEligible.cut} đồng).`);
   sheet.addRow([]);
@@ -218,7 +222,7 @@ export async function buildCnkdWorkbook(sheetData: HouseholdCnkd, brand = 'Ludy'
   sheet.addRow([]);
   line(sheetData.household.representativeName ?? '');
   sheet.addRow([]);
-  line('Ghi chú: chưa trừ phần doanh thu được miễn thuế trong năm; kế toán đối chiếu với quy định hiện hành (#2520).');
+  line('Ghi chú: phần doanh thu được trừ theo ngưỡng được tính ở mục thuế theo doanh thu cả năm, từ doanh thu lũy kế từ đầu năm; Ludy không nộp tờ khai thay hộ kinh doanh.');
   return new Uint8Array(await workbook.xlsx.writeBuffer());
 }
 

@@ -272,6 +272,32 @@ suite('the yearly rule of the household tax (#3710 slice 3)', () => {
       expect(picked.yearToDate.payable).toEqual({ vatBefore: '68000000', vatCut: '13600000', vat: '54400000', pitBefore: '8000000', pitCut: '2400000', pit: '5600000' });
     });
 
+    it('does not ask for a pick when no single trade reaches the threshold: the PIT is held back for the accountant, the research giving no rule for the rest of the deduction', async () => {
+      const o = await org();
+      await setProfile(o);
+      const shirt = await item(o, 'AO', 'goods');
+      const repair = await item(o, 'SUA', 'services');
+      // Goods 600 million and services 700 million: 1.3 billion in all, but neither trade has the 1 billion the deduction takes.
+      await entry(o, '2026-09-05', 'Bán hàng và sửa chữa', [['111', 1.3 * BILLION, 0], ['511', 0, 1.3 * BILLION]], { sale: [{ amount: 0.6 * BILLION, item: shirt }, { amount: 0.7 * BILLION, item: repair }] });
+      const book = await s2a(o, '2026-09');
+      expect(book.yearToDate).toMatchObject({ crossed: true, deductionNeeded: false, deductionShort: true, deductionTrade: null, payable: null });
+      // A pick changes nothing.
+      const picked = await query<HouseholdS2a>(o, 'finance.household.s2a', { legalEntityId: o.household, period: '2026-09', deductionTrade: 'services' });
+      expect(picked.yearToDate).toMatchObject({ deductionNeeded: false, deductionShort: true, payable: null });
+    });
+
+    it('holds the period back as short when the side before it could not be worked out, though the pick is usable at its end', async () => {
+      const o = await org();
+      await setProfile(o);
+      const shirt = await item(o, 'AO', 'goods');
+      const repair = await item(o, 'SUA', 'services');
+      // By the end of June: goods 500 million and services 600 million (1.1 billion, no trade reaching the threshold). In September services reach 1.5 billion.
+      await entry(o, '2026-02-10', 'Quý một', [['111', 1.1 * BILLION, 0], ['511', 0, 1.1 * BILLION]], { sale: [{ amount: 0.5 * BILLION, item: shirt }, { amount: 0.6 * BILLION, item: repair }] });
+      await entry(o, '2026-09-10', 'Quý ba', [['111', 0.9 * BILLION, 0], ['511', 0, 0.9 * BILLION]], { sale: [{ amount: 0.9 * BILLION, item: repair }] });
+      const book = await query<HouseholdS2a>(o, 'finance.household.s2a', { legalEntityId: o.household, period: '2026-09', deductionTrade: 'services' });
+      expect(book.yearToDate).toMatchObject({ revenueToDate: '2000000000', revenueBefore: '1100000000', deductionNeeded: false, deductionShort: true, payable: null });
+    });
+
     it('holds the tax back while revenue has no trade yet, but still says the threshold is crossed', async () => {
       const o = await org();
       await setProfile(o);

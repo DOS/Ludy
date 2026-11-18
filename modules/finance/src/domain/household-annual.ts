@@ -42,8 +42,9 @@ export interface AnnualTax {
   pit: string;
   // The trade that took the deduction (null below the threshold, or where the PIT is held back).
   deduction: HouseholdTrade | null;
-  // 'deduction': the PIT could not be worked out (several trades and no usable pick); the VAT above is still exact.
-  held: 'deduction' | null;
+  // The PIT could not be worked out; the VAT above is still exact. 'deduction': several trades and no usable pick, the household is asked. 'short': no trade reaches the threshold, so the deduction rule
+  // is not known (the accountant's to give, #2520).
+  held: 'deduction' | 'short' | null;
 }
 
 const ZERO = '0';
@@ -66,14 +67,28 @@ export function annualTax(input: AnnualInput): AnnualTax {
   if (!input.pitApplies) {
     return { revenue: toMoney(total), crossed: true, vatBefore: toMoney(vatBefore), vatCut: toMoney(vatCut), vat: toMoney(vatBefore.minus(vatCut)), pitBefore: ZERO, pitCut: ZERO, pit: ZERO, deduction: null, held: null };
   }
-  // The trade that takes the deduction: the only trade, or the household's pick when it has revenue of at least the threshold. Anything else holds the PIT back.
+  // The trade that takes the deduction: the only trade with revenue, or the household's pick. The research gives no rule for a trade whose revenue is below the threshold (does the rest of the deduction
+  // pass to another trade?), so it is not guessed: with no trade reaching the threshold the PIT is held back as 'short' (the accountant's rule is needed, #2520); with some trade reaching it but no usable pick the
+  // PIT is held back as 'deduction' (the household is asked).
   const positive = entries.filter(([, rev]) => money(rev).gt(0));
   const only = positive.length === 1 ? positive[0]![0] : null;
+  const reaching = positive.filter(([, rev]) => money(rev).gte(money(input.threshold)));
+  const held = (reason: 'deduction' | 'short'): AnnualTax => ({
+    revenue: toMoney(total),
+    crossed: true,
+    vatBefore: toMoney(vatBefore),
+    vatCut: toMoney(vatCut),
+    vat: toMoney(vatBefore.minus(vatCut)),
+    pitBefore: ZERO,
+    pitCut: ZERO,
+    pit: ZERO,
+    deduction: null,
+    held: reason,
+  });
+  if (only === null && reaching.length === 0) return held('short');
   const picked = only ?? input.deductionTrade;
   const pickedRevenue = picked !== null ? entries.find(([trade]) => trade === picked)?.[1] : undefined;
-  if (picked === null || pickedRevenue === undefined || money(pickedRevenue).lt(money(input.threshold))) {
-    return { revenue: toMoney(total), crossed: true, vatBefore: toMoney(vatBefore), vatCut: toMoney(vatCut), vat: toMoney(vatBefore.minus(vatCut)), pitBefore: ZERO, pitCut: ZERO, pit: ZERO, deduction: null, held: 'deduction' };
-  }
+  if (picked === null || pickedRevenue === undefined || money(pickedRevenue).lt(money(input.threshold))) return held('deduction');
   const pitBefore = sum(entries.map(([trade, rev]) => taxOn(trade === picked ? toMoney(money(rev).minus(input.threshold)) : rev, rateOf(trade).pitPercent)));
   const cut = input.pitCut;
   const pitCut = cut && money(cut.percent).gt(0) && (cut.ceiling === null || total.lte(money(cut.ceiling))) ? money(taxOn(toMoney(pitBefore), cut.percent)) : money(0);

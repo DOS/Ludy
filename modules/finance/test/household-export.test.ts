@@ -90,7 +90,7 @@ const sheetData = (over: Partial<HouseholdCnkd> = {}): HouseholdCnkd => ({
   unassigned: '0',
   totals: { revenue: '1600000', vat: '40000', pit: '17000', tax: '57000' },
   vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [{ trade: 'goods', cut: '0', vatPayable: '10000' }, { trade: 'services', cut: '0', vatPayable: '30000' }], total: { cut: '0', vatPayable: '40000' }, ifEligible: null },
-  yearToDate: { year: 2026, revenueToDate: '1500000', revenueBefore: '0', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: false, deductionTrade: null, deductionNeeded: false, payable: { vatBefore: '0', vatCut: '0', vat: '0', pitBefore: '0', pitCut: '0', pit: '0' }, pitCut: null },
+  yearToDate: { year: 2026, revenueToDate: '1500000', revenueBefore: '0', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: false, deductionTrade: null, deductionNeeded: false, deductionShort: false, payable: { vatBefore: '0', vatCut: '0', vat: '0', pitBefore: '0', pitCut: '0', pit: '0' }, pitCut: null },
   withheld: { total: '4200', settlements: [{ id: '00000000-0000-4000-8000-0000000000a1', platform: 'shopee', periodStart: '2026-10-01', periodEnd: '2026-10-15', taxWithheld: '4200' }] },
   due: '52800',
   overpaid: '0',
@@ -118,7 +118,7 @@ describe('the 01/CNKD worksheet workbook', () => {
     expect(all.some((t) => t.includes('Ludy không nộp tờ khai'))).toBe(true);
     expect(all).toContain('(Ký, họ tên)');
     // The exempt band is not deducted, and the file says so.
-    expect(all.some((t) => t.includes('chưa trừ phần doanh thu được miễn thuế'))).toBe(true);
+    expect(all.some((t) => t.includes('được tính ở mục thuế theo doanh thu cả năm'))).toBe(true);
   });
 
   it('writes revenue, percentages and tax by trade, the totals, the withheld tax and what is left to pay', async () => {
@@ -131,7 +131,7 @@ describe('the 01/CNKD worksheet workbook', () => {
     expect([services?.getCell(2).value, services?.getCell(4).value, services?.getCell(6).value]).toEqual([600000, 30000, 12000]);
     const total = rows.get('Cộng');
     expect([total?.getCell(2).value, total?.getCell(4).value, total?.getCell(6).value]).toEqual([1600000, 40000, 17000]);
-    expect(rows.get('Tổng thuế GTGT và TNCN theo tỷ lệ')?.getCell(2).value).toBe(57000);
+    expect(rows.get('Tổng thuế GTGT và TNCN theo tỷ lệ trên doanh thu của kỳ, chưa xét ngưỡng năm')?.getCell(2).value).toBe(57000);
     expect(rows.get('  shopee, 01/10/2026 - 15/10/2026')?.getCell(2).value).toBe(4200);
     expect(rows.get('Cộng thuế đã khấu trừ')?.getCell(2).value).toBe(4200);
     expect(rows.get('Số thuế còn phải nộp')?.getCell(2).value).toBe(52800);
@@ -169,7 +169,7 @@ describe('the 01/CNKD worksheet workbook', () => {
     sheet.eachRow((row) => rows.set(String(row.getCell(1).value), row));
     const note = (label: string) => rows.get(label)?.getCell(7).value;
     expect(note('Ngành nghề')).toBe('Ghi chú');
-    for (const label of ['Phân phối, cung cấp hàng hóa', 'Dịch vụ', 'Cộng', 'Tổng thuế GTGT và TNCN theo tỷ lệ', 'Số thuế còn phải nộp', 'Số thuế đã khấu trừ vượt số phải nộp']) {
+    for (const label of ['Phân phối, cung cấp hàng hóa', 'Dịch vụ', 'Cộng', 'Tổng thuế GTGT và TNCN theo tỷ lệ trên doanh thu của kỳ, chưa xét ngưỡng năm', 'Số thuế còn phải nộp', 'Số thuế đã khấu trừ vượt số phải nộp']) {
       expect(note(label), label).toBe(HOUSEHOLD_PROVISIONAL_LABEL);
     }
     expect(note('  shopee, 01/10/2026 - 15/10/2026') ?? null).toBeNull();
@@ -205,7 +205,7 @@ describe('the 01/CNKD worksheet and the Decree 174 VAT cut (#3710)', () => {
     );
     expect(rows.get('Giảm thuế GTGT 20.0000% theo Nghị định 174')?.getCell(2).value).toBe(8000);
     // VAT payable 32000 plus the PIT 17000.
-    expect(rows.get('Tổng thuế GTGT và TNCN sau giảm')?.getCell(2).value).toBe(49000);
+    expect(rows.get('Tổng thuế GTGT và TNCN sau giảm, theo tỷ lệ trên doanh thu của kỳ, chưa xét ngưỡng năm')?.getCell(2).value).toBe(49000);
     expect(rows.get('Số thuế còn phải nộp')?.getCell(2).value).toBe(44800);
   });
 
@@ -214,7 +214,7 @@ describe('the 01/CNKD worksheet and the Decree 174 VAT cut (#3710)', () => {
       vatCut: { answer: null, percent: '20.0000', applied: false, lines: [{ trade: 'goods', cut: '0', vatPayable: '10000' }, { trade: 'services', cut: '0', vatPayable: '30000' }], total: { cut: '0', vatPayable: '40000' }, ifEligible: { cut: '8000', vatPayable: '32000' } },
     });
     expect(texts(await cnkdSheet(d)).some((t) => t.includes('nếu thuộc diện được giảm, thuế GTGT sẽ là 32000 đồng (giảm 8000 đồng)'))).toBe(true);
-    expect((await rowsOf(d)).has('Tổng thuế GTGT và TNCN sau giảm')).toBe(false);
+    expect((await rowsOf(d)).has('Tổng thuế GTGT và TNCN sau giảm, theo tỷ lệ trên doanh thu của kỳ, chưa xét ngưỡng năm')).toBe(false);
   });
 
   it('writes nothing about the cut when the answer is no', async () => {
@@ -232,7 +232,7 @@ describe('the 01/CNKD worksheet and the yearly rule (#3710 slice 3)', () => {
     });
     return value;
   };
-  const YT: HouseholdYearToDate = { year: 2026, revenueToDate: '1500000000', revenueBefore: '1000000000', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: true, deductionTrade: 'goods', deductionNeeded: false, payable: { vatBefore: '12000000', vatCut: '2400000', vat: '9600000', pitBefore: '1000000', pitCut: '300000', pit: '700000' }, pitCut: { percent: '30', ceiling: '3000000000', applied: true } };
+  const YT: HouseholdYearToDate = { year: 2026, revenueToDate: '1500000000', revenueBefore: '1000000000', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: true, deductionTrade: 'goods', deductionNeeded: false, deductionShort: false, payable: { vatBefore: '12000000', vatCut: '2400000', vat: '9600000', pitBefore: '1000000', pitCut: '300000', pit: '700000' }, pitCut: { percent: '30', ceiling: '3000000000', applied: true } };
   it('says nothing is owed yet below the threshold', async () => {
     const d = sheetData();
     expect((await allText(d)).some((t) => t.includes('chưa vượt ngưỡng nên chưa phải nộp thuế'))).toBe(true);
@@ -254,10 +254,17 @@ describe('the 01/CNKD worksheet and the yearly rule (#3710 slice 3)', () => {
   });
 
   it('asks the household to choose the trade that takes the deduction and writes no PIT figure', async () => {
-    const d = sheetData({ yearToDate: { ...YT, deductionTrade: null, deductionNeeded: true, payable: null } });
+    const d = sheetData({ yearToDate: { ...YT, deductionTrade: null, deductionNeeded: true, deductionShort: false, payable: null } });
     expect((await allText(d)).some((t) => t.includes('hãy chọn ngành nghề được trừ'))).toBe(true);
     expect(await amountOf(d, 'Thuế TNCN phải nộp của kỳ')).toBeUndefined();
     expect(await amountOf(d, 'Thuế GTGT phải nộp của kỳ')).toBeUndefined();
+  });
+
+  it('says the PIT is held back for the accountant when no trade reaches the threshold', async () => {
+    const d = sheetData({ yearToDate: { ...YT, deductionTrade: null, deductionNeeded: false, deductionShort: true, payable: null, pitCut: null } });
+    expect((await allText(d)).some((t) => t.includes('Chưa ngành nghề nào có doanh thu đạt ngưỡng') && t.includes('chờ kế toán xác nhận'))).toBe(true);
+    expect((await allText(d)).some((t) => t.includes('hãy chọn ngành nghề'))).toBe(false);
+    expect(await amountOf(d, 'Thuế TNCN phải nộp của kỳ')).toBeUndefined();
   });
 
   it('says the revenue is not all on a trade when the payable is null', async () => {

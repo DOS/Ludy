@@ -129,6 +129,8 @@ export const zHouseholdYearToDate = z.strictObject({
   crossed: z.boolean(),
   deductionTrade: zHouseholdTrade.nullable(),
   deductionNeeded: z.boolean(),
+  // No trade reaches the threshold (or the side before the period could not be worked out): the research gives no rule for the deduction there, so the PIT is held back for the accountant (#2520), not asked again.
+  deductionShort: z.boolean(),
   payable: z.strictObject({ vatBefore: zMoney, vatCut: zMoney, vat: zMoney, pitBefore: zMoney, pitCut: zMoney, pit: zMoney }).nullable(),
   pitCut: z.strictObject({ percent: z.string(), ceiling: zMoney.nullable(), applied: z.boolean() }).nullable(),
 });

@@ -52,7 +52,7 @@ const cnkd = (over: Partial<HouseholdCnkd> = {}): HouseholdCnkd => ({
   unassigned: '0',
   totals: { revenue: '1600000', vat: '16000', pit: '8000', tax: '24000' },
   vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [], total: null, ifEligible: null },
-  yearToDate: { year: 2026, revenueToDate: '1500000', revenueBefore: '0', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: false, deductionTrade: null, deductionNeeded: false, payable: { vatBefore: '0', vatCut: '0', vat: '0', pitBefore: '0', pitCut: '0', pit: '0' }, pitCut: null },
+  yearToDate: { year: 2026, revenueToDate: '1500000', revenueBefore: '0', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: false, deductionTrade: null, deductionNeeded: false, deductionShort: false, payable: { vatBefore: '0', vatCut: '0', vat: '0', pitBefore: '0', pitCut: '0', pit: '0' }, pitCut: null },
   withheld: { total: '4200', settlements: [{ id: '00000000-0000-4000-8000-0000000000a1', platform: 'shopee', periodStart: '2026-10-01', periodEnd: '2026-10-15', taxWithheld: '4200' }] },
   due: '19800',
   overpaid: '0',
@@ -296,13 +296,24 @@ describe('the yearly threshold on the 01/CNKD screen (#3710 slice 3)', () => {
   it('asks for the deduction trade and, from the second quarter, the revenue before the quarter by trade', () => {
     const html = page('owner', {
       profile: percentage(['goods', 'services']),
-      cnkd: cnkd({ yearToDate: { ...base, revenueToDate: '1200000000', revenueBefore: '1100000000', crossed: true, deductionNeeded: true, payable: null } }),
+      cnkd: cnkd({ yearToDate: { ...base, revenueToDate: '1200000000', revenueBefore: '1100000000', crossed: true, deductionNeeded: true, deductionShort: false, payable: null } }),
     });
     expect(html).toContain('data-testid="household-cnkd-ytd-deduction"');
     expect(html).toContain('value="services"');
     expect(html).toContain('data-testid="household-cnkd-split-before"');
     expect(text(html)).toContain('had ₫1,100,000,000 of revenue');
     expect(html).not.toContain('household-cnkd-ytd-pit"');
+  });
+
+  it('says the PIT is held back for the accountant when no trade reaches the threshold', () => {
+    const html = page('owner', {
+      profile: percentage(['goods', 'services']),
+      cnkd: cnkd({ yearToDate: { ...base, revenueToDate: '1200000000', crossed: true, deductionNeeded: false, deductionShort: true, payable: null } }),
+    });
+    expect(html).toContain('data-testid="household-cnkd-ytd-short"');
+    expect(text(html)).toContain('No single trade reaches');
+    expect(html).not.toContain('household-cnkd-ytd-deduction');
+    expect(html).not.toContain('household-cnkd-ytd-payable');
   });
 
   it('does not ask for the revenue before the quarter with one trade or when nothing came before', () => {

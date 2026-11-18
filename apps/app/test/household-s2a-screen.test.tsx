@@ -68,7 +68,7 @@ const book = (over: Partial<HouseholdS2a> = {}): HouseholdS2a => ({
   unassignedGross: '0',
   totals: { revenue: '900000', vat: '25000', pit: '10500', tax: '35500' },
   vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [], total: null, ifEligible: null },
-  yearToDate: { year: 2026, revenueToDate: '1500000', revenueBefore: '0', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: false, deductionTrade: null, deductionNeeded: false, payable: { vatBefore: '0', vatCut: '0', vat: '0', pitBefore: '0', pitCut: '0', pit: '0' }, pitCut: null },
+  yearToDate: { year: 2026, revenueToDate: '1500000', revenueBefore: '0', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: false, deductionTrade: null, deductionNeeded: false, deductionShort: false, payable: { vatBefore: '0', vatCut: '0', vat: '0', pitBefore: '0', pitCut: '0', pit: '0' }, pitCut: null },
   unconfirmed: [
     { kind: 'form', key: 'S2a 2026.1', effectiveFrom: '2026-01-01' },
     { kind: 'rate', key: 'goods', effectiveFrom: '2026-01-01' },
@@ -263,12 +263,20 @@ describe('the yearly threshold on the S2a screen (#3710 slice 3)', () => {
   });
 
   it('asks which trade takes the deduction and shows no PIT figure while it is held back', () => {
-    const html = page({ s2a: book({ yearToDate: crossed({ deductionTrade: null, deductionNeeded: true, payable: null, pitCut: null }) }) });
+    const html = page({ s2a: book({ yearToDate: crossed({ deductionTrade: null, deductionNeeded: true, deductionShort: false, payable: null, pitCut: null }) }) });
     expect(html).toContain('data-testid="household-s2a-ytd-deduction"');
-    expect(text(html)).toContain('Which trade takes the 1 billion dong deduction for PIT?');
+    expect(text(html)).toContain('Which trade takes the ₫1,000,000,000 deduction for PIT?');
     expect(html).toContain('value="goods"');
     expect(html).toContain('value="services"');
     expect(html).not.toContain('household-s2a-ytd-pit"');
+    expect(html).not.toContain('household-s2a-ytd-payable');
+  });
+
+  it('says the PIT is held back for the accountant when no trade reaches the threshold', () => {
+    const html = page({ s2a: book({ yearToDate: crossed({ deductionTrade: null, deductionNeeded: false, deductionShort: true, payable: null, pitCut: null }) }) });
+    expect(html).toContain('data-testid="household-s2a-ytd-short"');
+    expect(text(html)).toContain('No single trade reaches the ₫1,000,000,000 threshold');
+    expect(html).not.toContain('household-s2a-ytd-deduction');
     expect(html).not.toContain('household-s2a-ytd-payable');
   });
 

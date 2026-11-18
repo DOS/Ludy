@@ -28,7 +28,7 @@ const book = (over: Partial<HouseholdS2a> = {}): HouseholdS2a => ({
   unassignedGross: '0',
   totals: { revenue: '1500000', vat: '31000', pit: '13500', tax: '44500' },
   vatCut: { answer: 'no', percent: '20.0000', applied: false, lines: [{ trade: 'goods', cut: '0', vatPayable: '11000' }, { trade: 'services', cut: '0', vatPayable: '20000' }], total: { cut: '0', vatPayable: '31000' }, ifEligible: null },
-  yearToDate: { year: 2026, revenueToDate: '1500000', revenueBefore: '0', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: false, deductionTrade: null, deductionNeeded: false, payable: { vatBefore: '0', vatCut: '0', vat: '0', pitBefore: '0', pitCut: '0', pit: '0' }, pitCut: null },
+  yearToDate: { year: 2026, revenueToDate: '1500000', revenueBefore: '0', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: false, deductionTrade: null, deductionNeeded: false, deductionShort: false, payable: { vatBefore: '0', vatCut: '0', vat: '0', pitBefore: '0', pitCut: '0', pit: '0' }, pitCut: null },
   unconfirmed: [
     { kind: 'form', key: 'S2a 2026.1', effectiveFrom: '2026-01-01' },
     { kind: 'rate', key: 'goods', effectiveFrom: '2026-01-01' },
@@ -204,7 +204,7 @@ describe('the S2a-HKD workbook and the yearly rule (#3710 slice 3)', () => {
     });
     return value;
   };
-  const YT: HouseholdYearToDate = { year: 2026, revenueToDate: '1500000000', revenueBefore: '1000000000', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: true, deductionTrade: 'goods', deductionNeeded: false, payable: { vatBefore: '12000000', vatCut: '2400000', vat: '9600000', pitBefore: '1000000', pitCut: '300000', pit: '700000' }, pitCut: { percent: '30', ceiling: '3000000000', applied: true } };
+  const YT: HouseholdYearToDate = { year: 2026, revenueToDate: '1500000000', revenueBefore: '1000000000', threshold: { amount: '1000000000', effectiveFrom: '2026-01-01', status: 'confirmed' }, crossed: true, deductionTrade: 'goods', deductionNeeded: false, deductionShort: false, payable: { vatBefore: '12000000', vatCut: '2400000', vat: '9600000', pitBefore: '1000000', pitCut: '300000', pit: '700000' }, pitCut: { percent: '30', ceiling: '3000000000', applied: true } };
   it('says nothing is owed yet below the threshold', async () => {
     const d = book();
     expect((await allText(d)).some((t) => t.includes('chưa vượt ngưỡng nên chưa phải nộp thuế'))).toBe(true);
@@ -226,10 +226,17 @@ describe('the S2a-HKD workbook and the yearly rule (#3710 slice 3)', () => {
   });
 
   it('asks the household to choose the trade that takes the deduction and writes no PIT figure', async () => {
-    const d = book({ yearToDate: { ...YT, deductionTrade: null, deductionNeeded: true, payable: null } });
+    const d = book({ yearToDate: { ...YT, deductionTrade: null, deductionNeeded: true, deductionShort: false, payable: null } });
     expect((await allText(d)).some((t) => t.includes('hãy chọn ngành nghề được trừ'))).toBe(true);
     expect(await amountOf(d, 'Thuế TNCN phải nộp của kỳ')).toBeUndefined();
     expect(await amountOf(d, 'Thuế GTGT phải nộp của kỳ')).toBeUndefined();
+  });
+
+  it('says the PIT is held back for the accountant when no trade reaches the threshold', async () => {
+    const d = book({ yearToDate: { ...YT, deductionTrade: null, deductionNeeded: false, deductionShort: true, payable: null, pitCut: null } });
+    expect((await allText(d)).some((t) => t.includes('Chưa ngành nghề nào có doanh thu đạt ngưỡng') && t.includes('chờ kế toán xác nhận'))).toBe(true);
+    expect((await allText(d)).some((t) => t.includes('hãy chọn ngành nghề'))).toBe(false);
+    expect(await amountOf(d, 'Thuế TNCN phải nộp của kỳ')).toBeUndefined();
   });
 
   it('says the revenue is not all on a trade when the payable is null', async () => {

@@ -55,6 +55,13 @@ describe('annualTax', () => {
     expect(annualTax(input(rev, { deductionTrade: 'goods' }))).toMatchObject({ held: 'deduction', pit: '0', vatBefore: '68000000' });
   });
 
+  it('holds the PIT back as short, not asked, when no single trade reaches the threshold: the research gives no rule for the rest of the deduction', () => {
+    const rev: Array<[HouseholdTrade, string]> = [['goods', '600000000'], ['services', '700000000']];
+    expect(annualTax(input(rev))).toMatchObject({ crossed: true, held: 'short', pit: '0', vatBefore: '41000000' });
+    // A pick changes nothing: no trade can take the whole deduction.
+    expect(annualTax(input(rev, { deductionTrade: 'services' }))).toMatchObject({ held: 'short', pit: '0' });
+  });
+
   it('asks for the pick when there are several trades, and never defaults it', () => {
     const t = annualTax(input([['goods', '800000000'], ['services', '1200000000']]));
     expect(t).toMatchObject({ crossed: true, held: 'deduction', pit: '0' });

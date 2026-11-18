@@ -737,6 +737,7 @@ function YearToDateNotes({ ytd, prefix, mark, withPit, trades, picked, onPick }:
   const t = useTranslations('household');
   const f = useFormat();
   const pay = ytd.payable;
+  const amount = ytd.threshold ? f.money(ytd.threshold.amount) : '';
   return (
     <section className="mt-3" data-testid={prefix}>
       <h3 className="mb-1 text-sm font-semibold text-foreground">{t('ytdTitle', { year: String(ytd.year) })}</h3>
@@ -755,11 +756,11 @@ function YearToDateNotes({ ytd, prefix, mark, withPit, trades, picked, onPick }:
         )}
       </dl>
       <p className="mt-1 text-sm text-muted-foreground" data-testid={`${prefix}-state`}>
-        {ytd.crossed ? t('ytdCrossed') : t('ytdBelow')}
+        {ytd.crossed ? t(withPit ? 'ytdCrossed' : 'ytdCrossedVat') : t('ytdBelow')}
       </p>
       {withPit && ytd.deductionNeeded && (
         <div className="mt-2 space-y-1" data-testid={`${prefix}-deduction`}>
-          <Label htmlFor={`${prefix}-deduction-trade`}>{t('ytdDeductionQuestion')}</Label>
+          <Label htmlFor={`${prefix}-deduction-trade`}>{t('ytdDeductionQuestion', { amount })}</Label>
           <NativeSelect id={`${prefix}-deduction-trade`} value={picked} onChange={(e) => onPick(e.target.value)}>
             <NativeSelectOption value="">{t('ytdDeductionNone')}</NativeSelectOption>
             {trades.map((x) => (
@@ -768,8 +769,13 @@ function YearToDateNotes({ ytd, prefix, mark, withPit, trades, picked, onPick }:
               </NativeSelectOption>
             ))}
           </NativeSelect>
-          <p className="text-xs text-muted-foreground">{t('ytdDeductionHint')}</p>
+          <p className="text-xs text-muted-foreground">{t('ytdDeductionHint', { amount })}</p>
         </div>
+      )}
+      {withPit && ytd.deductionShort && (
+        <Alert className="mt-2" data-testid={`${prefix}-short`}>
+          <AlertDescription>{t('ytdShort', { amount })}</AlertDescription>
+        </Alert>
       )}
       {pay && (
         <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm" data-testid={`${prefix}-payable`}>
