@@ -383,11 +383,13 @@ export function channelConversationAdapters(config: WhatsAppConfig): Record<stri
   return whatsapp ? { whatsapp: new WhatsAppConversations(new Graph(whatsapp.appSecret, whatsapp.graphVersion)) } : {};
 }
 
-// The meeting platforms a deployment has (Meetings C1 and C3): the offline sandbox when the channel sandbox is on, and Zoom only when the deployment has its own Zoom OAuth app (off by default).
-export function meetingPlatformsOf(config: Pick<Config, 'CHANNEL_SANDBOX' | 'ZOOM_OAUTH_CLIENT_ID' | 'ZOOM_OAUTH_CLIENT_SECRET'>) {
+// The meeting platforms a deployment has (Meetings C1, C3 and C4): the offline sandbox when the channel sandbox is on, Zoom only when the deployment has its own Zoom OAuth app, and Teams only when it has its
+// own Microsoft Entra app (both off by default).
+export function meetingPlatformsOf(config: Pick<Config, 'CHANNEL_SANDBOX' | 'ZOOM_OAUTH_CLIENT_ID' | 'ZOOM_OAUTH_CLIENT_SECRET' | 'TEAMS_OAUTH_CLIENT_ID' | 'TEAMS_OAUTH_CLIENT_SECRET'>) {
   return meetingPlatformAdapters({
     sandbox: config.CHANNEL_SANDBOX === 'true',
     ...(config.ZOOM_OAUTH_CLIENT_ID && config.ZOOM_OAUTH_CLIENT_SECRET ? { zoom: { clientId: config.ZOOM_OAUTH_CLIENT_ID, clientSecret: config.ZOOM_OAUTH_CLIENT_SECRET } } : {}),
+    ...(config.TEAMS_OAUTH_CLIENT_ID && config.TEAMS_OAUTH_CLIENT_SECRET ? { teams: { clientId: config.TEAMS_OAUTH_CLIENT_ID, clientSecret: config.TEAMS_OAUTH_CLIENT_SECRET } } : {}),
   });
 }
 

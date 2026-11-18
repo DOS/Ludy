@@ -53,6 +53,9 @@ export const MEETING_PLATFORM_ERROR_CODES = [
   'not_claimed',
   'claim_failed',
   'timeout',
+  // Microsoft Teams (C4): the customer's tenant administrator has not turned on Graph access to meeting transcripts, or the speaker names; only they can.
+  'transcripts_disabled',
+  'speakers_disabled',
 ] as const;
 export type MeetingPlatformErrorCode = (typeof MEETING_PLATFORM_ERROR_CODES)[number];
 export const zMeetingPlatformErrorCode = z.enum(MEETING_PLATFORM_ERROR_CODES);

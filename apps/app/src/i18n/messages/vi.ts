@@ -2757,6 +2757,8 @@ export const vi = {
         not_claimed: 'Bản ghi tải xong nhưng chưa được nhận trong 55 phút, hãy nhập lại.',
         claim_failed: 'Bản ghi tải xong nhưng Ludy không nhận được. Hãy nhập lại.',
         timeout: 'Việc nhập mất quá lâu nên đã dừng. Hãy nhập lại.',
+        transcripts_disabled: 'Quản trị viên Microsoft 365 của bạn chưa cho phép ứng dụng đọc bản chép lời cuộc họp Teams. Hãy nhờ họ bật "Microsoft Graph access" trong mục Transcript API access ở Teams admin center, rồi thử lại.',
+        speakers_disabled: 'Quản trị viên Microsoft 365 của bạn chưa cho phép hiện tên người nói trong bản chép lời Teams. Hãy nhờ họ bật "Include speaker attribution" trong cài đặt cuộc họp của Teams, rồi thử lại.',
         unknown: 'Không nhập được bản ghi này. Hãy thử lại.',
       },
       dialog: {
