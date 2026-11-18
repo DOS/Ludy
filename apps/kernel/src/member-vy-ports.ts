@@ -4,8 +4,8 @@
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
 import { z } from 'zod';
-import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, generateMeetingBriefText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
-import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, BriefError, writeBrief, NoteAiError, NoteAiModelError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind } from '@crove/agent/member-vy';
+import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, CHAPTERS_TIMEOUT_MS, ChaptersModelError, generateMeetingBriefText, generateMeetingChaptersText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
+import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, BriefError, writeBrief, ChaptersError, chapterMeeting, NoteAiError, NoteAiModelError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind } from '@crove/agent/member-vy';
 import { ASK_ESTIMATE, ASK_HITS_MAX, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
 import { readTasksFromSourceData, type SourceQueryFn } from '@crove/mod-projects';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
@@ -113,6 +113,8 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
     generate: (_who, prompt) =>
       prompt.feature === 'meetings.brief'
         ? generateMeetingBriefText(config, prompt, Math.min(timeoutMs, BRIEF_TIMEOUT_MS))
+        : prompt.feature === 'meetings.chapters'
+        ? generateMeetingChaptersText(config, prompt, Math.min(timeoutMs, CHAPTERS_TIMEOUT_MS))
         : prompt.feature === 'meetings.translate'
         ? generateMeetingTranslationText(config, prompt, timeoutMs)
         : prompt.feature === 'meetings.ask'
@@ -139,6 +141,8 @@ function codeOf(error: unknown): string {
   if (error instanceof TranslationModelError) return error.kind === 'timeout' ? 'TRANSLATE_TIMEOUT' : 'TRANSLATE_FAILED';
   if (error instanceof AskError) return error.code;
   if (error instanceof AskModelError) return error.kind === 'timeout' ? 'ASK_TIMEOUT' : 'ASK_FAILED';
+  if (error instanceof ChaptersError) return error.code;
+  if (error instanceof ChaptersModelError) return error.kind === 'timeout' ? 'CHAPTERS_TIMEOUT' : 'CHAPTERS_FAILED';
   if (error instanceof TasksFromNoteError) return error.code;
   if (error instanceof TasksFromSourceError) return error.code;
   if (error instanceof TasksFromNoteModelError) return error.kind === 'timeout' ? 'PROPOSAL_TIMEOUT' : 'PROPOSAL_FAILED';
@@ -271,6 +275,73 @@ async function runRecorderVy(deps: MeetingSummaryDeps, orgId: string, actor: Use
     // The recorder's notice that the draft is waiting (#3730): only for a summary (not the notes run), only once the result is stored as ready, and best effort: a notice that could not be
     // queued never fails the run, and a failed run (every path above) sends nothing. The event holds ids and the language, no text of the summary or the meeting.
     if (kind === 'summary') await notifySummaryReady(deps.runtime, as, { meetingId, runId });
+    return { meetingId, runId, state: 'ready', errorCode: null };
+  } finally {
+    ticket.release();
+  }
+}
+
+// The recorder's Vy writing the table of contents of one meeting (#3844, ADR-0049 stage A): the summary's run in a smaller form. The checks come first (meetings.chapters.status: the deployment's switch,
+// the recorder; then a draft-budget ticket; then meetings.chapters.start, which makes the member's Vy run under the kernel's vy.use, kill-switch and budget checks), the transcript is read as the
+// recorder, the one model call runs outside any transaction through the member's own meter under meetings.chapters, and the checked chapters are stored as the recorder's private, tainted result.
+// The recorder then copies the result into their draft (meetings.chapters.copy_result). A failure at any step is a fixed code stored as the run's failed result.
+export function runMeetingChapters(deps: MeetingSummaryDeps, orgId: string, actor: UserActor, meetingId: string): Promise<Summarized> {
+  return runChapters(deps, orgId, actor, meetingId);
+}
+
+// The fixed code of a failure of a chapters run: the codes of its own checks, and its own words (never the summary's) for a timeout and for anything unexpected.
+function chaptersCodeOf(error: unknown): string {
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' ? 'CHAPTERS_FAILED' : code === 'SUMMARY_TIMEOUT' ? 'CHAPTERS_TIMEOUT' : code;
+}
+
+async function runChapters(deps: MeetingSummaryDeps, orgId: string, actor: UserActor, meetingId: string): Promise<Summarized> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  if (!model || !meter) throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here; type the chapters by hand');
+  const allowed = await deps.runtime.query<{ enabled: boolean; reason: 'off' | 'not_recorder' | null }>('meetings.chapters.status', { meetingId }, as);
+  if (!allowed.enabled) {
+    if (allowed.reason === 'not_recorder') throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy for its chapters');
+    throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here; type the chapters by hand');
+  }
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('SUMMARY_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+  try {
+    const started = await deps.runtime.execute<{ meetingId: string; runId: string }>('meetings.chapters.start', { meetingId }, as);
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<Summarized> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        console.error(`[meetings-chapters] failed result not stored: ${chaptersCodeOf(storeError)}`);
+      }
+      console.error(`[meetings-chapters] run failed: ${errorCode}`);
+      return { meetingId, runId, state: 'failed', errorCode };
+    };
+    let body: string;
+    try {
+      const transcript = await deps.runtime.query<Transcript>('meetings.transcript.get', { meetingId }, as);
+      const meeting = await deps.runtime.query<{ language: 'vi' | 'en' }>('meetings.meeting.get', { meetingId }, as);
+      const segments = transcript.segments.map((s) => ({ startSeconds: s.startSeconds, endSeconds: s.endSeconds, speakerLabel: s.speakerLabel, text: s.text }));
+      const bound = bindPorts({ orgId, memberUserId: actor.userId }, { model, memory: nothingToRemember, knowledge: noKnowledge });
+      const result = await withDeadline(withAiScope({ orgId, memberRunId: runId, meter }, async () => ({ body: (await chapterMeeting({ segments, language: meeting.language }, bound)).body })), timeoutMs);
+      body = revealPrivateText(result.body);
+    } catch (error: unknown) {
+      return await fail(chaptersCodeOf(error));
+    }
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body } }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') throw error;
+      return await fail(chaptersCodeOf(error));
+    }
+    if (stored.status === 'failed') {
+      console.error('[meetings-chapters] run failed: AI_STOPPED');
+      return { meetingId, runId, state: 'failed', errorCode: 'AI_STOPPED' };
+    }
     return { meetingId, runId, state: 'ready', errorCode: null };
   } finally {
     ticket.release();

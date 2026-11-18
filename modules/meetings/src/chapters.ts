@@ -14,6 +14,7 @@ const TITLE_MESSAGES = {
   empty: 'A chapter needs a title',
   too_long: 'A chapter title is too long',
   multiline: 'A chapter title is one line',
+  control: 'A chapter title holds a character that cannot be shown',
   contact: 'A chapter title holds no email address or phone number',
 } as const;
 
@@ -46,12 +47,33 @@ export const chaptersSave = defineCommand({
       const anchored = new Set(found.rows.map((r) => r.second));
       if (seconds.some((s) => !anchored.has(s))) throw new DomainError('CHAPTER_NOT_ANCHORED', 422, 'A chapter must start at a line of the transcript');
     }
-    // The draft set is replaced whole.
+    // The draft set is replaced whole. A chapter that starts at the second of a chapter the model wrote keeps the mark (and the run it came from) even when its title is edited: only the recorder's review
+    // (meetings.draft.review) clears it, never a save. A chapter at any other second is the recorder's own.
+    const marked = await ctx.trx
+      .selectFrom('crove_meetings.meeting_chapter')
+      .select(['start_seconds', 'source_run_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .where('stage', '=', 'draft')
+      .where('tainted', '=', true)
+      .execute();
+    const runOf = new Map(marked.map((m) => [m.start_seconds, m.source_run_id]));
     await ctx.trx.deleteFrom('crove_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').execute();
     if (chapters.length > 0) {
       await ctx.trx
         .insertInto('crove_meetings.meeting_chapter')
-        .values(chapters.map((c, i) => ({ org_id: ctx.orgId, meeting_id: input.meetingId, stage: 'draft' as const, position: i + 1, title: c.title, start_seconds: c.startSeconds })))
+        .values(
+          chapters.map((c, i) => ({
+            org_id: ctx.orgId,
+            meeting_id: input.meetingId,
+            stage: 'draft' as const,
+            position: i + 1,
+            title: c.title,
+            start_seconds: c.startSeconds,
+            tainted: runOf.has(c.startSeconds),
+            source_run_id: runOf.get(c.startSeconds) ?? null,
+          })),
+        )
         .execute();
     }
     ctx.audit({ meetingId: input.meetingId, chapters: chapters.length });

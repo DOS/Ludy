@@ -18,7 +18,7 @@ import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 const READ_ONCE = { staleTime: 5 * 60_000, refetchOnWindowFocus: false } as const;
 
 // The refusals the editor can explain in the person's language; any other error shows the generic message.
-const REFUSALS = ['CHAPTER_NOT_ANCHORED', 'CHAPTER_DUPLICATE_SECOND', 'CHAPTER_TITLE_EMPTY', 'CHAPTER_TITLE_TOO_LONG', 'CHAPTER_TITLE_MULTILINE', 'CHAPTER_TITLE_CONTACT'] as const;
+const REFUSALS = ['CHAPTER_NOT_ANCHORED', 'CHAPTER_DUPLICATE_SECOND', 'CHAPTER_TITLE_EMPTY', 'CHAPTER_TITLE_TOO_LONG', 'CHAPTER_TITLE_MULTILINE', 'CHAPTER_TITLE_CONTACT', 'CHAPTER_TITLE_CONTROL', 'CHAPTERS_ALREADY_COPIED', 'CHAPTERS_STALE', 'DRAFT_CHAPTERS_EXIST', 'DRAFT_NOT_REVIEWED'] as const;
 type Refusal = (typeof REFUSALS)[number];
 const refusalOf = (error: unknown): Refusal | null => {
   const code = (error as { code?: unknown } | null)?.code;
@@ -26,6 +26,8 @@ const refusalOf = (error: unknown): Refusal | null => {
 };
 
 interface Row {
+  // True while the row is Vy's, unread (the badge only; the mark itself is the database's).
+  vy: boolean;
   title: string;
   // The whole second of the line the chapter starts at, as the select holds it; '' while none is picked.
   second: string;
@@ -58,7 +60,7 @@ function ChapterEditor({ meetingId, base }: { meetingId: string; base: readonly 
     if (lines.some((l) => l.second === second)) continue;
     lines.push({ second, label: `${clock(second)} · ${segment.text.length > 60 ? `${segment.text.slice(0, 60)}…` : segment.text}` });
   }
-  const initial: Row[] = base.map((c) => ({ title: c.title, second: String(c.startSeconds) }));
+  const initial: Row[] = base.map((c) => ({ vy: c.tainted, title: c.title, second: String(c.startSeconds) }));
   const [rows, setRows] = useState<Row[] | null>(null);
   const [saved, setSaved] = useState(false);
   const current = rows ?? initial;
@@ -104,6 +106,7 @@ function ChapterEditor({ meetingId, base }: { meetingId: string; base: readonly 
             {/* A chapter saved at a second this transcript no longer has stays visible, so it can be moved or removed. */}
             {row.second !== '' && !lines.some((l) => String(l.second) === row.second) && <NativeSelectOption value={row.second}>{clock(Number(row.second))}</NativeSelectOption>}
           </NativeSelect>
+          {row.vy && <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground" data-testid="chapter-vy-badge">{t('unreadBadge')}</span>}
           <Button type="button" size="sm" variant="ghost" aria-label={t('remove')} onClick={() => change(current.filter((_, j) => j !== i))}>
             ×
           </Button>
@@ -111,7 +114,7 @@ function ChapterEditor({ meetingId, base }: { meetingId: string; base: readonly 
       ))}
       {refusal ? <ErrorText>{t(`errors.${refusal}`)}</ErrorText> : save.error ? <ErrorText>{errorMessage(save.error)}</ErrorText> : null}
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" size="sm" variant="outline" disabled={current.length >= CHAPTERS_MAX || lines.length === 0} onClick={() => change([...current, { title: '', second: '' }])}>
+        <Button type="button" size="sm" variant="outline" disabled={current.length >= CHAPTERS_MAX || lines.length === 0} onClick={() => change([...current, { vy: false, title: '', second: '' }])}>
           {t('add')}
         </Button>
         <Button type="button" size="sm" loading={save.isPending} disabled={rows === null || !complete} onClick={() => save.mutate()}>
@@ -123,12 +126,82 @@ function ChapterEditor({ meetingId, base }: { meetingId: string; base: readonly 
   );
 }
 
+// The failures of a run the person is told about in their own words; any other code gets the general line.
+const RUN_CODES = ['AI_BUDGET_EXHAUSTED', 'AI_STOPPED', 'CHAPTERS_TIMEOUT', 'CHAPTERS_FAILED', 'CHAPTERS_UNPARSABLE', 'CHAPTERS_EMPTY', 'CHAPTERS_TOO_LONG', 'CHAPTERS_NO_TRANSCRIPT'] as const;
+const runCodeOf = (code: string | null): (typeof RUN_CODES)[number] | 'default' => RUN_CODES.find((c) => c === code) ?? 'default';
+
+// The recorder's own Vy writing the chapters: ask, wait for the one answer, then copy it into the draft with a click of their own. Shown to the recorder only, and only when this system lets Vy
+// write (the status says so); nothing is shared from here, and the copied chapters stay marked as Vy's until the recorder confirms they read them.
+function VyChapters({ meetingId, hasModelDraft }: { meetingId: string; hasModelDraft: boolean }) {
+  const t = useTranslations('meetings.chapters');
+  const status = useQuery(orpc.meetings.results.chaptersStatus.queryOptions({ input: { meetingId } }));
+  const ask = useMutation({ mutationFn: () => orpc.meetings.results.chaptersRun.call({ meetingId }) });
+  const copy = useMutation({
+    mutationFn: (runId: string) => orpc.meetings.results.chaptersCopy.call({ meetingId, runId }),
+    onSuccess: () => {
+      ask.reset();
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.results.chaptersGet.key() });
+    },
+  });
+  if (!status.data?.enabled) return null;
+  const answer = ask.data;
+  const copyRefusal = copy.error ? refusalOf(copy.error) : null;
+  return (
+    <div className="space-y-2 rounded-lg border p-3" data-testid="vy-chapters">
+      <p className="text-sm font-medium">{t('vy.title')}</p>
+      <p className="text-xs text-muted-foreground">{t('vy.desc')}</p>
+      {/* One live region that is always in the page, so the changes are announced. */}
+      <div role="status" aria-live="polite" className="space-y-2 empty:mb-0">
+        {ask.isPending && <p>{t('vy.running')}</p>}
+        {answer?.state === 'ready' && !copy.isSuccess && <p data-testid="vy-chapters-ready">{t('vy.ready')}</p>}
+        {copy.isSuccess && <p>{t('vy.copied')}</p>}
+      </div>
+      {answer?.state === 'ready' && !copy.isSuccess && (
+        <div className="space-y-2">
+          {hasModelDraft && <p className="text-xs text-muted-foreground">{t('vy.copyReplaces')}</p>}
+          <Button size="sm" loading={copy.isPending} onClick={() => copy.mutate(answer.runId)}>
+            {t('vy.copy')}
+          </Button>
+        </div>
+      )}
+      {answer?.state === 'failed' && <ErrorText>{`${t('vy.failed')} ${t(`vy.codes.${runCodeOf(answer.errorCode)}`)}`}</ErrorText>}
+      {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
+      {copyRefusal ? <ErrorText>{t(`errors.${copyRefusal}`)}</ErrorText> : copy.error ? <ErrorText>{errorMessage(copy.error)}</ErrorText> : null}
+      {!ask.isPending && answer?.state !== 'ready' && (
+        <Button size="sm" variant={answer ? 'outline' : 'default'} onClick={() => ask.mutate()}>
+          {answer ? t('vy.restart') : t('vy.start')}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+// The recorder's own confirmation that they read the chapters Vy wrote: the rows on screen that carry the mark, named exactly, lose it, and only then can the minutes be published.
+function ConfirmRead({ meetingId, ids }: { meetingId: string; ids: string[] }) {
+  const t = useTranslations('meetings.chapters');
+  const review = useMutation({
+    mutationFn: () => orpc.meetings.results.review.call({ meetingId, confirmed: true, ids }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: orpc.meetings.results.chaptersGet.key() }),
+  });
+  return (
+    <div className="space-y-2" data-testid="chapters-unread">
+      <p className="text-xs text-muted-foreground">{t('unreadNote')}</p>
+      <Button type="button" size="sm" variant="outline" loading={review.isPending} onClick={() => review.mutate()}>
+        {t('confirm')}
+      </Button>
+      {review.error && <ErrorText>{errorMessage(review.error)}</ErrorText>}
+    </div>
+  );
+}
+
 export function MeetingChapters({ meetingId, isRecorder, onJump }: { meetingId: string; isRecorder: boolean; onJump: (seconds: number) => void }) {
   const t = useTranslations('meetings.chapters');
   const chapters = useQuery({ ...orpc.meetings.results.chaptersGet.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   if (chapters.isPending) return null;
   if (chapters.error) return <ErrorText>{errorMessage(chapters.error)}</ErrorText>;
   const { draft, published } = chapters.data;
+  // The draft rows on screen that Vy wrote and the recorder has not read: the confirmation names exactly these.
+  const unreadIds = draft.filter((c) => c.tainted).map((c) => c.id);
   // A reader of a meeting with no published chapters sees no card at all.
   if (!isRecorder && published.length === 0) return null;
   return (
@@ -147,6 +220,8 @@ export function MeetingChapters({ meetingId, isRecorder, onJump }: { meetingId: 
         {isRecorder && (
           <div className="space-y-2">
             <h3 className="text-xs font-medium text-muted-foreground">{t('draftTitle')}</h3>
+            <VyChapters meetingId={meetingId} hasModelDraft={draft.some((c) => c.tainted)} />
+            {unreadIds.length > 0 && <ConfirmRead meetingId={meetingId} ids={unreadIds} />}
             {/* The draft if there is one, else a copy of the published set to edit (the next publish replaces it). */}
             <ChapterEditor meetingId={meetingId} base={draft.length > 0 ? draft : published} />
           </div>

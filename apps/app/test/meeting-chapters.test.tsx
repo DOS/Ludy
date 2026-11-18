@@ -130,6 +130,50 @@ describe('what the recorder sees', () => {
   });
 });
 
+describe('the recorder\'s Vy chapters', () => {
+  const withStatus = (enabled: boolean) => client.current.setQueryData(['meetings', 'results', 'chaptersStatus'], { meetingId: 'm1', enabled, reason: enabled ? null : 'off' });
+
+  it('offers the button to the recorder when Vy may write, and hides it when AI is off, leaving the editor', () => {
+    withStatus(true);
+    const on = show({ meetingId: 'm1', draft: [], published: [] }, true);
+    expect(on).toContain('data-testid="vy-chapters"');
+    expect(on).toContain(en.meetings.chapters.vy.title);
+    expect(buttons(on).map((b) => b.text)).toContain(en.meetings.chapters.vy.start);
+    withStatus(false);
+    const off = show({ meetingId: 'm1', draft: [], published: [] }, true);
+    expect(off).not.toContain('data-testid="vy-chapters"');
+    expect(off).toContain('data-testid="chapter-editor"');
+  });
+
+  it('never shows the button to a reader', () => {
+    withStatus(true);
+    const html = show({ meetingId: 'm1', draft: [], published: PUBLISHED }, false);
+    expect(html).not.toContain('data-testid="vy-chapters"');
+    expect(html).not.toContain(en.meetings.chapters.vy.start);
+  });
+
+  it('marks the rows Vy wrote and asks the recorder to confirm them, and asks for nothing once they are read', () => {
+    withStatus(false);
+    const unread = show({ meetingId: 'm1', draft: [chapter('d1', 1, 'Mở đầu', 0, true), chapter('d2', 2, 'Báo giá', 10, false)], published: [] }, true);
+    expect(unread).toContain('data-testid="chapters-unread"');
+    expect(unread).toContain(en.meetings.chapters.unreadNote);
+    expect(unread.match(/data-testid="chapter-vy-badge"/g)).toHaveLength(1);
+    expect(buttons(unread).map((b) => b.text)).toContain(en.meetings.chapters.confirm);
+    const read = show({ meetingId: 'm1', draft: [chapter('d1', 1, 'Mở đầu', 0, false)], published: [] }, true);
+    expect(read).not.toContain('data-testid="chapters-unread"');
+    expect(read).not.toContain('data-testid="chapter-vy-badge"');
+  });
+
+  it('has Vietnamese words for every line of the Vy block, the same keys as English', () => {
+    const keys = (o: Record<string, unknown>, prefix = ''): string[] => Object.entries(o).flatMap(([k, v]) => (typeof v === 'object' && v !== null ? keys(v as Record<string, unknown>, `${prefix}${k}.`) : [`${prefix}${k}`]));
+    expect(keys(viMessages.meetings.chapters).sort()).toEqual(keys(en.meetings.chapters).sort());
+    withStatus(true);
+    const html = show({ meetingId: 'm1', draft: [chapter('d1', 1, 'Mở đầu', 0, true)], published: [] }, true, 'vi');
+    expect(html).toContain(viMessages.meetings.chapters.vy.title);
+    expect(html).toContain(viMessages.meetings.chapters.unreadNote);
+  });
+});
+
 describe('a click on a chapter', () => {
   it('marks the transcript line that starts at its second, and only that line', () => {
     client.current.setQueryData(['meetings', 'transcript', 'get'], TRANSCRIPT);
