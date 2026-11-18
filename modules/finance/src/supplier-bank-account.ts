@@ -55,7 +55,7 @@ const view = (row: AccountRow): SupplierBankAccount => ({
 
 // The digits of what a person typed: spaces, dots and dashes are dropped, 6 to 20 digits remain. The one place a number is normalized.
 export function normalizeAccountNumber(text: string): string {
-  const digits = text.replace(/[\s.\-]/g, '');
+  const digits = text.replace(/[\s.-]/g, '');
   if (!/^[0-9]{6,20}$/.test(digits)) throw new DomainError('SUPPLIER_BANK_NUMBER_INVALID', 422, 'Số tài khoản phải gồm 6 đến 20 chữ số');
   return digits;
 }
