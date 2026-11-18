@@ -1244,6 +1244,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     weekday: number,
     allowShortEn: boolean,
     checkLeadingStartIdx?: number,
+    interval = 1,
   ): number | null => {
     const baseEnd = (words[phraseEndIdx] as WordToken).end;
     if (!isWordSpanAvailable({ start: spanStart, end: baseEnd })) return null;
@@ -1257,7 +1258,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       return finalEndIdx;
     }
     recordRecurrence(
-      { freq: 'weekly', interval: 1, byWeekday: weekday },
+      { freq: 'weekly', interval, byWeekday: weekday },
       nextOccurrenceOfWeekday(today, weekday, true),
       spanStart,
       baseEnd,
@@ -1548,6 +1549,32 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
                 ? 'monthly'
                 : null;
         if (freq) {
+          if (freq === 'weekly') {
+            const isEn = w0.nfcLower === 'every';
+            let afterWeekIdx = i + 3;
+            const connWord = words[afterWeekIdx];
+            if (connWord && contiguous(i + 2, afterWeekIdx) && (isEn ? connWord.nfcLower === 'on' : vnMatch(connWord, 'vào'))) {
+              afterWeekIdx += 1;
+            }
+            const wd =
+              afterWeekIdx < words.length && contiguous(i + 2, afterWeekIdx)
+                ? matchWeekday(input, words, afterWeekIdx, isEn)
+                : null;
+            if (wd) {
+              const consumedTo = claimWeeklyWeekdayPhrase(
+                w0.start,
+                afterWeekIdx + wd.consumed - 1,
+                wd.weekday,
+                isEn,
+                undefined,
+                interval,
+              );
+              if (consumedTo !== null) {
+                i = consumedTo;
+                continue;
+              }
+            }
+          }
           const span = spanOf(i + 2);
           if (isWordPhraseEndAvailable(span)) {
             recordRecurrence({ freq, interval }, today, span.start, span.end);
@@ -2544,7 +2571,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       recordRecurrence({ freq, interval: 1 }, today, w0.start, w0.end);
     }
   }
-  const recurrence = recurrenceState.rule;
+  let recurrence = recurrenceState.rule;
   const recurrenceDerivedDueOn = recurrenceState.derivedDueOn;
 
   // 9. Resolve final dueOn, dueTime, dueAt, remindAt
@@ -2556,7 +2583,7 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
     const candidateMs = zonedInstant(opts.timeZone, today, parsedTime.hour * 60 + parsedTime.minute);
     dueOn = candidateMs <= nowMs ? addLocalDays(today, 1) : today;
   } else if (parsedTime && !explicitTodaySpecified && explicitDueOn === null && recurrence !== null && dueOn === today) {
-    // Daily/weekly recurrence starting today whose clock time already passed advances to its next occurrence.
+    // Daily/weekly/monthly recurrence starting today whose clock time already passed advances to its next cycle.
     const candidateMs = zonedInstant(opts.timeZone, today, parsedTime.hour * 60 + parsedTime.minute);
     if (candidateMs <= nowMs) {
       if (recurrence.freq === 'daily') {
@@ -2564,7 +2591,16 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
       } else if (recurrence.freq === 'weekly') {
         dueOn = addLocalDays(today, 7 * recurrence.interval);
       } else if (recurrence.freq === 'monthly') {
-        dueOn = addCalendarMonthsForRecurrence(today, recurrence.interval, recurrence.byMonthDay);
+        const nextDueOn = addCalendarMonthsForRecurrence(today, recurrence.interval, recurrence.byMonthDay);
+        // Keep the original anchor day when clamped into a shorter month (e.g. Jan 31 -> Feb 28 preserves 31 for Mar 31).
+        if (recurrence.byMonthDay === undefined) {
+          const parsedToday = parseIsoCalendarDate(today);
+          const parsedNext = parseIsoCalendarDate(nextDueOn);
+          if (parsedToday && parsedNext && parsedNext.day < parsedToday.day) {
+            recurrence = { ...recurrence, byMonthDay: parsedToday.day };
+          }
+        }
+        dueOn = nextDueOn;
       }
     }
   }

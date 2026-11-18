@@ -1498,6 +1498,26 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueTime: '09:00',
       recurrence: { freq: 'monthly', interval: 1, byMonthDay: -1 },
     });
+    expect(
+      parseTodoQuickAdd('Gọi khách mỗi tháng 9h', { now: new Date('2027-01-31T16:00:00+07:00'), timeZone: VN_TZ }),
+    ).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2027-02-28',
+      dueTime: '09:00',
+      recurrence: { freq: 'monthly', interval: 1, byMonthDay: 31 },
+    });
+    expect(parseTodoQuickAdd('Call every 2 weeks on Monday and Wednesday 9am', { now: TUE_AFTERNOON, timeZone: VN_TZ })).toMatchObject({
+      title: 'Call every 2 weeks on Monday and Wednesday',
+      dueOn: '2026-11-18',
+      dueTime: '09:00',
+      recurrence: null,
+    });
+    expect(parseTodoQuickAdd('Call every 2 weeks on Monday 9am', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Call',
+      dueOn: '2026-11-23',
+      dueTime: '09:00',
+      recurrence: { freq: 'weekly', interval: 2, byWeekday: 1 },
+    });
 
     // Filesystem paths protect embedded date/weekday words ("/tmp/tomorrow", "/home/admin/friday", "./tomorrow", "C:\\tmp\\tomorrow")
     expect(parseTodoQuickAdd('Read /tmp/tomorrow', { now: TUE_AFTERNOON, timeZone: VN_TZ })).toMatchObject({
