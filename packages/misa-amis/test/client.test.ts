@@ -314,7 +314,10 @@ describe('what the caller changes while a call waits', () => {
     const { fake, client, release } = held();
     const vouchers = [voucher(REF1, AMIS_MAX_VOUCHER_LINES)];
     const call = client.save(conn, vouchers);
-    vouchers[0]?.detail.push(line(AMIS_MAX_VOUCHER_LINES + 1));
+    // The list is read-only in the type; a caller that ignores that is what this test is about.
+    const first = vouchers[0];
+    if (!first) throw new Error('no voucher');
+    (first.detail as unknown[]).push(line(AMIS_MAX_VOUCHER_LINES + 1));
     vouchers.push(voucher(REF2));
     release();
     await call;
