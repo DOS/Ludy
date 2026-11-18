@@ -99,7 +99,7 @@ test('stale deals show a badge and a next steps list, done and snooze are one cl
     // The setting sits in Settings, "Quy trình bán hàng" (#3647), a link from the Deals screen.
     await page.getByRole('tab', { name: 'Bảng' }).click();
     await page.getByRole('link', { name: 'Sửa giai đoạn' }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/settings#sales-process$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/settings/sales#sales-process$`));
     const setting = page.getByTestId('stale-setting');
     await expect(setting.getByLabel('Số ngày')).toHaveValue('14');
     await setting.getByLabel('Số ngày').fill('5');

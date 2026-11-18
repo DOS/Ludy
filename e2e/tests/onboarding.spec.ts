@@ -46,7 +46,7 @@ test('a firm adds a client company by tax code, then opens the form again for th
     await page.getByLabel('Địa chỉ (không bắt buộc)').fill('Số 1 Phố Huế, Hà Nội');
     await page.getByLabel('Email người cần mời (không bắt buộc)').fill(contact);
     await page.getByRole('button', { name: 'Tạo tổ chức' }).click();
-    await expect(page).toHaveURL(/\/o\/[^/]+\/settings\?invite=/);
+    await expect(page).toHaveURL(/\/o\/[^/]+\/settings\/members\?invite=/);
   });
 
   const slug = new URL(page.url()).pathname.split('/')[2] ?? '';

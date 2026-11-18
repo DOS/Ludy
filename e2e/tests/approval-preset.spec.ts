@@ -3,6 +3,7 @@
 // once the owner holds the role, the switch goes through.
 import { expect, test } from '@playwright/test';
 import { createOrg, newEmail, signUp } from '../lib/session.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 import { nextTotp } from '../lib/totp.ts';
 
 test('an owner switches the approval rule once a chief accountant is named', async ({ page }) => {
@@ -11,16 +12,18 @@ test('an owner switches the approval rule once a chief accountant is named', asy
   await createOrg(page, 'Công ty quy tắc duyệt');
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
 
-  const card = page.getByRole('region', { name: 'Quy tắc duyệt bút toán' });
-  await expect(card.getByRole('radio', { name: 'Chủ doanh nghiệp duyệt' })).toBeChecked();
-  await expect(card.getByRole('button', { name: 'Lưu quy tắc' })).toBeDisabled();
-
-  // Switching is R3: turn on the second factor first, so the code is fresh.
+  // Switching is R3: turn on the second factor first (Security tab), so the code is fresh.
+  await openSettingsTab(page, 'security');
   await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
   const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
   await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
   await page.getByRole('button', { name: 'Xác nhận' }).click();
   await expect(page.getByText('Đang bật')).toBeVisible();
+
+  await openSettingsTab(page, 'members');
+  const card = page.getByRole('region', { name: 'Quy tắc duyệt bút toán' });
+  await expect(card.getByRole('radio', { name: 'Chủ doanh nghiệp duyệt' })).toBeChecked();
+  await expect(card.getByRole('button', { name: 'Lưu quy tắc' })).toBeDisabled();
 
   // Nobody holds the chief accountant role yet: refused, with the way to the role assignments.
   await card.getByRole('radio', { name: 'Chỉ kế toán trưởng duyệt' }).check();

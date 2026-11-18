@@ -39,7 +39,8 @@ import { OnboardingPage } from './routes/onboarding.tsx';
 import { OpeningBalancePage } from './routes/opening-balance.tsx';
 import { OrgLayout } from './routes/org-layout.tsx';
 import { ResetPasswordPage } from './routes/reset-password.tsx';
-import { SettingsPage } from './routes/settings.tsx';
+import { SettingsAccountingPage, SettingsAppsPage, SettingsBookingsPage, SettingsConnectionsPage, SettingsDataPage, SettingsMembersPage, SettingsOrgPage, SettingsSalesPage, SettingsSecurityPage } from './routes/settings/pages.tsx';
+import { legacySettingsTab, SETTINGS_TAB_TO } from './routes/settings/tabs.ts';
 import { SocialPage } from './routes/social.tsx';
 import { SocialImportPage } from './routes/social-import.tsx';
 import { SocialSnippetsPage } from './routes/social-snippets.tsx';
@@ -590,13 +591,27 @@ const socialPlanPrintRoute = createRoute({
   validateSearch: parsePlanSearch,
   component: SocialPlanPrintPage,
 });
-// ?invite=<email> fills the invite form: onboarding sends a firm here to invite the new client's contact (issue #324).
+// Settings is seven tabs, each its own screen (#3589); the first keeps the address `settings`. ?invite=<email> fills the invite form: onboarding sends a firm here to invite the new client's
+// contact (issue #324), and the form is on the members tab. An old link to a card of the single page (`settings#quote-settings`, `settings#integrations`...) goes to the tab that holds it, with its #fragment.
+const parseSettingsSearch = (search: Record<string, unknown>): { invite?: string } => (typeof search.invite === 'string' ? { invite: search.invite.slice(0, 320) } : {});
 const settingsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: 'settings',
-  validateSearch: (search: Record<string, unknown>): { invite?: string } => (typeof search.invite === 'string' ? { invite: search.invite.slice(0, 320) } : {}),
-  component: SettingsPage,
+  validateSearch: parseSettingsSearch,
+  beforeLoad: ({ params, search, location }) => {
+    const tab = legacySettingsTab(location.hash, search);
+    if (tab) throw redirect({ to: SETTINGS_TAB_TO[tab], params: { slug: (params as { slug: string }).slug }, search, hash: location.hash.replace(/^#/, ''), replace: true });
+  },
+  component: SettingsOrgPage,
 });
+const settingsMembersRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/members', validateSearch: parseSettingsSearch, component: SettingsMembersPage });
+const settingsAppsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/apps', component: SettingsAppsPage });
+const settingsBookingsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/bookings', component: SettingsBookingsPage });
+const settingsSalesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/sales', component: SettingsSalesPage });
+const settingsAccountingRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/accounting', component: SettingsAccountingPage });
+const settingsConnectionsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/connections', component: SettingsConnectionsPage });
+const settingsSecurityRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/security', component: SettingsSecurityPage });
+const settingsDataRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/data', component: SettingsDataPage });
 // The audit log (#672): owners and admins only, which the page checks and the server enforces.
 // ?targetType=&targetId= (and the other filters) open it filtered: a decided proposal links here (#1445).
 const auditRoute = createRoute({ getParentRoute: () => orgRoute, path: 'audit', validateSearch: parseAuditSearch, component: AuditPage });
@@ -710,7 +725,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, signEnvelopesRoute, signEnvelopeDetailRoute, signTemplatesRoute, signVerifyRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, accountingOverviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, paymentRemindersRoute, salesInvoicesRoute, stockRoute, householdRoute, marketplaceRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, aiUsageRoute, aiConnectionsRoute, tasksRoute, taskDetailRoute, projectsRoute, projectDetailRoute, signEnvelopesRoute, signEnvelopeDetailRoute, signTemplatesRoute, signVerifyRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, hrEmployeesRoute, hrRecruitingRoute, hrPayrollRoute, hrDeclarationsRoute, hrBankTemplatesRoute, meetingsRoute, meetingRecordRoute, meetingDetailRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, settingsMembersRoute, settingsAppsRoute, settingsBookingsRoute, settingsSalesRoute, settingsAccountingRoute, settingsConnectionsRoute, settingsSecurityRoute, settingsDataRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

@@ -17,17 +17,18 @@ export function ScreenTabs({ slug, installed, badges }: { slug: string; installe
   return (
     <div className="mb-5 border-b">
       {/* Not a navigation landmark: the menu stays the one place a screen reader and a test finds "the menu". */}
-      <ul aria-label={t('tabsLabel')} className="-mb-px flex flex-wrap gap-x-5">
+      {/* A phone scrolls the strip sideways instead of stacking its tabs in rows: Settings has seven (#3589). */}
+      <ul aria-label={t('tabsLabel')} className="-mb-px flex gap-x-5 overflow-x-auto md:flex-wrap md:overflow-visible">
         {tabs.map((tab) => {
           const current = tab.path === here;
           const badge = badges[tab.label];
           return (
-            <li key={tab.path}>
+            <li key={tab.path} className="shrink-0">
               <Link
                 to={`/o/$slug/${tab.path}` as NavItem['to']}
                 params={{ slug }}
                 {...(current ? { 'aria-current': 'page' as const } : {})}
-                className={`flex min-h-11 items-center gap-1.5 border-b-2 px-0.5 text-sm md:min-h-9 ${current ? 'border-primary font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                className={`flex min-h-11 items-center gap-1.5 whitespace-nowrap border-b-2 px-0.5 text-sm md:min-h-9 ${current ? 'border-primary font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
               >
                 {t(tab.label)}
                 {badge ? <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{badge}</span> : null}

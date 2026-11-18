@@ -277,7 +277,7 @@ export function DealsPage() {
           view={view === 'board' ? 'board' : 'list'}
           extra={
             canManage ? (
-              <Link to="/o/$slug/settings" params={{ slug }} hash={SALES_PROCESS_ID} className={buttonVariants({ variant: 'link', size: 'sm' })}>
+              <Link to="/o/$slug/settings/sales" params={{ slug }} hash={SALES_PROCESS_ID} className={buttonVariants({ variant: 'link', size: 'sm' })}>
                 {t('editStages')}
               </Link>
             ) : undefined

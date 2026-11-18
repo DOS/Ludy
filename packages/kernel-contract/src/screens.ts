@@ -24,6 +24,16 @@ const KERNEL_SCREENS = {
     { path: 'ai-usage' },
     { path: 'ai-connections' },
     { path: 'settings' },
+    // The other tabs of Settings (#3589), each with its own address; the first tab is `settings` itself. Ctrl K finds each by its tab name. The accounting tab opens where finance runs, the
+    // connections tab where finance (the bank feed, the e-invoice provider, the bank account numbers) or the meetings (the member's meeting platforms) run, and the sales tab (the quotes and the deal board) where crm runs.
+    { path: 'settings/members', find: 'settingsMembers' },
+    { path: 'settings/apps', find: 'settingsApps' },
+    { path: 'settings/bookings', find: 'settingsBookings' },
+    { path: 'settings/sales', find: 'settingsSales', modules: ['crm'] },
+    { path: 'settings/accounting', find: 'settingsAccounting', modules: ['finance'] },
+    { path: 'settings/connections', find: 'settingsConnections', modules: ['finance', 'meetings'] },
+    { path: 'settings/security', find: 'settingsSecurity' },
+    { path: 'settings/data', find: 'settingsData' },
     // The audit log (#672): owners and admins only, which the page checks and the server enforces.
     { path: 'audit' },
     { path: 'personal-data' },

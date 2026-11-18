@@ -567,7 +567,7 @@ export function DealQuotes({ deal, canEdit, onClose }: { deal: Deal; canEdit: bo
       {bare && (
         <p className="text-sm text-muted-foreground" data-testid="quote-letterhead-hint">
           {t('settings.bare')}{' '}
-          <Link to="/o/$slug/settings" params={{ slug }} hash={QUOTE_SETTINGS_ID} className="text-link underline">
+          <Link to="/o/$slug/settings/sales" params={{ slug }} hash={QUOTE_SETTINGS_ID} className="text-link underline">
             {t('settings.setUp')}
           </Link>
         </p>

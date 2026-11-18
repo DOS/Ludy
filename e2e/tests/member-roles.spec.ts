@@ -2,6 +2,7 @@
 // it back, and the member role select keeps its own label beside the new control.
 import { expect, test } from '@playwright/test';
 import { createOrg, newEmail, signUp } from '../lib/session.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 import { nextTotp } from '../lib/totp.ts';
 
 test('an owner gives the chief accountant role and takes it back', async ({ page }) => {
@@ -10,12 +11,15 @@ test('an owner gives the chief accountant role and takes it back', async ({ page
   await createOrg(page, 'Công ty phân quyền');
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
 
-  // Giving a role is R3: turn on the second factor first, so the code is fresh.
+  // Giving a role is R3: turn on the second factor first (Security tab), so the code is fresh.
+  await openSettingsTab(page, 'security');
   await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
   const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
   await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
   await page.getByRole('button', { name: 'Xác nhận' }).click();
   await expect(page.getByText('Đang bật')).toBeVisible();
+
+  await openSettingsTab(page, 'members');
 
   const row = page.getByRole('listitem').filter({ hasText: owner }).first();
   const roles = row.getByRole('group', { name: `Vai trò nghiệp vụ của ${owner}` });
