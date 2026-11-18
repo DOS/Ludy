@@ -5,7 +5,7 @@
 // never asked for an account or a book: the profile decides which books it sees. The law behind a book is data still waiting for the accountant (#2520) and the screen says so. Owners and admins
 // change the profile; every role reads the books.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { HOUSEHOLD_EXPENSE_GROUPS, HOUSEHOLD_TRADES, vietnamToday, type HouseholdProfileSet, type HouseholdS2a, type HouseholdS2b, type HouseholdVatCut } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
@@ -294,7 +294,7 @@ function S2aBook({ entityId, variant = 'S2a' }: { entityId: string; variant?: 'S
               </dd>
             </dl>
           )}
-          <VatCutNotes cut={data.vatCut} prefix={`household-${p}`} />
+          <VatCutNotes cut={data.vatCut} prefix={`household-${p}`} mark={provisional} />
         </>
       )}
     </Card>
@@ -640,7 +640,7 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
               )}
             </dl>
           )}
-          <VatCutNotes cut={data.vatCut} prefix="household-cnkd" />
+          <VatCutNotes cut={data.vatCut} prefix="household-cnkd" mark={provisional} />
           <p className="mt-3 text-xs text-muted-foreground">{t('cnkdWithheldHint')}</p>
           {data.withheld.settlements.length > 0 && (
             <ul className="mt-1 list-disc pl-5 text-sm">
@@ -657,7 +657,7 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
 }
 
 // The Decree 174 VAT cut under the totals of a book (#3710): the cut and the VAT payable when the profile answered yes, and when it did not answer, what the VAT would be if the household were eligible.
-function VatCutNotes({ cut, prefix }: { cut: HouseholdVatCut; prefix: string }) {
+function VatCutNotes({ cut, prefix, mark }: { cut: HouseholdVatCut; prefix: string; mark: ReactNode }) {
   const t = useTranslations('household');
   const f = useFormat();
   return (
@@ -667,16 +667,21 @@ function VatCutNotes({ cut, prefix }: { cut: HouseholdVatCut; prefix: string }) 
           <dt className="text-subtle-foreground">{t('vatCutLine', { percent: cut.percent })}</dt>
           <dd className="tabular-nums" data-testid={`${prefix}-vatcut-amount`}>
             {f.money(cut.total.cut)}
+            {mark}
           </dd>
           <dt className="text-subtle-foreground">{t('vatCutPayable')}</dt>
           <dd className="tabular-nums" data-testid={`${prefix}-vatcut-payable`}>
             {f.money(cut.total.vatPayable)}
+            {mark}
           </dd>
         </dl>
       )}
       {cut.ifEligible && (
         <Alert className="mt-3" data-testid={`${prefix}-vatcut-ask`}>
-          <AlertDescription>{t('vatCutIfEligible', { vat: f.money(cut.ifEligible.vatPayable), cut: f.money(cut.ifEligible.cut) })}</AlertDescription>
+          <AlertDescription>
+            {t('vatCutIfEligible', { vat: f.money(cut.ifEligible.vatPayable), cut: f.money(cut.ifEligible.cut) })}
+            {mark}
+          </AlertDescription>
         </Alert>
       )}
     </>

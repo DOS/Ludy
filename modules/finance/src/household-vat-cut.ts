@@ -49,8 +49,10 @@ export function vatCutBlock(args: { answer: HouseholdVatCutAnswer | null; cut: V
   return { answer: args.answer, percent, applied, lines, total, ifEligible };
 }
 
-// The unconfirmed-row entry for the cut: only a cut the book relies on (applied, or shown as "if eligible") can make the book provisional.
-export function vatCutUnconfirmed(answer: HouseholdVatCutAnswer | null, cut: VatCutRow | null): { kind: 'reduction'; key: string; effectiveFrom: string } | null {
-  if (!cut || cut.status === 'confirmed' || answer === 'no' || !money(cut.percent).gt(0)) return null;
+// The unconfirmed-row entry for the cut: only a cut the book really relies on (applied, or shown as the "if eligible" figure) can make the book provisional. A cut the result does not use
+// (the answer is no, no cut is in force, or the parts are not all on a trade yet, so no "if eligible" figure is given) adds nothing.
+export function vatCutUnconfirmed(block: HouseholdVatCut, cut: VatCutRow | null): { kind: 'reduction'; key: string; effectiveFrom: string } | null {
+  if (!cut || cut.status === 'confirmed') return null;
+  if (!block.applied && block.ifEligible === null) return null;
   return { kind: 'reduction', key: 'vat', effectiveFrom: cut.effectiveFrom };
 }

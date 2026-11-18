@@ -62,13 +62,24 @@ describe('vatCutBlock', () => {
 });
 
 describe('vatCutUnconfirmed', () => {
-  it('makes the book provisional only when it relies on an unconfirmed cut', () => {
-    const open: VatCutRow = { ...CUT, status: 'commentary' };
-    expect(vatCutUnconfirmed('yes', open)).toEqual({ kind: 'reduction', key: 'vat', effectiveFrom: '2026-01-01' });
-    expect(vatCutUnconfirmed(null, open)).toEqual({ kind: 'reduction', key: 'vat', effectiveFrom: '2026-01-01' });
-    expect(vatCutUnconfirmed('no', open)).toBeNull();
-    expect(vatCutUnconfirmed('yes', CUT)).toBeNull();
-    expect(vatCutUnconfirmed('yes', null)).toBeNull();
-    expect(vatCutUnconfirmed('yes', { ...open, percent: '0.0000' })).toBeNull();
+  const open: VatCutRow = { ...CUT, status: 'commentary' };
+  const entry = { kind: 'reduction', key: 'vat', effectiveFrom: '2026-01-01' };
+
+  it('makes the book provisional only when it relies on an unconfirmed cut: applied, or shown as the "if eligible" figure', () => {
+    expect(vatCutUnconfirmed(vatCutBlock({ answer: 'yes', cut: open, lines: LINES, complete: true }), open)).toEqual(entry);
+    expect(vatCutUnconfirmed(vatCutBlock({ answer: 'yes', cut: open, lines: LINES, complete: false }), open)).toEqual(entry);
+    expect(vatCutUnconfirmed(vatCutBlock({ answer: null, cut: open, lines: LINES, complete: true }), open)).toEqual(entry);
+  });
+
+  it('adds nothing for a cut the result does not use', () => {
+    // The answer is no: nothing is cut and no estimate is shown.
+    expect(vatCutUnconfirmed(vatCutBlock({ answer: 'no', cut: open, lines: LINES, complete: true }), open)).toBeNull();
+    // No answer, but a part has no trade yet: no estimate is given either.
+    expect(vatCutUnconfirmed(vatCutBlock({ answer: null, cut: open, lines: LINES, complete: false }), open)).toBeNull();
+    // A confirmed cut, no cut row, or a cut of 0 never makes the book provisional.
+    expect(vatCutUnconfirmed(vatCutBlock({ answer: 'yes', cut: CUT, lines: LINES, complete: true }), CUT)).toBeNull();
+    expect(vatCutUnconfirmed(vatCutBlock({ answer: 'yes', cut: null, lines: LINES, complete: true }), null)).toBeNull();
+    const zero: VatCutRow = { ...open, percent: '0.0000' };
+    expect(vatCutUnconfirmed(vatCutBlock({ answer: 'yes', cut: zero, lines: LINES, complete: true }), zero)).toBeNull();
   });
 });

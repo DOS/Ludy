@@ -213,5 +213,14 @@ describe('the Decree 174 VAT cut on the S2a screen (#3710 slice 2)', () => {
     const html = page({ s2a: book({ unconfirmed: [{ kind: 'reduction', key: 'vat', effectiveFrom: '2026-01-01' }] }) });
     expect(html.replace(/<[^>]*>/g, ' ')).toContain('The VAT cut of Decree 174, from');
   });
-});
 
+  it('marks the cut figures provisional while the book is, and not when it is confirmed', () => {
+    const cut = { answer: 'yes' as const, percent: '20.0000', applied: true, lines, total: { cut: '5000', vatPayable: '20000' }, ifEligible: null };
+    const provisional = page({ s2a: book({ vatCut: cut }) });
+    const block = provisional.slice(provisional.indexOf('data-testid="household-s2a-vatcut"'), provisional.indexOf('data-testid="household-s2a-vatcut"') + 1500);
+    expect(block).toContain('data-testid="household-s2a-provisional"');
+    const confirmed = page({ s2a: book({ vatCut: cut, commentary: false, unconfirmed: [] }) });
+    const confirmedBlock = confirmed.slice(confirmed.indexOf('data-testid="household-s2a-vatcut"'), confirmed.indexOf('data-testid="household-s2a-vatcut"') + 1500);
+    expect(confirmedBlock).not.toContain('household-s2a-provisional');
+  });
+});

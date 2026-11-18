@@ -179,7 +179,7 @@ export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow
     if (rate.status !== 'confirmed') unconfirmed.push({ kind: 'rate', key: t, effectiveFrom: rate.effective_from });
   }
 
-  const cutUnconfirmed = vatCutUnconfirmed(w.profile.vatCutEligible, cutRow);
+  const cutUnconfirmed = vatCutUnconfirmed(vatCut, cutRow);
   if (cutUnconfirmed) unconfirmed.push(cutUnconfirmed);
 
   const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();

@@ -159,7 +159,7 @@ export const householdCnkd = defineQuery({
       const rate = rates.get(t)!;
       if (rate.status !== 'confirmed') unconfirmed.push({ kind: 'rate', key: t, effectiveFrom: rate.effective_from });
     }
-    const cutUnconfirmed = vatCutUnconfirmed(profile.vatCutEligible, cutRow);
+    const cutUnconfirmed = vatCutUnconfirmed(vatCut, cutRow);
     if (cutUnconfirmed) unconfirmed.push(cutUnconfirmed);
     const commentary = unconfirmed.length > 0;
     if (input.forExport && !totals) throw invalid('Chưa chia hết doanh thu theo ngành nghề nên chưa xuất được tờ khai');
