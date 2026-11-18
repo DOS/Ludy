@@ -13688,6 +13688,9 @@ export const vi = {
           export: 'Ghi nhận một lần tải file chuyển lương cho ngân hàng (chỉ số lượng, không có tên, số tài khoản hay số tiền)',
           get: 'Xem file chuyển lương cho ngân hàng của một bảng lương đã duyệt, kể cả số tài khoản ngân hàng của từng người',
         },
+        coworker: {
+          access: 'Kiểm tra quyền chủ tổ chức hoặc quản trị viên trước khi gọi đồng nghiệp bảng lương',
+        },
         declaration: {
           export: 'Ghi nhận một lần tải bảng kê khai báo (chỉ số lượng, không có tên hay số tiền)',
           get: 'Xem bảng kê để khai báo (D02-LT, 05/KK-TNCN, 05/QTT-TNCN, dữ liệu chứng từ 03/TNCN, Sổ quản lý lao động, Báo cáo 01/PLI), kể cả số định danh, mã số thuế và số sổ BHXH',
