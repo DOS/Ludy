@@ -597,6 +597,20 @@ export const SUPPLIER_BANK_ACCOUNT_CHANGE_KINDS = ['added', 'replaced', 'retired
 export type SupplierBankAccountChangeKind = (typeof SUPPLIER_BANK_ACCOUNT_CHANGE_KINDS)[number];
 export type SupplierBankAccountTable = Refine<G.FinanceSupplierBankAccountTable, { status: Generated<(typeof SUPPLIER_BANK_ACCOUNT_STATUSES)[number]> }>;
 export type SupplierBankAccountChangeTable = Refine<G.FinanceSupplierBankAccountChangeTable, { kind: SupplierBankAccountChangeKind }>;
+// A payment to a supplier approved in Ludy (#3113 S2): approved, paid, cancelled or stale (the supplier's account changed after the approval); the hold reason and the channel the supplier confirmed by are closed lists.
+export const SUPPLIER_PAYMENT_STATUSES = ['approved', 'paid', 'cancelled', 'stale'] as const;
+export const SUPPLIER_PAYMENT_HOLD_REASONS = ['new_account'] as const;
+export const SUPPLIER_PAYMENT_CHANNELS = ['phone_on_file', 'in_person', 'email_on_file'] as const;
+export type SupplierPaymentTable = Refine<
+  G.FinanceSupplierPaymentTable,
+  {
+    status: Generated<(typeof SUPPLIER_PAYMENT_STATUSES)[number]>;
+    hold_reason: (typeof SUPPLIER_PAYMENT_HOLD_REASONS)[number] | null;
+    confirmed_channel: (typeof SUPPLIER_PAYMENT_CHANNELS)[number] | null;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
 // A connection to a marketplace (#2519): the result of its last test and of its last poll, as states and never the platform's own text.
 export const MARKETPLACE_TEST_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable'] as const;
 export type MarketplaceTestState = (typeof MARKETPLACE_TEST_STATES)[number];
@@ -1434,6 +1448,7 @@ type Refined = Tables<{
   'crove_finance.stock_period_item': StockPeriodItemTable;
   'crove_finance.supplier_bank_account': SupplierBankAccountTable;
   'crove_finance.supplier_bank_account_change': SupplierBankAccountChangeTable;
+  'crove_finance.supplier_payment': SupplierPaymentTable;
   'crove_finance.stock_count': StockCountTable;
   'crove_finance.stock_count_line': StockCountLineTable;
   'crove_finance.categorization_rule': CategorizationRuleTable;
