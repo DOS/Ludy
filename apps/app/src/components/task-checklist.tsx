@@ -210,9 +210,12 @@ export function TaskChecklistEditor({
   stepError = false,
   label,
   idPrefix,
+  onDraftChange,
 }: {
   value: readonly TaskChecklistStep[];
   onChange: (next: TaskChecklistStep[]) => void;
+  // Told what is typed in the new-step box, so a form around the editor knows it holds input that is not saved yet.
+  onDraftChange?: (text: string) => void;
   disabled?: boolean;
   stepError?: boolean;
   label?: string;
@@ -223,11 +226,15 @@ export function TaskChecklistEditor({
   const { done, total } = countTaskChecklistSteps(value);
   const atLimit = value.length >= TASK_CHECKLIST_STEPS_MAX;
 
+  const changeDraft = (text: string) => {
+    setDraft(text);
+    onDraftChange?.(text);
+  };
   const addStep = () => {
     const trimmed = draft.trim();
     if (!trimmed || atLimit || disabled) return;
     onChange([...value, { text: trimmed.slice(0, TASK_CHECKLIST_STEP_MAX), done: false }]);
-    setDraft('');
+    changeDraft('');
   };
 
   return (
@@ -248,7 +255,7 @@ export function TaskChecklistEditor({
           onRemove={(index) => onChange(value.filter((_, idx) => idx !== index))}
         />
       )}
-      <ChecklistAddRow draft={draft} atLimit={atLimit} disabled={disabled} onDraftChange={setDraft} onAdd={addStep} />
+      <ChecklistAddRow draft={draft} atLimit={atLimit} disabled={disabled} onDraftChange={changeDraft} onAdd={addStep} />
       {stepError && <p className="text-xs text-destructive">{t('checklistStepRequired')}</p>}
     </div>
   );

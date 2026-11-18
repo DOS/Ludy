@@ -14,6 +14,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { SuggestBar, SuggestionChip, useMarketplaceSuggestions, type Suggestion } from './stock-ai.tsx';
 import { DataTable, ErrorText, TableSkeleton } from './ui.tsx';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
@@ -23,7 +24,7 @@ const refresh = async () => {
   await Promise.all([queryClient.invalidateQueries({ queryKey: orpc.marketplace.key() }), queryClient.invalidateQueries({ queryKey: orpc.stock.key() })]);
 };
 
-function UnassignedRow({ line, items, canWrite }: { line: MarketplaceUnassignedLine; items: StockItem[]; canWrite: boolean }) {
+function UnassignedRow({ line, items, canWrite, suggestion, asked }: { line: MarketplaceUnassignedLine; items: StockItem[]; canWrite: boolean; suggestion: Suggestion | undefined; asked: boolean }) {
   const t = useTranslations('stock');
   const f = useFormat();
   const [itemId, setItemId] = useState('');
@@ -42,7 +43,11 @@ function UnassignedRow({ line, items, canWrite }: { line: MarketplaceUnassignedL
           {line.orderedAt ? ` · ${f.date(line.orderedAt)}` : ''} · {t(`marketplace.stages.${line.stage}`)}
         </div>
       </TableCell>
-      <TableCell className="px-4 py-3">{line.sku ?? line.itemName ?? t('marketplace.noSku')}</TableCell>
+      <TableCell className="px-4 py-3">
+        {line.sku ?? line.itemName ?? t('marketplace.noSku')}
+        {/* The coworker's proposal (#2686): only fills the picker below; the person's assign is the write. */}
+        {canWrite && <div className="mt-2"><SuggestionChip suggestion={suggestion} asked={asked} items={choices} onUse={() => setItemId(suggestion?.itemId ?? '')} testId="marketplace-suggestion" /></div>}
+      </TableCell>
       <TableCell className={NUM}>{line.quantity}</TableCell>
       <TableCell className="px-4 py-3">
         {canWrite ? (
@@ -86,6 +91,7 @@ export function MarketplaceUnassigned({ legalEntityId, ready, items, canWrite }:
   const t = useTranslations('stock');
   const unassigned = useQuery({ ...orpc.marketplace.unassigned.queryOptions({ input: { legalEntityId } }), enabled: ready });
   const lines = unassigned.data ?? [];
+  const suggestions = useMarketplaceSuggestions(lines, items);
   if (unassigned.error) return <ErrorText>{errorMessage(unassigned.error)}</ErrorText>;
   if (lines.length === 0) return null;
   return (
@@ -93,9 +99,10 @@ export function MarketplaceUnassigned({ legalEntityId, ready, items, canWrite }:
       <h2 className="text-base font-medium text-foreground">{t('marketplace.unassignedTitle')}</h2>
       <p className="mb-3 text-sm text-subtle-foreground">{t('marketplace.unassignedHint')}</p>
       {canWrite && items.filter((i) => i.active).length === 0 && <p className="mb-3 text-sm text-foreground">{t('noItemsToAssign')}</p>}
+      {canWrite && items.filter((i) => i.active).length > 0 && <SuggestBar suggestions={suggestions} testId="marketplace-suggest" />}
       <DataTable head={[t('marketplace.order'), t('marketplace.sku'), t('quantity'), '']} numeric={[2]}>
         {lines.map((line) => (
-          <UnassignedRow key={line.lineId} line={line} items={items} canWrite={canWrite} />
+          <UnassignedRow key={line.lineId} line={line} items={items} canWrite={canWrite} suggestion={suggestions.suggestionOf(line.lineId)} asked={suggestions.isAsked(line.lineId)} />
         ))}
       </DataTable>
     </section>
