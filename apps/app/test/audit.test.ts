@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';
-import { auditFilter, auditForm, commandLabel, nextAuditCursor, parseAuditSearch, withCommandLabels } from '../src/lib/audit.ts';
+import { auditFilter, auditForm, auditTargetChoices, commandLabel, isSystemRow, lowerFirst, nextAuditCursor, parseAuditSearch, withCommandLabels } from '../src/lib/audit.ts';
 
 const empty = { actor: '', command: '', outcome: '', target: '', targetType: '', from: '', to: '' };
 
@@ -70,5 +70,64 @@ describe('audit filter', () => {
     expect(withCommandLabels('a,b\r\n1,2\r\n', labels)).toBe('a,b\r\n1,2\r\n');
     // A last line without its line break, ending in an empty cell, is kept.
     expect(withCommandLabels('command,detail\r\nkernel.x,', labels)).toBe('command,command_label,detail\r\nkernel.x,,\r\n');
+  });
+});
+
+// The activity log in words (#3595).
+describe('activity log in words', () => {
+  it('counts a system row as one nobody did, and an AI app over MCP as not one', () => {
+    expect(isSystemRow({ actorType: 'system', via: null })).toBe(true);
+    expect(isSystemRow({ actorType: 'system', via: { kind: 'mcp', clientName: 'Claude Desktop' } })).toBe(false);
+    expect(isSystemRow({ actorType: 'user', via: null })).toBe(false);
+    expect(isSystemRow({ actorType: 'agent', via: null })).toBe(false);
+  });
+
+  it('opens the log with the system rows shown only when the link says so', () => {
+    expect(parseAuditSearch({ system: '1' })).toEqual({ system: '1' });
+    expect(parseAuditSearch({ system: 'yes' })).toEqual({});
+  });
+
+  it('lowers the first letter of a label for a sentence, and keeps a name or an acronym', () => {
+    expect(lowerFirst('Duyệt đề xuất')).toBe('duyệt đề xuất');
+    expect(lowerFirst('Approve a proposal')).toBe('approve a proposal');
+    expect(lowerFirst('Vy ghi nhớ một mục')).toBe('Vy ghi nhớ một mục');
+    expect(lowerFirst('AI budget')).toBe('AI budget');
+    // A short Vietnamese verb is lower-cased like any other (it once kept its capital for being two letters long).
+    expect(lowerFirst('Bỏ vai trò của thành viên')).toBe('bỏ vai trò của thành viên');
+    expect(lowerFirst('Gỡ việc khỏi dự án')).toBe('gỡ việc khỏi dự án');
+    expect(lowerFirst('Mở lại một hội thoại')).toBe('mở lại một hội thoại');
+    expect(lowerFirst('Google Meet được tạo')).toBe('Google Meet được tạo');
+  });
+
+  it('finds an object by a name or a number: a party, and a document twice when a proposal made it', () => {
+    const choices = auditTargetChoices({
+      parties: [{ id: 'p1', name: 'Công ty ABC', taxCode: '0312345678' }],
+      documents: [
+        { id: 'd1', series: 'C26TAA', number: '0000012', partyName: 'Công ty ABC', proposalId: 'pr1' },
+        { id: 'd2', series: '', number: 'PC-7', partyName: 'Anh Nam', proposalId: null },
+      ],
+    });
+    expect(choices.map((c) => [c.kind, c.id, c.label, c.hint])).toEqual([
+      ['party', 'p1', 'Công ty ABC', '0312345678'],
+      ['document', 'd1', 'C26TAA 0000012', 'Công ty ABC'],
+      ['approval', 'pr1', 'C26TAA 0000012', 'Công ty ABC'],
+      ['document', 'd2', 'PC-7', 'Anh Nam'],
+    ]);
+  });
+
+  it('keeps the raw fields in the CSV file: the command, the system rows and the detail line', () => {
+    const csv = 'occurred_at,actor_type,command,detail\r\n2026-11-02T00:00:00.000Z,system,kernel.notification.dispatch,aal=aal2; policy.P10=self_approved\r\n';
+    const out = withCommandLabels(csv, (name) => commandLabel(vi.commands, name));
+    expect(out).toContain('system,kernel.notification.dispatch,Gửi thông báo,aal=aal2; policy.P10=self_approved');
+  });
+
+  it('has the same sentences and object names in both languages, and no raw module code as an object name', () => {
+    const keys = (node: unknown, path = ''): string[] =>
+      typeof node === 'object' && node !== null ? Object.entries(node).flatMap(([k, v]) => keys(v, path ? `${path}.${k}` : k)) : [path];
+    expect(keys(en.audit.done).sort()).toEqual(keys(vi.audit.done).sort());
+    expect(keys(en.audit.objects).sort()).toEqual(keys(vi.audit.objects).sort());
+    // Every sentence is for a command the screen has a label for.
+    for (const path of keys(vi.audit.done)) expect(commandLabel(vi.commands, path), path).not.toBeNull();
+    for (const text of keys(vi.audit.objects).map((k) => commandLabel(vi.audit.objects, k))) expect(text).not.toMatch(/^[a-z_]+(\.[a-z_]+)*$/);
   });
 });

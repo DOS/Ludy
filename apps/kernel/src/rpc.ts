@@ -72,12 +72,13 @@ import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-wee
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
 import { briefStatusOf, runMeetingBrief, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
-import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
-import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
+import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
+import { MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
 import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
+import { misaCheck } from './misa-check.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -2915,6 +2916,10 @@ export function createRpcHandler(
       list: os.vouchers.list.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.vouchers.list', input, { actor, orgId })),
       ),
+      // What MISA's import will refuse or cut in one of the seven exports (#3848): a read over the rows the file is built from, in the caller's own context. The export is unchanged and never waits for it.
+      misaCheck: os.vouchers.misaCheck.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => misaCheck((name, query) => runtime.query(name, query, { actor, orgId }), input)),
+      ),
     },
     openingBalance: {
       preview: os.openingBalance.preview.handler(({ context, input }) =>
@@ -3286,6 +3291,14 @@ export function createRpcHandler(
         inFinance(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('finance.marketplace.assign', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // The coworker's proposal of the item of unassigned lines (#2686): the source (product name and SKU text, the entity's items) is read in the member's own transaction, the model is asked outside any
+      // transaction through the same stock coworker, budget and cache. Nothing is written; the person assigns.
+      suggest: os.marketplace.suggest.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const source = await runtime.query<MarketplaceSuggestSource>('finance.marketplace.suggest_source', input, { actor, orgId });
+          return suggestMarketplaceItems(stockCoworker, orgId, actor.userId, source, input.lang ?? 'vi');
         }),
       ),
       unassign: os.marketplace.unassign.handler(({ context, input }) =>
