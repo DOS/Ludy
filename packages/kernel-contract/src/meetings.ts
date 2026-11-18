@@ -1123,3 +1123,25 @@ export type SeriesOpenItems = z.infer<typeof zSeriesOpenItems>;
 
 // What the worker's series nudge is told (the command checks it again before it writes anything): one member, the series, and the start of the next meeting of it.
 export const zSeriesNudge = z.strictObject({ userId: zId, seriesId: zId, startsAt: z.iso.datetime({ offset: true }) });
+
+// The "minutes draft ready" notice of the recorder (#3730): kind, event and mail template. The notice holds no text of the draft and no title: the in-app line is a fixed text that opens the meeting through its
+// subject, and the mail holds a fixed line and the link, so no copy of the title or of the draft exists to erase.
+export const SUMMARY_READY_KIND = 'meetings.summary_ready';
+export const SUMMARY_READY_EVENT = 'meetings.summary.ready';
+export const SUMMARY_READY_MAIL_TEMPLATE = 'meetings.summary_ready';
+export const SUMMARY_READY_MAIL_SOURCE = 'meetings.summary_ready';
+// What the API tells the recorder's own command after a summary run was stored as ready: the meeting and the run (the notice's key: one per finished run).
+export const zSummaryReadyRef = z.strictObject({ meetingId: zId, runId: zId });
+export type SummaryReadyRef = z.infer<typeof zSummaryReadyRef>;
+// The outbox event: ids and the meeting's language, never a word. The recorder is the one who made the run (the command checks it), so the worker's notice reads the recipient here.
+export const zSummaryReadyEvent = z.strictObject({ meetingId: zId, runId: zId, recorderUserId: zId, language: z.enum(['vi', 'en']) });
+export type SummaryReadyEvent = z.infer<typeof zSummaryReadyEvent>;
+// The worker's dispatch is told the event's id only and reads the event itself.
+export const zSummaryReadyDispatch = z.strictObject({ eventId: zId });
+// The mail's merge data: the org's name, the app path that opens the meeting, the language. No other key can be stored.
+export const zSummaryReadyMail = z.strictObject({
+  lang: z.enum(['vi', 'en']),
+  org: z.string().trim().min(1).max(200),
+  path: z.string().regex(/^\/o\/[a-z0-9][a-z0-9-]{0,62}\/meetings\/[0-9a-f-]{36}$/),
+});
+export type SummaryReadyMail = z.infer<typeof zSummaryReadyMail>;
