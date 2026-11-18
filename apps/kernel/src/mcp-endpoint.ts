@@ -21,7 +21,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
 import { DomainError, toDomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { zMcpPartiesInput, myOrgs } from '@crove/kernel';
-import { zMcpMeetingsInput, zMcpOpenActionsInput, zMcpSeriesOpenItemsInput, zMcpMinutesInput } from '@crove/kernel-contract';
+import { SIGNAL_PARTIAL_VIEW_CODE, zMcpMeetingsInput, zMcpOpenActionsInput, zMcpSeriesOpenItemsInput, zMcpMinutesInput } from '@crove/kernel-contract';
 import { zMcpInvoicesInput, zMcpOverviewInput } from '@crove/mod-finance';
 import { zMcpDraftCreate, zMcpPostsInput, zMcpReviewQueueInput } from '@crove/mod-social';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -466,6 +466,10 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
           if (error instanceof DomainError && error.code === 'MODULE_OFF') {
             const app = (error.details as { module?: unknown } | undefined)?.module;
             return { code: RPC_INTERNAL, toolError: true, message: `MODULE_OFF: the ${typeof app === 'string' && /^[a-z]{1,20}$/.test(app) ? app : 'requested'} app is switched off for this company. Its owner can switch it on in Ludy; nothing was changed.` };
+          }
+          // A finance read that cannot answer for the whole organization says so in words a connected app can act on, instead of the generic refusal (#3849).
+          if (error instanceof DomainError && error.code === SIGNAL_PARTIAL_VIEW_CODE) {
+            return { code: RPC_INTERNAL, toolError: true, message: `${SIGNAL_PARTIAL_VIEW_CODE}: this connection sees only part of the books, or the organization has more than one legal entity, so this figure is not answered (a total of part of the books would read as the total of all)` };
           }
           if (error instanceof DomainError && error.status === 429) {
             const wait = (error.details as { retryAfterSeconds?: unknown } | undefined)?.retryAfterSeconds;
