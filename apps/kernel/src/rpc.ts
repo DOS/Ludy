@@ -80,6 +80,7 @@ import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace
 import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
 import { misaCheck } from './misa-check.ts';
 import { explainMisaCheckLine, misaCheckLineAi } from './finance-misa-check-line-ai.ts';
+import { misaAmisPreview } from './misa-amis-preview.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -3000,6 +3001,10 @@ export function createRpcHandler(
     vouchers: {
       list: os.vouchers.list.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.vouchers.list', input, { actor, orgId })),
+      ),
+      // What would be sent to MISA AMIS Kế toán (#3901): a read over the same vouchers as the MISA SME export, in the caller's own context. It sends nothing and calls no one.
+      misaAmisPreview: os.vouchers.misaAmisPreview.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => misaAmisPreview((name, query) => runtime.query(name, query, { actor, orgId }), input)),
       ),
       // What MISA's import will refuse or cut in one of the seven exports (#3848): a read over the rows the file is built from, in the caller's own context. The export is unchanged and never waits for it.
       misaCheck: os.vouchers.misaCheck.handler(({ context, input }) =>

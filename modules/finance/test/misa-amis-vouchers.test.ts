@@ -79,7 +79,7 @@ const sale = (overrides: Partial<SalesVoucher> = {}): SalesVoucher => ({
 });
 
 // What is sent, as the text MISA would receive, read back as data for the comparison.
-const sent = (mapping: AmisMapping): Array<Record<string, unknown>> => mapping.vouchers.map((v) => JSON.parse(toJsonText({ org_company_code: 'ludy-x', voucher: v })).voucher as Record<string, unknown>);
+const sent = (mapping: Pick<AmisMapping, 'vouchers'>): Array<Record<string, unknown>> => mapping.vouchers.map((v) => JSON.parse(toJsonText({ org_company_code: 'ludy-x', voucher: v })).voucher as Record<string, unknown>);
 const only = (mapping: AmisMapping): AmisVoucher => {
   expect(mapping.blockers).toEqual([]);
   expect(mapping.vouchers).toHaveLength(1);
@@ -92,7 +92,7 @@ describe('cash and bank vouchers', () => {
   it('writes a phiếu chi (voucher_type 4): Dr the line, Cr the cash account, reason "pay a supplier"', () => {
     const v = only(cashAmisVouchers(cash(), ctx()));
     checkVoucher(v);
-    expect(sent({ vouchers: [v], blockers: [] })[0]).toEqual({
+    expect(sent({ vouchers: [v] })[0]).toEqual({
       voucher_type: 4,
       org_refid: '0192f0a1-2b3c-7d4e-8f50-6172839a4b5d',
       org_refno: 'CRPC202600012',
@@ -178,7 +178,7 @@ describe('purchase vouchers', () => {
   it('writes the services voucher (17): reftype 330 for an unpaid purchase, Cr 331, VAT spread over the lines, a line with no quantity as one at its amount', () => {
     const v = only(purchaseServiceAmisVouchers(purchase(), ctx()));
     checkVoucher(v);
-    const [data] = sent({ vouchers: [v], blockers: [] });
+    const [data] = sent({ vouchers: [v] });
     expect(data).toMatchObject({
       voucher_type: 17,
       org_refid: SOURCE_ID.toLowerCase(),
@@ -245,7 +245,7 @@ describe('sales vouchers', () => {
   it('writes the sales voucher (13): reftype 3530, Dr 131, Cr revenue, output VAT on 3331', () => {
     const v = only(salesAmisVouchers(sale(), ctx()));
     checkVoucher(v);
-    const [data] = sent({ vouchers: [v], blockers: [] });
+    const [data] = sent({ vouchers: [v] });
     expect(data).toMatchObject({ voucher_type: 13, reftype: 3530, total_sale_amount: 1500000, total_vat_amount: 130000, total_amount: 1630000, is_sale_with_outward: false });
     const detail = data?.detail as Array<Record<string, unknown>>;
     expect(detail[0]).toMatchObject({

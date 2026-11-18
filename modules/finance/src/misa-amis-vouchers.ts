@@ -11,7 +11,7 @@
 // Amounts are decimal strings, written as exact JSON numbers (`amisNumber`); arithmetic goes through decimal.js (@crove/l10n-vn).
 import { createHash } from 'node:crypto';
 import { PAYABLE_ACCOUNT, money, sum } from '@crove/l10n-vn';
-import { AMIS_MAX_VOUCHER_LINES, AMIS_VOUCHER_TYPES, amisNumber, type AmisVoucher } from '@crove/misa-amis';
+import { AMIS_MAX_VOUCHER_LINES, AMIS_VOUCHER_TYPES, AmisNumber, amisNumber, type AmisVoucher } from '@crove/misa-amis';
 import { isInflow, type AccountParents, type MisaGoodsCode } from '@crove/kernel-contract';
 import { canonical } from './domain/money.ts';
 import {
@@ -73,6 +73,9 @@ export interface AmisBlocker {
 
 /** `vouchers` is empty when there is a blocker: nothing is half written. More than one voucher when the lines exceed AMIS's 500. */
 export interface AmisMapping {
+  /** Ludy's number of the voucher (the `org_refno` of its first part) and the AMIS voucher_type: known whether or not it can be written. */
+  voucherNo: string;
+  amisType: number;
   vouchers: AmisVoucher[];
   blockers: AmisBlocker[];
 }
@@ -160,8 +163,18 @@ function partyFields(prefix: 'account_object' | 'tax_account_object', party: Vou
   return fields;
 }
 
-const done = (vouchers: AmisVoucher[]): AmisMapping => ({ vouchers, blockers: [] });
-const blocked = (blockers: AmisBlocker[]): AmisMapping => ({ vouchers: [], blockers });
+/** The lines and the total payable (VAT included) of the vouchers a mapping wrote: what a preview shows without opening them. */
+export function amisTotals(vouchers: readonly AmisVoucher[]): { lines: number; total: string } {
+  const amounts = vouchers.map((v) => (v.total_amount instanceof AmisNumber ? v.total_amount.text : '0'));
+  return { lines: vouchers.reduce((n, v) => n + v.detail.length, 0), total: total(amounts) };
+}
+
+interface Meta {
+  voucherNo: string;
+  amisType: number;
+}
+const done = (meta: Meta, vouchers: AmisVoucher[]): AmisMapping => ({ ...meta, vouchers, blockers: [] });
+const blocked = (meta: Meta, blockers: AmisBlocker[]): AmisMapping => ({ ...meta, vouchers: [], blockers });
 
 // ---------------------------------------------------------------------------------------------------------------
 // Cash and bank vouchers: 5 Phiếu thu, 4 Phiếu chi, 1 Thu tiền gửi (báo Có), 3 Chi tiền gửi (báo Nợ)
@@ -173,13 +186,22 @@ const BANK_DEPOSIT_REASON = { customer: 29, other: 34 } as const;
 
 const startsWith = (account: string, root: string): boolean => account === root || account.startsWith(root);
 
+const CASH_AMIS_TYPE = {
+  cash_receipt: AMIS_VOUCHER_TYPES.cashReceipt,
+  cash_payment: AMIS_VOUCHER_TYPES.cashPayment,
+  bank_credit: AMIS_VOUCHER_TYPES.bankCredit,
+  bank_debit: AMIS_VOUCHER_TYPES.bankDebit,
+} as const;
+
 export function cashAmisVouchers(voucher: CashVoucher, ctx: AmisContext): AmisMapping {
+  const no = cashVoucherNo(voucher);
+  const meta = { voucherNo: no, amisType: CASH_AMIS_TYPE[voucher.type] };
   const blockers: AmisBlocker[] = [];
   if (ctx.branchId === null) blockers.push({ code: 'branch_missing', sourceId: voucher.sourceId, lineNo: null });
   if (voucher.lines.length === 0) blockers.push({ code: 'no_lines', sourceId: voucher.sourceId, lineNo: null });
   const code = voucher.party ? partyCode(voucher.party, ctx) : null;
   if (voucher.party && code === undefined) blockers.push({ code: 'party_code_unknown', sourceId: voucher.sourceId, lineNo: null });
-  if (blockers.length > 0) return blocked(blockers);
+  if (blockers.length > 0) return blocked(meta, blockers);
 
   const inflow = isInflow(voucher.type);
   const fromSupplier = voucher.lines.some((l) => startsWith(l.account, PAYABLE_ACCOUNT));
@@ -202,7 +224,6 @@ export function cashAmisVouchers(voucher: CashVoucher, ctx: AmisContext): AmisMa
     ...(voucher.party ? partyFields('account_object', voucher.party, code) : {}),
     ...(needsPurpose ? { purchase_purpose_id: AMIS_PURCHASE_PURPOSES[ctx.purchasePurpose], purchase_purpose_code: ctx.purchasePurpose } : {}),
   }));
-  const no = cashVoucherNo(voucher);
   const vouchers = split(
     detail,
     (part, lines) => ({
@@ -225,7 +246,7 @@ export function cashAmisVouchers(voucher: CashVoucher, ctx: AmisContext): AmisMa
     voucher.sourceId,
     'cash',
   );
-  return done(vouchers);
+  return done(meta, vouchers);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -301,14 +322,16 @@ function purchaseHeader(lines: ReadonlyArray<{ amount: { text: string }; vat_amo
 }
 
 export function purchaseServiceAmisVouchers(voucher: PurchaseVoucher, ctx: AmisContext): AmisMapping {
+  const no = misaVoucherNo(PURCHASE_VOUCHER_PREFIX, voucher.entryId);
+  const meta = { voucherNo: no, amisType: AMIS_VOUCHER_TYPES.purchaseServices };
   const rows = servicePurchaseRows(voucher);
   const blockers = purchaseBlockers(voucher, rows, ctx, () => ctx.serviceItemCode);
-  if (blockers.length > 0) return blocked(blockers);
+  if (blockers.length > 0) return blocked(meta, blockers);
   const code = partyCode(voucher.vendor, ctx);
   const itemCode = ctx.serviceItemCode ?? '';
   const detail = purchaseDetail(rows, ctx, code, () => itemCode, () => ({ inventory_item_type: 2 }));
-  const no = misaVoucherNo(PURCHASE_VOUCHER_PREFIX, voucher.entryId);
   return done(
+    meta,
     split(
       detail,
       (part, lines) => ({
@@ -338,9 +361,11 @@ export function purchaseGoodsAmisVouchers(
   parents: AccountParents,
   ctx: AmisContext,
 ): AmisMapping {
+  const no = misaVoucherNo(GOODS_PURCHASE_VOUCHER_PREFIX, voucher.entryId);
+  const meta = { voucherNo: no, amisType: AMIS_VOUCHER_TYPES.purchaseGoods };
   const rows = goodsPurchaseRows(voucher, saved, parents);
   const blockers = purchaseBlockers(voucher, rows, ctx, (row) => row.goods.itemCode);
-  if (blockers.length > 0) return blocked(blockers);
+  if (blockers.length > 0) return blocked(meta, blockers);
   const code = partyCode(voucher.vendor, ctx);
   const detail = purchaseDetail(
     rows,
@@ -356,8 +381,8 @@ export function purchaseGoodsAmisVouchers(
       inventory_resale_type_id: 0,
     }),
   );
-  const no = misaVoucherNo(GOODS_PURCHASE_VOUCHER_PREFIX, voucher.entryId);
   return done(
+    meta,
     split(
       detail,
       (part, lines) => ({
@@ -386,6 +411,8 @@ export function purchaseGoodsAmisVouchers(
 // Sales: 13 Chứng từ bán hàng, reftype 3530 (domestic, not yet collected: Ludy debits 131).
 
 export function salesAmisVouchers(voucher: SalesVoucher, ctx: AmisContext): AmisMapping {
+  const no = misaVoucherNo(SALES_VOUCHER_PREFIX, voucher.entryId);
+  const meta = { voucherNo: no, amisType: AMIS_VOUCHER_TYPES.sales };
   const rows = salesRows(voucher);
   const blockers: AmisBlocker[] = [];
   const at = (code: AmisBlockerCode, lineNo: number | null) => blockers.push({ code, sourceId: voucher.sourceId, lineNo });
@@ -395,7 +422,7 @@ export function salesAmisVouchers(voucher: SalesVoucher, ctx: AmisContext): Amis
   if (code === undefined) at('party_code_unknown', null);
   if (ctx.salesItemCode === null) for (const row of rows) at('item_code_unknown', row.line.lineNo);
   for (const row of rows) if (vatFields(row.vat) === null) at('vat_rate_unmapped', row.line.lineNo);
-  if (blockers.length > 0) return blocked(blockers);
+  if (blockers.length > 0) return blocked(meta, blockers);
 
   const detail = rows.map((row, i) => {
     const { line } = row;
@@ -426,8 +453,8 @@ export function salesAmisVouchers(voucher: SalesVoucher, ctx: AmisContext): Amis
       vat_account: row.vatAccount,
     };
   });
-  const no = misaVoucherNo(SALES_VOUCHER_PREFIX, voucher.entryId);
   return done(
+    meta,
     split(
       detail,
       (part, lines) => {
