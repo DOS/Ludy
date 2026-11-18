@@ -3482,6 +3482,7 @@ export interface SignEnvelopeTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
+  direct_link_id: string | null;
 }
 
 /** crove_sign.field */

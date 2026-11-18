@@ -9,11 +9,13 @@ import type { CommandContext } from '@crove/kernel-runtime';
 
 export const SIGN_INVITE_MAIL_TEMPLATE = 'sign.invite';
 export const SIGN_OTP_MAIL_TEMPLATE = 'sign.otp';
+export const SIGN_DIRECT_OTP_MAIL_TEMPLATE = 'sign.direct_otp';
 export const SIGN_COMPLETED_MAIL_TEMPLATE = 'sign.completed';
 export const SIGN_REMIND_MAIL_TEMPLATE = 'sign.remind';
 
 export const SIGN_INVITE_MAIL_SOURCE = 'sign.envelope.send';
 export const SIGN_OTP_MAIL_SOURCE = 'sign.public.request_otp';
+export const SIGN_DIRECT_OTP_MAIL_SOURCE = 'sign.direct.request_otp';
 export const SIGN_COMPLETED_MAIL_SOURCE = 'sign.envelope.seal_complete';
 export const SIGN_REMIND_MAIL_SOURCE = 'sign.envelope.remind';
 
@@ -32,6 +34,15 @@ export const zSignOtpMailPayload = z.strictObject({
   lang: z.literal('vi'),
   orgName: z.string().min(1).max(200),
   signerId: zId,
+  otpId: zId,
+  docTitle: z.string().min(1).max(300),
+  expiresAt: z.string().min(1).max(64),
+});
+
+export const zSignDirectOtpMailPayload = z.strictObject({
+  lang: z.literal('vi'),
+  orgName: z.string().min(1).max(200),
+  directLinkId: zId,
   otpId: zId,
   docTitle: z.string().min(1).max(300),
   expiresAt: z.string().min(1).max(64),
@@ -202,6 +213,44 @@ export function renderSignOtpMail(
     <p style="margin:0 0 8px;font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase">${escapeHtml(brand)}</p>
     <h1 style="margin:0 0 14px;font-size:19px;color:#0f172a">Ma xac thuc ky tai lieu</h1>
     <p style="margin:0 0 12px;font-size:15px;line-height:1.6">${escapeHtml(greeting)}</p>
+    <p style="margin:0 0 18px;font-size:15px;line-height:1.6">Su dung ma sau de xac thuc email khi xem va ky tai lieu <strong>${escapeHtml(title)}</strong> tu <strong>${escapeHtml(orgName)}</strong>:</p>
+    <div style="margin:0 0 20px;padding:16px;background:#f1f5f9;border-radius:8px;text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:28px;font-weight:700;letter-spacing:.28em;color:#0f172a">${escapeHtml(context.code)}</div>
+    <p style="margin:0;font-size:13px;color:#475569">Ma co hieu luc trong 10 phut (toi da 5 lan nhap sai). Khong chia se ma nay voi nguoi khac.</p>
+  </div>
+</body></html>`;
+
+  return { text, html };
+}
+
+export function renderSignDirectOtpMail(
+  raw: unknown,
+  context: { brand?: string; code: string },
+): RenderedSignMail {
+  const mail = zSignDirectOtpMailPayload.parse(raw);
+  if (!SIGN_OTP_CODE_PATTERN.test(context.code)) {
+    throw new Error('sign direct otp mail: invalid 6-digit OTP code');
+  }
+  const brand = oneLine(context.brand ?? 'Ludy', 80);
+  const orgName = oneLine(mail.orgName, 200);
+  const title = oneLine(mail.docTitle, 300);
+
+  const text = [
+    `Ma xac thuc OTP ky tai lieu - ${orgName}`,
+    '',
+    'Xin chao,',
+    `Ma OTP cua ban de mo va ky tai lieu "${title}" la: ${context.code}`,
+    '',
+    'Ma co hieu luc trong 10 phut va se bi khoa sau 5 lan nhap sai.',
+    'Khong chia se ma nay voi bat ky ai.',
+    '',
+    brand,
+  ].join('\n');
+
+  const html = `<!doctype html><html lang="vi"><body style="margin:0;padding:24px;background:#f8fafc;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+  <div style="max-width:520px;margin:0 auto;background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:28px">
+    <p style="margin:0 0 8px;font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase">${escapeHtml(brand)}</p>
+    <h1 style="margin:0 0 14px;font-size:19px;color:#0f172a">Ma xac thuc ky tai lieu</h1>
+    <p style="margin:0 0 12px;font-size:15px;line-height:1.6">Xin chao,</p>
     <p style="margin:0 0 18px;font-size:15px;line-height:1.6">Su dung ma sau de xac thuc email khi xem va ky tai lieu <strong>${escapeHtml(title)}</strong> tu <strong>${escapeHtml(orgName)}</strong>:</p>
     <div style="margin:0 0 20px;padding:16px;background:#f1f5f9;border-radius:8px;text-align:center;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:28px;font-weight:700;letter-spacing:.28em;color:#0f172a">${escapeHtml(context.code)}</div>
     <p style="margin:0;font-size:13px;color:#475569">Ma co hieu luc trong 10 phut (toi da 5 lan nhap sai). Khong chia se ma nay voi nguoi khac.</p>
