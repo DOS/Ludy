@@ -91,11 +91,14 @@ describe('the approval of a campaign plan on a server that cannot launch (#3675)
     for (const locale of ['vi', 'en'] as const) {
       const { detail } = adsChangeText(launch, translatorFor(locale), money, date, false);
       const { inboxDetail } = m(locale);
-      for (const text of [detail, inboxDetail.adsNoLauncher, inboxDetail.adsLaunchHeldSubtitle, inboxDetail.approveCampaignHeldOnly, inboxDetail.approvedCampaignHeldToast]) {
+      for (const text of [inboxDetail.adsNoLauncher, inboxDetail.adsLaunchHeldSubtitle, inboxDetail.approveCampaignHeldOnly, inboxDetail.approvedCampaignHeldToast]) {
         expect(text, locale).toBeTruthy();
         expect(text, locale).not.toMatch(promises);
       }
     }
+    // The detail may say what happens if the server turns launching on later, but only as a condition, after saying nothing is created now.
+    expect(adsChangeText(launch, translatorFor('en'), money, date, false).detail).toContain('If this server turns on running real ads later');
+    expect(adsChangeText(launch, translatorFor('vi'), money, date, false).detail).toContain('Nếu sau này máy chủ bật chạy quảng cáo thật');
     expect(adsChangeText(launch, translatorFor('vi'), money, date, false).detail).toContain('giữ 700000 VND trong hạn mức chi tiêu');
     expect(adsChangeText(launch, translatorFor('vi'), money, date, false).detail).toContain('Máy chủ này chưa bật chạy quảng cáo thật nên chiến dịch chưa được tạo');
     expect(fmt(m('vi').inboxDetail.approveCampaignHeldOnly as string, { amount: '700000 VND' })).toBe('Duyệt và chỉ giữ chỗ 700000 VND (chưa tạo chiến dịch)');

@@ -1083,12 +1083,13 @@ describe('the Inbox card of a campaign launch (#3296)', () => {
       expect(html).toContain('data-testid="ads-no-launcher"');
       expect(html).toContain(en.inboxDetail.adsNoLauncher);
       expect(html).toContain('This server has not turned on running real ads, so the campaign is not created');
-      expect(html).not.toContain('switches it on by itself');
+      expect(html).not.toContain('Ludy holds');
       expect(html).not.toContain('creates the campaign at the ad platform paused');
+      expect(html).toContain('If this server turns on running real ads later');
       const vi = asked(false, 'vi');
       expect(vi).toContain(viMessages.inboxDetail.adsNoLauncher);
       expect(vi).toContain('chưa tạo chiến dịch');
-      expect(vi).not.toContain('tự bật từ ngày bắt đầu');
+      expect(vi).not.toContain('tạo chiến dịch trên nền tảng quảng cáo ở trạng thái tạm dừng');
     });
 
     it('keeps the promise of a launch where the server can launch, and where it does not say', () => {
