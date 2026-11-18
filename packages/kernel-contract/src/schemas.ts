@@ -692,6 +692,9 @@ export const zJournalVoucherProposal = z.object({
   // The legal entity whose books the voucher is posted in (#1280), resolved when it was asked for. Absent on proposals
   // made before #1280: the entity resolved for the approver.
   legalEntityId: zId.optional(),
+  // The confirmed count of stock whose surplus (3381) this voucher resolves (#3712 slice 2a): written only by finance's own preparer, never by a requester, and
+  // checked again at approval (modules/finance/src/stock-surplus.ts).
+  surplusCountId: zId.optional(),
 });
 export type JournalVoucherProposal = z.infer<typeof zJournalVoucherProposal>;
 

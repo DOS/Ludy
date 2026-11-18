@@ -266,7 +266,7 @@ import {
   zConversationAddress,
 } from './conversations.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
-import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } from './journal-voucher.ts';
+import { zDepreciationRequest, zJournalVoucherRequest, zSurplusResolutionRequest, zYearClosingRequest } from './journal-voucher.ts';
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
 import { zStatementsHtkkCheck, zStatementsHtkkYear } from './statements-htkk.ts';
 import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
@@ -2114,7 +2114,8 @@ export const contract = {
           z.object({ command: z.literal('finance.journal.reverse'), input: zJournalReversal, idempotencyKey: zId }),
           z.object({ command: z.literal('finance.voucher.record'), input: zCashVoucherRequest, idempotencyKey: zId }),
           // A general journal voucher (NVK, #888) entered by hand.
-          z.object({ command: z.literal('finance.journal_voucher.record'), input: zJournalVoucherRequest, idempotencyKey: zId }),
+          // A voucher as entered, or the resolution of a count's surplus (#3712 slice 2a): a count and an account, the lines and the amount come from the books.
+          z.object({ command: z.literal('finance.journal_voucher.record'), input: z.union([zJournalVoucherRequest, zSurplusResolutionRequest]), idempotencyKey: zId }),
           // The year-end closing (#889): the server builds the lines from the ledger.
           z.object({ command: z.literal('finance.closing.record'), input: zYearClosingRequest, idempotencyKey: zId }),
           // A month's depreciation and allocation (#919): the server builds the lines from the register.

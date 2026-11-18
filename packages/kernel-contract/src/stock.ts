@@ -314,6 +314,10 @@ export const zStockCount = z.object({
   createdAt: z.string(),
   confirmedAt: z.string().nullable(),
   voucherId: zId.nullable(),
+  // What a confirmed count's surplus is worth, whole dong ('0' for a count with none and for one not confirmed), the voucher that resolved it (#3712 slice 2a) and the proposal of one that waits.
+  surplus: z.string(),
+  surplusVoucherId: zId.nullable(),
+  surplusProposalId: zId.nullable(),
   // A draft is worked out from the books as they read now; a confirmed count shows what its adjustments made.
   lines: z.array(zStockCountLine),
 });
