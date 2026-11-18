@@ -17,7 +17,6 @@ import { cn } from '@crove/ui/lib/utils';
 import { Empty, ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { splitQuoted } from '../lib/email-text.ts';
-import { senderCheckEnabled } from '../lib/auth.ts';
 import { channelsOfPosts, INBOX_PAGE_SIZE, inboxListInput, mergeConversationPages, nextConversationCursor } from '../lib/conversation-inbox.ts';
 import { client, errorMessage, fetchConversationImage, orpc, queryClient } from '../lib/api.ts';
 import { appendQuoteMessage, canInsertQuoteLink } from '../lib/quote-reply.ts';
@@ -42,12 +41,11 @@ export interface PostRef {
 const codeOf = (error: unknown): string | null => ((error as { code?: unknown } | null)?.code as string | undefined) ?? null;
 
 // The codes a failed or unclear send is worded for; any other is shown as it is.
-// The mark of an email whose sender the receiving server did not vouch for (#2439): the name and address in From may be anyone's. It shows only where the
-// deployment can check senders at all (INBOUND_AUTHSERV_ID): without it every mail is unconfirmed, the mark would sit on all of them and mean nothing (#3636).
+// The mark of an email whose sender the receiving server did not vouch for (#2439): the name and address in From may be anyone's. The server sends `senderUnverified`
+// only where the deployment can check senders at all (INBOUND_AUTHSERV_ID): without it every mail is unconfirmed, the mark would sit on all of them and mean nothing (#3636).
 // The explanation is a visible line under the address (`explain`), not a hover title that touch and keyboard readers never get.
 export function UnverifiedMark({ explain = false }: { explain?: boolean }) {
   const t = useTranslations('conversations');
-  if (!senderCheckEnabled()) return null;
   return (
     <>
       <span className="shrink-0 rounded border border-border px-1 text-xs leading-4 text-muted-foreground" data-testid="unverified-sender">
@@ -656,7 +654,7 @@ export function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail
             : t('replyEmail')
           : t(detail.conversation.kind === 'direct' ? 'replyPrivate' : 'replyPublic', { channel: detail.conversation.channel.displayName })}
       </p>
-      {detail.conversation.kind === 'email' && detail.conversation.senderUnverified && senderCheckEnabled() && (
+      {detail.conversation.kind === 'email' && detail.conversation.senderUnverified && (
         <p className="text-xs text-muted-foreground" data-testid="reply-unverified-note">
           {t('replyEmailUnverified')}
         </p>

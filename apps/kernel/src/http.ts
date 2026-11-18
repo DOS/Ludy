@@ -745,9 +745,6 @@ export function createHttpApp(deps: HttpDeps) {
       // uploads are direct (R2, #2192): the composer then lets those channels take images.
       platformMediaUrls: Boolean(store.fetchUrls),
       inboundEnabled: Boolean(config.INBOUND_DOMAIN && config.INBOUND_SECRET),
-      // This deployment can tell whether an email's sender is who it says (INBOUND_AUTHSERV_ID names the receiving server whose Authentication-Results are believed, #2439):
-      // the Inbox shows the "sender not confirmed" mark only then, since without it every mail is unconfirmed and the mark would say nothing (#3636). A flag only.
-      emailSenderCheck: Boolean(config.INBOUND_AUTHSERV_ID),
       mailEnabled: deps.mailer?.enabled ?? false,
       // The shell's feedback and support link (SUPPORT_URL, issue #310); null hides it.
       supportUrl: config.SUPPORT_URL ?? null,

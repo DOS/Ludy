@@ -9,7 +9,6 @@ import type { ConversationDetail, ConversationMessage } from '@crove/kernel-cont
 import { catalog } from '../src/i18n/runtime.ts';
 import { channelKindLabel } from '../src/lib/conversation-labels.ts';
 
-const state = { senderCheck: false };
 vi.mock('../src/lib/api.ts', () => ({
   client: {},
   orpc: { conversations: { key: () => ['conversations'], get: { queryOptions: () => ({ queryKey: ['get'] }) } } },
@@ -18,7 +17,7 @@ vi.mock('../src/lib/api.ts', () => ({
   isStepUpRequired: () => false,
   fetchConversationImage: () => Promise.reject(new Error('not called')),
 }));
-vi.mock('../src/lib/auth.ts', async (original) => ({ ...(await original<typeof import('../src/lib/auth.ts')>()), getConfig: () => ({ aiEnabled: true, channels: { sandbox: false } }), senderCheckEnabled: () => state.senderCheck }));
+vi.mock('../src/lib/auth.ts', async (original) => ({ ...(await original<typeof import('../src/lib/auth.ts')>()), getConfig: () => ({ aiEnabled: true, channels: { sandbox: false } }) }));
 vi.mock('@tanstack/react-query', () => ({
   useQuery: () => ({ data: undefined, isError: false, isLoading: true }),
   useInfiniteQuery: () => ({ data: undefined }),
@@ -49,14 +48,7 @@ const wrap = (node: React.ReactNode, locale: Locale) => renderToStaticMarkup(<In
 const box = (detail: ConversationDetail, locale: Locale = 'vi') => wrap(<ReplyBox detail={detail} seen={1} onMoved={() => undefined} />, locale);
 
 describe('the "sender not confirmed" mark (IN-2)', () => {
-  it('shows nothing on a deployment that cannot check senders, which is the default', () => {
-    state.senderCheck = false;
-    expect(wrap(<UnverifiedMark explain />, 'vi')).toBe('');
-    expect(box(detailOf('email', { senderUnverified: true }))).not.toContain('reply-unverified-note');
-  });
-
-  it('where senders can be checked, says it in the new words with the explanation as visible text, not a hover title', () => {
-    state.senderCheck = true;
+  it('says it in the new words with the explanation as visible text, not a hover title', () => {
     const vi = wrap(<UnverifiedMark explain />, 'vi');
     expect(vi).toContain('Chưa xác nhận người gửi');
     expect(vi).not.toContain('Chưa xác minh');
@@ -67,23 +59,20 @@ describe('the "sender not confirmed" mark (IN-2)', () => {
     expect(wrap(<UnverifiedMark explain />, 'en')).toContain('Sender not confirmed');
     // In a list row only the short mark is drawn.
     expect(wrap(<UnverifiedMark />, 'vi')).not.toContain('unverified-explain');
-    state.senderCheck = false;
   });
 });
 
 describe('the reply box (IN-3, IN-4)', () => {
-  it('names the address an email goes to, and warns about an unconfirmed sender only where senders are checked', () => {
-    state.senderCheck = false;
-    const plain = box(detailOf('email', { senderUnverified: true }));
+  it('names the address an email goes to, and warns about an unconfirmed sender only when the server marks the thread', () => {
+    const marked = box(detailOf('email', { senderUnverified: true }));
+    expect(marked).toContain('Thư sẽ gửi tới lan@example.com');
+    expect(marked).toContain('data-testid="reply-unverified-note"');
+    // A deployment that cannot check senders sends no mark (the server leaves the field out), so the reply carries no warning.
+    const plain = box(detailOf('email', { senderUnverified: false }));
     expect(plain).toContain('Thư sẽ gửi tới lan@example.com');
     expect(plain).not.toContain('reply-unverified-note');
-    state.senderCheck = true;
-    const checked = box(detailOf('email', { senderUnverified: true }));
-    expect(checked).toContain('Thư sẽ gửi tới lan@example.com');
-    expect(checked).toContain('data-testid="reply-unverified-note"');
-    expect(box(detailOf('email', { senderUnverified: false }))).not.toContain('reply-unverified-note');
+    expect(box(detailOf('email'))).not.toContain('reply-unverified-note');
     expect(box(detailOf('email'), 'en')).toContain('The mail will be sent to lan@example.com');
-    state.senderCheck = false;
   });
 
   it('gives each reply type a button that names what happens, in both languages', () => {
