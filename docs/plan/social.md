@@ -1,6 +1,10 @@
 # Crove Social: module plan
 
-> Plan for the Social module (`social`, product name "Crove Social"), 2026-10-16. Owner decision of 2026-10-16: Social starts now, in parallel with the Accounting work, as an exception to plan Decision 2 (kernel plan, Decision 17). References: Postiz (and the owner's archived fork DOS/Ludy-Post), OpenPost, BrightBean Studio, TryPost, Mixpost, and the platforms' official docs; findings and sources in [social-research.md](social-research.md). We study designs, never copy code (research §1). The kernel plan's Phase 5 section stays the summary; this file is the detailed plan. Vietnamese page for the owner: [social.vi.html](social.vi.html).
+> Plan for the Social module (`social`, historical product name "Crove Social"), 2026-10-16. Owner decision of 2026-10-16: Social starts now, in parallel with the Accounting work, as an exception to plan Decision 2 (kernel plan, Decision 17).
+>
+> **Naming update (2026-11-18, [#3796](https://github.com/DOS/Ludy/issues/3796)):** Users now see this module as **Hộp thư & Bài đăng / Inbox & Posts** (`modules.social`) inside the **Engage** App (`engage`, alongside `crm` and `ads`); technical identifiers (`modules/social`, `social.*`, `CROVE_MODULES`) keep `social` ([DESIGN.md](../../DESIGN.md) section 1.1).
+>
+> References: Postiz (and the owner's archived fork DOS/Ludy-Post), OpenPost, BrightBean Studio, TryPost, Mixpost, and the platforms' official docs; findings and sources in [social-research.md](social-research.md). We study designs, never copy code (research §1). The kernel plan's Phase 5 section stays the summary; this file is the detailed plan. Vietnamese page for the owner: [social.vi.html](social.vi.html).
 
 ## 1. Goal and scope
 
