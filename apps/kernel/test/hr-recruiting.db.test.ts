@@ -840,4 +840,197 @@ suite('HR lightweight recruiting, calendar interview, 1-click hire, and Ly brief
     await Promise.all([tx1, tx2]);
     expect(order).toEqual(['tx1:acquired', 'tx3-other-key:acquired', 'tx1:releasing', 'tx2:acquired']);
   });
+
+  it('refuses ordinary recruiting commands and queries when hr is switched off while allowing owner PDPL candidate.erase (#3447 Item 2)', async () => {
+    const o = await org();
+    const opening = await o.exec<HrOpeningWritten>(o.owner, 'hr.recruiting.opening.add', {
+      title: 'Trưởng nhóm Kinh doanh',
+      contractType: 'indefinite',
+      region: 'I',
+    });
+
+    const fromIso = new Date(Date.now() + 2 * 86_400_000).toISOString();
+    const toIso = new Date(Date.now() + 14 * 86_400_000).toISOString();
+    const slots = await o.query<HrInterviewSlotsResult>(o.owner, 'hr.recruiting.interview_slots', {
+      from: fromIso,
+      to: toIso,
+      durationMinutes: 45,
+      maxSlots: 4,
+    });
+    expect(slots.slots.length).toBeGreaterThanOrEqual(1);
+
+    const hiredWithInterview = await o.exec<HrCandidateWritten>(o.owner, 'hr.recruiting.candidate.add', {
+      openingId: opening.openingId,
+      displayName: 'Ngô Minh Quân',
+      email: 'quan.ngo@example.com',
+      phone: '0938112233',
+      notes: 'Ứng viên kỹ thuật, liên hệ 0938112233.',
+    });
+    const booked = await o.exec<HrCandidateInterviewScheduled>(o.owner, 'hr.recruiting.candidate.schedule_interview', {
+      candidateId: hiredWithInterview.candidateId,
+      startsAt: slots.slots[0]!.startIso,
+      endsAt: slots.slots[0]!.endIso,
+    });
+    await o.exec<HrCandidateHireResult>(o.owner, 'hr.recruiting.candidate.hire', {
+      candidateId: hiredWithInterview.candidateId,
+      effectiveFrom: '2026-12-01',
+      baseWage: '24000000',
+      allowDirectHire: true,
+    });
+
+    const rejectedCand = await o.exec<HrCandidateWritten>(o.owner, 'hr.recruiting.candidate.add', {
+      openingId: opening.openingId,
+      displayName: 'Bùi Thu Hà',
+      email: 'ha.bui@example.com',
+      phone: '0977556677',
+      notes: 'Hồ sơ lưu sau phỏng vấn.',
+    });
+    await o.exec(o.owner, 'hr.recruiting.candidate.move_stage', {
+      candidateId: rejectedCand.candidateId,
+      toStage: 'rejected',
+    });
+
+    const activePipelineCand = await o.exec<HrCandidateWritten>(o.owner, 'hr.recruiting.candidate.add', {
+      openingId: opening.openingId,
+      displayName: 'Đặng Quốc Tuấn',
+    });
+
+    // Switch off HR for this org (ADR-0053).
+    await o.exec(o.owner, 'kernel.org.set_app', { module: 'hr', enabled: false });
+
+    const moduleOff = { code: 'MODULE_OFF', status: 404, details: { module: 'hr' } };
+
+    // Ordinary recruiting queries and Ly brief RPC are refused while HR is off.
+    await expect(o.query(o.owner, 'hr.recruiting.opening.list', {})).rejects.toMatchObject(moduleOff);
+    await expect(o.query(o.owner, 'hr.recruiting.candidate.list', {})).rejects.toMatchObject(moduleOff);
+    await expect(o.query(o.owner, 'hr.recruiting.candidate.get', { candidateId: rejectedCand.candidateId })).rejects.toMatchObject(moduleOff);
+    await expect(o.query(o.owner, 'hr.recruiting.interview_slots', { from: fromIso, to: toIso })).rejects.toMatchObject(moduleOff);
+    await expect(o.query(o.owner, 'hr.recruiting.brief.read', { candidateId: rejectedCand.candidateId, lang: 'vi' })).rejects.toMatchObject(moduleOff);
+    const { postBrief } = makeHttp(o);
+    expect((await postBrief(o.owner, { candidateId: rejectedCand.candidateId, lang: 'vi' })).status).toBe(404);
+
+    // Ordinary recruiting commands are refused while HR is off.
+    await expect(o.exec(o.owner, 'hr.recruiting.opening.add', { title: 'Vị trí mới' })).rejects.toMatchObject(moduleOff);
+    await expect(o.exec(o.owner, 'hr.recruiting.candidate.add', { displayName: 'Ứng viên mới' })).rejects.toMatchObject(moduleOff);
+    await expect(
+      o.exec(o.owner, 'hr.recruiting.candidate.edit', { candidateId: activePipelineCand.candidateId, notes: 'Không được sửa khi tắt app' }),
+    ).rejects.toMatchObject(moduleOff);
+    await expect(
+      o.exec(o.owner, 'hr.recruiting.candidate.move_stage', { candidateId: activePipelineCand.candidateId, toStage: 'rejected' }),
+    ).rejects.toMatchObject(moduleOff);
+    await expect(
+      o.exec(o.owner, 'hr.recruiting.candidate.schedule_interview', {
+        candidateId: activePipelineCand.candidateId,
+        startsAt: slots.slots[0]!.startIso,
+        endsAt: slots.slots[0]!.endIso,
+      }),
+    ).rejects.toMatchObject(moduleOff);
+    await expect(
+      o.exec(o.owner, 'hr.recruiting.candidate.hire', {
+        candidateId: activePipelineCand.candidateId,
+        effectiveFrom: '2026-12-01',
+        baseWage: '15000000',
+        allowDirectHire: true,
+      }),
+    ).rejects.toMatchObject(moduleOff);
+
+    // `hr.recruiting.candidate.erase` (`runsWhenOff`) still enforces owner-only RBAC, fresh MFA (`aal2`), and terminal-stage checks while HR is off.
+    await expect(
+      o.exec(o.admin, 'hr.recruiting.candidate.erase', { candidateId: rejectedCand.candidateId }, asMfa(o.admin)),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(
+      o.exec(o.owner, 'hr.recruiting.candidate.erase', { candidateId: rejectedCand.candidateId }, asUser(o.owner)),
+    ).rejects.toMatchObject({ code: 'STEP_UP_REQUIRED', status: 403 });
+    await expect(
+      o.exec(o.owner, 'hr.recruiting.candidate.erase', { candidateId: activePipelineCand.candidateId }, asMfa(o.owner)),
+    ).rejects.toMatchObject({ code: 'HR_CANDIDATE_STILL_IN_PIPELINE', status: 409 });
+
+    // Owner with fresh MFA (`aal2`) erases both terminal candidates cleanly while HR is off, auto-cancelling the active linked interview.
+    const erasedHired = await o.exec<HrCandidateEraseResult>(
+      o.owner,
+      'hr.recruiting.candidate.erase',
+      { candidateId: hiredWithInterview.candidateId },
+      asMfa(o.owner),
+    );
+    expect(erasedHired.candidateId).toBe(hiredWithInterview.candidateId);
+
+    const erasedRejected = await o.exec<HrCandidateEraseResult>(
+      o.owner,
+      'hr.recruiting.candidate.erase',
+      { candidateId: rejectedCand.candidateId },
+      asMfa(o.owner),
+    );
+    expect(erasedRejected.candidateId).toBe(rejectedCand.candidateId);
+
+    await expect(
+      o.exec(o.owner, 'hr.recruiting.candidate.erase', { candidateId: rejectedCand.candidateId }, asMfa(o.owner)),
+    ).rejects.toMatchObject({ code: 'HR_CANDIDATE_ERASED', status: 409 });
+
+    // Verify directly in PostgreSQL while HR remains off: PII cleared, interview link cleared, calendar_event cancelled, audit PII-free.
+    const dbState = await withAdmin(async (c) => {
+      const candRows = (
+        await c.query<{
+          id: string;
+          display_name: string;
+          email: string | null;
+          phone: string | null;
+          notes: string | null;
+          interview_event_id: string | null;
+          interview_starts_at: Date | null;
+          interview_ends_at: Date | null;
+          erased_at: Date | null;
+        }>(
+          `SELECT id, display_name, email, phone, notes, interview_event_id, interview_starts_at, interview_ends_at, erased_at
+           FROM crove_hr.candidate
+           WHERE org_id = $1 AND id = ANY($2::uuid[])`,
+          [o.orgId, [hiredWithInterview.candidateId, rejectedCand.candidateId]],
+        )
+      ).rows;
+      const eventRow = (
+        await c.query<{ status: string; cancelled_by: string | null }>(
+          `SELECT status, cancelled_by FROM crove_kernel.calendar_event WHERE org_id = $1 AND id = $2`,
+          [o.orgId, booked.eventId],
+        )
+      ).rows[0];
+      const auditRow = (
+        await c.query<{ detail: { cancelledInterviewEventId?: string | null }; row: string }>(
+          `SELECT detail, audit_event::text AS row
+           FROM crove_kernel.audit_event
+           WHERE org_id = $1 AND command = 'hr.recruiting.candidate.erase' AND target_id = $2
+           ORDER BY id DESC LIMIT 1`,
+          [o.orgId, hiredWithInterview.candidateId],
+        )
+      ).rows[0];
+      return { candRows, eventRow, auditRow };
+    });
+
+    expect(dbState.candRows).toHaveLength(2);
+    for (const row of dbState.candRows) {
+      expect(row.display_name).toBe(HR_ERASED_NAME);
+      expect(row.email).toBeNull();
+      expect(row.phone).toBeNull();
+      expect(row.notes).toBeNull();
+      expect(row.interview_event_id).toBeNull();
+      expect(row.interview_starts_at).toBeNull();
+      expect(row.interview_ends_at).toBeNull();
+      expect(row.erased_at).not.toBeNull();
+    }
+    expect(dbState.eventRow).toEqual({ status: 'cancelled', cancelled_by: o.owner });
+    expect(dbState.auditRow?.detail.cancelledInterviewEventId).toBe(booked.eventId);
+    expect(dbState.auditRow?.row).not.toContain('Ngô Minh Quân');
+    expect(dbState.auditRow?.row).not.toContain('quan.ngo@example.com');
+    expect(dbState.auditRow?.row).not.toContain('0938112233');
+
+    // Re-enabling HR restores reads and surfaces the erased view cleanly.
+    await o.exec(o.owner, 'kernel.org.set_app', { module: 'hr', enabled: true });
+    const restoredView = await o.query<HrCandidateView>(o.owner, 'hr.recruiting.candidate.get', {
+      candidateId: hiredWithInterview.candidateId,
+    });
+    expect(restoredView.displayName).toBe(HR_ERASED_NAME);
+    expect(restoredView.email).toBeNull();
+    expect(restoredView.phone).toBeNull();
+    expect(restoredView.notes).toBeNull();
+    expect(restoredView.interviewEventId).toBeNull();
+    expect(restoredView.erasedAt).not.toBeNull();
+  });
 });
