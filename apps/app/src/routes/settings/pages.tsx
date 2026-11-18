@@ -13,7 +13,6 @@ import { QuoteSettingsCard } from '../../components/quote-settings-card.tsx';
 import { SalesProcessCard } from '../../components/sales-process-card.tsx';
 import { MySessions } from '../../components/sessions.tsx';
 import { TwoFactorCard } from '../../components/two-factor.tsx';
-import { installedModules } from '../../lib/org-modules.ts';
 import { AccountRulesCard } from '../account-rules.tsx';
 import { ChartOfAccountsCard } from '../accounts.tsx';
 import { ApprovalPresetCard } from '../approval-preset.tsx';
@@ -39,7 +38,7 @@ export function SettingsOrgPage() {
   const t = useTranslations('settings');
   return (
     <SettingsFrame>
-      {({ org, canManage }) => (
+      {({ org, canManage, modules }) => (
         <>
           <Card className="block p-4">
             <p className="text-sm font-medium text-muted-foreground">{t('org')}</p>
@@ -54,7 +53,7 @@ export function SettingsOrgPage() {
               </div>
               {/* Keyed by org too: a value typed in one org must not stay in the form when the page shows another. */}
               <AddressField key={`address:${org.slug}:${org.address ?? ''}`} address={org.address ?? null} canManage={canManage} />
-              {installedModules().includes('finance') && (
+              {modules.includes('finance') && (
                 <ContactEmailField key={`contact-email:${org.slug}:${org.contactEmail ?? ''}`} email={org.contactEmail ?? null} canManage={canManage} />
               )}
               <div>
@@ -71,7 +70,7 @@ export function SettingsOrgPage() {
             {org.role === 'owner' && org.inboundAddress && <RotateInboundAddress />}
           </Card>
           {/* What the tax office knows of the org: its tax code, VAT filing period and tax calendar, one value then "Sửa" each (ST-6). */}
-          {installedModules().includes('finance') && (
+          {modules.includes('finance') && (
           <Anchor id={SETTINGS_CARD.taxProfile}>
             <Card className="block p-4">
               <p className="text-sm font-medium text-muted-foreground">{t('taxProfile')}</p>
@@ -84,7 +83,7 @@ export function SettingsOrgPage() {
           </Anchor>
           )}
           {/* The legal entities the books are kept for (#1278), with the finance module; owners and admins only. */}
-          {installedModules().includes('finance') && canManage && (
+          {modules.includes('finance') && canManage && (
             <Anchor id={SETTINGS_CARD.legalEntities}>
               <LegalEntitiesCard key={`legal-entities:${org.slug}`} />
             </Anchor>
@@ -100,11 +99,11 @@ export function SettingsMembersPage() {
   const search: { invite?: string } = useSearch({ strict: false });
   return (
     <SettingsFrame>
-      {({ org, me, canManage, isOwner }) => (
+      {({ org, me, canManage, isOwner, modules }) => (
         <>
           <MembersCard key={`members:${org.slug}`} members={org.members} me={me?.userId} isOwner={isOwner} canManage={canManage} inviteEmail={search.invite} />
           {/* Who approves the ledger's proposals (#1425), with the finance module; every member sees it, owners switch it. The reminders of a proposal nobody has decided sit under the rule (ST-6). */}
-          {installedModules().includes('finance') && (
+          {modules.includes('finance') && (
             <ApprovalPresetCard key={`approval-preset:${org.slug}:${org.approvalPreset}`} preset={org.approvalPreset} isOwner={isOwner}>
               <dl className="mt-4 border-t pt-4 text-sm">
                 <ProposalRemindersField key={`proposal-reminders:${org.slug}`} canManage={canManage} />
@@ -119,10 +118,9 @@ export function SettingsMembersPage() {
 
 // Ứng dụng: which apps the company uses (ADR-0053, #3312; every member sees the list, owners and admins switch it), then the retention of Engage's conversations and the meetings' minutes templates.
 export function SettingsAppsPage() {
-  const modules = installedModules();
   return (
     <SettingsFrame>
-      {({ org, canManage }) => (
+      {({ org, canManage, modules }) => (
         <>
           <OrgAppsCard key={`org-apps:${org.slug}`} />
           {/* How long Engage's conversations are kept (CV6, #2305; moved here from the Inbox, #3582), with the social module; owners and admins. */}
@@ -137,10 +135,9 @@ export function SettingsAppsPage() {
 
 // Lịch hẹn: the member's working hours and the booking pages' event types.
 export function SettingsBookingsPage() {
-  const modules = installedModules();
   return (
     <SettingsFrame>
-      {({ org, me }) => (
+      {({ org, me, modules }) => (
         <>
           {/* The member's own working hours and days off (#1313). */}
           <WorkingHoursCard key={`working-hours:${org.slug}`} canEdit={org.role !== 'viewer'} />
@@ -154,10 +151,9 @@ export function SettingsBookingsPage() {
 
 // Bán hàng, with the crm module: the quotes' letterhead and the deal board's stages; owners and admins.
 export function SettingsSalesPage() {
-  const modules = installedModules();
   return (
     <SettingsFrame>
-      {({ org, canManage }) => (
+      {({ org, canManage, modules }) => (
         <>
           {/* The letterhead, bank note, defaults and logo of the org's quotes (#3645), with the crm module; owners and admins. */}
           {modules.includes('crm') && canManage && <QuoteSettingsCard key={`quote-settings:${org.slug}`} />}
@@ -198,15 +194,14 @@ export function SettingsAccountingPage() {
 
 // Kết nối: the bank feed, the e-invoice provider and the numbers of the bank accounts (finance), and the member's own meeting platforms (meetings).
 export function SettingsConnectionsPage() {
-  const modules = installedModules();
   return (
     <SettingsFrame>
-      {({ org, canManage }) => (
+      {({ org, canManage, modules }) => (
         <>
           {/* The bank feed (ADR-0039, #2099) and the e-invoice provider (ADR-0044, #2501), each only where the deployment offers one or the org has one connected. */}
           {modules.includes('finance') && <IntegrationsSection key={`integrations:${org.slug}`} role={org.role} orgSlug={org.slug} />}
           {/* The numbers of the bank accounts (#2183): how a statement file finds its account without a bank feed; owners and admins. */}
-          {canManage && (
+          {modules.includes('finance') && canManage && (
             <Anchor id={SETTINGS_CARD.bankAccountNumbers}>
               <BankAccountNumbersCard key={`bank-account-numbers:${org.slug}`} canManage={canManage} />
             </Anchor>
@@ -225,10 +220,9 @@ export function SettingsConnectionsPage() {
 
 // Bảo mật tài khoản: the person's own second factor and devices; the team's extension devices for owners and admins.
 export function SettingsSecurityPage() {
-  const modules = installedModules();
   return (
     <SettingsFrame>
-      {({ org, me, canManage }) => (
+      {({ org, me, canManage, modules }) => (
         <>
           <Anchor id={SETTINGS_CARD.twoFactor}>
             <TwoFactorCard />

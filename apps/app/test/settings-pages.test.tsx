@@ -156,6 +156,9 @@ describe('which cards each tab of Settings holds', () => {
       expect(cardsOf(render('SettingsAppsPage'))).toEqual(['org-apps']);
       expect(cardsOf(render('SettingsBookingsPage'))).toEqual(['working-hours']);
       expect(cardsOf(render('SettingsSalesPage'))).toEqual([]);
+      // Meetings alone opens the connections tab, but the bank account numbers are finance's.
+      modules.current = ['kernel', 'meetings'];
+      expect(cardsOf(render('SettingsConnectionsPage'))).toEqual(['meeting-platforms']);
       expect(cardsOf(render('SettingsOrgPage'))).toEqual([]);
       expect(cardsOf(render('SettingsSecurityPage'))).toEqual(['two-factor', 'my-sessions']);
     } finally {

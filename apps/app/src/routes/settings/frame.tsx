@@ -5,7 +5,7 @@ import { useEffect, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { ErrorText, PageHeader, PageSkeleton } from '../../components/ui.tsx';
 import { errorMessage, orpc } from '../../lib/api.ts';
-import { useModulesVersion } from '../../lib/org-modules.ts';
+import { installedModules, useModulesVersion } from '../../lib/org-modules.ts';
 
 const useOrg = () => useQuery(orpc.org.get.queryOptions());
 const useMe = () => useQuery(orpc.me.get.queryOptions());
@@ -16,6 +16,8 @@ export interface SettingsContext {
   // Owners and admins change the org's settings; everyone else sees them.
   canManage: boolean;
   isOwner: boolean;
+  // The modules the org runs, read when the frame renders, which it does again when the org's apps change: a page reads them here, never once outside the render function.
+  modules: string[];
 }
 
 // The frame every tab of Settings shares: the title, the org read, and a one-column list of cards (ST-8: no two-column grid, so no card leaves half a row empty). The tab strip itself is
@@ -58,7 +60,7 @@ export function SettingsFrame({ children }: { children: (context: SettingsContex
     <>
       <PageHeader title={t('title')} subtitle={org.data.name} />
       {/* Sibling cards keyed by the org carry a key of their own: with one key shared, React loses a card when a slot before it renders nothing, and the old one stays in the page next to its new copy. */}
-      <div className="grid max-w-4xl gap-6">{children({ org: org.data, me: me.data, canManage, isOwner: org.data.role === 'owner' })}</div>
+      <div className="grid max-w-4xl gap-6">{children({ org: org.data, me: me.data, canManage, isOwner: org.data.role === 'owner', modules: installedModules() })}</div>
     </>
   );
 }
