@@ -62,10 +62,10 @@ async function compose(page: Page, body: string, channels: string[] = []): Promi
   }
 }
 
-// A channel's card on the post screen: the one with that channel's name and its own-text box (the review panel names
-// every channel too, but has no such box).
+// A channel's card on the post screen: the one with that channel's name (the review panel names every channel too, but is
+// no channel card).
 function channelCard(page: Page, name: string): Locator {
-  return page.locator('[data-slot="card"]').filter({ hasText: name }).filter({ hasText: 'Viết riêng cho kênh này' });
+  return page.getByTestId('channel-card').filter({ hasText: name });
 }
 
 // Opens an entry of the Posts screen's tools menu (#3655): the figures, the photo library, ideas, import, channels and the rest.
@@ -203,7 +203,8 @@ test('retries a failed channel and settles the channels Crove could not account 
   // The person found the post on the platform: the channel counts as published.
   await seenCard.getByRole('button', { name: 'Đã thấy bài trên trang' }).click();
   await expect(seenCard.getByText('Đã đăng', { exact: true })).toBeVisible();
-  await expect(seenCard.getByText(/^Đã đăng lúc/)).toBeVisible();
+  // The time it went out is in the result at the top of the page (#3656).
+  await expect(page.getByTestId('published-summary').getByText(/^Đã đăng lúc/)).toBeVisible();
 
   // The person drops the channel instead: it is cancelled, with nothing left to do on it.
   await droppedCard.getByRole('button', { name: 'Bỏ bài trên kênh này' }).click();
@@ -449,19 +450,23 @@ test('turns on evergreen reposting for a published post', async ({ page }) => {
   await createOrg(page, 'Công ty Đăng Lại Định Kỳ');
   const postId = await publishOnSandbox(page, 'Trang Định Kỳ', 'Bài đăng lại mỗi tháng');
 
-  // The panel shows once the post is out; reposting is off until someone turns it on.
-  const evergreen = page.getByLabel('Tự đăng lại');
+  // The choice shows once the post is out, under "Tùy chọn khác"; reposting is off until someone turns it on.
+  await page.getByText('Tùy chọn khác', { exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Không tự đăng lại' })).toBeChecked();
+  await page.getByRole('radio', { name: 'Theo chu kỳ' }).check();
+  const evergreen = page.getByLabel('Chu kỳ đăng lại');
   await expect(evergreen).toHaveValue('');
   await evergreen.selectOption('30');
   await expect(evergreen).toHaveValue('30');
   await page.reload();
-  await expect(page.getByLabel('Tự đăng lại')).toHaveValue('30');
-  await expect(page.getByLabel('Tự đăng lại').locator('option:checked')).toHaveText('Mỗi 30 ngày');
+  // A repeat that is on opens "Tùy chọn khác" by itself.
+  await expect(page.getByRole('radio', { name: 'Theo chu kỳ' })).toBeChecked();
+  await expect(page.getByLabel('Chu kỳ đăng lại')).toHaveValue('30');
+  await expect(page.getByLabel('Chu kỳ đăng lại').locator('option:checked')).toHaveText('Mỗi 30 ngày');
   expect(sql<{ evergreen_days: number | null }>(`SELECT evergreen_days FROM crove_social.post WHERE id = :'post'`, { post: postId })).toEqual([{ evergreen_days: 30 }]);
 
   // And off again.
-  await page.getByLabel('Tự đăng lại').selectOption('');
-  await expect(page.getByLabel('Tự đăng lại')).toHaveValue('');
+  await page.getByRole('radio', { name: 'Không tự đăng lại' }).check();
   await expect
     .poll(() => sql<{ evergreen_days: number | null }>(`SELECT evergreen_days FROM crove_social.post WHERE id = :'post'`, { post: postId }))
     .toEqual([{ evergreen_days: null }]);
@@ -473,7 +478,8 @@ test('shows the latest metrics of a published channel on the post and in the Met
   const channel = 'Trang Số Liệu';
   const body = 'Bài có số liệu tương tác';
   const postId = await publishOnSandbox(page, channel, body);
-  const card = channelCard(page, channel);
+  // The numbers are in the result at the top of the page (#3656), per channel.
+  const card = page.getByTestId('published-summary').getByRole('region', { name: channel });
 
   // A capture as the worker records it. Taken now, it is newer than any capture the worker's own sweep may have made
   // since the post went out, and the sweep asks again only after 6 hours.
@@ -1031,6 +1037,18 @@ test('corrects a published post on its channel: a blocked word is refused, the t
   await expect(card.getByText('Đang cập nhật nội dung đã sửa lên kênh')).toHaveCount(0, { timeout: 15_000 });
   await expect(card.getByText('Phở bò giá 45.000đ').first()).toBeVisible();
 
+  // A second member joins first: the versions of a post show for a team of two or more (#3656).
+  const writer = newEmail('social-live-edit-member');
+  const memberContext = await browser.newContext({ baseURL: new URL(postUrl).origin, locale: 'vi-VN', timezoneId: TIME_ZONE });
+  const memberPage = await memberContext.newPage();
+  await signInNewUser(memberPage, writer);
+  await expect.poll(() => sql<{ id: string }>(`SELECT id FROM crove_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: writer }).length).toBe(1);
+  exec(
+    `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
+     SELECT t.org_id, u.id, 'member' FROM crove_kernel.tenant t, crove_kernel.user_account u
+      WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
+    { slug, email: writer },
+  );
   // The timeline: the owner corrected it, and the channel shows the corrected text.
   await page.reload();
   await expect(page.getByText('đã sửa nội dung bài đã đăng').first()).toBeVisible();
@@ -1045,17 +1063,6 @@ test('corrects a published post on its channel: a blocked word is refused, the t
   await expect(first.getByRole('button', { name: 'Khôi phục' })).toHaveCount(0);
 
   // A member sees no such action, and the server refuses them with 403.
-  const writer = newEmail('social-live-edit-member');
-  const memberContext = await browser.newContext({ baseURL: new URL(postUrl).origin, locale: 'vi-VN', timezoneId: TIME_ZONE });
-  const memberPage = await memberContext.newPage();
-  await signInNewUser(memberPage, writer);
-  await expect.poll(() => sql<{ id: string }>(`SELECT id FROM crove_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: writer }).length).toBe(1);
-  exec(
-    `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
-     SELECT t.org_id, u.id, 'member' FROM crove_kernel.tenant t, crove_kernel.user_account u
-      WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
-    { slug, email: writer },
-  );
   const read = memberPage.waitForRequest((r) => r.url().includes('/api/rpc/social/posts/get'));
   await memberPage.goto(postUrl);
   const headers = (await read).headers();

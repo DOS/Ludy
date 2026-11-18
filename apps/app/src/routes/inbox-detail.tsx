@@ -415,6 +415,8 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   // A campaign plan is the one ads request that spends: its button, toast and subtitle say what approving does (#3639). The card reads the same query.
   const adsView = useQuery({ ...orpc.ads.proposal.queryOptions({ input: { id } }), enabled: ads });
   const adsLaunch = adsView.data?.change?.change === 'campaign_launch' ? adsView.data.change : null;
+  // This server has no launch writer for the plan's account (#3675): approving holds the amount and creates nothing, so the words say that.
+  const adsHeldOnly = adsLaunch !== null && adsView.data?.canLaunch === false;
   // A request to issue a sales e-invoice (#2502) posts nothing either; its card shows the invoice the approval would send.
   const issue = detail.data ? isEInvoiceIssueKind(detail.data.kind) : false;
   // The invoice the approval would send. Approving waits for it: with no view of the invoice (still loading, or the read failed) nothing can be approved.
@@ -477,7 +479,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   };
   const partyName = () => (sale ? payload?.buyer.name : payload?.seller.name) || detail.data?.title || '';
   // An ads request posts nothing, and its title is the server's Vietnamese: its toasts name no one and no entry.
-  const approve = useMutation(orpc.inbox.approve.mutationOptions({ onSuccess: () => done(adsLaunch ? t('approvedCampaignToast', { name: visibleBidi(adsLaunch.plan.name), amount: f.money(adsLaunch.amount, adsLaunch.currency), from: f.date(adsLaunch.plan.startOn) }) : ads ? t('approvedAdsToast') : issue ? t('approvedIssueToast') : t('approvedToast', { name: partyName() })) }));
+  const approve = useMutation(orpc.inbox.approve.mutationOptions({ onSuccess: () => done(adsLaunch ? t(adsHeldOnly ? 'approvedCampaignHeldToast' : 'approvedCampaignToast', { name: visibleBidi(adsLaunch.plan.name), amount: f.money(adsLaunch.amount, adsLaunch.currency), from: f.date(adsLaunch.plan.startOn) }) : ads ? t('approvedAdsToast') : issue ? t('approvedIssueToast') : t('approvedToast', { name: partyName() })) }));
   const stepUp = isStepUpRequired(approve.error);
   // The dialog closes as soon as the approval is sent again, while the approve button is disabled and cannot take focus: once the request is over, and the page is
   // still here (an ordinary refusal), focus goes back to the button.
@@ -744,7 +746,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
         )}
         {item.canApprove && ads && (
           <Button ref={approveRef} loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
-            {adsLaunch ? t('approveCampaignLaunch', { amount: f.money(adsLaunch.amount, adsLaunch.currency) }) : t('approveAds')}
+            {adsLaunch ? t(adsHeldOnly ? 'approveCampaignHeldOnly' : 'approveCampaignLaunch', { amount: f.money(adsLaunch.amount, adsLaunch.currency) }) : t('approveAds')}
           </Button>
         )}
         {item.canApprove && issue && (
@@ -824,7 +826,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
                       ? t('journalVoucherSubtitlePosted', { code: journalVoucherCode, date: f.date(journalVoucher.date) })
                       : t('journalVoucherSubtitle', { date: f.date(journalVoucher.date) })
                     : ads
-                      ? t(adsLaunch ? 'adsLaunchSubtitle' : 'adsSubtitle')
+                      ? t(adsLaunch ? (adsHeldOnly ? 'adsLaunchHeldSubtitle' : 'adsLaunchSubtitle') : 'adsSubtitle')
                       : issue
                         ? t('issueSubtitle')
                         : undefined

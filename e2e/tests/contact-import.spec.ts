@@ -71,7 +71,8 @@ test('a member imports contacts from a CSV after reading the preview', async ({ 
   });
 
   await test.step('the contacts list shows the new contacts', async () => {
-    await page.getByRole('link', { name: 'Về danh sách liên hệ' }).first().click();
+    // #3650: back goes to the screen the import came from; a link when the page was opened directly, a button when it was reached in the app.
+    await page.getByRole('link', { name: 'Quay lại danh sách' }).or(page.getByRole('button', { name: 'Quay lại danh sách' })).first().click();
     // The people list holds the people; the company, with its tax code, is on the Companies screen (#2438).
     await expect(page.getByText('Nguyễn Văn An')).toBeVisible();
     await expect(page.getByText('Công ty ABC')).toHaveCount(0);

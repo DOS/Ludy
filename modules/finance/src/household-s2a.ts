@@ -17,7 +17,7 @@ import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runti
 import { money, sum, toMoney } from '@crove/l10n-vn';
 import { pickInForce } from './domain/household-rules.ts';
 import { splitAmount, taxOn, type SplitBucket, type SplitWeight } from './domain/household-tax.ts';
-import { householdBookWindow, householdSalesRows } from './household-books.ts';
+import { householdBookWindow, householdSalesRows, type HouseholdBookWindow } from './household-books.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const CHUNK = 500;
@@ -114,84 +114,89 @@ export async function saleDocumentWeights(ctx: Ctx, entryIds: readonly string[],
   return out;
 }
 
+// What S2a and S2b share: the rows of 511 shared between the profile's trades, the percentage of each trade in force on the period's last day, the revenue, VAT and PIT of each line, the totals that wait for
+// every part to have a trade, and the rows behind the figures that the accountant has not confirmed. One code path, so the two books cannot disagree on a row, a split or a rounding. S2b drops the PIT.
+export async function tradeRevenueBook(ctx: QueryContext, w: HouseholdBookWindow, book: 'S2a' | 'S2b') {
+  const trades = HOUSEHOLD_TRADES.filter((t) => w.profile.trades.includes(t));
+
+  // The percentage of each trade the profile names, in force on the period's last day.
+  const rateRows = await ctx.trx
+    .selectFrom('crove_finance.household_trade_rate')
+    .select(['trade', 'effective_from', 'vat_percent', 'pit_percent', 'status'])
+    .where('effective_from', '<=', w.to)
+    .execute();
+  const rates = new Map(pickInForce(rateRows, (r) => r.trade, w.to).map((r) => [r.trade, r]));
+  for (const t of trades) {
+    if (!rates.has(t)) throw new DomainError('HOUSEHOLD_RATE_MISSING', 422, 'Chưa có tỷ lệ thuế cho một ngành nghề trong hồ sơ', { trade: t });
+  }
+
+  const sales = householdSalesRows(w.ledger.lines, w.from);
+  // One trade takes every row; with several, the rows are shared by what each entry is built from.
+  const weights = trades.length > 1 ? await saleDocumentWeights(ctx, sales.map((r) => r.entryId), trades) : new Map<string, SplitWeight[]>();
+  const rows: HouseholdS2aRow[] = sales.map((r) => {
+    const parts = trades.length === 1 ? [{ bucket: trades[0]! as SplitBucket, amount: r.amount }] : splitAmount(r.amount, weights.get(r.entryId) ?? []);
+    return { ...r, parts: parts.map((p) => ({ trade: p.bucket, amount: p.amount })) };
+  });
+  const total = toMoney(sum(rows.map((r) => r.amount)));
+
+  const revenueOf = (bucket: SplitBucket) => toMoney(sum(rows.flatMap((r) => r.parts.filter((p) => p.trade === bucket).map((p) => p.amount))));
+  const lines = trades.map((trade) => {
+    const rate = rates.get(trade)!;
+    const revenue = revenueOf(trade);
+    const vatPercent = toMoney(money(rate.vat_percent));
+    const pitPercent = toMoney(money(rate.pit_percent));
+    return { trade, revenue, vatPercent, pitPercent, vat: taxOn(revenue, vatPercent), pit: taxOn(revenue, pitPercent) };
+  });
+  const unassigned = revenueOf('unassigned');
+  // The totals wait for every part to have a trade: any unassigned part with an amount holds them back, even when the net of the unassigned parts is zero (two unrelated entries that cancel
+  // each other would otherwise hide their tax). A sale and its void that are both unassigned therefore also hold the period's totals back: the safe side, never a tax total that leaves a part out.
+  const unassignedParts = rows.flatMap((r) => r.parts.filter((p) => p.trade === 'unassigned').map((p) => money(p.amount)));
+  const unassignedGross = toMoney(unassignedParts.reduce((acc, v) => acc.plus(v.abs()), money(0)));
+  const totals = money(unassignedGross).isZero()
+    ? (() => {
+        const vat = sum(lines.map((l) => l.vat));
+        const pit = sum(lines.map((l) => l.pit));
+        return { revenue: toMoney(sum(lines.map((l) => l.revenue))), vat: toMoney(vat), pit: toMoney(pit), tax: toMoney(vat.plus(pit)) };
+      })()
+    : null;
+
+  const unconfirmed: HouseholdS2a['unconfirmed'] = [];
+  // The layout of the book in force on the period's last day, from its own row (the book rule of the profile view carries no date), so the label follows the same day as the rates.
+  const formRows = await ctx.trx.selectFrom('crove_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'status']).where('book', '=', book).where('effective_from', '<=', w.to).execute();
+  const formInForce = pickInForce(formRows, (r) => r.book, w.to)[0];
+  // The layout shown is the one in force on the last day too (the profile view's rule is read on the first day or on the last profile change), so the book, its status and its label agree.
+  const form = formInForce ? { book: formInForce.book, version: formInForce.version, name: formInForce.name, status: formInForce.status } : w.form;
+  if (form.status !== 'confirmed') unconfirmed.push({ kind: 'form', key: `${book} ${form.version}`, effectiveFrom: formInForce?.effective_from ?? w.from });
+  for (const t of trades) {
+    const rate = rates.get(t)!;
+    if (rate.status !== 'confirmed') unconfirmed.push({ kind: 'rate', key: t, effectiveFrom: rate.effective_from });
+  }
+
+  const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();
+  return {
+    period: { period: w.ledger.period.period, from: w.from, to: w.to },
+    household: { name: entityRow.name, taxCode: entityRow.tax_code, representativeName: w.representativeName, openedOn: w.openedOn },
+    form,
+    rows,
+    total,
+    lines,
+    unassigned,
+    unassignedGross,
+    totals,
+    unconfirmed,
+    commentary: unconfirmed.length > 0,
+  };
+}
+
 export const householdS2a = defineQuery({
   name: 'finance.household.s2a',
   input: zHouseholdS2aGet,
   access: ALL,
   handler: async (ctx, input): Promise<HouseholdS2a> => {
     const w = await householdBookWindow(ctx, input.legalEntityId, input.period, 'S2a');
-    const profile = w.profile;
     // S2a is the book of the percentage method; the form row says so, and the profile must agree on the last day.
-    if (profile.pitMethod !== 'percentage') throw new DomainError('HOUSEHOLD_BOOK_NOT_REQUIRED', 422, 'Hồ sơ hộ kinh doanh của pháp nhân này không yêu cầu sổ S2a trong kỳ đã chọn');
-    const trades = HOUSEHOLD_TRADES.filter((t) => profile.trades.includes(t));
-
-    // The percentage of each trade the profile names, in force on the period's last day.
-    const rateRows = await ctx.trx
-      .selectFrom('crove_finance.household_trade_rate')
-      .select(['trade', 'effective_from', 'vat_percent', 'pit_percent', 'status'])
-      .where('effective_from', '<=', w.to)
-      .execute();
-    const rates = new Map(pickInForce(rateRows, (r) => r.trade, w.to).map((r) => [r.trade, r]));
-    for (const t of trades) {
-      if (!rates.has(t)) throw new DomainError('HOUSEHOLD_RATE_MISSING', 422, 'Chưa có tỷ lệ thuế cho một ngành nghề trong hồ sơ', { trade: t });
-    }
-
-    const sales = householdSalesRows(w.ledger.lines, w.from);
-    // One trade takes every row; with several, the rows are shared by what each entry is built from.
-    const weights = trades.length > 1 ? await saleDocumentWeights(ctx, sales.map((r) => r.entryId), trades) : new Map<string, SplitWeight[]>();
-    const rows: HouseholdS2aRow[] = sales.map((r) => {
-      const parts = trades.length === 1 ? [{ bucket: trades[0]! as SplitBucket, amount: r.amount }] : splitAmount(r.amount, weights.get(r.entryId) ?? []);
-      return { ...r, parts: parts.map((p) => ({ trade: p.bucket, amount: p.amount })) };
-    });
-    const total = toMoney(sum(rows.map((r) => r.amount)));
-
-    const revenueOf = (bucket: SplitBucket) => toMoney(sum(rows.flatMap((r) => r.parts.filter((p) => p.trade === bucket).map((p) => p.amount))));
-    const lines = trades.map((trade) => {
-      const rate = rates.get(trade)!;
-      const revenue = revenueOf(trade);
-      const vatPercent = toMoney(money(rate.vat_percent));
-      const pitPercent = toMoney(money(rate.pit_percent));
-      return { trade, revenue, vatPercent, pitPercent, vat: taxOn(revenue, vatPercent), pit: taxOn(revenue, pitPercent) };
-    });
-    const unassigned = revenueOf('unassigned');
-    // The totals wait for every part to have a trade: any unassigned part with an amount holds them back, even when the net of the unassigned parts is zero (two unrelated entries that cancel
-    // each other would otherwise hide their tax). A sale and its void that are both unassigned therefore also hold the period's totals back: the safe side, never a tax total that leaves a part out.
-    const unassignedParts = rows.flatMap((r) => r.parts.filter((p) => p.trade === 'unassigned').map((p) => money(p.amount)));
-    const unassignedGross = toMoney(unassignedParts.reduce((acc, v) => acc.plus(v.abs()), money(0)));
-    const totals = money(unassignedGross).isZero()
-      ? (() => {
-          const vat = sum(lines.map((l) => l.vat));
-          const pit = sum(lines.map((l) => l.pit));
-          return { revenue: toMoney(sum(lines.map((l) => l.revenue))), vat: toMoney(vat), pit: toMoney(pit), tax: toMoney(vat.plus(pit)) };
-        })()
-      : null;
-
-    const unconfirmed: HouseholdS2a['unconfirmed'] = [];
-    // The layout of the book in force on the period's last day, from its own row (the book rule of the profile view carries no date), so the label follows the same day as the rates.
-    const formRows = await ctx.trx.selectFrom('crove_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'status']).where('book', '=', 'S2a').where('effective_from', '<=', w.to).execute();
-    const formInForce = pickInForce(formRows, (r) => r.book, w.to)[0];
-    // The layout shown is the one in force on the last day too (the profile view's rule is read on the first day or on the last profile change), so the book, its status and its label agree.
-    const form = formInForce ? { book: formInForce.book, version: formInForce.version, name: formInForce.name, status: formInForce.status } : w.form;
-    if (form.status !== 'confirmed') unconfirmed.push({ kind: 'form', key: `S2a ${form.version}`, effectiveFrom: formInForce?.effective_from ?? w.from });
-    for (const t of trades) {
-      const rate = rates.get(t)!;
-      if (rate.status !== 'confirmed') unconfirmed.push({ kind: 'rate', key: t, effectiveFrom: rate.effective_from });
-    }
-
-    const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', w.entity).executeTakeFirstOrThrow();
-    return zHouseholdS2a.parse({
-      period: { period: w.ledger.period.period, from: w.from, to: w.to },
-      household: { name: entityRow.name, taxCode: entityRow.tax_code, representativeName: w.representativeName, openedOn: w.openedOn },
-      form,
-      rows,
-      total,
-      lines,
-      unassigned,
-      unassignedGross,
-      totals,
-      unconfirmed,
-      commentary: unconfirmed.length > 0,
-    });
+    if (w.profile.pitMethod !== 'percentage') throw new DomainError('HOUSEHOLD_BOOK_NOT_REQUIRED', 422, 'Hồ sơ hộ kinh doanh của pháp nhân này không yêu cầu sổ S2a trong kỳ đã chọn');
+    return zHouseholdS2a.parse(await tradeRevenueBook(ctx, w, 'S2a'));
   },
 });
 

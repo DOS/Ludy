@@ -116,9 +116,9 @@ export function PipelineSettings() {
   const list = stages.data ?? [];
   const open = list.filter((s) => s.kind === 'open');
   return (
-    <section aria-label={t('title')} className="space-y-3 rounded-lg border border-border p-4">
+    <section aria-label={t('title')} className="space-y-3">
       <div>
-        <h2 className="text-sm font-semibold text-foreground">{t('title')}</h2>
+        <p className="text-sm font-semibold text-foreground">{t('title')}</p>
         <p className="text-xs text-muted-foreground">{t('hint', { max: String(PIPELINE_STAGE_MAX) })}</p>
       </div>
       <ul className="space-y-3">

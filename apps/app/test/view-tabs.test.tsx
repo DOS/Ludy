@@ -54,6 +54,35 @@ function render(role: 'owner' | 'member' | 'viewer', filters: FilterAst = none):
 describe('ViewTabs', () => {
   beforeEach(() => client.current.clear());
 
+  it('shows no strip while there is no saved view and the filter is as it was (#3647): one lone "Tất cả" tab does nothing', () => {
+    const qc = client.current;
+    qc.setQueryData(['org', 'get', null], { role: 'member' });
+    qc.setQueryData(['savedViews', 'list', { scope: 'crm.party' }], []);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="vi" messages={catalog('vi')}>
+          <ViewTabs scope="crm.party" filters={none} sort={null} onApply={() => undefined} />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(html).toBe('');
+  });
+
+  it('comes with a changed filter, to offer saving it', () => {
+    const qc = client.current;
+    qc.setQueryData(['org', 'get', null], { role: 'member' });
+    qc.setQueryData(['savedViews', 'list', { scope: 'crm.party' }], []);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="vi" messages={catalog('vi')}>
+          <ViewTabs scope="crm.party" filters={{ v: 1, all: [{ field: 'kind', op: 'is', value: 'person' }] }} sort={null} onApply={() => undefined} />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(html).toContain(viMessages.savedViews.all);
+    expect(html).toContain(viMessages.savedViews.save);
+  });
+
   it('lists "Tất cả", then the member’s own views, then the shared ones with their badge', () => {
     const html = render('member');
     const order = [viMessages.savedViews.all, 'Công ty có email', 'Của nhóm'].map((label) => html.indexOf(label));

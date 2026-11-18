@@ -70,6 +70,7 @@ import { householdCommands, householdQueries } from './household.ts';
 import { householdBookCommands, householdBookQueries } from './household-books.ts';
 import { householdReturnQueries } from './household-return.ts';
 import { householdS2aQueries } from './household-s2a.ts';
+import { householdS2bQueries } from './household-s2b.ts';
 import { householdS2cQueries } from './household-s2c.ts';
 import { stockReportQueries } from './stock-report.ts';
 import { stockLowQueries } from './stock-low.ts';
@@ -147,7 +148,7 @@ export { buildStatementsHtkkXml, type StatementsFiling } from './statements-htkk
 export * from './domain/statements-htkk-xml.ts';
 export { buildFixedAssetsWorkbook } from './fixed-assets-export.ts';
 export { buildStockWorkbook } from './stock-export.ts';
-export { buildCnkdWorkbook, buildS1aWorkbook, buildS2aWorkbook, buildS2cWorkbook } from './household-export.ts';
+export { buildCnkdWorkbook, buildS1aWorkbook, buildS2aWorkbook, buildS2bWorkbook, buildS2cWorkbook } from './household-export.ts';
 export {
   MISA_SME_BANK_CREDIT,
   MISA_SME_BANK_DEBIT,
@@ -210,6 +211,7 @@ export const financeQueries = [
   ...householdBookQueries,
   ...householdReturnQueries,
   ...householdS2aQueries,
+  ...householdS2bQueries,
   ...householdS2cQueries,
   ...fixedAssetQueries,
   ...bankFeedQueries,

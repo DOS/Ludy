@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The filter bar of the Deals screen (CRM K3, #2227): search, stage, status, owner, expected close, an amount range and the
 // sort, as the controls of a Filter AST of the `crm.deal` scope (lib/deal-filter.ts). One bar for the list and the board; a
-// stored view's other conditions show as chips that can be removed.
-import type { ReactNode } from 'react';
+// stored view's other conditions show as chips that can be removed. Search and the owner are always there; the rest sit
+// behind "Bộ lọc khác" with the count of those in use (#3647). On the board the stage, the status and the sort are what the
+// columns already say, so they show there only while a view has set one.
+import { useId, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import type { PipelineStage, SavedViewSort } from '@crove/kernel-contract';
+import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
@@ -45,6 +48,8 @@ export function DealFilterBar({
   setSort,
   stages,
   members,
+  view,
+  extra,
 }: {
   bar: DealFilterState;
   setBar: (next: DealFilterState) => void;
@@ -52,9 +57,27 @@ export function DealFilterBar({
   setSort: (next: SavedViewSort | null) => void;
   stages: readonly PipelineStage[];
   members: readonly { userId: string; email: string; displayName?: string | null }[];
+  view: 'board' | 'list';
+  // Sits at the end of the always-visible row (the board's "Sửa giai đoạn" link).
+  extra?: ReactNode;
 }) {
   const t = useTranslations('deals');
+  const panelId = useId();
+  const [openChoice, setOpenChoice] = useState<boolean | null>(null);
   const filtered = dealFilterToAst(bar).all.length > 0;
+  const board = view === 'board';
+  const showStage = !board || bar.stage !== '';
+  const showStatus = !board || bar.status !== '';
+  const showSort = !board || sort !== null;
+  // How many of the folded controls hold a value: the badge on the button, and what opens the panel when there are some.
+  const inUse =
+    (showStage && bar.stage !== '' ? 1 : 0) +
+    (showStatus && bar.status !== '' ? 1 : 0) +
+    (bar.close !== '' ? 1 : 0) +
+    (bar.amountMin.trim() !== '' ? 1 : 0) +
+    (bar.amountMax.trim() !== '' ? 1 : 0) +
+    (showSort && sort !== null ? 1 : 0);
+  const open = openChoice ?? inUse > 0;
   const select = (id: string, label: string, value: string, onChange: (value: string) => void, options: ReactNode) => (
     <div className="flex flex-col gap-1">
       <Label htmlFor={id} className="text-xs text-subtle-foreground">
@@ -91,33 +114,6 @@ export function DealFilterBar({
           <Input id="deal-search" type="search" placeholder={t('filters.searchPlaceholder')} maxLength={100} value={bar.search} onChange={(e) => setBar({ ...bar, search: e.target.value })} />
         </div>
         {select(
-          'deal-stage',
-          t('columns.stage'),
-          bar.stage,
-          (stage) => setBar({ ...bar, stage }),
-          <>
-            <NativeSelectOption value="">{t('filters.any')}</NativeSelectOption>
-            {stages.map((s) => (
-              <NativeSelectOption key={s.id} value={s.id}>
-                {s.name}
-              </NativeSelectOption>
-            ))}
-            {bar.stage !== '' && !stages.some((s) => s.id === bar.stage) && <NativeSelectOption value={bar.stage}>{t('filters.removed')}</NativeSelectOption>}
-          </>,
-        )}
-        {select(
-          'deal-status',
-          t('filters.status'),
-          bar.status,
-          (status) => setBar({ ...bar, status: (['open', 'won', 'lost'] as const).find((s) => s === status) ?? ('' satisfies DealStatusFilter) }),
-          <>
-            <NativeSelectOption value="">{t('filters.any')}</NativeSelectOption>
-            <NativeSelectOption value="open">{t('filters.statusOpen')}</NativeSelectOption>
-            <NativeSelectOption value="won">{t('filters.statusWon')}</NativeSelectOption>
-            <NativeSelectOption value="lost">{t('filters.statusLost')}</NativeSelectOption>
-          </>,
-        )}
-        {select(
           'deal-owner',
           t('columns.owner'),
           bar.owner,
@@ -134,40 +130,84 @@ export function DealFilterBar({
             {bar.owner !== '' && bar.owner !== 'me' && bar.owner !== 'none' && !members.some((m) => m.userId === bar.owner) && <NativeSelectOption value={bar.owner}>{t('filters.removed')}</NativeSelectOption>}
           </>,
         )}
-        {select(
-          'deal-close',
-          t('columns.expectedClose'),
-          bar.close,
-          (close) => setBar({ ...bar, close: (['overdue', 'soon', 'empty'] as const).find((c) => c === close) ?? ('' satisfies DealCloseFilter) }),
-          <>
-            <NativeSelectOption value="">{t('filters.any')}</NativeSelectOption>
-            <NativeSelectOption value="overdue">{t('filters.closeOverdue')}</NativeSelectOption>
-            <NativeSelectOption value="soon">{t('filters.closeSoon')}</NativeSelectOption>
-            <NativeSelectOption value="empty">{t('filters.closeEmpty')}</NativeSelectOption>
-          </>,
-        )}
-        {amount('amountMin', t('filters.amountMin'))}
-        {amount('amountMax', t('filters.amountMax'))}
-        {select(
-          'deal-sort',
-          t('filters.sort'),
-          dealSortValue(sort),
-          (value) => setSort(dealSortOfValue(value)),
-          <>
-            <NativeSelectOption value="">{t('sort.default')}</NativeSelectOption>
-            {DEAL_SORT_OPTIONS.map((value) => (
-              <NativeSelectOption key={value} value={value}>
-                {t(SORT_LABELS[value] ?? 'sort.default')}
-              </NativeSelectOption>
-            ))}
-          </>,
-        )}
+        <Button type="button" variant="outline" size="sm" aria-expanded={open} aria-controls={panelId} onClick={() => setOpenChoice(!open)}>
+          {t('filters.more')}
+          {inUse > 0 && (
+            <Badge variant="secondary" className="ml-2">
+              <span aria-hidden="true">{inUse}</span>
+              <span className="sr-only">{t('filters.moreCount', { count: String(inUse) })}</span>
+            </Badge>
+          )}
+        </Button>
         {filtered && (
           <Button variant="ghost" size="sm" onClick={() => setBar(EMPTY_DEAL_FILTER)}>
             {t('filters.clear')}
           </Button>
         )}
+        {extra}
       </div>
+      {open && (
+        <div id={panelId} className="mb-4 flex flex-wrap items-end gap-3">
+          {showStage &&
+            select(
+              'deal-stage',
+              t('columns.stage'),
+              bar.stage,
+              (stage) => setBar({ ...bar, stage }),
+              <>
+                <NativeSelectOption value="">{t('filters.any')}</NativeSelectOption>
+                {stages.map((s) => (
+                  <NativeSelectOption key={s.id} value={s.id}>
+                    {s.name}
+                  </NativeSelectOption>
+                ))}
+                {bar.stage !== '' && !stages.some((s) => s.id === bar.stage) && <NativeSelectOption value={bar.stage}>{t('filters.removed')}</NativeSelectOption>}
+              </>,
+            )}
+          {showStatus &&
+            select(
+              'deal-status',
+              t('filters.status'),
+              bar.status,
+              (status) => setBar({ ...bar, status: (['open', 'won', 'lost'] as const).find((s) => s === status) ?? ('' satisfies DealStatusFilter) }),
+              <>
+                <NativeSelectOption value="">{t('filters.any')}</NativeSelectOption>
+                <NativeSelectOption value="open">{t('filters.statusOpen')}</NativeSelectOption>
+                <NativeSelectOption value="won">{t('filters.statusWon')}</NativeSelectOption>
+                <NativeSelectOption value="lost">{t('filters.statusLost')}</NativeSelectOption>
+              </>,
+            )}
+          {select(
+            'deal-close',
+            t('columns.expectedClose'),
+            bar.close,
+            (close) => setBar({ ...bar, close: (['overdue', 'soon', 'empty'] as const).find((c) => c === close) ?? ('' satisfies DealCloseFilter) }),
+            <>
+              <NativeSelectOption value="">{t('filters.any')}</NativeSelectOption>
+              <NativeSelectOption value="overdue">{t('filters.closeOverdue')}</NativeSelectOption>
+              <NativeSelectOption value="soon">{t('filters.closeSoon')}</NativeSelectOption>
+              <NativeSelectOption value="empty">{t('filters.closeEmpty')}</NativeSelectOption>
+            </>,
+          )}
+          {amount('amountMin', t('filters.amountMin'))}
+          {amount('amountMax', t('filters.amountMax'))}
+          {showSort &&
+            select(
+              'deal-sort',
+              t('filters.sort'),
+              dealSortValue(sort),
+              (value) => setSort(dealSortOfValue(value)),
+              <>
+                <NativeSelectOption value="">{t('sort.default')}</NativeSelectOption>
+                {DEAL_SORT_OPTIONS.map((value) => (
+                  <NativeSelectOption key={value} value={value}>
+                    {t(SORT_LABELS[value] ?? 'sort.default')}
+                  </NativeSelectOption>
+                ))}
+              </>,
+            )}
+        </div>
+      )}
       {bar.rest.length > 0 && (
         <ul className="mb-3 flex flex-wrap gap-2" aria-label={t('filters.other')}>
           {bar.rest.map((c, i) => (

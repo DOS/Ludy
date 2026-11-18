@@ -55,7 +55,7 @@ describe('notes.my_work (#2593)', () => {
       },
     } as unknown as QueryContext;
 
-    const result = await myWork.handler(ctx, { timeZone: 'Asia/Ho_Chi_Minh' });
+    const result = await myWork.handler(ctx, { timeZone: 'Asia/Ho_Chi_Minh', sort: 'manual' });
     const parsedInput = zProjectTaskProjectsInput.parse(capturedInput);
 
     expect(parsedInput.taskIds).toHaveLength(PROJECT_TASK_MAP_LIMIT);

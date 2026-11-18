@@ -149,6 +149,9 @@ export function ViewTabs({ scope, filters, sort, onApply }: { scope: string; fil
     remove.reset();
   };
 
+  // With no saved view, nothing to save and nothing said, the strip would hold one tab, "Tất cả", that does nothing (#3647): it comes with the first view or a changed filter.
+  if (list.length === 0 && activeId === null && !dirty && mode === 'none' && notice === null && !error) return null;
+
   return (
     <div className="mb-3 space-y-2">
       <div className="max-w-full overflow-x-auto">

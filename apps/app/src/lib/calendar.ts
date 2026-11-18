@@ -1,6 +1,7 @@
 // Helpers for the working hours card in Settings (issue #1313). The form shows one window per weekday; the server
 // enforces every rule, these only turn the form into the saved shape and back.
 import { WEEKDAYS, zonedDate, zonedInstant, type Weekday, type WorkingHours } from '@crove/kernel-contract';
+import { VIETNAM_ZONE, isVietnamZone, zoneOffset, zonePlace } from './booking.ts';
 
 export interface DayHours {
   weekday: Weekday;
@@ -65,5 +66,17 @@ export function datesOf(timeZone: string, startsAt: string, endsAt: string): { f
 /** The IANA zones this browser knows, the member's own first when it is missing from the list. */
 export function timeZones(current: string): string[] {
   const all = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
-  return all.includes(current) ? all : [current, ...all];
+  // Vietnam first, where most members are (#3650); the rest as the browser lists them.
+  const rest = all.filter((z) => !isVietnamZone(z));
+  // The member's own Vietnam zone is the first entry, whichever of its two names was saved, so it is listed once.
+  const first = isVietnamZone(current) ? current : VIETNAM_ZONE;
+  const list = [first, ...rest];
+  return list.includes(current) ? list : [current, ...list];
+}
+
+/** A zone as a person says it (#3650): "Việt Nam (GMT+7)", "Tokyo (GMT+9)", never "Asia/Tokyo". `vietnam` is the word for Vietnam in the page's language. */
+export function zoneLabel(zone: string, vietnam: string, at: number = Date.now()): string {
+  const offset = zoneOffset(zone, at);
+  const place = isVietnamZone(zone) ? vietnam : zonePlace(zone);
+  return offset ? `${place} (${offset})` : place;
 }

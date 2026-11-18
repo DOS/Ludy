@@ -101,7 +101,11 @@ describe('formProblems', () => {
     const form = planToForm(plan());
     expect(formProblems({ ...form, name: ' ' }).name).toBe('nameNeeded');
     expect(formProblems({ ...form, dailyBudget: '0' }).dailyBudget).toBe('budgetFormat');
-    expect(formProblems({ ...form, dailyBudget: '10.123' }).dailyBudget).toBe('budgetFormat');
+    expect(formProblems({ ...form, dailyBudget: '10.1234' }).dailyBudget).toBe('budgetFormat');
+    // Vietnamese and English money (#3641): grouped and decimal forms are fine, and the plan carries the canonical decimal string.
+    for (const ok of ['100.000', '100,000', '5.000.000', '100000,5']) expect(formProblems({ ...form, dailyBudget: ok }).dailyBudget, ok).toBeUndefined();
+    expect(formToPlan({ ...form, dailyBudget: '5.000.000' }).dailyBudget).toBe('5000000');
+    expect(formToPlan({ ...form, dailyBudget: '100000,5' }).dailyBudget).toBe('100000.5');
     expect(formProblems({ ...form, dailyBudget: '' }).dailyBudget).toBeUndefined();
     expect(formProblems({ ...form, locations: [{ country: 'Vietnam', region: '' }] }).locations).toBe('countryFormat');
     expect(formProblems({ ...form, ageMin: '17' }).age).toBe('ageFormat');

@@ -8,9 +8,13 @@ export interface NotesExportWords {
   exportedAt: string;
   notes: string;
   todos: string;
+  todoLists: string;
   private: string;
   shared: string;
   tags: string;
+  priority: string;
+  list: string;
+  sections: string;
   pinned: string;
   archived: string;
   trashed: string;
@@ -32,6 +36,7 @@ const flat = (text: string) => text.replace(/\s+/g, ' ').trim();
 
 /** The Markdown file: each note under its title with its facts, then its body as written; each to-do with its steps. */
 export function notesMarkdown(data: NotesExport, w: NotesExportWords): string {
+  const listById = new Map(data.todoLists.map((l) => [l.id, l]));
   const out: string[] = [`# ${w.heading}`, '', line(w.exportedAt, data.exportedAt)];
   if (data.truncated) out.push('', `> ${w.truncated}`);
   out.push('', `## ${w.notes} (${data.notes.length})`);
@@ -48,6 +53,14 @@ export function notesMarkdown(data: NotesExport, w: NotesExportWords): string {
   out.push('', `## ${w.todos} (${data.todos.length})`);
   for (const t of data.todos) {
     out.push('', `### [${t.status === 'done' ? 'x' : ' '}] ${flat(t.title)}`, '', line(w.status[t.status], t.id));
+    if (t.priority < 4) out.push(line(w.priority, `P${t.priority}`));
+    if (t.listId) {
+      const list = listById.get(t.listId);
+      const section = list && t.sectionId ? list.sections.find((s) => s.id === t.sectionId) : undefined;
+      const listLabel = list ? (section ? `${flat(list.name)} / ${flat(section.name)}` : flat(list.name)) : t.listId;
+      out.push(line(w.list, listLabel));
+    }
+    if (t.tags.length > 0) out.push(line(w.tags, t.tags.join(', ')));
     if (t.dueAt) out.push(line(w.due, `${t.dueAt} (${t.timeZone})`));
     else if (t.dueOn) out.push(line(w.due, t.dueOn));
     if (t.remindAt) out.push(line(w.remind, t.remindAt));
@@ -57,6 +70,15 @@ export function notesMarkdown(data: NotesExport, w: NotesExportWords): string {
     if (t.links.length > 0) out.push(formatLinks(w.links, t.links));
     if (t.details.trim()) out.push('', t.details.trimEnd());
     if (t.checklist.length > 0) out.push('', ...t.checklist.map((s) => `- [${s.done ? 'x' : ' '}] ${flat(s.text)}`));
+  }
+  if (data.todoLists.length > 0) {
+    out.push('', `## ${w.todoLists} (${data.todoLists.length})`);
+    for (const l of data.todoLists) {
+      out.push('', `### ${flat(l.name)}`, '', line(w.list, l.id));
+      if (l.sections.length > 0) out.push(line(w.sections, l.sections.map((s) => flat(s.name)).join(', ')));
+      if (l.deletedAt) out.push(line(w.trashed, l.deletedAt));
+      out.push(line(w.created, l.createdAt), line(w.updated, l.updatedAt));
+    }
   }
   return `${out.join('\n')}\n`;
 }

@@ -38,8 +38,8 @@ export function DealStaleSetting() {
     set.mutate({ staleDays: value });
   };
   return (
-    <form onSubmit={submit} className="space-y-2 rounded-lg border border-border p-3" data-testid="stale-setting">
-      <h3 className="text-sm font-semibold text-foreground">{t('title')}</h3>
+    <form onSubmit={submit} className="space-y-2 border-t border-border pt-4" data-testid="stale-setting">
+      <p className="text-sm font-semibold text-foreground">{t('title')}</p>
       <p className="text-xs text-muted-foreground">{t('hint', { min: String(DEAL_STALE_DAYS_MIN), max: String(DEAL_STALE_DAYS_MAX) })}</p>
       <div className="flex flex-wrap items-end gap-2">
         <Field label={t('days')} className="w-32">

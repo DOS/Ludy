@@ -18,20 +18,26 @@ export const notesManifest = defineModule({
       // A member's own to-do (#1673), always private: its title, details and checklist steps are free text, so pii.
       todo: columns(
         [
-          'org_id', 'id', 'owner_user_id', 'status', 'due_on', 'due_at', 'time_zone', 'remind_at', 'reminded_at', 'sort_key', 'source_note_id', 'source_run_id', 'source_run_seq', 'task_id', 'tainted',
+          'org_id', 'id', 'owner_user_id', 'status', 'priority', 'due_on', 'due_at', 'time_zone', 'remind_at', 'reminded_at', 'list_id', 'section_id', 'sort_key', 'source_note_id', 'source_run_id', 'source_run_seq', 'task_id', 'tainted',
           'recurrence', 'series_id', 'revision', 'created_at', 'updated_at', 'done_at', 'deleted_at',
         ],
-        { title: 'pii', details: 'pii', checklist: 'pii', search: 'pii' },
+        { title: 'pii', details: 'pii', checklist: 'pii', tags: 'pii', search: 'pii' },
+      ),
+      // A member's own to-do list (#3558), always private: its name and section names are free text, so pii.
+      todo_list: columns(
+        ['org_id', 'id', 'owner_user_id', 'color', 'sort_key', 'revision', 'created_at', 'updated_at', 'deleted_at'],
+        { name: 'pii', sections: 'pii' },
       ),
     },
   },
   // It owns no permission: access comes from the base role (owners, admins and members write notes), and who reads a
   // note is the database's row policies (ADR-0037).
   permissions: [],
-  // Its entities (#1656): the note and the to-do, which every command names as its audit target.
+  // Its entities (#1656): the note, the to-do and the to-do list, which every command names as its audit target.
   entities: [
     { type: 'notes.note', table: 'note', legalEntityScoped: false, audit: 'command' },
     { type: 'notes.todo', table: 'todo', legalEntityScoped: false, audit: 'command' },
+    { type: 'notes.todo_list', table: 'todo_list', legalEntityScoped: false, audit: 'command' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
   ...MODULE_SCREENS.notes,

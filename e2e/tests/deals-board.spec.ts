@@ -43,8 +43,16 @@ test('a member adds deals, moves them between stages and the board keeps its ord
   await page.getByRole('navigation').getByRole('link', { name: 'Cơ hội' }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/deals$`));
   const board = page.getByTestId('deal-board');
-  await expect(board.getByRole('region', { name: 'Mới' })).toBeVisible();
-  await expect(board.getByRole('region', { name: 'Thắng' })).toBeVisible();
+
+  await test.step('an org with no deal sees one action and the customer import, not five empty columns (#3647)', async () => {
+    await expect(page.getByText('Bảng chưa có cơ hội nào.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Thêm cơ hội' })).toHaveCount(1);
+    await expect(page.getByRole('link', { name: 'Nhập khách hàng từ tệp' })).toBeVisible();
+    await expect(board).toHaveCount(0);
+    // Nothing else to press: no stage button in the header, and no filter bar over a board with nothing to filter.
+    await expect(page.getByRole('button', { name: 'Giai đoạn' })).toHaveCount(0);
+    await expect(page.getByRole('searchbox', { name: 'Tìm kiếm' })).toHaveCount(0);
+  });
 
   const column = (name: string) => board.getByRole('region', { name });
   const titles = (name: string) => column(name).getByTestId('deal-card').locator('p.font-medium').allTextContents();
@@ -62,6 +70,24 @@ test('a member adds deals, moves them between stages and the board keeps its ord
     }
     expect(await titles('Mới')).toEqual(['Gói kế toán năm', 'Tư vấn thuế', 'Báo cáo tài chính']);
     await expect(column('Mới')).toContainText('3');
+  });
+
+  await test.step('from 1280 wide every stage, Thắng and Thua included, is on screen with no sideways scroll (#3647)', async () => {
+    // Thắng and Thua share one closed column, so the six stages take five; a 1280 px laptop (content about 930 px) and a 1440 one both hold them.
+    for (const width of [1280, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const name of ['Mới', 'Báo giá', 'Thắng', 'Thua']) {
+        const box = await column(name).boundingBox();
+        expect(box, `${name} at ${width}`).not.toBeNull();
+        expect(box!.x, `${name} at ${width}`).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width, `${name} at ${width}`).toBeLessThanOrEqual(width);
+      }
+      expect(await board.evaluate((el) => el.scrollWidth - el.clientWidth), `scroll at ${width}`).toBeLessThanOrEqual(1);
+    }
+    await expect(page.getByRole('heading', { level: 2, name: 'Thua' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Bộ lọc khác' })).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByLabel('Phụ trách')).toBeVisible();
+    await expect(page.getByLabel('Từ số tiền')).toHaveCount(0);
   });
 
   await test.step('the stage menu moves a card to another column', async () => {
