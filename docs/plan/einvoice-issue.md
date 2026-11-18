@@ -74,7 +74,11 @@ The owner's accounting adviser answered four of the eight questions of #2506 (re
 | 5. Shops and restaurants | A retail shop or restaurant with many transactions needs cash-register invoices (hóa đơn máy tính tiền): the coded flow cannot keep up with every sale | **Row 3's working answer is withdrawn**: high-volume retail and F&B stay out of scope (a till); the Tích hợp page says the coded flow is for invoices issued one by one, and the cash-register series (`M` in the symbol) stay filtered out, as the adapter does |
 | 4. A sale invoiced late | When a missed invoice is found in a later period, the invoice is issued then and **declared in the original period**; the fine is heavy | The draft keeps the sale's date (Art. 9) as the tax period the VAT working uses, apart from the issue date; issuing a sale older than the next working day warns of the fine and needs a person's reason; the VAT working of a closed period then shows the late invoice for a supplementary declaration. A build issue for the VAT working (#316) follows |
 
-Still open with the accountant: 1 (form 04/SS-HĐĐT and its deadline), 6 (buyer CCCD or passport), 7 (an 8% invoice adjusted in 2027), 8 (what Art. 15 and 19 cover).
+Still open with the accountant on 2026-11-17: 1 (form 04/SS-HĐĐT and its deadline), 6 (buyer CCCD or passport), 7 (an 8% invoice adjusted in 2027), 8 (what Art. 15 and 19 cover).
+
+### 3c. Researched answers to the last four (2026-11-18)
+
+The accountant asked the agents to research and fill in the remaining questions themselves. The answers, with sources and confidence, are in [accounting-rules-research-2026-11-18.md](accounting-rules-research-2026-11-18.md#e-invoices-2506-the-four-open-questions-of-einvoice-issuemd-section-3b). In short: the texts in force are now Decree 254/2026 and Circular 91/2026 (from 2026-07-01), so this plan's Decree 123 and Circular 78 citations read as their successors; 04/SS-HĐĐT is still filed for a non-core error, never with an adjustment or replacement, and has no day-count deadline; a consumer's ID must be on the invoice when given, a foreign buyer's passport with nationality, otherwise "Bán cho người tiêu dùng"; a 2027 correction of an 8% invoice keeps 8% unless a quantity error changes amount and tax (Official Letter 2121/TCT-CS precedent, medium confidence); Art. 15 binds the seller and Art. 19 an authorized issuer or a platform, not Ludy as a client of the seller's provider. The design changes are #3709.
 
 ## 4. The providers and their APIs
 
