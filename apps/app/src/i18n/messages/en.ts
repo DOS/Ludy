@@ -14029,6 +14029,8 @@ export const en = {
         copy_result: 'Copy the summary Vy finished for a meeting into the draft',
         start: 'Ask Vy to summarize a meeting',
         status: 'See whether Vy can summarize a meeting',
+        ready: 'Note that the minutes draft of a meeting is ready',
+        ready_notice: 'Tell the recorder that the minutes draft is ready',
       },
       series: {
         open_items: 'See the open items of the previous meeting of a series',

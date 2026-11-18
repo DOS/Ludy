@@ -22,7 +22,7 @@ import { ROLES, openMeeting, userOf } from './transcript.ts';
 const SUBJECT = { vi: 'Bản nháp biên bản đã sẵn sàng để bạn xem', en: 'Your minutes draft is ready for review' } as const;
 
 export const summaryReady = defineCommand({
-  name: SUMMARY_READY_EVENT,
+  name: 'meetings.summary.ready',
   input: zSummaryReadyRef,
   risk: 'R1',
   sideEffect: 'internal',
@@ -34,7 +34,7 @@ export const summaryReady = defineCommand({
     // Only the recorder asks for a run, and only the recorder is told.
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder is told that the draft is ready');
     const row = await ctx.trx.selectFrom('crove_meetings.meeting').select('language').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
-    await ctx.emit(SUMMARY_READY_EVENT, zSummaryReadyEvent.parse({ meetingId: input.meetingId, runId: input.runId, recorderUserId: userId, language: row.language }));
+    await ctx.emit('meetings.summary.ready', zSummaryReadyEvent.parse({ meetingId: input.meetingId, runId: input.runId, recorderUserId: userId, language: row.language }));
     ctx.audit({ meetingId: input.meetingId, runId: input.runId });
     return { queued: true };
   },

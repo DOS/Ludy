@@ -14028,6 +14028,8 @@ export const vi = {
         copy_result: 'Chép bản tóm tắt Vy đã xong của cuộc họp vào bản nháp',
         start: 'Nhờ Vy tóm tắt một cuộc họp',
         status: 'Xem Vy có tóm tắt được cuộc họp không',
+        ready: 'Ghi nhận bản nháp biên bản của một cuộc họp đã sẵn sàng',
+        ready_notice: 'Báo cho người ghi cuộc họp rằng bản nháp biên bản đã sẵn sàng',
       },
       series: {
         open_items: 'Xem việc còn dở của buổi trước trong chuỗi cuộc họp',
