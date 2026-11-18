@@ -3,11 +3,12 @@
 // kernel.today, grouped by kind with flags first; each row links to the screen where the item is acted on. Nothing is
 // approved or sent from here: batch approval stays in the owning app's screen.
 import { useQuery } from '@tanstack/react-query';
-import type { MouseEvent } from 'react';
+import { useState, type MouseEvent } from 'react';
 import { useRouter } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { todayCoworkerKey, type TodayCoworkers, type TodayItem, type TodaySeverity } from '@crove/kernel-contract';
+import { todayCoworkerKey, todayCount, type TodayCoworkers, type TodayItem, type TodaySeverity } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
+import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { NavIcon } from '@crove/ui/components/nav-icon';
 import { TodayBrief } from './today-brief.tsx';
@@ -15,7 +16,7 @@ import { Empty, ErrorText, ListSkeleton } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
-import { TODAY_ICON, groupToday, todayPath, todayTotal } from '../lib/today.ts';
+import { QUEUE_ROWS, TODAY_ICON, groupToday, limitGroups, proposalChips, queueRows, todayPath, todayTotal } from '../lib/today.ts';
 
 const SEVERITY_VARIANT: Record<TodaySeverity, 'destructive' | 'warning' | 'outline'> = { block: 'destructive', warn: 'warning', info: 'outline' };
 
@@ -85,12 +86,25 @@ export function TodayList({ slug }: { slug: string }) {
   const t = useTranslations('today');
   const live = useStreamLive();
   const today = useQuery({ ...orpc.today.list.queryOptions(), refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
-  const groups = groupToday(today.data?.items ?? []);
+  const [all, setAll] = useState(false);
+  const items = today.data?.items ?? [];
+  // One count per thing (#3591): a flag about proposals already listed is a chip on them, not a row, and the number beside the title is the
+  // same one the summary says.
+  const allGroups = groupToday(queueRows(items));
+  const rows = allGroups.reduce((n, g) => n + g.items.length, 0);
+  const groups = all ? allGroups : limitGroups(allGroups, QUEUE_ROWS);
+  const chips = proposalChips(items);
+  const total = todayCount(items);
 
   return (
     <section aria-labelledby="overview-today">
-      <h2 id="overview-today" className="text-lg font-semibold">
+      <h2 id="overview-today" className="flex items-baseline gap-2 text-lg font-semibold">
         {t('title')}
+        {total > 0 && (
+          <span className="font-mono text-sm font-normal tabular-nums text-subtle-foreground" data-testid="today-total">
+            {total}
+          </span>
+        )}
       </h2>
       <p className="mt-1 text-xs text-subtle-foreground">{t('subtitle')}</p>
       <div className="mt-3">
@@ -102,13 +116,22 @@ export function TodayList({ slug }: { slug: string }) {
           <Empty title={t('empty')} hint={t('emptyHint')} />
         ) : (
           <div className="space-y-5">
-            <TodayBrief slug={slug} items={today.data?.items ?? []} name={today.data.coworkers.gm} />
+            <TodayBrief slug={slug} items={items} name={today.data.coworkers.gm} />
             {groups.map((group) => (
               <div key={group.kind}>
-                <h3 className="mb-2 flex items-baseline gap-2 text-sm font-semibold">
-                  {t(`kinds.${group.kind}`)}
-                  <span className="font-mono text-xs font-normal tabular-nums text-subtle-foreground">{todayTotal(group.items)}</span>
-                </h3>
+                <div className="mb-2 flex flex-wrap items-baseline gap-2">
+                  <h3 className="flex items-baseline gap-2 text-sm font-semibold">
+                    {t(`kinds.${group.kind}`)}
+                    <span className="font-mono text-xs font-normal tabular-nums text-subtle-foreground">{todayTotal(allGroups.find((g) => g.kind === group.kind)?.items ?? group.items)}</span>
+                  </h3>
+                  {/* Beside the heading, not in it, so the heading's name stays the kind and its count. */}
+                  {group.kind === 'proposal' &&
+                    chips.map((chip) => (
+                      <Badge key={chip.severity} variant={SEVERITY_VARIANT[chip.severity]} data-testid="today-chip">
+                        {t(`chip.${chip.severity}`, { count: chip.count })}
+                      </Badge>
+                    ))}
+                </div>
                 <Card className="block overflow-hidden p-0">
                   <ul className="divide-y">
                     {group.items.map((item) => (
@@ -118,6 +141,11 @@ export function TodayList({ slug }: { slug: string }) {
                 </Card>
               </div>
             ))}
+            {rows > QUEUE_ROWS && (
+              <Button type="button" variant="outline" size="sm" aria-expanded={all} onClick={() => setAll((v) => !v)} data-testid="today-toggle">
+                {all ? t('showLess') : t('showAll', { count: rows })}
+              </Button>
+            )}
           </div>
         )}
       </div>

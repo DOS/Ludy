@@ -51,3 +51,10 @@ apps/web/playwright-report
 
 # Playwright output of the extension tests
 test-results
+
+# Agent worktrees and tool scratch (AGENTS.md, "Worktrees")
+.claude/worktrees/
+.codex/worktrees/
+.cursor/worktrees/
+.agents/worktrees/
+.qwen/

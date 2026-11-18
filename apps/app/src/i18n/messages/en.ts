@@ -206,6 +206,10 @@ export const en = {
     emptyHint: 'Warnings, proposals waiting for approval, unanswered messages and upcoming deadlines show up here when there are some.',
     kinds: { flag: 'Warnings', proposal: 'Waiting for your approval', message: 'Unanswered messages', deadline: 'Coming up' },
     severity: { block: 'Blocking', warn: 'Needs a look', info: 'Note' },
+    // On the proposals' heading: how many of them carry a failed check or a warning (#3591).
+    chip: { block: '{count, plural, other {# blocking}}', warn: '{count, plural, other {# to look at}}', info: '{count, plural, other {# with a note}}' },
+    showAll: 'Show all ({count, number})',
+    showLess: 'Show less',
     count: '{count, plural, one {# item} other {# items}}',
     due: 'Due {when}',
     open: 'Open',
@@ -335,32 +339,29 @@ export const en = {
     // One card per installed app (#1528).
     apps: {
       title: 'Apps',
+      // The apps with no figure to show are one line of links, not a card each (#3591).
+      others: 'Open other apps',
       open: 'Open {app}',
       failed: 'Could not load this figure.',
       retry: 'Try again',
       accounting: {
         vatDue: '{days, plural, one {day until} other {days until}} the VAT return for {period} is due',
         vatOverdue: '{days, plural, one {day overdue} other {days overdue}}: the VAT return for {period}',
-        noPeriod: 'No VAT filing period chosen',
       },
       social: { scheduled: '{count, plural, one {post scheduled} other {posts scheduled}} in the next 7 days' },
       crm: { upcoming: '{count, plural, one {upcoming booking} other {upcoming bookings}} of yours' },
     },
+    // What waits for the member and "Needs you today" does not already count (#3591): one thing is counted once.
     waiting: {
-      title: 'Waiting for you',
-      empty: 'Nothing is waiting for you',
-      emptyHint: 'Invoices you forward or upload become proposed entries in the Document inbox, and show here when they need your approval.',
-      proposals: { label: '{count, plural, one {proposed entry to approve} other {proposed entries to approve}}', hint: 'Check each invoice, then approve it to post it', open: 'Open the inbox' },
-      socialReviews: { label: '{count, plural, one {post for you to review} other {posts for you to review}}', hint: 'Social posts that need your look before they are scheduled', open: 'Review the posts' },
+      title: 'Also waiting for you',
       failedFiles: { label: '{count, plural, one {file that could not be read} other {files that could not be read}}', hint: 'See why, then upload another file', open: 'Open the inbox' },
-      notifications: { label: '{count, plural, one {unread notification} other {unread notifications}}', hint: 'Proposals, unreadable files, statements and filing periods coming due', open: 'See notifications' },
+      notifications: { label: '{count, plural, one {unread notification} other {unread notifications}}', hint: 'Unreadable files, statements, reminders and filing periods coming due', open: 'See notifications' },
       tasks: { label: '{count, plural, one {task assigned to you} other {tasks assigned to you}}', hint: 'Open tasks of yours or of a position you hold', open: 'See tasks' },
-      bankLines: { label: '{count, plural, one {statement line without a voucher} other {statement lines without a voucher}}', hint: 'Enter a receipt, payment, debit or credit note for each line', open: 'Open bank statements' },
     },
   },
   // The Tổng quan of the Kế toán app (#2631): the first screen of the app.
   financeOverview: {
-    title: 'Overview',
+    title: 'Finance overview',
     subtitle: 'Cash, profit, receivables and payables of the chosen legal entity, against the period of the same kind before.',
     retry: 'Try again',
     period: 'This period: {from} to {to}. Compared with: {previousFrom} to {previousTo}.',
@@ -578,7 +579,7 @@ export const en = {
     periodQuarter: 'Q{quarter} {year}',
     daysLeft: '{days, plural, =0 {due today} one {# day left} other {# days left}}',
     noFilingPeriod: 'Filing period not set',
-    chooseFilingPeriod: 'Set it',
+    chooseFilingPeriod: 'Choose filing period',
     deadlineNote: 'A deadline on a Saturday or Sunday moves to the Monday; {brand} does not count public holidays yet.',
     empty: 'You are not part of any company yet',
     emptyHint: 'Create your first company or accept an invite from a client to get started.',
@@ -2354,6 +2355,7 @@ export const en = {
       privateOnly: 'Only me',
       save: 'Save note',
       empty: 'Write down what to remember about this client',
+      emptyOrg: 'Jot down something to remember',
       emptyRecord: 'Write down what to remember about this record',
       toggleOf: 'Notes about {name}',
       todosTitle: 'My private to-dos',
