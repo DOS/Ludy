@@ -122,7 +122,7 @@ export const hrmEn: HrmCopy = {
       },
       {
         title: 'Official HTKK tax XML export and payslip email delivery',
-        body: 'Awaiting legal review on Personal Data Protection Law (PDPL) retention rules, HTKK XSD schema licensing and authenticated payslip delivery. Today payslips are viewed in the app and tax and insurance schedules export as .xlsx workbooks.',
+        body: 'Official HTKK tax XML and payslip email delivery await legal review on Personal Data Protection Law (PDPL) retention rules, HTKK XSD schema licensing and authenticated payslip delivery. Today payslips are viewed directly in the app and the Labor Management Register and 01/PLI report export as .xlsx or .json, while D02-LT, 05/KK-TNCN and 05/QTT-TNCN .xlsx workbooks export once official pay-run approval unlocks.',
       },
       {
         title: 'Direct labor contract handoff to Ludy eSign',

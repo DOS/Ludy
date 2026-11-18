@@ -125,7 +125,7 @@ export const hrmVi = {
       },
       {
         title: 'Xuất tệp XML thuế chuẩn HTKK và gửi phiếu lương qua email',
-        body: 'Đang chờ luật sư rà soát thời hạn lưu trữ theo Luật Bảo vệ dữ liệu cá nhân, điều kiện bản quyền bộ lược đồ XSD của HTKK và phương thức gửi phiếu lương bảo mật. Hôm nay phiếu lương xem trực tiếp trong ứng dụng và số liệu thuế, bảo hiểm xuất ra tệp .xlsx để đối chiếu kê khai.',
+        body: 'Tệp XML thuế chuẩn HTKK và gửi phiếu lương qua email đang chờ luật sư rà soát thời hạn lưu trữ theo Luật Bảo vệ dữ liệu cá nhân, điều kiện bản quyền bộ lược đồ XSD của HTKK và phương thức gửi phiếu lương bảo mật. Hôm nay phiếu lương xem trực tiếp trong ứng dụng, Sổ quản lý lao động và báo cáo 01/PLI xuất ra tệp .xlsx hoặc .json; còn các bảng kê D02-LT, 05/KK-TNCN và 05/QTT-TNCN dạng .xlsx sẽ xuất khi mở khoá duyệt kỳ lương chính thức.',
       },
       {
         title: 'Gửi ký hợp đồng lao động trực tiếp qua Ludy eSign',
