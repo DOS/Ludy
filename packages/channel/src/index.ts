@@ -12,6 +12,7 @@ export * from './oauth.ts';
 export * from './calendar-google.ts';
 export * from './calendar-microsoft.ts';
 export * from './meeting-platform.ts';
+export * from './meeting-platform-zoom.ts';
 export * from './minutes-webhook.ts';
 export * from './text.ts';
 export * from './meta.ts';
