@@ -4281,7 +4281,6 @@ export const en = {
     emptyHint: 'Add the first deal: pick a customer, enter the amount and the expected close date.',
     loadMore: 'Load more',
     importFile: 'Import customers from a file',
-    openDeal: 'Open deal {title}',
     editOf: 'Edit deal {title}',
     sheet: {
       newHint: 'Pick the customer, enter the amount and the expected close date.',

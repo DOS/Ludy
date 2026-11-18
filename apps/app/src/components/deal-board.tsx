@@ -117,7 +117,21 @@ function Card({
       className={`rounded-lg border border-border bg-card text-sm ${dragging ? 'opacity-40' : ''} ${dropBefore ? 'border-t-2 border-t-primary' : ''}`}
     >
       {/* The card is one click target: it opens the deal's sheet (details, quotes, bookings), and everything there is one tap from the card (#3648). */}
-      <button type="button" data-testid="deal-card-open" aria-label={t('openDeal', { title: deal.title })} onClick={onOpen} className="block w-full rounded-lg p-3 text-left outline-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50">
+      {/* A div with the button role, not a <button>: Firefox cannot start a drag on a button inside a draggable card. Its name is its content, so the customer, the amount and the next step are read with the title. */}
+      <div
+        role="button"
+        tabIndex={0}
+        data-testid="deal-card-open"
+        onClick={onOpen}
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onOpen();
+          }
+        }}
+        className="block w-full cursor-pointer rounded-lg p-3 text-left outline-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
         <span data-testid="deal-title" className="block font-medium text-foreground">
           {deal.title}
         </span>
@@ -135,7 +149,7 @@ function Card({
           </span>
         )}
         {deal.lostReason && <span className="block text-xs text-muted-foreground">{t('lostReason', { reason: deal.lostReason })}</span>}
-      </button>
+      </div>
       <div className="space-y-1 px-3 pb-3">
         <DealPartyDuplicate deal={deal} canEdit={canEdit} />
         <p className="text-xs text-muted-foreground" data-testid="deal-card-owner">

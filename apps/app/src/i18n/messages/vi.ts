@@ -4279,7 +4279,6 @@ export const vi = {
     emptyHint: 'Thêm cơ hội đầu tiên: chọn khách hàng, nhập số tiền và ngày dự kiến chốt.',
     loadMore: 'Xem thêm',
     importFile: 'Nhập khách hàng từ tệp',
-    openDeal: 'Mở cơ hội {title}',
     editOf: 'Sửa cơ hội {title}',
     sheet: {
       newHint: 'Chọn khách hàng, nhập số tiền và ngày dự kiến chốt.',

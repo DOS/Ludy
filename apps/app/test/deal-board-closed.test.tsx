@@ -167,7 +167,9 @@ describe('the card of the deal board (#3648)', () => {
   it('is one click target that opens the deal, and holds no Sửa, Báo giá or Lịch hẹn buttons', () => {
     const html = render(undefined);
     expect(html).toContain('data-testid="deal-card-open"');
-    expect(html).toContain('aria-label="Mở cơ hội Gói kế toán năm"');
+    expect(html).toContain('role="button"');
+    // Named by its content, which holds the customer and the amount too.
+    expect(html).not.toContain('aria-label="Mở cơ hội');
     for (const word of ['>Sửa<', '>Báo giá<', '>Lịch hẹn<']) expect(html).not.toContain(word);
     // The stage menu stays.
     expect(html).toContain('aria-label="Giai đoạn của cơ hội Gói kế toán năm"');
