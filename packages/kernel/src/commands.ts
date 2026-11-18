@@ -969,7 +969,7 @@ export function isBulkItemRefusal(error: unknown): error is DomainError {
   return error instanceof DomainError && BULK_ITEM_REFUSALS.has(error.code);
 }
 
-// Commands whose approval inserts into crove_finance.cash_voucher and takes its per-type numbering lock (#509, #2793).
+// Commands whose approval records a cash or bank voucher and takes its per-type numbering lock (#509, #2793).
 export const VOUCHER_BULK_COMMANDS = [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND] as const;
 
 // The order a bulk approval runs its items in, so that concurrent batches take their locks in one order. Every item
