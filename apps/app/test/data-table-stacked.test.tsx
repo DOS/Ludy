@@ -21,7 +21,7 @@ describe('DataTable stacked', () => {
         {rows}
       </DataTable>,
     ).replaceAll('&amp;', '&');
-    for (const cls of ['max-sm:min-w-0', 'max-sm:[&_thead]:hidden', 'max-sm:[&_tr]:block', 'max-sm:[&_td]:block', 'max-sm:[&_td_button]:min-h-11', 'max-sm:[&_td_select]:min-h-11', 'before:content-[attr(data-label)]']) expect(html).toContain(cls);
+    for (const cls of ['max-sm:min-w-0', 'max-sm:[&_thead]:hidden', 'max-sm:[&_tr]:block', 'max-sm:[&_td]:block', 'max-sm:[&_td:not([colspan])_button]:min-h-11', 'max-sm:[&_td:not([colspan])_select]:min-h-11', 'max-sm:max-h-none', 'before:content-[attr(data-label)]']) expect(html).toContain(cls);
     expect(html).toContain('data-label="Phụ trách"');
   });
 

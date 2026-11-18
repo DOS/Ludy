@@ -371,7 +371,7 @@ const STACKED =
   'max-sm:[&_tr]:block max-sm:[&_tr]:rounded-lg max-sm:[&_tr]:border max-sm:[&_tbody_tr:last-child]:border-b ' +
   'max-sm:[&_td]:block max-sm:[&_td]:px-0 max-sm:[&_td]:py-1 max-sm:[&_td]:text-left max-sm:[&_td:empty]:hidden max-sm:[&_tr]:p-3 ' +
   'max-sm:[&_td[data-label]:not(:empty)]:before:mr-1 max-sm:[&_td[data-label]:not(:empty)]:before:text-xs max-sm:[&_td[data-label]:not(:empty)]:before:text-subtle-foreground max-sm:[&_td[data-label]:not(:empty)]:before:content-[attr(data-label)] ' +
-  'max-sm:[&_td_button]:min-h-11 max-sm:[&_td_select]:min-h-11 max-sm:[&_td_a]:inline-flex max-sm:[&_td_a]:min-h-11 max-sm:[&_td_a]:items-center';
+  'max-sm:[&_td:not([colspan])_button]:min-h-11 max-sm:[&_td:not([colspan])_select]:min-h-11 max-sm:[&_td:not([colspan])>a]:inline-flex max-sm:[&_td:not([colspan])>a]:min-h-11 max-sm:[&_td:not([colspan])>a]:items-center';
 
 export function DataTable({ head, numeric = [], foot, stacked = false, children }: { head: string[]; numeric?: number[]; foot?: ReactNode; stacked?: boolean; children: ReactNode }) {
   const scroller = useRef<HTMLDivElement>(null);
@@ -393,7 +393,7 @@ export function DataTable({ head, numeric = [], foot, stacked = false, children 
     <div className={cn('overflow-hidden rounded-xl border bg-card', stacked && 'max-sm:border-0 max-sm:bg-transparent')}>
       <Table
         className={cn('min-w-[640px] [&_td]:whitespace-normal', stacked && STACKED)}
-        container={{ ref: scroller, className: 'max-h-[max(24rem,calc(100dvh-10rem))] overflow-y-auto', tabIndex: scrolls ? 0 : undefined }}
+        container={{ ref: scroller, className: cn('max-h-[max(24rem,calc(100dvh-10rem))] overflow-y-auto', stacked && 'max-sm:max-h-none max-sm:overflow-visible'), tabIndex: scrolls ? 0 : undefined }}
       >
         {/* The rule under the header is a shadow: a collapsed border does not move with a sticky row. */}
         <TableHeader ref={header} className="sticky top-0 z-10 bg-muted [&_th]:bg-muted [&_th]:shadow-[inset_0_-1px_0_var(--color-border)] [&_tr]:border-b-0">

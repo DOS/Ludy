@@ -11,7 +11,7 @@ import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { AmountInput } from './amount-input.tsx';
-import { DateInput } from './date-input.tsx';
+import { DateInput, hasInvalidDate } from './date-input.tsx';
 import { NewPartyGroup } from './deal-party-new.tsx';
 import { ErrorText, Field, focusFirstInvalid, useFieldErrors } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -148,6 +148,10 @@ export function DealForm({ deal, members, onDone, presetParty = null, plain = fa
   });
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (hasInvalidDate(e.currentTarget)) {
+      e.currentTarget.reportValidity();
+      return;
+    }
     if (!fields.checkAll(['title', 'party', 'amount']) || !party) {
       focusFirstInvalid(e.currentTarget);
       return;

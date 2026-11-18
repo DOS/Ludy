@@ -207,7 +207,9 @@ export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies
   };
   const apply = ({ filters: next, sort: nextSort }: ViewState) => {
     // A view saved on the other screen may carry a kind: the screen's own kind stays.
-    setBar({ ...astToContactFilter(next), kind: '' });
+    // Nor does it keep a condition whose control this screen does not show (a company has no email filter, a person no tax code one), which would filter with nothing to say so (#3649).
+    const applied = astToContactFilter(next);
+    setBar({ ...applied, kind: '', ...(mode === 'companies' ? { email: '', phone: '' } : { taxCode: '' }) });
     setSort(nextSort);
     setOpenId(null);
   };

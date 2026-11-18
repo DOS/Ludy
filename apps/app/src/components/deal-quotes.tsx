@@ -33,7 +33,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
-import { DateInput } from './date-input.tsx';
+import { DateInput, hasInvalidDate } from './date-input.tsx';
 import { DealOrders, QuoteDecisionPanel, canDecideQuote, type QuoteDecisionMode } from './deal-orders.tsx';
 import { QuoteDealOffers } from './quote-deal-offers.tsx';
 import { QUOTE_SETTINGS_ID } from './quote-settings-card.tsx';
@@ -231,6 +231,10 @@ function QuoteEditor({ quote, canEdit, sent, onSent, onClose }: { quote: Quote; 
 
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (hasInvalidDate(e.currentTarget)) {
+      e.currentTarget.reportValidity();
+      return;
+    }
     const bad = lines.findIndex((l) => !zQuoteLineInput.safeParse(toInput(l)).success);
     setInvalid(bad < 0 ? null : bad + 1);
     if (bad >= 0) return;
