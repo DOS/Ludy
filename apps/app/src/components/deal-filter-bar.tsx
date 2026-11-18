@@ -133,8 +133,9 @@ export function DealFilterBar({
         <Button type="button" variant="outline" size="sm" aria-expanded={open} aria-controls={panelId} onClick={() => setOpenChoice(!open)}>
           {t('filters.more')}
           {inUse > 0 && (
-            <Badge variant="secondary" className="ml-2" aria-label={t('filters.moreCount', { count: String(inUse) })}>
-              {inUse}
+            <Badge variant="secondary" className="ml-2">
+              <span aria-hidden="true">{inUse}</span>
+              <span className="sr-only">{t('filters.moreCount', { count: String(inUse) })}</span>
             </Badge>
           )}
         </Button>

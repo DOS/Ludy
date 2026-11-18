@@ -274,7 +274,7 @@ export function DealsPage() {
   const rows = deals.data?.pages.flatMap((p) => p.items) ?? [];
   // An org with no deal sees one action, the empty state's: the header's "Thêm cơ hội" waits until there is a deal (#3647). The board's answer is the one DealBoard reads.
   const plainBoard = useQuery({ ...orpc.crm.deals.board.queryOptions({ input: {} }), enabled: view === 'board' });
-  const noDeals = view === 'board' ? applied.all.length === 0 && isEmptyBoard(plainBoard.data) : view === 'list' && !filtered && !deals.isPending && !stages.isPending && !deals.error && rows.length === 0;
+  const noDeals = view === 'board' ? !filtered && isEmptyBoard(plainBoard.data) : view === 'list' && !filtered && !deals.isPending && !stages.isPending && !deals.error && rows.length === 0;
   const head = [t('columns.title'), t('columns.party'), t('columns.stage'), t('columns.amount'), t('columns.expectedClose'), t('columns.owner'), ...(canEdit ? [''] : [])];
   const stageList = stages.data ?? [];
 
@@ -311,23 +311,25 @@ export function DealsPage() {
         <DealNextSteps canEdit={canEdit} />
       ) : (
         <>
-      <ViewTabs scope={SCOPE} filters={filters} sort={sort} onApply={applyView} />
-      <DealFilterBar
-        bar={bar}
-        setBar={setBar}
-        sort={sort}
-        setSort={setSort}
-        stages={stageList}
-        members={members}
-        view={view === 'board' ? 'board' : 'list'}
-        extra={
-          view === 'board' && canManage ? (
-            <Link to="/o/$slug/settings" params={{ slug }} hash={SALES_PROCESS_ID} className={buttonVariants({ variant: 'link', size: 'sm' })}>
-              {t('editStages')}
-            </Link>
-          ) : undefined
-        }
-      />
+      {!noDeals && <ViewTabs scope={SCOPE} filters={filters} sort={sort} onApply={applyView} />}
+      {!noDeals && (
+        <DealFilterBar
+          bar={bar}
+          setBar={setBar}
+          sort={sort}
+          setSort={setSort}
+          stages={stageList}
+          members={members}
+          view={view === 'board' ? 'board' : 'list'}
+          extra={
+            canManage ? (
+              <Link to="/o/$slug/settings" params={{ slug }} hash={SALES_PROCESS_ID} className={buttonVariants({ variant: 'link', size: 'sm' })}>
+                {t('editStages')}
+              </Link>
+            ) : undefined
+          }
+        />
+      )}
       {view === 'board' ? (
         <DealBoard
           members={members}

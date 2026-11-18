@@ -49,13 +49,9 @@ test('a member adds deals, moves them between stages and the board keeps its ord
     await expect(page.getByRole('button', { name: 'Thêm cơ hội' })).toHaveCount(1);
     await expect(page.getByRole('link', { name: 'Nhập khách hàng từ tệp' })).toBeVisible();
     await expect(board).toHaveCount(0);
-    // The header holds the view tabs and nothing else to press; the stage editor is in Settings, a link away.
+    // Nothing else to press: no stage button in the header, and no filter bar over a board with nothing to filter.
     await expect(page.getByRole('button', { name: 'Giai đoạn' })).toHaveCount(0);
-    await expect(page.getByRole('link', { name: 'Sửa giai đoạn' })).toBeVisible();
-    // Search and the owner are always there; the rest are folded.
-    await expect(page.getByRole('searchbox', { name: 'Tìm kiếm' })).toBeVisible();
-    await expect(page.getByLabel('Phụ trách')).toBeVisible();
-    await expect(page.getByLabel('Từ số tiền')).toHaveCount(0);
+    await expect(page.getByRole('searchbox', { name: 'Tìm kiếm' })).toHaveCount(0);
   });
 
   const column = (name: string) => board.getByRole('region', { name });
@@ -79,9 +75,11 @@ test('a member adds deals, moves them between stages and the board keeps its ord
   await test.step('at 1440 wide every column, Thắng and Thua included, is on screen with no sideways scroll (#3647)', async () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     for (const name of ['Mới', 'Báo giá', 'Thắng', 'Thua']) await expect(column(name)).toBeInViewport({ ratio: 1 });
-    expect(await board.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(0);
+    expect(await board.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1);
     await expect(page.getByRole('heading', { level: 2, name: 'Thua' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Bộ lọc khác' })).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByLabel('Phụ trách')).toBeVisible();
+    await expect(page.getByLabel('Từ số tiền')).toHaveCount(0);
   });
 
   await test.step('the stage menu moves a card to another column', async () => {

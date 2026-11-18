@@ -31,13 +31,13 @@ describe('DealFilterBar', () => {
   it('opens by itself with a count when a folded filter is in use, and shows the list its stage, status and sort', () => {
     const html = render('list', { ...EMPTY_DEAL_FILTER, status: 'won', amountMin: '1000000' }, 'vi', { field: 'amount', dir: 'desc' });
     expect(html).toContain('aria-expanded="true"');
-    expect(html).toContain('aria-label="3 điều kiện đang dùng"');
+    expect(html).toContain('>3 điều kiện đang dùng<');
     for (const id of ['deal-stage', 'deal-status', 'deal-close', 'deal-amountMin', 'deal-amountMax', 'deal-sort']) expect(html).toContain(`id="${id}"`);
   });
 
   it('on the board leaves out the stage, the status and the sort the columns already say, and keeps the close date and the amounts', () => {
     const html = render('board', { ...EMPTY_DEAL_FILTER, close: 'overdue' });
-    expect(html).toContain('aria-label="1 điều kiện đang dùng"');
+    expect(html).toContain('>1 điều kiện đang dùng<');
     expect(html).toContain('id="deal-close"');
     expect(html).toContain('id="deal-amountMin"');
     for (const id of ['deal-stage', 'deal-status', 'deal-sort']) expect(html).not.toContain(`id="${id}"`);
@@ -50,6 +50,6 @@ describe('DealFilterBar', () => {
   it('says it in English', () => {
     const html = render('list', { ...EMPTY_DEAL_FILTER, status: 'lost' }, 'en');
     expect(html).toContain('>More filters<');
-    expect(html).toContain('aria-label="1 in use"');
+    expect(html).toContain('>1 in use<');
   });
 });

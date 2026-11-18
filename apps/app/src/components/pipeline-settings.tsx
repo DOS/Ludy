@@ -118,7 +118,7 @@ export function PipelineSettings() {
   return (
     <section aria-label={t('title')} className="space-y-3">
       <div>
-        <h3 className="text-sm font-semibold text-foreground">{t('title')}</h3>
+        <p className="text-sm font-semibold text-foreground">{t('title')}</p>
         <p className="text-xs text-muted-foreground">{t('hint', { max: String(PIPELINE_STAGE_MAX) })}</p>
       </div>
       <ul className="space-y-3">
