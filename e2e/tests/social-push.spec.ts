@@ -114,6 +114,8 @@ test('a member turns push on for this device and off again; the worker registers
 
   // On again after a reload: the browser's subscription is the listed device.
   await page.reload();
+  // The settings fold again after a reload (#3658).
+  await page.getByText('Nhận thông báo về...', { exact: true }).click();
   await expect(toggle).toBeChecked();
   await toggle.click();
   await expect(page.getByText('Các thiết bị đang nhận thông báo đẩy')).toHaveCount(0);
