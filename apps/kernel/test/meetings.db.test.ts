@@ -1464,7 +1464,7 @@ suite('meetings module database integration tests (#2576)', () => {
   const refusedWith = (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => (error as { code?: string }).code ?? 'ERR');
   const meetingExists = (id: string) => admin(async (c) => (await c.query('SELECT 1 FROM crove_meetings.meeting WHERE id = $1', [id])).rowCount === 1);
   // A suggested recording of a member's own connection, as the sweep leaves it (the table owner writes it: the sweep's definer needs the worker login).
-  async function suggest(who: string, over: { title?: string; startedAt?: string; sizeBytes?: number | null } = {}) {
+  async function suggest(who: string, over: { title?: string; startedAt?: string; sizeBytes?: number | null; hasAudio?: boolean; hasVideo?: boolean; hasTranscript?: boolean } = {}) {
     const recordingId = randomUUID();
     await admin(async (c) => {
       const connection = await c.query<{ id: string }>(
@@ -1472,9 +1472,9 @@ suite('meetings module database integration tests (#2576)', () => {
         [orgId, userIds.get(who), `${who}-${randomUUID()}@sandbox.test`],
       );
       await c.query(
-        `INSERT INTO crove_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, title, started_at, size_bytes, has_audio)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)`,
-        [orgId, recordingId, connection.rows[0]!.id, userIds.get(who), randomUUID(), over.title ?? 'Họp khách hàng', over.startedAt ?? new Date(Date.now() - 90 * 86_400_000).toISOString(), over.sizeBytes === undefined ? 4096 : over.sizeBytes],
+        `INSERT INTO crove_kernel.meeting_platform_recording (org_id, id, connection_id, user_id, external_id, title, started_at, size_bytes, has_audio, has_video, has_transcript)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [orgId, recordingId, connection.rows[0]!.id, userIds.get(who), randomUUID(), over.title ?? 'Họp khách hàng', over.startedAt ?? new Date(Date.now() - 90 * 86_400_000).toISOString(), over.sizeBytes === undefined ? 4096 : over.sizeBytes, over.hasAudio ?? true, over.hasVideo ?? false, over.hasTranscript ?? false],
       );
     });
     return recordingId;
@@ -1829,6 +1829,59 @@ suite('meetings module database integration tests (#2576)', () => {
       expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'standard' })).status).toBe(200);
     }
   });
+  it('34c. C2: take_transcript writes the claimed transcript-only recording as a tainted draft of Google\'s transcription, ends the meeting and marks the row imported; anyone else, or any other row, is refused and nothing is written (#3174)', async () => {
+    const take = (who: string, input: Record<string, unknown>) =>
+      runtime.execute<{ meetingId: string; stored: number }>('meetings.import.take_transcript', input, { actor: asUser(who), orgId });
+    const segments = [
+      { startSeconds: 1, endSeconds: 4, speakerLabel: 'Nguyễn Văn Nam', text: 'Chào mọi người, ta bắt đầu họp.' },
+      { startSeconds: 5, endSeconds: 9, speakerLabel: 'Khách A', text: 'Báo giá cho khách A là 120 triệu.' },
+    ];
+    const newMeeting = async () => String((await rpc('meetings/create', 'recorder', { title: 'Họp Google Meet', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start' })).body.meetingId);
+    const claimed = async (meetingId: string, over: { hasAudio?: boolean; status?: string } = {}) => {
+      const recordingId = await suggest('recorder', { hasAudio: over.hasAudio ?? false, hasTranscript: true });
+      await admin((c) =>
+        c.query(`UPDATE crove_kernel.meeting_platform_recording SET status = $2, meeting_id = $3, staging_key = $4, length_seconds = 600 WHERE id = $1`, [recordingId, over.status ?? 'claimed', meetingId, `staging/${randomBytes(32).toString('hex')}`]),
+      );
+      return recordingId;
+    };
+    const stored = (meetingId: string) =>
+      admin(async (c) => (await c.query<{ source: string; tainted: boolean; stage: string; speaker_label: string }>('SELECT source, tainted, stage, speaker_label FROM crove_meetings.transcript_segment WHERE meeting_id = $1 ORDER BY start_seconds', [meetingId])).rows);
+
+    // Not the recorder, no claimed row, an unclaimed row and a row with audio: each is refused and writes nothing.
+    const meetingId = await newMeeting();
+    expect(await refusedWith(take('recorder', { meetingId, segments }))).toBe('IMPORT_NOT_CLAIMED');
+    const recordingId = await claimed(meetingId);
+    expect(await refusedWith(take('attendee', { meetingId, segments }))).toMatch(/FORBIDDEN|MEETING_NOT_FOUND/);
+    const unclaimed = await newMeeting();
+    await claimed(unclaimed, { status: 'staged' });
+    expect(await refusedWith(take('recorder', { meetingId: unclaimed, segments }))).toBe('IMPORT_NOT_CLAIMED');
+    const withAudio = await newMeeting();
+    await claimed(withAudio, { hasAudio: true });
+    expect(await refusedWith(take('recorder', { meetingId: withAudio, segments }))).toBe('IMPORT_NOT_CLAIMED');
+    expect(await stored(meetingId)).toEqual([]);
+    expect(await recordingRow(recordingId)).toMatchObject({ status: 'claimed' });
+
+    // The claimed transcript-only row of the recorder: written as Google's tainted draft.
+    expect(await take('recorder', { meetingId, segments })).toEqual({ meetingId, stored: 2 });
+    expect(await stored(meetingId)).toEqual([
+      { source: 'google_meet', tainted: true, stage: 'draft', speaker_label: 'Nguyễn Văn Nam' },
+      { source: 'google_meet', tainted: true, stage: 'draft', speaker_label: 'Khách A' },
+    ]);
+    expect(await recordingRow(recordingId)).toMatchObject({ status: 'imported', staging_key: null });
+    expect(await admin(async (c) => (await c.query<{ e: boolean }>('SELECT ended_at IS NOT NULL AS e FROM crove_meetings.meeting WHERE id = $1', [meetingId])).rows[0]?.e)).toBe(true);
+    // The recorder reads it back labelled as Google's, a correction keeps the label, and the audit row holds ids and a count, never a line.
+    const read = await rpc('meetings/transcript/get', 'recorder', { meetingId });
+    expect((read.body as { segments: { source: string }[] }).segments.map((x) => x.source)).toEqual(['google_meet', 'google_meet']);
+    const first = (read.body as { segments: { id: string }[] }).segments[0]!;
+    expect((await rpc('meetings/transcript/correct', 'recorder', { segmentId: first.id, text: 'Chào cả nhà, bắt đầu họp.' })).status).toBe(200);
+    expect((await stored(meetingId)).map((x) => x.source)).toEqual(['google_meet', 'google_meet']);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.import.take_transcript' AND detail->>'meetingId' = $1`, [meetingId])).rows[0]?.detail);
+    expect(audit).toMatchObject({ meetingId, recordingId, stored: 2, source: 'google_meet' });
+    expect(JSON.stringify(audit)).not.toContain('120 triệu');
+    // Taken once: the row is imported now, so the same call is refused.
+    expect(await refusedWith(take('recorder', { meetingId, segments }))).toBe('IMPORT_NOT_CLAIMED');
+  });
+
   it('35. #3337: a video uploaded with extract=audio keeps only the extracted Opus, whatever the shape of the upload', async () => {
     const mp4 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypmp42'), Buffer.from('video frames '.repeat(300))]);
     const opus = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('extracted opus '.repeat(20))]);

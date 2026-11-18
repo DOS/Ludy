@@ -11,11 +11,12 @@
 //   (`kernel-meeting-import-sweep handler`, apps/kernel/test/invariant/job-egress.test.ts) is justified by this command.
 // - The bytes then wait in staging; the member's own request claims, seals and records them through POST /api/meetings/:id/media, so the sealing code is the one an upload uses.
 // - No AI part: the transcript and minutes of the imported meeting are the ordinary ones, started by the member. Audit rows hold ids and the provider, never a title or a platform text.
-import { zMeetingImportDiscarded, zMeetingImportDiscardEmpty, zMeetingImportStart, type MeetingLanguage } from '@crove/kernel-contract';
+import { zMeetingImportDiscarded, zMeetingImportDiscardEmpty, zMeetingImportStart, zMeetingTranscriptImport, type MeetingLanguage } from '@crove/kernel-contract';
 import { DomainError, defineCommand, newStagingKey, type CommandContext } from '@crove/kernel-runtime';
 import { sql } from 'kysely';
 import { createMeetingRow } from './meeting-core.ts';
-import { ROLES } from './transcript.ts';
+import { lockMeetingMedia } from './media-record.ts';
+import { ROLES, openMeeting, replaceDraft } from './transcript.ts';
 
 // What a recording without a title is called, until the member renames the meeting.
 const UNTITLED: Record<MeetingLanguage, string> = { vi: 'Cuộc họp đã nhập', en: 'Imported meeting' };
@@ -187,4 +188,48 @@ export const meetingImportDiscardEmpty = defineCommand({
   },
 });
 
-export const importCommands = [meetingImportStart, meetingImportDiscardEmpty];
+// The member's own step that finishes a TRANSCRIPT-ONLY import (C2, #3174): the worker's job staged the platform's transcript, the import route claimed it and read it again, and this command writes
+// the lines as the recorder's draft. It is no RPC command (nothing in the contract names it): only the route runs it, with the lines it read from the staged file, so a member cannot call it
+// with text of their own under the platform's name. It still refuses anything but the claimed transcript-only recording of this member for this meeting. The lines are Google's transcription:
+// born tainted, `source` 'google_meet' (nothing updates it), so the recorder reads them before anything is published, and no AI call or cost is involved. It also takes the recording to `imported`
+// and ends the meeting, as recording a media does for an audio import. The audit row holds ids and a count, never a line.
+export const meetingImportTakeTranscript = defineCommand({
+  name: 'meetings.import.take_transcript',
+  input: zMeetingTranscriptImport,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ROLES,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới nhập được bản chép lời');
+    const userId = ctx.actor.userId;
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Chỉ người ghi cuộc họp mới nhập được bản chép lời của nó');
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.meeting_platform_recording')
+      .select(['id', 'length_seconds'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .where('user_id', '=', userId)
+      .where('status', '=', 'claimed')
+      .where('has_transcript', '=', true)
+      .where('has_audio', '=', false)
+      .where('has_video', '=', false)
+      .executeTakeFirst();
+    if (!row) throw new DomainError('IMPORT_NOT_CLAIMED', 403, 'Cuộc họp này không có bản chép lời nào đang chờ nhập');
+    // The same lock as every writer of a meeting's media, so a piece or an upload that races with this finds the meeting done or waits for it.
+    await lockMeetingMedia(ctx, input.meetingId);
+    await replaceDraft(ctx, input.meetingId, input.segments, { tainted: true, source: 'google_meet' });
+    await sql`SELECT crove_kernel.meeting_platform_recording_imported(${input.meetingId}::uuid)`.execute(ctx.trx);
+    // The call ended when the platform says it did, else with its last line; never later than now (the rule of recording a media).
+    const seconds = row.length_seconds ?? Math.ceil(Math.max(...input.segments.map((s) => s.endSeconds)));
+    await sql`
+      UPDATE crove_meetings.meeting
+      SET ended_at = LEAST(started_at + (${seconds}::int * interval '1 second'), ${ctx.now}::timestamptz), updated_at = ${ctx.now}::timestamptz
+      WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid AND ended_at IS NULL AND started_at IS NOT NULL`.execute(ctx.trx);
+    ctx.audit({ meetingId: input.meetingId, recordingId: row.id, stored: input.segments.length, source: 'google_meet' });
+    return { meetingId: input.meetingId, stored: input.segments.length };
+  },
+});
+
+export const importCommands = [meetingImportStart, meetingImportDiscardEmpty, meetingImportTakeTranscript];
