@@ -540,7 +540,7 @@ const schema = z.object({
   ZOOM_OAUTH_CLIENT_ID: optional,
   ZOOM_OAUTH_CLIENT_SECRET: optional,
   // Microsoft Teams recordings and transcripts (Meetings C4, #3176): the operator's own multi-tenant Microsoft Entra app (work and school accounts; authorization code with PKCE) with the delegated
-  // permissions of docs/runbooks/meetings-teams.md and the redirect URL APP_URL/meetings/oauth/teams/callback. Two of the permissions need a customer's tenant administrator to consent. Off by default: with
+  // permissions of docs/runbooks/meetings-teams.md and the redirect URL APP_URL/meetings/oauth/microsoft_teams/callback. Two of the permissions need a customer's tenant administrator to consent. Off by default: with
   // neither set there is no Teams adapter and no Teams connection. Both or neither. Its own pair, apart from CALENDAR_MICROSOFT_*: a calendar app asks for calendar scopes only.
   TEAMS_OAUTH_CLIENT_ID: optional,
   TEAMS_OAUTH_CLIENT_SECRET: optional,

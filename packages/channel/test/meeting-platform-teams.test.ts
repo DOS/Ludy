@@ -373,7 +373,7 @@ describe('teamsConnectProblem', () => {
 describe('TeamsMeetingPlatform OAuth', () => {
   it('builds the authorize address for work and school accounts with the narrow scopes, PKCE and no prompt', () => {
     const { adapter } = teams(graph());
-    const url = new URL(adapter.authorizeUrl({ state: 'st', redirectUri: 'https://app.example/meetings/oauth/teams/callback', codeChallenge: 'chal' }));
+    const url = new URL(adapter.authorizeUrl({ state: 'st', redirectUri: 'https://app.example/meetings/oauth/microsoft_teams/callback', codeChallenge: 'chal' }));
     expect(url.origin + url.pathname).toBe('https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize');
     expect(url.searchParams.get('client_id')).toBe(APP.clientId);
     expect(url.searchParams.get('response_type')).toBe('code');
