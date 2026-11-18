@@ -13779,6 +13779,7 @@ export const vi = {
         create: 'Tạo bản nháp kiểm kê',
         list: 'Xem các lần kiểm kê',
         preview: 'Xem số sổ sách để kiểm kê',
+        surplus_source: 'Xem số liệu hàng thừa của lần kiểm kê',
       },
       stock_item: {
         list: 'Xem các mặt hàng',

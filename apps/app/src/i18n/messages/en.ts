@@ -13780,6 +13780,7 @@ export const en = {
         create: 'Make a count draft',
         list: 'View the stock counts',
         preview: 'View the book quantities to count against',
+        surplus_source: 'View the facts of a count\'s surplus',
       },
       stock_item: {
         list: 'View the items',
