@@ -1067,10 +1067,12 @@ export type AdsAdLaunchTable = Refine<
 // (queued until the platform confirms it). The database's guard holds who inserts and who moves it.
 export const AD_MANAGE_KINDS = ['pause', 'resume', 'archive', 'budget_lower', 'budget_raise', 'schedule_shorten', 'schedule_extend'] as const;
 export const AD_MANAGE_STATES = ['queued', 'applied', 'failed', 'cancelled', 'unclear'] as const;
+export const AD_MANAGE_LEVELS = ['campaign', 'ad_set', 'ad'] as const;
 export type AdsAdManageChangeTable = Refine<
   G.AdsAdManageChangeTable,
   {
     kind: (typeof AD_MANAGE_KINDS)[number];
+    level: (typeof AD_MANAGE_LEVELS)[number];
     state: Generated<(typeof AD_MANAGE_STATES)[number]>;
   }
 >;
