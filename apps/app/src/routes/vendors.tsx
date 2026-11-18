@@ -8,6 +8,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
+import { SupplierBankPanel } from '../components/supplier-bank-panel.tsx';
 import { EditParty, MergeParty, PartyDuplicates, refreshParties } from '../components/party-edit.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -81,12 +82,14 @@ function VendorRow({
   accounts,
   canManage,
   canEdit,
+  isOwner,
 }: {
   vendor: Party;
   others: readonly Party[];
   accounts: readonly ChartAccount[];
   canManage: boolean;
   canEdit: boolean;
+  isOwner: boolean;
 }) {
   const t = useTranslations('vendors');
   const f = useFormat();
@@ -94,6 +97,7 @@ function VendorRow({
   const tn = useTranslations('notes');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const [notesOpen, setNotesOpen] = useState(false);
+  const [bankOpen, setBankOpen] = useState(false);
   return (
     <>
       <TableRow>
@@ -115,6 +119,12 @@ function VendorRow({
                 {t('edit')}
               </Button>
             )}
+            {/* A supplier's bank accounts (#3113): owners and admins only; the number is sealed and never shown. */}
+            {canManage && (
+              <Button variant="ghost" size="sm" onClick={() => setBankOpen((o) => !o)} aria-expanded={bankOpen} aria-label={t('bank.openOf', { name: vendor.name })} data-testid="vendor-bank-open">
+                {t('bank.open')}
+              </Button>
+            )}
             {/* The party's notes (#1671), beside its other actions. */}
             {notesInstalled() && (
               <Button variant="ghost" size="sm" onClick={() => setNotesOpen((o) => !o)} aria-expanded={notesOpen} aria-label={tn('panel.toggleOf', { name: vendor.name })}>
@@ -133,6 +143,13 @@ function VendorRow({
                 <MergeParty party={vendor} others={others} ns="vendors" />
               </div>
             )}
+          </TableCell>
+        </TableRow>
+      )}
+      {bankOpen && canManage && (
+        <TableRow>
+          <TableCell colSpan={6} className="px-4 py-3">
+            <SupplierBankPanel partyId={vendor.id} canErase={isOwner} />
           </TableCell>
         </TableRow>
       )}
@@ -162,6 +179,7 @@ export function VendorsPage() {
   const org = useQuery(orpc.org.get.queryOptions());
   const canManage = org.data?.role === 'owner' || org.data?.role === 'admin';
   const canEdit = canManage || org.data?.role === 'member';
+  const isOwner = org.data?.role === 'owner';
   return (
     <>
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
@@ -192,7 +210,7 @@ export function VendorsPage() {
           head={[t('columns.name'), t('columns.taxCode'), t('columns.address'), t('columns.documents'), t('columns.defaultAccount'), ...(canEdit ? [''] : [])]}
         >
           {vendors.data?.map((v) => (
-            <VendorRow key={v.id} vendor={v} others={vendors.data ?? []} accounts={accounts.data ?? []} canManage={canManage} canEdit={canEdit} />
+            <VendorRow key={v.id} vendor={v} others={vendors.data ?? []} accounts={accounts.data ?? []} canManage={canManage} canEdit={canEdit} isOwner={isOwner} />
           ))}
         </DataTable>
       )}
