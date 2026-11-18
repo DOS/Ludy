@@ -18,8 +18,8 @@ import { DealPartyDuplicate, refreshDeals, type Member } from './deal-form.tsx';
 import { Empty, ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { isEmptyBoard, moveCard, type Drop } from '../lib/deal-board.ts';
-import { formatMoney } from '../lib/format.ts';
+import { isDealOverdue, isEmptyBoard, moveCard, type Drop } from '../lib/deal-board.ts';
+import { formatDate, formatMoney } from '../lib/format.ts';
 
 // What an empty Deals screen offers (#3647): the one action, and the way to bring customers in first. There is no deal import; the deal needs a customer, so the file is of customers.
 export function DealsEmpty({ title, hint, canEdit, onAdd }: { title: string; hint?: string | undefined; canEdit: boolean; onAdd: () => void }) {
@@ -100,7 +100,7 @@ function Card({
 }) {
   const t = useTranslations('deals');
   const { locale } = useLocaleSetting();
-  const overdue = deal.stageKind === 'open' && deal.expectedClose !== null && deal.expectedClose < new Date().toISOString().slice(0, 10);
+  const overdue = isDealOverdue(deal);
   const step = deal.followUp ? nextStepLine(deal.followUp.reason) : null;
   return (
     <li
@@ -142,10 +142,10 @@ function Card({
         )}
         <span className="block text-xs text-muted-foreground">{deal.partyName}</span>
         <span className="mt-1 block tabular-nums">{formatMoney(deal.amount, locale, deal.currency)}</span>
-        {deal.expectedClose && <span className={`block text-xs ${overdue ? 'text-destructive' : 'text-muted-foreground'}`}>{t('board.closeOn', { date: deal.expectedClose })}</span>}
+        {deal.expectedClose && <span className={`block text-xs ${overdue ? 'text-destructive' : 'text-muted-foreground'}`}>{overdue ? t('board.overdueOn', { date: formatDate(deal.expectedClose, locale) }) : t('board.closeOn', { date: formatDate(deal.expectedClose, locale) })}</span>}
         {step && deal.followUp && (
           <span className="mt-1 block text-xs text-foreground" data-testid="deal-card-next">
-            {t(`nextSteps.${step}`, { date: deal.followUp.sinceOn })}
+            {t(`nextSteps.${step}`, { date: formatDate(deal.followUp.sinceOn, locale) })}
           </span>
         )}
         {deal.lostReason && <span className="block text-xs text-muted-foreground">{t('lostReason', { reason: deal.lostReason })}</span>}

@@ -33,6 +33,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
+import { DateInput } from './date-input.tsx';
 import { DealOrders, QuoteDecisionPanel, canDecideQuote, type QuoteDecisionMode } from './deal-orders.tsx';
 import { QuoteDealOffers } from './quote-deal-offers.tsx';
 import { QUOTE_SETTINGS_ID } from './quote-settings-card.tsx';
@@ -248,7 +249,7 @@ function QuoteEditor({ quote, canEdit, sent, onSent, onClose }: { quote: Quote; 
       <p className="text-sm text-muted-foreground">{t('editor.for', { party: quote.partyName, deal: quote.dealTitle })}</p>
       {readOnly && <p className="text-sm text-muted-foreground">{t('editor.readOnly')}</p>}
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label={t('editor.validUntil')}>{(c) => <Input {...c} type="date" required disabled={readOnly} value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />}</Field>
+        <Field label={t('editor.validUntil')}>{(c) => <DateInput {...c} required disabled={readOnly} value={validUntil} onChange={setValidUntil} />}</Field>
         {!readOnly && others.length > 0 && (
           <Field label={t('editor.copyFrom')}>
             {(c) => (

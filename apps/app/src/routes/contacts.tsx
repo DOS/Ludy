@@ -187,7 +187,8 @@ export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies
   );
   const rows = contacts.data?.pages.flatMap((p) => p.items) ?? [];
   const filtered = filters.all.length > 0;
-  const head = mode === 'companies' ? [t('columns.name'), t('columns.taxCode'), t('columns.people'), t('columns.openDeals'), ''] : [t('columns.name'), t('columns.company'), t('columns.phone'), t('columns.email'), ''];
+  // The name is the open control (#3649), so there is no column of "Mở" buttons; a person's row also says how many deals are open.
+  const head = mode === 'companies' ? [t('columns.name'), t('columns.taxCode'), t('columns.people'), t('columns.openDeals')] : [t('columns.name'), t('columns.company'), t('columns.phone'), t('columns.email'), t('columns.openDeals')];
   // The list narrowed to one contact, which opens: the one just added, or the one an add found already there.
   const reveal = (id: string, search: string) => {
     // The search takes at most 100 characters.
@@ -250,9 +251,10 @@ export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies
           </Label>
           <Input id="contact-search" type="search" placeholder={t('search')} maxLength={100} value={bar.search} onChange={(e) => setBar({ ...bar, search: e.target.value })} />
         </div>
-        {triSelect('email', t('filters.hasEmail'))}
-        {triSelect('phone', t('filters.hasPhone'))}
-        {triSelect('taxCode', t('filters.hasTaxCode'))}
+        {/* Only the filters that fit the kind: a company has a tax code, a person has an email and a phone (#3649). */}
+        {mode === 'people' && triSelect('email', t('filters.hasEmail'))}
+        {mode === 'people' && triSelect('phone', t('filters.hasPhone'))}
+        {mode === 'companies' && triSelect('taxCode', t('filters.hasTaxCode'))}
         <div className="flex flex-col gap-1">
           <Label htmlFor="contact-sort" className="text-xs text-subtle-foreground">
             {t('filters.sort')}
@@ -292,7 +294,7 @@ export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies
         <Empty title={filtered ? (mode === 'companies' ? t('companiesNoMatch') : t('noMatch')) : mode === 'companies' ? t('companiesEmpty') : t('empty')} hint={filtered ? undefined : mode === 'companies' ? t('companiesEmptyHint') : t('emptyHint')} />
       ) : (
         <>
-          <DataTable head={head}>
+          <DataTable head={head} stacked>
             {rows.map((c) => (
               <ContactRows key={c.id} mode={mode} contact={c} open={openId === c.id} onToggle={() => setOpenId(openId === c.id ? null : c.id)} canEdit={canEdit} columns={head.length} />
             ))}
@@ -321,33 +323,54 @@ export function CompaniesPage() {
   return <ContactsPage mode="companies" />;
 }
 
-function ContactRows({ mode, contact, open, onToggle, canEdit, columns }: { mode: 'people' | 'companies'; contact: Contact; open: boolean; onToggle: () => void; canEdit: boolean; columns: number }) {
+export function ContactRows({ mode, contact, open, onToggle, canEdit, columns }: { mode: 'people' | 'companies'; contact: Contact; open: boolean; onToggle: () => void; canEdit: boolean; columns: number }) {
   const t = useTranslations('contacts');
   const f = useFormat();
   return (
     <>
       <TableRow>
         <TableCell className="min-w-48 px-4 py-3">
-          <p className="font-medium text-foreground">{contact.name}</p>
+          {/* The name opens the contact (#3649); its panel is the row below. */}
+          <button type="button" onClick={onToggle} aria-expanded={open} aria-label={t('openOf', { name: contact.name })} className="rounded-sm text-left font-medium text-foreground outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
+            {contact.name}
+          </button>
         </TableCell>
         {mode === 'companies' ? (
           <>
-            <TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">{contact.taxCode ?? ''}</TableCell>
-            <TableCell className="px-4 py-3 text-muted-foreground tabular-nums">{f.number(contact.peopleCount)}</TableCell>
-            <TableCell className="px-4 py-3 text-muted-foreground tabular-nums">{f.number(contact.openDeals)}</TableCell>
+            <TableCell data-label={t('columns.taxCode')} className="px-4 py-3 font-mono text-xs text-muted-foreground">
+              {contact.taxCode ?? ''}
+            </TableCell>
+            <TableCell data-label={t('columns.people')} className="px-4 py-3 text-muted-foreground tabular-nums">
+              {f.number(contact.peopleCount)}
+            </TableCell>
+            <TableCell data-label={t('columns.openDeals')} className="px-4 py-3 text-muted-foreground tabular-nums">
+              {f.number(contact.openDeals)}
+            </TableCell>
           </>
         ) : (
           <>
-            <TableCell className="px-4 py-3 text-muted-foreground">{contact.company?.name ?? ''}</TableCell>
-            <TableCell className="px-4 py-3 text-muted-foreground">{contact.phone ?? ''}</TableCell>
-            <TableCell className="px-4 py-3 text-muted-foreground">{contact.email ?? ''}</TableCell>
+            <TableCell data-label={t('columns.company')} className="px-4 py-3 text-muted-foreground">
+              {contact.company?.name ?? ''}
+            </TableCell>
+            <TableCell className="px-4 py-3 text-muted-foreground">
+              {contact.phone && (
+                <a href={`tel:${contact.phone.replace(/[^\d+]/g, '')}`} className="text-link underline-offset-4 hover:underline">
+                  {contact.phone}
+                </a>
+              )}
+            </TableCell>
+            <TableCell className="px-4 py-3 text-muted-foreground">
+              {contact.email && (
+                <a href={`mailto:${contact.email}`} className="break-all text-link underline-offset-4 hover:underline">
+                  {contact.email}
+                </a>
+              )}
+            </TableCell>
+            <TableCell data-label={t('columns.openDeals')} className="px-4 py-3 text-muted-foreground tabular-nums">
+              {f.number(contact.openDeals)}
+            </TableCell>
           </>
         )}
-        <TableCell className="px-4 py-3 text-right">
-          <Button variant="ghost" size="sm" onClick={onToggle} aria-expanded={open} aria-label={t('openOf', { name: contact.name })}>
-            {open ? t('close') : t('open')}
-          </Button>
-        </TableCell>
       </TableRow>
       {open && <ContactPanel contact={contact} canEdit={canEdit} columns={columns} />}
     </>

@@ -11,6 +11,7 @@ import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { AmountInput } from './amount-input.tsx';
+import { DateInput } from './date-input.tsx';
 import { NewPartyGroup } from './deal-party-new.tsx';
 import { ErrorText, Field, focusFirstInvalid, useFieldErrors } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -167,7 +168,7 @@ export function DealForm({ deal, members, onDone, presetParty = null, plain = fa
       <Field label={t('form.amount')} hint={t('form.amountHint')} error={fields.of('amount')}>
         {(c) => <AmountInput {...c} value={amount} onChange={(v) => (setAmount(v), fields.edit('amount'))} />}
       </Field>
-      <Field label={t('form.expectedClose')}>{(c) => <Input {...c} type="date" value={expectedClose} onChange={(e) => setExpectedClose(e.target.value)} />}</Field>
+      <Field label={t('form.expectedClose')}>{(c) => <DateInput {...c} value={expectedClose} onChange={setExpectedClose} />}</Field>
       <Field label={t('form.owner')}>
         {(c) => (
           <NativeSelect {...c} className="w-full" value={ownerUserId} onChange={(e) => setOwnerUserId(e.target.value)}>

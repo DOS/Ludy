@@ -13,6 +13,7 @@ import { ORDER_LINE_INVOICE_ORDERS_MAX, QUOTE_ACCEPTED_VIA, SALES_ORDER_REASON_M
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
+import { DateInput } from './date-input.tsx';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { refreshQuoteQueries } from './quote-send.tsx';
 import { ErrorText, Field } from './ui.tsx';
@@ -55,7 +56,7 @@ function AcceptPanel({ quote, onDone }: { quote: QuoteSummary; onDone: () => voi
     <form onSubmit={submit} className="w-full space-y-2 rounded-md border border-border p-3" aria-label={t('acceptTitle')} data-testid="quote-accept">
       <h4 className="text-sm font-medium text-foreground">{t('acceptTitle')}</h4>
       <p className="text-xs text-muted-foreground">{t('acceptHint')}</p>
-      <Field label={t('date')}>{(c) => <Input {...c} type="date" max={vietnamToday()} required value={date} onChange={(e) => setDate(e.target.value)} />}</Field>
+      <Field label={t('date')}>{(c) => <DateInput {...c} max={vietnamToday()} required value={date} onChange={setDate} />}</Field>
       <Field label={t('via')}>
         {(c) => (
           <NativeSelect {...c} className="w-full" value={via} onChange={(e) => setVia(e.target.value as QuoteAcceptedVia | '')}>

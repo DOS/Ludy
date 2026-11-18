@@ -4316,6 +4316,7 @@ export const vi = {
     emptyHint: 'Thêm cơ hội đầu tiên: chọn khách hàng, nhập số tiền và ngày dự kiến chốt.',
     loadMore: 'Xem thêm',
     importFile: 'Nhập khách hàng từ tệp',
+    overdue: 'Quá hạn',
     editOf: 'Sửa cơ hội {title}',
     sheet: {
       newHint: 'Chọn khách hàng, nhập số tiền và ngày dự kiến chốt.',
@@ -4377,6 +4378,7 @@ export const vi = {
       emptyTitle: 'Bảng chưa có cơ hội nào.',
       emptyHint: 'Thêm cơ hội đầu tiên, hoặc nhập khách hàng từ tệp trước. Cơ hội đã đóng hơn 30 ngày trước xem ở dạng Danh sách.',
       closeOn: 'Dự kiến chốt {date}',
+      overdueOn: 'Quá hạn, dự kiến chốt {date}',
       lostFor: 'Lý do thua của "{title}" (không bắt buộc)',
       lastDays: 'Các cơ hội đóng trong {days} ngày qua',
       showAll: 'Xem tất cả',
