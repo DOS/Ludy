@@ -15,9 +15,11 @@ import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { channelKindLabel } from '../lib/conversation-labels.ts';
 import { dismissContactMatch, dismissedContactMatches } from '../lib/conversation-dismissed.ts';
+import { installedModules } from '../lib/org-modules.ts';
 import { canInsertQuoteLink } from '../lib/quote-reply.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { TOUCH_BUTTON } from '../lib/conversation-touch.ts';
+import { ContactDeals } from './contact-deals.tsx';
 import { ConversationTasks } from './conversation-tasks.tsx';
 import { PersonalDataSection } from './conversation-erase.tsx';
 import { POLL_MS, useContactName, useMe } from './conversation-inbox.tsx';
@@ -236,6 +238,10 @@ export function ContactPanel({ conversationId, onOpen, onErased }: { conversatio
       </div>
       {canWrite && c.contact.partyId === null && <ContactSuggestions conversationId={conversationId} lastSeq={c.lastSeq} />}
       {canWrite && <LinkContact key={`${conversationId}:${c.contact.partyId ?? ''}`} conversationId={conversationId} defaultName={c.contact.displayName ?? ''} hasParty={c.contact.partyId !== null} />}
+      {/* The customer's open deals and "Thêm cơ hội" (#3648): where the chat turns into a sale. Everyone who can read the thread reads the deals; only those who may write add one. */}
+      {c.contact.partyId !== null && installedModules().includes('crm') && (
+        <ContactDeals key={`deals:${c.contact.partyId}`} contact={{ id: c.contact.partyId, name: c.contact.partyName ?? contactName(c.contact), kind: 'person', taxCode: null }} canEdit={canWrite} openOnly />
+      )}
       {canWrite && c.contact.partyId !== null && canInsertQuoteLink(c.kind) && <QuoteReplyInsert conversationId={conversationId} partyId={c.contact.partyId} canReply={detail.data.reply.allowed} />}
       {canWrite && c.contact.partyId !== null && canInsertQuoteLink(c.kind) && <FollowupReplyInsert conversationId={conversationId} partyId={c.contact.partyId} canReply={detail.data.reply.allowed} />}
       <ConversationTasks key={`tasks:${conversationId}`} conversationId={conversationId} channelName={c.channel.displayName} canWrite={canWrite} />

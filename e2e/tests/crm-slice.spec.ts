@@ -186,7 +186,8 @@ test('add a contact inside the deal form, and a deal from the contact panel', as
     const deals = page.getByTestId('contact-deals');
     await expect(deals).toContainText('Gói tư vấn');
     await page.getByRole('button', { name: 'Thêm cơ hội cho Khách Mới' }).click();
-    const form = deals.getByRole('form', { name: 'Thêm cơ hội' });
+    // #3648: the form opens in the deal's side sheet, with the contact chosen.
+    const form = page.getByTestId('deal-sheet').getByRole('form', { name: 'Thêm cơ hội' });
     await expect(form.getByText('Khách Mới')).toBeVisible();
     await expect(form.getByRole('searchbox')).toHaveCount(0);
     await expect(form.getByLabel('Người phụ trách')).toHaveValue('me');
