@@ -59,6 +59,10 @@ const SIGNALS = [
   'crm.signals.open_deals:ludy.read',
   // The one query behind the `ludy_signals` tool (step S4): it runs the three rules above as the grant and returns their items.
   'kernel.mcp.signals:ludy.read',
+  // The two Meetings reads of a company grant (#3731, owner decision 2026-11-18, Meetings PO design review): the published results of meetings whose visibility is 'org', nothing else. Optional here so the
+  // read can land on its own; once it has, a follow-up moves both names to REACHABLE. Their privacy pins are in test/invariant/mcp-meetings-company.db.test.ts and the projection test of the read.
+  'meetings.mcp.list:ludy.read',
+  'meetings.mcp.minutes:ludy.read',
 ];
 
 // The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Exactly this one,
