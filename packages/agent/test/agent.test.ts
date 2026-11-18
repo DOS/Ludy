@@ -38,8 +38,8 @@ describe('AI extraction output', () => {
   it('keeps the seller\'s bank account only when it is a plain copy, and checks it against the PDF text when there is one (#2426)', () => {
     const account = (value: string | null, sourceText?: string) => toParsed({ ...base, seller: { ...base.seller, bankAccount: value } }, sourceText)?.seller.bankAccount;
     // A photo has no text to check against: a printed account of 6 or more digits is kept as printed, nothing else of the answer changes.
-    expect(account('0011 2233 4455')).toBe('0011 2233 4455');
-    expect(account('  STK 001122334455 (VCB)  ')).toBe('STK 001122334455 (VCB)');
+    expect(account('5011 2233 4455')).toBe('5011 2233 4455');
+    expect(account('  STK 501122334455 (VCB)  ')).toBe('STK 501122334455 (VCB)');
     expect(toParsed({ ...base, seller: { ...base.seller, bankAccount: null } })?.seller).not.toHaveProperty('bankAccount');
     // Not an account: empty, a note, a short code, too long.
     expect(account(null)).toBeUndefined();
@@ -48,14 +48,14 @@ describe('AI extraction output', () => {
     expect(account('12345')).toBeUndefined();
     expect(account(`TK ${'1234567890 '.repeat(8)}`)).toBeUndefined();
     // From a PDF every digit run the model wrote must be in the text (digits split by spaces or dots are one run): an account the text does not hold is dropped, never repaired.
-    const text = 'Số tài khoản: 0011.2233.4455 tại Vietcombank\nTổng cộng 275.000';
-    expect(account('001122334455', text)).toBe('001122334455');
-    expect(account('0011 2233 4455', text)).toBe('0011 2233 4455');
-    expect(account('001122334456', text)).toBeUndefined();
-    expect(account('0011 2233 4455 / 0987654321', text)).toBeUndefined();
+    const text = 'Số tài khoản: 5011.2233.4455 tại Vietcombank\nTổng cộng 275.000';
+    expect(account('501122334455', text)).toBe('501122334455');
+    expect(account('5011 2233 4455', text)).toBe('5011 2233 4455');
+    expect(account('501122334456', text)).toBeUndefined();
+    expect(account('5011 2233 4455 / 0987654321', text)).toBeUndefined();
     // A line break or a note after the account does not glue a following figure onto it, on either side.
-    expect(account('001122334455', 'Số tài khoản: 001122334455\n1 Dịch vụ')).toBe('001122334455');
-    expect(account('001122334455', 'STK 001122334455 - 2026')).toBe('001122334455');
-    expect(printedBankAccount('001122334455', '')).toBeNull();
+    expect(account('501122334455', 'Số tài khoản: 501122334455\n1 Dịch vụ')).toBe('501122334455');
+    expect(account('501122334455', 'STK 501122334455 - 2026')).toBe('501122334455');
+    expect(printedBankAccount('501122334455', '')).toBeNull();
   });
 });
