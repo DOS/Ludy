@@ -15,6 +15,8 @@ import { z } from 'zod';
 import {
   zId,
   zMeetingPlatformConnectionRef,
+  MEETING_PLATFORM_OAUTH_NAME,
+  zMeetingPlatformConnectProvider,
   zMeetingPlatformErrorCode,
   zMeetingPlatformListed,
   zMeetingPlatformProvider,
@@ -72,6 +74,68 @@ function platformError(error: unknown): never {
       throw error;
   }
 }
+
+const zStateHash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+const OAUTH_ATTEMPT_SECONDS = 600;
+
+// The errors the meeting_platform_oauth_* definers raise, as domain errors (the same codes as the calendar's pair, which the app already words).
+function oauthError(error: unknown): never {
+  const message = (error as { message?: unknown } | null)?.message;
+  switch (message) {
+    case 'OAUTH_FORBIDDEN':
+      throw new DomainError('FORBIDDEN', 403, 'Người xem không kết nối được nền tảng họp');
+    case 'OAUTH_TOO_MANY':
+      throw new DomainError('OAUTH_TOO_MANY', 429, 'Bạn đã mở quá nhiều lượt kết nối chưa hoàn tất, hãy thử lại sau ít phút');
+    case 'OAUTH_STATE_INVALID':
+      throw new DomainError('OAUTH_STATE_INVALID', 400, 'Lượt kết nối này không hợp lệ hoặc không phải của bạn, hãy bắt đầu lại');
+    case 'OAUTH_STATE_USED':
+      throw new DomainError('OAUTH_STATE_USED', 409, 'Lượt kết nối này đã được dùng, hãy bắt đầu lại');
+    case 'OAUTH_STATE_EXPIRED':
+      throw new DomainError('OAUTH_STATE_EXPIRED', 409, 'Lượt kết nối đã hết hạn, hãy bắt đầu lại');
+    default:
+      throw error;
+  }
+}
+
+// Starts a connect: only the hash of the state and the PKCE verifier reach the database (the state itself is the browser's). The attempt is the member's own and single use.
+export const meetingPlatformOAuthBegin = defineCommand({
+  name: 'kernel.meeting_platform.oauth_begin',
+  input: z.strictObject({ provider: zMeetingPlatformConnectProvider, stateHash: zStateHash, codeVerifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/).nullable() }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: EDITORS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const { rows } = await sql<{ id: string }>`
+      SELECT crove_kernel.meeting_platform_oauth_begin(${MEETING_PLATFORM_OAUTH_NAME[input.provider]}, ${input.stateHash}, ${input.codeVerifier}, ${OAUTH_ATTEMPT_SECONDS}::integer) AS id`
+      .execute(ctx.trx)
+      .catch(oauthError);
+    const attemptId = rows[0]?.id;
+    if (!attemptId) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+    // The audit row names the attempt and provider only: never the hash or the verifier.
+    ctx.audit({ attempt_id: attemptId, provider: input.provider });
+    return { attemptId, expiresAt: new Date(ctx.now.getTime() + OAUTH_ATTEMPT_SECONDS * 1000).toISOString() };
+  },
+});
+
+// Uses the attempt up before the code is exchanged, so a code and state work once even if the exchange fails.
+export const meetingPlatformOAuthConsume = defineCommand({
+  name: 'kernel.meeting_platform.oauth_consume',
+  input: z.strictObject({ provider: zMeetingPlatformConnectProvider, stateHash: zStateHash }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: EDITORS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const { rows } = await sql<{ code_verifier: string | null }>`
+      SELECT code_verifier FROM crove_kernel.meeting_platform_oauth_consume(${MEETING_PLATFORM_OAUTH_NAME[input.provider]}, ${input.stateHash})`
+      .execute(ctx.trx)
+      .catch(oauthError);
+    if (rows.length !== 1) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+    ctx.audit({ provider: input.provider });
+    return { codeVerifier: rows[0]?.code_verifier ?? null };
+  },
+});
 
 export const zMeetingPlatformConnect = z.strictObject({
   provider: zMeetingPlatformProvider,
@@ -512,6 +576,8 @@ export const meetingPlatformRecordings = defineQuery({
 });
 
 export const meetingPlatformCommands = [
+  meetingPlatformOAuthBegin,
+  meetingPlatformOAuthConsume,
   meetingPlatformConnect,
   meetingPlatformDisconnect,
   meetingPlatformRefresh,
