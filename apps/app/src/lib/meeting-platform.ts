@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The facts the Meetings screens use about recordings a meeting platform finished (meetings integrations C1, #3173): what a row offers, why it cannot be imported, how often to look again
 // and which words a failure code gets. Pure functions, so the screens and their tests share one reading of a row.
-import { MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, type MeetingPlatformErrorCode, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
+import { MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_VIDEO_MAX_BYTES, type MeetingPlatformErrorCode, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
 
 // The longest recording the import accepts: the transcription limit of 90 minutes (the product owner's rule for C1). A longer one is shown as too long to import.
 export const IMPORT_MAX_SECONDS = 90 * 60;
@@ -21,10 +21,12 @@ export function pollMs(rows: readonly MeetingPlatformRecordingView[] | undefined
 // Why a recording cannot be imported by a click, in the order the server's own checks would meet them; null when it can.
 export type ImportBlock = 'video_only' | 'too_long' | 'too_large';
 
-export function importBlock(row: Pick<MeetingPlatformRecordingView, 'hasAudio' | 'lengthSeconds' | 'sizeBytes'>): ImportBlock | null {
-  if (!row.hasAudio) return 'video_only';
+// Why a recording cannot be imported, or null. A recording with only a video file can be imported where the deployment can take the audio out of it (`videoImport`, C2a #3306); then the video's own size
+// cap applies (the audio that comes out is capped when it is staged).
+export function importBlock(row: Pick<MeetingPlatformRecordingView, 'hasAudio' | 'hasVideo' | 'videoImport' | 'lengthSeconds' | 'sizeBytes'>): ImportBlock | null {
+  if (!row.hasAudio && !(row.hasVideo && row.videoImport)) return 'video_only';
   if (row.lengthSeconds !== null && row.lengthSeconds > IMPORT_MAX_SECONDS) return 'too_long';
-  if (row.sizeBytes !== null && row.sizeBytes > MEETING_PLATFORM_IMPORT_MAX_BYTES) return 'too_large';
+  if (row.sizeBytes !== null && row.sizeBytes > (row.hasAudio ? MEETING_PLATFORM_IMPORT_MAX_BYTES : MEETING_PLATFORM_VIDEO_MAX_BYTES)) return 'too_large';
   return null;
 }
 
@@ -46,7 +48,7 @@ export function canSubmitImport(input: { consentTicked: boolean; title: string; 
 
 // A failed row can be tried again unless the same failure would come back: the platform no longer has it, it has no audio, or it is too large or too long.
 const FINAL_ERRORS: readonly string[] = ['recording_gone', 'no_audio', 'too_large', 'too_long'];
-export function canRetry(row: Pick<MeetingPlatformRecordingView, 'errorCode' | 'hasAudio' | 'lengthSeconds' | 'sizeBytes'>): boolean {
+export function canRetry(row: Pick<MeetingPlatformRecordingView, 'errorCode' | 'hasAudio' | 'hasVideo' | 'videoImport' | 'lengthSeconds' | 'sizeBytes'>): boolean {
   return importBlock(row) === null && !(row.errorCode !== null && FINAL_ERRORS.includes(row.errorCode));
 }
 

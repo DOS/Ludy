@@ -194,6 +194,11 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
           <p className="text-xs text-muted-foreground">
             {[f.dateTime(row.startedAt), lengthText, row.sizeBytes === null ? null : formatBytes(row.sizeBytes, f.number)].filter((x) => x !== null).join(' · ')}
           </p>
+          {!row.hasAudio && row.hasVideo && row.videoImport && (
+            <p className="text-xs text-subtle-foreground" data-testid="meeting-recording-video-note">
+              {t('videoKeepsAudio')}
+            </p>
+          )}
           <p className="text-xs text-subtle-foreground">{t('offers', { items: offers(row, { audio: t('offerAudio'), video: t('offerVideo'), transcript: t('offerTranscript'), nothing: t('offerNothing') }) })}</p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">

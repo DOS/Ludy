@@ -17,6 +17,13 @@ import { sql } from 'kysely';
 import { createMeetingRow } from './meeting-core.ts';
 import { ROLES } from './transcript.ts';
 
+// Whether this deployment can take the audio out of a platform's video file (C2a, #3306): crove-media is configured (MEDIA_URL). Set once at start by the kernel; off, a recording that has only a video file is refused at
+// the click with the words it always had, before a meeting is made for it.
+let videoImportOn = false;
+export function setMeetingVideoImport(enabled: boolean): void {
+  videoImportOn = enabled;
+}
+
 // What a recording without a title is called, until the member renames the meeting.
 const UNTITLED: Record<MeetingLanguage, string> = { vi: 'Cuộc họp đã nhập', en: 'Imported meeting' };
 
@@ -43,7 +50,7 @@ async function readOwnRecording(trx: Trx, orgId: string, userId: string, recordi
   return trx
     .selectFrom('crove_kernel.meeting_platform_recording as r')
     .innerJoin('crove_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
-    .select(['r.status', 'r.title', 'r.started_at', 'r.meeting_id', 'c.provider'])
+    .select(['r.status', 'r.title', 'r.started_at', 'r.meeting_id', 'r.has_audio', 'r.has_video', 'c.provider'])
     .where('r.org_id', '=', orgId)
     .where('r.id', '=', recordingId)
     .where('r.user_id', '=', userId)
@@ -99,6 +106,8 @@ export const meetingImportStart = defineCommand({
     if (recording.status !== 'suggested' && recording.status !== 'failed') {
       throw new DomainError('MEETING_PLATFORM_STATE', 409, 'Bản ghi này đã được nhập hoặc đang được nhập');
     }
+    // No audio file and no way to take the audio out of a video file: refused here, before a meeting is made for it.
+    if (!recording.has_audio && !(recording.has_video && videoImportOn)) throw new DomainError('MEETING_PLATFORM_NO_AUDIO', 422, 'Nền tảng không có tệp âm thanh hay video cho bản ghi này');
     const title = (input.title ?? (recording.title.trim() === '' ? UNTITLED[input.language] : recording.title.trim())).slice(0, 200);
 
     // A retry of a failed try: the empty meeting that try made goes, by the recorder's own delete path (it also shreds the meeting's keys), so the list does not keep one empty meeting for each failed click.
@@ -117,7 +126,7 @@ export const meetingImportStart = defineCommand({
       startedAt: recording.started_at,
       retentionFrom: ctx.now,
       lengthSeconds: null,
-      // Audio first: the video of a recording is not imported by C1.
+      // Audio only: the video of a platform's recording is never kept (C2a takes the audio out of it).
       keepVideo: false,
       liveNotes: false,
       summaryTemplate: input.summaryTemplate,

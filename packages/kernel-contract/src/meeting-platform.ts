@@ -74,6 +74,8 @@ export const zMeetingPlatformRecordingView = z.strictObject({
   hasAudio: z.boolean(),
   hasVideo: z.boolean(),
   hasTranscript: z.boolean(),
+  // True when this deployment can take the audio out of a video file (C2a, #3306): a recording that has only a video file can then be imported; false, it is refused as before.
+  videoImport: z.boolean(),
   status: z.enum(MEETING_PLATFORM_RECORDING_STATUSES),
   meetingId: zId.nullable(),
   errorCode: z.string().nullable(),
