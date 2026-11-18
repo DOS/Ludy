@@ -180,11 +180,14 @@ export type QuickAddRecurrenceTranslator = ((
     key:
       | 'quickAddRecurEveryDays'
       | 'quickAddRecurEveryWeeks'
-      | 'quickAddRecurEveryMonths',
+      | 'quickAddRecurEveryMonths'
+      | 'quickAddRecurEveryMonthsLast',
     values: { interval: string },
   ) => string) &
   ((key: 'quickAddRecurWeeklyOn', values: { weekday: string }) => string) &
+  ((key: 'quickAddRecurEveryWeeksOn', values: { interval: string; weekday: string }) => string) &
   ((key: 'quickAddRecurMonthlyDay', values: { day: string }) => string) &
+  ((key: 'quickAddRecurEveryMonthsDay', values: { day: string; interval: string }) => string) &
   ((key: `weekdays.${(typeof QUICK_ADD_WEEKDAY_KEYS)[number]}`) => string);
 
 /** Formats a parsed recurrence rule into a localized preview chip label. */
@@ -197,12 +200,22 @@ export function formatQuickAddRecurrenceLabel(
   }
   if (rule.freq === 'weekly') {
     if (rule.byWeekday !== undefined) {
-      const dayKey = QUICK_ADD_WEEKDAY_KEYS[rule.byWeekday] ?? 'mon';
-      return t('quickAddRecurWeeklyOn', { weekday: t(`weekdays.${dayKey}`) });
+      const weekday = t(`weekdays.${QUICK_ADD_WEEKDAY_KEYS[rule.byWeekday] ?? 'mon'}`);
+      return rule.interval === 1
+        ? t('quickAddRecurWeeklyOn', { weekday })
+        : t('quickAddRecurEveryWeeksOn', { interval: String(rule.interval), weekday });
     }
     return rule.interval === 1 ? t('quickAddRecurWeekly') : t('quickAddRecurEveryWeeks', { interval: String(rule.interval) });
   }
-  if (rule.byMonthDay === -1) return t('quickAddRecurMonthlyLast');
-  if (rule.byMonthDay !== undefined) return t('quickAddRecurMonthlyDay', { day: String(rule.byMonthDay) });
+  if (rule.byMonthDay === -1) {
+    return rule.interval === 1
+      ? t('quickAddRecurMonthlyLast')
+      : t('quickAddRecurEveryMonthsLast', { interval: String(rule.interval) });
+  }
+  if (rule.byMonthDay !== undefined) {
+    return rule.interval === 1
+      ? t('quickAddRecurMonthlyDay', { day: String(rule.byMonthDay) })
+      : t('quickAddRecurEveryMonthsDay', { day: String(rule.byMonthDay), interval: String(rule.interval) });
+  }
   return rule.interval === 1 ? t('quickAddRecurMonthly') : t('quickAddRecurEveryMonths', { interval: String(rule.interval) });
 }

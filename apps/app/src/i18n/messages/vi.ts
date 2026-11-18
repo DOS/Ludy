@@ -8646,10 +8646,13 @@ export const vi = {
     quickAddRecurWeekly: 'Mỗi tuần',
     quickAddRecurEveryWeeks: 'Mỗi {interval} tuần',
     quickAddRecurWeeklyOn: 'Hàng tuần · {weekday}',
+    quickAddRecurEveryWeeksOn: 'Mỗi {interval} tuần · {weekday}',
     quickAddRecurMonthly: 'Mỗi tháng',
     quickAddRecurEveryMonths: 'Mỗi {interval} tháng',
     quickAddRecurMonthlyDay: 'Ngày {day} hàng tháng',
+    quickAddRecurEveryMonthsDay: 'Ngày {day} mỗi {interval} tháng',
     quickAddRecurMonthlyLast: 'Cuối tháng',
+    quickAddRecurEveryMonthsLast: 'Cuối tháng · mỗi {interval} tháng',
     weekdays: {
       sun: 'Chủ nhật',
       mon: 'Thứ Hai',

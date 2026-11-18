@@ -259,6 +259,12 @@ describe('TodoQuickAddBar & ShellNav SSR rendering (#3556)', () => {
     expect(enHtml).toContain('Priority P2');
     expect(enHtml).toContain('#ops');
     expect(enHtml).toContain('Admin');
+
+    // Interval > 1 with weekday or month day shows the actual multi-interval in the preview chip
+    const biweeklyVi = renderInApp('vi', <TodoQuickAddBar initialValue="Họp mỗi 2 tuần thứ sáu 9h" nowOverride={NOW} timeZoneOverride={TZ} />);
+    expect(biweeklyVi).toContain('Mỗi 2 tuần · Thứ Sáu');
+    const biweeklyEn = renderInApp('en', <TodoQuickAddBar initialValue="Call every 2 weeks on Friday 9am" nowOverride={NOW} timeZoneOverride={TZ} />);
+    expect(biweeklyEn).toContain('Every 2 weeks on Friday');
   });
 
   it('renders MyWorkPage and ShellNav trigger cleanly', () => {

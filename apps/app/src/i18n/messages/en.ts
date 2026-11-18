@@ -8647,10 +8647,13 @@ export const en = {
     quickAddRecurWeekly: 'Every week',
     quickAddRecurEveryWeeks: 'Every {interval} weeks',
     quickAddRecurWeeklyOn: 'Every {weekday}',
+    quickAddRecurEveryWeeksOn: 'Every {interval} weeks on {weekday}',
     quickAddRecurMonthly: 'Every month',
     quickAddRecurEveryMonths: 'Every {interval} months',
     quickAddRecurMonthlyDay: 'Day {day} every month',
+    quickAddRecurEveryMonthsDay: 'Day {day} every {interval} months',
     quickAddRecurMonthlyLast: 'Last day of month',
+    quickAddRecurEveryMonthsLast: 'Last day every {interval} months',
     weekdays: {
       sun: 'Sunday',
       mon: 'Monday',
