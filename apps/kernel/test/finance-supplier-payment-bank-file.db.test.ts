@@ -21,6 +21,25 @@ const NUMBER = '0123 4567 8901';
 const OTHER = '9988776655';
 const HOLDER = 'Nguyen Van Canary';
 
+// The keys and the leaf values of a JSON value, so an amount is looked for as a value or a key and never as digits inside a random id or a timestamp.
+function keysAndLeaves(value: unknown, keys: string[] = [], leaves: unknown[] = []): { keys: string[]; leaves: unknown[] } {
+  if (value !== null && typeof value === 'object') {
+    for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+      keys.push(key);
+      keysAndLeaves(inner, keys, leaves);
+    }
+  } else {
+    leaves.push(value);
+  }
+  return { keys, leaves };
+}
+const expectNoAmount = (value: unknown, amounts: readonly string[]) => {
+  const { keys, leaves } = keysAndLeaves(value);
+  for (const amount of amounts) expect(leaves).not.toContain(amount);
+  for (const amount of amounts) expect(leaves).not.toContain(Number(amount));
+  expect(keys.filter((k) => ['amount', 'total'].includes(k))).toEqual([]);
+};
+
 suite('the bank file of supplier payments (#3113 S3)', () => {
   const dbName = `crove_test_supplier_payment_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
@@ -290,7 +309,8 @@ suite('the bank file of supplier payments (#3113 S3)', () => {
     expect(rowsAfter.length).toBe(before + 1);
     const text = JSON.stringify(rowsAfter);
     expect(text).toContain('VND');
-    for (const secret of ['012345678901', HOLDER, '110']) expect(text).not.toContain(secret);
+    for (const secret of ['012345678901', HOLDER]) expect(text).not.toContain(secret);
+    expectNoAmount(rowsAfter, ['110']);
     const marked = await markers(o, first.id);
     expect(marked?.export_count).toBe(1);
     expect(marked?.exported_by).toBe(o.admin);

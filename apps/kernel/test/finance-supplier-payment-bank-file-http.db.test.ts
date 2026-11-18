@@ -38,6 +38,25 @@ class MemoryStore implements BlobStore {
   async delete() {}
 }
 
+// The keys and the leaf values of a JSON value, so an amount is looked for as a value or a key and never as digits inside a random id or a timestamp.
+function keysAndLeaves(value: unknown, keys: string[] = [], leaves: unknown[] = []): { keys: string[]; leaves: unknown[] } {
+  if (value !== null && typeof value === 'object') {
+    for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+      keys.push(key);
+      keysAndLeaves(inner, keys, leaves);
+    }
+  } else {
+    leaves.push(value);
+  }
+  return { keys, leaves };
+}
+const expectNoAmount = (value: unknown, amounts: readonly string[]) => {
+  const { keys, leaves } = keysAndLeaves(value);
+  for (const amount of amounts) expect(leaves).not.toContain(amount);
+  for (const amount of amounts) expect(leaves).not.toContain(Number(amount));
+  expect(keys.filter((k) => ['amount', 'total'].includes(k))).toEqual([]);
+};
+
 suite('the bank file of supplier payments over HTTP (#3113 S3b-2)', () => {
   const dbName = `crove_test_supplier_file_http_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
@@ -168,8 +187,9 @@ suite('the bank file of supplier payments over HTTP (#3113 S3b-2)', () => {
     expect(marked).toMatchObject({ export_count: 1, exported_by: ownerId });
     expect(marked?.exported_at).not.toBeNull();
     // The audit rows hold no name, number or amount.
-    const audit = JSON.stringify(await rows('SELECT to_jsonb(a) AS a FROM crove_kernel.audit_event a WHERE a.org_id = $1 AND a.command LIKE $2', [orgId, 'finance.supplier_payment.bank_file.%']));
-    for (const secret of ['012345678901', 'Canary', '110']) expect(audit).not.toContain(secret);
+    const auditRows = await rows('SELECT to_jsonb(a) AS a FROM crove_kernel.audit_event a WHERE a.org_id = $1 AND a.command LIKE $2', [orgId, 'finance.supplier_payment.bank_file.%']);
+    for (const secret of ['012345678901', 'Canary']) expect(JSON.stringify(auditRows)).not.toContain(secret);
+    expectNoAmount(auditRows, ['110']);
     // A second request: refused, naming the payment and the time of the first file, no bytes and no new marker.
     const again = await get(url([id]));
     expect(again.status).toBe(409);
