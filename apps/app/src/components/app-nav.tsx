@@ -11,9 +11,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@crove/ui/components/dropdown-menu';
-import { NavIcon, type NavIconName } from '@crove/ui/components/nav-icon';
+import { NavIcon } from '@crove/ui/components/nav-icon';
 import { ProjectIcon } from '@crove/ui/components/project-icon';
 import { LocaleSwitcher } from '../i18n/provider.tsx';
+import { APP_ICON, menuIcon } from '../lib/menu-icons.ts';
 import { ADMIN_ITEMS, BELL_ITEM, TOP_ITEMS, currentMenuItem, isHeadedGroup, type AppId, type InstalledApp, type NavItem, type NavLabel } from '../lib/apps.ts';
 import { signOut } from '../lib/session-actions.ts';
 import { StatusLink } from './status-link.tsx';
@@ -26,22 +27,12 @@ import { Logo } from './ui.tsx';
 // switcher. None may contain another item's name: a link is found by its name (e2e), and a name inside another matches both.
 const IN_MENU_LABEL: Partial<Record<NavLabel, 'socialPosts'>> = { social: 'socialPosts' };
 
-const APP_ICON: Record<AppId, NavIconName> = { teamwork: 'appTeamwork', finance: 'appAccounting', engage: 'appSocial', hr: 'appHr', sign: 'journal', ai: 'appAi' };
-
-// A menu item's icon is the one named like its label (packages/ui nav-icon.tsx). Items without an icon of their own take
-// the closest: the AI budgets the banknote of the vouchers (money spent), the Tài chính overview the dashboard of the
-// overview, the tax the spreadsheet of the VAT return (Ads and Reports have icons of their own, #3659); the type fails to compile for a label that has neither.
-const OWN_ICON = { accountingOverview: 'overview', aiUsage: 'vouchers', aiConnections: 'settings', socialInbox: 'inbox', socialNotifications: 'alerts', tax: 'vat', salesInvoices: 'documents', stock: 'fixedAssets', declarations: 'documents', recruiting: 'employees', meetings: 'comments', signEnvelopes: 'documents', signTemplates: 'notes', signVerify: 'portalList' } as const satisfies { [L in Exclude<NavLabel, NavIconName>]: NavIconName };
-const menuIcon = (label: NavLabel): NavIconName => (label in OWN_ICON ? OWN_ICON[label as keyof typeof OWN_ICON] : (label as NavIconName));
-
 export interface ShellNavProps {
   slug: string;
-  // The installed apps (#1528) and the one whose menu shows: the app of the screen, or the last one used on the org's
-  // own screens (Settings, the chart).
+  // The installed apps (#1528) and the one whose menu shows: the app of the screen. On the org's own screens (Overview,
+  // Notifications, Settings, the activity log) `app` is null: no app is marked and no app menu shows (#3588), only the rail.
   apps: readonly InstalledApp[];
-  app: AppId;
-  // Whether the screen belongs to an app; on the org's own screens no app is marked current.
-  inApp: boolean;
+  app: AppId | null;
   // The count shown on an item (pending proposals on the inbox, unread notifications); an app with a count gets a dot.
   badges: Partial<Record<string, string | number | null | undefined>>;
   orgs: readonly { orgId: string; slug: string; name: string }[];
@@ -56,12 +47,12 @@ export interface ShellNavProps {
 // What the sidebar and the phone drawer both hold (#1245, #1528): the app switcher down the left edge, with the org's
 // own screens at its foot; beside it the org switch, the palette button, the current app's menu and the account menu.
 // Every control is at least 44px tall in the phone drawer (below md) and 24px in the sidebar.
-export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPalette, paletteKeys, onOpenQuickCapture, onNavigate }: ShellNavProps) {
+export function ShellNav({ slug, apps, app, badges, orgs, email, onOpenPalette, paletteKeys, onOpenQuickCapture, onNavigate }: ShellNavProps) {
   const t = useTranslations('nav');
   const tp = useTranslations('palette');
   const tmw = useTranslations('myWork');
   const groupIdBase = useId();
-  const current = apps.find((a) => a.id === app) ?? apps[0];
+  const current = app === null ? undefined : apps.find((a) => a.id === app);
   const hasBadge = (items: readonly NavItem[]) => items.some((item) => Boolean(badges[item.label]));
   // Exactly one item is marked current: the one of the longest path that holds the screen, a tab keeping its menu item (#3225).
   // The router's own fuzzy match would also mark Engage's Posts (`social`) on the Inbox (`social/inbox`), so it is turned off below.
@@ -86,120 +77,126 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
   );
   return (
     // One landmark for the whole menu, the switcher included, so "the menu" is one place for a screen reader.
-    <nav aria-label={t('menu')} className="flex min-h-0 min-w-0 flex-1">
-      <div className="flex w-16 shrink-0 flex-col border-r py-3 md:py-4">
-        <ul aria-label={t('appsLabel')} className="flex flex-col items-center gap-1">
-          {TOP_ITEMS.map((item) => railLink(item, t(item.label)))}
-          {apps.map((a) => {
-            const selected = inApp && a.id === current?.id;
-            return (
-              <li key={a.id}>
-                <Link
-                  to={a.home}
-                  params={{ slug }}
-                  // Switching apps keeps the phone drawer open, so the new app's menu is there to pick from.
-                  aria-current={selected ? 'true' : undefined}
-                  className={`relative flex min-h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[11px] leading-tight hover:bg-sidebar-accent hover:text-foreground ${selected ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
-                >
-                  <NavIcon name={APP_ICON[a.id]} className="size-5" />
-                  <span>{t(`apps.${a.id}`)}</span>
-                  {hasBadge(a.groups.flatMap((g) => g.items)) && <span className="absolute top-1.5 right-2.5 size-2 rounded-full bg-primary" aria-hidden="true" />}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-        <ul className="mt-auto flex flex-col items-center gap-1 pt-3">
-          {BELL_ITEM && railLink(BELL_ITEM, t('bell'), badges[BELL_ITEM.label] as string | number | null | undefined)}
-          {ADMIN_ITEMS.map((item) => railLink(item, t(item.label)))}
-        </ul>
-      </div>
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col px-3 py-0 md:py-4">
-        <div className="mb-4 hidden px-2 md:block">
-          <Logo />
+    // On a phone the whole column scrolls as one (rail, menu, account; #3588): the nav scrolls, and the row inside it is at least as high as
+    // the drawer and as high as its content, so a long menu (Tài chính has four groups) is never cut off behind the account block. From md
+    // up the row vanishes (`contents`) and the sidebar is laid out as before.
+    <nav aria-label={t('menu')} className="flex min-h-0 min-w-0 flex-1 max-md:items-start max-md:overflow-y-auto">
+      <div className="flex min-w-0 flex-1 max-md:min-h-full md:contents">
+        <div className="flex w-16 shrink-0 flex-col border-r py-3 md:py-4">
+          <ul aria-label={t('appsLabel')} className="flex flex-col items-center gap-1">
+            {TOP_ITEMS.map((item) => railLink(item, t(item.label)))}
+            {apps.map((a) => {
+              const selected = a.id === current?.id;
+              return (
+                <li key={a.id}>
+                  <Link
+                    to={a.home}
+                    params={{ slug }}
+                    // Switching apps keeps the phone drawer open, so the new app's menu is there to pick from.
+                    aria-current={selected ? 'true' : undefined}
+                    className={`relative flex min-h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[11px] leading-tight hover:bg-sidebar-accent hover:text-foreground ${selected ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
+                  >
+                    <NavIcon name={APP_ICON[a.id]} className="size-5" />
+                    <span>{t(`apps.${a.id}`)}</span>
+                    {hasBadge(a.groups.flatMap((g) => g.items)) && <span className="absolute top-1.5 right-2.5 size-2 rounded-full bg-primary" aria-hidden="true" />}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+          <ul className="mt-auto flex flex-col items-center gap-1 pt-3">
+            {BELL_ITEM && railLink(BELL_ITEM, t('bell'), badges[BELL_ITEM.label] as string | number | null | undefined)}
+            {ADMIN_ITEMS.map((item) => railLink(item, t(item.label)))}
+          </ul>
         </div>
-        <div className="px-2">
-          {orgs.length > 1 && (
-            <Link to="/clients" onClick={onNavigate} className="mb-2 flex min-h-11 items-center text-sm text-link hover:underline md:min-h-6">
-              {t('allClients')}
-            </Link>
-          )}
-          <OrgMenu slug={slug} orgs={orgs} onNavigate={onNavigate} />
-          {/* The legal entity of the finance books (#1486), when the caller sees more than one. */}
-          <EntitySwitcher slug={slug} />
-        </div>
-        <div className="mt-2 flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={onOpenPalette}
-            className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-1.5 rounded-lg border bg-background px-2.5 py-1.5 text-left text-sm text-subtle-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-0"
-          >
-            <span className="min-w-0 truncate">{tp('open')}</span>
-            <kbd className="shrink-0 rounded-sm border px-1 font-mono text-[11px] whitespace-nowrap">{paletteKeys}</kbd>
-          </button>
-          {onOpenQuickCapture && (
-            <Button
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col px-3 py-0 md:py-4">
+          <div className="mb-4 hidden px-2 md:block">
+            <Logo />
+          </div>
+          <div className="px-2">
+            {orgs.length > 1 && (
+              <Link to="/clients" onClick={onNavigate} className="mb-2 flex min-h-11 items-center text-sm text-link hover:underline md:min-h-6">
+                {t('allClients')}
+              </Link>
+            )}
+            <OrgMenu slug={slug} orgs={orgs} onNavigate={onNavigate} />
+            {/* The legal entity of the finance books (#1486), when the caller sees more than one. */}
+            <EntitySwitcher slug={slug} />
+          </div>
+          <div className="mt-2 flex items-center gap-1.5">
+            <button
               type="button"
-              variant="outline"
-              size="icon"
-              onClick={onOpenQuickCapture}
-              aria-label={tmw('quickCaptureTrigger')}
-              title={tmw('quickCaptureTrigger')}
-              data-testid="shell-quick-capture-btn"
-              className="min-h-11 min-w-11 shrink-0 md:size-8 md:min-h-0 md:min-w-0"
+              onClick={onOpenPalette}
+              className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-1.5 rounded-lg border bg-background px-2.5 py-1.5 text-left text-sm text-subtle-foreground hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-0"
             >
-              <ProjectIcon name="plus" className="size-4" />
-            </Button>
-          )}
-        </div>
-        {/* The menu scrolls only on a very short window, so the account menu below it always stays on screen. */}
-        <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto">
-          {current && (
-            <p className="px-3 pb-1.5 text-sm font-semibold text-foreground">{t(`appNames.${current.id}`)}</p>
-          )}
-          {current?.groups.map((group, index) => {
-            const labelId = `${groupIdBase}-${group.id}`;
-            // A group named by the app itself (the first of the other apps) needs no heading, and neither does the reports item.
-            const heading = isHeadedGroup(group.id) ? group.id : null;
-            return (
-              <section
-                key={group.id}
-                className={index === 0 ? '' : 'mt-3 md:mt-2'}
-                {...(heading ? { 'aria-labelledby': labelId } : { 'aria-label': group.id === 'reports' ? t('reports') : t(`appNames.${current.id}`) })}
+              <span className="min-w-0 truncate">{tp('open')}</span>
+              <kbd className="shrink-0 rounded-sm border px-1 font-mono text-[11px] whitespace-nowrap">{paletteKeys}</kbd>
+            </button>
+            {onOpenQuickCapture && (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={onOpenQuickCapture}
+                aria-label={tmw('quickCaptureTrigger')}
+                title={tmw('quickCaptureTrigger')}
+                data-testid="shell-quick-capture-btn"
+                className="min-h-11 min-w-11 shrink-0 md:size-8 md:min-h-0 md:min-w-0"
               >
-                {heading && (
-                  // A label, not a heading: the page's own heading stays the only one with a screen's name ("Khách hàng").
-                  <p id={labelId} className="px-3 pb-1 text-xs font-medium text-subtle-foreground">
-                    {t(`groups.${heading}`)}
-                  </p>
-                )}
-                <ul className="flex flex-col gap-0.5">
-                  {group.items.map((item) => {
-                    const badge = badges[item.label];
-                    const isCurrent = item.to === currentTo;
-                    return (
-                      <li key={item.to}>
-                        <Link
-                          to={item.to}
-                          params={{ slug }}
-                          onClick={onNavigate}
-                          className={`flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-0.5 ${isCurrent ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
-                          activeOptions={{ exact: true }}
-                          {...(isCurrent ? { 'aria-current': 'page' as const } : {})}
-                        >
-                          <NavIcon name={menuIcon(item.label)} />
-                          <span className="min-w-0 flex-1 truncate">{t(IN_MENU_LABEL[item.label] ?? item.label)}</span>
-                          {badge ? <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{badge}</span> : null}
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            );
-          })}
+                <ProjectIcon name="plus" className="size-4" />
+              </Button>
+            )}
+          </div>
+          {/* The menu scrolls only on a very short window, so the account menu below it always stays on screen. On the org's own screens
+              (no app) there is no menu, only the rail (#3588). On a phone the nav scrolls instead (above). */}
+          <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto max-md:overflow-y-visible">
+            {current && (
+              <p className="px-3 pb-1.5 text-sm font-semibold text-foreground">{t(`appNames.${current.id}`)}</p>
+            )}
+            {current?.groups.map((group, index) => {
+              const labelId = `${groupIdBase}-${group.id}`;
+              // A group named by the app itself (the first of the other apps) needs no heading, and neither does the reports item.
+              const heading = isHeadedGroup(group.id) ? group.id : null;
+              return (
+                <section
+                  key={group.id}
+                  className={index === 0 ? '' : 'mt-3 md:mt-2'}
+                  {...(heading ? { 'aria-labelledby': labelId } : { 'aria-label': group.id === 'reports' ? t('reports') : t(`appNames.${current.id}`) })}
+                >
+                  {heading && (
+                    // A label, not a heading: the page's own heading stays the only one with a screen's name ("Khách hàng").
+                    <p id={labelId} className="px-3 pb-1 text-xs font-medium text-subtle-foreground">
+                      {t(`groups.${heading}`)}
+                    </p>
+                  )}
+                  <ul className="flex flex-col gap-0.5">
+                    {group.items.map((item) => {
+                      const badge = badges[item.label];
+                      const isCurrent = item.to === currentTo;
+                      return (
+                        <li key={item.to}>
+                          <Link
+                            to={item.to}
+                            params={{ slug }}
+                            onClick={onNavigate}
+                            className={`flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-0.5 ${isCurrent ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
+                            activeOptions={{ exact: true }}
+                            {...(isCurrent ? { 'aria-current': 'page' as const } : {})}
+                          >
+                            <NavIcon name={menuIcon(item.label)} />
+                            <span className="min-w-0 flex-1 truncate">{t(IN_MENU_LABEL[item.label] ?? item.label)}</span>
+                            {badge ? <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{badge}</span> : null}
+                          </Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              );
+            })}
+          </div>
+          <AccountMenu email={email} />
         </div>
-        <AccountMenu email={email} />
       </div>
     </nav>
   );
@@ -230,7 +227,10 @@ export function OrgMenu({ slug, orgs, onNavigate }: { slug: string; orgs: readon
           className="flex min-h-11 w-full items-center gap-2 rounded-lg border border-field-border bg-transparent px-2.5 py-1.5 text-left text-sm font-medium text-foreground outline-none hover:bg-sidebar-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:bg-sidebar-accent md:min-h-8 md:py-1 dark:bg-input/30"
         >
           <span className="sr-only">{t('org')}: </span>
-          <span className="min-w-0 flex-1 truncate">{current?.name ?? slug}</span>
+          {/* The full name is the tooltip when a long company name is cut off (#3588). */}
+          <span className="min-w-0 flex-1 truncate" title={current?.name ?? slug}>
+            {current?.name ?? slug}
+          </span>
           <NavIcon name="expand" className="shrink-0 text-muted-foreground" />
         </DropdownMenuTrigger>
         {/* Base UI names the menu by its button ("Tổ chức: DOS"). */}
@@ -265,14 +265,22 @@ function AccountMenu({ email }: { email: string | undefined }) {
       <details className="group">
         <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-lg px-2 py-1.5 md:min-h-0 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-foreground [&::-webkit-details-marker]:hidden">
           <span className="sr-only">{t('account')}: </span>
-          <span className="min-w-0 flex-1 truncate">{email}</span>
+          <span className="min-w-0 flex-1 truncate" title={email}>
+            {email}
+          </span>
           <NavIcon name="expand" className="transition-transform group-open:rotate-180 motion-reduce:transition-none" />
         </summary>
         <div className="mt-2 flex flex-col gap-2 px-2 pb-1 text-xs text-subtle-foreground">
           <StatusLink className="flex min-h-11 items-center text-sm text-link md:min-h-6" />
-          {/* One per row: side by side, both names were cut off at the sidebar's width. */}
-          <LocaleSwitcher className="w-full text-muted-foreground" />
-          <ThemeSwitcher className="w-full text-muted-foreground" />
+          {/* One per row: side by side, both names were cut off at the sidebar's width. Each has its name above it (#3588); the select keeps its own accessible name. */}
+          <div className="flex flex-col gap-1">
+            <span aria-hidden="true">{tc('language')}</span>
+            <LocaleSwitcher className="w-full text-muted-foreground" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <span aria-hidden="true">{tc('theme')}</span>
+            <ThemeSwitcher className="w-full text-muted-foreground" />
+          </div>
         </div>
       </details>
       <button type="button" className="mt-1 inline-flex min-h-11 items-center px-2 text-xs text-subtle-foreground hover:text-muted-foreground md:min-h-6" onClick={() => void signOut()}>

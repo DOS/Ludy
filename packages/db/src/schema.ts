@@ -1189,11 +1189,15 @@ export type MeetingsMeetingTable = Refine<
 // The transcript of a meeting (#2578): a segment is a draft, the recorder's own copy, until the recorder publishes it.
 export const TRANSCRIPT_STAGES = ['draft', 'published'] as const;
 export type TranscriptStageValue = (typeof TRANSCRIPT_STAGES)[number];
+// Whose transcription a line is (C2, #3174): Ludy's own (or typed by the recorder), or the one Google Meet wrote.
+export const TRANSCRIPTION_MAKERS = ['ludy', 'google_meet'] as const;
+export type TranscriptionMakerValue = (typeof TRANSCRIPTION_MAKERS)[number];
 
 export type MeetingsTranscriptSegmentTable = Refine<
   G.MeetingsTranscriptSegmentTable,
   {
     stage: ColumnType<TranscriptStageValue, TranscriptStageValue | undefined, never>;
+    source: ColumnType<TranscriptionMakerValue, TranscriptionMakerValue | undefined, never>;
   }
 >;
 
@@ -1209,6 +1213,14 @@ export type MeetingsMeetingResultTable = Refine<
   G.MeetingsMeetingResultTable,
   {
     feature: MeetingResultFeature;
+    stage: Generated<MeetingResultStage>;
+  }
+>;
+
+// The chapters (table of contents) of a meeting (#3844): a draft the recorder writes, published with the minutes.
+export type MeetingsMeetingChapterTable = Refine<
+  G.MeetingsMeetingChapterTable,
+  {
     stage: Generated<MeetingResultStage>;
   }
 >;
@@ -1356,6 +1368,7 @@ type Refined = Tables<{
   'crove_meetings.chat_channel': MeetingsChatChannelTable;
   'crove_meetings.chat_post': MeetingsChatPostTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
+  'crove_meetings.meeting_chapter': MeetingsMeetingChapterTable;
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'crove_meetings.translation': MeetingsTranslationTable;

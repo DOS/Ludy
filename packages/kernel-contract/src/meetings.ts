@@ -438,6 +438,9 @@ export type MeetingOrphanKeys = z.infer<typeof zMeetingOrphanKeys>;
 // own working copy, until the recorder publishes it (the summary step, M6).
 export const TRANSCRIPT_STAGES = ['draft', 'published'] as const;
 export type TranscriptStage = (typeof TRANSCRIPT_STAGES)[number];
+// Whose transcription a line is (C2, #3174): Ludy's own, or the transcript Google Meet wrote and the recorder imported. The screens label the second one as Google's.
+export const TRANSCRIPTION_MAKERS = ['ludy', 'google_meet'] as const;
+export type TranscriptionMaker = (typeof TRANSCRIPTION_MAKERS)[number];
 export const TRANSCRIPT_TEXT_MAX = 4000;
 export const TRANSCRIPT_SPEAKER_MAX = 80;
 export const TRANSCRIPT_SEGMENTS_MAX = 5000;
@@ -475,8 +478,16 @@ export const zTranscriptSegment = z.strictObject({
   text: z.string(),
   stage: z.enum(TRANSCRIPT_STAGES),
   corrected: z.boolean(),
+  source: z.enum(TRANSCRIPTION_MAKERS),
 });
 export type TranscriptSegment = z.infer<typeof zTranscriptSegment>;
+
+// The input of the import of a platform's transcript (C2, #3174): the lines the job staged, read again and bounded here (tainted input). It is no RPC input: only the import route runs the command.
+export const zMeetingTranscriptImport = z.strictObject({
+  meetingId: zId,
+  segments: z.array(zTranscriptSegmentInput).min(1).max(TRANSCRIPT_SEGMENTS_MAX),
+});
+export type MeetingTranscriptImport = z.infer<typeof zMeetingTranscriptImport>;
 
 // What the caller may read of a meeting's transcript: the recorder reads their draft (and anything published); every other
 // reader of the meeting reads published segments only. `stage` is the stage the caller sees.
@@ -604,7 +615,8 @@ export const zActionItemDeleted = z.strictObject({ itemId: zId, deleted: z.liter
 
 // The one click that shows the drafts to the meeting's readers: `confirmed: true` is the person's own click, never defaulted.
 export const zResultPublish = z.strictObject({ meetingId: zId, confirmed: z.literal(true) });
-export const zResultPublished = z.strictObject({ meetingId: zId, results: z.number().int().min(0), items: z.number().int().min(0) });
+// `chapters` (#3844): how many chapters of the meeting's table of contents were published with them.
+export const zResultPublished = z.strictObject({ meetingId: zId, results: z.number().int().min(0), items: z.number().int().min(0), chapters: z.number().int().min(0) });
 
 // Accepting an item makes a team task from it. The person confirms the title, picks the date and the seat (never picked for them when the attendee holds
 // none or several); a task is read by every member, and the transcript is never copied into it.

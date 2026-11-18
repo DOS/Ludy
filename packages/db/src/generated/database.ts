@@ -205,6 +205,7 @@ export interface CroveMeetingsSchema {
   'crove_meetings.live_chunk': MeetingsLiveChunkTable;
   'crove_meetings.live_line': MeetingsLiveLineTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
+  'crove_meetings.meeting_chapter': MeetingsMeetingChapterTable;
   'crove_meetings.meeting_link': MeetingsMeetingLinkTable;
   'crove_meetings.meeting_note': MeetingsMeetingNoteTable;
   'crove_meetings.meeting_reader': MeetingsMeetingReaderTable;
@@ -3173,6 +3174,21 @@ export interface MeetingsLiveLineTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
+/** crove_meetings.meeting_chapter */
+export interface MeetingsMeetingChapterTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  stage: Generated<string>;
+  position: number;
+  title: string;
+  start_seconds: number;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_meetings.meeting_link */
 export interface MeetingsMeetingLinkTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -3290,6 +3306,7 @@ export interface MeetingsTranscriptSegmentTable {
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
   search: ColumnType<string | null, never, NotGranted>;
+  source: ColumnType<string, string | undefined, NotGranted>;
 }
 
 /** crove_meetings.translation */

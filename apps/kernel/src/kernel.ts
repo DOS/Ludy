@@ -178,7 +178,7 @@ export interface KernelAdapters {
   summaryModel?: ModelPort | null;
   // Vy's eSign field placement and risky clause review (#3351); null runs manual signing without AI.
   signAi?: Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> | null;
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'supplierPayableLineSentence' | 'einvoiceRateExplanation' | 'stockSurplusNote' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'supplierPayableLineSentence' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockSurplusNote' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -381,6 +381,14 @@ export const whatsappApp = (config: WhatsAppConfig) => (config.CHANNEL_WHATSAPP_
 export function channelConversationAdapters(config: WhatsAppConfig): Record<string, ConversationAdapter> {
   const whatsapp = whatsappApp(config);
   return whatsapp ? { whatsapp: new WhatsAppConversations(new Graph(whatsapp.appSecret, whatsapp.graphVersion)) } : {};
+}
+
+// The meeting platforms a deployment has (Meetings C1 and C3): the offline sandbox when the channel sandbox is on, and Zoom only when the deployment has its own Zoom OAuth app (off by default).
+export function meetingPlatformsOf(config: Pick<Config, 'CHANNEL_SANDBOX' | 'ZOOM_OAUTH_CLIENT_ID' | 'ZOOM_OAUTH_CLIENT_SECRET'>) {
+  return meetingPlatformAdapters({
+    sandbox: config.CHANNEL_SANDBOX === 'true',
+    ...(config.ZOOM_OAUTH_CLIENT_ID && config.ZOOM_OAUTH_CLIENT_SECRET ? { zoom: { clientId: config.ZOOM_OAUTH_CLIENT_ID, clientSecret: config.ZOOM_OAUTH_CLIENT_SECRET } } : {}),
+  });
 }
 
 // The outside calendar providers this deployment has an OAuth app for (#2123), by OAuth provider id; one without
@@ -780,7 +788,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
           ),
-          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), emailSenderCheck: Boolean(config.INBOUND_AUTHSERV_ID), adsLaunchProviders: Object.keys(adWritersOf(config)), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', ...(whatsappApp(config) && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsapp: whatsappApp(config) } : {}), connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
+          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), emailSenderCheck: Boolean(config.INBOUND_AUTHSERV_ID), adsLaunchProviders: Object.keys(adWritersOf(config)), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', ...(whatsappApp(config) && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsapp: whatsappApp(config) } : {}), connectors: channelConnectors(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
           ...(stream ? { stream } : {}),
           // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its
           // own worker, so it has none to wait for.
@@ -833,7 +841,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
             // The audio of a video-only platform recording (C2a, #3306): crove-media extracts it; without MEDIA_URL the extractor is not configured and such a recording fails `no_audio`.
             meetingsImportExtractor: mediaAudioExtractorFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS),
-            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformAdapters({ sandbox: config.CHANNEL_SANDBOX === 'true' }), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config), adStateReaders: adStateReadersOf(config) },
+            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config), adStateReaders: adStateReadersOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,

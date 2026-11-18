@@ -14,6 +14,13 @@ export const MEETING_PLATFORM_OAUTH_PROVIDERS = ['google_recordings', 'zoom_reco
 export type MeetingPlatformOAuthProvider = (typeof MEETING_PLATFORM_OAUTH_PROVIDERS)[number];
 export const zMeetingPlatformOAuthProvider = z.enum(MEETING_PLATFORM_OAUTH_PROVIDERS);
 
+// The platforms a member connects through the platform's own OAuth dialog (C3 onwards; the sandbox connects without one), and the name of their attempt in the oauth_state table. The return address of the
+// dialog is `<APP_URL>/meetings/oauth/<platform>/callback`, a page of the app.
+export const MEETING_PLATFORM_CONNECT_PROVIDERS = ['zoom'] as const;
+export type MeetingPlatformConnectProvider = (typeof MEETING_PLATFORM_CONNECT_PROVIDERS)[number];
+export const zMeetingPlatformConnectProvider = z.enum(MEETING_PLATFORM_CONNECT_PROVIDERS);
+export const MEETING_PLATFORM_OAUTH_NAME: Record<MeetingPlatformConnectProvider, MeetingPlatformOAuthProvider> = { zoom: 'zoom_recordings' };
+
 export const MEETING_PLATFORM_CONNECTION_STATUSES = ['active', 'expired'] as const;
 // suggested -> importing (the click) -> staged (the worker's bytes wait in staging) -> claimed (the member's request took them) -> imported; failed and dismissed branch off.
 export const MEETING_PLATFORM_RECORDING_STATUSES = ['suggested', 'importing', 'staged', 'claimed', 'imported', 'failed', 'dismissed'] as const;

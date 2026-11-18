@@ -1,5 +1,6 @@
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
+import { zChapters, zChaptersSave, zChaptersSaved } from './meeting-chapters.ts';
 import {
   zBulkApproveItems,
   SOCIAL_REVIEW_CHECKS_MAX,
@@ -201,7 +202,7 @@ import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockClos
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
 import { zBankSupplierMatch, zSupplierPayableLine, zSupplierPayableLineAsk, zSupplierPayableList, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentPrepare, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
 import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep } from './einvoice-notice.ts';
-import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceCorrectionOptions, zEInvoiceCorrectionRateExplained, zEInvoiceCorrectionRateInput, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
+import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceCorrectionOptions, zEInvoiceCorrectionRateExplained, zEInvoiceCorrectionRateInput, zEInvoiceReasonInput, zEInvoiceReasonSuggested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoicePrevious, zEInvoicePreviousInput, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStartCorrection, zEInvoiceStatus, zEInvoiceSuggested, zEInvoiceSuggestInput } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
@@ -274,7 +275,7 @@ import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
 import { zSinceYesterday, zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting, zTodayWeekly, zTodayWeeklyInput } from './today.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
-import { zMeetingPlatformConnectionRef, zMeetingPlatformConnectionView, zMeetingPlatformRecordingRef, zMeetingPlatformRecordingView } from './meeting-platform.ts';
+import { zMeetingPlatformConnectProvider, zMeetingPlatformConnectionRef, zMeetingPlatformConnectionView, zMeetingPlatformRecordingRef, zMeetingPlatformRecordingView } from './meeting-platform.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
 import { zEInvoiceDraftFromOrder, zOrderLineInvoiceStates, zOrderLineInvoiceStatesInput, zStockMoveFromOrderLine, zStockMoveFromOrderLineResult } from './finance-orders.ts';
 import { zQuoteAccept, zQuoteDecided, zQuoteDecline, zSalesOrder, zSalesOrderCancel, zSalesOrderDeliver, zSalesOrderDeliveryChanged, zSalesOrderHandoff, zSalesOrderListQuery, zSalesOrderPage, zSalesOrderRef, zSalesOrderSummary, zSalesOrderUndeliver } from './crm-sales-orders.ts';
@@ -576,6 +577,7 @@ import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsCommitted, zAdsCommittedInput, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
+import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStatesInput, zAdsBoostStateView } from './ads-boost.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
@@ -805,6 +807,15 @@ export const contract = {
     dismiss: oc.input(zMeetingPlatformRecordingRef).output(z.strictObject({ recordingId: zId, dismissed: z.literal(true) })),
     disconnect: oc.input(zMeetingPlatformConnectionRef).output(z.strictObject({ connectionId: zId, disconnected: z.literal(true) })),
     connectSandbox: oc.input(z.strictObject({})).output(z.strictObject({ connectionId: zId, reconnected: z.boolean() })),
+    // The platforms this deployment lets a member connect through the platform's own dialog (Zoom, C3): empty without the app credentials and a credential key, so the screen shows no connect button the
+    // server could not finish. Start returns where to send the browser; the platform sends it back to /meetings/oauth/<platform>/callback, whose screen finishes the attempt with the code and state.
+    providers: oc.output(z.array(zMeetingPlatformConnectProvider)),
+    connectStart: oc
+      .input(z.strictObject({ provider: zMeetingPlatformConnectProvider }))
+      .output(z.strictObject({ authorizeUrl: z.url({ protocol: /^https$/ }), state: zOAuthState, expiresAt: z.iso.datetime({ offset: true }) })),
+    connectFinish: oc
+      .input(z.strictObject({ provider: zMeetingPlatformConnectProvider, state: zOAuthState, code: z.string().min(1).max(2048) }))
+      .output(z.strictObject({ connectionId: zId, displayName: z.string(), reconnected: z.boolean() })),
   },
   taxRegistry: {
     lookup: oc.input(z.object({ taxCode: z.string().trim().max(20) })).output(zTaxRegistryEntry),
@@ -1339,6 +1350,9 @@ export const contract = {
       // as the summary), `enhancePreview` the finished expansion with their own lines and Vy's told apart, copied into the draft by `copySummary`.
       notesGet: oc.input(zMeetingRef).output(zNotes),
       notesSave: oc.input(zNotesSave).output(zNotesSaved),
+      // The table of contents (#3844): `chaptersGet` the recorder's draft and published chapters, or a reader's published ones; `chaptersSave` the recorder's own set, replacing their draft.
+      chaptersGet: oc.input(zMeetingRef).output(zChapters),
+      chaptersSave: oc.input(zChaptersSave).output(zChaptersSaved),
       enhance: oc.input(zSummaryRef).output(zSummarized),
       enhancePreview: oc.input(zNotesPreviewInput).output(zNotesPreview),
       // Speaker names (#3502): the recorder's Vy may suggest which attendee a speaker label is; `speakerSuggestions` is what a finished summary run suggested and still applies,
@@ -2476,6 +2490,9 @@ export const contract = {
       // The VAT rate a correction proposes for the nature a person picked (#3709): the basis and the rate by code, the fixed reason and the Official Letter 2121/TCT-CS note, and the accounting
       // coworker's plain explanation when the model is on and the AI budget allows (`ai` says why not). Read only; the person confirms by starting the correction. Owners, admins and members.
       correctionRate: oc.input(zEInvoiceCorrectionRateInput).output(zEInvoiceCorrectionRateExplained),
+      // The accounting coworker's proposal of the reason code of an adjusting or replacing invoice (#3690): a read that never stores; the code is one of the entered list, picked by number and checked in code,
+      // and the person confirms by starting the correction (`ai` says why there is none). The note typed is never stored or logged. Owners, admins and members.
+      suggestReason: oc.input(zEInvoiceReasonInput).output(zEInvoiceReasonSuggested),
       // An error only in the non-core content of an issued invoice (#2504): records it with the text that is right, and the two steps the seller does outside Ludy (tell the buyer; file the
       // form 04/SS-HĐĐT, a working answer of #2506 not confirmed by the accountant). Ludy sends nothing. Owners, admins and members.
       noticeOpen: oc.input(zEInvoiceNoticeOpen).output(zEInvoiceNotice),
@@ -2852,6 +2869,11 @@ export const contract = {
     campaignDraft: oc.input(z.strictObject({ draftId: zId })).output(zAdsCampaignDraftView),
     saveCampaignDraft: oc.input(zAdsCampaignDraftSaveCall).output(zAdsCampaignDraftView),
     discardCampaignDraft: oc.input(zAdsCampaignDraftDiscardCall).output(z.object({ draftId: zId })),
+    // Boost a published Social post (W3, #3834): the options (is it possible, with which accounts), the newest boost of each of some posts, and drafting one from a
+    // post. Drafting makes the same draft W1 builds; asking for approval is requestChange (campaign_launch), the same approval and launch as any plan.
+    boostOptions: oc.output(zAdsBoostOptions),
+    boostStates: oc.input(zAdsBoostStatesInput).output(z.array(zAdsBoostStateView)),
+    draftBoost: oc.input(zAdsBoostDraftCall).output(zAdsBoostDrafted),
     // Cancels a launch that has not started (W2-2): an approved plan's commitment against the caps is released. Owners and admins.
     cancelLaunch: oc.input(zAdsLaunchCancelCall).output(z.object({ launchId: zId, released: z.string() })),
     // Stops a launch that has started (W2-4a): owners and admins. It keeps the launch's commitment against the caps to at least today in the account's time zone (a person's

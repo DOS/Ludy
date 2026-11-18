@@ -8,6 +8,8 @@
 //
 // The provider and error-code unions below repeat those of `@crove/kernel-contract` (meeting-platform.ts); this package does not depend on the contract, and the kernel's tests hold the two equal.
 
+import { ZoomMeetingPlatform, type ZoomAppConfig } from './meeting-platform-zoom.ts';
+
 export type MeetingPlatformProvider = 'sandbox' | 'google_meet' | 'zoom' | 'microsoft_teams';
 export type MeetingPlatformErrorCode =
   | 'download_failed'
@@ -84,8 +86,39 @@ export interface MeetingPlatformAdapter {
   prepareDownload(credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, signal?: AbortSignal): Promise<MeetingPlatformDownload>;
   // The platform's own transcript of one recording, for an adapter that has one (Google Meet, C2). The job never opens a transcript download: the adapter calls its own API hosts.
   transcript?(credential: MeetingPlatformCredential, recordingId: string, signal?: AbortSignal): Promise<MeetingPlatformTranscript>;
-  // `refused`: the platform will not renew the grant, the job expires the connection.
+  // `refused`: the platform will not renew the grant, the job expires the connection (an adapter may also throw `connection_expired` for the same). It renews ONE token under a lock, in a transaction the database ends if it
+  // idles too long: it must honour `signal` and return the NEW refresh token a provider rotates, with the new expiry; a failure to reach the platform throws `platform_unavailable` and changes nothing.
   refresh?(credential: MeetingPlatformCredential, signal?: AbortSignal): Promise<MeetingPlatformCredential | { refused: true }>;
+}
+
+// The account a finished OAuth grant belongs to, as the kernel seals and stores it (the connect step; calendar-google.ts has the same shape for calendars).
+export interface MeetingPlatformAccount {
+  // A stable name of the account, lowercased (the connection's unique key per member and provider, and part of the binding its tokens are sealed for).
+  externalAccount: string;
+  displayName: string;
+  scopes: string[];
+  expiresAt: Date | null;
+  // The credential JSON the job and the sweep open (`accessToken`, `refreshToken`, `expiresAt`); sealed by the caller and dropped, never logged.
+  secret: string;
+}
+
+export interface MeetingPlatformAuthorizeInput {
+  state: string;
+  redirectUri: string;
+  codeChallenge: string | null;
+}
+
+// The connect dialog of a platform (C3 onwards). A separate interface, because the sandbox has none. `oauthProvider` is the name of the attempt in the shared oauth_state table.
+export interface MeetingPlatformOAuth {
+  readonly oauthProvider: 'google_recordings' | 'zoom_recordings' | 'teams_recordings';
+  readonly pkce: boolean;
+  authorizeUrl(input: MeetingPlatformAuthorizeInput): string;
+  // Throws MeetingPlatformError for a platform answer (a code the platform refused is `platform_refused`); never puts a token or the code in the error.
+  exchange(input: { code: string; redirectUri: string; codeVerifier: string | null }, signal?: AbortSignal): Promise<MeetingPlatformAccount>;
+}
+
+export function hasOAuth(adapter: MeetingPlatformAdapter | undefined): adapter is MeetingPlatformAdapter & MeetingPlatformOAuth {
+  return adapter !== undefined && typeof (adapter as Partial<MeetingPlatformOAuth>).authorizeUrl === 'function' && typeof (adapter as Partial<MeetingPlatformOAuth>).exchange === 'function';
 }
 
 /**
@@ -197,15 +230,18 @@ export class SandboxMeetingPlatform implements MeetingPlatformAdapter {
 }
 
 export interface MeetingPlatformAdaptersConfig {
+  // The Zoom adapter (C3, #3175) is there only when the deployment has a Zoom OAuth app (ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET); without one the provider has no adapter at all.
+  zoom?: ZoomAppConfig | undefined;
   // The offline sandbox is on unless this is `false`.
   sandbox?: boolean | undefined;
   // A shared sandbox store (tests and the dev stack add fixtures to it); a fresh seeded one when omitted.
   sandboxPlatform?: SandboxMeetingPlatform | undefined;
 }
 
-// The adapters a deployment has, by provider; a provider without one has no key. C2 to C4 add theirs here.
+// The adapters a deployment has, by provider; a provider without one has no key. C2 and C4 add theirs here; Zoom's (C3) is there when its app is configured.
 export function meetingPlatformAdapters(config: MeetingPlatformAdaptersConfig = {}): Partial<Record<MeetingPlatformProvider, MeetingPlatformAdapter>> {
   const adapters: Partial<Record<MeetingPlatformProvider, MeetingPlatformAdapter>> = {};
   if (config.sandbox !== false) adapters.sandbox = config.sandboxPlatform ?? new SandboxMeetingPlatform();
+  if (config.zoom) adapters.zoom = new ZoomMeetingPlatform(config.zoom);
   return adapters;
 }
