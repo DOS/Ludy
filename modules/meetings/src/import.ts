@@ -190,8 +190,8 @@ export const meetingImportDiscardEmpty = defineCommand({
 
 // The member's own step that finishes a TRANSCRIPT-ONLY import (C2, #3174): the worker's job staged the platform's transcript, the import route claimed it and read it again, and this command writes
 // the lines as the recorder's draft. It is no RPC command (nothing in the contract names it): only the route runs it, with the lines it read from the staged file, so a member cannot call it
-// with text of their own under the platform's name. It still refuses anything but the claimed transcript-only recording of this member for this meeting. The lines are Google's transcription:
-// born tainted, `source` 'google_meet' (nothing updates it), so the recorder reads them before anything is published, and no AI call or cost is involved. It also takes the recording to `imported`
+// with text of their own under the platform's name. It still refuses anything but the claimed transcript-only recording of this member for this meeting. The lines are the platform's
+// transcription (Google Meet's, or Microsoft Teams' where the recording came through a Teams connection): born tainted, `source` the platform (nothing updates it), so the recorder reads them before anything is published, and no AI call or cost is involved. It also takes the recording to `imported`
 // and ends the meeting, as recording a media does for an audio import. The audit row holds ids and a count, never a line.
 export const meetingImportTakeTranscript = defineCommand({
   name: 'meetings.import.take_transcript',
@@ -207,7 +207,7 @@ export const meetingImportTakeTranscript = defineCommand({
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Chỉ người ghi cuộc họp mới nhập được bản chép lời của nó');
     const row = await ctx.trx
       .selectFrom('crove_kernel.meeting_platform_recording')
-      .select(['id', 'length_seconds'])
+      .select(['id', 'length_seconds', 'connection_id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .where('user_id', '=', userId)
@@ -217,9 +217,12 @@ export const meetingImportTakeTranscript = defineCommand({
       .where('has_video', '=', false)
       .executeTakeFirst();
     if (!row) throw new DomainError('IMPORT_NOT_CLAIMED', 403, 'Cuộc họp này không có bản chép lời nào đang chờ nhập');
+    // Whose transcription it is follows the connection the recording came through, never the caller's input: a Teams connection labels its lines Microsoft's, every other one keeps the label of C2.
+    const connection = await ctx.trx.selectFrom('crove_kernel.meeting_platform_connection').select('provider').where('org_id', '=', ctx.orgId).where('id', '=', row.connection_id).executeTakeFirst();
+    const source = connection?.provider === 'microsoft_teams' ? 'microsoft_teams' : 'google_meet';
     // The same lock as every writer of a meeting's media, so a piece or an upload that races with this finds the meeting done or waits for it.
     await lockMeetingMedia(ctx, input.meetingId);
-    await replaceDraft(ctx, input.meetingId, input.segments, { tainted: true, source: 'google_meet' });
+    await replaceDraft(ctx, input.meetingId, input.segments, { tainted: true, source });
     await sql`SELECT crove_kernel.meeting_platform_recording_imported(${input.meetingId}::uuid)`.execute(ctx.trx);
     // The definer does nothing for a row that is no longer claimed (the sweep may have failed a stale claim since the read above, and the row cannot be locked by this role): then the
     // lines and the end of the meeting go with the rolled-back transaction, and the member is told so, never left with a half-imported meeting and a retry that makes a second one.
@@ -231,7 +234,7 @@ export const meetingImportTakeTranscript = defineCommand({
       UPDATE crove_meetings.meeting
       SET ended_at = LEAST(started_at + (${seconds}::int * interval '1 second'), ${ctx.now}::timestamptz), updated_at = ${ctx.now}::timestamptz
       WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid AND ended_at IS NULL AND started_at IS NOT NULL`.execute(ctx.trx);
-    ctx.audit({ meetingId: input.meetingId, recordingId: row.id, stored: input.segments.length, source: 'google_meet' });
+    ctx.audit({ meetingId: input.meetingId, recordingId: row.id, stored: input.segments.length, source });
     return { meetingId: input.meetingId, stored: input.segments.length };
   },
 });
