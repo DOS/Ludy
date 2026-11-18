@@ -10121,6 +10121,9 @@ export const en = {
     publishNow: 'Approve and schedule',
     publishNowHint: 'Saves the post, approves it as you and schedules it as chosen under When should it go out. A channel that needs another reviewer waits for them.',
     publishNowChanged: 'The review checklist or the approval rules just changed, so the post was sent for review instead of going out now. Approve it in the review panel.',
+    tools: { open: 'Tools' },
+    postViews: { label: 'How to view posts', list: 'List', calendar: 'Calendar', board: 'Board' },
+    screenBack: '← Posts',
     tabs: { upcoming: 'Schedule', calendar: 'Calendar', board: 'Board', review: 'To review', attention: 'Needs attention', drafts: 'Drafts', done: 'Published', archived: 'Archived', metrics: 'Metrics', library: 'Image library' },
     filters: {
       channel: 'Channel',
@@ -10148,7 +10151,7 @@ export const en = {
       sharedName: '{name} (shared)',
       ownedBy: '{name} · by {owner}',
       someone: 'a member',
-      save: 'Save view',
+      save: 'Save this filter',
       name: 'View name',
       namePlaceholder: 'For example: Lan’s posts this week',
       share: 'Share with the team',
@@ -10207,6 +10210,7 @@ export const en = {
       cancel: 'Cancel',
     },
     calendar: {
+      dayPosts: '{count, plural, one {# post on {day}, open the list} other {# posts on {day}, open the list}}',
       previous: 'Previous',
       campaignShade: 'The label "{name}" runs {period}; days outside the campaign are shaded.',
       outsideCampaign: 'Outside the campaign',

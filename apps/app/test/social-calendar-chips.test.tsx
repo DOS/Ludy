@@ -101,6 +101,19 @@ describe('one calendar chip per post (#1220)', () => {
     expect(html).toContain('Sandbox (Trang 1): Đã lên lịch; Sandbox (Trang 2): Đã lên lịch');
   });
 
+  it('draws a month day on a phone as dots and a button that opens the day, with chips from sm up (#3655)', () => {
+    client.current.setQueryData(['social', 'posts', 'list'], day12);
+    const html = render(<SocialCalendar slug="hoa-mai" names={names} canDecide canWrite />);
+    // One dots button for the day of twelve posts: four dots and the rest as a count, named for a screen reader with the day.
+    expect(count(html, 'data-testid="calendar-day-dots"')).toBe(1);
+    expect(html).toContain('sm:hidden');
+    expect(text(html)).toContain(`12 bài ngày ${dayId(day).split('-').reverse().join('/')}, mở danh sách`);
+    // The chips and "+N" are hidden below sm in the month view, but stay in the page for wider screens.
+    expect(html).toContain('contents max-sm:hidden');
+    // The day's "+" is visible on touch, not only on hover.
+    expect(html).toContain('max-sm:opacity-100');
+  });
+
   it('names mixed statuses in words, what needs a person first, and keeps a dashed chip for a planned draft', () => {
     const mixed = post(200, 'Bài hai trạng thái', [channel(201, 'scheduled', at(10), 1), channel(202, 'failed', at(10), 2)]);
     const draft = post(300, 'Bản nháp dự kiến', [channel(301, 'draft', at(11), 3), channel(302, 'draft', at(11), 4)], at(11));
@@ -112,7 +125,8 @@ describe('one calendar chip per post (#1220)', () => {
     // Under a channel filter only that channel's chip is drawn.
     const filtered = render(<SocialCalendar slug="hoa-mai" names={names} canDecide canWrite filters={{ connectionId: uuid(2) }} />);
     expect(count(filtered, 'data-testid="calendar-chip"')).toBe(1);
-    expect(text(filtered)).toContain('Bài hai trạng thái Sandbox · Đăng lỗi');
+    // The one channel by its name too (#3655), so two Pages of one network are told apart without a tooltip.
+    expect(text(filtered)).toContain('Bài hai trạng thái Sandbox (Trang 2) · Đăng lỗi');
   });
 
   it('lists every post and channel of the day in a dialog named by its heading, with each row’s actions', () => {

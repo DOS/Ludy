@@ -68,7 +68,13 @@ function channelCard(page: Page, name: string): Locator {
   return page.locator('[data-slot="card"]').filter({ hasText: name }).filter({ hasText: 'Viết riêng cho kênh này' });
 }
 
-// The calendar feed card of the Social calendar tab, by its title.
+// Opens an entry of the Posts screen's tools menu (#3655): the figures, the photo library, ideas, import, channels and the rest.
+async function openTool(page: Page, name: string): Promise<void> {
+  await page.getByRole('button', { name: 'Công cụ' }).click();
+  await page.getByRole('menuitem', { name, exact: true }).click();
+}
+
+// The calendar feed card of the Channels screen's general settings (#3655), by its title.
 const calendarCard = (page: Page) => page.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name: 'Đăng ký lịch', exact: true }) });
 
 const postIdOf = (page: Page) => new URL(page.url()).pathname.split('/').pop() ?? '';
@@ -306,7 +312,7 @@ test('asks in the app\'s dialog before cancelling many posts and before revoking
   });
 
   await test.step('revoking the calendar address asks first, and Escape changes nothing', async () => {
-    await page.goto(`/o/${slug}/social?tab=calendar`);
+    await page.goto(`/o/${slug}/social/channels`);
     // Found by its title: the button it holds changes once an address exists, so a locator built on it would lose the card.
     const card = calendarCard(page);
     await card.getByRole('button', { name: 'Tạo địa chỉ đăng ký' }).click();
@@ -344,7 +350,7 @@ test('keeps uploaded images in the library with the posts that use them', async 
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
 
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('tab', { name: 'Thư viện ảnh' }).click();
+  await openTool(page, 'Thư viện ảnh');
   const item = page.getByRole('tabpanel').getByRole('button', { name: /thu-vien\.png/ });
   await expect(item).toContainText('Dùng trong 1 bài');
 
@@ -359,7 +365,7 @@ test('keeps uploaded images in the library with the posts that use them', async 
 
   // One file in the library, used by both posts, which its panel lists.
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('tab', { name: 'Thư viện ảnh' }).click();
+  await openTool(page, 'Thư viện ảnh');
   await expect(item).toHaveCount(1);
   await expect(item).toContainText('Dùng trong 2 bài');
   await item.click();
@@ -407,7 +413,7 @@ test('imports a sheet with images, alt texts, labels and a first comment as draf
     `Bài có ảnh nội bộ ${run},Trang Nhập Ảnh,https://127.0.0.1/anh.jpg,,,Tháng 11\r\n` +
     `Bài thiếu ảnh ${run},Trang Nhập Ảnh,khong-co.jpg,,,\r\n`;
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Nhập từ tệp' }).click();
+  await openTool(page, 'Nhập từ tệp');
   await page.getByLabel('Chọn tệp CSV hoặc Excel').setInputFiles([{ name: 'ke-hoach.csv', mimeType: 'text/csv', buffer: Buffer.from(sheet) }]);
   await expect(page.getByText('1 trên 3 dòng sẵn sàng.')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText('Không tải ảnh từ "https://127.0.0.1/anh.jpg" vì đây là địa chỉ trong mạng nội bộ')).toBeVisible();
@@ -490,7 +496,7 @@ test('shows the latest metrics of a published channel on the post and in the Met
 
   // The Metrics tab: the window's totals and the channel's row.
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('tab', { name: 'Số liệu' }).click();
+  await openTool(page, 'Số liệu');
   const panel = page.getByRole('tabpanel');
   const row = panel.getByRole('row').filter({ has: page.getByRole('link', { name: body }) });
   await expect(row.getByRole('cell')).toHaveText([new RegExp(`^${body}`), '1.234', '56', '7', '3']);
@@ -506,7 +512,7 @@ test('shows the latest metrics of a published channel on the post and in the Met
     { channel },
   );
   await page.reload();
-  await page.getByRole('tab', { name: 'Số liệu' }).click();
+  await openTool(page, 'Số liệu');
   const growth = page.getByRole('tabpanel').locator('[data-slot="card"]').filter({ hasText: 'Tăng trưởng kênh trong 30 ngày' });
   await expect(growth).toContainText('1.080 người theo dõi');
   await expect(growth).toContainText('+80');
@@ -781,7 +787,7 @@ test('turns an idea on the board into a draft, which moves it to Drafted (#701)'
   await createOrg(page, 'Công ty Ý Tưởng');
   await connectSandbox(page, 'Trang Ý Tưởng');
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Ý tưởng', exact: true }).click();
+  await openTool(page, 'Ý tưởng');
   await page.getByRole('button', { name: 'Thêm ý tưởng' }).click();
   await page.getByLabel('Ý tưởng', { exact: true }).fill('Món mới mùa thu');
   await page.getByLabel('Ghi chú (không bắt buộc)').fill('Chụp ở quầy, ánh sáng buổi sáng');
@@ -833,7 +839,7 @@ test('moves a draft to review on the board and approves it with four-eyes; an il
     if (/\/api\/rpc\/social\/(posts\/submit|variants\/(decide|schedule|unschedule))/.test(r.url())) moves.push(r.url());
   });
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('tab', { name: 'Bảng' }).click();
+  await page.getByRole('button', { name: 'Bảng', exact: true }).click();
   await expect(page).toHaveURL(/tab=board/);
   const column = (name: string) => page.getByRole('region', { name, exact: true });
   const card = page.getByTestId('board-card').filter({ hasText: 'Bài chuyển trên bảng' });
@@ -1181,15 +1187,16 @@ test('draws a post on six channels as one chip, and "+9" opens every post of the
   const [seventh] = sql<{ id: string }>(`SELECT id FROM crove_social.post WHERE body = 'Bài số 7' AND org_id = (SELECT org_id FROM crove_social.post WHERE id = :'six')`, { six });
   await expect(page).toHaveURL(new RegExp(`/social/${seventh?.id ?? 'missing'}$`));
 
-  // At phone width the month and the day's list fit the screen, and "+9" still opens it.
+  // At phone width the month and the day's list fit the screen: the day shows dots, not chips (#3655), and a tap on them opens the list.
   await page.setViewportSize({ width: 360, height: 780 });
   await page.goto(`/o/${slug}/social?tab=calendar`);
   await cell.scrollIntoViewIfNeeded();
   const inside = (box: { x: number; width: number } | null) => box !== null && box.x >= 0 && box.x + box.width <= 360;
   expect(inside(await cell.locator('xpath=..').boundingBox())).toBe(true);
-  const narrowMore = cell.getByRole('button', { name: /^\+9 bài nữa/ });
-  expect(inside(await narrowMore.boundingBox())).toBe(true);
-  await narrowMore.click();
+  await expect(cell.getByTestId('calendar-chip').first()).toBeHidden();
+  const dots = cell.getByTestId('calendar-day-dots');
+  expect(inside(await dots.boundingBox())).toBe(true);
+  await dots.click();
   await expect(dialog).toBeVisible();
   expect(inside(await dialog.boundingBox())).toBe(true);
   await dialog.getByRole('button', { name: 'Đóng' }).click();
@@ -1236,7 +1243,7 @@ test('makes a client report link without the best posts and the audience, which 
     { channel },
   );
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('tab', { name: 'Số liệu' }).click();
+  await openTool(page, 'Số liệu');
   const panel = page.getByRole('tabpanel');
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(new Date());
   await panel.getByLabel('Từ ngày', { exact: true }).fill(today);
