@@ -1346,8 +1346,8 @@ export interface FinanceJournalVoucherTable {
   payout_settlement_id: ColumnType<string | null, string | null, NotGranted>;
   payout_bank_line_id: ColumnType<string | null, string | null, NotGranted>;
   fee_document_id: ColumnType<string | null, string | null, NotGranted>;
-  surplus_count_id: ColumnType<string | null, string | null, NotGranted>;
   settlement_month: ColumnType<string | null, string | null, NotGranted>;
+  surplus_count_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.legal_entity_books */
