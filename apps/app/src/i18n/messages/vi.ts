@@ -1748,6 +1748,11 @@ export const vi = {
     moveQuantity: 'Số lượng',
     moveSource: 'Nguồn',
     reverse: 'Đảo phát sinh',
+    return: 'Hàng trả lại',
+    returnQuantity: 'Số lượng hàng trả lại (còn trả được {left})',
+    returnLeft: 'Còn {left}',
+    returnHint: 'Khi hóa đơn bán bị hủy, các lần trả lại của nó cũng bị đảo theo. Hàng thực sự đã về kho thì ghi nhận trả lại lại, trên lần xuất của hóa đơn thay thế.',
+    returnConfirm: 'Xác nhận trả lại',
     reverseConfirm: 'Xác nhận đảo',
     reversed: 'Đã đảo',
     close: 'Đóng',
@@ -1815,7 +1820,7 @@ export const vi = {
     balance: 'Tồn',
     cardValue: 'Giá trị nhập',
     directions: { purchase: 'Mua vào', sale: 'Bán ra' },
-    sources: { document_line: 'Từ hóa đơn', manual: 'Nhập tay', reversal: 'Đảo', order_line: 'Từ đơn hàng sàn', count: 'Kiểm kê', crm_order_line: 'Giao hàng của đơn bán' },
+    sources: { document_line: 'Từ hóa đơn', manual: 'Nhập tay', reversal: 'Đảo', order_line: 'Từ đơn hàng sàn', count: 'Kiểm kê', crm_order_line: 'Giao hàng của đơn bán', sale_return: 'Hàng khách trả lại' },
     trades: { goods: 'Hàng hóa', services: 'Dịch vụ', catering: 'Ăn uống', digital_content: 'Nội dung số', other: 'Khác' },
     // The finance coworker on stock (#2514): the item it suggests for an unassigned line.
     suggest: {
@@ -12633,6 +12638,10 @@ export const vi = {
       STOCK_COUNT_STALE: 'Số liệu kho đã thay đổi từ khi lập đề xuất; hãy từ chối đề xuất này và lập lại.',
       STOCK_COUNT_UNSUPPORTED: 'Không lập được bút toán chênh lệch kiểm kê: quá nhiều tài khoản hoặc có số tiền lẻ dưới 1 đồng.',
       STOCK_MOVE_COUNT: 'Phát sinh này là điều chỉnh của một lần kiểm kê nên không đảo được; hãy kiểm kê lại.',
+      STOCK_MOVE_HAS_RETURN: 'Lần bán này đã có hàng trả lại; hãy đảo các lần trả lại trước.',
+      STOCK_RETURN_NOT_SALE: 'Chỉ ghi nhận hàng trả lại cho một lần xuất bán hàng.',
+      STOCK_RETURN_REVERSED: 'Lần xuất bán này đã được đảo nên không ghi nhận thêm hàng trả lại.',
+      STOCK_RETURN_EXCEEDS: 'Số lượng vượt quá số còn trả lại được của lần bán này.',
       STOCK_COUNT_ENTRY: 'Bút toán này ghi chênh lệch của một lần kiểm kê kho nên không đảo được; hãy kiểm kê lại.',
       STOCK_COUNT_ITEM_INACTIVE: 'Mặt hàng này đã ngừng dùng; hãy bật lại trước khi kiểm kê.',
       STOCK_COUNT_ITEM_ENTITY: 'Mặt hàng và lần kiểm kê thuộc hai pháp nhân khác nhau.',
@@ -13491,6 +13500,7 @@ export const vi = {
       stock_move: {
         list: 'Xem phát sinh kho của mặt hàng',
         reverse: 'Đảo một phát sinh kho',
+        return: 'Ghi nhận trả lại một phần hàng đã bán',
       },
       einvoice_series: {
         list: 'Xem ký hiệu hóa đơn',

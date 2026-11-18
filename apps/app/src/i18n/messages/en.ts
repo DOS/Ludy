@@ -1750,6 +1750,11 @@ export const en = {
     moveQuantity: 'Quantity',
     moveSource: 'Source',
     reverse: 'Reverse move',
+    return: 'Goods returned',
+    returnQuantity: 'Quantity returned ({left} still returnable)',
+    returnLeft: '{left} left',
+    returnHint: 'When a sale invoice is voided, its returns are undone with it. Goods that really did come back are returned again, against the stock-out of the replacement invoice.',
+    returnConfirm: 'Confirm return',
     reverseConfirm: 'Confirm reverse',
     reversed: 'Reversed',
     close: 'Close',
@@ -1817,7 +1822,7 @@ export const en = {
     balance: 'Balance',
     cardValue: 'Value in',
     directions: { purchase: 'Purchase', sale: 'Sale' },
-    sources: { document_line: 'From an invoice', manual: 'Entered by hand', reversal: 'Reversal', order_line: 'From a marketplace order', count: 'Stock count', crm_order_line: 'Delivery of a sales order' },
+    sources: { document_line: 'From an invoice', manual: 'Entered by hand', reversal: 'Reversal', order_line: 'From a marketplace order', count: 'Stock count', crm_order_line: 'Delivery of a sales order', sale_return: 'Goods returned by a customer' },
     trades: { goods: 'Goods', services: 'Services', catering: 'Catering', digital_content: 'Digital content', other: 'Other' },
     // The finance coworker on stock (#2514): the item it suggests for an unassigned line.
     suggest: {
@@ -12620,6 +12625,10 @@ export const en = {
       STOCK_COUNT_STALE: 'The stock changed since the proposal was made; reject it and ask again.',
       STOCK_COUNT_UNSUPPORTED: 'The entry for the count cannot be made: too many accounts or an amount with a fraction of a dong.',
       STOCK_MOVE_COUNT: 'This move is the adjustment of a count, so it cannot be reversed; count again.',
+      STOCK_MOVE_HAS_RETURN: 'This sale already has goods returned against it; undo the returns first.',
+      STOCK_RETURN_NOT_SALE: 'Goods can only be returned against the stock-out of a sale.',
+      STOCK_RETURN_REVERSED: 'This sale stock-out has been reversed, so nothing more can be returned against it.',
+      STOCK_RETURN_EXCEEDS: 'The quantity is more than what is still returnable on this sale.',
       STOCK_COUNT_ENTRY: 'This entry posted the difference of a stock count, so it cannot be reversed; count again.',
       STOCK_COUNT_ITEM_INACTIVE: 'This item is no longer in use; switch it back on before counting it.',
       STOCK_COUNT_ITEM_ENTITY: 'The item and the count belong to two different legal entities.',
@@ -13492,6 +13501,7 @@ export const en = {
       stock_move: {
         list: 'View the stock moves of an item',
         reverse: 'Reverse a stock move',
+        return: 'Return part of the goods of a sale',
       },
       einvoice_series: {
         list: 'View the invoice series',
