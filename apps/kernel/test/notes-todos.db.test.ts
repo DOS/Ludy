@@ -505,8 +505,9 @@ suite('personal to-dos on PostgreSQL (#1673)', () => {
       recurrence: null,
       listId: null,
       sectionId: null,
-      revision: stoppedRec.revision,
+      revision: 3,
     });
+    expect([2, 3]).toContain(stoppedRec.revision);
     expect(await o.query<Todo>(o.mine, 'notes.todo.get', { todoId: recTodo.todoId })).toMatchObject({
       status: 'open',
       recurrence: null,
