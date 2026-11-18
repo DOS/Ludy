@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { EXTRACT_TIMING } from '@crove/extract-contract';
 import { misaBlockers } from '@crove/einvoice';
-import { zExtensionId } from '@crove/kernel-contract';
+import { MODULE_IDS, zExtensionId, type ModuleId } from '@crove/kernel-contract';
 import type { UsageLimits } from '@crove/kernel';
 import { parseAllowedEmails } from './auth-access.ts';
 import { checkHostedLoginUrl, hostedLoginName } from './auth-hosted-login.ts';
@@ -27,8 +27,8 @@ const optional = z
 
 // Modules this build ships (plan Decision 12, ADR-0031). kernel is always on; the others are on unless CROVE_MODULES
 // leaves them out.
-export const AVAILABLE_MODULES = ['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign'] as const;
-export type ModuleId = (typeof AVAILABLE_MODULES)[number];
+export const AVAILABLE_MODULES = MODULE_IDS;
+export type { ModuleId };
 
 // CROVE_MODULES: a comma-separated list such as `finance`. Unset or empty enables every available module; kernel is
 // added when missing. An unknown name stops the boot, so a typo never silently turns a module off. The prober reads it

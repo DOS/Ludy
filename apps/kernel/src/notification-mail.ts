@@ -81,7 +81,7 @@ export async function renderNotificationMail(input: MailTemplateInput): Promise<
     typeof channel === 'string' && channel ? `Kênh: ${oneLine(channel)}` : null,
     `${open}: ${url}`,
     '',
-    `Thư này được gửi từ ${input.brand} cho ${oneLine(org)}. Bạn có thể tắt email trong mục Thông báo của Social.`,
+    `Thư này được gửi từ ${input.brand} cho ${oneLine(org)}. Bạn có thể tắt email trong mục Cập nhật bài đăng của Engage.`,
   ].filter((l) => l !== null);
   const html = `<!doctype html><html lang="vi"><body style="font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#18181b;line-height:1.5">
 <p style="margin:0 0 12px">${escapeHtml(leadText)}</p>
@@ -91,7 +91,7 @@ ${typeof channel === 'string' && channel ? `<p style="margin:0 0 4px"><strong>K�
 ${ahead ? `<p style="margin:0 0 4px">${escapeHtml(ahead)}</p>` : ''}
 ${better ? `<p style="margin:0 0 4px">${escapeHtml(better)}</p>` : ''}
 <p style="margin:16px 0"><a href="${escapeHtml(url)}" style="color:#b91c1c">${escapeHtml(open)}</a></p>
-<p style="font-size:12px;color:#71717a">Thư này được gửi từ ${escapeHtml(input.brand)} cho ${escapeHtml(oneLine(org))}. Bạn có thể tắt email trong mục Thông báo của Social.</p>
+<p style="font-size:12px;color:#71717a">Thư này được gửi từ ${escapeHtml(input.brand)} cho ${escapeHtml(oneLine(org))}. Bạn có thể tắt email trong mục Cập nhật bài đăng của Engage.</p>
 </body></html>`;
   return { subject: [...oneLine(input.subject ?? leadText)].slice(0, 200).join(''), text: lines.join('\n'), html };
 }
