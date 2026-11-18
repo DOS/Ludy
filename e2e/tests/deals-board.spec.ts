@@ -96,7 +96,7 @@ test('a member adds deals, moves them between stages and the board keeps its ord
     await open.click();
     const sheet = page.getByTestId('deal-sheet');
     await expect(sheet).toBeVisible();
-    await expect(sheet.getByRole('heading', { name: 'Tư vấn thuế' })).toBeVisible();
+    await expect(sheet.getByRole('heading', { name: 'Tư vấn thuế', exact: true })).toBeVisible();
     for (const name of ['Thông tin cơ hội', 'Báo giá', 'Lịch hẹn']) await expect(sheet.getByRole('heading', { name, exact: true }).first()).toBeVisible();
     await expect(sheet.getByRole('form', { name: 'Sửa cơ hội' }).getByLabel('Tên cơ hội')).toHaveValue('Tư vấn thuế');
     await expect(sheet.getByRole('button', { name: 'Tạo báo giá' })).toBeVisible();
