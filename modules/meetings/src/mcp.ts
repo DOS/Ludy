@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The two Meetings reads an MCP grant may run (#3731, owner decision 2026-11-18, ADR-0051): `ludy_meetings_list` (meetings.mcp.list) and `ludy_meeting_minutes` (meetings.mcp.minutes). Both are R0 reads
+// The three Meetings reads an MCP grant may run (#3731, #3804, owner decision 2026-11-18, ADR-0051): `ludy_meetings_list` (meetings.mcp.list), `ludy_meeting_minutes` (meetings.mcp.minutes) and `ludy_meetings_open_actions` (meetings.mcp.open_actions). All are R0 reads
 // for a COMPANY grant (an owner's or admin's); the scope is `ludy.read`. A member grant reads nothing of Meetings (the hold of 2026-11-13 on member-private tools stays): the tools are not listed for it,
 // the queries refuse it, and the database gives its sealed context no row of the module.
 //
@@ -15,7 +15,7 @@
 //
 // A meeting that is unknown, of another org, of attendees only, not published, or whose text period ended answers one and the same MEETING_NOT_FOUND, so a client learns nothing about meetings it may not read.
 import { sql } from 'kysely';
-import { MCP_ACTIONS_MAX, MCP_DECISIONS_MAX, MCP_LINE_MAX, MCP_SUMMARY_LINES_MAX, plainLine, zMcpMeetingsInput, zMcpMinutesInput } from '@crove/kernel-contract';
+import { MCP_ACTIONS_MAX, MCP_DECISIONS_MAX, MCP_LINE_MAX, MCP_SUMMARY_LINES_MAX, plainLine, zMcpMeetingsInput, zMcpMinutesInput, zMcpOpenActionsInput } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { vnDay } from './retention.ts';
@@ -34,6 +34,20 @@ export interface McpMeetingRow {
 }
 export interface McpMeetings {
   meetings: McpMeetingRow[];
+  total: number;
+  truncated: boolean;
+}
+export interface McpOpenAction {
+  meetingId: string;
+  meetingTitle: string;
+  meetingStartedAt: string;
+  title: string;
+  owner: string | null;
+  dueDate: string | null;
+  status: 'open';
+}
+export interface McpOpenActions {
+  items: McpOpenAction[];
   total: number;
   truncated: boolean;
 }
@@ -171,4 +185,55 @@ export const mcpMinutes = defineQuery({
   },
 });
 
-export const mcpMeetingsQueries = [mcpMeetings, mcpMinutes];
+// `ludy_meetings_open_actions` (#3804): the published, unflagged action items nobody made a task of yet, across the meetings `visibleMeetings` admits (visibility 'org', a published result, inside the text
+// period), the newest meeting first. An item is open while no task was made from it (the same reading as `open` in the minutes). Per item exactly: the meeting's id, title and start, the item's title, the
+// owner AS SAID (the free `who` text, never the matched user id), the due date when one was matched, and the status. Never a user id, the transcript, a draft or a flagged item. Every text is one plain line.
+export const mcpOpenActions = defineQuery({
+  name: 'meetings.mcp.open_actions',
+  input: zMcpOpenActionsInput,
+  access: GRANTORS,
+  mcp: { scope: 'ludy.read' },
+  handler: async (ctx, input): Promise<McpOpenActions> => {
+    requireCompanyGrant(ctx);
+    const filtered = () => {
+      let q = visibleMeetings(ctx)
+        .innerJoin('crove_meetings.action_item as a', (join) => join.onRef('a.org_id', '=', 'm.org_id').onRef('a.meeting_id', '=', 'm.id'))
+        .where('a.org_id', '=', ctx.orgId)
+        .where('a.stage', '=', 'published')
+        .where('a.task_id', 'is', null)
+        // An item code flagged (a contact detail in its title, ...) is not handed to an outside AI app: a person reviews it in the app.
+        .where(sql<boolean>`a.flags = '[]'::jsonb`);
+      // An item with no due date is not before any day, so it is left out when the filter is set.
+      if (input.dueBefore) q = q.where(sql<boolean>`a.when_parsed < ${input.dueBefore}::date`);
+      return q;
+    };
+    const rows = await filtered()
+      .select(['m.id as meeting_id', 'm.title as meeting_title', startOf.as('at'), 'a.title', 'a.who_drafted', sql<string | null>`a.when_parsed::text`.as('when_parsed')])
+      .orderBy(startOf, 'desc')
+      .orderBy('m.id', 'desc')
+      .orderBy('a.transcript_seconds')
+      .orderBy('a.created_at')
+      .orderBy('a.id')
+      .limit(input.limit)
+      .execute();
+    const counted = await filtered()
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .executeTakeFirst();
+    const total = Number(counted?.n ?? 0);
+    const items = rows.map((r): McpOpenAction => {
+      const owner = plainLine(r.who_drafted, WHO_MAX);
+      return {
+        meetingId: r.meeting_id,
+        meetingTitle: plainLine(r.meeting_title, TITLE_MAX),
+        meetingStartedAt: (r.at as Date).toISOString(),
+        title: plainLine(r.title, TITLE_MAX),
+        owner: owner === '' ? null : owner,
+        dueDate: r.when_parsed,
+        status: 'open',
+      };
+    });
+    return { items, total, truncated: total > items.length };
+  },
+});
+
+export const mcpMeetingsQueries = [mcpMeetings, mcpMinutes, mcpOpenActions];
