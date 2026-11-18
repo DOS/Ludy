@@ -179,9 +179,12 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
   }, [typed]); // eslint-disable-line react-hooks/exhaustive-deps
   const channelList = (channels.data ?? []).filter((c) => c.status !== 'revoked');
   // Nothing connected (the channel list has loaded and holds none): the empty New tab says so instead of "no new conversations".
-  const noChannels = channels.data !== undefined && channelList.length === 0;
-  // Neither empty text is drawn until the channel list has answered: a list that finishes first must not say "all clear" to an org with no channel for a moment.
-  const emptyReady = list.loaded && channels.data !== undefined;
+  // "Nothing connected" counts the Inbox's own email connection too (made by the first customer mail): an org that only receives forwarded email is not unconnected.
+  const everyChannel = useQuery(orpc.channels.list.queryOptions({ input: { includeMessaging: true, includeEmail: true } }));
+  const noChannels = everyChannel.data !== undefined && everyChannel.data.every((c) => c.status === 'revoked');
+  // Neither empty text is drawn until that list has answered (or failed, when the ordinary empty text stands): a list that finishes first must not say "all clear" to an org
+  // with no channel for a moment.
+  const emptyReady = list.loaded && (everyChannel.data !== undefined || everyChannel.isError);
   const { slug } = useParams({ strict: false }) as { slug: string };
   const org = useQuery(orpc.org.get.queryOptions());
   const paneClass = 'min-h-0 min-w-0';
