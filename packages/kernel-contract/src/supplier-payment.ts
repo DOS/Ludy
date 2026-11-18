@@ -52,6 +52,9 @@ export const zSupplierPayment = z.strictObject({
   staleAt: z.string().nullable(),
   cancelledAt: z.string().nullable(),
   paidAt: z.string().nullable(),
+  // When a bank file with this payment was last handed over (the database clock) and how many times; a second file needs the caller's confirmation.
+  exportedAt: z.string().nullable(),
+  exportCount: z.number().int().min(0),
 });
 export type SupplierPayment = z.infer<typeof zSupplierPayment>;
 export const zSupplierPaymentList = z.array(zSupplierPayment);
@@ -65,7 +68,8 @@ export const zSupplierPaymentsWaiting = z.array(zSupplierPaymentWaiting);
 // committed before it reads, it needs a second factor used in the last 5 minutes, and it opens the sealed holder and number of each payment's pinned account there and nowhere else. The answer is
 // returned to the caller and never stored. One file holds the payments the caller names, all in one currency; a payment the file cannot carry refuses the whole file, naming the payment (never a number).
 export const SUPPLIER_PAYMENT_BANK_FILE_MAX = 200;
-export const zSupplierPaymentBankFileQuery = z.strictObject({ paymentIds: z.array(z.uuid()).min(1).max(SUPPLIER_PAYMENT_BANK_FILE_MAX) });
+// reexport: the caller confirms that a payment whose file was handed over before gets a second file (the first is named in the refusal otherwise).
+export const zSupplierPaymentBankFileQuery = z.strictObject({ paymentIds: z.array(z.uuid()).min(1).max(SUPPLIER_PAYMENT_BANK_FILE_MAX), reexport: z.boolean().optional() });
 export type SupplierPaymentBankFileQuery = z.infer<typeof zSupplierPaymentBankFileQuery>;
 export const zSupplierPaymentBankFileRow = z.strictObject({
   seq: z.string(),
@@ -81,6 +85,11 @@ export const zSupplierPaymentBankFile = z.strictObject({
   total: zAmount,
 });
 export type SupplierPaymentBankFile = z.infer<typeof zSupplierPaymentBankFile>;
-// The audit row of a handed-over file: a count and the currency, never a name, a number or an amount.
-export const zSupplierPaymentBankFileExport = z.strictObject({ rows: z.number().int().min(1).max(SUPPLIER_PAYMENT_BANK_FILE_MAX), currency: z.string().regex(/^[A-Z]{3}$/) });
+// The audit row of a handed-over file and the marker on each payment: the payments, a count and the currency, never a name, a number or an amount. reexport says the caller confirmed a second file.
+export const zSupplierPaymentBankFileExport = z.strictObject({
+  paymentIds: z.array(z.uuid()).min(1).max(SUPPLIER_PAYMENT_BANK_FILE_MAX),
+  rows: z.number().int().min(1).max(SUPPLIER_PAYMENT_BANK_FILE_MAX),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  reexport: z.boolean().optional(),
+});
 export type SupplierPaymentBankFileExport = z.infer<typeof zSupplierPaymentBankFileExport>;

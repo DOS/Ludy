@@ -9,6 +9,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { SupplierBankPanel } from '../components/supplier-bank-panel.tsx';
+import { SupplierPaymentsPanel } from '../components/supplier-payments-panel.tsx';
 import { EditParty, MergeParty, PartyDuplicates, refreshParties } from '../components/party-edit.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -184,6 +185,7 @@ export function VendorsPage() {
     <>
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
       {canEdit && <DuplicateHints canManage={canManage} />}
+      {canManage && <SupplierPaymentsPanel names={new Map((vendors.data ?? []).map((v) => [v.id, v.name]))} />}
       <div className="mb-4 max-w-sm">
         <Input placeholder={t('search')} value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
