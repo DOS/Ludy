@@ -59,7 +59,7 @@ export function RecordingChip() {
           <span>{t(local.paused ? 'chip.paused' : 'chip.recording', { time: formatClock(local.elapsedMs()) })}</span>
         </Link>
         {local.stop && (
-          <Button type="button" size="sm" variant="destructive" className="h-9 rounded-full px-3 text-xs md:h-6" data-testid="recording-chip-stop" onClick={() => local.stop?.()}>
+          <Button type="button" size="sm" variant="destructive" className="h-6 min-h-9 rounded-full px-3 text-xs md:min-h-0" data-testid="recording-chip-stop" onClick={() => local.stop?.()}>
             {t('chip.stop')}
           </Button>
         )}

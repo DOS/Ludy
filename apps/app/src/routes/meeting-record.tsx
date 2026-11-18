@@ -260,10 +260,10 @@ export function MeetingRecordPage() {
             <p className="text-xs text-muted-foreground">{t('record.keepsGoing')}</p>
             {recording && (
               <div className="flex gap-2">
-                <Button variant="outline" className="h-11 sm:h-8" onClick={pauseOrResume}>
+                <Button variant="outline" className="min-h-11 sm:min-h-0" onClick={pauseOrResume}>
                   {phase === 'paused' ? t('record.resume') : t('record.pause')}
                 </Button>
-                <Button variant="destructive" className="h-11 sm:h-8" onClick={stop}>
+                <Button variant="destructive" className="min-h-11 sm:min-h-0" onClick={stop}>
                   {t('record.stop')}
                 </Button>
               </div>
