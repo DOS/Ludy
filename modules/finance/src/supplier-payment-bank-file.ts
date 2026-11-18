@@ -57,8 +57,6 @@ type Candidate = {
   invoice_number: string | null;
 };
 
-const refused = (code: string, status: 404 | 409 | 422, message: string, paymentId: string) => new DomainError(code, status, message, { paymentId });
-
 export const supplierPaymentBankFileGet = defineQuery({
   name: 'finance.supplier_payment.bank_file.get',
   input: zSupplierPaymentBankFileQuery,
@@ -86,19 +84,19 @@ export const supplierPaymentBankFileGet = defineQuery({
        WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ANY (${ids}::uuid[])`.execute(ctx.trx);
     const byId = new Map(rows.map((r) => [r.id, r]));
     // The order the caller named the payments in is the file's order before it is sorted for the bank; a missing one is named.
-    for (const id of ids) if (!byId.has(id)) throw refused('SUPPLIER_PAYMENT_NOT_FOUND', 404, 'Không tìm thấy một khoản chi trong danh sách', id);
+    for (const id of ids) if (!byId.has(id)) throw new DomainError('SUPPLIER_PAYMENT_NOT_FOUND', 404, 'Không tìm thấy một khoản chi trong danh sách', { paymentId: id });
     const chosen = ids.map((id) => byId.get(id) as Candidate);
     for (const p of chosen) {
-      if (p.status !== 'approved') throw refused('SUPPLIER_PAYMENT_NOT_APPROVED', 409, 'Một khoản chi không còn ở trạng thái đã duyệt; không xuất được file', p.id);
-      if (!p.ready) throw refused('SUPPLIER_PAYMENT_HELD', 409, 'Một khoản chi còn trong thời gian giữ 24 giờ; chưa xuất được file', p.id);
-      if (!p.account_ok) throw refused('SUPPLIER_PAYMENT_ACCOUNT_CHANGED', 409, 'Tài khoản ngân hàng của một nhà cung cấp đã thay đổi từ lúc duyệt; hãy tạo đề xuất chi mới', p.id);
-      if (p.voided) throw refused('SUPPLIER_PAYMENT_DOCUMENT', 409, 'Hóa đơn của một khoản chi đã bị hủy; không xuất được file', p.id);
+      if (p.status !== 'approved') throw new DomainError('SUPPLIER_PAYMENT_NOT_APPROVED', 409, 'Một khoản chi không còn ở trạng thái đã duyệt; không xuất được file', { paymentId: p.id });
+      if (!p.ready) throw new DomainError('SUPPLIER_PAYMENT_HELD', 409, 'Một khoản chi còn trong thời gian giữ 24 giờ; chưa xuất được file', { paymentId: p.id });
+      if (!p.account_ok) throw new DomainError('SUPPLIER_PAYMENT_ACCOUNT_CHANGED', 409, 'Tài khoản ngân hàng của một nhà cung cấp đã thay đổi từ lúc duyệt; hãy tạo đề xuất chi mới', { paymentId: p.id });
+      if (p.voided) throw new DomainError('SUPPLIER_PAYMENT_DOCUMENT', 409, 'Hóa đơn của một khoản chi đã bị hủy; không xuất được file', { paymentId: p.id });
       // The amount frozen in the request that was approved is the amount the file pays: a payment whose own amount differs (or whose request cannot be read) is refused.
-      if (p.frozen === null || !money(p.frozen).equals(money(p.amount))) throw refused('SUPPLIER_PAYMENT_AMOUNT_MISMATCH', 422, 'Số tiền của một khoản chi không khớp số tiền đã duyệt; không xuất được file', p.id);
+      if (p.frozen === null || !money(p.frozen).equals(money(p.amount))) throw new DomainError('SUPPLIER_PAYMENT_AMOUNT_MISMATCH', 422, 'Số tiền của một khoản chi không khớp số tiền đã duyệt; không xuất được file', { paymentId: p.id });
     }
     const currency = (chosen[0] as Candidate).currency;
     const other = chosen.find((p) => p.currency !== currency);
-    if (other) throw refused('SUPPLIER_PAYMENT_CURRENCY_MIXED', 422, 'Một file chỉ gồm các khoản chi cùng một loại tiền', other.id);
+    if (other) throw new DomainError('SUPPLIER_PAYMENT_CURRENCY_MIXED', 422, 'Một file chỉ gồm các khoản chi cùng một loại tiền', { paymentId: other.id });
     // Only now are the sealed values opened, in one batch, after the audit row.
     const items = chosen.flatMap((p) => [
       { sealed: p.holder_sealed as string, place: HOLDER_PLACE, ref: supplierSubject(p.party_id) },
@@ -109,9 +107,9 @@ export const supplierPaymentBankFileGet = defineQuery({
     const lines = chosen.map((p, i) => {
       const holder = opened[2 * i];
       const number = opened[2 * i + 1];
-      if (typeof holder !== 'string' || typeof number !== 'string') throw refused('SUPPLIER_PAYMENT_ACCOUNT_ERASED', 422, 'Dữ liệu ngân hàng của một nhà cung cấp đã bị xóa; không xuất được file', p.id);
+      if (typeof holder !== 'string' || typeof number !== 'string') throw new DomainError('SUPPLIER_PAYMENT_ACCOUNT_ERASED', 422, 'Dữ liệu ngân hàng của một nhà cung cấp đã bị xóa; không xuất được file', { paymentId: p.id });
       const account = clean(number.replace(/\s+/g, ''));
-      if (account === '' || clean(holder) === '') throw refused('SUPPLIER_PAYMENT_ACCOUNT_ERASED', 422, 'Dữ liệu ngân hàng của một nhà cung cấp không đọc được; không xuất được file', p.id);
+      if (account === '' || clean(holder) === '') throw new DomainError('SUPPLIER_PAYMENT_ACCOUNT_ERASED', 422, 'Dữ liệu ngân hàng của một nhà cung cấp không đọc được; không xuất được file', { paymentId: p.id });
       return { holder: clean(holder), account, bank: clean(p.bank_name ?? ''), amount: money(p.amount).toFixed(), content: `Thanh toan hoa don ${clean(p.invoice_number ?? '')}`.trim() };
     });
     const sorted = [...lines]
