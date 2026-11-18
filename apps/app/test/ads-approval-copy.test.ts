@@ -89,9 +89,8 @@ describe('the approval of a campaign plan on a server that cannot launch (#3675)
 
   it('words the card, the subtitle, the button and the toast as a hold only, in both languages', () => {
     for (const locale of ['vi', 'en'] as const) {
-      const { detail } = adsChangeText(launch, translatorFor(locale), money, date, false);
       const { inboxDetail } = m(locale);
-      for (const text of [inboxDetail.adsNoLauncher, inboxDetail.adsLaunchHeldSubtitle, inboxDetail.approveCampaignHeldOnly, inboxDetail.approvedCampaignHeldToast]) {
+      for (const text of [adsChangeText(launch, translatorFor(locale), money, date, false).detail, inboxDetail.adsNoLauncher, inboxDetail.adsLaunchHeldSubtitle, inboxDetail.approveCampaignHeldOnly, inboxDetail.approvedCampaignHeldToast]) {
         expect(text, locale).toBeTruthy();
         expect(text, locale).not.toMatch(promises);
       }
