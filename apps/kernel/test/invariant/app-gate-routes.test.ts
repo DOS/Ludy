@@ -67,12 +67,12 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/api/sign/submit': { app: 'sign', gate: 'sql', why: 'crove_sign.public_submit gates org_app_on + entitlement -> 404' },
   '/api/sign/decline': { app: 'sign', gate: 'sql', why: 'crove_sign.public_decline gates org_app_on + entitlement -> 404' },
   '/api/sign/verify': { app: 'sign', gate: 'sql', why: 'crove_sign.public_verify_certificate gates org_app_on + entitlement -> 404' },
-  // #3525 (eSign Slice 2a A1): Slice 2a PR moves each from 'pending' to 'sql' (crove_sign SECURITY DEFINER resolver checking org_app_on + entitlement with opaque 404).
-  '/api/sign/direct/view': { app: 'sign', gate: 'pending', why: '#3525 (Slice 2a A1 direct signing link pre-registration)' },
-  '/api/sign/direct/pdf': { app: 'sign', gate: 'pending', why: '#3525 (Slice 2a A1 direct signing link pre-registration)' },
-  '/api/sign/direct/otp/request': { app: 'sign', gate: 'pending', why: '#3525 (Slice 2a A1 direct signing link pre-registration)' },
-  '/api/sign/direct/otp/verify': { app: 'sign', gate: 'pending', why: '#3525 (Slice 2a A1 direct signing link pre-registration)' },
-  '/api/sign/direct/start': { app: 'sign', gate: 'pending', why: '#3525 (Slice 2a A1 direct signing link pre-registration)' },
+  // #3551 (eSign Slice 2a A1): each direct signing link route gates via its crove_sign.public_direct_* SECURITY DEFINER procedure (org_app_on + entitlement -> 404).
+  '/api/sign/direct/view': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_resolve gates org_app_on + entitlement -> 404' },
+  '/api/sign/direct/pdf': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_pdf_source gates org_app_on + entitlement -> 404' },
+  '/api/sign/direct/otp/request': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_request_otp gates org_app_on + entitlement -> 404' },
+  '/api/sign/direct/otp/verify': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_verify_otp gates org_app_on + entitlement -> 404' },
+  '/api/sign/direct/start': { app: 'sign', gate: 'sql', why: 'crove_sign.public_direct_start gates org_app_on + entitlement -> 404' },
 };
 
 // The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that

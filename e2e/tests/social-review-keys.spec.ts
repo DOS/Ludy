@@ -46,11 +46,11 @@ test('approves three posts with a checklist in a row from the keyboard and lands
   await page.getByRole('button', { name: 'Lưu danh sách' }).click();
   await expect(page.getByText('Đã lưu danh sách kiểm tra.')).toBeVisible();
 
-  await page.getByRole('link', { name: 'Quay lại' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   const ids: string[] = [];
   for (const body of ['Bài phím một', 'Bài phím hai', 'Bài phím ba']) {
     ids.push(await submitForReview(page, body));
-    await page.getByRole('link', { name: 'Quay lại' }).click();
+    await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   }
   // The review list is newest change first: the third post, then the second, then the first.
   const order = [...ids].reverse();
@@ -137,7 +137,7 @@ test('places a comment pin from the keyboard and moves it with the arrow keys be
   await signInNewUser(page, newEmail('social-pin-keys'));
   await createOrg(page, 'Công ty Ghim Phím');
   await connectSandbox(page, 'Trang Ghim Phím');
-  await page.getByRole('link', { name: 'Quay lại' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill('Bài có ảnh để ghim');
   await page.locator('input[type="file"]').setInputFiles([{ name: 'logo.png', mimeType: 'image/png', buffer: PNG }]);

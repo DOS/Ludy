@@ -136,6 +136,17 @@ suite('what a company MCP grant reads of Meetings (#3731, invariants first)', ()
     await seedMeeting(orgA, 'orgDraft', 'recorder', 'org', false);
     await seedMeeting(orgA, 'attendeesByAdmin', 'admin', 'attendees', true);
     await seedMeeting(orgA, 'attendeesByMember', 'recorder', 'attendees', true);
+    // The text period (N1 of the post-merge review of the read): one that ended yesterday and one that ends today (the period is `> today` in Vietnam time, as the commands treat it) are gone; one kept until a
+    // person deletes it (null) and the default (a year ahead) are not. A published org meeting whose only action item is flagged is read, its item is not.
+    const vnToday = `(now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`;
+    await seedMeeting(orgA, 'orgEnded', 'recorder', 'org', true);
+    await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = ${vnToday} - 1 WHERE org_id = $1 AND id = $2`, [orgA, ids.orgEnded]);
+    await seedMeeting(orgA, 'orgEndsToday', 'recorder', 'org', true);
+    await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = ${vnToday} WHERE org_id = $1 AND id = $2`, [orgA, ids.orgEndsToday]);
+    await seedMeeting(orgA, 'orgKept', 'recorder', 'org', true);
+    await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = NULL WHERE org_id = $1 AND id = $2`, [orgA, ids.orgKept]);
+    await seedMeeting(orgA, 'orgFlagged', 'recorder', 'org', true);
+    await sqlAdmin(`UPDATE crove_meetings.action_item SET flags = '["contact"]'::jsonb WHERE org_id = $1 AND meeting_id = $2`, [orgA, ids.orgFlagged]);
     // Org B: an org-visible published meeting, which no grant of org A may read.
     await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgB, users.attendee]);
     await seedMeeting(orgB, 'otherOrg', 'foreign', 'org', true);
@@ -158,7 +169,7 @@ suite('what a company MCP grant reads of Meetings (#3731, invariants first)', ()
     }
     // The control: the admin (a person, not a grant) reads the org's org-visible meetings and the ones they recorded; the policies are live.
     const own = idsOf(await visible(person(orgA, users.admin as string), 'meeting'));
-    expect(own).toEqual([ids.orgPublished, ids.orgDraft, ids.attendeesByAdmin].sort());
+    expect(own).toEqual([ids.orgPublished, ids.orgDraft, ids.attendeesByAdmin, ids.orgEnded, ids.orgEndsToday, ids.orgKept, ids.orgFlagged].sort());
   });
 
   it('reads, in a company context, no row of any table of the module but the org-visible meetings and their published results and items', async () => {
@@ -167,7 +178,7 @@ suite('what a company MCP grant reads of Meetings (#3731, invariants first)', ()
     // The three open tables: what is visible is a subset of the org-visible meeting and its published rows, never another meeting, a draft, or another org.
     const meetings = await visible(ctx, 'meeting');
     expect(meetings.every((m) => m.org_id === orgA)).toBe(true);
-    expect(idsOf(meetings).every((id) => [ids.orgPublished, ids.orgDraft].includes(id))).toBe(true);
+    expect(idsOf(meetings).every((id) => [ids.orgPublished, ids.orgKept, ids.orgFlagged].includes(id))).toBe(true);
     expect(idsOf(meetings)).not.toContain(ids.attendeesByAdmin);
     expect(idsOf(meetings)).not.toContain(ids.attendeesByMember);
     expect(idsOf(meetings)).not.toContain(ids.otherOrg);
@@ -182,6 +193,65 @@ suite('what a company MCP grant reads of Meetings (#3731, invariants first)', ()
       expect(rows.every((r) => r.org_id === orgA), t).toBe(true);
       for (const row of rows) expect(allowed, `${t} ${row.id}`).toContain(row.id);
     }
+  });
+
+  it('holds the line in the database, not only in the query: a company context reads exactly the published, in-period org meetings, their published results and their unflagged published items', async () => {
+    const ctx = company(orgA, users.admin as string);
+    // Meetings: a draft-only org meeting, one whose text period ended (yesterday, or today), an attendees-only one and another org's are all out; a kept (null) period and a flagged item's meeting are in.
+    const meetings = await visible(ctx, 'meeting');
+    expect(idsOf(meetings)).toEqual([ids.orgPublished, ids.orgKept, ids.orgFlagged].sort());
+    for (const gone of ['orgDraft', 'orgEnded', 'orgEndsToday', 'attendeesByAdmin', 'attendeesByMember', 'otherOrg']) expect(idsOf(meetings), gone).not.toContain(ids[gone]);
+    // Results: the published result of each meeting read, and no other (the policies of the result and the item follow the meeting policy: a meeting that is out takes its rows with it).
+    const published = async (table: string, wanted: string[]) =>
+      (
+        await sqlAdmin<{ id: string }>(`SELECT id FROM crove_meetings.${table} WHERE org_id = $1 AND stage = 'published' AND meeting_id = ANY($2::uuid[])`, [orgA, wanted])
+      ).rows.map((r) => r.id).sort();
+    expect(idsOf(await visible(ctx, 'meeting_result'))).toEqual(await published('meeting_result', [ids.orgPublished as string, ids.orgKept as string, ids.orgFlagged as string]));
+    // Items: those of the meetings read, published and not flagged (a flagged item is a person's to review, as the query leaves it out).
+    const items = (
+      await sqlAdmin<{ id: string }>(
+        `SELECT id FROM crove_meetings.action_item WHERE org_id = $1 AND stage = 'published' AND flags = '[]'::jsonb AND meeting_id = ANY($2::uuid[])`,
+        [orgA, [ids.orgPublished, ids.orgKept, ids.orgFlagged]],
+      )
+    ).rows.map((r) => r.id).sort();
+    expect(items.length).toBeGreaterThan(0);
+    expect(idsOf(await visible(ctx, 'action_item'))).toEqual(items);
+    // The flagged item exists and is published (the control that the exclusion is the policy's), and the person who recorded it reads it.
+    const flagged = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 AND stage = 'published'`, [orgA, ids.orgFlagged])).rows.map((r) => r.id);
+    expect(flagged.length).toBeGreaterThan(0);
+    expect(idsOf(await visible(person(orgA, users.recorder as string), 'action_item'))).toEqual(expect.arrayContaining(flagged));
+    expect(idsOf(await visible(ctx, 'action_item'))).not.toEqual(expect.arrayContaining(flagged));
+  });
+
+  it('answers the shared test of the policies only to an agent context of the same org with the whole-org scope, and says yes only for a published, in-period org meeting', async () => {
+    const ask = async (ctx: Sealed, org: string, meeting: string) =>
+      asSealed(ctx, async (c) => (await c.query<{ ok: boolean }>('SELECT crove_meetings.is_org_minutes_meeting($1, $2) AS ok', [org, meeting])).rows[0]?.ok);
+    const grantor = users.admin as string;
+    // The company context with the whole-org scope: yes for a published, in-period org meeting (a kept period too), no for the rest.
+    for (const yes of ['orgPublished', 'orgKept', 'orgFlagged']) expect(await ask(company(orgA, grantor), orgA, ids[yes] as string), yes).toBe(true);
+    for (const no of ['orgDraft', 'orgEnded', 'orgEndsToday', 'attendeesByAdmin', 'attendeesByMember']) expect(await ask(company(orgA, grantor), orgA, ids[no] as string), no).toBe(false);
+    // Not for a person (the policies' own branches serve a person), not for an entity-scoped company context, and not across orgs (either way round). The helper names no kind, so another agent context with
+    // the whole-org scope (a member grant's) gets the same answer: it learns only whether an org-visible, published, in-period meeting exists, which every member of the org already reads; the rows stay
+    // behind the policies, and the member context reads none (the test above).
+    expect(await ask(person(orgA, grantor), orgA, ids.orgPublished as string)).toBe(false);
+    expect(await ask(company(orgA, grantor, [randomUUID()]), orgA, ids.orgPublished as string)).toBe(false);
+    expect(await ask(company(orgB, users.foreign as string), orgA, ids.orgPublished as string)).toBe(false);
+    expect(await ask(company(orgA, grantor), orgB, ids.otherOrg as string)).toBe(false);
+    expect(await ask(company(orgB, users.foreign as string), orgB, ids.orgPublished as string)).toBe(false);
+  });
+
+  it('moves with the text period: a meeting whose period ends today leaves the company context, and one set to a day ahead comes back', async () => {
+    const ctx = company(orgA, users.admin as string);
+    const vnToday = `(now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date`;
+    expect(idsOf(await visible(ctx, 'meeting'))).not.toContain(ids.orgEndsToday);
+    await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = ${vnToday} + 1 WHERE org_id = $1 AND id = $2`, [orgA, ids.orgEndsToday]);
+    try {
+      expect(idsOf(await visible(ctx, 'meeting'))).toContain(ids.orgEndsToday);
+      expect(idsOf(await visible(ctx, 'meeting_result')).length).toBeGreaterThan(0);
+    } finally {
+      await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = ${vnToday} WHERE org_id = $1 AND id = $2`, [orgA, ids.orgEndsToday]);
+    }
+    expect(idsOf(await visible(ctx, 'meeting'))).not.toContain(ids.orgEndsToday);
   });
 
   it('keeps the legal-entity scope: a company context without the whole-org scope reads no org meeting and nothing else of the module', async () => {

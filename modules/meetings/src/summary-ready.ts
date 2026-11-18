@@ -11,6 +11,9 @@
 //                                 line nor the mail: the mail is queued only when the in-app notice was written, so the one switch (the notification settings) covers both, and a second
 //                                 dispatch for the same run writes and sends nothing.
 //
+// meetings.summary.ready trusts the runId it is given: it is reached only from the API's own port (member-vy-ports.ts), never from an RPC route. If it is ever exposed, it must first check that the runId is a
+// finished summary run of this meeting by this recorder.
+//
 // Push is not part of this slice: the browser push of the app belongs to Social (its own subscription table and sender), so a Meetings notice has no push path yet (follow-up).
 import { sql } from 'kysely';
 import { createMailMessage, notifyMembers, outboxEvent, uploaderEntity } from '@crove/kernel';

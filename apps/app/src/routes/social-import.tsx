@@ -15,6 +15,7 @@ import { Card } from '@crove/ui/components/card';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Thumb } from '../components/social-media.tsx';
 import { DataTable, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
+import { brandFileName } from '../i18n/brand.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { MAX_STATEMENT_BYTES, readStatementFile } from '../lib/bank-statement.ts';
@@ -171,7 +172,7 @@ export function SocialImportPage() {
     const url = URL.createObjectURL(new Blob([IMPORT_TEMPLATE], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'crove-social-mau.csv';
+    a.download = brandFileName('crove-mau-nhap-bai.csv');
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   };

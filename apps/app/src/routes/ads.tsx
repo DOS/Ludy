@@ -565,18 +565,19 @@ export function Totals({ summary, currency, canManage, onChooseResult, period }:
   );
 }
 
-// The cells of one row of a table of metrics: its first column, then spend, impressions and clicks, and results with
-// their cost where a result kind is chosen.
+// The cells of one row of a table of metrics: its first column, then spend and, where a result kind is chosen, the results
+// with their cost, then impressions and clicks. The figures that matter come first, so on a phone, where the table scrolls
+// sideways, they are not the right-most columns (AD-12, #3659).
 function MetricRow({ cells, metric, currency, withResults }: { cells: ReactNode; metric: AdsSummary['total']; currency: string; withResults: boolean }) {
   const f = useFormat();
   return (
     <>
       <TableCell className="px-4 py-3 text-foreground">{cells}</TableCell>
       <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(metric.spend, currency)}</TableCell>
-      <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(metric.impressions)}</TableCell>
-      <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(metric.clicks)}</TableCell>
       {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{metric.results === null ? '-' : f.number(metric.results)}</TableCell>}
       {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{metric.costPerResult === null ? '-' : f.money(metric.costPerResult, currency)}</TableCell>}
+      <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(metric.impressions)}</TableCell>
+      <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(metric.clicks)}</TableCell>
     </>
   );
 }
@@ -589,7 +590,7 @@ export function Breakdowns({ summary, currency }: { summary: AdsSummary; currenc
   const daysId = useId();
   const withResults = summary.resultKind !== null;
   const results = withResults ? [t('columns.results'), t('columns.costPerResult')] : [];
-  // After the name, spend, impressions and clicks are right-aligned numbers, and so are the results columns where there are any.
+  // After the name every column is a right-aligned number.
   const numeric = withResults ? [1, 2, 3, 4, 5] : [1, 2, 3];
   return (
     <>
@@ -597,7 +598,7 @@ export function Breakdowns({ summary, currency }: { summary: AdsSummary; currenc
         <h2 id={monthsId} className={H2}>
           {t('monthsTitle')}
         </h2>
-        <DataTable head={[t('columns.month'), t('columns.spend'), t('columns.impressions'), t('columns.clicks'), ...results]} numeric={numeric}>
+        <DataTable head={[t('columns.month'), t('columns.spend'), ...results, t('columns.impressions'), t('columns.clicks')]} numeric={numeric}>
           {[...summary.months].reverse().map((m) => (
             <TableRow key={m.month}>
               <MetricRow cells={monthLabel(m.month)} metric={m} currency={currency} withResults={withResults} />
@@ -612,7 +613,7 @@ export function Breakdowns({ summary, currency }: { summary: AdsSummary; currenc
         {summary.campaigns.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t('campaignsEmpty')}</p>
         ) : (
-          <DataTable head={[t('columns.campaign'), t('columns.spend'), t('columns.impressions'), t('columns.clicks'), ...results]} numeric={numeric}>
+          <DataTable head={[t('columns.campaign'), t('columns.spend'), ...results, t('columns.impressions'), t('columns.clicks')]} numeric={numeric}>
             {summary.campaigns.map((c) => (
               <TableRow key={c.externalObjectId}>
                 <MetricRow cells={c.name || c.externalObjectId} metric={c} currency={currency} withResults={withResults} />
@@ -626,7 +627,7 @@ export function Breakdowns({ summary, currency }: { summary: AdsSummary; currenc
           {t('daysTitle')}
         </h2>
         <DataTable
-          head={[t('columns.day'), t('columns.spend'), t('columns.impressions'), t('columns.clicks'), t('columns.reach'), ...results]}
+          head={[t('columns.day'), t('columns.spend'), ...results, t('columns.impressions'), t('columns.clicks'), t('columns.reach')]}
           numeric={[1, 2, 3, 4, ...(withResults ? [5, 6] : [])]}
         >
           {[...summary.days].reverse().map((d) => (
@@ -636,11 +637,11 @@ export function Breakdowns({ summary, currency }: { summary: AdsSummary; currenc
                 {!d.settled && <span className="ml-2 text-xs text-subtle-foreground">{t('notFinal')}</span>}
               </TableCell>
               <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(d.spend, currency)}</TableCell>
+              {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{d.results === null ? '-' : f.number(d.results)}</TableCell>}
+              {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{d.costPerResult === null ? '-' : f.money(d.costPerResult, currency)}</TableCell>}
               <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(d.impressions)}</TableCell>
               <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(d.clicks)}</TableCell>
               <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{d.reach === null ? '-' : f.number(d.reach)}</TableCell>
-              {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{d.results === null ? '-' : f.number(d.results)}</TableCell>}
-              {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{d.costPerResult === null ? '-' : f.money(d.costPerResult, currency)}</TableCell>}
             </TableRow>
           ))}
         </DataTable>

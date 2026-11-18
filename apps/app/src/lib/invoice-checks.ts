@@ -60,6 +60,8 @@ export function invoiceCheckMessage(check: Check, t: Translate, format: { money:
       return amountSentence(t, p, money);
     case 'anomaly_cash.payroll_limit':
       return has('count') ? t('invoiceChecks.anomaly_cash.payrollLimit', { count: p.count ?? '' }) : check.message;
+    case 'anomaly_payroll.active_payment':
+      return has('accounts') ? t('invoiceChecks.anomaly_payroll.activePayment', { accounts: p.accounts ?? '' }) : check.message;
     case 'anomaly_price.jump':
       return has('item', 'usual', 'current', 'percent')
         ? t('invoiceChecks.anomaly_price.jump', { item: p.item ?? '', usual: money(p.usual ?? ''), current: money(p.current ?? ''), percent: p.percent ?? '' })

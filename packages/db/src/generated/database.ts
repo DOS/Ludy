@@ -936,6 +936,7 @@ export interface FinanceCashVoucherTable {
   number_allocation_id: ColumnType<string | null, string | null, NotGranted>;
   payroll_run_id: ColumnType<string | null, string | null, NotGranted>;
   payroll_payment_kind: ColumnType<string | null, string | null, NotGranted>;
+  supplier_payment_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.categorization_rule */
@@ -1644,6 +1645,7 @@ export interface FinanceStockMoveTable {
   amount: ColumnType<string | null, string | null, NotGranted>;
   crm_order_id: ColumnType<string | null, string | null, NotGranted>;
   crm_order_line_no: ColumnType<number | null, number | null, NotGranted>;
+  return_of_move_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.stock_period_item */
@@ -1735,6 +1737,10 @@ export interface FinanceSupplierPaymentTable {
   cancel_reason: string | null;
   paid_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  exported_by: string | null;
+  exported_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  export_count: Generated<number>;
+  first_exported_at: ColumnType<Date | null, Date | string | null, NotGranted>;
 }
 
 /** crove_finance.vat_return_filed */
@@ -3498,6 +3504,7 @@ export interface SignEnvelopeTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
+  direct_link_id: string | null;
 }
 
 /** crove_sign.field */

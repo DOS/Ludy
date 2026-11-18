@@ -805,4 +805,214 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     await expect(team.query(team.member, 'hr.payroll.payment.amounts', { runIds: [runId] })).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
+  it('maps only the (run, kind) 23505 violation on payroll voucher insert to HR_PAYMENT_DONE, and lets other 23505 violations surface (#2793)', async () => {
+    const o = await org('tt133', 'trio');
+    const { runId } = await postedRun(o, 'trio');
+    const first = await pay(o, runId, 'tax', {}, o.admin);
+    // A second pending proposal of the same (run, kind), as if created before the open-proposal check saw the first: both pass checkPayable while the slot lock holds them, and the second hits cash_voucher_payroll_payment_uq on insert.
+    const [cloned] = await rows<{ id: string }>(
+      `INSERT INTO crove_kernel.proposal (org_id, kind, command, status, title, payload, request_input, eligible_approvers, authors, co_authors, legal_entity_id)
+       SELECT org_id, kind, command, 'pending', title, payload, request_input, eligible_approvers, authors, co_authors, legal_entity_id
+       FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2 RETURNING id`,
+      [o.orgId, first.proposalId],
+    );
+    const secondId = cloned?.id as string;
+    const holder = new pg.Client({ connectionString: adminUrl });
+    await holder.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(
+        `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('crove_finance.cash_voucher_payroll_slot:' || $1::text || ':' || $2::text || ':tax', 0))`,
+        [o.orgId, runId],
+      );
+      const race = Promise.allSettled([approve(o, first.proposalId, o.admin2), approve(o, secondId, o.admin2)]);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await holder.query('ROLLBACK');
+      const settled = await race;
+      expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const rejected = settled.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+      expect(rejected.reason).toMatchObject({ code: 'HR_PAYMENT_DONE', status: 409 });
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      await holder.end();
+    }
+    expect(await voucherOf(o, runId, 'tax')).toHaveLength(1);
+
+    // Another 23505 on the payroll voucher insert (here, rewinding the bank_debit number series so number_allocate hits number_allocation_number_uq) is not misreported as HR_PAYMENT_DONE.
+    const union = await pay(o, runId, 'union', {}, o.admin);
+    await rows(`UPDATE crove_kernel.number_series SET next_number = 1 WHERE org_id = $1 AND doc_type = 'finance.cash_voucher.bank_debit'`, [o.orgId]);
+    const nonPayroll23505 = await approve(o, union.proposalId, o.admin2).then(
+      () => null,
+      (err: { code?: string; status?: number; details?: Record<string, unknown> }) => err,
+    );
+    expect(nonPayroll23505).not.toBeNull();
+    expect(nonPayroll23505?.code).not.toBe('HR_PAYMENT_DONE');
+    expect(nonPayroll23505).toMatchObject({ code: 'CONFLICT', status: 409, details: { constraint: 'number_allocation_number_uq' } });
+    expect(await voucherOf(o, runId, 'union')).toHaveLength(0);
+
+    // Restoring the series lets the union payment record cleanly; a settled bank line on a payroll payment still surfaces BANK_LINE_MATCHED rather than HR_PAYMENT_DONE.
+    await rows(`UPDATE crove_kernel.number_series SET next_number = 2 WHERE org_id = $1 AND doc_type = 'finance.cash_voucher.bank_debit'`, [o.orgId]);
+    await expect(approve(o, union.proposalId, o.admin2)).resolves.toMatchObject({ voucherId: expect.any(String) });
+  });
+
+  it('orders payroll payment vouchers with ordinary vouchers in kernel.proposal.approve_many so numbering locks run in VOUCHER_TYPES + id order (#2793)', async () => {
+    const o = await org('tt133', 'trio');
+    const { runId } = await postedRun(o, 'trio');
+    const requestPlain = (input: Record<string, unknown>) =>
+      rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.voucher.record', input }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
+    // Create ordinary bank_debit BEFORE payroll bank_debit so ordinaryBankDebit.id < payrollBankDebit.id (uuid_v7), then submit payrollBankDebit first in the batch.
+    const ordinaryBankDebit = await requestPlain({ type: 'bank_debit', date: '2026-03-31', cashAccount: '1121', description: 'Chi phí ngân hàng', lines: [{ account: '6422', amount: '200000' }] });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const payrollBankDebit = await pay(o, runId, 'tax', { type: 'bank_debit', cashAccount: '1121' }, o.admin);
+    const payrollCashPayment = await pay(o, runId, 'union', { type: 'cash_payment', cashAccount: '1111' }, o.admin);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const ordinaryCashPayment = await requestPlain({ type: 'cash_payment', date: '2026-03-31', cashAccount: '1111', description: 'Chi phí tiền mặt', lines: [{ account: '6422', amount: '150000' }] });
+    const ordinaryCashReceipt = await requestPlain({ type: 'cash_receipt', date: '2026-03-31', cashAccount: '1111', description: 'Thu khác', lines: [{ account: '711', amount: '100000' }] });
+    const journalVoucher = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      {
+        command: 'finance.journal_voucher.record',
+        input: {
+          date: '2026-03-31',
+          description: 'Bút toán tổng hợp',
+          lines: [
+            { account: '6422', debit: '50000', credit: '0' },
+            { account: '3388', debit: '0', credit: '50000' },
+          ],
+        },
+      },
+      { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(ordinaryBankDebit.proposalId < payrollBankDebit.proposalId).toBe(true);
+    expect(payrollCashPayment.proposalId < ordinaryCashPayment.proposalId).toBe(true);
+
+    const submitted = [
+      { id: payrollBankDebit.proposalId.toUpperCase(), revision: 1 },
+      { id: ordinaryBankDebit.proposalId, revision: 1 },
+      { id: ordinaryCashPayment.proposalId, revision: 1 },
+      { id: payrollCashPayment.proposalId, revision: 1 },
+      { id: ordinaryCashReceipt.proposalId, revision: 1 },
+      { id: journalVoucher.proposalId, revision: 1 },
+    ];
+    const bulk = await rt.execute<{ results: { id: string; outcome: string; result?: { code?: string; journalEntryId?: string } }[] }>(
+      'kernel.proposal.approve_many',
+      { items: submitted },
+      { actor: asMfa(o.admin2), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(bulk.results.map((r) => [r.id, r.outcome])).toEqual(submitted.map((s) => [s.id, 'approved']));
+
+    const codeByProposal = new Map(bulk.results.map((r) => [r.id.toLowerCase(), r.result?.code]));
+    // Within cash_payment, payrollCashPayment.id < ordinaryCashPayment.id so payroll gets PC00001 and ordinary gets PC00002.
+    expect(codeByProposal.get(payrollCashPayment.proposalId)).toBe('PC00001');
+    expect(codeByProposal.get(ordinaryCashPayment.proposalId)).toBe('PC00002');
+    // Within bank_debit, ordinaryBankDebit.id < payrollBankDebit.id so ordinary gets BN00001 and payroll gets BN00002 (without #2793, payrollBankDebit ran first at rank 0 and took BN00001).
+    expect(codeByProposal.get(ordinaryBankDebit.proposalId)).toBe('BN00001');
+    expect(codeByProposal.get(payrollBankDebit.proposalId)).toBe('BN00002');
+
+    // Physical insertion order of journal_entry rows in this transaction confirms non-voucher -> cash_receipt -> cash_payment -> bank_debit.
+    const entryIds = bulk.results.map((r) => r.result?.journalEntryId as string);
+    const physicalOrder = await rows<{ id: string }>('SELECT id FROM crove_finance.journal_entry WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY ctid', [o.orgId, entryIds]);
+    const entryOf = (proposalId: string) => bulk.results.find((r) => r.id.toLowerCase() === proposalId.toLowerCase())?.result?.journalEntryId;
+    expect(physicalOrder.map((e) => e.id)).toEqual([
+      entryOf(journalVoucher.proposalId),
+      entryOf(ordinaryCashReceipt.proposalId),
+      entryOf(payrollCashPayment.proposalId),
+      entryOf(ordinaryCashPayment.proposalId),
+      entryOf(ordinaryBankDebit.proposalId),
+      entryOf(payrollBankDebit.proposalId),
+    ]);
+  });
+
+  it('warns on an ordinary payment voucher debiting a payroll payable only while a pay-run payment of that liability is pending or recorded, and leaves finance.payroll_payment.record unaffected (#2793)', async () => {
+    const o = await org('tt133', 'trio');
+    const branch = await withAdmin(async (c) => {
+      const { rows: created } = await c.query<{ id: string }>(
+        `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh phía Nam', 'branch', $2) RETURNING id`,
+        [o.orgId, o.owner],
+      );
+      return created[0]?.id as string;
+    });
+    const { runId } = await postedRun(o, 'trio');
+    const plainVoucher = (lines: { account: string; amount: string }[], extra: Record<string, unknown> = {}, user = o.member) =>
+      rt.execute<{ proposalId: string }>(
+        'kernel.proposal.request',
+        { command: 'finance.voucher.record', input: { type: 'bank_debit', date: '2026-03-31', cashAccount: '1121', description: 'Chi tay công nợ lương', lines, ...extra } },
+        { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+    const checksOf = async (proposalId: string) =>
+      (await rows<{ checks: { id: string; status: string; code?: string; params?: Record<string, string> }[] | null }>(
+        `SELECT payload -> 'checks' AS checks FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`,
+        [o.orgId, proposalId],
+      ))[0]?.checks ?? [];
+
+    // (b) Before any pay-run payment is pending or recorded, an ordinary voucher debiting 334 raises no warning.
+    const beforeAny = await plainVoucher([{ account: '334', amount: '500000' }]);
+    expect(await checksOf(beforeAny.proposalId)).toEqual([]);
+
+    // (a) Once net_pay is pending, an ordinary voucher debiting 334 carries anomaly_payroll.active_payment, is held out of bulk approval, and still approves individually under four-eyes.
+    const pendingNet = await pay(o, runId, 'net_pay', {}, o.admin);
+    const whilePending = await plainVoucher([{ account: '334', amount: '500000' }]);
+    expect(await checksOf(whilePending.proposalId)).toEqual([
+      expect.objectContaining({ id: 'anomaly_payroll', status: 'warn', code: 'anomaly_payroll.active_payment', params: { accounts: '334' } }),
+    ]);
+    const inboxDetail = await rt.query<{ warnChecks: number; anomalyChecks: number; failedChecks: number }>('kernel.inbox.get', { id: whilePending.proposalId }, { actor: asUser(o.admin), orgId: o.orgId });
+    expect(inboxDetail).toMatchObject({ warnChecks: 1, anomalyChecks: 1, failedChecks: 0 });
+    expect(JSON.stringify(inboxDetail)).not.toMatch(/canary/i);
+    const bulk = await rt.execute<{ results: { id: string; outcome: string; code?: string }[] }>(
+      'kernel.proposal.approve_many',
+      { items: [{ id: whilePending.proposalId, revision: 1 }] },
+      { actor: asMfa(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(bulk.results).toEqual([expect.objectContaining({ id: whilePending.proposalId, outcome: 'refused', code: 'BULK_NOT_ALLOWED' })]);
+    await expect(approve(o, whilePending.proposalId, o.admin)).resolves.toMatchObject({ voucherId: expect.any(String) });
+
+    // Unsettled payroll kinds (3382 union), TT133 deposits (3386), inflows (cash_receipt) and another legal entity raise nothing while only net_pay is pending in the default entity.
+    expect(await checksOf((await plainVoucher([{ account: '3382', amount: '100000' }])).proposalId)).toEqual([]);
+    expect(await checksOf((await plainVoucher([{ account: '3386', amount: '100000' }])).proposalId)).toEqual([]);
+    expect(await checksOf((await plainVoucher([{ account: '334', amount: '100000' }], { type: 'cash_receipt', cashAccount: '1111' })).proposalId)).toEqual([]);
+    expect(await checksOf((await plainVoucher([{ account: '334', amount: '100000' }], { legalEntityId: branch }, o.owner)).proposalId)).toEqual([]);
+
+    // Recording net_pay keeps the warning active on plain vouchers debiting 334.
+    const recordedNet = await approve(o, pendingNet.proposalId, o.admin2);
+    const whileRecorded = await plainVoucher([{ account: '334', amount: '250000' }], { type: 'cash_payment', cashAccount: '1111' });
+    expect(await checksOf(whileRecorded.proposalId)).toEqual([
+      expect.objectContaining({ id: 'anomaly_payroll', status: 'warn', code: 'anomaly_payroll.active_payment', params: { accounts: '334' } }),
+    ]);
+
+    // (c) finance.payroll_payment.record itself never receives anomaly_payroll, even when other payroll payments exist or after reversing and re-requesting the same kind.
+    const taxPayment = await pay(o, runId, 'tax', {}, o.admin);
+    expect(await checksOf(taxPayment.proposalId)).toEqual([]);
+    await expect(approve(o, taxPayment.proposalId, o.admin2)).resolves.toMatchObject({ voucherId: expect.any(String) });
+
+    // (b) Reversing the recorded net_pay voucher frees the liability, so a plain voucher debiting 334 raises no warning again, while tax (3335, still recorded) warns.
+    const askedReversal = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.journal.reverse', input: { entryId: recordedNet.journalEntryId, entryDate: '2026-03-31', reason: 'Lập lại' } },
+      { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    await approve(o, askedReversal.proposalId, o.admin2);
+    expect(await checksOf((await plainVoucher([{ account: '334', amount: '250000' }])).proposalId)).toEqual([]);
+    expect(await checksOf((await plainVoucher([{ account: '3335', amount: '100000' }])).proposalId)).toEqual([
+      expect.objectContaining({ id: 'anomaly_payroll', status: 'warn', code: 'anomaly_payroll.active_payment', params: { accounts: '3335' } }),
+    ]);
+    const netAgain = await pay(o, runId, 'net_pay', {}, o.admin);
+    expect(await checksOf(netAgain.proposalId)).toEqual([]);
+    await expect(approve(o, netAgain.proposalId, o.admin2)).resolves.toMatchObject({ voucherId: expect.any(String) });
+
+    // Under TT99, 3386 is unemployment insurance, so a pending insurance payment warns when a plain voucher debits 3386.
+    const o99 = await org('tt99', 'solo');
+    const posted99 = await postedRun(o99);
+    await pay(o99, posted99.runId, 'insurance');
+    const plain99 = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.voucher.record', input: { type: 'bank_debit', date: '2026-03-31', cashAccount: '1121', description: 'Nộp bảo hiểm tay', lines: [{ account: '3386', amount: '100000' }] } },
+      { actor: asUser(o99.owner), orgId: o99.orgId, idempotencyKey: randomUUID() },
+    );
+    const [checks99] = await rows<{ checks: { code?: string; params?: Record<string, string> }[] }>(
+      `SELECT payload -> 'checks' AS checks FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`,
+      [o99.orgId, plain99.proposalId],
+    );
+    expect(checks99?.checks).toEqual([expect.objectContaining({ code: 'anomaly_payroll.active_payment', params: { accounts: '3386' } })]);
+  });
+
 });
