@@ -145,6 +145,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.hook.record',
       'meetings.import.start',
       'meetings.import.discard_empty',
+      'meetings.import.take_transcript',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');
