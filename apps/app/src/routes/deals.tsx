@@ -26,8 +26,8 @@ import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { EMPTY_DEAL_FILTER, astToDealFilter, dealFilterToAst, type DealFilterState } from '../lib/deal-filter.ts';
-import { isEmptyBoard, readDealView, showAllClosed, withDealView, type DealView } from '../lib/deal-board.ts';
-import { formatMoney } from '../lib/format.ts';
+import { isDealOverdue, isEmptyBoard, readDealView, showAllClosed, withDealView, type DealView } from '../lib/deal-board.ts';
+import { formatDate, formatMoney } from '../lib/format.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 
 const refresh = refreshDeals;
@@ -52,7 +52,7 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns, onOpen }:
   );
   const remove = useMutation(orpc.crm.deals.delete.mutationOptions({ onSuccess: () => void refresh() }));
   const owner = members.find((m) => m.userId === deal.ownerUserId);
-  const overdue = deal.stageKind === 'open' && deal.expectedClose !== null && deal.expectedClose < new Date().toISOString().slice(0, 10);
+  const overdue = isDealOverdue(deal);
   const pick = (stageId: string) => {
     const stage = stages.find((s) => s.id === stageId);
     if (!stage || stage.id === deal.stageId) return;
@@ -95,8 +95,14 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns, onOpen }:
           )}
         </TableCell>
         <TableCell className="px-4 text-right text-sm tabular-nums">{formatMoney(deal.amount, locale, deal.currency)}</TableCell>
-        <TableCell className={`px-4 text-sm ${overdue ? 'text-destructive' : ''}`}>{deal.expectedClose ?? ''}</TableCell>
-        <TableCell className="px-4 text-sm">{owner ? (owner.displayName ?? owner.email) : ''}</TableCell>
+        <TableCell data-label={t('columns.expectedClose')} className={`px-4 text-sm ${overdue ? 'text-destructive' : ''}`}>
+          {deal.expectedClose ? formatDate(deal.expectedClose, locale) : ''}
+          {/* The word, not only the colour (#3649). */}
+          {overdue && <span className="ml-1 font-medium">{t('overdue')}</span>}
+        </TableCell>
+        <TableCell data-label={t('columns.owner')} className="px-4 text-sm">
+          {owner ? (owner.displayName ?? owner.email) : ''}
+        </TableCell>
         {canEdit && (
           <TableCell className="px-4">
             <div className="flex flex-wrap gap-1">
@@ -299,7 +305,7 @@ export function DealsPage() {
         filtered ? <Empty title={t('filters.noMatch')} /> : <DealsEmpty title={t('empty')} hint={canEdit ? t('emptyHint') : undefined} canEdit={canEdit} onAdd={() => setSheet({ kind: 'new' })} />
       ) : (
         <>
-          <DataTable head={head} numeric={[3]}>
+          <DataTable head={head} numeric={[3]} stacked>
             {rows.map((d) => (
               <DealRow key={d.id} deal={d} stages={stageList} members={members} canEdit={canEdit} canDelete={d.canDelete} columns={head.length} onOpen={() => setSheet({ kind: 'deal', deal: d })} />
             ))}

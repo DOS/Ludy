@@ -110,3 +110,8 @@ export function DateInput({
     </span>
   );
 }
+
+// Whether a date field of the form holds something half typed or out of range: a `noValidate` form does not stop on the field's own validity message, so its submit asks (#3649).
+export function hasInvalidDate(form: HTMLFormElement): boolean {
+  return [...form.querySelectorAll('input')].some((input) => input.validity.customError);
+}

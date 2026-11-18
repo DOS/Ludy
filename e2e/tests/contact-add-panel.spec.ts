@@ -43,7 +43,8 @@ test('add a person with a new company, see the duplicate email, add a company an
     await expect(panel()).toHaveCount(0);
     const company = page.getByTestId('person-company');
     await expect(company).toContainText('Công ty ABC');
-    await expect(page.getByRole('cell', { name: 'Nguyễn Văn An', exact: true })).toBeVisible();
+    // The name is the open button of its row (#3649).
+    await expect(page.getByRole('button', { name: 'Mở Nguyễn Văn An', exact: true })).toBeVisible();
   });
 
   await test.step('an email that is already a contact is shown, and saving needs "Vẫn thêm mới"', async () => {
@@ -79,7 +80,7 @@ test('add a person with a new company, see the duplicate email, add a company an
     await panel().getByLabel('Địa chỉ').fill('12 Lê Lợi, Quận 1');
     await panel().getByRole('button', { name: 'Lưu', exact: true }).click();
     await expect(panel()).toHaveCount(0);
-    await expect(page.getByRole('cell', { name: 'Công ty Xanh', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Mở Công ty Xanh', exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Thêm công ty', exact: true }).click();
     await panel().getByLabel('Mã số thuế').fill('0123 456 780');

@@ -4318,6 +4318,7 @@ export const en = {
     emptyHint: 'Add the first deal: pick a customer, enter the amount and the expected close date.',
     loadMore: 'Load more',
     importFile: 'Import customers from a file',
+    overdue: 'Overdue',
     editOf: 'Edit deal {title}',
     sheet: {
       newHint: 'Pick the customer, enter the amount and the expected close date.',
@@ -4379,6 +4380,7 @@ export const en = {
       emptyTitle: 'The board has no deals yet.',
       emptyHint: 'Add the first deal, or import your customers from a file first. Deals closed more than 30 days ago are in the List view.',
       closeOn: 'Expected to close {date}',
+      overdueOn: 'Overdue, expected to close {date}',
       lostFor: 'Why "{title}" was lost (optional)',
       lastDays: 'Deals closed in the last {days} days',
       showAll: 'Show all',

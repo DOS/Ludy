@@ -12,7 +12,7 @@ import { DealSheet, type DealSheetTarget } from './deal-sheet.tsx';
 import { ErrorText } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
-import { formatMoney } from '../lib/format.ts';
+import { formatDate, formatMoney } from '../lib/format.ts';
 
 export function ContactDeals({ contact, canEdit, openOnly = false }: { contact: Pick<Contact, 'id' | 'name' | 'kind' | 'taxCode'>; canEdit: boolean; openOnly?: boolean }) {
   const partyId = contact.id;
@@ -57,7 +57,7 @@ export function ContactDeals({ contact, canEdit, openOnly = false }: { contact: 
               </button>
               <span className="text-xs text-muted-foreground">{stages.data?.find((s) => s.id === d.stageId)?.name ?? t(`deals.kind.${d.stageKind}`)}</span>
               <span className="tabular-nums text-muted-foreground">{formatMoney(d.amount, locale, d.currency)}</span>
-              {d.expectedClose && <span className="text-xs text-subtle-foreground">{t('deals.close', { date: d.expectedClose })}</span>}
+              {d.expectedClose && <span className="text-xs text-subtle-foreground">{t('deals.close', { date: formatDate(d.expectedClose, locale) })}</span>}
             </li>
           ))}
         </ul>
