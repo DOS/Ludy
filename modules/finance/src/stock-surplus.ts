@@ -5,7 +5,7 @@
 //   `surplusVoucherRequest` below to build the voucher: Dr 3381 / Cr `account`, for the amount the books give, never one the requester sent. The account is one of 711, 3388 and 331 (331 with a supplier).
 // - The proposal carries `surplusCountId`. At approval `checkSurplusVoucher` works the amount out again from the count's adjustments and refuses a proposal that is not exactly that voucher
 //   (STOCK_SURPLUS_STALE); the voucher is then written with the tag column journal_voucher.surplus_count_id, which the database accepts only from an executing finance.journal_voucher.record proposal
-//   and only once per count (20270116140000).
+//   and only once per count (20270116160000).
 // - A surplus is resolved once: a standing voucher (STOCK_SURPLUS_RESOLVED) or another proposal waiting (STOCK_SURPLUS_PENDING) refuses a second. A voucher whose entry is later reversed keeps the
 //   count resolved: correcting it is a journal voucher by hand, not a second resolution.
 // Facts only, no model.
