@@ -1452,6 +1452,23 @@ export const vi = {
     contractTermCol: 'Thời hạn / Kết thúc',
     probationCol: 'Thử việc',
     termMonthsShort: '{months} tháng',
+    sign: {
+      column: 'Ký điện tử',
+      send: 'Ký qua eSign',
+      downloadSealed: 'Tải bản đã ký',
+      envelopeTitle: 'Hợp đồng lao động - {name} ({date})',
+      signerRoleLabel: 'Người lao động',
+      openLabel: 'Mở hồ sơ ký: {title} ({status})',
+      status: {
+        draft: 'Nháp',
+        sent: 'Đang chờ ký',
+        in_progress: 'Đang chờ ký',
+        completed: 'Đã ký kết',
+        declined: 'Từ chối / Đã hủy',
+        voided: 'Từ chối / Đã hủy',
+        expired: 'Hết hạn',
+      },
+    },
     alerts: {
       contract_expired: 'Hợp đồng đã hết hạn {days} ngày ({date})',
       contract_expiring_soon: 'Hợp đồng sắp hết hạn (còn {days} ngày, {date})',

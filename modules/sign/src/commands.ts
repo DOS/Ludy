@@ -15,8 +15,9 @@ import {
 import { EXTRACT_LIMITS } from '@crove/extract-contract';
 import { tableWrite, zId } from '@crove/kernel-contract';
 import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
-import { appendSigningEvent } from './events.ts';
 import { signDirectPublicCommands } from './direct-public.ts';
+import { appendSigningEvent } from './events.ts';
+import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
 import { signManifest } from './manifest.ts';
 import { signPublicCommands } from './public-commands.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
@@ -103,6 +104,7 @@ async function lockEnvelope(ctx: CommandContext, envelopeId: string) {
     .forUpdate()
     .executeTakeFirst();
   if (!row) throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Envelope not found');
+  assertCanAccessEnvelopeRow(ctx, row);
   return row;
 }
 
@@ -160,6 +162,7 @@ export const envelopeCreate = defineCommand({
     if (input.sourceKind !== 'standalone' && sourceId === null) {
       throw new DomainError('SIGN_INVALID_SOURCE', 422, 'Linked envelopes require sourceId');
     }
+    assertCanCreateEnvelopeForSource(ctx, input.sourceKind);
     const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
     if (expiresAt !== null && expiresAt.getTime() <= ctx.now.getTime()) {
       throw new DomainError('SIGN_INVALID_EXPIRY', 422, 'expiresAt must be in the future');

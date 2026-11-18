@@ -19,6 +19,7 @@ import {
 } from '@crove/kernel-runtime';
 import { sql } from 'kysely';
 import { z } from 'zod';
+import { assertCanAccessEnvelopeRow } from './hr-visibility.ts';
 import { signManifest } from './manifest.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -1259,7 +1260,7 @@ async function recordAiAnalysisRow(
 ): Promise<SignAiAnalysisRecord> {
   const env = await ctx.trx
     .selectFrom('crove_sign.envelope')
-    .select(['id', 'org_id', 'version', 'status', 'inspect_status', 'source_sha256', 'page_count'])
+    .select(['id', 'org_id', 'version', 'status', 'source_kind', 'created_by', 'inspect_status', 'source_sha256', 'page_count'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', input.envelopeId)
     .forUpdate()
@@ -1267,6 +1268,7 @@ async function recordAiAnalysisRow(
   if (!env) {
     throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Signing envelope not found');
   }
+  assertCanAccessEnvelopeRow(ctx, env, 'Signing envelope not found');
   if (options.requireDraft && env.status !== 'draft') {
     throw new DomainError('SIGN_ENVELOPE_NOT_DRAFT', 409, 'AI field proposals can only be saved for draft envelopes');
   }
@@ -1394,13 +1396,25 @@ export const aiAnalysisSource = defineQuery({
   handler: async (ctx, input): Promise<SignAiSource> => {
     const env = await ctx.trx
       .selectFrom('crove_sign.envelope')
-      .select(['id', 'version', 'status', 'inspect_status', 'source_sha256', 'title', 'page_count', 'page_dimensions_json'])
+      .select([
+        'id',
+        'version',
+        'status',
+        'source_kind',
+        'created_by',
+        'inspect_status',
+        'source_sha256',
+        'title',
+        'page_count',
+        'page_dimensions_json',
+      ])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
     if (!env) {
       throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Signing envelope not found');
     }
+    assertCanAccessEnvelopeRow(ctx, env, 'Signing envelope not found');
 
     const signers = await ctx.trx
       .selectFrom('crove_sign.signer')
@@ -1455,13 +1469,14 @@ export const aiAnalysisGet = defineQuery({
   handler: async (ctx, input): Promise<SignAiAnalysisRecord | null> => {
     const env = await ctx.trx
       .selectFrom('crove_sign.envelope')
-      .select(['id', 'source_sha256'])
+      .select(['id', 'source_kind', 'created_by', 'source_sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
     if (!env) {
       throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Signing envelope not found');
     }
+    assertCanAccessEnvelopeRow(ctx, env, 'Signing envelope not found');
 
     const activeSigners = await ctx.trx
       .selectFrom('crove_sign.signer')
