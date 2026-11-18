@@ -10,6 +10,7 @@ import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts
 import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
 import { minutesTemplateCommands, minutesTemplateQueries } from './minutes-templates.ts';
+import { mcpMeetingsQueries } from './mcp.ts';
 import { seriesCommands, seriesQueries } from './series.ts';
 import { speakerCommands } from './speaker.ts';
 import { summaryCommands, summaryQueries } from './summary.ts';
@@ -1053,4 +1054,5 @@ export const meetingsQueries = [
   ...liveRunQueries,
   ...liveAssembleQueries,
   ...hookQueries,
+  ...mcpMeetingsQueries,
 ];
