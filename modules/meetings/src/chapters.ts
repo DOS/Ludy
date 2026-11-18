@@ -60,10 +60,10 @@ export const chaptersSave = defineCommand({
     const runBySecond = new Map(marked.map((m) => [m.start_seconds, m.source_run_id]));
     const runByTitle = new Map(marked.map((m) => [m.title, m.source_run_id]));
     // The mark follows the chapter by its second or by its title: moving a chapter to another line, or changing only its title, never clears it.
-    const runOf = (c: { title: string; startSeconds: number }): { marked: boolean; run: string | null } => {
+    const markOf = (c: { title: string; startSeconds: number }): { marked: boolean; fromRunId: string | null } => {
       const bySecond = runBySecond.has(c.startSeconds);
       const byTitle = runByTitle.has(c.title);
-      return { marked: bySecond || byTitle, run: bySecond ? (runBySecond.get(c.startSeconds) ?? null) : (runByTitle.get(c.title) ?? null) };
+      return { marked: bySecond || byTitle, fromRunId: bySecond ? (runBySecond.get(c.startSeconds) ?? null) : (runByTitle.get(c.title) ?? null) };
     };
     await ctx.trx.deleteFrom('crove_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').execute();
     if (chapters.length > 0) {
@@ -77,8 +77,8 @@ export const chaptersSave = defineCommand({
             position: i + 1,
             title: c.title,
             start_seconds: c.startSeconds,
-            tainted: runOf(c).marked,
-            source_run_id: runOf(c).run,
+            tainted: markOf(c).marked,
+            source_run_id: markOf(c).fromRunId,
           })),
         )
         .execute();
