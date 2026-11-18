@@ -808,7 +808,7 @@ suite('the changes of a running ad (#3835, W4)', () => {
 
   it('keeps the days of a schedule extension that was still queued when the launch stopped and was wound down: it may already have run at the platform', async () => {
     const r = await rig();
-    const extend = await approved<{ id: string }>(r, EXTEND(r), { commit: true, amount: String(100000 * 24) });
+    await approved<{ id: string }>(r, EXTEND(r), { commit: true, amount: String(100000 * 24) });
     // Stopped today (the first end, D(10), is in the future; the extended end is D(20)) and wound down: the pause job's work is done.
     await inContext(r.org, 'system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'stopped', stop_reason = 'stopped', commit_until = $3::date WHERE org_id = $1 AND id = $2`, [r.org.orgId, r.launch, today]), true);
     await admin(async (c) => {

@@ -37,14 +37,17 @@ test('an owner sees a live launch under Manage, reads its changes in words, and 
   await test.step('a live launch with its objects and its changes, seeded as the superuser', async () => {
     const vars = { slug, draft: draftId, launch: launchId, campaign: CAMPAIGN, adSet: AD_SET };
     // An approved plan of ten days (two days ago to seven days ahead, in the account's zone) at 100,000 a day: at most 1,000,000.
+    // The draft guard holds a draft to being born a draft, so it is lifted for this one statement and put back (always on, as the migration sets it), which the stack's superuser may do.
     exec(
-      `INSERT INTO crove_ads.ad_campaign_draft (org_id, id, ad_account_id, legal_entity_id, name, objective, status, daily_budget, start_on, end_on, targeting, link_url, variants, max_spend, proposal_id, approved_at, created_by)
+      `ALTER TABLE crove_ads.ad_campaign_draft DISABLE TRIGGER campaign_draft_guard;
+       INSERT INTO crove_ads.ad_campaign_draft (org_id, id, ad_account_id, legal_entity_id, name, objective, status, daily_budget, start_on, end_on, targeting, link_url, variants, max_spend, proposal_id, approved_at, created_by)
        SELECT a.org_id, :'draft', a.id, a.legal_entity_id, :'campaign', 'traffic', 'approved', 100000,
               (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 2, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 7,
               '{"locations":[{"country":"VN"}],"ageMin":22,"ageMax":45,"gender":"all","interests":[]}'::jsonb, 'https://example.com/quan-ly',
               '[{"headline":"Quản lý","primaryText":"Mời bạn ghé thử.","callToAction":"learn_more"}]'::jsonb, 1000000, gen_random_uuid(), now(),
               (SELECT m.user_id FROM crove_kernel.tenant_member m WHERE m.org_id = a.org_id LIMIT 1)
-       FROM crove_ads.ad_account a JOIN crove_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`,
+       FROM crove_ads.ad_account a JOIN crove_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug';
+       ALTER TABLE crove_ads.ad_campaign_draft ENABLE ALWAYS TRIGGER campaign_draft_guard`,
       vars,
     );
     exec(

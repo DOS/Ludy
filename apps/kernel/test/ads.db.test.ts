@@ -2919,8 +2919,8 @@ suite('ads on PostgreSQL (#2217)', () => {
               const a = await liveOn(accountA, w);
               const b = await liveOn(accountB, w, { dailyBudget: '50000', startOn: inDays(0), endOn: inDays(0) });
               // An org cap of 150 000 a day: A at 100 000 and B at 50 000 fit it exactly today.
-              const capId = randomUUID();
-              await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by) VALUES ($1, $2, 'org', 'daily', '150000', 'VND', $3)`, [orgId, capId, owner.userId]);
+              // (The cap in force is the newest id of its key, so the row takes a time-ordered id, as the database stamps them: a random one could sort before the cap already there.)
+              const capId = (await row<{ id: string }>(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by) VALUES ($1, crove_kernel.uuid_v7(), 'org', 'daily', '150000', 'VND', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id as string;
               // A lower budget confirmed today: its new budget starts tomorrow in the commitments, today is still counted at 100 000.
               expect((await manage(rig, changeId(await lower(owner, a.launch.id, '60000')))).ended).toBe('applied');
               // A raise to 140 000 is judged from the day before today: today 140 000 + 50 000 of B is over 150 000, so it is refused (at the request and at the approval), where
@@ -2935,8 +2935,7 @@ suite('ads on PostgreSQL (#2217)', () => {
             it('refuses a raise while a cap in another currency applies: nothing is converted, and "no compatible cap" never reads as within the cap (ADS_CAP_CURRENCY)', async () => {
               const w = new SandboxAdWriter();
               const { launch } = await live('Hạn mức khác đơn vị tiền', w);
-              const usd = randomUUID();
-              await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by) VALUES ($1, $2, 'org', 'daily', '9000', 'USD', $3)`, [orgId, usd, owner.userId]);
+              const usd = (await row<{ id: string }>(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by) VALUES ($1, crove_kernel.uuid_v7(), 'org', 'daily', '9000', 'USD', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id as string;
               expect(await askRaise(launch.id, '150000')).toMatchObject({ status: 409, body: { code: 'ADS_CAP_CURRENCY' } });
               expect(await askExtend(launch.id, inDays(8))).toMatchObject({ status: 409, body: { code: 'ADS_CAP_CURRENCY' } });
               // What only reduces spend is still allowed.
