@@ -12501,6 +12501,7 @@ export const en = {
       NO_RECIPIENT: 'This conversation has no customer email address to reply to',
       CHANNEL_PROVIDER_DISABLED: 'This kind of channel is not turned on on this server',
       BROKER_NOT_CONFIGURED: 'Connecting channels is not turned on. Ask your system administrator.',
+      KEYED_HASH_KEY_RETIRED: 'The key used for this value has been replaced; enter the value again.',
       AI_NOT_CONFIGURED: 'AI is not turned on. Ask your system administrator.',
       AI_DRAFT_FAILED: '{marketing} could not draft the post right now; try again later',
       AI_BUDGET_EXHAUSTED: "{gm} has used this month's AI budget; the owner can raise it, or wait for next month. The books and everything that needs no AI keep working",

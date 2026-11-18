@@ -2,7 +2,8 @@
 // A keyed hash of a short value a module needs to compare but never to read back (#3113: "is this the same bank account", "did the account change"). HMAC-SHA256 under a key that HKDF
 // derives from the deployment's key material for one purpose and one org (domain separation: the same value in two orgs, or under two purposes, gives two unrelated hashes). The key never
 // leaves the runtime: not the database, not a log, not an error. The hash is not reversible and, unlike a plain SHA-256 of a short number, cannot be guessed offline without the server key.
-// It survives the shred of a subject's key by design (it is not sealed under it); brute-forcing it needs the server key.
+// It survives the shred of a subject's key by design (it is not sealed under it); brute-forcing it needs the server key. There is no normalization here: the value is hashed byte for byte, so the
+// caller of each purpose normalizes first. A hash is stored in a table, never returned in a command's output or an event (it would be an equality oracle for any actor).
 import { createHmac, hkdfSync } from 'node:crypto';
 
 /** The HKDF info prefix; the purpose and the org follow it. */

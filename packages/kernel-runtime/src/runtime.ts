@@ -505,8 +505,10 @@ export interface CommandContext extends QueryContext {
   seal(ref: string, place: string, value: string): Promise<string>;
   // A keyed hash (HMAC-SHA256 hex) of a short value, for comparing it later without reading it back (a bank account number: is it the same account, did it change). The key derives from
   // the deployment's key material for this purpose (a lowercase name, such as `supplier_bank_account.number`) and this org, so the same value gives other hashes elsewhere; it never leaves
-  // the runtime. 1 byte to 4 KiB. `keyId` names an older credential key still kept (CREDENTIAL_KEY_PREVIOUS); omitted, the newest. The deployment needs its credential key (BROKER_NOT_CONFIGURED
-  // otherwise). Not sealed under a subject: it survives the shred of a subject's key.
+  // the runtime. 1 byte to 4 KiB. `keyId` names an older credential key still kept (CREDENTIAL_KEY_PREVIOUS); omitted, the newest; a key the deployment no longer keeps answers 409
+  // KEYED_HASH_KEY_RETIRED (make the hash again from the value). The deployment needs its credential key (BROKER_NOT_CONFIGURED otherwise). Not sealed under a subject: it survives the shred of a
+  // subject's key. The value is hashed byte for byte: the caller of each purpose normalizes first (digits only for a bank number, trimmed and NFC for text). Open to every actor, so NEVER return or
+  // emit a keyed hash in a command's output or an event: an agent that could compare hashes would hold an equality oracle inside the org.
   keyedHash(purpose: string, value: string, keyId?: string): string;
   // The id of the credential key ctx.keyedHash uses by default (the newest): store it next to a stored hash, so that after a key rotation a hash made under another id is re-made from the
   // value (opened from its sealed copy) and is never taken for a change of the value. BROKER_NOT_CONFIGURED when the deployment has no key.
@@ -2772,8 +2774,10 @@ export class Runtime {
         }),
       keyedHash: (purpose, value, keyId) => {
         refuseClosed('ctx.keyedHash');
+        if (this.#keyedHashRoots.length === 0) throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa (CREDENTIAL_KEY)');
         const root = keyId === undefined ? this.#keyedHashRoots[0] : this.#keyedHashRoots.find((r) => r.id === keyId);
-        if (!root) throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa (CREDENTIAL_KEY)');
+        // A key id this deployment no longer keeps is not a missing key: the caller makes the hash again from the value instead of reading the old hash as a change.
+        if (!root) throw new DomainError('KEYED_HASH_KEY_RETIRED', 409, 'Khóa mã hóa dùng cho giá trị này đã được thay');
         return keyedHash(root.key, base.orgId, purpose, value);
       },
       keyedHashKeyId: () => {

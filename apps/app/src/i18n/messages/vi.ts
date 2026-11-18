@@ -12500,6 +12500,7 @@ export const vi = {
       NO_RECIPIENT: 'Hội thoại này chưa có địa chỉ email của khách để trả lời',
       CHANNEL_PROVIDER_DISABLED: 'Loại kênh này chưa được bật trên máy chủ',
       BROKER_NOT_CONFIGURED: 'Tính năng kết nối kênh chưa bật. Liên hệ người quản trị hệ thống.',
+      KEYED_HASH_KEY_RETIRED: 'Khóa mã hóa dùng cho giá trị này đã được thay; hãy nhập lại giá trị.',
       AI_NOT_CONFIGURED: 'Tính năng AI chưa bật. Liên hệ người quản trị hệ thống.',
       AI_DRAFT_FAILED: '{marketing} không soạn được bài lúc này, hãy thử lại sau',
       AI_BUDGET_EXHAUSTED: '{gm} đã hết ngân sách tháng này; chủ tổ chức có thể nâng ngân sách hoặc đợi sang tháng mới. Sổ sách và mọi việc không cần AI vẫn chạy bình thường',
