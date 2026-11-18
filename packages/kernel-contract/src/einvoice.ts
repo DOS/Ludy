@@ -63,9 +63,9 @@ const zDecimal = z.string().regex(/^\d{1,12}(\.\d{1,6})?$/);
 // A unit price may be signed: the difference of an adjusting invoice is a decrease with a minus (the checks refuse a minus on any other invoice).
 const zSignedDecimal = z.string().regex(/^-?\d{1,12}(\.\d{1,6})?$/);
 
-// `nationality` (#3709): the ISO 3166-1 alpha-2 code of a foreign buyer, two capital letters. A passport carries one and nothing else does (the server drops it from any other kind); it is checked as a
+// `nationality` (#3709): the ISO 3166-1 alpha-2 code of a foreign buyer, two capital letters (the limit here is wider so a wrong length is answered by the check, not a bare 422). A passport carries one and nothing else does (the server drops it from any other kind); it is checked as a
 // field of the draft, so a draft that still lacks it is shown with the issue and the save refuses it with EINVOICE_BUYER_NATIONALITY_REQUIRED (422) or EINVOICE_BUYER_NATIONALITY_INVALID (422).
-export const zEInvoiceBuyerIdentity = z.strictObject({ kind: z.enum(BUYER_IDENTITY_KINDS), value: zText(20), nationality: zText(2).nullable().default(null) });
+export const zEInvoiceBuyerIdentity = z.strictObject({ kind: z.enum(BUYER_IDENTITY_KINDS), value: zText(20), nationality: zText(10).nullable().default(null) });
 export type EInvoiceBuyerIdentity = z.infer<typeof zEInvoiceBuyerIdentity>;
 
 export const zEInvoiceBuyerInput = z.strictObject({

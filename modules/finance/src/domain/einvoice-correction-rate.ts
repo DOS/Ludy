@@ -68,9 +68,9 @@ export function proposeCorrectionRates(input: { nature: EInvoiceRateNature; rate
 }
 
 // The day the VAT rate of the correcting invoice's lines is judged on, for the checks: the original's date on the original basis (and on a correction made before the basis existed), else the
-// draft's own date, which the caller leaves out (null).
-export function correctionRateDate(basis: EInvoiceRateBasis | null, originalDate: string | null): string | null {
-  return basis === 'correction_date' ? null : originalDate;
+// draft's own invoice date, never a sale date a person typed (the rate in force on the day the correcting invoice is made).
+export function correctionRateDate(basis: EInvoiceRateBasis | null, originalDate: string | null, ownDate: string): string | null {
+  return basis === 'correction_date' ? ownDate : originalDate;
 }
 
 const dayText = (iso: string): string => iso.split('-').reverse().join('/');

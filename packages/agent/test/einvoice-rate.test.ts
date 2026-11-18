@@ -25,6 +25,15 @@ describe('the check on what the model wrote', () => {
     // 5% is in the facts of the other proposal (a rate it keeps), but not in this one's: still a percentage the facts do not offer here.
     expect(say(KEPT, 'Các dòng giữ thuế suất 5%.')).toEqual({ kind: 'none', code: 'FIGURES' });
   });
+  it('refuses an explanation that contradicts what the code decided (a moved rate kept, the wrong direction, a kept rate moved)', () => {
+    expect(say(MOVED, 'Các dòng giữ nguyên thuế suất 8% của hóa đơn gốc.')).toEqual({ kind: 'none', code: 'RATE' });
+    expect(say(MOVED, 'Dòng 8% giữ nguyên vì sai số lượng.')).toEqual({ kind: 'none', code: 'RATE' });
+    expect(say(MOVED, 'Dòng 10% chuyển sang 8% vì sai số lượng.')).toEqual({ kind: 'none', code: 'RATE' });
+    expect(say(MOVED, 'Dòng 5% chuyển sang 10%.')).toEqual({ kind: 'none', code: 'RATE' });
+    // The true story passes, with a kept rate named as kept.
+    expect(say(MOVED, 'Dòng 8% chuyển sang 10%, còn dòng 5% giữ nguyên.')).toMatchObject({ kind: 'sentence' });
+    expect(say(KEPT, 'Các dòng giữ nguyên thuế suất 8%.')).toMatchObject({ kind: 'sentence' });
+  });
   it('refuses a link, a foreign script, an empty text, a long one and more than two sentences', () => {
     expect(say(KEPT, 'Xem https://example.test để biết thêm.')).toEqual({ kind: 'none', code: 'LINK' });
     expect(say(KEPT, 'Hàng bị trả lại nên giữ thuế suất 8% (пример).')).toEqual({ kind: 'none', code: 'SCRIPT' });

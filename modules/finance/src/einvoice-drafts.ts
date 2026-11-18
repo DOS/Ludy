@@ -117,10 +117,10 @@ const identityOf = (row: Pick<DraftRow, 'buyer_identity_kind' | 'buyer_identity'
   row.buyer_identity_kind && row.buyer_identity ? { kind: row.buyer_identity_kind, value: row.buyer_identity, nationality: row.buyer_nationality } : null;
 
 // The day the 8% of a correcting draft's lines is judged on (#2504, #3709): the original's date, unless the person confirmed that the rate follows the correction's own date.
-const rateDateOf = (row: Pick<DraftRow, 'correction_rate_basis'>, originalDate: string | null): string | null => correctionRateDate(row.correction_rate_basis, originalDate);
+const rateDateOf = (row: Pick<DraftRow, 'correction_rate_basis' | 'invoice_date'>, originalDate: string | null): string | null => correctionRateDate(row.correction_rate_basis, originalDate, row.invoice_date);
 
 // A draft as the API gives it, from its row and its line rows: the amounts as the API writes them, and the checks run on what is stored.
-// `rateDate` is the invoice date of the original a correcting draft corrects (#2504), or null when the rate follows the correction's own date (#3709, `rateDateOf`).
+// `rateDate` is the invoice date of the original a correcting draft corrects (#2504), or the draft's own invoice date when the rate follows the correction's date (#3709, `rateDateOf`).
 function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string, rateDate: string | null = null): EInvoiceDraft {
   const lines: EInvoiceDraftLine[] = [...lineRows]
     .sort((x, y) => x.line_no - y.line_no)
@@ -262,7 +262,7 @@ export const einvoiceDraftCheck = defineQuery({
     if (input.correction) {
       draft.adjustment = input.correction.kind === 'adjustment';
       const original = await selectDrafts(ctx).select('invoice_date').where('id', '=', input.correction.originalDraftId).executeTakeFirst();
-      draft.rateDate = correctionRateDate(input.correction.rateBasis, original?.invoice_date ?? null);
+      draft.rateDate = correctionRateDate(input.correction.rateBasis, original?.invoice_date ?? null, input.date);
     }
     const computed = computeDraft(draft.lines);
     return {

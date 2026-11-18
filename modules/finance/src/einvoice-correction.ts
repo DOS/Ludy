@@ -35,7 +35,7 @@ const dayOf = (value: string | Date): string => (typeof value === 'string' ? val
 
 // The proposal for an original and a nature, worked out on the day of the database (#3709): the distinct VAT rates of the original's lines, the basis, the rates that move.
 async function proposalFor(ctx: Pick<QueryContext, 'trx' | 'orgId'>, originalId: string, originalDate: string, nature: EInvoiceRateNature, today: string): Promise<{ proposal: CorrectionRateProposal; has8: boolean }> {
-  const rows = await ctx.trx.selectFrom('crove_finance.einvoice_draft_line').select('vat_rate').where('org_id', '=', ctx.orgId).where('draft_id', '=', originalId).execute();
+  const rows = await ctx.trx.selectFrom('crove_finance.einvoice_draft_line').select('vat_rate').where('org_id', '=', ctx.orgId).where('draft_id', '=', originalId).orderBy('line_no').execute();
   const rates = rows.map((r) => r.vat_rate);
   return { proposal: proposeCorrectionRates({ nature, rates, originalDate, correctionDate: today }), has8: rates.some((r) => r === '8%') };
 }

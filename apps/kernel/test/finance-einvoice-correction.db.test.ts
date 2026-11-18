@@ -441,7 +441,9 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     expect(await hash(corr.id)).not.toBe(legacyHash);
     // The database keeps the basis to a correction and to the two values.
     await expect(rows('UPDATE crove_finance.einvoice_draft SET correction_rate_basis = $3 WHERE org_id = $1 AND id = $2', [o.orgId, corr.id, 'someday'])).rejects.toMatchObject({ code: '23514' });
-    await expect(rows("UPDATE crove_finance.einvoice_draft SET correction_rate_basis = 'original' WHERE org_id = $1 AND id = $2", [o.orgId, original.draftId])).rejects.toMatchObject({ code: '23514' });
+    // A draft that is no correction cannot carry one (a draft row: an issued invoice would meet the state guard first).
+    const plainDraft = await execute<{ id: string }>(o, 'finance.einvoice_draft.save', form(o));
+    await expect(rows("UPDATE crove_finance.einvoice_draft SET correction_rate_basis = 'original' WHERE org_id = $1 AND id = $2", [o.orgId, plainDraft.id])).rejects.toMatchObject({ code: '23514' });
     await setBasis('original');
     // The same draft made a replacement instead (another original) hashes differently from this adjustment.
     const other = await issued(o, p, 'individual');
@@ -543,7 +545,7 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     const adjusting = await start(o, original.draftId, 'adjustment', { rateNature: 'amount_change', rateBasis: 'correction_date' });
     expect(adjusting.correction).toMatchObject({ kind: 'adjustment', rateBasis: 'correction_date' });
     expect((await rows<{ correction_rate_basis: string | null }>('SELECT correction_rate_basis FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, adjusting.id]))[0]?.correction_rate_basis).toBe('correction_date');
-    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.start_correction'", [o.orgId]);
+    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.start_correction' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId]);
     expect(audit[0]?.detail).toMatchObject({ rateNature: 'amount_change', rateBasis: 'correction_date' });
 
     // The 8% of the correcting draft is judged on the confirmed basis: a draft dated 2027 and left at 8% is refused on the correction date basis, kept on the original's, and judged on the original's

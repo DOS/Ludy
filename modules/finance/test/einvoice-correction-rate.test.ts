@@ -77,10 +77,11 @@ describe('proposeCorrectionRates over the rates of a whole original', () => {
 
 describe('the day the rate of a correction is judged on', () => {
   it('is the original\'s unless the person confirmed the correction\'s own, and also for a correction made before the basis existed', () => {
-    expect(correctionRateDate('original', ORIGINAL)).toBe(ORIGINAL);
-    expect(correctionRateDate(null, ORIGINAL)).toBe(ORIGINAL);
-    expect(correctionRateDate('correction_date', ORIGINAL)).toBeNull();
-    expect(correctionRateDate(null, null)).toBeNull();
+    expect(correctionRateDate('original', ORIGINAL, '2027-01-10')).toBe(ORIGINAL);
+    expect(correctionRateDate(null, ORIGINAL, '2027-01-10')).toBe(ORIGINAL);
+    // The correction's own invoice date, never a sale date.
+    expect(correctionRateDate('correction_date', ORIGINAL, '2027-01-10')).toBe('2027-01-10');
+    expect(correctionRateDate(null, null, '2027-01-10')).toBeNull();
   });
 });
 

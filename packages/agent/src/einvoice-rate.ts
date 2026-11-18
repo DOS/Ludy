@@ -74,6 +74,8 @@ export function einvoiceRatePrompt(facts: EInvoiceRateFacts): string {
 
 const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u).filter((s) => s.trim() !== '').length;
 const PERCENT = /(\d+(?:[.,]\d+)?)\s*%/g;
+const MOVE = /(\d+(?:[.,]\d+)?)\s*%[^%\d.;]{0,40}?(?:chuyển\s+sang|chuyển\s+thành|đổi\s+sang|đổi\s+thành|thành|sang)\s*(\d+(?:[.,]\d+)?)\s*%/giu;
+const KEEP = /giữ(?:\s+nguyên)?(?:\s+mức)?(?:\s+thuế\s+suất)?\s*(\d+(?:[.,]\d+)?)\s*%|(\d+(?:[.,]\d+)?)\s*%\s*(?:được\s+)?giữ\s+nguyên/giu;
 
 /** The text the model gave, or why there is none. Pure: the model call is the caller's. */
 export function checkEInvoiceRate(facts: EInvoiceRateFacts, output: { sentence?: string } | null): EInvoiceRateResult {
@@ -84,16 +86,28 @@ export function checkEInvoiceRate(facts: EInvoiceRateFacts, output: { sentence?:
   if (problem) return { kind: 'none', code: problem };
   // Only the Latin script (Vietnamese is Latin): a Cyrillic or Greek look-alike inside a word could hide a figure.
   if (/[^\p{Script=Latin}\p{N}\p{P}\p{Z}\p{S}\p{M}]/u.test(text)) return { kind: 'none', code: 'SCRIPT' };
-  // A percentage must be one of the rates the facts name: the digit check above lets "10" through when the facts mention 10% for another reason ("8% to 10%" in a text that says the rate is kept).
+  // A percentage must be one of the rates the facts name: the digit check above lets "10" through when the facts mention 10% for another reason.
   const offered = new Set([...facts.changes.flatMap((c) => [c.from, c.to]), ...facts.kept].flatMap((rate) => (/^\d+(?:\.\d+)?%$/.test(rate) ? [rate.slice(0, -1)] : [])));
   for (const match of text.matchAll(PERCENT)) {
     if (!offered.has((match[1] ?? '').replace(',', '.'))) return { kind: 'none', code: 'RATE' };
   }
-  // A proposal that moves a rate must not be explained as one that keeps it, nor the reverse: the sentence may only name a rate that moves ("to") when the code moves it.
-  if (facts.changes.length === 0) {
-    for (const match of text.matchAll(PERCENT)) {
-      if (!facts.kept.includes(`${(match[1] ?? '').replace(',', '.')}%`)) return { kind: 'none', code: 'RATE' };
-    }
+  // The explanation must not contradict the code (a rate the code moves explained as kept, a move in the wrong direction, a rate that stays explained as moving).
+  const norm = (n: string) => n.replace(',', '.');
+  const moves = new Set(facts.changes.map((c) => `${c.from.slice(0, -1)}>${c.to.slice(0, -1)}`));
+  const moved = new Set(facts.changes.map((c) => c.from.slice(0, -1)));
+  const keptRates = new Set(facts.kept.filter((r) => /^\d+(?:\.\d+)?%$/.test(r)).map((r) => r.slice(0, -1)));
+  // "X% chuyển sang Y%": the pair must be one the code moves.
+  for (const m of text.matchAll(MOVE)) {
+    if (!moves.has(`${norm(m[1] ?? '')}>${norm(m[2] ?? '')}`)) return { kind: 'none', code: 'RATE' };
+  }
+  // "giữ (nguyên) ... X%" or "X% giữ nguyên": X must not be a rate that moves.
+  for (const m of text.matchAll(KEEP)) {
+    const rate = norm(m[1] ?? m[2] ?? '');
+    if (moved.has(rate)) return { kind: 'none', code: 'RATE' };
+  }
+  // A rate that stays must not be written as the start of a move.
+  for (const m of text.matchAll(MOVE)) {
+    if (keptRates.has(norm(m[1] ?? '')) && !moved.has(norm(m[1] ?? ''))) return { kind: 'none', code: 'RATE' };
   }
   return { kind: 'sentence', text };
 }
