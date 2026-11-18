@@ -31,7 +31,7 @@ const { MeetingChapters } = await import('../src/components/meeting-chapters.tsx
 const { MeetingTranscript } = await import('../src/components/meeting-transcript.tsx');
 
 const chapter = (id: string, position: number, title: string, startSeconds: number, tainted = false): Chapter => ({ id, position, title, startSeconds, tainted });
-const segment = (id: string, startSeconds: number, text: string) => ({ id, startSeconds, endSeconds: startSeconds + 5, speakerLabel: 'Lan', text, stage: 'published' as const, corrected: false });
+const segment = (id: string, startSeconds: number, text: string) => ({ id, startSeconds, endSeconds: startSeconds + 5, speakerLabel: 'Lan', text, stage: 'published' as const, corrected: false, source: 'ludy' as const });
 const TRANSCRIPT: Transcript = {
   meetingId: 'm1',
   isRecorder: true,
