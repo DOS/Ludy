@@ -21,9 +21,12 @@ export function ContactDeals({ contact, canEdit, openOnly = false }: { contact: 
   const { locale } = useLocaleSetting();
   const [sheet, setSheet] = useState<DealSheetTarget | null>(null);
   const org = useQuery({ ...orpc.org.get.queryOptions(), enabled: canEdit });
-  const deals = useQuery(orpc.crm.deals.byParty.queryOptions({ input: { partyId } }));
+  // `byParty` answers the newest 200 deals of the customer, so the open ones are asked for as such (the list read, filtered by the server) where only they are shown.
+  const all = useQuery({ ...orpc.crm.deals.byParty.queryOptions({ input: { partyId } }), enabled: !openOnly });
+  const open = useQuery({ ...orpc.crm.deals.list.queryOptions({ input: { partyId, status: 'open' } }), enabled: openOnly });
+  const deals = openOnly ? open : all;
   const stages = useQuery(orpc.crm.pipeline.stages.queryOptions({ input: {} }));
-  const shown = (deals.data ?? []).filter((d) => !openOnly || d.stageKind === 'open');
+  const shown = openOnly ? (open.data?.items ?? []) : (all.data ?? []);
   return (
     <div data-testid="contact-deals">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">

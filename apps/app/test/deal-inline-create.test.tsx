@@ -121,6 +121,8 @@ describe("the deals in the Inbox's contact panel (#3648)", () => {
   function renderWith(node: React.ReactNode): string {
     const qc = new QueryClient();
     qc.setQueryData(['crm', 'deals', 'byParty'], [deal('00000000-0000-4000-8000-000000000001', 'Gói kế toán năm', 'open'), deal('00000000-0000-4000-8000-000000000002', 'Gói cũ đã thắng', 'won')]);
+    // The open ones come from the list read, filtered by the server.
+    qc.setQueryData(['crm', 'deals', 'list'], { items: [deal('00000000-0000-4000-8000-000000000001', 'Gói kế toán năm', 'open')], next: null });
     return renderToStaticMarkup(
       <QueryClientProvider client={qc}>
         <IntlProvider locale="vi" messages={catalog('vi')}>
