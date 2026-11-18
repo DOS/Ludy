@@ -8,6 +8,8 @@
 //
 // The provider and error-code unions below repeat those of `@crove/kernel-contract` (meeting-platform.ts); this package does not depend on the contract, and the kernel's tests hold the two equal.
 
+import { ZoomMeetingPlatform, type ZoomAppConfig } from './meeting-platform-zoom.ts';
+
 export type MeetingPlatformProvider = 'sandbox' | 'google_meet' | 'zoom' | 'microsoft_teams';
 export type MeetingPlatformErrorCode =
   | 'download_failed'
@@ -197,15 +199,18 @@ export class SandboxMeetingPlatform implements MeetingPlatformAdapter {
 }
 
 export interface MeetingPlatformAdaptersConfig {
+  // The Zoom adapter (C3, #3175) is there only when the deployment has a Zoom OAuth app (ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET); without one the provider has no adapter at all.
+  zoom?: ZoomAppConfig | undefined;
   // The offline sandbox is on unless this is `false`.
   sandbox?: boolean | undefined;
   // A shared sandbox store (tests and the dev stack add fixtures to it); a fresh seeded one when omitted.
   sandboxPlatform?: SandboxMeetingPlatform | undefined;
 }
 
-// The adapters a deployment has, by provider; a provider without one has no key. C2 to C4 add theirs here.
+// The adapters a deployment has, by provider; a provider without one has no key. C2 and C4 add theirs here; Zoom's (C3) is there when its app is configured.
 export function meetingPlatformAdapters(config: MeetingPlatformAdaptersConfig = {}): Partial<Record<MeetingPlatformProvider, MeetingPlatformAdapter>> {
   const adapters: Partial<Record<MeetingPlatformProvider, MeetingPlatformAdapter>> = {};
   if (config.sandbox !== false) adapters.sandbox = config.sandboxPlatform ?? new SandboxMeetingPlatform();
+  if (config.zoom) adapters.zoom = new ZoomMeetingPlatform(config.zoom);
   return adapters;
 }
