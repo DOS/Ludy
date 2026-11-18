@@ -275,20 +275,27 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
   });
 
   await test.step('Disconnect asks first, keeps the stored figures readable, and leaves the account quiet and not refreshable', async () => {
-    // Ads is the only place to disconnect an ad account: the channels screen does not list it.
+    // The Ads settings are the only place to disconnect an ad account: the channels screen does not list it, and the figures screen has no such button.
     const trigger = page.getByRole('button', { name: 'Ngắt kết nối', exact: true });
     const dialog = page.getByRole('dialog', { name: 'Ngắt kết nối tài khoản quảng cáo này?' });
+    await expect(trigger).toHaveCount(0);
+    await toSettings();
     await trigger.click();
     await expect(dialog.getByText('Số liệu đã lưu vẫn được giữ để xem lại.', { exact: false })).toBeVisible();
     // Cancel leaves everything as it was.
     await dialog.getByRole('button', { name: 'Hủy' }).click();
     await expect(dialog).toHaveCount(0);
+    await toFigures();
     await expect(page.getByText('Đã ngắt kết nối', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Làm mới ngay' })).toBeEnabled();
 
+    await toSettings();
     await trigger.click();
     await dialog.getByRole('button', { name: 'Ngắt kết nối', exact: true }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Đã ngắt kết nối tài khoản quảng cáo.' })).toBeVisible();
+    // Once disconnected the button is gone from the settings too.
+    await expect(trigger).toHaveCount(0);
+    await toFigures();
 
     // A quiet "disconnected" state: the account stays in the picker, Refresh is off, and nothing says it is live.
     await expect(page.getByText('Đã ngắt kết nối', { exact: true })).toBeVisible();
@@ -297,7 +304,6 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await expect(page.getByText('Số liệu đã cập nhật đến')).toHaveCount(0);
     await expect(page.getByText('Lần cập nhật tiếp theo')).toHaveCount(0);
     await expect(page.getByText('Số liệu đã lưu đến hết ngày', { exact: false })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Ngắt kết nối', exact: true })).toHaveCount(0);
     await expect(page.getByLabel('Tài khoản quảng cáo', { exact: true }).locator('option')).toHaveCount(2);
 
     // The stored figures are still there to read, with their tables and the books strip.
