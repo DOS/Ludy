@@ -8,9 +8,10 @@ import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
+import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -294,6 +295,9 @@ export interface RpcChannels {
   adsPlatforms?: Readonly<Record<string, AdPlatform>>;
   // The deployment can confirm who sent an email (INBOUND_AUTHSERV_ID, #3636): only then do conversations carry the "sender not confirmed" mark. Left out: it cannot.
   emailSenderCheck?: boolean;
+  // The provider ids of the write connections this deployment has a launch writer for (adWritersOf: the sandbox's with ADS_SANDBOX, Meta's only with ADS_LIVE_LAUNCH,
+  // #3675): ids only. The approval card says when a plan cannot launch here. Left out, none.
+  adsLaunchProviders?: readonly string[];
   // The write Meta app is the read ads app or the Pages app (metaWriteAppShared of the config): switching running ads off then closes every
   // Meta reading connection (ADR-0043 point 4). Left out, it is taken as shared, the safe side.
   adsWriteAppShared?: boolean;
@@ -3705,7 +3709,13 @@ export function createRpcHandler(
       requestChange: os.ads.requestChange.handler(({ context, input }) =>
         inAds(context, (orgId, actor) => runtime.execute('kernel.proposal.request', adsRequestOf(input), { actor, orgId, idempotencyKey: input.idempotencyKey })),
       ),
-      proposal: os.ads.proposal.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.proposal.change', input, { actor, orgId }))),
+      proposal: os.ads.proposal.handler(({ context, input }) =>
+        inAds(context, async (orgId, actor) => {
+          const read = (await runtime.query('ads.proposal.change', input, { actor, orgId })) as { change: AdsChange | null; provider: string | null };
+          // Only a plan to launch asks whether this server can: null for every other request, which launches nothing (#3675).
+          return { change: read.change, canLaunch: read.change?.change === 'campaign_launch' ? adLaunchCapable(channels?.adsLaunchProviders ?? [], read.provider) : null };
+        }),
+      ),
       lowerCap: os.ads.lowerCap.handler(({ context, input }) =>
         inAds(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;

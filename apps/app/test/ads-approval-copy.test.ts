@@ -80,3 +80,33 @@ describe('the button, the toast and the subtitles of the approval', () => {
     }
   });
 });
+
+// #3675: on a server with no launch writer an approved plan holds its amount and nothing is created, so every string of the approval says that and none promises a launch.
+describe('the approval of a campaign plan on a server that cannot launch (#3675)', () => {
+  const promises = /tự bật|tạo chiến dịch ở trạng thái|đang tạo chiến dịch|switches it on|creates the campaign at the ad platform|is creating the campaign/i;
+  const m = (locale: 'vi' | 'en') => catalog(locale) as unknown as { inboxDetail: Record<string, string> };
+  const fmt = (template: string, values: Record<string, string>) => template.replace(/\{(\w+)\}/g, (_m, k: string) => values[k] ?? `{${k}}`);
+
+  it('words the card, the subtitle, the button and the toast as a hold only, in both languages', () => {
+    for (const locale of ['vi', 'en'] as const) {
+      const { detail } = adsChangeText(launch, translatorFor(locale), money, date, false);
+      const { inboxDetail } = m(locale);
+      for (const text of [detail, inboxDetail.adsNoLauncher, inboxDetail.adsLaunchHeldSubtitle, inboxDetail.approveCampaignHeldOnly, inboxDetail.approvedCampaignHeldToast]) {
+        expect(text, locale).toBeTruthy();
+        expect(text, locale).not.toMatch(promises);
+      }
+    }
+    expect(adsChangeText(launch, translatorFor('vi'), money, date, false).detail).toContain('giữ 700000 VND trong hạn mức chi tiêu');
+    expect(adsChangeText(launch, translatorFor('vi'), money, date, false).detail).toContain('Máy chủ này chưa bật chạy quảng cáo thật nên chiến dịch chưa được tạo');
+    expect(fmt(m('vi').inboxDetail.approveCampaignHeldOnly as string, { amount: '700000 VND' })).toBe('Duyệt và chỉ giữ chỗ 700000 VND (chưa tạo chiến dịch)');
+    expect(m('vi').inboxDetail.adsNoLauncher).toBe('Máy chủ này chưa bật chạy quảng cáo thật; duyệt sẽ giữ chỗ hạn mức nhưng chưa tạo chiến dịch.');
+    expect(adsChangeLine(launch, translatorFor('en'), money, date, false)).toContain('not created at the ad platform');
+  });
+
+  it('keeps the launch sentence when the server can launch or does not say', () => {
+    for (const answer of [true, null]) {
+      expect(adsChangeText(launch, translatorFor('en'), money, date, answer).detail).toContain('switches it on by itself');
+    }
+    expect(adsChangeText(launch, translatorFor('en'), money, date).detail).toContain('switches it on by itself');
+  });
+});

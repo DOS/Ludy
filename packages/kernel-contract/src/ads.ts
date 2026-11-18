@@ -215,7 +215,10 @@ export const zAdsChange = z.discriminatedUnion('change', [
   }),
 ]);
 export type AdsChange = z.infer<typeof zAdsChange>;
-export const zAdsProposalView = z.object({ change: zAdsChange.nullable() });
+// `canLaunch` (#3675) is asked for a plan to launch only (null for every other request): whether this deployment has a launch writer for the plan's ad account, so the card
+// never promises a launch the server will not make (ADS_LIVE_LAUNCH off, as a public deployment must have it, leaves an approved plan queued with its amount held and nothing created).
+// It holds no secret and no provider id.
+export const zAdsProposalView = z.object({ change: zAdsChange.nullable(), canLaunch: z.boolean().nullable() });
 
 // Asking for one of those changes (the API call: owners and admins; it makes a proposal in the Inbox, never the change).
 export const zAdsChangeRequest = z.discriminatedUnion('change', [
