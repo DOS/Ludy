@@ -7,10 +7,10 @@ import { nextTotp } from '../lib/totp.ts';
 
 test('the agents screen asks for a second factor in place, then does what was asked', async ({ page }) => {
   await signUp(page, newEmail('agents'));
-  await createOrg(page, 'Công ty Tác tử');
+  await createOrg(page, 'Công ty Đội ngũ AI');
   await page.getByRole('navigation').getByRole('link', { name: 'Ludy AI', exact: true }).click();
   await page.getByRole('navigation').getByRole('link', { name: 'Đội ngũ AI' }).click();
-  await expect(page.getByRole('heading', { name: 'Sơ đồ tổ chức và tác tử AI' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Đội ngũ AI' })).toBeVisible();
 
   await page.getByTestId('template').first().getByRole('button', { name: 'Cài', exact: true }).click();
   await expect(page.getByText('Việc này cần xác thực hai lớp. Bật xác thực hai lớp cho tài khoản, Ludy sẽ thực hiện lại ngay sau đó.')).toBeVisible();
@@ -24,7 +24,7 @@ test('the agents screen asks for a second factor in place, then does what was as
   await page.getByRole('button', { name: 'Xác nhận' }).click();
 
   // The refused request ran again once the factor was on.
-  await expect(page.getByText('Đã cài tác tử AI và vị trí của nó.')).toBeVisible();
+  await expect(page.getByText('Đã cài đồng nghiệp AI và vị trí của nó.')).toBeVisible();
   await expect(page.getByTestId('agent-row')).toHaveCount(1);
   await expect(page.getByText(/^Đang chờ: cài mẫu/)).toHaveCount(0);
 });
