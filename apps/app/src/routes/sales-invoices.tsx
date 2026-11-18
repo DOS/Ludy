@@ -21,6 +21,7 @@ import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DataTable, Empty, ErrorText, FieldError, fieldControl, fieldHintId, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
+import { reasonButtonOff, reasonFill } from '../lib/einvoice-reason.ts';
 import { applyPrevious } from '../lib/invoice-copy.ts';
 import { appendSource, bookingDay, bookingSourceText, dealSourceText } from '../lib/invoice-crm-source.ts';
 import { ClientError, client, errorMessage, getCurrentOrg, isStepUpRequired, orpc, queryClient, uploadAgreement } from '../lib/api.ts';
@@ -583,18 +584,18 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
   const [errorNote, setErrorNote] = useState('');
   const [reasonAi, setReasonAi] = useState<EInvoiceReasonSuggested['ai'] | null>(null);
   const [reasonWhy, setReasonWhy] = useState<string | null>(null);
+  // An answer is for the question it was asked: what the person does meanwhile (picks a reason, edits the note, closes the panel) moves the ticket on, and a late answer is dropped.
+  const ticket = useRef(0);
   const suggest = useMutation({
-    mutationFn: (method: EInvoiceCorrectionKind) => client.einvoice.drafts.suggestReason({ originalDraftId: draft.id, kind: method, note: errorNote.trim() }),
-    onSuccess: (proposal) => {
+    mutationFn: (variables: { method: EInvoiceCorrectionKind; ticket: number }) => client.einvoice.drafts.suggestReason({ originalDraftId: draft.id, kind: variables.method, note: errorNote.trim() }),
+    onMutate: () => setReasonWhy(null),
+    onSuccess: (proposal, variables) => {
+      if (variables.ticket !== ticket.current) return;
       setReasonAi(proposal.ai);
       // The code is one of the list the select holds; anything else fills nothing.
-      const known = proposal.code !== null && (options.data?.reasonCodes ?? []).some((c) => c.code === proposal.code);
-      if (proposal.ai === 'used' && known) {
-        setReason(proposal.code as string);
-        setReasonWhy(proposal.why);
-      } else {
-        setReasonWhy(null);
-      }
+      const fill = reasonFill(proposal, options.data?.reasonCodes ?? []);
+      setReasonWhy(fill?.why ?? null);
+      if (fill) setReason(fill.code);
     },
   });
   const [file, setFile] = useState<File | null>(null);
@@ -621,6 +622,7 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
       setFile(null);
       setNature('');
       setRateConfirmed(false);
+      ticket.current += 1;
       setErrorNote('');
       setReasonAi(null);
       setReasonWhy(null);
@@ -658,7 +660,16 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
           ) : (
             <div className="mt-2">
               <Label htmlFor={`${id}-reason`}>{t('correction.reason')}</Label>
-              <NativeSelect id={`${id}-reason`} value={reason} onChange={(e) => setReason(e.target.value)} data-testid="invoice-correction-reason">
+              <NativeSelect
+                id={`${id}-reason`}
+                value={reason}
+                onChange={(e) => {
+                  ticket.current += 1;
+                  setReasonWhy(null);
+                  setReason(e.target.value);
+                }}
+                data-testid="invoice-correction-reason"
+              >
                 <NativeSelectOption value="">{t('correction.reasonPick')}</NativeSelectOption>
                 {reasons.map((r) => (
                   <NativeSelectOption key={r.code} value={r.code}>
@@ -669,15 +680,23 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
               {/* "Gợi ý lý do" (#3690): the person says what is wrong and the coworker proposes a code of the list; the person can change it. */}
               <div className="mt-2 space-y-1" data-testid="invoice-correction-reason-ai">
                 <Label htmlFor={`${id}-error-note`}>{t('correction.reasonNote')}</Label>
-                <Textarea id={`${id}-error-note`} rows={2} maxLength={600} value={errorNote} placeholder={t('correction.reasonNotePlaceholder')} onChange={(e) => setErrorNote(e.target.value)} data-testid="invoice-correction-error-note" />
+                <Textarea id={`${id}-error-note`} rows={2} maxLength={600} value={errorNote}
+                  placeholder={t('correction.reasonNotePlaceholder')}
+                  onChange={(e) => {
+                    ticket.current += 1;
+                    setReasonWhy(null);
+                    setErrorNote(e.target.value);
+                  }}
+                  data-testid="invoice-correction-error-note"
+                />
                 <div className="flex flex-wrap items-center gap-2">
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
                     loading={suggest.isPending}
-                    disabled={errorNote.trim() === '' || suggest.isPending || reasonAi === 'off' || reasonAi === 'budget'}
-                    onClick={() => suggest.mutate(kind)}
+                    disabled={reasonButtonOff({ note: errorNote, pending: suggest.isPending, last: reasonAi })}
+                    onClick={() => suggest.mutate({ method: kind, ticket: ticket.current })}
                     data-testid="invoice-correction-reason-suggest"
                   >
                     {t('correction.reasonSuggest')}
@@ -763,6 +782,8 @@ export function CorrectionAction({ draft, onStarted, openWith = null }: { draft:
                 setFile(null);
                 setNature('');
                 setRateConfirmed(false);
+                ticket.current += 1;
+                setReason('');
                 setErrorNote('');
                 setReasonAi(null);
                 setReasonWhy(null);

@@ -82,11 +82,11 @@ describe('suggestCorrectionReason', () => {
     expect(logged).not.toContain(INPUT.note);
   });
 
-  it('says busy when the member asks too often, and gives the ticket back after each call', async () => {
+  it('says busy when the member asks too often, per member', async () => {
     const { ai } = setup(async () => PROPOSAL, new DraftBudget({ perUserPerMinute: 1, now: () => 1000 }));
     expect(await suggestCorrectionReason(ai, ORG, USER, SOURCE, INPUT)).toMatchObject({ ai: 'used' });
     expect(await suggestCorrectionReason(ai, ORG, USER, SOURCE, INPUT)).toMatchObject({ ai: 'busy', code: null });
-    // Another member is not held back, and a call that failed does not keep its member waiting.
+    // Another member is not held back.
     expect(await suggestCorrectionReason(ai, ORG, 'another-user-id', SOURCE, INPUT)).toMatchObject({ ai: 'used' });
   });
 });

@@ -62,9 +62,12 @@ function linesText(facts: EInvoiceReasonFacts): string {
     .join('\n');
 }
 
-/** The text the figures of the why are checked against: the note, the lines and the labels of the codes. */
+/** The text the figures of the why are checked against: the note, the lines' own fields and the labels of the codes, WITHOUT the numbering the prompt adds (a "3" that is only the third code or the third line is no
+ * figure anyone stated) and without the date. */
 export function einvoiceReasonSourceText(facts: EInvoiceReasonFacts): string {
-  return [cut(facts.note, EINVOICE_REASON_NOTE_MAX), dayText(facts.originalDate), linesText(facts), codesText(facts)].join('\n');
+  const lines = shownLines(facts).map((l) => `${oneLine(l.description, DESCRIPTION_CHARS)} | ${l.unit ? oneLine(l.unit, 30) : '-'} | quantity ${l.quantity} | VAT ${l.vatRate}`);
+  const labels = shownCodes(facts).map((c) => oneLine(c.label, LABEL_CHARS));
+  return [cut(facts.note, EINVOICE_REASON_NOTE_MAX), ...lines, ...labels].join('\n');
 }
 
 export function einvoiceReasonInstructions(): string {
@@ -90,8 +93,9 @@ export function einvoiceReasonPrompt(facts: EInvoiceReasonFacts): string {
 
 const sentencesIn = (text: string): number => text.split(/(?<=[.!?…])\s+|\n+/u).filter((s) => s.trim() !== '').length;
 const fold = (text: string): string => text.normalize('NFKD').replace(/\p{Diacritic}/gu, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase();
-// Something DONE that the model cannot know: filed, sent, issued, approved ("đã gửi", "được phát hành", "was sent", ...).
-const CLAIM = /\b(?:da|duoc|vua|moi)\s+(?:gui|nop|phat\s+hanh|duyet|lap|ky|xuat|huy|dieu\s+chinh|thay\s+the)\b|\b(?:was|were|has\s+been|have\s+been|been)\s+(?:filed|sent|issued|approved|submitted|cancelled|canceled)\b/;
+// Something DONE that the model cannot know: sent to the buyer, filed with the tax office, approved, signed, accepted or given a code ("đã gửi", "được duyệt", "đã chấp nhận", "was sent", "we filed", ...). The
+// original IS issued, so "hóa đơn đã lập", "đã xuất" and "cần được điều chỉnh" are plain facts and pass.
+const CLAIM = /\b(?:da|duoc|vua|moi)\s+(?:gui|nop|duyet|ky|huy|chap\s+nhan|cap\s+ma|nhan|xac\s+nhan)\b|\b(?:was|were|has\s+been|have\s+been|been)\s+(?:filed|sent|issued|approved|submitted|cancelled|canceled|accepted)\b|\b(?:we|i)\s+(?:have\s+)?(?:sent|filed|issued|approved|submitted|cancelled|canceled)\b/;
 
 /** The proposal the model gave, or why there is none. Pure: the model call is the caller's. */
 export function checkEInvoiceReason(facts: EInvoiceReasonFacts, output: EInvoiceReasonModelOutput | null): EInvoiceReasonResult {

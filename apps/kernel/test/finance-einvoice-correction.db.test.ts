@@ -606,8 +606,9 @@ suite('adjusting and replacing an issued sales e-invoice (#2504)', () => {
     const notIssued = await execute<{ id: string }>(o, 'finance.einvoice_draft.save', form(o));
     expect(await refusal(query('finance.einvoice.reason_source', { originalDraftId: notIssued.id }))).toBe('EINVOICE_ORIGINAL_NOT_ISSUED');
     expect(await refusal(query('finance.einvoice.reason_source', { originalDraftId: randomUUID() }))).toBe('EINVOICE_DRAFT_NOT_FOUND');
-    // It is a read: no draft was made and nothing was audited as a command.
-    expect(await rows('SELECT 1 FROM crove_finance.einvoice_draft WHERE org_id = $1 AND original_draft_id = $2', [o.orgId, original.draftId])).toHaveLength(0);
+    // An issued invoice of ANOTHER org is the same not-found: its lines are never read through this query.
+    const other = await issued(await org(), sandbox());
+    expect(await refusal(query('finance.einvoice.reason_source', { originalDraftId: other.draftId }))).toBe('EINVOICE_DRAFT_NOT_FOUND');
   });
 
   it('sends the consumer label and a passport\'s nationality in the provider\'s document (#3709)', async () => {

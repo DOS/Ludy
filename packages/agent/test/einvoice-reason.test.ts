@@ -44,10 +44,20 @@ describe('the check on what the model answered', () => {
     // A figure that IS in the note, the lines or a label is fine.
     expect(check({ choice: 2, why: 'Số lượng ghi 10 nhưng đúng là 12.' })).toMatchObject({ kind: 'proposal' });
   });
+  it('states no figure that is only the numbering of the list, the lines or the date', () => {
+    // 3 is the third code, 1 the first line, 20 and 11 and 2026 the date: none of them was stated by anyone.
+    for (const why of ['Số lượng đúng là 3 hộp.', 'Số lượng đúng là 20 hộp.', 'Số lượng đúng là 2026 hộp.', 'Số lượng đúng là 11 hộp.']) expect(check({ choice: 2, why })).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+  it('lets plain facts about the original through (it is issued by definition)', () => {
+    for (const why of ['Số lượng cần được điều chỉnh cho đúng.', 'Hóa đơn cần được thay thế vì sai số lượng.', 'Hóa đơn đã lập ghi sai số lượng.', 'Hóa đơn đã xuất ghi sai số lượng hàng.']) {
+      expect(check({ choice: 2, why })).toMatchObject({ kind: 'proposal' });
+    }
+  });
   it('refuses a foreign script and a claim that a step was done', () => {
     expect(check({ choice: 2, why: 'Sai số lượng (пример).' })).toEqual({ kind: 'none', code: 'SCRIPT' });
     expect(check({ choice: 1, why: 'Hóa đơn đã gửi cho người mua nên cần sửa.' })).toEqual({ kind: 'none', code: 'CLAIM' });
     expect(check({ choice: 1, why: 'The invoice was issued with the wrong buyer.' })).toEqual({ kind: 'none', code: 'CLAIM' });
+    for (const why of ['Cơ quan thuế đã chấp nhận hóa đơn này.', 'Hóa đơn đã được cấp mã rồi.', 'We sent it to the buyer yesterday.', 'Hóa đơn được duyệt xong.']) expect(check({ choice: 1, why })).toEqual({ kind: 'none', code: 'CLAIM' });
     expect(check({ choice: 1, why: 'Người mua đã đổi địa chỉ nên ghi lại.' })).toMatchObject({ kind: 'proposal' });
   });
   it('offers at most the first 60 codes and refuses a number past them', () => {
