@@ -290,6 +290,78 @@ describe('ZoomMeetingPlatform.refresh', () => {
   });
 });
 
+describe('ZoomMeetingPlatform connect (authorizeUrl and exchange)', () => {
+  const GRANT = { code: 'code-not-real-0001', redirectUri: 'https://app.example.test/meetings/oauth/zoom/callback', codeVerifier: 'v'.repeat(64) };
+
+  it('builds the authorize address with the app id, the redirect address, the state and the PKCE challenge, and no scope', () => {
+    const { adapter, calls } = zoom([]);
+    const url = new URL(adapter.authorizeUrl({ state: 'state-0001', redirectUri: GRANT.redirectUri, codeChallenge: 'challenge-0001' }));
+    expect(`${url.origin}${url.pathname}`).toBe('https://zoom.us/oauth/authorize');
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      response_type: 'code',
+      client_id: APP.clientId,
+      redirect_uri: GRANT.redirectUri,
+      state: 'state-0001',
+      code_challenge: 'challenge-0001',
+      code_challenge_method: 'S256',
+    });
+    expect(adapter.oauthProvider).toBe('zoom_recordings');
+    expect(adapter.pkce).toBe(true);
+    // Building an address calls nothing.
+    expect(calls).toEqual([]);
+  });
+
+  it('exchanges the code with the app credentials and the verifier, reads who the grant is, and returns a credential the job reads', async () => {
+    const { adapter, calls } = zoom([{ json: fixture('token') }, { json: fixture('users-me') }]);
+    const account = await adapter.exchange(GRANT);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.url).toBe('https://zoom.us/oauth/token');
+    expect(calls[0]?.headers.authorization).toBe(`Basic ${Buffer.from(`${APP.clientId}:${APP.clientSecret}`).toString('base64')}`);
+    expect(Object.fromEntries(new URLSearchParams(calls[0]?.body))).toEqual({ grant_type: 'authorization_code', code: GRANT.code, redirect_uri: GRANT.redirectUri, code_verifier: GRANT.codeVerifier });
+    expect(calls[1]?.url).toBe('https://api.zoom.us/v2/users/me');
+    expect(calls[1]?.headers.authorization).toBe('Bearer access-new');
+    // Keyed by the Zoom user's id (lowercased); the address is only the display name.
+    expect(account.externalAccount).toBe('synthetic-user-id-0001');
+    expect(account.displayName).toBe('Linh Nguyen');
+    expect(account.scopes).toEqual(['cloud_recording:read:list_user_recordings', 'cloud_recording:read:list_recording_files']);
+    expect(account.expiresAt).toEqual(new Date(NOW.getTime() + 3599 * 1000));
+    expect(JSON.parse(account.secret)).toEqual({ accessToken: 'access-new', refreshToken: 'refresh-new', expiresAt: new Date(NOW.getTime() + 3599 * 1000).toISOString() });
+  });
+
+  it('names the account by its address when Zoom gives no display name, and omits the verifier when the attempt has none', async () => {
+    const { adapter, calls } = zoom([{ json: { access_token: 'a1', refresh_token: 'r1', expires_in: 3600 } }, { json: { id: 'ABC123xyz', email: 'only@example.test' } }]);
+    const account = await adapter.exchange({ ...GRANT, codeVerifier: null });
+    expect(account.displayName).toBe('only@example.test');
+    expect(account.externalAccount).toBe('abc123xyz');
+    expect(JSON.parse(account.secret)).toEqual({ accessToken: 'a1', refreshToken: 'r1', expiresAt: new Date(NOW.getTime() + 3600 * 1000).toISOString() });
+    expect(Object.fromEntries(new URLSearchParams(calls[0]?.body))).not.toHaveProperty('code_verifier');
+  });
+
+  it('refuses a code or an app Zoom does not accept, and an account with no address, with short codes and nothing stored', async () => {
+    for (const status of [400, 401]) expect(await codeOf(zoom([{ status, json: { error: 'invalid_grant' } }]).adapter.exchange(GRANT))).toBe('platform_refused');
+    // The token was accepted but the profile read is refused (the app lacks the permission): the same short code, never the token.
+    expect(await codeOf(zoom([{ json: fixture('token') }, { status: 401 }]).adapter.exchange(GRANT))).toBe('platform_refused');
+    expect(await codeOf(zoom([{ json: fixture('token') }, { status: 403 }]).adapter.exchange(GRANT))).toBe('platform_refused');
+    expect(await codeOf(zoom([{ json: fixture('token') }, { json: { id: 'x', display_name: 'No Address' } }]).adapter.exchange(GRANT))).toBe('platform_refused');
+    expect(await codeOf(zoom([{ json: fixture('token') }, { json: { email: 'no-id@example.test' } }]).adapter.exchange(GRANT))).toBe('platform_refused');
+  });
+
+  it('says platform_unavailable for a busy or malformed Zoom, and an error carries no token, code or answer body', async () => {
+    expect(await codeOf(zoom([{ status: 503 }]).adapter.exchange(GRANT))).toBe('platform_unavailable');
+    expect(await codeOf(zoom([new TypeError('fetch failed')]).adapter.exchange(GRANT))).toBe('platform_unavailable');
+    expect(await codeOf(zoom([{ json: { token_type: 'bearer' } }]).adapter.exchange(GRANT))).toBe('platform_unavailable');
+    // A grant with no refresh token would die within the hour: refused at connect, not an hour later.
+    expect(await codeOf(zoom([{ json: { access_token: 'a1', expires_in: 3600 } }]).adapter.exchange(GRANT))).toBe('platform_unavailable');
+    expect(await codeOf(zoom([{ json: fixture('token') }, { status: 502 }]).adapter.exchange(GRANT))).toBe('platform_unavailable');
+    const failure: unknown = await zoom([{ status: 400, text: 'secret-body-code-not-real-0001 access-new' }]).adapter.exchange(GRANT).then(() => null, (e: unknown) => e);
+    expect(failure).toBeInstanceOf(MeetingPlatformError);
+    const message = (failure as MeetingPlatformError).message;
+    expect(message).not.toContain(GRANT.code);
+    expect(message).not.toContain('secret-body');
+    expect(message).not.toContain('access-new');
+  });
+});
+
 describe('the Zoom adapter\'s hosts and registration', () => {
   it('may call only the API host and the token host, and a call to any other host is refused before the transport', async () => {
     const t = transport([{ json: {} }]);

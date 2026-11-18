@@ -2,6 +2,7 @@
 // The Zoom OAuth app of the recording import (Meetings C3, #3175): off by default, both settings or neither, and the adapter exists only with both.
 import { describe, expect, it } from 'vitest';
 import { ZoomMeetingPlatform } from '@crove/channel';
+import { MEETING_PLATFORM_OAUTH_NAME } from '@crove/kernel-contract';
 import { loadConfig } from '../src/config.ts';
 import { meetingPlatformsOf } from '../src/kernel.ts';
 
@@ -21,6 +22,8 @@ describe('ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET', () => {
     const adapters = meetingPlatformsOf(loadConfig({ ...BASE, ...ZOOM, CHANNEL_SANDBOX: 'false' }));
     expect(Object.keys(adapters)).toEqual(['zoom']);
     expect(adapters.zoom).toBeInstanceOf(ZoomMeetingPlatform);
+    // The adapter's attempt name and the contract's map (which the commands use) stay the same.
+    expect((adapters.zoom as ZoomMeetingPlatform).oauthProvider).toBe(MEETING_PLATFORM_OAUTH_NAME.zoom);
   });
 
   it('refuse one without the other, and an id that is not the shape of a Zoom client id', () => {

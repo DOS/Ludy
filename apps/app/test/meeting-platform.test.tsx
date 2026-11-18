@@ -26,7 +26,7 @@ vi.mock('../src/lib/api.ts', async () => {
         return node([...path, prop]);
       },
     });
-  return { orpc: node([]), queryClient: client.current, errorMessage: (e: unknown) => `ERR:${(e as Error).message}`, claimImportedMedia: vi.fn() };
+  return { orpc: node([]), client: node(['client']), getCurrentOrg: () => 'acme', queryClient: client.current, errorMessage: (e: unknown) => `ERR:${(e as Error).message}`, claimImportedMedia: vi.fn() };
 });
 vi.mock('../src/lib/auth.ts', () => ({ getConfig: () => ({ modules: config.modules, channels: { sandbox: config.sandbox } }) }));
 vi.mock('@tanstack/react-router', async (importOriginal) => {
@@ -87,7 +87,7 @@ const reset = () => {
 // Text as the server renderer writes it (quotes and apostrophes are escaped).
 const esc = (s: string) => s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#x27;');
 const count = (html: string, needle: string) => html.split(needle).length - 1;
-const KEYS = { connections: ['meetingPlatform', 'connections'], recordings: ['meetingPlatform', 'recordings'], policy: ['meetings', 'consentPolicy', 'get'] };
+const KEYS = { connections: ['meetingPlatform', 'connections'], providers: ['meetingPlatform', 'providers'], recordings: ['meetingPlatform', 'recordings'], policy: ['meetings', 'consentPolicy', 'get'] };
 // A query that failed on its last read. It keeps data (an empty list) so the server render, which would otherwise read again on mount, shows the error as the browser does after a failed read.
 const failQuery = (key: string[], message: string) => {
   client.current.setQueryData(key, []);
@@ -134,14 +134,40 @@ describe('MeetingPlatforms (Settings)', () => {
     expect(empty).toContain(en.meetings.platform.settings.none);
     expect(empty).toContain('data-testid="meeting-platform-connect-sandbox"');
     expect(empty).toContain(en.meetings.platform.settings.connectSandbox);
-    // Google Meet, Zoom and Teams are not offered in C1.
+    // Without a connect dialog the deployment can finish (no providers answered), no platform but the sandbox is offered.
     for (const name of ['Zoom', 'Microsoft Teams']) expect(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />))).not.toContain(`>${name}<`);
+    expect(empty).not.toContain('meeting-platform-connect-zoom');
     expect(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect={false} />))).not.toContain('meeting-platform-connect-sandbox');
     config.sandbox = false;
     expect(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />))).not.toContain('meeting-platform-connect-sandbox');
     config.sandbox = true;
     client.current.setQueryData(KEYS.connections, [connection()]);
     expect(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />))).not.toContain('meeting-platform-connect-sandbox');
+  });
+
+  it('offers "Connect Zoom" with its plain-words note only where the deployment has the Zoom app, for a member who can connect, in both languages', () => {
+    reset();
+    client.current.setQueryData(KEYS.connections, []);
+    // The server answers with the platforms it can finish: none, then Zoom.
+    client.current.setQueryData(KEYS.providers, []);
+    expect(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />))).not.toContain('meeting-platform-connect-zoom');
+    client.current.setQueryData(KEYS.providers, ['zoom']);
+    const html = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
+    expect(html).toContain('data-testid="meeting-platform-connect-zoom"');
+    expect(html).toContain(en.meetings.platform.settings.connectZoom);
+    expect(html).toContain(esc(en.meetings.platform.settings.zoomNote));
+    // The note says where a video-only recording stands, in words a member knows (no setting name).
+    expect(en.meetings.platform.settings.zoomNote).toContain('media sandbox');
+    expect(en.meetings.platform.settings.zoomNote).not.toMatch(/MEDIA_URL|[A-Z]{3,}_[A-Z_]+/);
+    const vn = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />, 'vi'));
+    expect(vn).toContain(viMessages.meetings.platform.settings.connectZoom);
+    // A viewer connects nothing.
+    expect(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect={false} />))).not.toContain('meeting-platform-connect-zoom');
+    // Connected already: the button stays (a second Zoom account, or a reconnect), the list shows the account.
+    client.current.setQueryData(KEYS.connections, [connection({ provider: 'zoom', displayName: 'linh@example.test' })]);
+    const connected = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
+    expect(connected).toContain(esc(`${en.meetings.platform.provider.zoom}: linh@example.test`));
+    expect(connected).toContain('meeting-platform-connect-zoom');
   });
 
   it('shows a loading state, an error, and nothing at all without the meetings module', () => {

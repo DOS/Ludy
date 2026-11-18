@@ -2687,7 +2687,18 @@ export const vi = {
         disconnectNo: 'Giữ lại',
         connectSandbox: 'Kết nối bản thử (sandbox)',
         connectedToast: 'Đã kết nối bản thử.',
-        moreLater: 'Google Meet, Zoom và Microsoft Teams sẽ có ở các bản sau.',
+        connectZoom: 'Kết nối Zoom',
+        zoomNote: 'Zoom: Ludy liệt kê các bản ghi đám mây của chính tài khoản Zoom của bạn (cần gói Zoom có lưu bản ghi đám mây) và ưu tiên tệp chỉ có âm thanh. Bản ghi chỉ có video chỉ nhập được khi máy chủ đã bật bộ xử lý media; hãy hỏi người quản lý Ludy của bạn. Bạn tự duyệt các quyền ngay trên màn hình của Zoom và có thể gỡ ứng dụng trong Zoom bất cứ lúc nào.',
+        moreLater: 'Google Meet và Microsoft Teams sẽ có ở các bản sau.',
+      },
+      // Nơi Zoom đưa trình duyệt quay lại (/meetings/oauth/zoom/callback): việc kết nối được hoàn tất ở đây, rồi thành viên trở về Cài đặt.
+      oauth: {
+        title: 'Kết nối nền tảng họp',
+        finishing: 'Đang hoàn tất kết nối...',
+        connected: 'Đã kết nối {name}. Ludy sẽ liệt kê các bản ghi của tài khoản này trong vài phút.',
+        cancelled: 'Bạn đã hủy việc kết nối, không có gì thay đổi.',
+        lost: 'Không tìm thấy lượt kết nối này trong trình duyệt (có thể nó bắt đầu ở tab khác). Hãy bắt đầu lại từ Cài đặt.',
+        back: 'Về Cài đặt',
       },
       recordings: {
         title: 'Bản ghi có sẵn trên nền tảng',
@@ -14421,6 +14432,8 @@ export const vi = {
         import_holds: 'Xem một bản ghi từ nền tảng họp còn giữ khóa tạm này không',
         import_open: 'Xem các bản ghi đang chờ tải từ nền tảng họp',
         import_staged: 'Ghi nhận bản ghi từ nền tảng họp đã tải xong',
+        oauth_begin: 'Bắt đầu kết nối nền tảng họp',
+        oauth_consume: 'Hoàn tất kết nối nền tảng họp',
         recording: {
           dismiss: 'Bỏ qua một bản ghi gợi ý từ nền tảng họp',
         },
