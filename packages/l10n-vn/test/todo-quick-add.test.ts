@@ -1475,16 +1475,77 @@ describe('parseTodoQuickAdd (#3556)', () => {
       dueTime: '09:00',
       recurrence: { freq: 'daily', interval: 1 },
     });
+
+    // Monthly recurrences advance when today's scheduled occurrence has already passed
+    expect(parseTodoQuickAdd('Gọi khách mỗi tháng 9h', { now: TUE_AFTERNOON, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2026-12-17',
+      dueTime: '09:00',
+      dueAt: '2026-12-17T09:00:00+07:00',
+      recurrence: { freq: 'monthly', interval: 1 },
+    });
+    expect(parseTodoQuickAdd('Gọi khách mỗi 2 tháng 9h', { now: TUE_AFTERNOON, timeZone: VN_TZ })).toMatchObject({
+      title: 'Gọi khách',
+      dueOn: '2027-01-17',
+      dueTime: '09:00',
+      recurrence: { freq: 'monthly', interval: 2 },
+    });
+    expect(
+      parseTodoQuickAdd('Chốt sổ cuối tháng 9h', { now: new Date('2026-11-30T16:00:00+07:00'), timeZone: VN_TZ }),
+    ).toMatchObject({
+      title: 'Chốt sổ',
+      dueOn: '2026-12-31',
+      dueTime: '09:00',
+      recurrence: { freq: 'monthly', interval: 1, byMonthDay: -1 },
+    });
+
+    // Filesystem paths protect embedded date/weekday words ("/tmp/tomorrow", "/home/admin/friday", "./tomorrow", "C:\\tmp\\tomorrow")
+    expect(parseTodoQuickAdd('Read /tmp/tomorrow', { now: TUE_AFTERNOON, timeZone: VN_TZ })).toMatchObject({
+      title: 'Read /tmp/tomorrow',
+      dueOn: null,
+      dueTime: null,
+      tokens: [],
+    });
+    expect(parseTodoQuickAdd('Back up /home/admin/friday', { now: TUE_AFTERNOON, timeZone: VN_TZ })).toMatchObject({
+      title: 'Back up /home/admin/friday',
+      dueOn: null,
+      dueTime: null,
+      tokens: [],
+    });
+    expect(parseTodoQuickAdd('Edit src/routes/tomorrow and ./friday 9am', { now: TUE_MORNING, timeZone: VN_TZ })).toMatchObject({
+      title: 'Edit src/routes/tomorrow and ./friday',
+      dueOn: '2026-11-17',
+      dueTime: '09:00',
+    });
+    expect(parseTodoQuickAdd('Open C:\\Users\\friday\\tomorrow', { now: TUE_AFTERNOON, timeZone: VN_TZ })).toMatchObject({
+      title: 'Open C:\\Users\\friday\\tomorrow',
+      dueOn: null,
+      tokens: [],
+    });
+
+    // Dismissing "tonight" does not re-anchor a separate non-attached word like "sáng"
+    const tonightFirst = parseTodoQuickAdd('Gọi khách tonight sáng', { now: TUE_MORNING, timeZone: VN_TZ });
+    expect(tonightFirst.tokens.map((t) => [t.kind, t.raw])).toEqual([['date', 'tonight']]);
+    const tonightDismissed = parseTodoQuickAdd('Gọi khách tonight sáng', {
+      now: TUE_MORNING,
+      timeZone: VN_TZ,
+      dismissedTokens: tonightFirst.tokens,
+    });
+    expect(tonightDismissed.tokens).toEqual([]);
+    expect(tonightDismissed.dueOn).toBeNull();
+    expect(tonightDismissed.dueTime).toBeNull();
   });
 
-  it('stays linear on 50k-character adversarial --, %, and tab inputs without ReDoS', () => {
+  it('stays linear on 50k-character adversarial --, %, /, and tab inputs without ReDoS', () => {
     const dashes = `a${'--'.repeat(25_000)}!`;
+    const slashes = `${'/a'.repeat(25_000)}/`;
     const percents = '%'.repeat(50_000);
     const emailPrefix = `${'%'.repeat(25_000)}${'-'.repeat(25_000)}@host${'--'.repeat(500)}`;
     const tabs = `Gọi\t${'\t'.repeat(50_000)}khách, ngày mai`;
     const start = performance.now();
 
     expect(parseTodoQuickAdd(dashes, { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBeNull();
+    expect(parseTodoQuickAdd(slashes, { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBeNull();
     expect(parseTodoQuickAdd(percents, { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBeNull();
     expect(parseTodoQuickAdd(emailPrefix, { now: TUE_MORNING, timeZone: VN_TZ }).dueOn).toBeNull();
     const tabResult = parseTodoQuickAdd(tabs, { now: TUE_MORNING, timeZone: VN_TZ });

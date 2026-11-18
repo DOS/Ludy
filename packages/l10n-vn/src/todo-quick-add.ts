@@ -186,6 +186,14 @@ const EMAIL_RE =
   /(?<![\p{L}\p{N}\p{M}._%+-])[\p{L}\p{N}\p{M}._%+-]+@[\p{L}\p{N}]+(?:-+[\p{L}\p{N}]+)*(?:\.[\p{L}\p{N}]+(?:-+[\p{L}\p{N}]+)*)+/giu;
 const FILE_OR_DOMAIN_RE =
   /(?:^|(?<=[\s([,"'/]))(?<![\p{L}\p{N}\p{M}_.-])[\p{L}\p{N}\p{M}_]+(?:[.-]+[\p{L}\p{N}\p{M}_]+)*\.(?:[a-z][a-z0-9]{1,5}|PDF|DOCX?|XLSX?|PPTX?|CSV|TXT|MD|JSON|XML|PNG|JPE?G|GIF|SVG|ZIP|RAR|TAR|GZ)(?=$|[\s.,;:!?)\]"'])/gu;
+const UNIX_ABS_PATH_RE =
+  /(?:^|(?<=[\s([,"']))(?<![\p{L}\p{N}\p{M}_./-])(?:\/[\p{L}\p{N}\p{M}_.@-]+){2,}\/?(?=$|[\s.,;:!?)\]"'])/gu;
+const UNIX_ROOTED_REL_PATH_RE =
+  /(?:^|(?<=[\s([,"']))(?<![\p{L}\p{N}\p{M}_./-])(?:~|\.\.?)(?:\/[\p{L}\p{N}\p{M}_.@-]+)+\/?(?=$|[\s.,;:!?)\]"'])/gu;
+const REL_SLASH_PATH_RE =
+  /(?:^|(?<=[\s([,"']))(?<![\p{L}\p{N}\p{M}_./-])(?=[0-9_.-]*\p{L})[\p{L}\p{N}\p{M}_.-]+(?:\/[\p{L}\p{N}\p{M}_.@-]+)+\/?(?=$|[\s.,;:!?)\]"'])/gu;
+const WIN_PATH_RE =
+  /(?:^|(?<=[\s([,"']))(?<![\p{L}\p{N}\p{M}_./-])[A-Za-z]:(?:[\\\/][\p{L}\p{N}\p{M}_.@-]+)+[\\\/]?(?=$|[\s.,;:!?)\]"'])/gu;
 const PRIORITY_RE = /(?:^|(?<=[\s([,]))!p([1-4])(?=$|[\s.,;:!?)\]])/gi;
 const TAG_RE = /(?:^|(?<=[\s([,]))#(?=[0-9_-]*\p{L})([\p{L}\p{N}\p{M}][\p{L}\p{N}\p{M}_-]{0,39})(?=$|[\s.,;:!?)\]])/gu;
 const LIST_QUOTED_RE = /(?:^|(?<=[\s([,]))\/"([^"\n]{1,60})"(?=$|[\s.,;:!?)\]])/gu;
@@ -451,6 +459,17 @@ function nextMonthDayDate(today: string, dayOfMonth: number): string {
   return resolve(nextYear, nextMonth);
 }
 
+function addCalendarMonthsForRecurrence(today: string, interval: number, byMonthDay?: number): string {
+  const parsed = parseIsoCalendarDate(today);
+  if (!parsed) return today;
+  const totalMonths = parsed.year * 12 + (parsed.month - 1) + interval;
+  const targetYear = Math.floor(totalMonths / 12);
+  const targetMonth = (totalMonths % 12) + 1;
+  const maxDay = daysInCalendarMonth(targetYear, targetMonth);
+  const targetDay = byMonthDay === -1 ? maxDay : Math.min(byMonthDay ?? parsed.day, maxDay);
+  return formatIsoDate(targetYear, targetMonth, targetDay);
+}
+
 function findProtectedUrlSpans(input: string): Span[] {
   const spans: Span[] = [];
   for (const m of input.matchAll(URL_RE)) {
@@ -464,7 +483,15 @@ function findProtectedUrlSpans(input: string): Span[] {
     }
     if (raw.length > 0) spans.push({ start, end: start + raw.length });
   }
-  for (const re of [EMAIL_RE, FILE_OR_DOMAIN_RE, ISO_TIMESTAMP_RE]) {
+  for (const re of [
+    EMAIL_RE,
+    FILE_OR_DOMAIN_RE,
+    UNIX_ABS_PATH_RE,
+    UNIX_ROOTED_REL_PATH_RE,
+    REL_SLASH_PATH_RE,
+    WIN_PATH_RE,
+    ISO_TIMESTAMP_RE,
+  ]) {
     for (const m of input.matchAll(re)) {
       if (m[0].length > 0) spans.push({ start: m.index, end: m.index + m[0].length });
     }
@@ -2394,7 +2421,9 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
 
   // 8. Period adjacent to an already-matched explicit date, weekday recurrence, or dismissed date chip ("sáng mai", "tomorrow morning")
   const recurrenceAnchorSpans = recurrenceState.derivedDueOn !== null ? tokens.filter((t) => t.kind === 'recurrence') : [];
-  const dismissedDateAnchorSpans = dismissedList.filter((t) => t.kind === 'date');
+  const dismissedDateAnchorSpans = dismissedList.filter(
+    (t) => t.kind === 'date' && t.raw.trim().toLowerCase() !== 'tonight',
+  );
   for (const ds of [...dateSpans, ...recurrenceAnchorSpans, ...dismissedDateAnchorSpans]) {
     const beforeW = findAdjacentWordBefore(input, words, ds.start, occupied);
     const beforePeriod = beforeW && isWordSpanAvailable(beforeW) ? matchPeriodWord(beforeW, false) : null;
@@ -2534,6 +2563,8 @@ export function parseTodoQuickAdd(input: string, opts: TodoQuickAddOptions): Tod
         dueOn = addLocalDays(today, recurrence.interval);
       } else if (recurrence.freq === 'weekly') {
         dueOn = addLocalDays(today, 7 * recurrence.interval);
+      } else if (recurrence.freq === 'monthly') {
+        dueOn = addCalendarMonthsForRecurrence(today, recurrence.interval, recurrence.byMonthDay);
       }
     }
   }
