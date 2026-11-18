@@ -36,7 +36,7 @@ export const NUMBER_PLACE = 'crove_finance.supplier_bank_account.number_sealed';
 export const HOLDER_PLACE = 'crove_finance.supplier_bank_account.account_holder_sealed';
 // The subject every sealed value of one supplier is under: one key to shred.
 export const supplierSubject = (partyId: string): string => `supplier:${partyId}`;
-const HASH_PURPOSE = 'supplier_bank_account.number';
+export const HASH_PURPOSE = 'supplier_bank_account.number';
 
 type Trx = CommandContext['trx'];
 type AccountRow = { id: string; party_id: string; bank_name: string; last4: string; status: string; number_hash: string; hash_key_id: string; created_at: Date | string; retired_at: Date | string | null };

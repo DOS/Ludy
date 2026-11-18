@@ -63,6 +63,17 @@ Read this when you run a Product Owner (PO) session, the coordinator included (o
 - Rebase right before merging, because other agents merge often.
 - Before merging another session's PR that the owner named, check it is still open and its head matches: another agent may have merged or replaced it.
 
+## App, Feature Group, and Module naming
+
+Ludy uses a single four-tier naming hierarchy defined in [DESIGN.md](../DESIGN.md) section 1.1 and exported from `packages/kernel-contract/src/apps.ts` ([#3796](https://github.com/DOS/Ludy/issues/3796)):
+
+1. **Suite:** **Ludy** (internal code identifiers keep `crove`).
+2. **App (`AppId`, Vietnamese: Ứng dụng):** top-level switcher workspaces and `ludy.vn` product pages: `teamwork` (**Cộng tác / Teamwork**), `finance` (**Tài chính / Finance**), `engage` (**Engage**), `hr` (**Nhân sự / HR**), `sign` (**eSign**), `ai` (**Ludy AI**).
+3. **Feature Group (`AppGroupId`, Vietnamese: Nhóm tính năng):** sidebar navigation groups inside an App (`Hộp thư`, `CRM`, `Marketing`, `Báo cáo`; `Sổ sách & Thuế`, `Bán hàng`, `Mua hàng`). Feature Groups are never toggled independently.
+4. **Module (`ModuleId`, Vietnamese: Phân hệ):** independently deployed (`CROVE_MODULES`) and per-org toggleable packages (`kernel`, `notes`, `projects`, `meetings`, `finance`, `social`, `crm`, `ads`, `hr`, `sign`), each mapped to a primary App in `MODULE_CATALOG` (`kernel` maps to `null` and stays on).
+
+Do not duplicate module or app lists across packages or routes: import `APP_IDS`, `MODULE_IDS`, `MODULE_CATALOG`, `SWITCHABLE_MODULE_IDS`, `isKnownModule`, `isSwitchableModule`, `appOfModule`, and `modulesOfApp` from `@crove/kernel-contract`. Display names for all canonical `ModuleId` values live in `modules.*` inside `vi.ts` and `en.ts` (for example, `social` is shown as **Hộp thư & Bài đăng** / **Inbox & Posts**, never `"Social"` as an app name, and Settings **Ứng dụng & Phân hệ** groups switches under their parent App). Legacy wire and schema identifiers (`crove_kernel.tenant.apps_off`, `crove_kernel.org_app_on`, `kernel.org.apps`, `kernel.org.set_app`) remain unchanged for backwards compatibility.
+
 ## Production, secret and credential steps
 
 Read this when a task needs a step on production, a secret or a credential. No team lead or worker runs one; the coordinator's side is section 2b of [the coordinator skill](../.claude/skills/project-coordinator-cycle/SKILL.md).

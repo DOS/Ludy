@@ -192,11 +192,11 @@ suite('payments to a supplier (#3113 S2)', () => {
     expect(heldFor).toBe(24 * 3_600_000);
     // Not payable before payable_after: the database refuses the move whatever the clock of the application says.
     await expect(rows("UPDATE crove_finance.supplier_payment SET status = 'paid' WHERE org_id = $1 AND id = $2", [o.orgId, first.id])).rejects.toThrow(/SUPPLIER_PAYMENT_HELD/);
-    // The hold passes (the time of the row arranged as only the database owner can): the move to paid then holds, and stamps its own time.
+    // The hold passes (the time of the row arranged as only the database owner can): the move to paid still needs the file handed over and the voucher of the settlement (S3c, finance-supplier-payment-settle
+    // tests the paid move and its stamp), so it is refused until then.
     await unguarded((c) => c.query("UPDATE crove_finance.supplier_payment SET payable_after = now() - interval '1 hour' WHERE org_id = $1 AND id = $2", [o.orgId, first.id]));
-    await rows("UPDATE crove_finance.supplier_payment SET status = 'paid' WHERE org_id = $1 AND id = $2", [o.orgId, first.id]);
-    expect((await payments(o))[0]).toMatchObject({ status: 'paid' });
-    expect((await payments(o))[0]?.paid_at).not.toBeNull();
+    await expect(rows("UPDATE crove_finance.supplier_payment SET status = 'paid' WHERE org_id = $1 AND id = $2", [o.orgId, first.id])).rejects.toThrow(/SUPPLIER_PAYMENT_NOT_EXPORTED/);
+    expect((await payments(o))[0]).toMatchObject({ status: 'approved', paid_at: null });
     // An account older than 30 days: no hold. A second org's invoice, the account's creation time set back as only the database owner can.
     const o2 = await org(false);
     await addAccount(o2);
@@ -373,17 +373,16 @@ suite('payments to a supplier (#3113 S2)', () => {
     await expect(rows("UPDATE crove_finance.supplier_payment SET confirmed_at = now() - interval '2 days' WHERE org_id = $1 AND id = $2", [o.orgId, first.id])).rejects.toThrow(/SUPPLIER_PAYMENT_STATE/);
   });
 
-  it('lists the suppliers with a payment waiting, as ids and days only, and refuses to erase their bank data meanwhile', async () => {
+  it('counts the suppliers with a payment waiting (a request not yet decided, then an approved one), as ids, a count and an amount only, and refuses to erase their bank data meanwhile', async () => {
     const o = await org(false);
     await addAccount(o);
     const doc = await invoice(o);
     const { proposalId } = await request(o, doc);
-    const waiting = await query<Array<{ partyId: string; state: string; since: string }>>(o, 'finance.signals.supplier_payments_waiting', {}, o.member);
-    expect(waiting.map((w) => [w.partyId, w.state])).toEqual([[o.supplier, 'pending']]);
-    expect(waiting[0]?.since).toMatch(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/);
+    const waiting = await query<Array<{ partyId: string; count: number; amount: string }>>(o, 'finance.signals.supplier_payments_waiting', { partyIds: [o.supplier] }, o.member);
+    expect(waiting).toEqual([{ partyId: o.supplier, count: 1, amount: '110' }]);
     expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }))).toBe('SUPPLIER_PAYMENT_WAITING');
     await approve(o, proposalId);
-    expect((await query<Array<{ state: string }>>(o, 'finance.signals.supplier_payments_waiting', {}, o.member)).map((w) => w.state)).toEqual(['approved']);
+    expect(await query(o, 'finance.signals.supplier_payments_waiting', { partyIds: [o.supplier] }, o.member)).toEqual([{ partyId: o.supplier, count: 1, amount: '110' }]);
     expect(await refusal(execute(o, 'finance.supplier_bank_account.erase', { partyId: o.supplier }))).toBe('SUPPLIER_PAYMENT_WAITING');
     expect(JSON.stringify(waiting)).not.toContain('012345678901');
   });

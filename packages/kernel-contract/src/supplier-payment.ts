@@ -3,6 +3,7 @@
 // the bank-line match (S3) follow. The request for approval is a proposal (finance.supplier_payment.record, asked for through kernel.proposal.request with `purchaseDocumentId`); its payload names
 // the account the approver sees (the bank, the last four digits, the day it was added) so a changed account makes the request stale. No number, holder or hash crosses any of these.
 import { z } from 'zod';
+import { zCashVoucherProposal, zId, zLocalDate } from './schemas.ts';
 
 export const SUPPLIER_PAYMENT_COMMAND = 'finance.supplier_payment.record';
 export const SUPPLIER_PAYMENT_KIND = 'finance.supplier_payment';
@@ -59,10 +60,24 @@ export const zSupplierPayment = z.strictObject({
 export type SupplierPayment = z.infer<typeof zSupplierPayment>;
 export const zSupplierPaymentList = z.array(zSupplierPayment);
 
-// Rule 3's second read (V5, #3113): the suppliers with a payment waiting, ids and days only. `pending` is a request not decided yet, `approved` a payment waiting to be paid.
-export const zSupplierPaymentWaiting = z.strictObject({ partyId: z.uuid(), state: z.enum(['pending', 'approved']), since: z.string().regex(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) });
-export type SupplierPaymentWaiting = z.infer<typeof zSupplierPaymentWaiting>;
-export const zSupplierPaymentsWaiting = z.array(zSupplierPaymentWaiting);
+// The received invoices that can be asked for payment (#3113 S4b, #3701), owners and admins. Facts only, read from the books and the supplier's accounts: the supplier's name and the invoice's number,
+// day and amount, whether the supplier has exactly one active bank account (`ready`), none or several, and the day of its latest account change when that is inside the last 30 days. Never a bank,
+// a number or a holder. At most 100, oldest invoice first; `more` says that older ones were not all shown.
+export const zSupplierPayable = z.strictObject({
+  purchaseDocumentId: z.uuid(),
+  partyId: z.uuid(),
+  partyName: z.string().max(300),
+  invoiceNumber: z.string().max(100),
+  invoiceDate: zLocalDate,
+  amount: zAmount,
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  account: z.enum(['ready', 'none', 'many']),
+  accountChangedOn: zLocalDate.nullable(),
+});
+export type SupplierPayable = z.infer<typeof zSupplierPayable>;
+export const SUPPLIER_PAYABLE_MAX = 100;
+export const zSupplierPayableList = z.strictObject({ items: z.array(zSupplierPayable).max(SUPPLIER_PAYABLE_MAX), more: z.boolean() });
+export type SupplierPayableList = z.infer<typeof zSupplierPayableList>;
 
 // The bank file of approved supplier payments (#3113 S3, #3700). `finance.supplier_payment.bank_file.get` is a sensitive query in the requesting owner's or admin's own context: its audit row is
 // committed before it reads, it needs a second factor used in the last 5 minutes, and it opens the sealed holder and number of each payment's pinned account there and nowhere else. The answer is
@@ -93,3 +108,27 @@ export const zSupplierPaymentBankFileExport = z.strictObject({
   reexport: z.boolean().optional(),
 });
 export type SupplierPaymentBankFileExport = z.infer<typeof zSupplierPaymentBankFileExport>;
+
+// The settlement of an approved payment (#3113 S3c, #3700): a bank statement line that is the transfer of the payment records it as a payment voucher (giấy báo Nợ, Dr 331 with the supplier, Cr the
+// bank account of the line) and the payment becomes `paid`, in one approved step. Ludy never moves money: the voucher records a transfer the business made. The request is a proposal
+// (`finance.supplier_payment.settle.record`, asked for through kernel.proposal.request with the payment and the line); its payload is a voucher that names the payment, and the server builds every
+// line and the amount from the payment, never from the requester.
+export const SUPPLIER_PAYMENT_SETTLE_COMMAND = 'finance.supplier_payment.settle.record';
+export const zSupplierPaymentSettlePrepare = z.strictObject({ paymentId: z.uuid(), bankLineId: zId });
+export const zSupplierPaymentSettleProposal = zCashVoucherProposal.extend({ supplierPayment: z.strictObject({ paymentId: zId }) });
+export type SupplierPaymentSettleProposal = z.infer<typeof zSupplierPaymentSettleProposal>;
+// The payments an open money-out line may be: approved, exported, past the hold, of the line's amount and entity, with the line not before the day of the file. Code decides, by the amount; the
+// description's words only rank. The beneficiary account is compared when the settlement is asked for (the refusal SUPPLIER_PAYMENT_ACCOUNT_MISMATCH), never here.
+export const zBankSupplierCandidate = z.strictObject({
+  paymentId: zId,
+  partyId: zId,
+  partyName: z.string(),
+  invoiceNumber: z.string(),
+  amount: zAmount,
+  exportedAt: z.string(),
+  reason: z.enum(['amount', 'amount_note']),
+});
+export type BankSupplierCandidate = z.infer<typeof zBankSupplierCandidate>;
+export const zBankSupplierMatch = z.strictObject({ bankLineId: zId, date: zLocalDate, candidates: z.array(zBankSupplierCandidate) });
+export type BankSupplierMatch = z.infer<typeof zBankSupplierMatch>;
+

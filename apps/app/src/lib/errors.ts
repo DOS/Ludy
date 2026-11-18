@@ -84,6 +84,12 @@ export function isMfaRequired(error: unknown): boolean {
   return (error as { code?: string } | null)?.code === 'MFA_REQUIRED';
 }
 
+// The server answered and refused (a 4xx with its code, from the RPC path or a fetch path): nothing it was asked to do was done. A lost response, a timeout or a 5xx says nothing about whether it was done.
+export function isServerRefusal(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
+
 // The org's owner revoked this session for that org only (issue #247): leave the org, keep the session.
 export function isOrgAccessRevoked(error: unknown): boolean {
   return (error as { code?: string } | null)?.code === 'SESSION_REVOKED_IN_ORG';

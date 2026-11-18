@@ -120,6 +120,8 @@ const PROPOSAL_COMMANDS = new Set([
   'finance.einvoice.issue',
   // A payment to a supplier approved in Ludy (#3113 S2): posts to no ledger (Ludy moves no money).
   'finance.supplier_payment.record',
+  // The settlement of an approved supplier payment (#3700 S3c): records a bank voucher that names the payment and moves it to paid.
+  'finance.supplier_payment.settle.record',
 ]);
 // The proposals a user may ask for and their preparers: PROPOSAL_PREPARERS in proposal-resubmit.ts.
 const ADMINS = ['owner', 'admin'] as const;
@@ -962,7 +964,7 @@ export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
 // The proposals approved one at a time, never in a batch: what opens the way to spend on an ad platform (ADR-0043 point 1,
 // #2294). The approver reads what changes on its own card, and one stale item must not decide the rest. A batch refuses them
 // item by item with BULK_NOT_ALLOWED, without running them.
-const SINGLE_APPROVAL_COMMANDS = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock', 'ads.campaign.launch', 'finance.einvoice.issue', 'finance.supplier_payment.record'];
+const SINGLE_APPROVAL_COMMANDS = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock', 'ads.campaign.launch', 'finance.einvoice.issue', 'finance.supplier_payment.record', 'finance.supplier_payment.settle.record'];
 
 // Whether a nested approval's error refuses only that item.
 export function isBulkItemRefusal(error: unknown): error is DomainError {

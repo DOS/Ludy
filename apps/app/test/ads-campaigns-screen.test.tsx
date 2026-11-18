@@ -386,6 +386,10 @@ describe('a draft that is frozen', () => {
     expect(pausedHtml).toContain('Created on the ad platform');
     expect(pausedHtml).toContain('Campaign: ');
     expect(pausedHtml).toContain('cmp_101');
+    // The platform's id is behind a details link, not printed after the name (AD-11).
+    expect(pausedHtml).toContain('<summary');
+    expect(pausedHtml).toContain('Platform id: cmp_101');
+    expect(pausedHtml).not.toContain('(cmp_101)');
     expect(pausedHtml).toContain('Ad set: ');
     expect(pausedHtml).toContain('set_202');
     expect(pausedHtml).toContain('In review (the platform is reviewing it)');

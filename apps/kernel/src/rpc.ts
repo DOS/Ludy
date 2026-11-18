@@ -418,12 +418,16 @@ export function createRpcHandler(
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
-  // The finance coworker on payroll (#2534): the same reader and model, a budget of its own. It is told the pseudonymized sheet only (an alias per employee, fixed labels and amounts).
+  // The finance coworker on payroll (#2534, #2815): the same reader and model, independent budgets per action so `Promise.all([prepare, flag])` in the UI does not self-contend on `running`.
+  const payrollPrepareBudget = suggestionBudget();
   const payrollAi: PayrollAi = {
     reader: conversationReader?.payrollPrepare && conversationReader.payrollFlag && conversationReader.payrollExplain
       ? { payrollPrepare: conversationReader.payrollPrepare.bind(conversationReader), payrollFlag: conversationReader.payrollFlag.bind(conversationReader), payrollExplain: conversationReader.payrollExplain.bind(conversationReader) }
       : null,
-    budget: suggestionBudget(),
+    budget: payrollPrepareBudget,
+    prepareBudget: payrollPrepareBudget,
+    flagBudget: suggestionBudget(),
+    explainBudget: suggestionBudget(),
   };
   const laborCheckAi: LaborCheckAi = {
     reader: conversationReader?.laborCheck ? { laborCheck: conversationReader.laborCheck.bind(conversationReader) } : null,
@@ -605,8 +609,9 @@ export function createRpcHandler(
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
       inHr(context, (orgId, actor) => runtime.execute<O>(name, input, { actor, orgId }));
   const payrollReads = (orgId: string, actor: UserActor): PayrollReads => ({
+    authorize: () => runtime.query('hr.payroll.coworker.access', {}, { actor, orgId }),
     sheet: (runId) => runtime.query<HrRunSheet>('hr.payroll.run.sheet', { runId }, { actor, orgId }),
-    runs: () => runtime.query<HrRunSummary[]>('hr.payroll.run.list', { limit: 120 }, { actor, orgId }),
+    runs: (legalEntityId) => runtime.query<HrRunSummary[]>('hr.payroll.run.list', { limit: 120, legalEntityId }, { actor, orgId }),
     payslip: (lineId) => runtime.query<HrPayslip>('hr.payroll.line.payslip', { lineId }, { actor, orgId }),
   });
   const laborCheckPorts = (orgId: string, actor: UserActor): LaborCheckPorts => ({
@@ -2958,6 +2963,7 @@ export function createRpcHandler(
       erase: os.supplierBank.erase.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.erase', input, { actor, orgId }))),
     },
     supplierPayment: {
+      payable: os.supplierPayment.payable.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_payment.payable', input, { actor, orgId }))),
       list: os.supplierPayment.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_payment.list', input, { actor, orgId }))),
       confirmAccount: os.supplierPayment.confirmAccount.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.confirm_account', input, { actor, orgId }))),
       cancel: os.supplierPayment.cancel.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.cancel', input, { actor, orgId }))),
@@ -3492,6 +3498,9 @@ export function createRpcHandler(
       ),
       payrollMatch: os.bank.payrollMatch.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.payroll_match', input, { actor, orgId })),
+      ),
+      supplierMatch: os.bank.supplierMatch.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.supplier_match', input, { actor, orgId })),
       ),
       // The candidates are read again here in the owner's or admin's own transaction, so the facts the model is told come from the books and the line, never from the caller.
       payrollExplain: os.bank.payrollExplain.handler(({ context, input }) =>

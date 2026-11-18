@@ -48,6 +48,8 @@ export const PROPOSAL_PREPARERS = {
   'finance.einvoice.issue': 'finance.einvoice.prepare_issue',
   // A payment to a supplier approved in Ludy (#3113 S2), built from the invoice and the supplier's active account by finance's own command: an owner or an admin asks, an owner or an admin approves.
   'finance.supplier_payment.record': 'finance.supplier_payment.prepare',
+  // The settlement of an approved supplier payment by its bank line (#3700 S3c), built from the payment and the line by finance's own command: an owner or an admin asks, an approver of postings approves.
+  'finance.supplier_payment.settle.record': 'finance.supplier_payment.settle.prepare',
 } as const;
 export type RequestableCommand = keyof typeof PROPOSAL_PREPARERS;
 export const REQUESTABLE = Object.keys(PROPOSAL_PREPARERS) as [RequestableCommand, ...RequestableCommand[]];
