@@ -3,7 +3,7 @@
 // with too little history raises nothing, and the sentences carry the figures a person needs and nothing more of an account
 // number than its last four characters.
 import { describe, expect, it } from 'vitest';
-import { AMOUNT_MIN_HISTORY, amountCheck, anomalyChecks, bankAccountCheck, bankAccountRuns, maskBankAccount, normalizeBankAccount, priceCheck } from '../src/domain/anomaly.ts';
+import { AMOUNT_MIN_HISTORY, amountCheck, anomalyChecks, bankAccountCheck, maskBankAccount, normalizeBankAccount, priceCheck } from '../src/domain/anomaly.ts';
 
 describe('bank account', () => {
   it('flags an account the vendor never used before, naming the last one by its last four characters', () => {
@@ -25,22 +25,26 @@ describe('bank account', () => {
   });
 
   it('compares by digit runs of at least six digits, so notes and bank names make no difference (#2426)', () => {
-    expect(bankAccountRuns('0011 2233 4455')).toEqual(['001122334455']);
-    expect(bankAccountRuns('TK: 0011-2233.4455 (VCB) CN Hà Nội')).toEqual(['001122334455']);
-    expect(bankAccountRuns('0011 (VCB)')).toEqual([]);
-    expect(bankAccountRuns('N/A')).toEqual([]);
     // The same account with a note, a bank name or other spacing is not a change; a letter inside the number is not a join.
     expect(bankAccountCheck('0011 (VCB)', ['0011'])).toBeNull();
     expect(bankAccountCheck('001122334455 (VCB)', ['0011 2233 4455'])).toBeNull();
     expect(bankAccountCheck('STK 001122334455 tại Vietcombank', ['001122334455'])).toBeNull();
+    // A branch code after " - " is not part of the account.
+    expect(bankAccountCheck('001122334455 - 012', ['001122334455'])).toBeNull();
+    expect(bankAccountCheck('001122334455', ['001122334455 - 012'])).toBeNull();
     // "N/A" or a short code on either side is no account: nothing to compare, nothing flagged.
     expect(bankAccountCheck('N/A', ['001122334455'])).toBeNull();
     expect(bankAccountCheck('001122334455', ['N/A', '1234'])).toBeNull();
     // A different real account still warns, and the earlier one is the newest that had an account at all.
     const check = bankAccountCheck('0987 6543 21', ['N/A', '0011 2233 4455']);
     expect(check).toMatchObject({ code: 'anomaly_bank.changed', params: { previous: '********4455', current: '******4321' } });
-    // Any run of the account matching an earlier run is the same account (an invoice naming two).
-    expect(bankAccountCheck('0987654321 / 001122334455', ['001122334455'])).toBeNull();
+  });
+
+  it('flags a new account even when an account used before is printed beside it, and names the new one', () => {
+    const check = bankAccountCheck('0011 2233 4455 / 0987654321', ['001122334455']);
+    expect(check).toMatchObject({ code: 'anomaly_bank.changed', params: { previous: '********4455', current: '******4321' } });
+    // Both accounts known from earlier invoices: no change.
+    expect(bankAccountCheck('0987654321 / 001122334455', ['001122334455', '0987654321'])).toBeNull();
   });
 
   it('normalizes and masks account numbers', () => {

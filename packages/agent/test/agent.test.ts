@@ -53,6 +53,9 @@ describe('AI extraction output', () => {
     expect(account('0011 2233 4455', text)).toBe('0011 2233 4455');
     expect(account('001122334456', text)).toBeUndefined();
     expect(account('0011 2233 4455 / 0987654321', text)).toBeUndefined();
+    // A line break or a note after the account does not glue a following figure onto it, on either side.
+    expect(account('001122334455', 'Số tài khoản: 001122334455\n1 Dịch vụ')).toBe('001122334455');
+    expect(account('001122334455', 'STK 001122334455 - 2026')).toBe('001122334455');
     expect(printedBankAccount('001122334455', '')).toBeNull();
   });
 });

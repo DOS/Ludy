@@ -7,7 +7,7 @@
 // What each rule compares with is the vendor's own history, read by finance.extraction.lookup from the books: the totals
 // of its last invoices, the unit prices of their lines, and the bank accounts its earlier proposals carried. A vendor
 // with too little history raises nothing: the first account, the first few invoices and the first price are never odd.
-import { Decimal, descriptionRuleText, type DecimalValue, type InvoiceCheck } from '@crove/l10n-vn';
+import { bankAccountRuns, Decimal, descriptionRuleText, type DecimalValue, type InvoiceCheck } from '@crove/l10n-vn';
 
 // What the books remember of a vendor.
 export interface VendorHistory {
@@ -34,14 +34,6 @@ const ITEM_MAX = 60;
 // An account number as compared: letters and digits only, upper case, so spaces, dots and dashes do not make one account
 // two.
 export const normalizeBankAccount = (account: string): string => account.replace(/[^0-9A-Za-z]/g, '').toUpperCase();
-
-// The digit runs of an account as it is compared (#2426): digits split only by spaces, dots or dashes are one run ("0011 2233 4455"), and a run counts from BANK_ACCOUNT_RUN_MIN digits, so a bank name in
-// brackets, "N/A", a branch note or a short code does not make one account two or a real account differ from a note. Nothing is guessed: text with no such run has no account to compare.
-export const BANK_ACCOUNT_RUN_MIN = 6;
-export function bankAccountRuns(account: string): string[] {
-  const joined = account.replace(/(?<=\d)[\s.-]+(?=\d)/g, '');
-  return [...new Set(joined.match(new RegExp(`\\d{${BANK_ACCOUNT_RUN_MIN},}`, 'g')) ?? [])];
-}
 
 // An account number for a sentence: all but its last four characters hidden (of its longest digit run when it has one).
 export function maskBankAccount(account: string): string {
@@ -70,9 +62,13 @@ const positive = (value: string): DecimalValue | null => {
 export function bankAccountCheck(account: string | null | undefined, earlier: readonly string[]): InvoiceCheck | null {
   const now = account ? bankAccountRuns(account) : [];
   const before = earlier.map(bankAccountRuns).filter((runs) => runs.length > 0);
-  if (now.length === 0 || before.length === 0 || before.some((runs) => runs.some((run) => now.includes(run)))) return null;
+  if (now.length === 0 || before.length === 0) return null;
+  // Every account this invoice names must be one the vendor used before: a single new one is the change (an old account printed beside it does not hide it).
+  const seen = new Set(before.flat());
+  const fresh = now.find((run) => !seen.has(run));
+  if (fresh === undefined) return null;
   const last = maskBankAccount((earlier.find((a) => bankAccountRuns(a).length > 0) as string));
-  const current = maskBankAccount(account as string);
+  const current = maskBankAccount(fresh);
   return {
     id: 'anomaly_bank',
     status: 'warn',

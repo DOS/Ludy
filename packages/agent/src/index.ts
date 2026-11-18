@@ -4,7 +4,7 @@
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
-import { normalizeNumber, normalizeSeries, type ParsedInvoice } from '@crove/l10n-vn';
+import { bankAccountRuns, normalizeNumber, normalizeSeries, type ParsedInvoice } from '@crove/l10n-vn';
 import { metered, type AiUsageSink } from './meter.ts';
 
 export * from './ads-campaign.ts';
@@ -138,7 +138,7 @@ export class InvoiceExtractor {
         }),
       onUsage,
     );
-    return output ? toParsed(output, text) : null;
+    return output ? toParsed(output, text.slice(0, 60_000)) : null;
   }
 
   async fromImage(bytes: Uint8Array, mediaType: string, onUsage?: AiUsageSink): Promise<ParsedInvoice | null> {
@@ -192,14 +192,13 @@ function requiredAmount(value: string | null, field: string, currency: string): 
 // A bank account the model read (#2426), kept only when it is a plain copy: at least one run of 6 or more digits (digits split by spaces, dots or dashes are one run), at most 60 characters, and, when the text of the
 // document is known (a PDF), every such run is in that text. Otherwise it is left out, never repaired. The value is tainted: it can only raise the "account changed" warning a person reads; it pays nothing.
 const BANK_ACCOUNT_CHARS = 60;
-const digitRuns = (text: string): string[] => text.replace(/(?<=\d)[\s.-]+(?=\d)/g, '').match(/\d{6,}/g) ?? [];
 export function printedBankAccount(value: string | null | undefined, sourceText?: string): string | null {
   const account = (value ?? '').replace(/\s+/g, ' ').trim();
   if (account === '' || account.length > BANK_ACCOUNT_CHARS) return null;
-  const runs = digitRuns(account);
+  const runs = bankAccountRuns(account);
   if (runs.length === 0) return null;
   if (sourceText !== undefined) {
-    const printed = new Set(digitRuns(sourceText));
+    const printed = new Set(bankAccountRuns(sourceText));
     if (!runs.every((run) => printed.has(run))) return null;
   }
   return account;
