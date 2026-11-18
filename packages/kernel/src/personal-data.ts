@@ -512,6 +512,14 @@ export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason
     handling: 'shred',
     reason: "An employee's bank account number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
   },
+  'crove_finance.supplier_bank_account.account_holder_sealed': {
+    handling: 'shred',
+    reason: "A supplier's account holder name, sealed under the subject key supplier:<party_id>; finance.supplier_bank_account.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
+  'crove_finance.supplier_bank_account.number_sealed': {
+    handling: 'shred',
+    reason: "A supplier's bank account number, sealed under the subject key supplier:<party_id>; finance.supplier_bank_account.erase deletes the key, so the text that stays in the row can never be opened again",
+  },
 };
 
 // The column names the invariant test treats as personal data. A column of crove_kernel, crove_finance, crove_social,

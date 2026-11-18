@@ -164,6 +164,9 @@ function PushSetting() {
   );
 }
 
+// The three updates worth having on for anyone who posts: a post to review, a post that failed, a client's answer.
+const USEFUL_KINDS: readonly (typeof NOTIFICATION_KINDS)[number][] = ['review_requested', 'failed', 'client_answer'];
+
 function Settings({ muted, mailOff }: { muted: readonly NotificationKind[]; mailOff: boolean }) {
   const t = useTranslations('social.notifications');
   const mute = useMutation({
@@ -173,23 +176,31 @@ function Settings({ muted, mailOff }: { muted: readonly NotificationKind[]; mail
   const mail = useMutation({ mutationFn: (enabled: boolean) => client.social.notifications.mail({ enabled }), onSettled: refresh });
   const mailOn = mail.isPending && mail.variables !== undefined ? mail.variables : !mailOff;
   const digestOn = mute.isPending && mute.variables?.kind === DIGEST_KIND ? !mute.variables.muted : !muted.includes(DIGEST_KIND);
+  const kindBox = (kind: (typeof NOTIFICATION_KINDS)[number]) => {
+    const on = mute.isPending && mute.variables?.kind === kind ? !mute.variables.muted : !muted.includes(kind);
+    return (
+      <label key={kind} className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Checkbox checked={on} disabled={mute.isPending} onCheckedChange={(checked) => mute.mutate({ kind, muted: checked !== true })} />
+        {t(`kinds.${kind}`)}
+      </label>
+    );
+  };
+  // The few that matter to everyone come first (#3658); the rest, and the mail and the phone, are one fold further.
+  const useful = NOTIFICATION_KINDS.filter((k) => USEFUL_KINDS.includes(k));
+  const others = NOTIFICATION_KINDS.filter((k) => !USEFUL_KINDS.includes(k));
   return (
-    <Card className="block space-y-3 p-4">
-      <div>
-        <h2 className="text-sm font-medium text-foreground">{t('settings')}</h2>
-        <p className="text-xs text-subtle-foreground">{t('settingsHint')}</p>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {NOTIFICATION_KINDS.map((kind) => {
-          const on = mute.isPending && mute.variables?.kind === kind ? !mute.variables.muted : !muted.includes(kind);
-          return (
-            <label key={kind} className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Checkbox checked={on} disabled={mute.isPending} onCheckedChange={(checked) => mute.mutate({ kind, muted: checked !== true })} />
-              {t(`kinds.${kind}`)}
-            </label>
-          );
-        })}
-      </div>
+    <Card className="block p-4">
+      <details className="group" data-testid="notification-settings">
+        <summary className="flex min-h-11 cursor-pointer flex-col justify-center select-none focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none">
+          <span className="text-sm font-medium text-foreground">{t('settings')}</span>
+          <span className="text-xs text-subtle-foreground">{t('settingsHint')}</span>
+        </summary>
+        <div className="mt-3 space-y-3">
+      <div className="grid gap-2 sm:grid-cols-2">{useful.map(kindBox)}</div>
+      <details>
+        <summary className="min-h-8 cursor-pointer text-xs font-medium text-muted-foreground select-none">{t('moreKinds')}</summary>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">{others.map(kindBox)}</div>
+      </details>
       <label className="flex items-start gap-2 border-t pt-3 text-sm text-muted-foreground">
         <Checkbox checked={mailOn} disabled={mail.isPending} onCheckedChange={(checked) => mail.mutate(checked === true)} />
         <span>
@@ -207,6 +218,8 @@ function Settings({ muted, mailOff }: { muted: readonly NotificationKind[]; mail
       </label>
       {(mute.error ?? mail.error) && <ErrorText>{errorMessage(mute.error ?? mail.error)}</ErrorText>}
       <PushSetting />
+        </div>
+      </details>
     </Card>
   );
 }
