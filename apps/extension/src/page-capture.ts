@@ -182,7 +182,16 @@ function escapeLinkHref(url: string): string {
 /** Converts untrusted HTML into bounded, readable Markdown with only http/https links retained. */
 export function htmlToMarkdown(html: string, baseUrl: string | null = null): string {
   if (typeof html !== 'string' || html.trim() === '') return '';
-  const cleaned = html.replace(/<!--[\s\S]*?-->/g, '').replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+  let cleaned = html;
+  let prev: string;
+  do {
+    prev = cleaned;
+    cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, '').replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+  } while (cleaned !== prev);
+  do {
+    prev = cleaned;
+    cleaned = cleaned.replace(/<!--|<!\[CDATA\[/g, '');
+  } while (cleaned !== prev);
   const parts: string[] = [];
   const skipStack: string[] = [];
   const listStack: Array<{ kind: 'ul' | 'ol'; index: number }> = [];
