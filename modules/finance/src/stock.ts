@@ -348,7 +348,16 @@ export async function liveReturnsOf(ctx: Ctx, moveId: string): Promise<Array<{ i
 
 // The one lock every writer that touches the returns of a sale takes first: a new return, the undo of one, and the cascade that undoes them all before the sale is reversed. It is the lock the
 // database guard takes (stock_move_return_guard), taken here before the returns are listed, so what is listed is what stands when the cascade writes. Transaction-level, so it ends with the command.
+// Lock order, the same as the trigger's: the entity's shared lock first (what writeStockMove takes), then the sale's.
 export async function lockSaleReturns(ctx: Ctx, saleMoveId: string): Promise<void> {
+  const sale = await ctx.trx
+    .selectFrom('crove_finance.stock_move as m')
+    .innerJoin('crove_finance.stock_item as i', (j) => j.onRef('i.org_id', '=', 'm.org_id').onRef('i.id', '=', 'm.item_id'))
+    .select('i.legal_entity_id')
+    .where('m.org_id', '=', ctx.orgId)
+    .where('m.id', '=', saleMoveId)
+    .executeTakeFirst();
+  if (sale) await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${stockMoveLockKey(ctx.orgId, sale.legal_entity_id)}, 0))`.execute(ctx.trx);
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_finance.stock_move_return:${ctx.orgId}:${saleMoveId}`}, 0))`.execute(ctx.trx);
 }
 

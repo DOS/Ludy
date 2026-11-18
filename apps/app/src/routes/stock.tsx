@@ -124,9 +124,9 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
   const [returning, setReturning] = useState<{ id: string; quantity: string; key: string } | null>(null);
   const giveBack = useMutation({
     mutationFn: (v: { moveId: string; quantity: string; idempotencyKey: string }) => client.stock.moves.return(v),
-    // Only the draft that was sent is cleared: one opened on another row meanwhile stays.
+    // Only the draft that was sent is cleared: one opened on another row, or edited (a new key) meanwhile, stays.
     onSuccess: (_data, v) => {
-      setReturning((cur) => (cur?.id === v.moveId ? null : cur));
+      setReturning((cur) => (cur?.id === v.moveId && cur.key === v.idempotencyKey ? null : cur));
       refresh();
     },
   });
