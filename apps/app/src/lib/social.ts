@@ -312,3 +312,9 @@ export function dayRange(from: string | undefined, to: string | undefined): { fr
   }
   return out;
 }
+// The platforms whose picture rules differ enough to name (#3657): shown only for the channels the post has, in this order.
+export const MEDIA_RULE_PROVIDERS = ['instagram', 'facebook_page', 'zalo_oa'] as const;
+export type MediaRuleProvider = (typeof MEDIA_RULE_PROVIDERS)[number];
+export function mediaRuleProviders(providers: readonly string[]): MediaRuleProvider[] {
+  return MEDIA_RULE_PROVIDERS.filter((p) => providers.includes(p));
+}

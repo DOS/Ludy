@@ -2536,6 +2536,8 @@ function SharedFields({
         </div>
         <TextStyleHint text={base.body} providers={providers} />
         <BannedWordHints texts={[{ field: 'body', text: base.body }, ...(needsTitle && base.title ? [{ field: 'title', text: base.title }] : [])]} words={banned} />
+        {/* What Uy is, before the first Uy button (#3657). */}
+        {!disabled && onAiUsed && getConfig().aiEnabled === true && <p className="text-xs text-subtle-foreground">{t('uyGloss')}</p>}
         {!disabled && <HashtagSuggestions text={base.body} connectionId={null} onAiUsed={onAiUsed} onPick={(tag) => onChange({ ...base, body: withHashtag(base.body, tag) })} />}
         {!disabled && onAiUsed && (
           <AiRewrite
