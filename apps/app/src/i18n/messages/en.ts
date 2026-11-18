@@ -13511,6 +13511,7 @@ export const en = {
         orders: 'View the marketplace orders',
         staged: 'View the order reports waiting to be imported',
         unassigned: 'View the marketplace order lines not assigned to an item',
+        suggest_source: 'Read the product name and SKU of unassigned marketplace order lines to propose an item',
       },
       marketplace_income: {
         confirm: 'Import a marketplace income report',
