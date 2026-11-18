@@ -63,6 +63,8 @@ export const financeManifest = defineModule({
       stock_move: columns(['org_id', 'id', 'legal_entity_id', 'item_id', 'move_date', 'quantity', 'source_type', 'document_id', 'line_no', 'line_attempt', 'order_line_id', 'order_move', 'order_attempt', 'count_line_id', 'amount', 'crm_order_id', 'crm_order_line_no', 'reverses_move_id', 'created_by', 'created_at']),
       stock_period: columns(['org_id', 'id', 'legal_entity_id', 'period_month', 'voucher_id', 'total_cost', 'closed_by', 'closed_at']),
       stock_period_item: columns(['org_id', 'id', 'legal_entity_id', 'period_id', 'item_id', 'opening_quantity', 'opening_value', 'in_quantity', 'in_value', 'out_quantity', 'out_value', 'closing_quantity', 'closing_value', 'unit_cost']),
+      supplier_bank_account: columns(['org_id', 'id', 'party_id', 'bank_name', 'hash_key_id', 'status', 'retired_at', 'created_by', 'created_at'], { account_holder_sealed: 'payment', number_sealed: 'payment', number_hash: 'payment', last4: 'payment' }),
+      supplier_bank_account_change: columns(['org_id', 'id', 'party_id', 'account_id', 'kind', 'changed_by', 'changed_at', 'step_up_at'], { old_number_hash: 'payment', new_number_hash: 'payment' }),
       vat_return_filed: columns(['org_id', 'id', 'period', 'status', 'source', 'carried_in_amount', 'deductible_amount', 'carried_out_amount', 'marked_by', 'created_at', 'legal_entity_id']),
       vendor_account_rule: columns(['org_id', 'party_id', 'debit_account', 'confirmed_by', 'updated_at']),
     },
@@ -97,6 +99,8 @@ export const financeManifest = defineModule({
     { type: 'finance.stock_item', table: 'stock_item', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.stock_move', table: 'stock_move', legalEntityScoped: true, audit: 'append_only' },
     { type: 'finance.stock_period', table: 'stock_period', legalEntityScoped: true, audit: 'append_only' },
+    { type: 'finance.supplier_bank_account', table: 'supplier_bank_account', legalEntityScoped: false, audit: 'command' },
+    { type: 'finance.supplier_bank_account_change', table: 'supplier_bank_account_change', legalEntityScoped: false, audit: 'command' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
   ...MODULE_SCREENS.finance,
