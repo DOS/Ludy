@@ -175,7 +175,8 @@ describe('the S2a-HKD workbook and the Decree 174 VAT cut (#3710)', () => {
     expect(find(rows, 'Giảm thuế GTGT 20.0000% theo Nghị định 174')).toContain('6200');
     expect(find(rows, 'Thuế GTGT phải nộp sau giảm')).toContain('24800');
     // The tax total follows: VAT payable 24800 plus the PIT 13500.
-    expect(find(rows, 'Tổng thuế GTGT và TNCN')).toContain('38300');
+    expect(find(rows, 'Tổng thuế GTGT và TNCN sau giảm')).toContain('38300');
+    expect(find(rows, 'Tổng thuế GTGT và TNCN')).toBeUndefined();
   });
 
   it('writes no cut row and no "if eligible" line when the answer is no', async () => {

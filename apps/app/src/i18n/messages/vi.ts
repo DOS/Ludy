@@ -4777,7 +4777,7 @@ export const vi = {
     cnkdUnconfirmedForm: 'Mẫu {key}, có hiệu lực từ {date}',
     cnkdUnconfirmedReduction: 'Mức giảm thuế GTGT theo Nghị định 174, từ {date}',
     vatCutQuestion: 'Hàng hóa, dịch vụ của hộ có được giảm thuế GTGT theo Nghị định 174 không?',
-    vatCutHint: 'Nghị định 174 giảm thuế GTGT cho hàng hóa, dịch vụ không thuộc các nhóm bị loại trừ, ví dụ tài chính, bảo hiểm và hàng hóa, dịch vụ chịu thuế tiêu thụ đặc biệt. Danh sách đầy đủ nằm ở Phụ lục I và II của Nghị định 174. Nếu chưa chắc, để "Chưa trả lời": sổ tính không giảm và cho biết số thuế nếu hộ được giảm.',
+    vatCutHint: 'Nghị định 174 chỉ giảm thuế GTGT cho hàng hóa, dịch vụ không thuộc các nhóm bị loại trừ, ví dụ tài chính, bảo hiểm và một số nhóm khác do Nghị định quy định. Hãy hỏi kế toán nếu chưa chắc. Nếu chưa chắc, để "Chưa trả lời": sổ tính không giảm và cho biết số thuế nếu hộ được giảm.',
     vatCutAnswerNone: 'Chưa trả lời',
     vatCutAnswerYes: 'Có, được giảm',
     vatCutAnswerNo: 'Không được giảm',

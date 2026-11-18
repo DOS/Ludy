@@ -4779,7 +4779,7 @@ export const en = {
     cnkdUnconfirmedForm: 'The form {key}, from {date}',
     cnkdUnconfirmedReduction: 'The VAT cut of Decree 174, from {date}',
     vatCutQuestion: 'Do the household goods and services get the VAT cut of Decree 174?',
-    vatCutHint: 'Decree 174 cuts VAT for goods and services outside the excluded groups, for example finance, insurance and goods and services under excise tax. The full list is in Appendices I and II of Decree 174. If unsure, leave "Not answered": the book computes without the cut and shows the VAT if the household is eligible.',
+    vatCutHint: 'Decree 174 cuts VAT only for goods and services outside the excluded groups, for example finance, insurance and some other groups the Decree names. Ask your accountant if unsure. If unsure, leave "Not answered": the book computes without the cut and shows the VAT if the household is eligible.',
     vatCutAnswerNone: 'Not answered',
     vatCutAnswerYes: 'Yes, eligible for the cut',
     vatCutAnswerNo: 'No, not eligible',

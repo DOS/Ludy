@@ -267,7 +267,7 @@ async function buildTradeWorkbook(book: TradeBookView, brand: string, opts: { sh
     perLine('Thuế TNCN', (l) => l.pit ?? '0', book.totals?.pit, 'money');
   }
   const tax = sheet.addRow([]);
-  setTextCell(tax.getCell('description'), opts.pit ? 'Tổng thuế GTGT và TNCN' : 'Tổng thuế GTGT');
+  setTextCell(tax.getCell('description'), `${opts.pit ? 'Tổng thuế GTGT và TNCN' : 'Tổng thuế GTGT'}${book.vatCut.applied ? ' sau giảm' : ''}`);
   // No total while revenue has no business line yet: the cell stays blank, never a 0 that does not exist.
   if (book.totals) {
     const before = (opts.pit ? book.totals.tax : book.totals.vat) ?? '0';
