@@ -21,10 +21,9 @@ describe('org overview', () => {
   });
 
   it('counts the bell and the notices without the approvals, which are the proposals already counted (#3591)', () => {
-    // Seven invoices wait: seven "approval waiting" notices are unread, and the member also has two other notices.
-    expect(unreadNotices({ unread: 9, unreadApprovals: 7 })).toBe(2);
-    expect(unreadNotices({ unread: 7, unreadApprovals: 7 })).toBe(0);
-    expect(unreadNotices({ unread: 0, unreadApprovals: 3 })).toBe(0);
+    // Seven invoices wait: seven "approval waiting" notices are unread, and the member also has two other notices; the server counts the two.
+    expect(unreadNotices({ unreadWork: 2 })).toBe(2);
+    expect(unreadNotices({ unreadWork: 0 })).toBe(0);
     expect(unreadNotices(undefined)).toBeUndefined();
   });
 

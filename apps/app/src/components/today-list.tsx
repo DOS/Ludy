@@ -119,16 +119,19 @@ export function TodayList({ slug }: { slug: string }) {
             <TodayBrief slug={slug} items={items} name={today.data.coworkers.gm} />
             {groups.map((group) => (
               <div key={group.kind}>
-                <h3 className="mb-2 flex items-baseline gap-2 text-sm font-semibold">
-                  {t(`kinds.${group.kind}`)}
-                  <span className="font-mono text-xs font-normal tabular-nums text-subtle-foreground">{todayTotal(allGroups.find((g) => g.kind === group.kind)?.items ?? group.items)}</span>
+                <div className="mb-2 flex flex-wrap items-baseline gap-2">
+                  <h3 className="flex items-baseline gap-2 text-sm font-semibold">
+                    {t(`kinds.${group.kind}`)}
+                    <span className="font-mono text-xs font-normal tabular-nums text-subtle-foreground">{todayTotal(allGroups.find((g) => g.kind === group.kind)?.items ?? group.items)}</span>
+                  </h3>
+                  {/* Beside the heading, not in it, so the heading's name stays the kind and its count. */}
                   {group.kind === 'proposal' &&
                     chips.map((chip) => (
                       <Badge key={chip.severity} variant={SEVERITY_VARIANT[chip.severity]} data-testid="today-chip">
                         {t(`chip.${chip.severity}`, { count: chip.count })}
                       </Badge>
                     ))}
-                </h3>
+                </div>
                 <Card className="block overflow-hidden p-0">
                   <ul className="divide-y">
                     {group.items.map((item) => (

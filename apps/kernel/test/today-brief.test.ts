@@ -47,6 +47,9 @@ describe('briefFactsOf', () => {
     expect(templateBrief(facts)[0]).toBe('Hôm nay có 7 việc cần bạn: 7 đề xuất chờ duyệt.');
     // A failed check still reaches the brief as "blocking", a fact about the same seven.
     expect(briefFactsOf([item({ id: 'p', count: 7 }), item({ id: 'f', kind: 'flag', severity: 'block', count: 2, annotates: 'proposal' })], 'vi', '2026-11-02')).toMatchObject({ proposals: 7, flags: 0, blocking: 2 });
+    // The read flags every pending proposal, some waiting for another approver: never more blocked than the proposals listed.
+    expect(briefFactsOf([item({ id: 'p', count: 2 }), item({ id: 'f', kind: 'flag', severity: 'block', count: 5, annotates: 'proposal' })], 'vi', '2026-11-02')).toMatchObject({ proposals: 2, blocking: 2 });
+    expect(briefFactsOf([item({ id: 'f', kind: 'flag', severity: 'block', count: 5, annotates: 'proposal' })], 'vi', '2026-11-02')).toMatchObject({ proposals: 0, blocking: 0 });
   });
 
   it('names the nearest three due days, in Vietnam time, once each', () => {

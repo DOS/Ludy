@@ -9,7 +9,7 @@ import type { TodayBrief, TodayItem } from '@crove/kernel-contract';
 // text, so two lists do not meet by chance.
 export function listFingerprint(items: readonly TodayItem[]): string {
   const text = items
-    .map((i) => [i.app, i.id, i.kind, i.count ?? 1, i.amount ?? '', i.currency ?? '', i.dueAt ?? '', i.severity ?? ''].join('|'))
+    .map((i) => [i.app, i.id, i.kind, i.count ?? 1, i.amount ?? '', i.currency ?? '', i.dueAt ?? '', i.severity ?? '', i.annotates ?? ''].join('|'))
     .sort()
     .join('\n');
   let a = 5381;

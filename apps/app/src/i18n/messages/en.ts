@@ -579,7 +579,7 @@ export const en = {
     periodQuarter: 'Q{quarter} {year}',
     daysLeft: '{days, plural, =0 {due today} one {# day left} other {# days left}}',
     noFilingPeriod: 'Filing period not set',
-    chooseFilingPeriod: 'Set it',
+    chooseFilingPeriod: 'Choose filing period',
     deadlineNote: 'A deadline on a Saturday or Sunday moves to the Monday; {brand} does not count public holidays yet.',
     empty: 'You are not part of any company yet',
     emptyHint: 'Create your first company or accept an invite from a client to get started.',

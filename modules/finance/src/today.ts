@@ -70,7 +70,7 @@ export const financeToday = defineQuery({
     const items: TodayItem[] = [];
     if (ACTORS.includes(ctx.role)) {
       items.push(...(await waitingProposals(ctx, userId, to)));
-      items.push(...(await flaggedProposals(ctx, to)));
+      items.push(...(await flaggedProposals(ctx, userId, to)));
       items.push(...(await einvoiceItems(ctx, to)));
       items.push(...(await originalItems(ctx)));
       items.push(...(await bankItems(ctx, entities, to)));
@@ -82,6 +82,22 @@ export const financeToday = defineQuery({
   },
 });
 
+// The proposals of `p` waiting for the caller's own decision (the rule of waitingProposals below), as one predicate: the flags over proposals use the same
+// one, so a flag is always about proposals the list counts and never about ones that wait for someone else.
+function waitingForCaller(ctx: QueryContext, userId: string) {
+  const author = (who: ReturnType<typeof sql>) => sql`p.authors @> pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('type', 'user', 'id', ${who}))`;
+  const everyApproverWrote = sql`NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(p.eligible_approvers) e(u) WHERE NOT ${author(sql`e.u::text`)})`;
+  const coAuthor = (who: ReturnType<typeof sql>) => sql`coalesce(p.co_authors @> ARRAY[${who}::uuid], false)`;
+  const someoneElseMayDecide = sql`EXISTS (SELECT 1 FROM pg_catalog.unnest(p.eligible_approvers) e(u) WHERE NOT ${author(sql`e.u::text`)} AND NOT ${coAuthor(sql`e.u`)})`;
+  return sql`p.org_id = ${ctx.orgId}
+        AND p.status = 'pending'
+        AND p.command LIKE 'finance.%'
+        AND p.eligible_approvers @> ARRAY[${userId}::uuid]
+        AND (CASE WHEN ${author(sql`${userId}::text`)} THEN ${ctx.role === 'owner' ? everyApproverWrote : sql`false`}
+                  WHEN ${coAuthor(sql`${userId}`)} THEN NOT ${someoneElseMayDecide}
+                  ELSE true END)`;
+}
+
 // The finance proposals waiting for the caller's own decision, one item per party, direction and currency in each
 // entity, with the exact total of their invoices. "Waiting for me": the caller is in the proposal's approver snapshot,
 // and either did not write it or, when every approver in the snapshot wrote it, is an owner (the four-eyes rule then lets
@@ -91,10 +107,6 @@ export const financeToday = defineQuery({
 // the invoice's own amounts, so it is a group of its own currency. Vouchers and other proposals have no invoice total
 // and show no amount. A group list is capped, and the rest is one more item that says how many.
 async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Promise<TodayItem[]> {
-  const author = (who: ReturnType<typeof sql>) => sql`p.authors @> pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('type', 'user', 'id', ${who}))`;
-  const everyApproverWrote = sql`NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(p.eligible_approvers) e(u) WHERE NOT ${author(sql`e.u::text`)})`;
-  const coAuthor = (who: ReturnType<typeof sql>) => sql`coalesce(p.co_authors @> ARRAY[${who}::uuid], false)`;
-  const someoneElseMayDecide = sql`EXISTS (SELECT 1 FROM pg_catalog.unnest(p.eligible_approvers) e(u) WHERE NOT ${author(sql`e.u::text`)} AND NOT ${coAuthor(sql`e.u`)})`;
   const { rows } = await sql<GroupRow>`
     WITH w AS (
       SELECT p.legal_entity_id::text AS entity,
@@ -109,13 +121,7 @@ async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Pr
                   ELSE coalesce(nullif(p.payload #>> '{invoice,currency}', ''), 'VND') END AS currency,
              CASE WHEN p.kind = 'finance.purchase' AND (p.payload #>> '{invoice,total}') ~ ${MONEY} THEN (p.payload #>> '{invoice,total}')::numeric END AS total
       FROM crove_kernel.proposal p
-      WHERE p.org_id = ${ctx.orgId}
-        AND p.status = 'pending'
-        AND p.command LIKE 'finance.%'
-        AND p.eligible_approvers @> ARRAY[${userId}::uuid]
-        AND (CASE WHEN ${author(sql`${userId}::text`)} THEN ${ctx.role === 'owner' ? everyApproverWrote : sql`false`}
-                  WHEN ${coAuthor(sql`${userId}`)} THEN NOT ${someoneElseMayDecide}
-                  ELSE true END)
+      WHERE ${waitingForCaller(ctx, userId)}
     )
     SELECT entity, kind, direction, pg_catalog.min(party) AS party, currency,
            pg_catalog.count(*)::text AS n,
@@ -150,16 +156,16 @@ async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Pr
   return items;
 }
 
-// Pending finance proposals with a failed check (block) or a warning (warn), by entity: what to fix before approving. They are the same proposals
+// The proposals waiting for the caller (waitingProposals' rule) with a failed check (block) or a warning (warn), by entity: what to fix before approving. They are among the proposals
 // waitingProposals counts, so each flag annotates those items (a chip on them) and is not counted again.
-async function flaggedProposals(ctx: QueryContext, to: Link): Promise<TodayItem[]> {
+async function flaggedProposals(ctx: QueryContext, userId: string, to: Link): Promise<TodayItem[]> {
   const check = (status: string) => sql`EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(coalesce(p.payload -> 'checks', '[]'::jsonb)) c WHERE c ->> 'status' = ${status})`;
   const { rows } = await sql<FlagRow>`
     SELECT p.legal_entity_id::text AS entity,
            pg_catalog.count(*) FILTER (WHERE ${check('fail')})::text AS failed,
            pg_catalog.count(*) FILTER (WHERE NOT ${check('fail')} AND ${check('warn')})::text AS warned
     FROM crove_kernel.proposal p
-    WHERE p.org_id = ${ctx.orgId} AND p.status = 'pending' AND p.command LIKE 'finance.%'
+    WHERE ${waitingForCaller(ctx, userId)}
     GROUP BY 1
     ORDER BY 1`.execute(ctx.trx);
   const items: TodayItem[] = [];

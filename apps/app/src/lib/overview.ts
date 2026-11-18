@@ -23,8 +23,8 @@ export const WAITING_LINKS = {
 
 // The unread notifications as the bell and Home count them: a notice that a proposal waits for approval is about a proposal Home's list and the
 // Inbox badge already count, so it is left out (the same rule the daily mail applies).
-export function unreadNotices(list: { unread: number; unreadApprovals: number } | undefined): number | undefined {
-  return list === undefined ? undefined : Math.max(0, list.unread - list.unreadApprovals);
+export function unreadNotices(list: { unreadWork: number } | undefined): number | undefined {
+  return list?.unreadWork;
 }
 
 // The member's open tasks that the "Hôm nay cần bạn" list does not already carry (an overdue or due-today task is one of its items, whose id ends in the task's id).

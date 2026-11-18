@@ -177,8 +177,11 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
           `SELECT count(*) FILTER (WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(p.payload -> 'checks') k WHERE k ->> 'status' = 'fail'))::text AS failed,
                   count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(p.payload -> 'checks') k WHERE k ->> 'status' = 'fail')
                                     AND EXISTS (SELECT 1 FROM jsonb_array_elements(p.payload -> 'checks') k WHERE k ->> 'status' = 'warn'))::text AS warned
-           FROM crove_kernel.proposal p WHERE p.org_id = $1 AND p.status = 'pending'`,
-          [orgId],
+           FROM crove_kernel.proposal p
+           WHERE p.org_id = $1 AND p.status = 'pending' AND p.command LIKE 'finance.%'
+             -- Only the proposals waiting for the owner, as the groups count them (#3591): the flags are about those, not about ones another approver decides.
+             AND p.eligible_approvers @> ARRAY[$2::uuid] AND NOT p.authors @> jsonb_build_array(jsonb_build_object('type', 'user', 'id', $2::text))`,
+          [orgId, users.owner],
         )
       ).rows[0],
     );

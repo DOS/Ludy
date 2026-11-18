@@ -24,14 +24,17 @@ export function briefFactsOf(items: readonly TodayItem[], language: 'vi' | 'en',
     const currency = todayCurrency(item);
     amounts.set(currency, (amounts.get(currency) ?? new Decimal(0)).plus(item.amount));
   }
+  const proposals = sum((i) => i.kind === 'proposal' && !isTodayAnnotation(i));
   const dueDates = [...new Set(items.filter((item) => item.dueAt !== undefined).map((item) => vietnamDay(item.dueAt as string)))].sort().slice(0, DUE_DATES_MAX);
   return {
     language,
     today,
     dueDates,
     flags: sum((i) => i.kind === 'flag' && !isTodayAnnotation(i)),
-    blocking: sum((i) => i.kind === 'flag' && i.severity === 'block'),
-    proposals: sum((i) => i.kind === 'proposal'),
+    // A failed check on proposals is a fact about the proposals listed, so it never exceeds them (the read flags every pending proposal of the books,
+    // some of which wait for another approver); the chip on Home is capped the same way (proposalChips).
+    blocking: sum((i) => i.kind === 'flag' && i.severity === 'block' && !isTodayAnnotation(i)) + Math.min(sum((i) => i.severity === 'block' && i.annotates === 'proposal'), proposals),
+    proposals,
     messages: sum((i) => i.kind === 'message'),
     deadlines: sum((i) => i.kind === 'deadline'),
     proposalAmounts: [...amounts].map(([currency, amount]) => ({ currency, amount: amount.toFixed() })),

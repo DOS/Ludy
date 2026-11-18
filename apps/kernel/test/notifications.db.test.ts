@@ -167,8 +167,8 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
     expect(await dispatch('kernel.proposal.created')).toBe(2);
     const owner = await list(people.owner);
     expect(owner.unread).toBe(1);
-    // The notice is about a proposal Home counts as a proposal, so the bell leaves it out (#3591): it is the one unread notice and the one approval.
-    expect(owner.unreadApprovals).toBe(1);
+    // The notice is about a finance proposal Home counts as a proposal, so the bell leaves it out (#3591).
+    expect(owner.unreadWork).toBe(0);
     // The proposal's title, read when the notice is shown; the notice keeps no copy of it (#1977).
     const { title } = (await admin((c) => c.query<{ title: string }>('SELECT title FROM crove_kernel.proposal WHERE id = $1', [proposalId]))).rows[0] as { title: string };
     expect(owner.items).toEqual([
@@ -183,7 +183,7 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
     // The admin approves (four-eyes: the member uploaded it): the owner's notice no longer counts as unread.
     // The fixture carries no signature (#674), so the approver confirms that, as for any unverified invoice.
     await runtime.execute('kernel.proposal.approve', { id: proposalId, revision: 1, acceptUnverifiedSignature: true }, { actor: asMfa(people.admin), orgId: org.orgId, idempotencyKey: randomUUID() });
-    expect(await list(people.owner)).toMatchObject({ unread: 0, unreadApprovals: 0, items: [expect.objectContaining({ subjectId: proposalId, read: true })] });
+    expect(await list(people.owner)).toMatchObject({ unread: 0, unreadWork: 0, items: [expect.objectContaining({ subjectId: proposalId, read: true })] });
   });
 
   it('tells the uploader of a file that failed to read, and nobody for a kind they turned off', async () => {
