@@ -19,7 +19,7 @@ import { effectiveModules, installedItems } from '../lib/modules.ts';
 import { installedModules, setOrgModules, useModulesVersion } from '../lib/org-modules.ts';
 import { shellBadges } from '../lib/overview.ts';
 import { isPaletteShortcut, searchTerm } from '../lib/palette.ts';
-import { isQuickCaptureShortcut } from '../lib/quick-add.ts';
+import { hasOpenModalDialog, isQuickCaptureShortcut } from '../lib/quick-add.ts';
 import { documentNumber } from '../lib/search.ts';
 import { proposalName } from '../lib/review.ts';
 import { THEMES } from '../lib/theme.ts';
@@ -179,8 +179,7 @@ export function OrgLayout() {
           notesEnabled: notesOn,
           authenticated: me.isSuccess && Boolean(org),
           canWrite: roleHere !== 'viewer',
-          modalOpen:
-            typeof document !== 'undefined' && document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]') !== null,
+          modalOpen: hasOpenModalDialog(typeof document !== 'undefined' ? document : null),
           activeElement: typeof document !== 'undefined' ? document.activeElement : null,
         })
       ) {

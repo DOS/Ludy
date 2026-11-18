@@ -44,10 +44,24 @@ export function isEditableTarget(el: unknown): boolean {
   return false;
 }
 
+export const OPEN_MODAL_DIALOG_SELECTOR =
+  'dialog[open], [role="dialog"]:not([data-closed]), [role="alertdialog"]:not([data-closed])';
+
+/** True when any native `<dialog open>` or Base UI modal dialog/sheet is currently open in `doc`. */
+export function hasOpenModalDialog(doc: Pick<Document, 'querySelector'> | null | undefined): boolean {
+  if (!doc || typeof doc.querySelector !== 'function') return false;
+  return doc.querySelector(OPEN_MODAL_DIALOG_SELECTOR) !== null;
+}
+
+function isInOpenDialog(el: unknown): boolean {
+  const node = el as { closest?: (selector: string) => unknown } | null;
+  return Boolean(node && typeof node.closest === 'function' && node.closest(OPEN_MODAL_DIALOG_SELECTOR) !== null);
+}
+
 /**
  * True when pressing Alt+Q should open the global Quick Capture dialog:
  * only when the `notes` module is active, the user is authenticated (and can write),
- * and focus/target is not inside an `<input>`, `<textarea>`, `<select>`, or `[contenteditable]`.
+ * no modal dialog is open, and focus/target is not inside an `<input>`, `<textarea>`, `<select>`, or `[contenteditable]`.
  */
 export function isQuickCaptureShortcut(
   event: QuickCaptureKeyLike,
@@ -64,7 +78,14 @@ export function isQuickCaptureShortcut(
   if (event.defaultPrevented || event.isComposing) return false;
   const isQ = event.code === 'KeyQ' || event.key.toLowerCase() === 'q';
   if (!isQ) return false;
-  if (isEditableTarget(opts.activeElement) || isEditableTarget(event.target)) return false;
+  if (
+    isEditableTarget(opts.activeElement) ||
+    isEditableTarget(event.target) ||
+    isInOpenDialog(opts.activeElement) ||
+    isInOpenDialog(event.target)
+  ) {
+    return false;
+  }
   return true;
 }
 

@@ -7,7 +7,14 @@ import { zTodoCreate } from '@crove/kernel-contract';
 import { parseTodoQuickAdd } from '@crove/l10n-vn';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { setActiveLocale } from '../src/i18n/runtime.ts';
-import { buildTodoCreatePayload, isEditableTarget, isQuickCaptureShortcut, shiftDismissedTokens } from '../src/lib/quick-add.ts';
+import {
+  buildTodoCreatePayload,
+  hasOpenModalDialog,
+  isEditableTarget,
+  isQuickCaptureShortcut,
+  OPEN_MODAL_DIALOG_SELECTOR,
+  shiftDismissedTokens,
+} from '../src/lib/quick-add.ts';
 
 const apiState = vi.hoisted(() => ({ current: null as unknown as QueryClient }));
 
@@ -141,6 +148,19 @@ describe('Alt+Q global Quick Capture shortcut guard (#3556)', () => {
     const button = { tagName: 'BUTTON', isContentEditable: false, getAttribute: () => null, closest: () => null };
     expect(isEditableTarget(button)).toBe(false);
     expect(isQuickCaptureShortcut(altQ(), { notesEnabled: true, authenticated: true, activeElement: button })).toBe(true);
+
+    // Focusing a button inside a Base UI modal dialog ([role="dialog"] without aria-modal) or native dialog blocks Alt+Q
+    const dialogButton = {
+      tagName: 'BUTTON',
+      isContentEditable: false,
+      getAttribute: () => null,
+      closest: (sel: string) => (sel.includes('[role="dialog"]:not([data-closed])') ? {} : null),
+    };
+    expect(isQuickCaptureShortcut(altQ(), { notesEnabled: true, authenticated: true, activeElement: dialogButton })).toBe(false);
+    expect(hasOpenModalDialog({ querySelector: (sel) => (sel === OPEN_MODAL_DIALOG_SELECTOR ? ({} as Element) : null) })).toBe(
+      true,
+    );
+    expect(hasOpenModalDialog({ querySelector: () => null })).toBe(false);
   });
 });
 
