@@ -60,6 +60,23 @@ export interface MeetingPlatformDownload {
   inline?: { bytes: Uint8Array; contentType: string } | undefined;
 }
 
+// One line of a platform's own transcript (C2, #3174): seconds from the start of the call, the speaker's name where the platform gives it, and the text. Tainted data: the job bounds it again.
+export interface MeetingPlatformTranscriptEntry {
+  startSeconds: number;
+  endSeconds: number;
+  speaker: string | null;
+  text: string;
+}
+
+// A platform's transcript of a call. `source` names who made it: this is the PLATFORM's transcription, never Ludy's, and the data and the screens say so. `truncated`: the platform's transcript was longer
+// than the adapter reads.
+export interface MeetingPlatformTranscript {
+  source: 'google_meet';
+  language: string | null;
+  truncated: boolean;
+  entries: MeetingPlatformTranscriptEntry[];
+}
+
 export interface MeetingPlatformAdapter {
   readonly provider: MeetingPlatformProvider;
   // The API hosts this adapter may call itself (its fetch is bound to them, ADR-0025).
@@ -67,6 +84,8 @@ export interface MeetingPlatformAdapter {
   // At most 100 recordings that are finished and started at or after `since`, newest first.
   list(credential: MeetingPlatformCredential, since: Date, signal?: AbortSignal): Promise<MeetingPlatformListed[]>;
   prepareDownload(credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, signal?: AbortSignal): Promise<MeetingPlatformDownload>;
+  // The platform's own transcript of one recording, for an adapter that has one (Google Meet, C2). The job never opens a transcript download: the adapter calls its own API hosts.
+  transcript?(credential: MeetingPlatformCredential, recordingId: string, signal?: AbortSignal): Promise<MeetingPlatformTranscript>;
   // `refused`: the platform will not renew the grant, the job expires the connection.
   refresh?(credential: MeetingPlatformCredential, signal?: AbortSignal): Promise<MeetingPlatformCredential | { refused: true }>;
 }
