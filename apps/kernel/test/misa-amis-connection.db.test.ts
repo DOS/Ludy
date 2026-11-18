@@ -229,6 +229,15 @@ suite('MISA AMIS connections (#3875)', () => {
     // A code outside the shape is refused by the database, and a duplicate too.
     await expect(rows("UPDATE crove_finance.misa_amis_connection SET org_company_code = 'not-a-code' WHERE org_id = $1", [orgId])).rejects.toThrow();
     await expect(rows('UPDATE crove_finance.misa_amis_connection SET org_company_code = $1 WHERE org_id = $2', [codes[1]?.org_company_code, orgId])).rejects.toThrow(/misa_amis_connection_code_uq/);
+    // The tenant role's own privileges: it files a row without the code (the database makes it) and without a test result, and only a test's result may be updated afterwards.
+    const can = async (column: string, action: 'INSERT' | 'UPDATE') =>
+      (await rows<{ ok: boolean }>(`SELECT pg_catalog.has_column_privilege('crove_tenant', 'crove_finance.misa_amis_connection', $1, $2) AS ok`, [column, action]))[0]?.ok;
+    expect(await can('org_company_code', 'INSERT')).toBe(false);
+    expect(await can('org_company_code', 'UPDATE')).toBe(false);
+    expect(await can('last_test_state', 'INSERT')).toBe(false);
+    expect(await can('legal_entity_id', 'INSERT')).toBe(true);
+    expect(await can('last_test_state', 'UPDATE')).toBe(true);
+    expect(await can('legal_entity_id', 'UPDATE')).toBe(false);
   });
 
   it('refuses, in the database, a row filed on a channel connection of another provider', async () => {

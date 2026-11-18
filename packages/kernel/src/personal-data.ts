@@ -167,6 +167,14 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'The name of a connected social account, which may be a person; disconnecting removes the account',
   },
+  // The sealed secrets of connected accounts (#3854, #3875): the MISA AMIS access code is one of them, a credential of the org's own account that may name a person who made it. The column holds only the sealed
+  // envelope (sealed with the channel broker's key, bound to the org, the provider and the entity); it is closed to the tenant role, so the finder does not read it, and it is deleted when the connection is closed.
+  'crove_kernel.credential.envelope': {
+    kind: 'other',
+    handling: 'keep_org',
+    machinery: true,
+    reason: 'The sealed secret of a connected account (a social token, the MISA AMIS access code); never readable by the tenant, deleted when the connection is closed (disconnect) and with the org',
+  },
   // A member's connected outside calendar (#2123): the member's own account address, kept only for them.
   'crove_kernel.calendar_connection.display_name': {
     kind: 'email',

@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS crove_finance.misa_amis_connection (
 );
 CREATE INDEX IF NOT EXISTS misa_amis_connection_created_by_idx ON crove_finance.misa_amis_connection (org_id, created_by) WHERE created_by IS NOT NULL;
 SELECT crove_kernel.apply_tenant_rls('crove_finance.misa_amis_connection');
-REVOKE UPDATE ON crove_finance.misa_amis_connection FROM crove_tenant;
+-- The company code is made by the database and read by the callback of a later slice to find the organisation: a tenant role never types it (nor the result of a test, which only a test writes).
+REVOKE INSERT, UPDATE ON crove_finance.misa_amis_connection FROM crove_tenant;
+GRANT INSERT (org_id, id, legal_entity_id, channel_connection_id, created_by, created_at) ON crove_finance.misa_amis_connection TO crove_tenant;
 GRANT UPDATE (last_test_state, last_tested_at) ON crove_finance.misa_amis_connection TO crove_tenant;
 DROP TRIGGER IF EXISTS b_legal_entity ON crove_finance.misa_amis_connection;
 CREATE TRIGGER b_legal_entity BEFORE INSERT OR UPDATE OF legal_entity_id ON crove_finance.misa_amis_connection
