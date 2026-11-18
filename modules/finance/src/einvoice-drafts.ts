@@ -20,7 +20,7 @@ import { zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceSeriesSync, zId,
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { money, parseTaxCode } from '@crove/l10n-vn';
-import { checkDraft, computeDraft, isLateSale, type ComputedDraft, type DraftInput } from './domain/einvoice-draft.ts';
+import { checkDraft, computeDraft, isLateSale, maskBuyerIdentity, type ComputedDraft, type DraftInput } from './domain/einvoice-draft.ts';
 import { einvoiceDraftSuggestSource, einvoicePreviousInvoice } from './einvoice-suggest.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
@@ -110,8 +110,12 @@ const selectLines = (ctx: Ctx) => ctx.trx.selectFrom('crove_finance.einvoice_dra
 type DraftRow = Awaited<ReturnType<ReturnType<typeof selectDrafts>['execute']>>[number];
 type LineRow = Awaited<ReturnType<ReturnType<typeof selectLines>['execute']>>[number];
 
+// The identity an individual buyer gave, from a draft's row (both columns or neither).
+const identityOf = (row: Pick<DraftRow, 'buyer_identity_kind' | 'buyer_identity'>) => (row.buyer_identity_kind && row.buyer_identity ? { kind: row.buyer_identity_kind, value: row.buyer_identity } : null);
+
 // A draft as the API gives it, from its row and its line rows: the amounts as the API writes them, and the checks run on what is stored.
-function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string): EInvoiceDraft {
+// `rateDate` is the invoice date of the original a correcting draft corrects (#2504): an adjustment or a replacement keeps the VAT rate of the invoice it corrects, judged on its date.
+function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string, rateDate: string | null = null): EInvoiceDraft {
   const lines: EInvoiceDraftLine[] = [...lineRows]
     .sort((x, y) => x.line_no - y.line_no)
     .map((l) => ({
@@ -130,8 +134,10 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
     lateReason: row.late_reason,
     currency: row.currency,
     seriesId: row.series_id,
-    buyer: { kind: row.buyer_kind, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email },
+    buyer: { kind: row.buyer_kind, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email, identity: identityOf(row) },
     lines: lines.map((l) => ({ description: l.description, unit: l.unit, quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate })),
+    adjustment: row.correction_kind === 'adjustment',
+    rateDate,
   };
   const computed: ComputedDraft = { lines: lines.map((l) => ({ ...l })), subtotal: plain(row.subtotal), vatAmount: plain(row.vat_amount), total: plain(row.total) };
   return {
@@ -144,7 +150,7 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
     lateReason: row.late_reason,
     lateSale: isLateSale(row.sale_date, row.invoice_date),
     currency: row.currency,
-    buyer: { kind: row.buyer_kind, partyId: row.buyer_party_id, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email },
+    buyer: { kind: row.buyer_kind, partyId: row.buyer_party_id, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email, identity: identityOf(row) },
     lines,
     subtotal: plain(row.subtotal),
     vatAmount: plain(row.vat_amount),
@@ -154,13 +160,18 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
     issues: checkDraft(input, computed, today),
     issuedNumber: row.issued_number,
     errorCode: row.error_code,
+    correction:
+      row.correction_kind === 'adjustment' || row.correction_kind === 'replacement'
+        ? { kind: row.correction_kind, originalDraftId: row.original_draft_id as string, reasonCode: row.reason_code as string, agreementFileId: row.agreement_file_id }
+        : null,
   };
 }
 
 export async function loadDraft(ctx: Ctx, id: string, today: string): Promise<EInvoiceDraft> {
   const row = await selectDrafts(ctx).where('id', '=', id).executeTakeFirst();
   if (!row) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy bản nháp hóa đơn');
-  return buildDraft(row, await selectLines(ctx).where('draft_id', '=', id).execute(), today);
+  const original = row.original_draft_id ? await selectDrafts(ctx).select('invoice_date').where('id', '=', row.original_draft_id).executeTakeFirst() : undefined;
+  return buildDraft(row, await selectLines(ctx).where('draft_id', '=', id).execute(), today, original?.invoice_date ?? null);
 }
 
 export const einvoiceDraftList = defineQuery({
@@ -175,19 +186,51 @@ export const einvoiceDraftList = defineQuery({
     const rows = await list.orderBy('invoice_date', 'desc').orderBy('id', 'desc').limit(200).execute();
     // The lines of all of them in one read.
     const lines = rows.length === 0 ? [] : await selectLines(ctx).where('draft_id', 'in', rows.map((r) => r.id)).execute();
+    // The dates of the originals the correcting drafts of this page correct, in one read.
+    const originalIds = [...new Set(rows.flatMap((r) => (r.original_draft_id ? [r.original_draft_id] : [])))];
+    const originals = new Map(
+      originalIds.length === 0 ? [] : (await selectDrafts(ctx).select(['id', 'invoice_date']).where('id', 'in', originalIds).execute()).map((o) => [o.id, o.invoice_date] as const),
+    );
+    // The issued corrections of the issued invoices of this page, in one read: the method of the first one (the next correction keeps it) and whether the invoice was replaced (#2504). The
+    // corrections are looked for beyond the page: a correction made later is not among the 200 newest only when the invoice is old, and the original is then on this page.
+    const issuedIds = rows.filter((r) => r.state === 'issued').map((r) => r.id);
+    const corrections =
+      issuedIds.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('crove_finance.einvoice_draft')
+            .select(['original_draft_id', 'correction_kind', 'created_at'])
+            .where('org_id', '=', ctx.orgId)
+            .where('state', '=', 'issued')
+            .where('original_draft_id', 'in', issuedIds)
+            .orderBy('created_at')
+            .execute();
+    const firstKind = new Map<string, 'adjustment' | 'replacement'>();
+    const replaced = new Set<string>();
+    for (const c of corrections) {
+      if (!c.original_draft_id || (c.correction_kind !== 'adjustment' && c.correction_kind !== 'replacement')) continue;
+      if (!firstKind.has(c.original_draft_id)) firstKind.set(c.original_draft_id, c.correction_kind);
+      if (c.correction_kind === 'replacement') replaced.add(c.original_draft_id);
+    }
     return rows.map((row) => {
-      const draft = buildDraft(row, lines.filter((l) => l.draft_id === row.id), today);
+      const draft = buildDraft(row, lines.filter((l) => l.draft_id === row.id), today, row.original_draft_id ? (originals.get(row.original_draft_id) ?? null) : null);
       return {
         id: row.id,
         state: row.state,
         date: row.invoice_date,
         buyerName: row.buyer_name,
+        buyerIdentity: ((identity) => (identity ? { kind: identity.kind, masked: maskBuyerIdentity(identity.value) } : null))(identityOf(row)),
         total: plain(row.total),
         issueCount: draft.issues.length,
         issuedNumber: row.issued_number,
         errorCode: row.error_code,
         evidenceStored: row.signed_file_id !== null,
         updatedAt: new Date(row.updated_at).toISOString(),
+        buyerKind: row.buyer_kind,
+        correction:
+          (row.correction_kind === 'adjustment' || row.correction_kind === 'replacement') && row.original_draft_id ? { kind: row.correction_kind, originalDraftId: row.original_draft_id } : null,
+        correctedBy: firstKind.get(row.id) ?? null,
+        replaced: replaced.has(row.id),
       };
     });
   },
@@ -208,6 +251,12 @@ export const einvoiceDraftCheck = defineQuery({
   handler: async (ctx, input): Promise<EInvoiceDraftCheck> => {
     const today = await databaseToday(ctx.trx);
     const draft = toDraftInput(input);
+    // A correction is checked as it will be stored: signed prices for an adjustment, and the rate day of its original (#2504).
+    if (input.correction) {
+      draft.adjustment = input.correction.kind === 'adjustment';
+      const original = await selectDrafts(ctx).select('invoice_date').where('id', '=', input.correction.originalDraftId).executeTakeFirst();
+      draft.rateDate = original?.invoice_date ?? null;
+    }
     const computed = computeDraft(draft.lines);
     return {
       lines: computed.lines.map((l, i) => ({ lineNo: i + 1, description: l.description, unit: l.unit, quantity: l.quantity, unitPrice: l.unitPrice, amount: l.amount, vatRate: l.vatRate, vatAmount: l.vatAmount })),
@@ -229,6 +278,10 @@ export function toDraftInput(input: Pick<z.infer<typeof zEInvoiceDraftSave>, 'da
   };
   // A sale to a consumer carries no buyer details, whatever the form still held from before the kind was chosen.
   const consumer = input.buyer.kind === 'consumer';
+  // An identity belongs to an individual: a business keeps a tax code, so what the form still held from before the kind was changed is dropped. A passport is written in capitals and without spaces.
+  const given = input.buyer.identity ?? null;
+  const written = given ? (given.kind === 'passport' ? given.value.replace(/\s+/g, '').toUpperCase() : given.value.replace(/\s+/g, '')) : '';
+  const identity = input.buyer.kind === 'individual' && given && written !== '' ? { kind: given.kind, value: written } : null;
   // A sale date equal to the invoice's day is no sale date of its own; the reason belongs only to a late sale.
   const saleDate = input.saleDate && input.saleDate !== input.date ? input.saleDate : null;
   return {
@@ -238,8 +291,8 @@ export function toDraftInput(input: Pick<z.infer<typeof zEInvoiceDraftSave>, 'da
     currency: 'VND',
     seriesId: input.seriesId,
     buyer: consumer
-      ? { kind: input.buyer.kind, taxCode: null, name: null, address: null, email: null }
-      : { kind: input.buyer.kind, taxCode: taxCode(input.buyer.taxCode), name: blank(input.buyer.name), address: blank(input.buyer.address), email: blank(input.buyer.email) },
+      ? { kind: input.buyer.kind, taxCode: null, name: null, address: null, email: null, identity: null }
+      : { kind: input.buyer.kind, taxCode: taxCode(input.buyer.taxCode), name: blank(input.buyer.name), address: blank(input.buyer.address), email: blank(input.buyer.email), identity },
     lines: input.lines.map((l) => ({ description: l.description.trim(), unit: blank(l.unit), quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate })),
   };
 }
@@ -311,6 +364,8 @@ export const einvoiceDraftSave = defineCommand({
       buyer_name: draft.buyer.name,
       buyer_address: draft.buyer.address,
       buyer_email: draft.buyer.email,
+      buyer_identity_kind: draft.buyer.identity?.kind ?? null,
+      buyer_identity: draft.buyer.identity?.value ?? null,
       subtotal: computed.subtotal,
       vat_amount: computed.vatAmount,
       total: computed.total,
@@ -374,9 +429,9 @@ export const einvoiceDraftSave = defineCommand({
       if (pgCode(error) === '23514') throw new DomainError('EINVOICE_DRAFT_INVALID', 422, 'Bản nháp có giá trị không hợp lệ');
       throw error;
     }
-    // Facts without a name, an address, an email or a tax code: the ids and the counts.
+    // Facts without a name, an address, an email, a tax code or an identity: the ids and the counts (hasIdentity says only that one was given).
     // A late sale is in the facts with its date, and the reason is the person's own words under the later approval (finance.einvoice.issue).
-    ctx.audit({ draftId, legalEntityId: entity, lines: computed.lines.length, total: computed.total, created: input.draftId === null, ...(draft.saleDate ? { saleDate: draft.saleDate, lateSale: isLateSale(draft.saleDate, draft.date) } : {}) });
+    ctx.audit({ draftId, legalEntityId: entity, lines: computed.lines.length, total: computed.total, created: input.draftId === null, ...(draft.buyer.identity ? { hasIdentity: true } : {}), ...(draft.saleDate ? { saleDate: draft.saleDate, lateSale: isLateSale(draft.saleDate, draft.date) } : {}) });
     return loadDraft(ctx, draftId, today);
   },
 });

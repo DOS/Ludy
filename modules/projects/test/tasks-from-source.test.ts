@@ -27,6 +27,7 @@ function baseMeeting(overrides: Partial<MeetingDetail> = {}): MeetingDetail {
     keepVideo: false,
     liveNotes: false,
     summaryTemplate: 'general',
+    minutesTemplate: null,
     audioRetentionDate: '2026-12-16',
     textRetentionDate: null,
     hasAudio: true,

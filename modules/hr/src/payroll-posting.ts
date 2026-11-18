@@ -19,7 +19,7 @@ const monthEnd = (month: string): string => {
   const [year, m] = month.split('-').map(Number) as [number, number];
   return new Date(Date.UTC(year, m, 0)).toISOString().slice(0, 10);
 };
-export const monthLabel = (month: string): string => `${month.slice(5)}/${month.slice(0, 4)}`;
+const monthLabel = (month: string): string => `${month.slice(5)}/${month.slice(0, 4)}`;
 const incompleteAdjustment = () =>
   new DomainError('HR_POSTING_ADJUSTMENTS', 422, 'Bảng lương có dòng điều chỉnh làm trước khi ghi nhận bộ phận và các quỹ bảo hiểm nên chưa hạch toán được tháng này');
 const mismatch = (what: string) => new DomainError('HR_POSTING_MISMATCH', 422, `Số liệu của bảng lương không khớp (${what}); không lập được bút toán`, { what });

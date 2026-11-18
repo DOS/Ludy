@@ -98,7 +98,9 @@ describe('MeetingHookCard', () => {
   it('says so when the server has no key to seal a secret', () => {
     const html = render({ switchOn: true, sealing: false }, 'member');
     expect(html).toContain('meeting-hook-nosealing');
-    expect(html).toContain('CREDENTIAL_KEY');
+    expect(html).toContain(en.meetings.hook.noSealing.replaceAll("'", '&#x27;'));
+    expect(html).toContain('Ask your system administrator');
+    expect(html).not.toContain('CREDENTIAL_KEY');
     expect(render({ switchOn: true, sealing: true }, 'member')).not.toContain('meeting-hook-nosealing');
   });
 

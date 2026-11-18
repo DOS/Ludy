@@ -15,6 +15,7 @@ import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { canInsertQuoteLink } from '../lib/quote-reply.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { ConversationTasks } from './conversation-tasks.tsx';
+import { PersonalDataSection } from './conversation-erase.tsx';
 import { POLL_MS, useContactName, useMe } from './conversation-inbox.tsx';
 import { FollowupReplyInsert } from './followup-draft.tsx';
 import { QuoteReplyInsert } from './quote-send.tsx';
@@ -148,12 +149,13 @@ function LinkContact({ conversationId, defaultName, hasParty }: { conversationId
   );
 }
 
-export function ContactPanel({ conversationId, onOpen }: { conversationId: string; onOpen: (id: string) => void }) {
+// `onErased`: the thread is gone once its customer is erased, so the screen leaves it.
+export function ContactPanel({ conversationId, onOpen, onErased }: { conversationId: string; onOpen: (id: string) => void; onErased: () => void }) {
   const t = useTranslations('conversations.contact');
   const tc = useTranslations('conversations');
   const f = useFormat();
   const contactName = useContactName();
-  const { canWrite } = useMe();
+  const { canWrite, isAdmin } = useMe();
   const detail = useQuery({ ...orpc.conversations.get.queryOptions({ input: { conversationId } }), refetchInterval: POLL_MS });
   if (detail.isPending) return <Spinner />;
   if (detail.error || !detail.data) return <ErrorText>{errorMessage(detail.error)}</ErrorText>;
@@ -209,6 +211,7 @@ export function ContactPanel({ conversationId, onOpen }: { conversationId: strin
           </ul>
         )}
       </div>
+      {isAdmin && <PersonalDataSection detail={detail.data} contactName={contactName(c.contact)} onErased={onErased} />}
     </aside>
   );
 }

@@ -4,10 +4,11 @@
 // created_xact_id). A session with raw SQL that writes the audit row itself and marks the proposal executed with nothing
 // posted is refused, and so is an entry for another proposal or one posted by an earlier transaction. The entry of the
 // reversal path (source kernel.proposal) and of the journal voucher path (a voucher naming the proposal) let the move
-// pass. A command that is not a ledger command needs no effect, and the move keeps the command as approved, in the system
-// context too. crove_finance.ledger_effect_recorded answers for the org of the context only. Part of the invariant suite:
-// keep it self-contained (package code under test, no helpers from outside test/invariant/). Set CROVE_TEST_ADMIN_URL to
-// a superuser URL; the run creates and drops its own database.
+// pass, and on cash_voucher an untagged voucher satisfies finance.voucher.record only while a pay-run-tagged voucher
+// satisfies finance.payroll_payment.record only (#2853). A command that is not a ledger command needs no effect, and the
+// move keeps the command as approved, in the system context too. crove_finance.ledger_effect_recorded answers for the org
+// of the context only. Part of the invariant suite: keep it self-contained (package code under test, no helpers from
+// outside test/invariant/). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -31,6 +32,10 @@ const LINES = JSON.stringify([
 const MIRRORED = JSON.stringify([
   { line_no: 1, account_code: '6422', debit: '0', credit: '100000' },
   { line_no: 2, account_code: '331', debit: '100000', credit: '0' },
+]);
+const CASH_PAYMENT_LINES = JSON.stringify([
+  { line_no: 1, account_code: '334', debit: '100000', credit: '0' },
+  { line_no: 2, account_code: '1111', debit: '0', credit: '100000' },
 ]);
 const suite = ADMIN ? describe : describe.skip;
 
@@ -116,6 +121,19 @@ suite('ledger proposals executed only with their effect (#1842)', () => {
       [orgId, proposalId],
     );
     await post('finance.journal_voucher', rows[0]?.id as string)(c);
+  };
+  // A cash payment voucher naming the proposal (tagged with a pay run or untagged), and its entry: the paths of
+  // finance.voucher.record and finance.payroll_payment.record (#2853).
+  const cashVoucher = (proposalId: string, payrollRunId: string | null) => async (c: pg.Client) => {
+    const { rows } = await c.query<{ id: string }>(
+      `INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind)
+       VALUES ($1, 'cash_payment', 0, '2026-10-15', '1111', 'ledger effect', 100000, $2, $3, $4) RETURNING id`,
+      [orgId, proposalId, payrollRunId, payrollRunId ? 'net_pay' : null],
+    );
+    await c.query(`SELECT crove_finance.post_journal_entry('2026-10-15'::date, 'ledger effect', 'finance.cash_voucher', $1::uuid, $2::jsonb)`, [
+      rows[0]?.id as string,
+      CASH_PAYMENT_LINES,
+    ]);
   };
   const execute = (proposalId: string) => (c: pg.Client) =>
     c.query(`UPDATE crove_kernel.proposal SET status = 'executed', result = '{"ok": true}' WHERE org_id = $1 AND id = $2`, [orgId, proposalId]);
@@ -264,5 +282,58 @@ suite('ledger proposals executed only with their effect (#1842)', () => {
       };
     });
     expect(answer).toEqual({ ok: true, value: { notLedger: true, own: true, otherOrg: false, otherOrgNotLedger: false } });
+  });
+
+  it('keeps plain cash vouchers and payroll payment vouchers on their own commands (#2853)', async () => {
+    const asked = async (c: pg.Client, proposalId: string, command: string) =>
+      (await c.query<{ v: boolean }>('SELECT crove_finance.ledger_effect_recorded($1::uuid, $2::uuid, $3) AS v', [orgId, proposalId, command])).rows[0]?.v;
+
+    // Positive controls (committed, so deferred cash_voucher_entry runs too): an untagged voucher satisfies finance.voucher.record,
+    // and a pay-run-tagged voucher satisfies finance.payroll_payment.record.
+    const plain = await approved('finance.voucher.record');
+    let plainRecorded: boolean | undefined;
+    const plainOk = await asOwner(async (c) => {
+      await cashVoucher(plain, null)(c);
+      plainRecorded = await asked(c, plain, 'finance.voucher.record');
+      await ran('finance.voucher.record', plain)(c);
+      return execute(plain)(c);
+    }, true);
+    expect(plainRecorded).toBe(true);
+    expect(plainOk).toMatchObject({ ok: true, value: { rowCount: 1 } });
+
+    const payroll = await approved('finance.payroll_payment.record');
+    let payrollRecorded: boolean | undefined;
+    const payrollOk = await asOwner(async (c) => {
+      await cashVoucher(payroll, randomUUID())(c);
+      payrollRecorded = await asked(c, payroll, 'finance.payroll_payment.record');
+      await ran('finance.payroll_payment.record', payroll)(c);
+      return execute(payroll)(c);
+    }, true);
+    expect(payrollRecorded).toBe(true);
+    expect(payrollOk).toMatchObject({ ok: true, value: { rowCount: 1 } });
+
+    // Cross cases: a_effect_proposal admits both voucher commands on crove_finance.cash_voucher, so the voucher insert and
+    // journal entry succeed, and crove_finance.ledger_effect_recorded refuses moving either proposal to executed with the other's tag.
+    const plainWithRun = await approved('finance.voucher.record');
+    let taggedVoucherRecorded: boolean | undefined;
+    const plainRefused = await asOwner(async (c) => {
+      await cashVoucher(plainWithRun, randomUUID())(c);
+      taggedVoucherRecorded = await asked(c, plainWithRun, 'finance.voucher.record');
+      await ran('finance.voucher.record', plainWithRun)(c);
+      return execute(plainWithRun)(c);
+    });
+    expect(taggedVoucherRecorded).toBe(false);
+    expect(plainRefused).toMatchObject({ ok: false, ...REFUSED });
+
+    const payrollUntagged = await approved('finance.payroll_payment.record');
+    let untaggedVoucherRecorded: boolean | undefined;
+    const payrollRefused = await asOwner(async (c) => {
+      await cashVoucher(payrollUntagged, null)(c);
+      untaggedVoucherRecorded = await asked(c, payrollUntagged, 'finance.payroll_payment.record');
+      await ran('finance.payroll_payment.record', payrollUntagged)(c);
+      return execute(payrollUntagged)(c);
+    });
+    expect(untaggedVoucherRecorded).toBe(false);
+    expect(payrollRefused).toMatchObject({ ok: false, ...REFUSED });
   });
 });

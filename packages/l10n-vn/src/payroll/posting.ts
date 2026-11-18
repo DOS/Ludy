@@ -123,6 +123,23 @@ export interface PostingTotals {
 
 export type PaymentKind = 'net_pay' | 'insurance' | 'union' | 'tax';
 
+/** Words of the reason on a pay run's payment voucher (lý do chi): the month and what is paid, never a person's name. */
+export function payrollPaymentReason(kind: PaymentKind, month: string): string {
+  if (!MONTH.test(month)) throw new Error(`not a month (YYYY-MM): ${month}`);
+  const [year, m] = month.split('-') as [string, string];
+  const label = `${m}/${year}`;
+  switch (kind) {
+    case 'net_pay':
+      return `Chi lương tháng ${label}`;
+    case 'insurance':
+      return `Nộp bảo hiểm xã hội, y tế, thất nghiệp tháng ${label}`;
+    case 'union':
+      return `Nộp kinh phí công đoàn tháng ${label}`;
+    case 'tax':
+      return `Nộp thuế thu nhập cá nhân tháng ${label}`;
+  }
+}
+
 export interface Obligation {
   kind: PaymentKind;
   amount: Money;

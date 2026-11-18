@@ -59,6 +59,8 @@ test.describe('screen titles, skip link and focus on navigation (#2115)', () => 
         expect(heading, path).not.toBe('');
         // "<screen name> · <brand>", the screen name being the page's own heading.
         expect(title, path).toBe(`${heading} · ${BRAND}`);
+        // Posts is named as its menu item is (#3654), not as its app.
+        if (path.endsWith('/social')) expect(heading).toBe(locale === 'vi' ? 'Bài đăng' : 'Posts');
         titles.push(title);
       }
       expect(new Set(titles).size).toBe(screens.length);

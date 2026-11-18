@@ -53,7 +53,7 @@ async function connectSandbox(page: Page, ...names: string[]): Promise<void> {
 // you; with several, each named one is picked.
 async function compose(page: Page, body: string, channels: string[] = []): Promise<void> {
   await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill(body);
   for (const name of channels) {
     const pick = page.getByRole('button', { name });
@@ -226,7 +226,7 @@ test('publishes many failed posts again at once from the attention list (#1456)'
   const posts: string[] = [];
   for (const body of ['Bài lỗi thứ nhất', 'Bài lỗi thứ hai']) {
     await page.goto(`/o/${slug}/social`);
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill(body);
     await submitApproveSchedule(page, [channel]);
     posts.push(postIdOf(page));
@@ -267,7 +267,7 @@ test('asks in the app\'s dialog before cancelling many posts and before revoking
   // Two posts waiting in review: the review list is where a post that has not gone out can be cancelled in bulk.
   for (const body of ['Bài hủy thứ nhất', 'Bài hủy thứ hai']) {
     await page.goto(`/o/${slug}/social`);
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill(body);
     await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
     await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
@@ -349,7 +349,7 @@ test('keeps uploaded images in the library with the posts that use them', async 
   await expect(item).toContainText('Dùng trong 1 bài');
 
   // The second post takes the same image from the library instead of uploading it again.
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill('Bài thứ hai dùng lại ảnh');
   await page.getByRole('button', { name: 'Chọn từ thư viện' }).click();
   await page.getByRole('button', { name: 'Chọn ảnh thu-vien.png' }).click();
@@ -561,7 +561,9 @@ test('says AI drafting is off on a server without a model', async ({ page, reque
   await compose(page, 'Bài viết tay, không nhờ AI');
 
   await expect(page.getByText(/^Soạn cùng \p{Lu}\p{Ll}+$/u)).toBeVisible();
-  await expect(page.getByText('Máy chủ chưa cấu hình AI (AI_BASE_URL, AI_MODEL).')).toBeVisible();
+  // In plain words, with no setting names (#3652).
+  await expect(page.getByText(/chưa sẵn sàng: tính năng này chưa bật\. Liên hệ người quản trị hệ thống\./)).toBeVisible();
+  await expect(page.getByText('AI_BASE_URL')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^Nhờ \p{Lu}\p{Ll}+ soạn nháp$/u })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^Nhờ \p{Lu}\p{Ll}+ viết lại$/u })).toHaveCount(0);
 });
@@ -572,7 +574,7 @@ test('approves several posts at once from the review list (#635)', async ({ page
   await connectSandbox(page, 'Trang Duyệt Nhiều');
   await page.getByRole('link', { name: 'Quay lại' }).click();
   for (const body of ['Bài thứ nhất', 'Bài thứ hai']) {
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill(body);
     await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
     await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
@@ -617,11 +619,117 @@ test('lets an owner approve and schedule their own post in one step (#638)', asy
   await page.getByRole('button', { name: 'Lưu hàng đợi' }).click();
   await expect(page.getByText(/Khung giờ trống kế tiếp:/)).toBeVisible();
   await compose(page, 'Khai trương chi nhánh mới');
-  await page.getByRole('button', { name: 'Duyệt và lên lịch' }).click();
+  // The channel has slots, so the next free slot is the default and the button says so (#3653).
+  await expect(page.getByRole('button', { name: 'Khung giờ trống kế tiếp', pressed: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Duyệt và đăng vào khung giờ kế tiếp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   await expect(channelCard(page, 'Trang Một Bước').getByText('Đã lên lịch', { exact: true })).toBeVisible();
   const decided = sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_social.post_approval WHERE post_id = :'post' AND decision = 'approved'`, { post: postIdOf(page) });
   expect(decided).toEqual([{ n: 1 }]);
+});
+
+test('a new owner posts from a fresh channel by choosing when, with no empty-queue error (#3653)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-when'));
+  await createOrg(page, 'Công ty Chọn Giờ');
+  // A fresh channel has no queue slots.
+  await connectSandbox(page, 'Trang Chọn Giờ');
+  await compose(page, 'Bài đầu tiên của chủ mới');
+  // The card asks when; the next free slot is not offered, a time is already filled in, and the button names it.
+  await expect(page.getByText('Khi nào đăng?')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Giờ cụ thể', pressed: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Khung giờ trống kế tiếp' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Chọn giờ sau' })).toBeVisible();
+  const publish = page.getByRole('button', { name: /^Duyệt và đăng lúc \d{2}:\d{2} ngày \d{2}\/\d{2}$/ });
+  await expect(publish).toBeEnabled();
+  // A time of the person's own is the one sent.
+  await page.getByLabel('Ngày và giờ đăng').getByRole('textbox', { name: 'Giờ' }).fill('15:30');
+  await expect(page.getByRole('button', { name: /^Duyệt và đăng lúc 15:30 ngày / })).toBeVisible();
+  await publish.click();
+  await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
+  await expect(channelCard(page, 'Trang Chọn Giờ').getByText('Đã lên lịch', { exact: true })).toBeVisible();
+  await expect(page.getByText(/hàng đợi/)).toHaveCount(0);
+  const rows = sql<{ at: string | null; slot: string | null }>(
+    `SELECT to_char(scheduled_at AT TIME ZONE :'zone', 'HH24:MI') AS at, queue_slot_at::text AS slot FROM crove_social.post_variant WHERE post_id = :'post'`,
+    { post: postIdOf(page), zone: TIME_ZONE },
+  );
+  expect(rows).toEqual([{ at: '15:30', slot: null }]);
+});
+
+test('a draft saved from the composer keeps no time the person did not choose (#3653)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-when-draft'));
+  await createOrg(page, 'Công ty Nháp Không Giờ');
+  await connectSandbox(page, 'Trang Nháp Không Giờ');
+  await compose(page, 'Nháp chưa chọn giờ');
+  await page.getByRole('button', { name: 'Lưu nháp' }).click();
+  await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
+  const planned = sql<{ at: string | null }>(`SELECT scheduled_at::text AS at FROM crove_social.post WHERE id = :'post'`, { post: postIdOf(page) });
+  expect(planned).toEqual([{ at: null }]);
+});
+
+test('puts the connect card first on a phone and folds the general settings below the channels (#3651)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-connect-first'));
+  const slug = await createOrg(page, 'Công ty Kết Nối Trước');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/o/${slug}/social/channels`);
+  const connect = page.getByTestId('connect-card');
+  await expect(connect).toBeVisible();
+  // The demo channel is labelled and below any real platform; no noise about what the server cannot do.
+  await expect(connect.getByText('Kênh thử (chỉ để dùng thử)')).toBeVisible();
+  await expect(page.getByText('Chưa cấu hình')).toHaveCount(0);
+  await expect(page.getByText('Kênh thử đã tắt trên máy chủ này.')).toHaveCount(0);
+  // The settings of the whole line are one folded group, under the connect card.
+  const settings = page.getByRole('button', { name: /Cài đặt chung/ });
+  await expect(settings).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByTestId('conversation-replies-card')).toBeHidden();
+  const cardBox = await connect.boundingBox();
+  const settingsBox = await settings.boundingBox();
+  expect(cardBox && settingsBox && cardBox.y < settingsBox.y).toBe(true);
+  await settings.click();
+  await expect(settings).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByTestId('conversation-replies-card')).toBeVisible();
+  // With a channel connected, the connect card is still above it on a phone.
+  await page.getByLabel('Tên kênh thử').fill('Trang Kết Nối Trước');
+  await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
+  await expect(page.getByText('Trang Kết Nối Trước').first()).toBeVisible();
+  const after = await connect.boundingBox();
+  const channelBox = await page.getByText('Trang Kết Nối Trước').first().boundingBox();
+  expect(after && channelBox && after.y < channelBox.y).toBe(true);
+  // A wide screen keeps the settings open, beside the connect card's column.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.reload();
+  await expect(page.getByRole('button', { name: /Cài đặt chung/ })).toHaveAttribute('aria-expanded', 'true');
+});
+
+test('opens Posts on the post waiting for review, and the schedule tab shows an action when empty (#3654)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-default-tab'));
+  const slug = await createOrg(page, 'Công ty Mở Đúng Tab');
+  await connectSandbox(page, 'Trang Mở Đúng Tab');
+  // Nothing waits yet: the schedule is the first view, and its empty state offers to write a post.
+  await page.goto(`/o/${slug}/social`);
+  await expect(page.getByRole('heading', { name: 'Bài đăng', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Lịch đăng' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Chưa có bài nào lên lịch', { exact: true })).toBeVisible();
+  await expect(page.getByText(/4 tuần/)).toHaveCount(0);
+  // The header's link and the empty state's own action.
+  await expect(page.getByRole('link', { name: 'Soạn bài' })).toHaveCount(2);
+  // A post goes to review: Posts now opens on it, with no tab in the address.
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
+  await page.getByLabel('Nội dung chung').fill('Bài đang chờ duyệt ở tab đầu');
+  await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
+  await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
+  await page.goto(`/o/${slug}/social`);
+  await expect(page.getByRole('tab', { name: /Cần duyệt/ })).toHaveAttribute('aria-selected', 'true');
+  // The post's own row (the same text is also in the review proposals panel).
+  await expect(page.getByRole('link', { name: 'Bài đang chờ duyệt ở tab đầu' })).toBeVisible();
+  // The schedule is one click away and stays chosen across a reload.
+  await page.getByRole('tab', { name: 'Lịch đăng' }).click();
+  await expect(page).toHaveURL(/tab=upcoming/);
+  await page.reload();
+  await expect(page.getByRole('tab', { name: 'Lịch đăng' })).toHaveAttribute('aria-selected', 'true');
+  // An empty list has its action: drafts offer to write a post.
+  await page.getByRole('tab', { name: 'Nháp', exact: true }).click();
+  await expect(page.getByText('Chưa có bản nháp')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Soạn bài' })).toHaveCount(2);
 });
 
 test('posts a Story of one image, with no text, in a phone frame (#644)', async ({ page }) => {

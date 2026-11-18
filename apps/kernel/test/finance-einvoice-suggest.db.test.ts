@@ -42,6 +42,8 @@ const PREFIX = '010010910';
 const VALID_TAX_CODE = `${PREFIX}${enterpriseCheckDigit(PREFIX)}`;
 
 const today = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+// A day inside the 8% period (it ends 2026-12-31): an 8% draft is dated on it, so the suite does not depend on the day it runs (#3680).
+const IN_REDUCED_PERIOD = '2026-11-03';
 
 suite('the coworker on a sales e-invoice draft (#2505)', () => {
   const dbName = `crove_test_einvoice_suggest_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -119,7 +121,7 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
     execute<Draft>(o, 'finance.einvoice_draft.save', {
       draftId: null,
       legalEntityId: null,
-      date: today(),
+      date: vatRate === '8%' ? IN_REDUCED_PERIOD : today(),
       seriesId,
       buyer: { kind: 'business', partyId, taxCode: VALID_TAX_CODE, name: 'Công ty Mua Thử', address: '1 Phố Thử, Hà Nội', email: null },
       lines: [{ description: 'Hàng A', unit: 'cái', quantity: '2', unitPrice: '100000', vatRate }],

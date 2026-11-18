@@ -50,6 +50,8 @@ export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 export const DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
 // text/csv: a bank statement (#2142), read into bank lines by the finance module instead of an invoice proposal; an .xlsx
 // statement arrives as a ZIP and is told from an archive of invoices when the worker reads it.
+// The signed agreement of an invoice correction (#2504): a PDF, or the photo or scan of the signed paper.
+export const AGREEMENT_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
 export const ACCEPTED_UPLOAD_TYPES = ['application/xml', 'text/xml', 'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'text/csv'];
 // Bulk intake (#314): a ZIP of documents, up to MAX_UPLOAD_BYTES like any document. It is stored as a file, opened in
 // the parsing sandbox by the worker, and every entry the sandbox returns becomes a document of its own.
@@ -85,7 +87,8 @@ export const MEETING_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'
 // import: a spreadsheet for a module's import (the tax portal's purchase list, #465). Stored with source 'import' and
 // never read as a document; the module that imports it has it read in the parsing sandbox.
 // sign_document: a PDF contract uploaded for eSign (#3323), stored with source 'sign_document' and never sent to Finance extraction.
-export const UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document'] as const;
+// agreement: the signed agreement of an e-invoice correction (#2504), a PDF or an image, stored with source 'agreement': never extracted, never in the Inbox. Direct and staged uploads.
+export const UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'agreement'] as const;
 // An import spreadsheet is an .xlsx workbook (a ZIP container) of at most this size.
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 export const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';

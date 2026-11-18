@@ -33,11 +33,12 @@ interface Draft {
 const SELLER_TAX_CODE = '0101234564';
 const PREFIX = '010010910';
 const VALID_TAX_CODE = `${PREFIX}${enterpriseCheckDigit(PREFIX)}`;
-const today = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+// A fixed day inside the 8% period (and in the past), so the 8% line below passes the rate check on any day the suite runs (#3678).
+const IN_PERIOD = '2026-11-03';
 const form = (seriesId: string | null, extra: Record<string, unknown> = {}) => ({
   draftId: null,
   legalEntityId: null,
-  date: today(),
+  date: IN_PERIOD,
   seriesId,
   buyer: { kind: 'business', partyId: null, taxCode: VALID_TAX_CODE, name: 'Công ty Mua Thử', address: '1 Phố Thử, Hà Nội', email: null },
   lines: [
