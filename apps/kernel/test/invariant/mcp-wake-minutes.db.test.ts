@@ -154,6 +154,8 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
     await sqlAdmin(`UPDATE crove_kernel.agent_grant SET revoked_at = now() WHERE org_id = $1 AND id = $2`, [orgA, ids.gRevoked]);
     ids.gDemoted = await wakeGrant(orgA, users.demotedA);
     await sqlAdmin(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgA, users.demotedA]);
+    // A demotion normally revokes the person's grants (a trigger); the grant is put back as live here, as if that revocation had been missed, so that only the live role keeps it from being woken.
+    await sqlAdmin(`UPDATE crove_kernel.agent_grant SET revoked_at = NULL WHERE org_id = $1 AND id = $2`, [orgA, ids.gDemoted]);
     ids.gOtherOrg = await wakeGrant(orgB, users.ownerB);
   }, 180_000);
 
@@ -248,7 +250,7 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
     expect(dropped).toMatchObject({ dropped: true, stored: 0, handedOver: 0 });
     expect(await deliveries()).toEqual([]);
     expect(sent).toEqual([]);
-    const audit = (await sqlAdmin<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.minutes_targets' ORDER BY created_at DESC LIMIT 1`, [orgA])).rows[0];
+    const audit = (await sqlAdmin<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.minutes_targets' ORDER BY occurred_at DESC LIMIT 1`, [orgA])).rows[0];
     expect(audit?.detail).toMatchObject({ eventId: (event as { id: string }).id, dropped: true });
     expect(JSON.stringify(audit)).not.toContain('BÍ MẬT');
     const fresh = await wake((event as { id: string }).id, { now: () => new Date(at + 23 * HOUR) });
@@ -287,7 +289,9 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
       expect(result.stored).toBe(1);
       expect((await deliveries()).map((r) => r.grant_id)).toEqual([ids.gOwner]);
     } finally {
+      // Disabling a person revokes their grants (a trigger); the person and their grants are put back for the cases after this one.
       await sqlAdmin(`UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [users.adminA]);
+      await sqlAdmin(`UPDATE crove_kernel.agent_grant SET revoked_at = NULL WHERE org_id = $1 AND id = ANY($2::uuid[])`, [orgA, [ids.gAdmin, ids.gMember]]);
     }
   });
 

@@ -28,7 +28,20 @@ The body is one JSON object with the keys `id`, `type`, `created_at`, `org`, `gr
 
 - `ping`: `data` is `{}`. A test.
 - `schedule.due`: `data` is `{"date":"YYYY-MM-DD"}`, the day (Vietnam time) the schedule fired for.
+- `meetings.minutes_published`: `data` is `{"meeting_id":"<uuid>","published_at":"<instant>"}`, sent when the recorder publishes the minutes of a meeting they shared with the whole company (see below). Exactly those two keys; no title, no text, no name.
 - `signal.fired`: `data` is `{"items":[...]}`, 1 to 20 items, each with `rule`, `key`, `severity` (`info`, `warn`, `block`) and some of `party_id`, `deal_id`, `invoice_id`, `amount` (a decimal string), `currency` (ISO 4217, with an amount), `due_on` and `days`. A signal fires when its `key` first appears and again only after it went away.
+
+**Published minutes, in detail** (`meetings.minutes_published`, issue #3803). When a meeting's recorder publishes its minutes and the meeting is shared with the whole company ("cả công ty", visibility `org`), Ludy sends this event to the company grants of that org whose wake-up is on and that still stand. It is a doorbell, not the minutes: the app then reads them with `ludy_meeting_minutes` (the meeting's id is `meeting_id`) under its own grant, which the database gates exactly as for any pull call.
+
+```json
+{"id":"2f6c0e5a-0e53-5b0b-8c4e-6f6f4f3a9d11","type":"meetings.minutes_published","created_at":"2026-11-18T09:30:00.123Z","org":"0197a1c2-7b3e-7c11-9a55-3f2d8e6b4a10","grant":"0197a1c2-7b3e-7c11-9a55-3f2d8e6b4a11","data":{"meeting_id":"0197a1c2-7b3e-7c11-9a55-3f2d8e6b4a12","published_at":"2026-11-18T09:29:58.456Z"}}
+```
+
+- **Who gets it.** Only a **company** grant of the org whose wake-up is on and whose standing holds now: not revoked or expired, the grantor still an owner or admin and not disabled (a grantor demoted after the grant was made wakes nothing). Never a member-bound grant (the database refuses the type for one, as it refuses a signal), and never another org's grant. The wake-up's schedule setting does not matter, as for signals.
+- **When.** Once per publish of a **result** of an org-visible meeting. An attendees-only meeting, a draft that is not published, a publish of action items alone and a refused publish send nothing. Publishing again sends another event (its own `id`); a retry of the same publish sends nothing new, because the event's id is derived from the publish and the grant.
+- **`published_at`** is the instant the minutes were published, the same value `ludy_meetings_list` shows as `publishedAt`, so the app can tell which minutes the event is about.
+- **Not while Meetings is off.** Events of an app the org switched off wait and are released when it is switched back on; one that is **older than 24 hours** when it would be sent is dropped (and audited by its id), so a long pause cannot release a burst of stale wake-ups. The app always reads the current state through the tool, so nothing is lost.
+- **Never in the body:** the title, the summary, the decisions, the action items, a name, who attended or who recorded the meeting. A canary test pins that none of them is in any stored row.
 
 **Signals, in detail.** Every five minutes the worker asks the kernel's cross-app rules for each company grant with signals due, as the grant itself (the same sealed, read-only, tainted context a pull call from that app gets; the worker has its own door into it, `enter_mcp_wake_company_context`, which only the worker's database login may use and only for a company grant whose wake-up is on). The rules are the ones the `ludy_signals` tool runs:
 
