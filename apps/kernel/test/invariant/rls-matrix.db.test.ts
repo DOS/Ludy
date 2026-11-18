@@ -1597,6 +1597,18 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #2516: the organization party that stands for a marketplace as the counterparty of the entity's 131 (ADR-0045 point 6, plan section 8.4): one per entity and platform, the party is an
+  // ordinary organization of the org. It takes the org's default entity by its trigger. Tenant roles read and insert; nothing updates or deletes it. Each seeded link names a platform
+  // of its own and a party of its own, since a platform is unique per entity and a party is linked once.
+  'crove_finance.marketplace_party': {
+    make: (o) => {
+      const party = randomUUID();
+      return {
+        setup: [{ table: 'crove_kernel.party', values: { org_id: o.id, id: party, kind: 'organization', name: `RLS matrix platform ${tag()}` } }],
+        row: { org_id: o.id, id: randomUUID(), platform: `p${marketplacePartySeq++}`, party_id: party },
+      };
+    },
+  },
   // #3875 (S2 of #3854): an entity's connection to MISA AMIS Kế toán: the channel connection that holds the sealed access code and the entity it is for (one connection per entity, so each row
   // takes an entity of its own). Tenant roles update only the result of the last connection test (a column grant), so the update probes assign the state to itself.
   'crove_finance.misa_amis_connection': {
@@ -1610,18 +1622,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_kernel.channel_connection', values: connection },
         ],
         row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, channel_connection_id: connection.id },
-      };
-    },
-  },
-  // #2516: the organization party that stands for a marketplace as the counterparty of the entity's 131 (ADR-0045 point 6, plan section 8.4): one per entity and platform, the party is an
-  // ordinary organization of the org. It takes the org's default entity by its trigger. Tenant roles read and insert; nothing updates or deletes it. Each seeded link names a platform
-  // of its own and a party of its own, since a platform is unique per entity and a party is linked once.
-  'crove_finance.marketplace_party': {
-    make: (o) => {
-      const party = randomUUID();
-      return {
-        setup: [{ table: 'crove_kernel.party', values: { org_id: o.id, id: party, kind: 'organization', name: `RLS matrix platform ${tag()}` } }],
-        row: { org_id: o.id, id: randomUUID(), platform: `p${marketplacePartySeq++}`, party_id: party },
       };
     },
   },
