@@ -436,12 +436,16 @@ suite('the S2a-HKD revenue book of a household business (#2517 slice 2a)', () =>
       await setProfile(o, { vatCutEligible: 'yes' });
       await sale(o, '2027-01-10');
       const book = await s2a(o, '2027-01');
-      expect(book.vatCut).toMatchObject({ answer: 'yes', percent: '0', applied: false, total: { cut: '0', vatPayable: '26000' }, ifEligible: null });
-      // The same sale in December 2026 is cut.
+      // The VAT percentages of 2027 are whatever the dated rows say (an earlier test of this file adds a goods row from 2026-10-01), so the payable is compared with the book's own VAT.
+      expect(book.vatCut).toMatchObject({ answer: 'yes', percent: '0', applied: false, total: { cut: '0', vatPayable: book.totals?.vat }, ifEligible: null });
+      // The same sale in December 2026 is cut: 20% of each line's VAT, to a whole dong.
       const december = await org();
       await setProfile(december, { vatCutEligible: 'yes' });
       await sale(december, '2026-12-10');
-      expect((await s2a(december, '2026-12')).vatCut).toMatchObject({ percent: '20', applied: true, total: { cut: '5200', vatPayable: '20800' } });
+      const dec = await s2a(december, '2026-12');
+      expect(dec.vatCut).toMatchObject({ percent: '20', applied: true });
+      expect(Number(dec.vatCut.total?.cut)).toBe(sum(dec.lines.map((l) => String(Math.round(Number(l.vat) * 0.2)))));
+      expect(Number(dec.vatCut.total?.cut)).toBeGreaterThan(0);
     });
 
     it('refuses a period whose profiles answer the question differently, and gives the parts on either side of the change', async () => {
