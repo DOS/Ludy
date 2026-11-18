@@ -42,14 +42,16 @@ suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
   const rows = <T extends pg.QueryResultRow>(text: string, params: unknown[] = []) => admin(async (c) => (await c.query<T>(text, params)).rows);
   const identity = (name: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@overview.test`, name: null }) as Promise<string>;
 
-  async function org() {
+  async function org(withBranch = false) {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, user(owner), `Org ${randomUUID().slice(0, 6)}`);
     const [member, branchAdmin] = [await identity('member'), await identity('branch')];
     const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
-    const branch = (await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [orgId, owner]))[0]?.id as string;
     await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'admin')", [orgId, member, branchAdmin]);
-    await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, branchAdmin, branch, owner]);
+    if (withBranch) {
+      const branch = (await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [orgId, owner]))[0]?.id as string;
+      await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, branchAdmin, branch, owner]);
+    }
     // Planted on purpose: what a grant must never read.
     const planted = (await rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email, phone) VALUES ($1, 'Khách bí mật', 'organization', 'secret-customer@example.test', '0909000111') RETURNING id", [orgId]))[0]?.id as string;
     expect(planted).toBeTruthy();
@@ -116,6 +118,8 @@ suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
     expect(Object.keys(seen).sort()).toEqual(KEYS);
     // The same range on the same books reads the same figures (the screen is asked with an explicit day, the tool with the database's today: compare what does not move with it).
     expect(seen.range).toBe('this_month');
+    for (const key of ['cash', 'receivables', 'payables'] as const) expect((seen[key] as { amount: string }).amount, key).toBe((screen[key] as { amount: string }).amount);
+    expect(typeof (seen.profit as { amount: unknown }).amount).toBe('string');
     expect(screen.receivables).toMatchObject({ amount: '2000000' });
     expect(seen.receivables).toMatchObject({ amount: '2000000' });
     expect(seen.payables).toMatchObject({ amount: '800000' });
@@ -127,10 +131,12 @@ suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
     expect(seen).not.toHaveProperty('expenses');
   });
 
-  it('refuses a grant that sees only part of the books, and never answers the part it sees', async () => {
-    const o = await org();
+  it('refuses a grant that sees only part of the books, and an org with more than one legal entity, and never answers the part it sees', async () => {
+    const o = await org(true);
     await o.post('2026-11-10', '111', '511', '5000000');
+    // The branch admin sees the branch only: refused. The owner sees every entity, but the figures are the default entity's alone: refused too.
     await expect(o.read(o.branchAdmin)).rejects.toMatchObject({ code: SIGNAL_PARTIAL_VIEW_CODE, status: 403 });
+    await expect(o.read(o.owner)).rejects.toMatchObject({ code: SIGNAL_PARTIAL_VIEW_CODE, status: 403 });
   });
 
   it('refuses arguments outside the schema, a browser session, a grant without the scope and a member', async () => {
