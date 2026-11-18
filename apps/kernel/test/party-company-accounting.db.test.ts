@@ -270,6 +270,8 @@ suite('the company of a person and the accounting (#2438)', () => {
       // A supplier's bank account and its change history (#3113 S1) only name the supplier: no command reads the party's kind, and the sealed number and holder are shredded by the supplier's subject key, not by its kind.
       'crove_finance.supplier_bank_account.party_id',
       'crove_finance.supplier_bank_account_change.party_id',
+      // A supplier payment (#3113 S2) only names the supplier it pays: no command reads the party's kind, and the account it pins carries the sealed number.
+      'crove_finance.supplier_payment.party_id',
     ];
     const { rows } = await admin((c) =>
       c.query<{ ref: string }>(

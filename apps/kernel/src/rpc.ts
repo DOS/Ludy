@@ -2957,6 +2957,11 @@ export function createRpcHandler(
       retire: os.supplierBank.retire.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.retire', input, { actor, orgId }))),
       erase: os.supplierBank.erase.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_bank_account.erase', input, { actor, orgId }))),
     },
+    supplierPayment: {
+      list: os.supplierPayment.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.supplier_payment.list', input, { actor, orgId }))),
+      confirmAccount: os.supplierPayment.confirmAccount.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.confirm_account', input, { actor, orgId }))),
+      cancel: os.supplierPayment.cancel.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.supplier_payment.cancel', input, { actor, orgId }))),
+    },
     paymentReminders: {
       list: os.paymentReminders.list.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.payment_reminders.list', input ?? {}, { actor, orgId })),

@@ -46,6 +46,8 @@ export const PROPOSAL_PREPARERS = {
   'ads.campaign.launch': 'ads.campaign.prepare_launch',
   // A sales e-invoice draft asked to be issued (ADR-0044 point 3, #2502): a member asks, an owner or an admin approves.
   'finance.einvoice.issue': 'finance.einvoice.prepare_issue',
+  // A payment to a supplier approved in Ludy (#3113 S2), built from the invoice and the supplier's active account by finance's own command: an owner or an admin asks, an owner or an admin approves.
+  'finance.supplier_payment.record': 'finance.supplier_payment.prepare',
 } as const;
 export type RequestableCommand = keyof typeof PROPOSAL_PREPARERS;
 export const REQUESTABLE = Object.keys(PROPOSAL_PREPARERS) as [RequestableCommand, ...RequestableCommand[]];
