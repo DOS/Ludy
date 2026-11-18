@@ -102,6 +102,7 @@ describe('module screens against the router (#1652)', () => {
       '/channels/oauth/$provider/callback',
       '/clients',
       '/login',
+      '/meetings/oauth/$provider/callback',
       '/mfa',
       '/oauth/interaction/$uid',
       '/onboarding',

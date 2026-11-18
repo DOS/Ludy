@@ -2687,7 +2687,18 @@ export const vi = {
         disconnectNo: 'Giữ lại',
         connectSandbox: 'Kết nối bản thử (sandbox)',
         connectedToast: 'Đã kết nối bản thử.',
-        moreLater: 'Google Meet, Zoom và Microsoft Teams sẽ có ở các bản sau.',
+        connectZoom: 'Kết nối Zoom',
+        zoomNote: 'Zoom: Ludy liệt kê các bản ghi đám mây của chính tài khoản Zoom của bạn (cần gói Zoom có lưu bản ghi đám mây) và ưu tiên tệp chỉ có âm thanh. Bản ghi chỉ có video chỉ nhập được khi máy chủ đã bật bộ xử lý media; hãy hỏi người quản lý Ludy của bạn. Bạn tự duyệt các quyền ngay trên màn hình của Zoom và có thể gỡ ứng dụng trong Zoom bất cứ lúc nào.',
+        moreLater: 'Google Meet và Microsoft Teams sẽ có ở các bản sau.',
+      },
+      // Nơi Zoom đưa trình duyệt quay lại (/meetings/oauth/zoom/callback): việc kết nối được hoàn tất ở đây, rồi thành viên trở về Cài đặt.
+      oauth: {
+        title: 'Kết nối nền tảng họp',
+        finishing: 'Đang hoàn tất kết nối...',
+        connected: 'Đã kết nối {name}. Ludy sẽ liệt kê các bản ghi của tài khoản này trong vài phút.',
+        cancelled: 'Bạn đã hủy việc kết nối, không có gì thay đổi.',
+        lost: 'Không tìm thấy lượt kết nối này trong trình duyệt (có thể nó bắt đầu ở tab khác). Hãy bắt đầu lại từ Cài đặt.',
+        back: 'Về Cài đặt',
       },
       recordings: {
         title: 'Bản ghi có sẵn trên nền tảng',
@@ -3301,6 +3312,32 @@ export const vi = {
       chipTitle: 'Giờ của dòng trong bản ghi lời nói',
       dropped: '{count} dòng của Vy bị bỏ vì không có trong bản ghi hoặc có số liệu không ai nói.',
       copyReplaces: 'Chép vào bản nháp sẽ thay phần Vy đã viết trước đó. Phần bạn tự gõ được giữ nguyên.',
+    },
+    // Mục lục của cuộc họp (#3844): tiêu đề và dòng của bản ghi lời nói mà mỗi mục bắt đầu.
+    chapters: {
+      title: 'Mục lục',
+      readerNote: 'Các phần của cuộc họp, mỗi phần có giờ trong bản ghi lời nói. Bấm vào một phần để đến dòng đó.',
+      jump: 'Đến dòng này trong bản ghi lời nói',
+      draftTitle: 'Bản nháp của bạn',
+      draftNote: 'Chỉ bạn đọc được bản nháp này. Mục lục được chia sẻ cùng biên bản: bấm Công bố ở phần biên bản.',
+      publishedTitle: 'Mục lục đã công bố',
+      none: 'Chưa có mục nào. Thêm các phần của cuộc họp, mỗi phần ở một dòng của bản ghi lời nói.',
+      noTranscript: 'Chưa có bản ghi lời nói nên chưa thêm được mục.',
+      add: 'Thêm một mục',
+      remove: 'Xóa mục này',
+      titleLabel: 'Tiêu đề mục',
+      titlePlaceholder: 'Ví dụ: Báo giá cho khách A',
+      lineLabel: 'Bắt đầu ở dòng',
+      save: 'Lưu bản nháp',
+      saved: 'Đã lưu bản nháp. Công bố cùng biên bản để mọi người đọc.',
+      errors: {
+        CHAPTER_NOT_ANCHORED: 'Mỗi mục phải bắt đầu ở một dòng của bản ghi lời nói.',
+        CHAPTER_DUPLICATE_SECOND: 'Hai mục bắt đầu ở cùng một dòng.',
+        CHAPTER_TITLE_EMPTY: 'Mỗi mục cần có tiêu đề.',
+        CHAPTER_TITLE_TOO_LONG: 'Tiêu đề mục dài tối đa 80 ký tự.',
+        CHAPTER_TITLE_MULTILINE: 'Tiêu đề mục chỉ một dòng.',
+        CHAPTER_TITLE_CONTACT: 'Tiêu đề mục không chứa địa chỉ email hay số điện thoại.',
+      },
     },
     // Minutes templates and the biên bản page (Meetings A4, #3162).
     templates: {
@@ -12599,6 +12636,7 @@ export const vi = {
       LIVE_PIECE_UNREADABLE: 'Không đọc được một đoạn từ kho lưu trữ nên chưa ghép được. Hãy báo người quản trị hệ thống.',
       MEDIA_ALREADY_RECORDED: 'Cuộc họp này đã có bản ghi rồi; bản ghi đến trước được giữ và bản đến sau bị từ chối.',
       MEDIA_JOINED_IN_USE: 'Bản ghép từ các đoạn trực tiếp đã được dùng để chép lời hoặc tóm tắt, nên bản ghi đầy đủ đến muộn không thay được nó và bị từ chối.',
+      IMPORT_NOT_CLAIMED: 'Bản chép lời này không còn chờ nhập nữa (đã nhập xong, hoặc lượt nhập đã bị hủy). Hãy thử nhập lại từ danh sách bản ghi.',
       IMPORT_ONLY: 'Cuộc họp này chỉ chứa bản ghi nhập từ nền tảng họp của nó; không thêm âm thanh khác vào được.',
       MEETING_PLATFORM_BUSY: 'Còn bản ghi đang được nhập từ nền tảng này. Hãy chờ nhập xong hoặc báo lỗi rồi hãy ngắt kết nối.',
       MEETING_PLATFORM_NOT_ACTIVE: 'Kết nối với nền tảng họp này đã hết hiệu lực. Hãy kết nối lại.',
@@ -14393,6 +14431,8 @@ export const vi = {
         import_holds: 'Xem một bản ghi từ nền tảng họp còn giữ khóa tạm này không',
         import_open: 'Xem các bản ghi đang chờ tải từ nền tảng họp',
         import_staged: 'Ghi nhận bản ghi từ nền tảng họp đã tải xong',
+        oauth_begin: 'Bắt đầu kết nối nền tảng họp',
+        oauth_consume: 'Hoàn tất kết nối nền tảng họp',
         recording: {
           dismiss: 'Bỏ qua một bản ghi gợi ý từ nền tảng họp',
         },
@@ -14689,6 +14729,7 @@ export const vi = {
       import: {
         discard_empty: 'Xóa cuộc họp trống do một lần nhập lỗi để lại',
         start: 'Nhập bản ghi họp có sẵn từ nền tảng họp thành một cuộc họp',
+        take_transcript: 'Ghi bản chép lời của nền tảng họp vào cuộc họp đã nhập, thành bản nháp để người ghi đọc lại',
       },
       live: {
         assemble_plan: 'Đọc các đoạn trực tiếp của người ghi để ghép thành bản ghi',

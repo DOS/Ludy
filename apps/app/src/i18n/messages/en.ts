@@ -2690,7 +2690,18 @@ export const en = {
         disconnectNo: 'Keep it',
         connectSandbox: 'Connect the test platform (sandbox)',
         connectedToast: 'Test platform connected.',
-        moreLater: 'Google Meet, Zoom and Microsoft Teams come in later versions.',
+        connectZoom: 'Connect Zoom',
+        zoomNote: "Zoom: Ludy lists the cloud recordings of your own Zoom account (you need a Zoom plan that keeps cloud recordings), and prefers the audio-only file. A recording with only video can be imported only where the server has the media sandbox turned on; ask whoever runs your Ludy. You approve Zoom's permissions on Zoom's own screen, and you can remove the app in Zoom at any time.",
+        moreLater: 'Google Meet and Microsoft Teams come in later versions.',
+      },
+      // Where Zoom's dialog sends the browser back (/meetings/oauth/zoom/callback): the connect is finished here, then the member returns to Settings.
+      oauth: {
+        title: 'Connect a meeting platform',
+        finishing: 'Finishing the connection...',
+        connected: 'Connected {name}. Ludy will list its recordings within a few minutes.',
+        cancelled: 'You cancelled the connection, nothing changed.',
+        lost: 'This connection attempt was not found in this browser (it may have started in another tab). Start again from Settings.',
+        back: 'Back to Settings',
       },
       recordings: {
         title: 'Recordings on your meeting platforms',
@@ -3303,6 +3314,32 @@ export const en = {
       chipTitle: 'Time of the line in the transcript',
       dropped: '{count} of Vy\'s lines were dropped because the transcript does not support them or they carry a figure nobody said.',
       copyReplaces: 'Copying into the draft replaces what Vy wrote there before. What you typed yourself stays.',
+    },
+    // The table of contents of a meeting (#3844): a title and the line of the transcript each chapter starts at.
+    chapters: {
+      title: 'Chapters',
+      readerNote: 'Parts of this meeting, each with the time in the transcript. Click one to go to that line.',
+      jump: 'Go to this line in the transcript',
+      draftTitle: 'Your draft',
+      draftNote: 'Only you can read this draft. It is shared with the minutes: press Publish in the minutes box.',
+      publishedTitle: 'Published chapters',
+      none: 'No chapters yet. Add the parts of the meeting, each at a line of the transcript.',
+      noTranscript: 'There is no transcript yet, so chapters cannot be added.',
+      add: 'Add a chapter',
+      remove: 'Remove this chapter',
+      titleLabel: 'Chapter title',
+      titlePlaceholder: 'For example: Pricing for customer A',
+      lineLabel: 'Starts at the line',
+      save: 'Save draft',
+      saved: 'Draft saved. Publish it with the minutes.',
+      errors: {
+        CHAPTER_NOT_ANCHORED: 'A chapter must start at a line of the transcript.',
+        CHAPTER_DUPLICATE_SECOND: 'Two chapters start at the same line.',
+        CHAPTER_TITLE_EMPTY: 'Every chapter needs a title.',
+        CHAPTER_TITLE_TOO_LONG: 'A chapter title has at most 80 characters.',
+        CHAPTER_TITLE_MULTILINE: 'A chapter title is a single line.',
+        CHAPTER_TITLE_CONTACT: 'A chapter title holds no email address or phone number.',
+      },
     },
     // Minutes templates and the minutes page (Meetings A4, #3162).
     templates: {
@@ -12611,6 +12648,7 @@ export const en = {
       LIVE_PIECE_UNREADABLE: 'A piece could not be read from storage, so they cannot be joined yet. Tell your system administrator.',
       MEDIA_ALREADY_RECORDED: 'This meeting already has its recording; the one that arrived first is kept and the later one is refused.',
       MEDIA_JOINED_IN_USE: 'The recording joined from the live pieces was already used for a transcript or a summary, so the complete recording that arrived late cannot replace it and is refused.',
+      IMPORT_NOT_CLAIMED: 'This transcript is no longer waiting to be imported (it was imported, or the import was cancelled). Try importing it again from the list of recordings.',
       IMPORT_ONLY: 'This meeting holds only the recording imported from its meeting platform; no other audio can be added to it.',
       MEETING_PLATFORM_BUSY: 'A recording from this platform is still being imported. Wait for it to finish or fail, then disconnect.',
       MEETING_PLATFORM_NOT_ACTIVE: 'The connection to this meeting platform is no longer valid. Connect again.',
@@ -14394,6 +14432,8 @@ export const en = {
         import_holds: 'Check whether a meeting platform recording still holds its staging key',
         import_open: 'View the meeting platform recordings waiting to download',
         import_staged: 'Record that a meeting platform recording was downloaded',
+        oauth_begin: 'Start connecting a meeting platform',
+        oauth_consume: 'Finish connecting a meeting platform',
         recording: {
           dismiss: 'Dismiss a suggested recording from a meeting platform',
         },
@@ -14690,6 +14730,7 @@ export const en = {
       import: {
         discard_empty: 'Remove the empty meeting a failed import left behind',
         start: 'Import a recording a meeting platform finished as a meeting',
+        take_transcript: "Store a meeting platform's own transcript as a draft of the imported meeting, for the recorder to read",
       },
       live: {
         assemble_plan: "Read the recorder's own live pieces to join them into the recording",

@@ -536,7 +536,7 @@ const schema = z.object({
   CALENDAR_MICROSOFT_CLIENT_SECRET: optional,
   CALENDAR_MICROSOFT_TENANT: optional,
   // Zoom recordings (Meetings C3, #3175): the operator's own Zoom OAuth app, a user-managed app (authorization code with PKCE; a self-hoster's own private app needs no Zoom review) with the granular
-  // cloud recording read scopes. Off by default: with neither set there is no Zoom adapter and no Zoom connection. Both or neither.
+  // cloud recording read scopes and the redirect URL APP_URL/meetings/oauth/zoom/callback (docs/runbooks/meetings-zoom.md). Off by default: with neither set there is no Zoom adapter and no Zoom connection. Both or neither.
   ZOOM_OAUTH_CLIENT_ID: optional,
   ZOOM_OAUTH_CLIENT_SECRET: optional,
   // The deployment's TikTok app (Login Kit and Content Posting API, Direct Post), S9. Callback URL:

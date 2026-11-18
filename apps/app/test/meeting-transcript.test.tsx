@@ -37,6 +37,7 @@ const segment = (id: string, startSeconds: number, text: string, over: Partial<T
   text,
   stage: 'draft' as const,
   corrected: false,
+  source: 'ludy' as const,
   ...over,
 });
 
