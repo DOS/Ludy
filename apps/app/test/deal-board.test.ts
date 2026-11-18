@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Board, Deal, PipelineStage } from '@crove/kernel-contract';
 import { dealFilterToAst } from '../src/lib/deal-filter.ts';
-import { moveCard, showAllClosed } from '../src/lib/deal-board.ts';
+import { isEmptyBoard, moveCard, readDealView, showAllClosed, withDealView } from '../src/lib/deal-board.ts';
 
 const stage = (id: string, kind: PipelineStage['kind'], position: number): PipelineStage => ({ id, name: id, kind, position });
 const deal = (id: string, stageId: string, stageKind: Deal['stageKind'] = 'open'): Deal => ({
@@ -83,5 +83,28 @@ describe('"Xem tất cả" in a closed column (docs/plan/crm.md section 6)', () 
     const b = showAllClosed('won');
     expect(a).not.toBe(b);
     expect(a.rest).not.toBe(b.rest);
+  });
+});
+
+describe('the view in the address (#3647)', () => {
+  it('reads the view `?tab=` names, and nothing for another value', () => {
+    expect(readDealView('?tab=next')).toBe('next');
+    expect(readDealView('?x=1&tab=list')).toBe('list');
+    expect(readDealView('?tab=archived')).toBeUndefined();
+    expect(readDealView('')).toBeUndefined();
+  });
+
+  it('sets the view and keeps the rest of the address', () => {
+    expect(withDealView('', 'list')).toBe('?tab=list');
+    expect(withDealView('?q=abc&tab=board', 'next')).toBe('?q=abc&tab=next');
+  });
+});
+
+describe('isEmptyBoard', () => {
+  it('is true only when the board is answered and no column holds a deal', () => {
+    expect(isEmptyBoard(undefined)).toBe(false);
+    expect(isEmptyBoard({ columns: [] })).toBe(false);
+    expect(isEmptyBoard({ columns: board().columns.map((c) => ({ ...c, count: 0, total: '0', cards: [] })) })).toBe(true);
+    expect(isEmptyBoard(board())).toBe(false);
   });
 });

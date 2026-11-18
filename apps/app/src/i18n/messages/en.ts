@@ -4271,6 +4271,8 @@ export const en = {
     empty: 'No deals yet.',
     emptyHint: 'Add the first deal: pick a customer, enter the amount and the expected close date.',
     loadMore: 'Load more',
+    importFile: 'Import customers from a file',
+    editStages: 'Edit stages',
     edit: 'Edit',
     delete: 'Delete',
     deleteTitle: 'Delete this deal?',
@@ -4285,6 +4287,8 @@ export const en = {
       search: 'Search',
       searchPlaceholder: 'Deal or customer name',
       any: 'Any',
+      more: 'More filters',
+      moreCount: '{count} in use',
       status: 'Status',
       statusOpen: 'Open',
       statusWon: 'Won',
@@ -4319,6 +4323,8 @@ export const en = {
     },
     board: {
       loading: 'Loading the deal board...',
+      emptyTitle: 'The board has no deals yet.',
+      emptyHint: 'Add the first deal, or import your customers from a file first. Deals closed more than 30 days ago are in the List view.',
       closeOn: 'Expected to close {date}',
       lostFor: 'Why "{title}" was lost (optional)',
       lastDays: 'Deals closed in the last {days} days',
@@ -4332,7 +4338,10 @@ export const en = {
       list: 'List',
       next: 'Next steps',
       nextCount: 'Next steps ({count})',
-      settings: 'Stages',
+    },
+    process: {
+      title: 'Sales process',
+      intro: 'The stages of the deal board, and when a forgotten deal shows up in "Next steps". Owners and admins can change them.',
     },
     followUp: 'Needs follow-up',
     duplicate: {
