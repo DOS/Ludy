@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { AmisError, amisErrorKind, safeAmisCode, type AmisErrorKind } from './errors.ts';
 import { toJsonText } from './json.ts';
 import { parseCallbackResults, type AmisCallbackResult } from './callback.ts';
-import { AMIS_SAVE_BATCH_MAX, checkVoucher, isOrgRefId, type AmisVoucher } from './vouchers.ts';
+import { AMIS_SAVE_BATCH_MAX, checkVoucher, isKnownVoucherType, isOrgRefId, type AmisVoucher } from './vouchers.ts';
 
 export const AMIS_HOSTS = ['developer.misa.vn'] as const;
 // The document's base URL; the paths below follow it. Unconfirmed until the live sandbox check.
@@ -106,9 +106,13 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
       response = await transport({ method, url: `${AMIS_BASE_URL}${path}`, headers, body: text });
     } catch (error: unknown) {
       // The transport's own three kinds pass; anything else it throws (its message may name a header) is `unreachable`.
-      throw error instanceof AmisError && (error.kind === 'unreachable' || error.kind === 'timeout' || error.kind === 'lost_answer') ? error : new AmisError('unreachable');
+      // Rebuilt, not rethrown: whatever the transport attached to its error (a request, headers) is not passed on.
+      throw new AmisError(error instanceof AmisError && (error.kind === 'unreachable' || error.kind === 'timeout' || error.kind === 'lost_answer') ? error.kind : 'unreachable');
     }
+    // The status is read before the body: only a 2xx can be a success, a gateway's 401 or 403 is a refused connection, anything else non-2xx is not MISA's answer.
+    if (response.status === 401 || response.status === 403) throw new AmisError('credentials');
     if (response.status >= 500 || response.status === 429) throw new AmisError('unavailable');
+    if (response.status < 200 || response.status > 299) throw new AmisError('invalid_response');
     let parsed: unknown;
     try {
       parsed = JSON.parse(response.body);
@@ -165,7 +169,8 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
         return (await send(path, method, body, token)).data;
       } catch (error: unknown) {
         if (!(error instanceof AmisError) || error.kind !== 'token') throw error;
-        tokens.delete(keyOf(c));
+        // Only the token that was refused is dropped: another call may have renewed it meanwhile.
+        if (tokens.get(keyOf(c))?.token === token) tokens.delete(keyOf(c));
         if (attempt > 0) throw new AmisError('credentials', { code: error.code });
       }
     }
@@ -215,7 +220,8 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
     },
 
     async saveDictionary(c, dataType, rows) {
-      if (rows.length === 0 || rows.length > AMIS_SAVE_BATCH_MAX) throw new AmisError('invalid_request', { reason: 'too_many_vouchers' });
+      if (rows.length === 0 || rows.length > AMIS_SAVE_BATCH_MAX) throw new AmisError('invalid_request', { reason: 'too_many_rows' });
+      toJsonText(rows);
       await authed(c, '/amiskt/v1/save_dictionary', 'POST', { org_company_code: c.orgCompanyCode, data_type: dataType, dictionary: rows });
     },
 
@@ -229,7 +235,10 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
 
     async remove(c, vouchers) {
       if (vouchers.length === 0 || vouchers.length > AMIS_SAVE_BATCH_MAX) throw new AmisError('invalid_request', { reason: 'too_many_vouchers' });
-      for (const v of vouchers) if (!isOrgRefId(v.org_refid)) throw new AmisError('invalid_request', { reason: 'bad_org_refid' });
+      for (const v of vouchers) {
+        if (!isOrgRefId(v.org_refid)) throw new AmisError('invalid_request', { reason: 'bad_org_refid' });
+        if (!isKnownVoucherType(v.voucher_type)) throw new AmisError('invalid_request', { reason: 'bad_voucher_type' });
+      }
       await authed(c, '/amiskt/v1/delete', 'DELETE', { org_company_code: c.orgCompanyCode, voucher: vouchers.map((v) => ({ voucher_type: v.voucher_type, org_refid: v.org_refid })) });
     },
 

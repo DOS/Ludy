@@ -66,11 +66,8 @@ describe('the token', () => {
   });
 
   it('gives up as `credentials` when the renewed token is refused too, and when the access code itself is refused', async () => {
-    const { fake, client } = setup();
-    await client.companyInfo(conn);
-    fake.expireTokens();
-    // The renewal itself is answered with an error: nothing to try again.
-    fake.calls.length = 0;
+    const { fake } = setup();
+    // The access code itself is refused on the token call: nothing to renew or try again.
     const bad = createAmisClient({ clientId: CLIENT, transport: fake.transport });
     const wrong = await fails(bad.companyInfo({ accessCode: 'not-the-code', orgCompanyCode: ORG }));
     expect(wrong).toMatchObject({ kind: 'credentials', code: 'InvalidAccessToken' });
@@ -203,9 +200,68 @@ describe('delete, catalogues and company', () => {
   });
 });
 
+describe('the answer\'s status, the token under concurrency, and the transport\'s errors', () => {
+  it('reads the status before the body: a 401 or 403 is a refused connection, and only a 2xx can be a success', async () => {
+    const { fake, client } = setup();
+    await client.companyInfo(conn);
+    for (const status of [401, 403]) {
+      fake.rawNext(status, '<html>denied</html>');
+      expect(await fails(client.companyInfo(conn)), String(status)).toMatchObject({ kind: 'credentials' });
+    }
+    for (const status of [302, 400, 404, 199]) {
+      fake.rawNext(status, JSON.stringify({ Success: true, Data: { x: 1 } }));
+      expect(await fails(client.companyInfo(conn)), String(status)).toMatchObject({ kind: 'invalid_response' });
+    }
+  });
+
+  it('does not pass on what a transport attached to its own error', async () => {
+    const { fake, client } = setup();
+    await client.companyInfo(conn);
+    fake.throwNext(Object.assign(new AmisError('timeout'), { request: { headers: { ClientID: CLIENT } }, cause: new Error(CODE) }));
+    const error = await fails(client.companyInfo(conn));
+    expect(error).toMatchObject({ kind: 'timeout' });
+    expect(Object.keys(error).sort()).toEqual(['code', 'kind', 'name', 'reason']);
+    expect(error.cause).toBeUndefined();
+  });
+
+  it('keeps a token another call just renewed when a late call fails with the old one', async () => {
+    const fake = createFakeMisa({ clientId: CLIENT, accessCodes: { [CODE]: ORG } });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => void (release = resolve));
+    let withOld = 0;
+    const client = createAmisClient({
+      clientId: CLIENT,
+      transport: async (request) => {
+        const response = await fake.transport(request);
+        // The third call made with token-1 (call B) has its answer held back until call A has finished with a renewed token.
+        if (request.headers['X-MISA-AccessToken'] === 'token-1' && ++withOld === 3) await gate;
+        return response;
+      },
+    });
+    await client.companyInfo(conn);
+    fake.expireTokens();
+    const a = client.companyInfo(conn);
+    const b = client.companyInfo(conn);
+    await a;
+    release();
+    await b;
+    // token-1, then token-2 for A; B's late ExpiredToken did not throw token-2 away, so there is no third.
+    expect(tokenCalls(fake)).toBe(2);
+  });
+
+  it('refuses a bad catalogue row or an unknown voucher type to delete before it asks for a token', async () => {
+    const { fake, client } = setup();
+    expect(await fails(client.saveDictionary(conn, AMIS_DICTIONARIES.accountObject, [{ account_object_code: 12.5 }]))).toMatchObject({ kind: 'invalid_request', reason: 'bad_amount' });
+    expect(await fails(client.saveDictionary(conn, AMIS_DICTIONARIES.accountObject, []))).toMatchObject({ reason: 'too_many_rows' });
+    expect(await fails(client.remove(conn, [{ voucher_type: 2, org_refid: REF1 }]))).toMatchObject({ reason: 'bad_voucher_type' });
+    expect(fake.calls).toHaveLength(0);
+  });
+});
+
 describe('what goes wrong', () => {
   it('maps a MISA error code to its kind, keeps only a plain-word code, and never lets server text into the error', async () => {
     const { fake, client } = setup();
+    await client.companyInfo(conn);
     for (const [code, kind] of [['InvalidParam', 'refused'], ['IsCreatedVoucher', 'refused'], ['AppIDDisconnect', 'credentials'], ['DBAmisNotConnectDBAC', 'credentials'], ['Exception', 'unavailable'], ['SomethingNew', 'refused']] as const) {
       fake.failNext(code);
       expect(await fails(client.companyInfo(conn)), code).toMatchObject({ kind, code });
@@ -218,6 +274,7 @@ describe('what goes wrong', () => {
 
   it('is `unavailable` on a 5xx or a 429 and `invalid_response` on an answer that is not in the document\'s shape', async () => {
     const { fake, client } = setup();
+    await client.companyInfo(conn);
     for (const status of [500, 502, 503, 429]) {
       fake.rawNext(status, '<html>boom</html>');
       expect(await fails(client.companyInfo(conn)), String(status)).toMatchObject({ kind: 'unavailable' });
@@ -226,12 +283,19 @@ describe('what goes wrong', () => {
       fake.rawNext(200, body);
       expect(await fails(client.companyInfo(conn)), body).toMatchObject({ kind: 'invalid_response' });
     }
+  });
+
+  it('is `invalid_response` when the token answer carries no token', async () => {
+    const { fake, client } = setup();
     fake.rawNext(200, JSON.stringify({ Success: true, Data: { access_token: '' } }));
+    expect(await fails(client.companyInfo(conn))).toMatchObject({ kind: 'invalid_response' });
+    fake.rawNext(200, JSON.stringify({ Success: true, Data: null }));
     expect(await fails(client.companyInfo(conn))).toMatchObject({ kind: 'invalid_response' });
   });
 
   it('keeps the transport\'s own kinds, and takes any other rejection as `unreachable` without its message', async () => {
     const { fake, client } = setup();
+    await client.companyInfo(conn);
     for (const kind of ['unreachable', 'timeout', 'lost_answer'] as const) {
       fake.throwNext(new AmisError(kind));
       expect(await fails(client.companyInfo(conn)), kind).toMatchObject({ kind });

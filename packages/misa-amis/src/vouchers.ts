@@ -19,6 +19,8 @@ export type AmisLudyVoucherType = (typeof AMIS_VOUCHER_TYPES)[keyof typeof AMIS_
 // All 19 types the document's /save takes (a type outside it is refused here, not by MISA after a round trip).
 const KNOWN = new Set([1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21]);
 
+export const isKnownVoucherType = (value: unknown): boolean => typeof value === 'number' && KNOWN.has(value);
+
 export const AMIS_MAX_VOUCHER_LINES = 500;
 // Our own bound on one call, not MISA's (the document gives none): a caller sends batches of this size.
 export const AMIS_SAVE_BATCH_MAX = 50;
@@ -36,7 +38,7 @@ export const isOrgRefId = (value: unknown): value is string => typeof value === 
 
 /** Refuses, before anything is sent, a voucher MISA would not take: an unknown type, an id that is not a UUID, no line, more than 500 lines (never cut: cutting a voucher changes what it says) or an amount that is not exact. */
 export function checkVoucher(voucher: AmisVoucher): void {
-  if (!KNOWN.has(voucher.voucher_type)) throw new AmisError('invalid_request', { reason: 'bad_voucher_type' });
+  if (!isKnownVoucherType(voucher.voucher_type)) throw new AmisError('invalid_request', { reason: 'bad_voucher_type' });
   if (!isOrgRefId(voucher.org_refid)) throw new AmisError('invalid_request', { reason: 'bad_org_refid' });
   if (!Array.isArray(voucher.detail) || voucher.detail.length === 0) throw new AmisError('invalid_request', { reason: 'no_lines' });
   if (voucher.detail.length > AMIS_MAX_VOUCHER_LINES) throw new AmisError('invalid_request', { reason: 'too_many_lines' });

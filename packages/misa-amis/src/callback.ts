@@ -22,6 +22,8 @@ export interface AmisCallback {
   dataType: number;
   // As the (unsigned) envelope says: a hint to compare with the stored connection, never a fact.
   orgCompanyCode: string;
+  // The envelope's own error_code when it says the whole batch failed (success false) and the code is a plain word: not signed either, so only a hint. A caller that sees results: [] with this set did not get "nothing to report".
+  batchError: string | null;
   results: AmisCallbackResult[];
 }
 export type AmisCallbackRead = { ok: true; callback: AmisCallback } | { ok: false; reason: 'malformed' | 'signature' | 'app_id' | 'data' };
@@ -88,5 +90,6 @@ export function readCallback(rawBody: string, clientId: string): AmisCallbackRea
   if (typeof orgCompanyCode !== 'string' || !ORG_COMPANY_CODE.test(orgCompanyCode) || !Number.isInteger(fields.data_type)) return { ok: false, reason: 'malformed' };
   const results = parseCallbackResults(data);
   if (results === null) return { ok: false, reason: 'data' };
-  return { ok: true, callback: { dataType: fields.data_type as number, orgCompanyCode, results } };
+  const batchError = fields.success === false ? (safeAmisCode(fields.error_code) ?? 'unknown') : null;
+  return { ok: true, callback: { dataType: fields.data_type as number, orgCompanyCode, batchError, results } };
 }

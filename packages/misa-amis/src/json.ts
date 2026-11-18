@@ -19,15 +19,33 @@ export function amisNumber(value: string): AmisNumber {
   return new AmisNumber(value);
 }
 
-const isPlain = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value) && !(value instanceof AmisNumber);
+// Only plain objects: a Decimal, a Date, a Map or a class instance would be written as an object of its fields, which MISA would read as garbage.
+const isPlain = (value: unknown): value is Record<string, unknown> => {
+  if (typeof value !== 'object' || value === null) return false;
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+};
+const MAX_DEPTH = 32;
 
-export function toJsonText(value: unknown): string {
-  if (value instanceof AmisNumber) return value.text;
-  if (Array.isArray(value)) return `[${value.map(toJsonText).join(',')}]`;
+export function toJsonText(value: unknown, depth = 0): string {
+  if (depth > MAX_DEPTH) throw new AmisError('invalid_request', { reason: 'bad_value' });
+  if (value instanceof AmisNumber) {
+    // Checked again here: the constructor takes any string and `text` is only read-only to the compiler, so the factory is not the only way in.
+    if (typeof value.text !== 'string' || !DECIMAL.test(value.text)) throw new AmisError('invalid_request', { reason: 'bad_amount' });
+    return value.text;
+  }
+  if (Array.isArray(value)) {
+    const items: string[] = [];
+    for (let i = 0; i < value.length; i++) {
+      if (!(i in value)) throw new AmisError('invalid_request', { reason: 'bad_value' });
+      items.push(toJsonText(value[i], depth + 1));
+    }
+    return `[${items.join(',')}]`;
+  }
   if (isPlain(value)) {
     return `{${Object.entries(value)
       .filter(([, v]) => v !== undefined)
-      .map(([k, v]) => `${JSON.stringify(k)}:${toJsonText(v)}`)
+      .map(([k, v]) => `${JSON.stringify(k)}:${toJsonText(v, depth + 1)}`)
       .join(',')}}`;
   }
   if (typeof value === 'number') {

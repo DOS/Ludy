@@ -25,6 +25,7 @@ describe('readCallback', () => {
       callback: {
         dataType: 1,
         orgCompanyCode: 'ludy-abc',
+        batchError: null,
         results: [
           { orgRefId: REF.toLowerCase(), voucherType: 1, success: false, errorCode: 'IsCreatedVoucher', errorMessage: 'Đã sinh chứng từ kế toán, không thể cập nhật được.', sessionId: 'd9a9a4c9-2408-472d-af9a-bb9a2439b9a2' },
           { orgRefId: REF.toLowerCase(), voucherType: 1, success: true, errorCode: null, errorMessage: '', sessionId: 'e6f76623-3c50-46a0-878e-4599940bf028' },
@@ -75,6 +76,14 @@ describe('readCallback', () => {
     expect(readCallback(envelope(JSON.stringify([entry({ success: 'yes' })])), CLIENT)).toEqual({ ok: false, reason: 'data' });
     expect(readCallback(envelope(JSON.stringify({ not: 'a list' })), CLIENT)).toEqual({ ok: false, reason: 'data' });
     expect(readCallback(envelope(JSON.stringify(Array.from({ length: 1001 }, () => entry()))), CLIENT)).toEqual({ ok: false, reason: 'data' });
+  });
+});
+
+describe('a batch error', () => {
+  it('is kept when the envelope says the whole batch failed, so an empty list is not read as "nothing to report"', () => {
+    expect(readCallback(envelope('[]', { success: false, error_code: 'InvalidParam' }), CLIENT)).toMatchObject({ ok: true, callback: { batchError: 'InvalidParam', results: [] } });
+    expect(readCallback(envelope('[]', { success: false, error_code: 'x y' }), CLIENT)).toMatchObject({ ok: true, callback: { batchError: 'unknown' } });
+    expect(readCallback(envelope('[]'), CLIENT)).toMatchObject({ ok: true, callback: { batchError: null } });
   });
 });
 

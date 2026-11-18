@@ -23,7 +23,7 @@ export const AMIS_ERROR_KINDS = [
 ] as const;
 export type AmisErrorKind = (typeof AMIS_ERROR_KINDS)[number];
 
-export const AMIS_INVALID_REASONS = ['too_many_lines', 'no_lines', 'bad_voucher_type', 'mixed_voucher_types', 'bad_org_refid', 'bad_amount', 'bad_value', 'too_many_vouchers', 'bad_page'] as const;
+export const AMIS_INVALID_REASONS = ['too_many_lines', 'no_lines', 'bad_voucher_type', 'mixed_voucher_types', 'bad_org_refid', 'bad_amount', 'bad_value', 'too_many_vouchers', 'too_many_rows', 'bad_page'] as const;
 export type AmisInvalidReason = (typeof AMIS_INVALID_REASONS)[number];
 
 const CODE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;

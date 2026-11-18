@@ -31,4 +31,15 @@ Checked by the live sandbox check after the credential handover, never assumed t
 - the shape of `get_call_back_detail_error`'s `Data` (assumed: the entries of a callback's `data`);
 - the base path (`https://developer.misa.vn/apis` plus `/amiskt/v1/...`);
 - the token's life (the text says 24 hours, the field says 12) and the time zone of `expired_time` (not used);
-- rate limits, fees, and any limit on the number of vouchers in one `save` (the adapter's own bound is 50).
+- rate limits, fees, and any limit on the number of vouchers in one `save` (the adapter's own bound is 50);
+- that the callback's `app_id` is the ClientID (the document says so; the reader refuses any other value, so if MISA sends a
+  separate app id every real callback is refused as `app_id` until the reader is changed).
+
+## What the callback route (S4) must do, because the reader cannot
+
+- Cap the body size before it is read: the reader parses the whole raw body before the signature is checked.
+- Never log or store a raw callback body: if `app_id` is the ClientID, the body carries the secret in clear.
+- Order by something other than arrival: a signed `data` can be replayed later with no time or nonce in it, so an old
+  `success: false` replayed after a successful push must not move a request back. Moves are forward only, keyed by
+  `org_refid`, with `session_id` kept to tell results apart.
+- Treat a result with `batchError` set and no results as a failure of the batch, not as nothing to report.
