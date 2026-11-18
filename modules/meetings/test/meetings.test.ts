@@ -96,6 +96,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.action_item.accept',
       'meetings.action_item.accept_clean',
       'meetings.notes.save',
+      'meetings.chapters.save',
       'meetings.summary.copy_result',
       'meetings.speaker.name',
       'meetings.series.set',
@@ -142,6 +143,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.hook.record',
       'meetings.import.start',
       'meetings.import.discard_empty',
+      'meetings.import.take_transcript',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');
@@ -169,6 +171,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.result.get',
       'meetings.action_item.source',
       'meetings.notes.get',
+      'meetings.chapters.get',
       'meetings.notes.preview',
       'meetings.summary.attendees',
       'meetings.speaker.suggestions',

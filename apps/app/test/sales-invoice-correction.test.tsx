@@ -109,6 +109,11 @@ describe('the panel that starts a correction', () => {
     expect(html).toContain('data-testid="invoice-correction-nature"');
     expect(html).toContain('Chọn loại sai sót');
     for (const text of ['Người mua trả lại hàng', 'Chiết khấu thương mại lập sau', 'Sai số lượng hoặc đơn giá, làm đổi số tiền và tiền thuế']) expect(html).toContain(text);
+    // The coworker's proposal of the reason (#3690): the person describes the error, and the button stays off until they do.
+    expect(html).toContain('data-testid="invoice-correction-error-note"');
+    expect(html).toMatch(/data-testid="invoice-correction-reason-suggest"[^>]*disabled|disabled[^>]*data-testid="invoice-correction-reason-suggest"/);
+    expect(html).toContain('Gợi ý lý do');
+    expect(html).not.toContain('invoice-correction-reason-why');
     // No nature picked: no proposal, no confirmation, and the start button is disabled.
     expect(html).not.toContain('invoice-correction-rate-proposal');
     expect(html).toMatch(/data-testid="invoice-correction-start"[^>]*disabled|disabled[^>]*data-testid="invoice-correction-start"/);
@@ -119,6 +124,8 @@ describe('the panel that starts a correction', () => {
     expect(html).toContain('data-testid="invoice-correction-no-reasons"');
     expect(html).toContain('Phụ lục XVII');
     expect(html).not.toContain('invoice-correction-reason');
+    // Nothing to propose from an empty list: no note and no button either.
+    expect(html).not.toContain('invoice-correction-reason-suggest');
     // The start button is there but disabled: no reason, no draft.
     expect(html).toMatch(/data-testid="invoice-correction-start"[^>]*disabled|disabled[^>]*data-testid="invoice-correction-start"/);
   });

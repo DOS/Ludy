@@ -2,7 +2,7 @@
 import { randomBytes } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
@@ -11,10 +11,10 @@ import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wa
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, EInvoiceReasonSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
-import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
+import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
   ALT_TEXT_IMAGE_MAX_BYTES,
   ALT_TEXT_IMAGE_TYPES,
@@ -65,6 +65,7 @@ import { generateRecruitingBrief, type RecruitingBriefAi, type RecruitingBriefPo
 import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot } from '@crove/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { einvoiceRateAi, explainCorrectionRate } from './einvoice-rate-ai.ts';
+import { einvoiceReasonAi, suggestCorrectionReason } from './einvoice-reason-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
@@ -321,6 +322,8 @@ export interface RpcChannels {
   connectors?: Readonly<Partial<Record<string, OAuthConnector>>>;
   // Outside calendars members connect (#2123) through an OAuth dialog this deployment configured, by OAuth provider id.
   calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
+  // The meeting platforms this deployment has an adapter for (Zoom: C3, only with its own OAuth app), by provider; one with a connect dialog is offered to members.
+  meetingPlatforms?: Readonly<Partial<Record<string, MeetingPlatformAdapter>>>;
   // The web app's address (kernel.ts hands over APP_URL, else PUBLIC_URL, #2261): the provider sends the browser back to
   // <it>/channels/oauth/:provider/callback, a page of the app that posts the code to the API. Named publicUrl for history.
   publicUrl?: string;
@@ -334,6 +337,16 @@ export interface RpcChannels {
   // Browser push for Social notifications (#1238, VAPID_*): the public key browsers subscribe with; unset: no push is
   // offered. Rides here for the same reason.
   push?: { publicKey: string };
+}
+
+// A meeting platform's refusal or failure during the connect step, as the answer the user sees: a fixed text, never the platform's words (the adapter's error carries only a short code).
+function meetingPlatformConnectFailure(error: unknown): DomainError {
+  if (error instanceof MeetingPlatformError && error.code === 'platform_refused') {
+    console.warn(`[meeting-platform] connect refused: ${error.message}`);
+    return new DomainError('OAUTH_CODE_REJECTED', 400, 'Nền tảng từ chối mã cấp quyền (đã dùng hoặc hết hạn) hoặc không cho đọc địa chỉ tài khoản, hãy kết nối lại và chấp nhận mọi quyền');
+  }
+  console.error('[meeting-platform] connect failed', error instanceof MeetingPlatformError ? error.code : error instanceof Error ? error.name : typeof error);
+  return new DomainError('OAUTH_PROVIDER_FAILED', 503, 'Nền tảng không phản hồi đúng, hãy thử lại sau');
 }
 
 // A provider's refusal or failure during the code exchange, as the answer the user sees. Never the provider's own
@@ -466,6 +479,9 @@ export function createRpcHandler(
   // The accounting coworker's explanation of the VAT rate a correcting e-invoice proposes (#3709): the same reader and model, a budget of its own. Code decides the rate and the basis (the finance
   // query); the model is told the nature, two dates and the rates only, and what it writes only explains. With AI off the screen shows the code's own reason.
   const einvoiceRateCoworker = einvoiceRateAi(conversationReader?.einvoiceRateExplanation ? { einvoiceRateExplanation: conversationReader.einvoiceRateExplanation.bind(conversationReader) } : null, suggestionBudget());
+  // The accounting coworker's proposal of the reason code of an adjusting or replacing e-invoice (#3690): the same reader and model, a budget of its own. It is told the list of codes, the buyer's kind, the
+  // original's lines without a price and the person's note (never stored or logged); the code it answers is picked from the list by number and checked in code, and a person confirms it.
+  const einvoiceReasonCoworker = einvoiceReasonAi(conversationReader?.einvoiceReasonSuggestion ? { einvoiceReasonSuggestion: conversationReader.einvoiceReasonSuggestion.bind(conversationReader) } : null, suggestionBudget());
 
   // The sales coworker on the lines of a quote (#2698): the same reader and model, a budget of its own. It is told the deal, the customer's latest words (only while the org's switch for AI on customers'
   // words is on) and the earlier quotes to them, and what it answers only fills the editor as proposals that a person applies or drops.
@@ -739,6 +755,17 @@ export function createRpcHandler(
     if (role === 'viewer') throw new DomainError('FORBIDDEN', 403, 'Người xem không kết nối được lịch');
     const adapter = channels?.calendars?.[provider];
     if (!channels || !adapter) throw new DomainError('CALENDAR_PROVIDER_DISABLED', 404, 'Loại lịch này chưa được cấu hình trên máy chủ');
+    // Checked before an attempt is written or used up: without a key the tokens could never be sealed.
+    if (channels.broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+    return { orgId, actor: actorOf(context.user), adapter, broker: channels.broker };
+  };
+  const meetingPlatformRedirectUri = (platform: string) => `${(channels?.publicUrl ?? '').replace(/\/$/, '')}/meetings/oauth/${platform}/callback`;
+  // The adapter of a meeting platform this deployment configured and that has a connect dialog, for a member who edits (a viewer connects nothing). The commands check the role again.
+  const meetingPlatformConnector = async (context: RpcContext, platform: string) => {
+    const { orgId, role } = await resolveMembership(runtime, context.user, context.orgSlug);
+    if (role === 'viewer') throw new DomainError('FORBIDDEN', 403, 'Người xem không kết nối được nền tảng họp');
+    const adapter = channels?.meetingPlatforms?.[platform];
+    if (!channels || !hasOAuth(adapter)) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Nền tảng họp này chưa được cấu hình trên máy chủ');
     // Checked before an attempt is written or used up: without a key the tokens could never be sealed.
     if (channels.broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
     return { orgId, actor: actorOf(context.user), adapter, broker: channels.broker };
@@ -1282,6 +1309,9 @@ export function createRpcHandler(
         // The recorder's rough notes and Vy's expansion of them (A5, #3163): the same run family, budget and checks as the summary; see member-vy-ports.ts.
         notesGet: os.meetings.results.notesGet.handler(meetingsQuery('meetings.notes.get')),
         notesSave: os.meetings.results.notesSave.handler(meetingsCommand('meetings.notes.save')),
+        // The table of contents of a meeting (#3844).
+        chaptersGet: os.meetings.results.chaptersGet.handler(meetingsQuery('meetings.chapters.get')),
+        chaptersSave: os.meetings.results.chaptersSave.handler(meetingsCommand('meetings.chapters.save')),
         enhance: os.meetings.results.enhance.handler(({ context, input }) =>
           inOrg(context, (orgId, actor) => runNotesEnhance({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
         ),
@@ -2592,6 +2622,58 @@ export function createRpcHandler(
           );
         }),
       ),
+      // The platforms a member may connect through the platform's own dialog (Zoom, C3): only those with an adapter that has one and a credential key, so the screen shows no button the server could not finish.
+      providers: os.meetingPlatform.providers.handler(({ context }) =>
+        guard(async () => {
+          await resolveMembership(runtime, context.user, context.orgSlug);
+          if (!channels || channels.broker.id === 'none') return [];
+          return MEETING_PLATFORM_CONNECT_PROVIDERS.filter((p) => hasOAuth(channels.meetingPlatforms?.[p]));
+        }),
+      ),
+      // The state and the PKCE verifier are made here; only the state's hash and the verifier reach the database. Nothing is fetched and no token exists yet.
+      connectStart: os.meetingPlatform.connectStart.handler(({ context, input }) =>
+        guard(async () => {
+          const { orgId, actor, adapter } = await meetingPlatformConnector(context, input.provider);
+          const attempt = newOAuthAttempt(adapter.pkce);
+          const begun = await runtime.execute<{ attemptId: string; expiresAt: string }>(
+            'kernel.meeting_platform.oauth_begin',
+            { provider: input.provider, stateHash: attempt.stateHash, codeVerifier: attempt.codeVerifier },
+            { actor, orgId },
+          );
+          const authorizeUrl = adapter.authorizeUrl({ state: attempt.state, redirectUri: meetingPlatformRedirectUri(input.provider), codeChallenge: attempt.codeChallenge });
+          return { authorizeUrl, state: attempt.state, expiresAt: begun.expiresAt };
+        }),
+      ),
+      // The attempt is consumed before the code is exchanged, so a code and state work once even if the exchange fails. The tokens the platform returns are sealed here and dropped: only the envelope
+      // reaches the command, and no query ever returns one.
+      connectFinish: os.meetingPlatform.connectFinish.handler(({ context, input }) =>
+        guard(async () => {
+          const { orgId, actor, adapter, broker } = await meetingPlatformConnector(context, input.provider);
+          const { codeVerifier } = await runtime.execute<{ codeVerifier: string | null }>(
+            'kernel.meeting_platform.oauth_consume',
+            { provider: input.provider, stateHash: oauthStateHash(input.state) },
+            { actor, orgId },
+          );
+          if (adapter.pkce && !codeVerifier) throw new DomainError('OAUTH_STATE_INVALID', 400, 'Lượt kết nối này không hợp lệ hoặc không phải của bạn, hãy bắt đầu lại');
+          const account = await adapter.exchange({ code: input.code, redirectUri: meetingPlatformRedirectUri(input.provider), codeVerifier }).catch((error: unknown) => {
+            throw meetingPlatformConnectFailure(error);
+          });
+          const sealed = broker.seal(account.secret, meetingPlatformBinding(orgId, adapter.provider, account.externalAccount));
+          const done = await runtime.execute<{ connectionId: string; reconnected: boolean }>(
+            'kernel.meeting_platform.connect',
+            {
+              provider: adapter.provider,
+              externalAccount: account.externalAccount,
+              displayName: account.displayName,
+              scopes: account.scopes,
+              expiresAt: account.expiresAt?.toISOString() ?? null,
+              credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+            },
+            { actor, orgId },
+          );
+          return { ...done, displayName: account.displayName };
+        }),
+      ),
     },
     // Org-less: any signed-in user may look up a tax code before the org exists. Nothing is written, so no command.
     taxRegistry: {
@@ -3145,6 +3227,13 @@ export function createRpcHandler(
           inFinance(context, async (orgId, actor) => {
             const proposal = await runtime.query<EInvoiceCorrectionRate>('finance.einvoice.correction_rate', input, { actor, orgId });
             return explainCorrectionRate(einvoiceRateCoworker, orgId, actor.userId, proposal);
+          }),
+        ),
+        // The coworker's proposal of the reason code (#3690): the source is read in the member's own transaction, the model is asked outside any transaction; the note typed is not stored.
+        suggestReason: os.einvoice.drafts.suggestReason.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            const source = await runtime.query<EInvoiceReasonSource>('finance.einvoice.reason_source', { originalDraftId: input.originalDraftId }, { actor, orgId });
+            return suggestCorrectionReason(einvoiceReasonCoworker, orgId, actor.userId, source, input);
           }),
         ),
         correctionOptions: os.einvoice.drafts.correctionOptions.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.correction_options', input, { actor, orgId }))),
@@ -3736,6 +3825,16 @@ export function createRpcHandler(
         inAds(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('ads.campaign.draft_save', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // Boost a published Social post (W3, #3834): the options, the newest boost of each of some posts, and drafting one (the same draft the builder makes; asking for
+      // approval is requestChange, the same approval and launch as any plan).
+      boostOptions: os.ads.boostOptions.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.boost.options', {}, { actor, orgId }))),
+      boostStates: os.ads.boostStates.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.boost.states', input, { actor, orgId }))),
+      draftBoost: os.ads.draftBoost.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.boost.draft', rest, { actor, orgId, idempotencyKey });
         }),
       ),
       discardCampaignDraft: os.ads.discardCampaignDraft.handler(({ context, input }) =>
