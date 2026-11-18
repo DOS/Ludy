@@ -63,6 +63,8 @@ export function MeetingDetailPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // A chapter was clicked (#3844): the transcript goes to its line, and a recording that is already loaded is set to that second (it is never started by the click).
   const [jump, setJump] = useState<{ second: number; token: number } | undefined>(undefined);
+  // The page links to another meeting in place: a jump to a line of one meeting never carries over to the next.
+  useEffect(() => setJump(undefined), [id]);
   const jumpTo = (second: number) => {
     setJump((j) => ({ second, token: (j?.token ?? 0) + 1 }));
     if (audioRef.current) audioRef.current.currentTime = second;
@@ -348,7 +350,7 @@ export function MeetingDetailPage() {
       <MeetingLive meetingId={id} liveNotes={meeting.liveNotes} isRecorder={meeting.isRecorder} />
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       {/* The chapters (#3844): the published table of contents for every reader, the recorder's own draft editor; a click takes the transcript below to the line */}
-      <MeetingChapters meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
+      <MeetingChapters key={id} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       <MeetingTranscript meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}
       {/* What to bring to the next meeting of a series (#3543): the previous meeting's decisions, the open items, the linked customer's open deals, and Vy's few sentences on a click */}

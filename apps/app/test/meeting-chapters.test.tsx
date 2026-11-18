@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The chapters (table of contents) on a meeting's page (#3844): every reader sees the published set with the time of each line (a click takes the transcript there), a reader of a meeting with none
-// sees no card, the recorder also sees their own draft editor (a title and the line it starts at, picked from the transcript), titles are plain text, and a click on a chapter marks the line of the
-// transcript that starts at its second. Rendered on the server from the query cache, with no network.
+// sees no card, the recorder also sees their own draft editor (a title and the line it starts at, picked from the transcript), titles are plain text, and the transcript marks the line that starts at the second it is given (the click, the audio seek and the
+// save are not run here). Rendered on the server from the query cache, with no network.
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';

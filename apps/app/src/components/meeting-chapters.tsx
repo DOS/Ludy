@@ -121,7 +121,7 @@ function ChapterEditor({ meetingId, base }: { meetingId: string; base: readonly 
           {t('save')}
         </Button>
       </div>
-      {saved && <p role="status" className="text-sm">{t('saved')}</p>}
+      <p role="status" aria-live="polite" className="text-sm empty:hidden">{saved ? t('saved') : null}</p>
     </div>
   );
 }
