@@ -16,9 +16,9 @@ CREATE TABLE IF NOT EXISTS crove_finance.supplier_bank_account (
   party_id uuid NOT NULL,
   bank_name text NOT NULL CHECK (char_length(bank_name) BETWEEN 1 AND 100),
   -- The account holder's name (personal data when the supplier is a sole trader), sealed under the same subject key as the number, so one shred erases both.
-  account_holder_sealed text NOT NULL CHECK (char_length(account_holder_sealed) BETWEEN 1 AND 2000),
+  account_holder_sealed text NOT NULL CHECK (pg_catalog.length(account_holder_sealed) <= 2000 AND account_holder_sealed LIKE 'crove:s1:%'),
   -- The full number, sealed under the supplier's subject key (`crove:s1:...`); never read back except by a sensitive query.
-  number_sealed text NOT NULL CHECK (char_length(number_sealed) BETWEEN 1 AND 2000),
+  number_sealed text NOT NULL CHECK (pg_catalog.length(number_sealed) <= 2000 AND number_sealed LIKE 'crove:s1:%'),
   -- Keyed hash of the normalized digits (hex of 32 bytes): not reversible, the same number gives the same hash within the org.
   number_hash text NOT NULL CHECK (number_hash ~ '^[0-9a-f]{64}$'),
   -- The id of the credential key the hash was made under (ctx.keyedHashKeyId): after a key rotation a hash under another id is made again from the sealed number, never read as a change.
