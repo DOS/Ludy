@@ -10,8 +10,19 @@
 //   count resolved: correcting it is a journal voucher by hand, not a second resolution.
 // Facts only, no model.
 import { sql } from 'kysely';
-import { JOURNAL_VOUCHER_KIND, type JournalVoucherProposal, type JournalVoucherRequest, type SurplusResolutionRequest } from '@crove/kernel-contract';
-import { DomainError, type QueryContext } from '@crove/kernel-runtime';
+import {
+  JOURNAL_VOUCHER_KIND,
+  STOCK_SURPLUS_NOTE_ITEMS,
+  zStockCountIdInput,
+  type JournalVoucherProposal,
+  type JournalVoucherRequest,
+  type StockSurplusSource,
+  type SurplusResolutionRequest,
+} from '@crove/kernel-contract';
+import type { MemberRole } from '@crove/db';
+import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { money } from '@crove/l10n-vn';
+import { SURPLUS_ACCOUNT } from './domain/stock-count.ts';
 import { isSurplusVoucher, surplusAmount, surplusDescription, surplusVoucherLines } from './domain/stock-surplus.ts';
 import { databaseToday } from './period-lock.ts';
 
@@ -106,3 +117,66 @@ export async function checkSurplusVoucher(ctx: Ctx, payload: JournalVoucherPropo
   const standing = await surplusStanding(ctx, countId, ownProposalId);
   if (standing.voucherId) throw new DomainError('STOCK_SURPLUS_RESOLVED', 409, 'Hàng thừa của lần kiểm kê này đã được xử lý', { voucherId: standing.voucherId });
 }
+
+// What a person needs to decide where the surplus goes (#3712 slice 2b), read from the books and nothing else: the items in surplus (largest by value first), the total, the supplier the goods were
+// last received from when there is one, and whether a person already made an entry by hand on 3381 since the count. The supplier is a hint the screen may offer; it is never chosen here, and what
+// the person picks still goes through the resolution request above. A count that is not confirmed or has no surplus is refused like a resolution is.
+const SURPLUS_VIEW_ROLES: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
+
+export const surplusSource = defineQuery({
+  name: 'finance.stock_count.surplus_source',
+  input: zStockCountIdInput,
+  access: SURPLUS_VIEW_ROLES,
+  handler: async (ctx, input): Promise<StockSurplusSource> => {
+    const countId = input.countId.toLowerCase();
+    const count = await countSurplus(ctx, countId, false);
+    refuseUnresolvable(count);
+    const { rows: moves } = await sql<{ item_id: string; name: string; unit: string; quantity: string; amount: string }>`
+      SELECT m.item_id::text AS item_id, i.name, i.unit, m.quantity::text AS quantity, m.amount::text AS amount
+      FROM crove_finance.stock_move m
+      JOIN crove_finance.stock_count_line l ON l.org_id = m.org_id AND l.id = m.count_line_id
+      JOIN crove_finance.stock_item i ON i.org_id = m.org_id AND i.id = m.item_id
+      WHERE m.org_id = ${ctx.orgId}::uuid AND l.count_id = ${countId}::uuid AND m.source_type = 'count' AND m.amount > 0
+      ORDER BY m.amount DESC, i.name, m.id`.execute(ctx.trx);
+    const shown = moves.slice(0, STOCK_SURPLUS_NOTE_ITEMS).map((m) => ({ name: m.name, quantity: m.quantity, unit: m.unit, value: money(m.amount).toDecimalPlaces(0).toFixed() }));
+    // The party of the latest purchase that received any of these items, in the count's own entity, up to the count date; a voided document is none.
+    const itemIds = [...new Set(moves.map((m) => m.item_id))];
+    let supplier: StockSurplusSource['supplier'] = null;
+    if (itemIds.length > 0) {
+      const { rows } = await sql<{ party_id: string; name: string; received: string }>`
+        SELECT d.party_id::text AS party_id, p.name, m.move_date::text AS received
+        FROM crove_finance.stock_move m
+        JOIN crove_finance.purchase_document d ON d.org_id = m.org_id AND d.id = m.document_id
+        JOIN crove_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
+        WHERE m.org_id = ${ctx.orgId}::uuid AND m.legal_entity_id = ${count.legalEntityId}::uuid AND m.source_type = 'document_line' AND m.quantity > 0
+          AND m.item_id = ANY (${itemIds}::uuid[]) AND m.move_date <= ${count.countDate}::date
+          AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id)
+        ORDER BY m.move_date DESC, m.created_at DESC, m.id DESC
+        LIMIT 1`.execute(ctx.trx);
+      const hit = rows[0];
+      if (hit) supplier = { partyId: hit.party_id, name: hit.name, lastReceived: hit.received };
+    }
+    // A manual entry on 3381 in this entity since the count: a general voucher of a person's own (no count, no resolution tag), not a reversal.
+    const { rows: manual } = await sql<{ one: number }>`
+      SELECT 1 AS one
+      FROM crove_finance.journal_line jl
+      JOIN crove_finance.journal_entry e ON e.org_id = jl.org_id AND e.id = jl.entry_id
+      JOIN crove_finance.journal_voucher v ON v.org_id = e.org_id AND v.id::text = e.source_id::text
+      WHERE jl.org_id = ${ctx.orgId}::uuid AND jl.account_code = ${SURPLUS_ACCOUNT} AND jl.legal_entity_id = ${count.legalEntityId}::uuid
+        AND e.source_type = 'finance.journal_voucher' AND e.reverses_entry_id IS NULL AND e.entry_date >= ${count.countDate}::date
+        AND v.stock_count_id IS NULL AND v.surplus_count_id IS NULL AND v.closing_year IS NULL AND v.stock_closing_month IS NULL
+      LIMIT 1`.execute(ctx.trx);
+    const standing = await surplusStanding(ctx, countId);
+    return {
+      countId,
+      countDate: count.countDate,
+      total: count.amount,
+      items: shown,
+      moreItems: Math.max(0, moves.length - shown.length),
+      supplier,
+      manualEntry: manual.length > 0,
+      voucherId: standing.voucherId,
+      proposalId: standing.proposalId,
+    };
+  },
+});

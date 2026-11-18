@@ -32,6 +32,7 @@ import {
 } from './recruiting-coworker.ts';
 import { checkSupplierPayableLineSentence, supplierPayableLineInstructions, supplierPayableLinePrompt, type SupplierPayableLineFacts, type SupplierPayableLineResult } from './supplier-payable-line.ts';
 import { checkEInvoiceRate, einvoiceRateInstructions, einvoiceRatePrompt, type EInvoiceRateFacts, type EInvoiceRateResult } from './einvoice-rate.ts';
+import { checkStockSurplusNote, stockSurplusInstructions, stockSurplusPrompt, type StockSurplusFacts, type StockSurplusResult } from './stock-surplus-note.ts';
 import { checkMarketplaceLineSentence, marketplaceLineInstructions, marketplaceLinePrompt, type MarketplaceLineFacts, type MarketplaceLineResult } from './marketplace-line.ts';
 import { checkPayrollMatchSentence, payrollMatchInstructions, payrollMatchPrompt, type PayrollMatchFacts, type PayrollMatchResult } from './payroll-match.ts';
 import { checkVatLateSentence, vatLateInstructions, vatLatePrompt, vatLateQuiet, type VatLateFacts, type VatLateSentenceResult } from './vat-late.ts';
@@ -155,6 +156,10 @@ export type SupplierPayableLineGenerator = (args: { system: string; prompt: stri
 const zEInvoiceRateOut = z.object({
   sentence: z.string().describe('One or two plain Vietnamese sentences on why the correcting invoice keeps or changes the VAT rate, citing only the dates and rates given, each written exactly as given'),
 });
+const zStockSurplusOut = z.object({
+  sentence: z.string().describe('Up to three plain sentences on the surplus of a stock count: the items, what it is worth and what the accounts 711, 3388 and 331 mean, citing only the figures given, each written exactly as given'),
+});
+export type StockSurplusGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zStockSurplusOut> | null; usage?: AiUsage }>;
 export type EInvoiceRateGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zEInvoiceRateOut> | null; usage?: AiUsage }>;
 export type MarketplaceLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceLineOut> | null; usage?: AiUsage }>;
 export type PayrollMatchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zPayrollMatchOut> | null; usage?: AiUsage }>;
@@ -263,6 +268,7 @@ export class InboxReader {
   private readonly generateMarketplaceLine: MarketplaceLineGenerator;
   private readonly generateSupplierPayableLine: SupplierPayableLineGenerator;
   private readonly generateEInvoiceRate: EInvoiceRateGenerator;
+  private readonly generateStockSurplus: StockSurplusGenerator;
   private readonly generateStockMatch: StockMatchGenerator;
   private readonly generateReorder: ReorderGenerator;
   private readonly generateEInvoiceDraft: EInvoiceDraftGenerator;
@@ -273,7 +279,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceRate?: EInvoiceRateGenerator; stockSurplus?: StockSurplusGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
@@ -347,6 +353,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.vat_late_explain', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zVatLateOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateStockSurplus =
+      generators.stockSurplus ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.stock_surplus_explain', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zStockSurplusOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -545,6 +559,15 @@ export class InboxReader {
     const { output, usage } = await this.generateVatLate({ system: vatLateInstructions(facts.language), prompt: vatLatePrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkVatLateSentence(facts, output);
+  }
+
+  /** The accounting coworker's explanation of the surplus of a count of stock (#3712 slice 2b), from the items, their value and the supplier code found, or why there is none: the text is refused when
+   * it states a number the facts do not hold, a link, claims a step was done, advises an account, sets an account number against the wrong meaning, or is empty or too long (stock-surplus-note.ts). onUsage
+   * gets the tokens the call used. */
+  async stockSurplusNote(facts: StockSurplusFacts, onUsage?: (usage: AiUsage) => void): Promise<StockSurplusResult> {
+    const { output, usage } = await this.generateStockSurplus({ system: stockSurplusInstructions(facts.language), prompt: stockSurplusPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkStockSurplusNote(facts, output);
   }
 
   /** The accounting coworker's plain-Vietnamese explanation of the VAT rate a correcting e-invoice proposes (#3709), from the nature, two dates and rates only, or why there is none: the text is

@@ -146,6 +146,16 @@ function SurplusResolution({ count, canWrite, slug }: { count: StockCount; canWr
   const [partyId, setPartyId] = useState('');
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const parties = useQuery({ ...orpc.parties.list.queryOptions({ input: { all: true } }), enabled: account === '331' });
+  const { locale } = useLocaleSetting();
+  const waiting = count.status === 'confirmed' && !isZero(count.surplus) && !count.surplusVoucherId && !count.surplusProposalId;
+  // The facts (items, total, supplier hint, manual-entry flag) come from the books and the coworker's words are an extra: with AI off, busy or refused the screen shows its own line. Kept for a while.
+  const note = useQuery({
+    ...orpc.stock.counts.surplusNote.queryOptions({ input: { countId: count.id, lang: locale.startsWith('vi') ? 'vi' : 'en' } }),
+    enabled: waiting,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
   const request = useMutation({
     mutationFn: () =>
       client.inbox.request({
@@ -164,7 +174,7 @@ function SurplusResolution({ count, canWrite, slug }: { count: StockCount; canWr
       <h4 className="text-sm font-medium text-foreground">{t('surplusTitle')}</h4>
       {count.surplusVoucherId ? (
         <p className="mt-1 text-sm text-subtle-foreground" data-testid="stock-surplus-done">
-          {t('surplusDone')}
+          {t('surplusDone')} {t('surplusDoneReversed')}
         </p>
       ) : proposalId ? (
         <Alert className="mt-2">
@@ -178,6 +188,44 @@ function SurplusResolution({ count, canWrite, slug }: { count: StockCount; canWr
       ) : (
         <>
           <p className="mt-1 text-sm text-subtle-foreground">{t('surplusWaits', { amount: f.money(count.surplus, 'VND') })}</p>
+          {note.data && (
+            <div className="mt-2 flex flex-col gap-1 text-sm" data-testid="stock-surplus-note">
+              <p className="text-subtle-foreground" data-testid="stock-surplus-items">
+                {t('surplusItems', { items: note.data.items.map((i) => `${i.name} ${i.quantity} ${i.unit}`).join(', ') })}
+                {note.data.moreItems > 0 ? `, ${t('surplusMoreItems', { count: String(note.data.moreItems) })}` : ''}
+              </p>
+              {note.data.explanation && (
+                <p className="text-subtle-foreground" data-testid="stock-surplus-explanation">
+                  <span className="font-medium">{t('surplusAiLabel')}: </span>
+                  {note.data.explanation} <span className="text-xs">({t('surplusAiNote')})</span>
+                </p>
+              )}
+              {note.data.supplier && (
+                <p className="text-subtle-foreground" data-testid="stock-surplus-supplier">
+                  {t('surplusSupplier', { name: note.data.supplier.name, date: f.date(note.data.supplier.lastReceived) })}
+                  {canWrite && (
+                    <Button
+                      variant="link"
+                      size="sm"
+                      onClick={() => {
+                        setAccount('331');
+                        setPartyId(note.data?.supplier?.partyId ?? '');
+                        setIdempotencyKey(crypto.randomUUID());
+                      }}
+                      data-testid="stock-surplus-use-supplier"
+                    >
+                      {t('surplusUseSupplier')}
+                    </Button>
+                  )}
+                </p>
+              )}
+              {note.data.manualEntry && (
+                <Alert>
+                  <AlertDescription data-testid="stock-surplus-manual-entry">{t('surplusManualEntry')}</AlertDescription>
+                </Alert>
+              )}
+            </div>
+          )}
           {canWrite && (
             <div className="mt-2 flex flex-col gap-2">
               <Label className="text-xs">
