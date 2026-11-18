@@ -31,6 +31,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import type { Translate } from '../i18n/runtime.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { keyFor, type KeyHolder } from '../lib/ads.ts';
+import { tidyMoneyInput } from '../lib/money-input.ts';
 import {
   badLocationIndex,
   blankVariant,
@@ -56,6 +57,7 @@ import {
   type AdsGender,
   type AiField,
   type CampaignForm,
+  budgetTextOf,
 } from '../lib/ads-campaigns.ts';
 import { toast } from '../lib/toast.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
@@ -297,7 +299,7 @@ export function CampaignBuilder({
             >
               {(control) => (
                 <div className="flex items-center gap-2">
-                  <Input {...control} inputMode="decimal" autoComplete="off" value={form.dailyBudget} onChange={(e) => set({ dailyBudget: e.target.value.trim() })} />
+                  <Input {...control} inputMode="decimal" autoComplete="off" value={form.dailyBudget} onChange={(e) => set({ dailyBudget: e.target.value.trim() })} onBlur={() => set({ dailyBudget: tidyMoneyInput(form.dailyBudget) })} />
                   <span className="text-sm text-muted-foreground">{currency ?? ''}</span>
                 </div>
               )}
@@ -437,7 +439,7 @@ export function CampaignBuilder({
 
       <p className="text-sm font-medium text-foreground" data-testid="campaign-max-spend">
         {spend !== null && currency !== null
-          ? t('campaigns.maxSpend', { amount: f.money(spend.amount, currency), days: spend.days, daily: f.money(form.dailyBudget.trim(), currency) })
+          ? t('campaigns.maxSpend', { amount: f.money(spend.amount, currency), days: spend.days, daily: f.money(budgetTextOf(form.dailyBudget), currency) })
           : maxSpendHint(form) === 'dates'
             ? t('campaigns.maxSpendDates', { max: String(ADS_PLAN_LIMITS.daysMax) })
             : t('campaigns.maxSpendNone')}

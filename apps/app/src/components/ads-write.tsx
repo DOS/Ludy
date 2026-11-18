@@ -22,6 +22,8 @@ import { useFormat } from '../i18n/provider.tsx';
 import { adsChangeLine, visibleBidi } from '../lib/ads-change.ts';
 import { AdsPlanPreview, useAdsPlanView } from './ads-plan-preview.tsx';
 import { toUnits } from '../lib/decimal.ts';
+import { parseMoneyInput, tidyMoneyInput } from '../lib/money-input.ts';
+import { TOUCH_BUTTON } from '../lib/touch.ts';
 import { NO_WRITE_OFFER, writeConnectWay, type AdWriteOffer } from '../lib/ads.ts';
 import { useAdOAuthStart } from '../lib/ads-oauth.ts';
 import { accountOffToastText, disableConfirmText, disabledToastText, writeConnectionStopped } from '../lib/ads-write.ts';
@@ -43,7 +45,12 @@ const refresh = () =>
 // A decimal the server will accept as a cap: above zero, at most two decimals (the sandbox and Meta report in whole units and
 // cents). The server checks again.
 const AMOUNT = /^(?!0+(\.0+)?$)\d{1,15}(\.\d{1,2})?$/;
-export const isCapAmount = (text: string): boolean => AMOUNT.test(text.trim());
+// What was typed may be "5.000.000" or "5,000,000" as well as "5000000" (#3641): it is judged, and sent, as the canonical decimal string.
+export const capAmountOf = (text: string): string | null => {
+  const canonical = parseMoneyInput(text);
+  return canonical !== null && AMOUNT.test(canonical) ? canonical : null;
+};
+export const isCapAmount = (text: string): boolean => capAmountOf(text) !== null;
 
 const capKey = (cap: Pick<AdsCapView, 'scope' | 'adAccountId' | 'period'>) => `${cap.scope}:${cap.adAccountId ?? ''}:${cap.period}`;
 
@@ -99,7 +106,7 @@ export function AdsWriteCard({
           ) : (
             owner && (
               <div>
-                <Button loading={enable.isPending} variant="outline" size="lg" onClick={() => enable.mutate({ change: 'write_enable', idempotencyKey: crypto.randomUUID() })}>
+                <Button loading={enable.isPending} variant="outline" size="lg" className={TOUCH_BUTTON} onClick={() => enable.mutate({ change: 'write_enable', idempotencyKey: crypto.randomUUID() })}>
                   {t('request')}
                 </Button>
                 {enable.error && <ErrorText>{errorMessage(enable.error)}</ErrorText>}
@@ -109,7 +116,7 @@ export function AdsWriteCard({
         {owner && writeEnabled && (
           <div>
             <ConfirmDialog
-              render={<Button loading={disable.isPending} variant="outline" size="lg" />}
+              render={<Button loading={disable.isPending} variant="outline" size="lg" className={TOUCH_BUTTON} />}
               destructive
               title={t('disableTitle')}
               description={disableConfirmText(root, accounts)}
@@ -131,7 +138,7 @@ export function AdsWriteCard({
           ) : (
             owner && (
               <div>
-                <Button loading={unblock.isPending} variant="outline" size="lg" onClick={() => unblock.mutate({ change: 'launches_unblock', idempotencyKey: crypto.randomUUID() })}>
+                <Button loading={unblock.isPending} variant="outline" size="lg" className={TOUCH_BUTTON} onClick={() => unblock.mutate({ change: 'launches_unblock', idempotencyKey: crypto.randomUUID() })}>
                   {t('unblockRequest')}
                 </Button>
                 {unblock.error && <ErrorText>{errorMessage(unblock.error)}</ErrorText>}
@@ -145,7 +152,7 @@ export function AdsWriteCard({
         <section className="space-y-2">
           <p className="text-sm text-muted-foreground">{t('pauseAllHint')}</p>
           <ConfirmDialog
-            render={<Button loading={pauseAll.isPending} variant="destructive" size="lg" />}
+            render={<Button loading={pauseAll.isPending} variant="destructive" size="lg" className={TOUCH_BUTTON} />}
             destructive
             title={t('pauseAllTitle')}
             description={t('pauseAllBody')}
@@ -318,13 +325,13 @@ function AccountRow({ account, owner, waiting, slug, offer }: { account: AdAccou
           <Badge variant={account.writeEnabled ? 'warning' : 'secondary'}>{account.writeEnabled ? t('accountOn') : t('accountOff')}</Badge>
           {account.canRunAds && <Badge variant="success">{t('accountCanRun')}</Badge>}
           {canConnect && (
-            <Button loading={connecting} variant="outline" onClick={connect}>
+            <Button loading={connecting} variant="outline" className={TOUCH_BUTTON} onClick={connect}>
               {t('accountConnect')}
             </Button>
           )}
           {account.writeEnabled
             ? owner && (
-                <Button loading={off.isPending} variant="outline" onClick={() => off.mutate({ adAccountId: account.id, idempotencyKey: crypto.randomUUID() })}>
+                <Button loading={off.isPending} variant="outline" className={TOUCH_BUTTON} onClick={() => off.mutate({ adAccountId: account.id, idempotencyKey: crypto.randomUUID() })}>
                   {t('accountDisable')}
                 </Button>
               )
@@ -332,7 +339,7 @@ function AccountRow({ account, owner, waiting, slug, offer }: { account: AdAccou
                 <Badge variant="proposal">{t('waitingBadge')}</Badge>
               ) : (
                 owner && (
-                  <Button loading={ask.isPending} variant="outline" onClick={() => ask.mutate({ change: 'account_enable', adAccountId: account.id, idempotencyKey: crypto.randomUUID() })}>
+                  <Button loading={ask.isPending} variant="outline" className={TOUCH_BUTTON} onClick={() => ask.mutate({ change: 'account_enable', adAccountId: account.id, idempotencyKey: crypto.randomUUID() })}>
                     {t('accountRequest')}
                   </Button>
                 )
@@ -397,7 +404,7 @@ export function CapForm({
   const targetKnown = scope === 'org' || account !== undefined;
   // Lowering goes strictly below the cap in force (the server refuses the same amount too): compared exactly, as decimal units,
   // never as a JS number.
-  const notBelow = lowering && inForce !== undefined && isCapAmount(amount) && toUnits(amount.trim()) >= toUnits(inForce.amount);
+  const notBelow = lowering && inForce !== undefined && isCapAmount(amount) && toUnits(capAmountOf(amount) ?? '0') >= toUnits(inForce.amount);
   const valid = isCapAmount(amount) && targetKnown && (lowering ? inForce !== undefined && !notBelow : /^[A-Z]{3}$/.test(currency) && !requestOpen);
   const request = useMutation(orpc.ads.requestChange.mutationOptions({ onSuccess: async () => (setAmount(''), toast(t('requestedToast')), refresh()) }));
   const lower = useMutation(orpc.ads.lowerCap.mutationOptions({ onSuccess: async () => (setAmount(''), toast(t('capLoweredToast')), refresh()) }));
@@ -406,8 +413,8 @@ export function CapForm({
     event.preventDefault();
     if (!valid) return;
     const named = scope === 'account' && account ? { adAccountId: account.id } : {};
-    if (lowering) lower.mutate({ scope, ...named, period, amount: amount.trim(), idempotencyKey: crypto.randomUUID() });
-    else request.mutate({ change: 'cap_set', scope, ...named, period, amount: amount.trim(), currency, idempotencyKey: crypto.randomUUID() });
+    if (lowering) lower.mutate({ scope, ...named, period, amount: capAmountOf(amount) ?? amount.trim(), idempotencyKey: crypto.randomUUID() });
+    else request.mutate({ change: 'cap_set', scope, ...named, period, amount: capAmountOf(amount) ?? amount.trim(), currency, idempotencyKey: crypto.randomUUID() });
   };
   const changeMode = (next: CapMode) => {
     setMode(next);
@@ -467,7 +474,7 @@ export function CapForm({
             )}
           </Field>
           <Field label={t('capAmount')} hint={amount !== '' && !isCapAmount(amount) ? t('capAmountInvalid') : notBelow ? t('capNotBelow') : undefined}>
-            {(control) => <Input {...control} inputMode="decimal" value={amount} disabled={busy} onChange={(e) => setAmount(e.target.value)} />}
+            {(control) => <Input {...control} inputMode="decimal" autoComplete="off" value={amount} disabled={busy} onChange={(e) => setAmount(e.target.value)} onBlur={() => setAmount((now) => tidyMoneyInput(now))} />}
           </Field>
           {!lowering && scope === 'org' && (
             <Field label={t('capCurrency')} hint={t('capCurrencyHint')}>
@@ -479,7 +486,7 @@ export function CapForm({
         <p className="text-sm text-muted-foreground">{inForce ? t('capInForce', { amount: f.money(inForce.amount, inForce.currency) }) : t('capNoneYet')}</p>
         {lowering && <p className="text-sm text-muted-foreground">{t('capLowerHint')}</p>}
         {!lowering && requestOpen && <p className="text-sm text-muted-foreground">{t('capRequestOpen')}</p>}
-        <Button loading={busy} type="submit" size="lg" disabled={!valid}>
+        <Button loading={busy} type="submit" size="lg" className={TOUCH_BUTTON} disabled={!valid}>
           {lowering ? t('capLower') : t('capRequest')}
         </Button>
       </form>

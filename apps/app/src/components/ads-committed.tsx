@@ -86,7 +86,7 @@ export function AdsCommittedStrip({ account, month }: { account: Pick<AdAccountV
   return (
     <section aria-labelledby={headingId} className="space-y-3">
       <h2 id={headingId} className="text-base font-semibold text-foreground">
-        {t('title')}
+        {t('title', { month: monthLabel(month) })}
       </h2>
       <CommittedBody account={account} month={month} />
       <p className="text-xs text-subtle-foreground">{t('hint', { month: monthLabel(month) })}</p>

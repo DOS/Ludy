@@ -30,7 +30,7 @@ The client secret goes from the Google Cloud Console OAuth client page into the 
 
 - The adapter makes requests to `googleads.googleapis.com` and `oauth2.googleapis.com` only, using API version `v26` (`customers:listAccessibleCustomers` and `googleAds:searchStream`), and a test pins that its source names no write endpoint and sends no `developer-token` header (sunset by Google in September 2026).
 - The refresh token is sealed with `CREDENTIAL_KEY`, opened by the worker alone to mint short-lived access tokens in memory, and appears in no log, audit row, event or answer (database test).
-- A Google Cloud consent screen left in Testing mode returns `refresh_token_expires_in` (7 days): Ludy stores that expiry on the connection (`connectionExpiresAt`) and warns on the Ads screen before the token lapses.
+- A Google Cloud consent screen left in Testing mode returns `refresh_token_expires_in` (7 days): Ludy stores that expiry on the connection (`connectionExpiresAt`) and warns on the Ads screen before the token lapses. The screen tells the owner only the date and to connect again (#3641); the endpoint names, the scope and the Testing and Production modes are for this runbook, not for the owner's copy.
 
 ## Before you start
 
