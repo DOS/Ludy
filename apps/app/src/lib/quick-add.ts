@@ -48,7 +48,9 @@ export const OPEN_MODAL_DIALOG_SELECTOR =
   'dialog[open], [role="dialog"]:not([data-closed]), [role="alertdialog"]:not([data-closed])';
 
 /** True when any native `<dialog open>` or Base UI modal dialog/sheet is currently open in `doc`. */
-export function hasOpenModalDialog(doc: Pick<Document, 'querySelector'> | null | undefined): boolean {
+export function hasOpenModalDialog(
+  doc: { querySelector?: ((selector: string) => unknown) | undefined } | null | undefined,
+): boolean {
   if (!doc || typeof doc.querySelector !== 'function') return false;
   return doc.querySelector(OPEN_MODAL_DIALOG_SELECTOR) !== null;
 }
