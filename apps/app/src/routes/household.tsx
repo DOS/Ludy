@@ -5,9 +5,9 @@
 // never asked for an account or a book: the profile decides which books it sees. The law behind a book is data still waiting for the accountant (#2520) and the screen says so. Owners and admins
 // change the profile; every role reads the books.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { HOUSEHOLD_EXPENSE_GROUPS, HOUSEHOLD_TRADES, vietnamToday, type HouseholdProfileSet, type HouseholdS2a, type HouseholdS2b, type HouseholdVatCut } from '@crove/kernel-contract';
+import { HOUSEHOLD_EXPENSE_GROUPS, HOUSEHOLD_TRADES, vietnamToday, type HouseholdProfileSet, type HouseholdS2a, type HouseholdS2b, type HouseholdVatCut, type HouseholdYearToDate } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -142,12 +142,18 @@ function S2aBook({ entityId, variant = 'S2a' }: { entityId: string; variant?: 'S
   const [quarter, setQuarter] = useState(String(Math.floor((Number(today.slice(5, 7)) - 1) / 3) + 1));
   const period = periodOf(kind, month, quarter, year);
   const valid = /^20\d{2}(-(0[1-9]|1[0-2]|Q[1-4]))?$/.test(period);
-  const s2aQuery = useQuery({ ...orpc.household.s2a.queryOptions({ input: { legalEntityId: entityId, period } }), enabled: valid && withPit, retry: false });
+  // The trade that takes the yearly deduction, asked of a household with several trades and never defaulted (#3710 slice 3).
+  const [deductionTrade, setDeductionTrade] = useState('');
+  const s2aQuery = useQuery({
+    ...orpc.household.s2a.queryOptions({ input: { legalEntityId: entityId, period, ...(deductionTrade !== '' ? { deductionTrade: deductionTrade as (typeof HOUSEHOLD_TRADES)[number] } : {}) } }),
+    enabled: valid && withPit,
+    retry: false,
+  });
   const s2bQuery = useQuery({ ...orpc.household.s2b.queryOptions({ input: { legalEntityId: entityId, period } }), enabled: valid && !withPit, retry: false });
   const book = withPit ? s2aQuery : s2bQuery;
   const download = useMutation({
     mutationFn: async () => {
-      const response = await apiFetch(`/api/export/household-${p}.xlsx?legalEntityId=${encodeURIComponent(entityId)}&period=${encodeURIComponent(period)}`);
+      const response = await apiFetch(`/api/export/household-${p}.xlsx?legalEntityId=${encodeURIComponent(entityId)}&period=${encodeURIComponent(period)}${withPit && deductionTrade !== '' ? `&deductionTrade=${encodeURIComponent(deductionTrade)}` : ''}`);
       const url = URL.createObjectURL(await response.blob());
       const a = document.createElement('a');
       a.href = url;
@@ -218,7 +224,7 @@ function S2aBook({ entityId, variant = 'S2a' }: { entityId: string; variant?: 'S
                 {t('s2aDraft')}
                 <ul className="mt-1 list-disc pl-5">
                   {data.unconfirmed.map((u) => (
-                    <li key={`${u.kind}-${u.key}`}>{u.kind === 'form' ? t('cnkdUnconfirmedForm', { key: u.key, date: f.date(u.effectiveFrom) }) : u.kind === 'reduction' ? t('cnkdUnconfirmedReduction', { date: f.date(u.effectiveFrom) }) : t('cnkdUnconfirmedRate', { trade: tradeName(u.key), date: f.date(u.effectiveFrom) })}</li>
+                    <li key={`${u.kind}-${u.key}`}>{u.kind === 'form' ? t('cnkdUnconfirmedForm', { key: u.key, date: f.date(u.effectiveFrom) }) : u.kind === 'threshold' ? t('cnkdUnconfirmedThreshold', { date: f.date(u.effectiveFrom) }) : u.kind === 'reduction' ? t(u.key === 'pit' ? 'cnkdUnconfirmedPitReduction' : 'cnkdUnconfirmedReduction', { date: f.date(u.effectiveFrom) }) : t('cnkdUnconfirmedRate', { trade: tradeName(u.key), date: f.date(u.effectiveFrom) })}</li>
                   ))}
                 </ul>
               </AlertDescription>
@@ -295,6 +301,7 @@ function S2aBook({ entityId, variant = 'S2a' }: { entityId: string; variant?: 'S
             </dl>
           )}
           <VatCutNotes cut={data.vatCut} prefix={`household-${p}`} mark={provisional} />
+          <YearToDateNotes ytd={data.yearToDate} prefix={`household-${p}-ytd`} mark={provisional} withPit={withPit} trades={data.lines.map((l) => l.trade)} picked={deductionTrade} onPick={setDeductionTrade} />
         </>
       )}
     </Card>
@@ -486,6 +493,8 @@ function S2cBook({ entityId }: { entityId: string }) {
 const EXPENSE_GROUP_KEYS = Object.fromEntries(HOUSEHOLD_EXPENSE_GROUPS.map((g) => [g, true])) as Record<(typeof HOUSEHOLD_EXPENSE_GROUPS)[number], true>;
 
 const MONEY_INPUT = /^\d{1,16}(\.\d{1,4})?$/;
+// A decimal string that is zero (the amounts are strings, never numbers).
+const isZeroAmount = (value: string) => /^-?0+(\.0+)?$/.test(value);
 
 // The quarterly worksheet 01/CNKD (#2518): a household with one trade has all revenue on it; with several it types the split, which the screen keeps for the ask only and the server never stores.
 // While a row behind the figures is unconfirmed (#2520) every figure that depends on it carries "Số liệu tạm, kế toán chưa xác nhận tỷ lệ" and the Excel file says the same; the label goes when the rows are
@@ -497,11 +506,37 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
   const [year, setYear] = useState(today.slice(0, 4));
   const [quarter, setQuarter] = useState<1 | 2 | 3 | 4>((Math.floor((Number(today.slice(5, 7)) - 1) / 3) + 1) as 1 | 2 | 3 | 4);
   const [split, setSplit] = useState<Record<string, string>>({});
+  const [splitBefore, setSplitBefore] = useState<Record<string, string>>({});
+  const [deductionTrade, setDeductionTrade] = useState('');
+  // The drafts belong to the period they were typed for: another year or quarter starts from empty (a split of Q3 sent for Q2 would assign revenue to the wrong trade).
+  const changePeriod = (nextYear: string, nextQuarter: 1 | 2 | 3 | 4) => {
+    setYear(nextYear);
+    setQuarter(nextQuarter);
+    setSplit({});
+    setSplitBefore({});
+  };
+  // The ledger's revenue before the quarter, remembered for the period so the fields to split it stay mounted while the sheet recalculates or refuses a split.
+  const [seenBefore, setSeenBefore] = useState<{ key: string; amount: string } | null>(null);
+  const periodKey = `${year}-${quarter}`;
   const valid = /^20\d{2}$/.test(year) && Number(year) >= 2026;
   const parts = trades.length > 1 ? trades.filter((x) => MONEY_INPUT.test((split[x] ?? '').trim())).map((x) => ({ trade: x, revenue: (split[x] ?? '').trim() })) : [];
   const badSplit = trades.length > 1 && trades.some((x) => (split[x] ?? '').trim() !== '' && !MONEY_INPUT.test((split[x] ?? '').trim()));
+  // The year's revenue before the quarter is split by trade only when the household has several trades and the quarter is not the first of the year.
+  const askBefore = trades.length > 1 && quarter > 1;
+  const partsBefore = askBefore ? trades.filter((x) => MONEY_INPUT.test((splitBefore[x] ?? '').trim())).map((x) => ({ trade: x, revenue: (splitBefore[x] ?? '').trim() })) : [];
+  const badBefore = askBefore && trades.some((x) => (splitBefore[x] ?? '').trim() !== '' && !MONEY_INPUT.test((splitBefore[x] ?? '').trim()));
+  type TradeRevenue = Array<{ trade: (typeof HOUSEHOLD_TRADES)[number]; revenue: string }>;
   const sheet = useQuery({
-    ...orpc.household.cnkd.queryOptions({ input: { legalEntityId: entityId, year: Number(year), quarter, ...(parts.length > 0 ? { split: parts as Array<{ trade: (typeof HOUSEHOLD_TRADES)[number]; revenue: string }> } : {}) } }),
+    ...orpc.household.cnkd.queryOptions({
+      input: {
+        legalEntityId: entityId,
+        year: Number(year),
+        quarter,
+        ...(parts.length > 0 ? { split: parts as TradeRevenue } : {}),
+        ...(partsBefore.length > 0 ? { splitBefore: partsBefore as TradeRevenue } : {}),
+        ...(deductionTrade !== '' ? { deductionTrade: deductionTrade as (typeof HOUSEHOLD_TRADES)[number] } : {}),
+      },
+    }),
     enabled: valid,
     retry: false,
   });
@@ -509,6 +544,9 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
     mutationFn: async () => {
       const query = new URLSearchParams({ legalEntityId: entityId, year, quarter: String(quarter) });
       if (parts.length > 0) query.set('split', parts.map((x) => `${x.trade}:${x.revenue}`).join(','));
+      // The yearly rule's inputs travel with the file, as with the screen: the split before the quarter and the trade that takes the threshold deduction.
+      if (partsBefore.length > 0) query.set('splitBefore', partsBefore.map((x) => `${x.trade}:${x.revenue}`).join(','));
+      if (deductionTrade !== '') query.set('deductionTrade', deductionTrade);
       const response = await apiFetch(`/api/export/household-cnkd.xlsx?${query.toString()}`);
       const url = URL.createObjectURL(await response.blob());
       const a = document.createElement('a');
@@ -519,6 +557,11 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
     },
   });
   const data = sheet.data;
+  const dataBefore = data?.yearToDate.revenueBefore;
+  useEffect(() => {
+    if (dataBefore !== undefined) setSeenBefore({ key: periodKey, amount: dataBefore });
+  }, [dataBefore, periodKey]);
+  const beforeAmount = seenBefore && seenBefore.key === periodKey ? seenBefore.amount : (dataBefore ?? null);
   // The label under a figure that depends on the rows still waiting for the accountant; nothing once they are confirmed.
   const provisional = data?.commentary ? (
     <span className="block text-xs text-muted-foreground" data-testid="household-cnkd-provisional">
@@ -534,11 +577,11 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <div className="space-y-1">
           <Label htmlFor="cnkd-year">{t('kinds.year')}</Label>
-          <Input id="cnkd-year" className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => setYear(e.target.value)} />
+          <Input id="cnkd-year" className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => changePeriod(e.target.value, quarter)} />
         </div>
         <div className="space-y-1">
           <Label htmlFor="cnkd-quarter">{t('kinds.quarter')}</Label>
-          <NativeSelect id="cnkd-quarter" value={String(quarter)} onChange={(e) => setQuarter(Number(e.target.value) as 1 | 2 | 3 | 4)}>
+          <NativeSelect id="cnkd-quarter" value={String(quarter)} onChange={(e) => changePeriod(year, Number(e.target.value) as 1 | 2 | 3 | 4)}>
             {['1', '2', '3', '4'].map((q) => (
               <NativeSelectOption key={q} value={q}>{`Q${q}`}</NativeSelectOption>
             ))}
@@ -567,6 +610,25 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
           </div>
         </fieldset>
       )}
+      {askBefore && beforeAmount !== null && !/^0+(\.0+)?$/.test(beforeAmount) && (
+        <fieldset className="mb-3" data-testid="household-cnkd-split-before">
+          <legend className="mb-1 text-xs text-subtle-foreground">{t('splitBeforeTitle')}</legend>
+          <p className="mb-2 text-xs text-muted-foreground">{t('splitBeforeHint', { amount: f.money(beforeAmount) })}</p>
+          {badBefore && (
+            <p className="mb-2 text-xs text-destructive" role="alert" data-testid="household-cnkd-split-before-invalid">
+              {t('splitInvalid')}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-3">
+            {trades.map((x) => (
+              <div key={x} className="space-y-1">
+                <Label htmlFor={`cnkd-split-before-${x}`}>{t(`tradeNames.${x as (typeof HOUSEHOLD_TRADES)[number]}`)}</Label>
+                <Input id={`cnkd-split-before-${x}`} className="w-40" inputMode="decimal" value={splitBefore[x] ?? ''} onChange={(e) => setSplitBefore({ ...splitBefore, [x]: e.target.value })} />
+              </div>
+            ))}
+          </div>
+        </fieldset>
+      )}
       {sheet.isLoading && valid && <CardSkeleton />}
       {sheet.error && <ErrorText>{errorMessage(sheet.error)}</ErrorText>}
       {download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
@@ -581,7 +643,7 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
                 {t('cnkdDraft')}
                 <ul className="mt-1 list-disc pl-5">
                   {data.unconfirmed.map((u) => (
-                    <li key={`${u.kind}-${u.key}`}>{u.kind === 'form' ? t('cnkdUnconfirmedForm', { key: u.key, date: f.date(u.effectiveFrom) }) : u.kind === 'reduction' ? t('cnkdUnconfirmedReduction', { date: f.date(u.effectiveFrom) }) : t('cnkdUnconfirmedRate', { trade: t(`tradeNames.${u.key as (typeof HOUSEHOLD_TRADES)[number]}`), date: f.date(u.effectiveFrom) })}</li>
+                    <li key={`${u.kind}-${u.key}`}>{u.kind === 'form' ? t('cnkdUnconfirmedForm', { key: u.key, date: f.date(u.effectiveFrom) }) : u.kind === 'threshold' ? t('cnkdUnconfirmedThreshold', { date: f.date(u.effectiveFrom) }) : u.kind === 'reduction' ? t(u.key === 'pit' ? 'cnkdUnconfirmedPitReduction' : 'cnkdUnconfirmedReduction', { date: f.date(u.effectiveFrom) }) : t('cnkdUnconfirmedRate', { trade: t(`tradeNames.${u.key as (typeof HOUSEHOLD_TRADES)[number]}`), date: f.date(u.effectiveFrom) })}</li>
                   ))}
                 </ul>
               </AlertDescription>
@@ -626,8 +688,8 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
               </dd>
               <dt className="font-medium text-foreground">{t('cnkdDue')}</dt>
               <dd className="font-medium tabular-nums" data-testid="household-cnkd-due">
-                {f.money(data.due ?? '0')}
-                {provisional}
+                {data.due === null ? t('cnkdDuePending') : f.money(data.due)}
+                {data.due === null ? null : provisional}
               </dd>
               {data.overpaid && data.overpaid !== '0' && (
                 <>
@@ -641,6 +703,7 @@ function CnkdReturn({ entityId, trades }: { entityId: string; trades: readonly s
             </dl>
           )}
           <VatCutNotes cut={data.vatCut} prefix="household-cnkd" mark={provisional} />
+          <YearToDateNotes ytd={data.yearToDate} prefix="household-cnkd-ytd" mark={provisional} withPit trades={trades} picked={deductionTrade} onPick={setDeductionTrade} />
           <p className="mt-3 text-xs text-muted-foreground">{t('cnkdWithheldHint')}</p>
           {data.withheld.settlements.length > 0 && (
             <ul className="mt-1 list-disc pl-5 text-sm">
@@ -685,6 +748,92 @@ function VatCutNotes({ cut, prefix, mark }: { cut: HouseholdVatCut; prefix: stri
         </Alert>
       )}
     </>
+  );
+}
+
+// The yearly rule under the totals of a book (#3710 slice 3): tax is on the year-to-date revenue, nothing is owed up to the threshold, VAT is on all revenue above it and PIT only on the part above it. With several
+// trades the household picks the trade that takes the deduction; until it does the PIT is held back (`payable` is null) and nothing is guessed. The income method (S2b) has no PIT and asks no deduction.
+function YearToDateNotes({ ytd, prefix, mark, withPit, trades, picked, onPick }: { ytd: HouseholdYearToDate; prefix: string; mark: ReactNode; withPit: boolean; trades: readonly string[]; picked: string; onPick: (trade: string) => void }) {
+  const t = useTranslations('household');
+  const f = useFormat();
+  const pay = ytd.payable;
+  const amount = ytd.threshold ? f.money(ytd.threshold.amount) : '';
+  return (
+    <section className="mt-3" data-testid={prefix}>
+      <h3 className="mb-1 text-sm font-semibold text-foreground">{t('ytdTitle', { year: String(ytd.year) })}</h3>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+        <dt className="text-subtle-foreground">{t('ytdRevenue')}</dt>
+        <dd className="tabular-nums" data-testid={`${prefix}-revenue`}>
+          {f.money(ytd.revenueToDate)}
+        </dd>
+        {ytd.threshold && (
+          <>
+            <dt className="text-subtle-foreground">{t('ytdThreshold')}</dt>
+            <dd className="tabular-nums" data-testid={`${prefix}-threshold`}>
+              {f.money(ytd.threshold.amount)}
+            </dd>
+          </>
+        )}
+      </dl>
+      <p className="mt-1 text-sm text-muted-foreground" data-testid={`${prefix}-state`}>
+        {ytd.crossed ? t(withPit ? 'ytdCrossed' : 'ytdCrossedVat') : t('ytdBelow')}
+      </p>
+      {withPit && (ytd.deductionNeeded || picked !== '') && (
+        <div className="mt-2 space-y-1" data-testid={`${prefix}-deduction`}>
+          <Label htmlFor={`${prefix}-deduction-trade`}>{t('ytdDeductionQuestion', { amount })}</Label>
+          <NativeSelect id={`${prefix}-deduction-trade`} value={picked} onChange={(e) => onPick(e.target.value)}>
+            <NativeSelectOption value="">{t('ytdDeductionNone')}</NativeSelectOption>
+            {trades.map((x) => (
+              <NativeSelectOption key={x} value={x}>
+                {t(`tradeNames.${x as (typeof HOUSEHOLD_TRADES)[number]}`)}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <p className="text-xs text-muted-foreground">{t('ytdDeductionHint', { amount })}</p>
+        </div>
+      )}
+      {withPit && ytd.deductionShort && (
+        <Alert className="mt-2" data-testid={`${prefix}-short`}>
+          <AlertDescription>{t('ytdShort', { amount })}</AlertDescription>
+        </Alert>
+      )}
+      {pay && (
+        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm" data-testid={`${prefix}-payable`}>
+          <dt className="text-subtle-foreground">{t('ytdVatPayable')}</dt>
+          <dd className="tabular-nums" data-testid={`${prefix}-vat`}>
+            {f.money(pay.vat)}
+            {mark}
+          </dd>
+          {!isZeroAmount(pay.vatCut) && (
+            <>
+              <dt className="text-subtle-foreground">{t('ytdVatCut')}</dt>
+              <dd className="tabular-nums" data-testid={`${prefix}-vatcut`}>
+                {f.money(pay.vatCut)}
+                {mark}
+              </dd>
+            </>
+          )}
+          {withPit && (
+            <>
+              <dt className="text-subtle-foreground">{t('ytdPitPayable')}</dt>
+              <dd className="tabular-nums" data-testid={`${prefix}-pit`}>
+                {f.money(pay.pit)}
+                {mark}
+              </dd>
+            </>
+          )}
+          {withPit && ytd.pitCut && (ytd.pitCut.applied || !isZeroAmount(pay.pitCut)) && (
+            <>
+              <dt className="text-subtle-foreground">{t('ytdPitCut', { percent: ytd.pitCut.percent })}</dt>
+              <dd className="tabular-nums" data-testid={`${prefix}-pitcut`}>
+                {f.money(pay.pitCut)}
+                {mark}
+              </dd>
+            </>
+          )}
+        </dl>
+      )}
+    </section>
   );
 }
 

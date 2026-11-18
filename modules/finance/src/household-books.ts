@@ -100,7 +100,7 @@ export interface HouseholdSalesRow {
   reversal: boolean;
 }
 
-export function householdSalesRows(lines: Awaited<ReturnType<typeof accountLedgerOf>>['lines'], from: string): HouseholdSalesRow[] {
+export function householdSalesRows(lines: Awaited<ReturnType<typeof accountLedgerOf>>['lines'], from: string, limit = HOUSEHOLD_S1A_ROW_LIMIT): HouseholdSalesRow[] {
   const byEntry = new Map<string, { entryId: string; date: string; reference: string | null; description: string; reversal: boolean; credit: string[]; debit: string[] }>();
   for (const l of lines) {
     if (l.entryDate < from) continue;
@@ -117,7 +117,7 @@ export function householdSalesRows(lines: Awaited<ReturnType<typeof accountLedge
     amount: toMoney(sum(r.credit).minus(sum(r.debit))),
     reversal: r.reversal,
   }));
-  if (rows.length > HOUSEHOLD_S1A_ROW_LIMIT) throw new DomainError('EXPORT_TOO_LARGE', 422, 'Quá nhiều dòng trong một kỳ; hãy chọn kỳ ngắn hơn');
+  if (rows.length > limit) throw new DomainError('EXPORT_TOO_LARGE', 422, 'Quá nhiều dòng trong một kỳ; hãy chọn kỳ ngắn hơn');
   return rows;
 }
 

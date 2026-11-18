@@ -115,6 +115,27 @@ export const zHouseholdVatCut = z.strictObject({
 });
 export type HouseholdVatCut = z.infer<typeof zHouseholdVatCut>;
 
+// The yearly rule of a household's tax as a book shows it (#3710 slice 3, research 2026-11-18 B1 and B2). Tax is worked out on the year-to-date revenue (1 January to the period's last day, from the ledger's account
+// 511, entries before the household's first profile included: the threshold is the household's yearly figure, not the book's). Up to the threshold in force that day (1 billion VND from 2026, a dated row)
+// nothing is owed; above it VAT is owed on all the revenue and PIT only on the part above the threshold, the household picking the trade the deduction applies to when it has several (`deductionNeeded`: asked, never
+// defaulted; the PIT is held back until it is given). The PIT cut (Decree 398) is a percentage of the PIT payable, only while the year's revenue is at most the ceiling of its dated row. `payable` is this period's tax: the
+// year-to-date tax at its last day less the year-to-date tax before its first day, so the periods of a year add up to the year. It is null while the PIT is held back or a part of the revenue has no trade. The `vat`
+// and `pit` columns of the book stay revenue times the percentage, as a fixed reference; `payable` is what is owed.
+export const zHouseholdYearToDate = z.strictObject({
+  year: z.number().int(),
+  revenueToDate: zMoney,
+  revenueBefore: zMoney,
+  threshold: z.strictObject({ amount: zMoney, effectiveFrom: zLocalDate, status: zHouseholdRuleStatus }).nullable(),
+  crossed: z.boolean(),
+  deductionTrade: zHouseholdTrade.nullable(),
+  deductionNeeded: z.boolean(),
+  // No trade reaches the threshold (or the side before the period could not be worked out): the research gives no rule for the deduction there, so the PIT is held back for the accountant (#2520), not asked again.
+  deductionShort: z.boolean(),
+  payable: z.strictObject({ vatBefore: zMoney, vatCut: zMoney, vat: zMoney, pitBefore: zMoney, pitCut: zMoney, pit: zMoney }).nullable(),
+  pitCut: z.strictObject({ percent: z.string(), ceiling: zMoney.nullable(), applied: z.boolean() }).nullable(),
+});
+export type HouseholdYearToDate = z.infer<typeof zHouseholdYearToDate>;
+
 // The quarterly return worksheet 01/CNKD of a household that pays by a percentage of revenue (#2518, plan 8.5 and 12 row 7). A WORKSHEET: Ludy never files and never calls the tax authority; the household
 // or its accountant files through the tax portal or eTax Mobile. Revenue is the ledger's own movement of account 511 over the quarter (so it ties to S1a and to the settlements of #2516), split by
 // the trades of the profile: a household with one trade has it all on that trade; with several, the household enters the split (`split`, per ask, nothing stored) and what is not yet given a trade is
@@ -130,6 +151,9 @@ export const zHouseholdCnkdGet = z.strictObject({
   year: z.number().int().min(2026).max(2100),
   quarter: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
   split: z.array(z.strictObject({ trade: zHouseholdTrade, revenue: zMoney })).max(HOUSEHOLD_TRADES.length).optional(),
+  // With several trades: the split of the year's revenue before the quarter (per ask, nothing stored), and the trade that takes the threshold deduction (#3710 slice 3).
+  splitBefore: z.array(z.strictObject({ trade: zHouseholdTrade, revenue: zMoney })).max(HOUSEHOLD_TRADES.length).optional(),
+  deductionTrade: zHouseholdTrade.optional(),
   forExport: z.boolean().optional(),
 });
 export type HouseholdCnkdGet = z.infer<typeof zHouseholdCnkdGet>;
@@ -144,13 +168,14 @@ export const zHouseholdCnkd = z.strictObject({
   unassigned: zMoney,
   totals: z.strictObject({ revenue: zMoney, vat: zMoney, pit: zMoney, tax: zMoney }).nullable(),
   vatCut: zHouseholdVatCut,
+  yearToDate: zHouseholdYearToDate,
   withheld: z.strictObject({
     total: zMoney,
     settlements: z.array(z.strictObject({ id: zId, platform: z.string(), periodStart: zLocalDate, periodEnd: zLocalDate, taxWithheld: zMoney })),
   }),
   due: zMoney.nullable(),
   overpaid: zMoney.nullable(),
-  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate', 'reduction']), key: z.string(), effectiveFrom: zLocalDate })),
+  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate', 'reduction', 'threshold']), key: z.string(), effectiveFrom: zLocalDate })),
   commentary: z.boolean(),
 });
 export type HouseholdCnkd = z.infer<typeof zHouseholdCnkd>;
@@ -162,7 +187,7 @@ export type HouseholdCnkd = z.infer<typeof zHouseholdCnkd>;
 // from anything else (a marketplace settlement, a manual voucher), or from an item whose trade the profile does not list, is `unassigned`. Any `unassigned` part holds the totals back (`totals` is null)
 // rather than guess. `commentary` is true while any row behind the figures (the book's form, a percentage) is not confirmed by the accountant (#2520): the screen and the Excel file then carry
 // HOUSEHOLD_PROVISIONAL_LABEL, which goes on its own when later dated `confirmed` rows exist. Ludy files nothing.
-export const zHouseholdS2aGet = z.strictObject({ legalEntityId: zId, period: zLedgerPeriod });
+export const zHouseholdS2aGet = z.strictObject({ legalEntityId: zId, period: zLedgerPeriod, deductionTrade: zHouseholdTrade.optional() });
 export type HouseholdS2aGet = z.infer<typeof zHouseholdS2aGet>;
 export const HOUSEHOLD_UNASSIGNED = 'unassigned' as const;
 export const zHouseholdS2aPart = z.strictObject({ trade: z.union([zHouseholdTrade, z.literal(HOUSEHOLD_UNASSIGNED)]), amount: zMoney });
@@ -191,7 +216,8 @@ export const zHouseholdS2a = z.strictObject({
   unassignedGross: zMoney,
   totals: z.strictObject({ revenue: zMoney, vat: zMoney, pit: zMoney, tax: zMoney }).nullable(),
   vatCut: zHouseholdVatCut,
-  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate', 'reduction']), key: z.string(), effectiveFrom: zLocalDate })),
+  yearToDate: zHouseholdYearToDate,
+  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate', 'reduction', 'threshold']), key: z.string(), effectiveFrom: zLocalDate })),
   commentary: z.boolean(),
 });
 export type HouseholdS2a = z.infer<typeof zHouseholdS2a>;
@@ -216,7 +242,8 @@ export const zHouseholdS2b = z.strictObject({
   unassignedGross: zMoney,
   totals: z.strictObject({ revenue: zMoney, vat: zMoney }).nullable(),
   vatCut: zHouseholdVatCut,
-  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate', 'reduction']), key: z.string(), effectiveFrom: zLocalDate })),
+  yearToDate: zHouseholdYearToDate,
+  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form', 'rate', 'reduction', 'threshold']), key: z.string(), effectiveFrom: zLocalDate })),
   commentary: z.boolean(),
 });
 export type HouseholdS2b = z.infer<typeof zHouseholdS2b>;

@@ -19,16 +19,26 @@ export interface VatCutRow {
   status: string;
 }
 
-// The VAT cut in force on `date`, or null when no row covers it (the books then cut nothing).
-export async function vatCutInForce(ctx: Ctx, date: string): Promise<VatCutRow | null> {
+export interface ReductionRow extends VatCutRow {
+  // The yearly revenue up to which the cut holds (the PIT cut of Decree 398: 10 billion VND); null when it has no ceiling.
+  ceiling: string | null;
+}
+
+// The reduction of a tax in force on `date`, or null when no row covers it (the books then cut nothing).
+export async function reductionInForce(ctx: Ctx, kind: 'vat' | 'pit', date: string): Promise<ReductionRow | null> {
   const rows = await ctx.trx
     .selectFrom('crove_finance.household_tax_reduction')
-    .select(['kind', 'effective_from', 'cut_percent', 'status'])
-    .where('kind', '=', 'vat')
+    .select(['kind', 'effective_from', 'cut_percent', 'revenue_ceiling', 'status'])
+    .where('kind', '=', kind)
     .where('effective_from', '<=', date)
     .execute();
   const row = pickInForce(rows, (r) => r.kind, date)[0];
-  return row ? { percent: toMoney(money(row.cut_percent)), effectiveFrom: row.effective_from, status: row.status } : null;
+  return row ? { percent: toMoney(money(row.cut_percent)), ceiling: row.revenue_ceiling === null ? null : toMoney(money(row.revenue_ceiling)), effectiveFrom: row.effective_from, status: row.status } : null;
+}
+
+// The VAT cut in force on `date`, or null when no row covers it (the books then cut nothing).
+export async function vatCutInForce(ctx: Ctx, date: string): Promise<VatCutRow | null> {
+  return reductionInForce(ctx, 'vat', date);
 }
 
 // The block a book carries. `lines` follow the book's lines (trade and VAT); `complete` is whether every part of the revenue has a trade, the same condition as the book's totals.

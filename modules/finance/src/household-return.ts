@@ -21,6 +21,8 @@ import { money, sum, toMoney } from '@crove/l10n-vn';
 import { pickInForce } from './domain/household-rules.ts';
 import { taxOn } from './domain/household-tax.ts';
 import { householdProfileView } from './household.ts';
+import { yearToDateBlock } from './household-annual.ts';
+import { salesEntriesOf, tradesDifferEarlierInYear } from './household-year-sales.ts';
 import { vatCutBlock, vatCutInForce, vatCutUnconfirmed } from './household-vat-cut.ts';
 import { accountLedgerOf } from './ledger-reports.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -151,7 +153,46 @@ export const householdCnkd = defineQuery({
     // The Decree 174 VAT cut on the quarter's last day, applied only as the profile's answer says (#3710): the VAT payable is the VAT less the cut, and what is owed follows it.
     const cutRow = await vatCutInForce(ctx, to);
     const vatCut = vatCutBlock({ answer: profile.vatCutEligible, cut: cutRow, lines, complete });
-    const owed = vatCut.total ? money(vatCut.total.vatPayable).plus(totalPit) : null;
+    // The yearly rule (#3710 slice 3): the year's revenue so far decides whether anything is owed. What is owed in the quarter is the year-to-date tax at its last day less the year-to-date tax before it.
+    // The revenue before the quarter comes from the ledger; with several trades the household enters its split (`splitBefore`, per ask, nothing stored) and what is not given a trade holds the tax back.
+    const beforeEntries = from > `${input.year}-01-01` ? await salesEntriesOf(ctx, entity, { from: `${input.year}-01-01`, before: from }) : [];
+    const beforeRevenue = toMoney(sum(beforeEntries.map((e) => e.amount)));
+    const beforeGiven = new Map<string, string>();
+    if (trades.length === 1) {
+      if (input.splitBefore && input.splitBefore.length > 0) throw invalid('Hộ chỉ có một ngành nghề nên không chia doanh thu');
+      beforeGiven.set(trades[0]!, beforeRevenue);
+    } else {
+      for (const part of input.splitBefore ?? []) {
+        if (!trades.includes(part.trade)) throw invalid('Ngành nghề không có trong hồ sơ hộ kinh doanh');
+        if (beforeGiven.has(part.trade)) throw invalid('Mỗi ngành nghề chỉ nhập một lần');
+        if (money(part.revenue).lt(0)) throw invalid('Doanh thu của một ngành nghề không được âm');
+        beforeGiven.set(part.trade, toMoney(money(part.revenue)));
+      }
+    }
+    const beforeSplittable = money(beforeRevenue).gt(0) ? money(beforeRevenue) : money(0);
+    if (trades.length > 1 && money(sum([...beforeGiven.values()])).gt(beforeSplittable)) throw invalid('Tổng doanh thu đã chia theo ngành của các kỳ trước trong năm vượt doanh thu trên sổ cái');
+    // Not clamped: net returns before the quarter (a negative figure) with no trade to put them on also hold the tax back.
+    const beforeUnassigned = trades.length === 1 ? money(0) : money(beforeRevenue).minus(sum([...beforeGiven.values()]));
+    // The quarter's own unassigned amount, not clamped: net returns with no trade to take them hold the tax back too, and every unassigned amount is counted in the year's totals.
+    const quarterUnassigned = trades.length === 1 ? money(0) : money(revenue).minus(sum([...given.values()]));
+    // One trade takes the whole year, so an earlier profile of the year with other trades makes the revenue before the quarter ambiguous: held for the accountant.
+    const ambiguousBefore = trades.length === 1 && (await tradesDifferEarlierInYear(ctx, entity, String(input.year), from, trades));
+    const toDate = new Map<string, string>(trades.map((t) => [t, toMoney(money(beforeGiven.get(t) ?? '0').plus(given.get(t) ?? '0'))]));
+    const year = await yearToDateBlock(ctx, {
+      to,
+      trades,
+      rates,
+      answer: profile.vatCutEligible,
+      pitApplies: true,
+      deductionTrade: input.deductionTrade,
+      revenue: {
+        toDate,
+        before: beforeGiven,
+        unassigned: { toDate: toMoney(quarterUnassigned.plus(beforeUnassigned)), before: toMoney(beforeUnassigned) },
+        unassignedHeld: !complete || !quarterUnassigned.isZero() || !beforeUnassigned.isZero() || ambiguousBefore,
+      },
+    });
+    const owed = year.block.payable ? money(year.block.payable.vat).plus(year.block.payable.pit) : null;
 
     const unconfirmed: HouseholdCnkd['unconfirmed'] = [];
     if (form.status !== 'confirmed') unconfirmed.push({ kind: 'form', key: `${FORM} ${form.version}`, effectiveFrom: form.effective_from });
@@ -161,8 +202,21 @@ export const householdCnkd = defineQuery({
     }
     const cutUnconfirmed = vatCutUnconfirmed(vatCut, cutRow);
     if (cutUnconfirmed) unconfirmed.push(cutUnconfirmed);
+    unconfirmed.push(...year.unconfirmed);
     const commentary = unconfirmed.length > 0;
     if (input.forExport && !totals) throw invalid('Chưa chia hết doanh thu theo ngành nghề nên chưa xuất được tờ khai');
+    if (input.forExport && !year.block.payable) {
+      // Revenue that no split can place (net returns, or an earlier profile with other trades) is the accountant's; the rest the household can finish.
+      const accountants = money(beforeRevenue).lt(0) || (!quarterUnassigned.isZero() && money(revenue).lt(0)) || ambiguousBefore;
+      // The accountant's case comes first: a pick of the deduction trade cannot release revenue that has no trade.
+      throw invalid(
+        accountants
+          ? 'Doanh thu thuần âm hoặc hồ sơ đổi ngành nghề trong năm nên chưa gắn được ngành nghề cho doanh thu; nhờ kế toán lập tờ khai'
+          : year.block.deductionNeeded
+            ? 'Chưa chọn ngành nghề được trừ ngưỡng doanh thu nên chưa tính được thuế năm và chưa xuất được tờ khai'
+            : 'Chưa chia hết doanh thu các kỳ trước trong năm theo ngành nghề nên chưa xuất được tờ khai',
+      );
+    }
 
     const entityRow = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirstOrThrow();
     return zHouseholdCnkd.parse({
@@ -174,6 +228,7 @@ export const householdCnkd = defineQuery({
       unassigned,
       totals,
       vatCut,
+      yearToDate: year.block,
       withheld: { total: toMoney(withheldTotal), settlements: withheldRows },
       due: owed ? toMoney(nonNegative(owed.minus(withheldTotal))) : null,
       overpaid: owed ? toMoney(nonNegative(withheldTotal.minus(owed))) : null,
