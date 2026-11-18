@@ -100,20 +100,29 @@ const notebookNotFound = () => new DomainError('NOTEBOOK_NOT_FOUND', 404, 'Khôn
 const sharedNotePrivateNotebook = () =>
   new DomainError('NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK', 422, 'Ghi chú dùng chung không thể đặt trong sổ tay riêng; hãy chọn sổ tay dùng chung hoặc bỏ chọn sổ tay');
 
-// Checks notebook readability under caller RLS (FOR SHARE) with uniform 404 for missing or unreadable notebooks
-// so cross-member private notebook_id probing yields zero existence oracle, and rejects shared notes in private notebooks.
+// Checks notebook readability under caller SELECT RLS with uniform 404 for missing or unreadable notebooks
+// so cross-member private notebook_id probing yields zero existence oracle, takes a shared per-notebook advisory
+// lock (SELECT FOR SHARE in PostgreSQL would apply UPDATE RLS and hide shared notebooks from plain members),
+// re-reads under the lock, and rejects shared notes in private notebooks.
 async function resolveNotebookForNote(
   ctx: CommandContext,
   notebookId: string,
   noteAuthorUserId: string,
   noteVisibility: NoteVisibility,
 ): Promise<{ id: string; visibility: NoteVisibility }> {
+  const first = await ctx.trx
+    .selectFrom('crove_notes.notebook')
+    .select(['id', 'author_user_id', 'visibility'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', notebookId)
+    .executeTakeFirst();
+  if (!first) throw notebookNotFound();
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${notebookId}`}, 0))`.execute(ctx.trx);
   const nb = await ctx.trx
     .selectFrom('crove_notes.notebook')
     .select(['id', 'author_user_id', 'visibility'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', notebookId)
-    .forShare()
     .executeTakeFirst();
   if (!nb) throw notebookNotFound();
   if (nb.visibility === 'private' && nb.author_user_id !== noteAuthorUserId) throw notebookNotFound();

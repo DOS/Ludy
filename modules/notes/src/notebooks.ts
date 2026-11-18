@@ -462,6 +462,8 @@ export const notebookUpdate = defineCommand({
       throw new DomainError('FORBIDDEN', 403, 'Thành viên giới hạn theo pháp nhân không chia sẻ được sổ tay dùng chung');
     }
 
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${input.notebookId}`}, 0))`.execute(ctx.trx);
+
     const before = await ctx.trx
       .selectFrom('crove_notes.notebook')
       .select(NOTEBOOK_COLUMNS)
@@ -548,6 +550,8 @@ export const notebookDelete = defineCommand({
       .executeTakeFirst();
     if (!peek) throw notebookNotFound();
     if (!canManageNotebook(peek, userId, ctx.role, wholeOrg)) throw notebookAuthorOnly();
+
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${input.notebookId}`}, 0))`.execute(ctx.trx);
 
     const locked = await ctx.trx
       .selectFrom('crove_notes.notebook')

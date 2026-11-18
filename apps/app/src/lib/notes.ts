@@ -292,7 +292,7 @@ export function insertWikiLinkAt(
   target: { id: string; title: string },
   duplicateTitle = false,
 ): { value: string; caret: number } {
-  const safeTitle = target.title.replace(/[\[\]|]/g, ' ').replace(/\s+/g, ' ').trim() || target.title;
+  const safeTitle = target.title.replace(/[[\]|]/g, ' ').replace(/\s+/g, ' ').trim() || target.title;
   const token = duplicateTitle ? `[[${target.id}|${safeTitle}]]` : `[[${safeTitle}]]`;
   const after = body.slice(cursor);
   // Consume an immediately following `]]` if the user had typed a closing bracket pair already.

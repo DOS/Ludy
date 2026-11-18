@@ -254,8 +254,9 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION crove_notes.note_notebook_integrity() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
-DROP TRIGGER IF EXISTS a_note_notebook_integrity ON crove_notes.note;
-CREATE TRIGGER a_note_notebook_integrity BEFORE INSERT OR UPDATE OF visibility, notebook_id, author_user_id ON crove_notes.note
+-- Named b_* so crove_kernel's agent_write_guard fires first alphabetically on any agent write.
+DROP TRIGGER IF EXISTS b_note_notebook_integrity ON crove_notes.note;
+CREATE TRIGGER b_note_notebook_integrity BEFORE INSERT OR UPDATE OF visibility, notebook_id, author_user_id ON crove_notes.note
   FOR EACH ROW EXECUTE FUNCTION crove_notes.note_notebook_integrity();
 
 -- Prevent turning a shared ('org') notebook 'private' while shared ('org') notes belong to it,
@@ -286,8 +287,8 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION crove_notes.notebook_visibility_integrity() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
-DROP TRIGGER IF EXISTS a_notebook_visibility_integrity ON crove_notes.notebook;
-CREATE TRIGGER a_notebook_visibility_integrity BEFORE UPDATE OF visibility ON crove_notes.notebook
+DROP TRIGGER IF EXISTS b_notebook_visibility_integrity ON crove_notes.notebook;
+CREATE TRIGGER b_notebook_visibility_integrity BEFORE UPDATE OF visibility ON crove_notes.notebook
   FOR EACH ROW EXECUTE FUNCTION crove_notes.notebook_visibility_integrity();
 
 -- Existence-oracle parity on note write policies for notebook_id.
