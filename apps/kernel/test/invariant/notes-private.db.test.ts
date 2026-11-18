@@ -545,6 +545,18 @@ suite('private notes on PostgreSQL (#1671, ADR-0037)', () => {
   // Last: it removes the author from the org.
   it("removes a former member's private notes only once they are no longer a member, and keeps their shared ones", async () => {
     const purge = () => run(system, async (c) => (await c.query<{ n: string }>('SELECT crove_notes.member_items_purge($1::uuid) AS n', [users.author])).rows[0]?.n);
+    // The author's private and shared templates, and a snapshot of each of their notes (#3562).
+    const [privateTpl, sharedTpl] = [randomUUID(), randomUUID()];
+    await admin(async (a) => {
+      await a.query(
+        `INSERT INTO crove_notes.note_template (org_id, id, author_user_id, visibility, name) VALUES ($1, $2, $4, 'private', 'Mẫu riêng'), ($1, $3, $4, 'org', 'Mẫu chung')`,
+        [orgId, privateTpl, sharedTpl, users.author],
+      );
+      await a.query(
+        `INSERT INTO crove_notes.note_version (org_id, note_id, author_user_id, revision, title) VALUES ($1, $2, $4, 1, $5), ($1, $3, $4, 1, 'Bản cũ chung')`,
+        [orgId, notes.private, notes.shared, users.author, SECRET],
+      );
+    });
     expect(await purge()).toBe('0');
     await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, users.author]));
     // run() rolls back, so the purge is committed here as the worker would.
@@ -559,10 +571,16 @@ suite('private notes on PostgreSQL (#1671, ADR-0037)', () => {
     } finally {
       await c.end();
     }
-    expect(purged).toBe('1');
+    // The private note and the private template.
+    expect(purged).toBe('2');
     // A second run finds nothing more to remove.
     expect(await purge()).toBe('0');
     const remaining = await admin((a) => a.query<{ id: string }>('SELECT id FROM crove_notes.note WHERE org_id = $1 ORDER BY id', [orgId]));
     expect(remaining.rows.map((r) => r.id)).toEqual([notes.shared]);
+    // The private note's snapshot went with it; the shared note's snapshot and the shared template stay.
+    const versions = await admin((a) => a.query<{ note_id: string }>('SELECT note_id FROM crove_notes.note_version WHERE org_id = $1', [orgId]));
+    expect(versions.rows.map((r) => r.note_id)).toEqual([notes.shared]);
+    const templates = await admin((a) => a.query<{ id: string }>('SELECT id FROM crove_notes.note_template WHERE org_id = $1', [orgId]));
+    expect(templates.rows.map((r) => r.id)).toEqual([sharedTpl]);
   });
 });
