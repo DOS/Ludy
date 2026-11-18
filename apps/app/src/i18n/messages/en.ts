@@ -11747,6 +11747,7 @@ export const en = {
     // Anomaly flags against the vendor's own history (#2380): Ly's warnings, which never block and are approved one by one.
     anomaly_bank: { changed: "Warning: the receiving bank account differs from last time (before {previous}, now {current}). Confirm it with the vendor before paying." },
     anomaly_cash: { payrollLimit: 'Warning: {count} people have a net pay of 5,000,000 dong or more but the payment is in cash; a payment of 5 million in one go must be non-cash for the pay to be deductible. Pay by transfer or ask the accountant.' },
+    anomaly_payroll: { activePayment: 'Warning: this voucher debits payroll payable account {accounts} while this legal entity has a pending or recorded pay-run payment voucher; check that it does not pay the same payroll obligation twice.' },
     anomaly_amount: {
       high: 'Warning: the amount {total} is {ratio} times this vendor\'s usual ({usual}, the median of its last {count} invoices; flagged from 3 times).',
       low: 'Warning: the amount {total} is only {percent}% of this vendor\'s usual ({usual}, the median of its last {count} invoices; flagged below a third).',

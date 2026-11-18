@@ -11746,6 +11746,7 @@ export const vi = {
     // Anomaly flags against the vendor's own history (#2380): Ly's warnings, which never block and are approved one by one.
     anomaly_bank: { changed: 'Cảnh báo: tài khoản nhận tiền khác lần trước (lần trước {previous}, lần này {current}). Hãy xác nhận với nhà cung cấp trước khi thanh toán.' },
     anomaly_cash: { payrollLimit: 'Cảnh báo: {count} người có lương thực lĩnh từ 5.000.000 đồng trở lên mà chi bằng tiền mặt; khoản chi từ 5 triệu đồng một lần cần thanh toán không dùng tiền mặt mới được tính chi phí được trừ. Hãy chuyển khoản hoặc hỏi kế toán.' },
+    anomaly_payroll: { activePayment: 'Cảnh báo: chứng từ chi thẳng vào tài khoản công nợ lương ({accounts}) trong khi pháp nhân đang có chứng từ chi lương theo bảng lương chờ duyệt hoặc đã ghi sổ; hãy kiểm tra để tránh chi trùng nghĩa vụ của bảng lương.' },
     anomaly_amount: {
       high: 'Cảnh báo: số tiền {total} cao gấp {ratio} lần mức thường của nhà cung cấp này ({usual}, trung vị của {count} hóa đơn gần nhất; cảnh báo từ 3 lần).',
       low: 'Cảnh báo: số tiền {total} chỉ bằng {percent}% mức thường của nhà cung cấp này ({usual}, trung vị của {count} hóa đơn gần nhất; cảnh báo khi dưới một phần ba).',
