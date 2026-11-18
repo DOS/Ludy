@@ -267,6 +267,9 @@ suite('the company of a person and the accounting (#2438)', () => {
       'crove_finance.einvoice_draft.buyer_party_id',
       // A meeting's link to a contact (L1, #2587) only names the party: a person or a company both link.
       'crove_meetings.meeting_link.party_id',
+      // A supplier's bank account and its change history (#3113 S1) only name the supplier: no command reads the party's kind, and the sealed number and holder are shredded by the supplier's subject key, not by its kind.
+      'crove_finance.supplier_bank_account.party_id',
+      'crove_finance.supplier_bank_account_change.party_id',
     ];
     const { rows } = await admin((c) =>
       c.query<{ ref: string }>(
