@@ -33,7 +33,7 @@ function Deadline({ deadline, slug, canChoose }: { deadline: ClientDeadline | nu
         {canChoose && (
           <>
             {' · '}
-            <Link to="/o/$slug/settings" params={{ slug }} className="text-link hover:underline">
+            <Link to="/o/$slug/settings" params={{ slug }} hash="tax-profile" className="text-link hover:underline">
               {t('chooseFilingPeriod')}
             </Link>
           </>

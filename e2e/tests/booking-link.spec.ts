@@ -21,7 +21,7 @@ test('a new owner reaches a copyable booking link from Lịch hẹn, and "Mở t
     await openBookings();
     await expect(page.getByText('Tạo loại lịch hẹn đầu tiên để khách đặt lịch')).toBeVisible();
     await page.getByRole('link', { name: 'Tạo loại lịch hẹn', exact: true }).click();
-    await expect(page).toHaveURL(new RegExp(`/o/${slug}/settings#booking-event-types$`));
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/settings/bookings#booking-event-types$`));
     // On screen, not only in the page: the jump waits for the cards and lands on the event types.
     await expect(page.getByRole('form', { name: 'Thêm loại lịch hẹn' })).toBeInViewport();
   });

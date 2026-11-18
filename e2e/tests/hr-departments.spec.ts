@@ -3,6 +3,7 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { createOrg, newEmail, signInNewUser, storedSession } from '../lib/session.ts';
 import { nextTotp } from '../lib/totp.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 function vietnamDates(): { today: string; hireDate: string; endedOn: string } {
   const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
@@ -317,6 +318,7 @@ test('Phase 7 non-admin (member + Kế toán trưởng) department and wage-roll
   const slug = await createOrg(page, 'Công ty Cách Ly Phòng Ban');
 
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await openSettingsTab(page, 'security');
   await enrollTotp(page);
   await expect(page.getByText('Đang bật')).toBeVisible();
 
@@ -359,7 +361,7 @@ test('Phase 7 non-admin (member + Kế toán trưởng) department and wage-roll
 
   // Invite a second user as org `member` and assign `Kế toán trưởng`.
   const memberEmail = newEmail('hr-dept-member');
-  await page.goto(`/o/${slug}/settings`);
+  await page.goto(`/o/${slug}/settings/members`);
   await page.getByPlaceholder(/^email@/).fill(memberEmail);
   await page.getByLabel('Vai trò', { exact: true }).selectOption('member');
   await page.getByRole('button', { name: 'Mời', exact: true }).click();

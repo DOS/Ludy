@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Comments on the business's own YouTube channel in the conversation core (issue #3134, plan docs/plan/conversations-channels.md section 4.5).
-// YouTube has no push for comments and meters its Data API in quota units per Google project, so this adapter only reads (`history`, the poll) and
-// answers (`reply`); the kernel decides when to poll, within the connection's daily unit budget, and counts the units each call says it spent.
-// Every platform fact below is tagged in the plan: none was read from the official page (the build session's network denied developers.google.com),
-// so the field names and the cost of a request are [M]/[O] until docs/runbooks/youtube-conversations-live-check.md settles them.
-import type { ConversationAdapter, ConversationCallResult, ConversationHistoryInput, ConversationHistoryResult, ConversationReplyInput, InboundConversationEvent } from './conversation.ts';
+// YouTube has no push for comments and meters its Data API in quota units per Google project, so this adapter reads (`history`, the poll), answers
+// (`reply`) and hides or shows a comment (`hide`, #3808); the kernel decides when to poll, within the connection's daily unit budget, and counts the units
+// each call says it spent.
+// The platform facts of the poll and the reply are tagged in the plan: none was read from the official page (the build session's network denied
+// developers.google.com), so the field names and the cost of those requests are [M]/[O] until docs/runbooks/youtube-conversations-live-check.md settles
+// them. The facts of `hide` were read from the official page of comments.setModerationStatus (2026-11-19, #3808): see the comment on the method.
+import type { ConversationAdapter, ConversationCallResult, ConversationHideInput, ConversationHideResult, ConversationHistoryInput, ConversationHistoryResult, ConversationReplyInput, InboundConversationEvent } from './conversation.ts';
 
 // YouTube's own limit on a comment [U]; the core's reply is shorter (CONVERSATION_REPLY_MAX), so this is the adapter's own last check.
 export const YOUTUBE_COMMENT_TEXT_MAX = 10_000;
@@ -146,6 +148,28 @@ export class YouTubeConversations implements ConversationAdapter {
       return { kind: 'accepted', externalId: id };
     } catch (error) {
       return classify(this.api, error).result;
+    }
+  }
+
+  // Hiding and showing a comment (`comments.setModerationStatus`, issue #3808). Facts from the official page: a POST with no body and the query `id` (the
+  // comment ids, up to 50) and `moderationStatus`; the caller must be the owner of the channel or video the comment is on (every comment this adapter reads is
+  // on the connected channel's own videos); scope `youtube.force-ssl` (the comment scope the connection already holds for the poll and the reply); 50 quota
+  // units; HTTP 204 without a body. The statuses are `heldForReview`, `published` and `rejected`, and "You can't change a rejected comment to published":
+  // `rejected` is therefore never sent, because a hide the person cannot take back is not the Hide button. Hide is `heldForReview` (the comment leaves the
+  // page and waits in YouTube Studio's held-for-review list) and Show again is `published`, so each is the undo of the other. `banAuthor` is never sent: a
+  // person who wants a commenter banned does it in YouTube Studio. The same status twice is the same state, so the call is idempotent and the kernel may repeat it.
+  async hide(input: ConversationHideInput): Promise<ConversationHideResult> {
+    const token = this.api.token(input.secret);
+    if (!token) return { kind: 'rejected', error: 'token_expired', code: 'NO_TOKEN' };
+    if (!CHANNEL_ID.test(input.externalAccountId)) return { kind: 'rejected', error: 'bad_request', code: 'BAD_ACCOUNT_ID' };
+    if (!COMMENT_ID.test(input.externalMessageId)) return { kind: 'rejected', error: 'bad_request', code: 'BAD_COMMENT_ID' };
+    try {
+      await this.api.call('POST', `${API}/comments/setModerationStatus?id=${encodeURIComponent(input.externalMessageId)}&moderationStatus=${input.hidden ? 'heldForReview' : 'published'}`, token);
+      return { kind: 'done' };
+    } catch (error) {
+      const c = classify(this.api, error).result;
+      // An unclear answer (a network failure, a server error) is asked again by the job: setting a status twice changes nothing.
+      return c;
     }
   }
 
