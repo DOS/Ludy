@@ -53,6 +53,12 @@ export function DraftPanel({ detail, onUse, onUseSaved }: { detail: Conversation
   if (!draft && !showAsk && detail.suggestions.length === 0) return null;
   return (
     <div className="space-y-2" data-testid="conversation-draft-panel">
+      {/* The first place the Inbox shows the sales coworker says what it is (DESIGN 1.1): a coworker that proposes, never one that sends. */}
+      {aiOn && (draft || showAsk) && (
+        <p className="text-xs text-muted-foreground" data-testid="conversation-dy-intro">
+          {t('draft.intro')}
+        </p>
+      )}
       {draft?.state === 'requested' && (
         <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="conversation-draft-writing">
           <Spinner /> {t('draft.writing')}
@@ -61,7 +67,7 @@ export function DraftPanel({ detail, onUse, onUseSaved }: { detail: Conversation
       {draft?.state === 'live' && draft.body !== null && (
         <section className="space-y-2 rounded-md border border-border bg-muted/50 p-3" aria-label={t('draft.title')} data-testid="conversation-draft">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline" data-testid="conversation-draft-tainted">
+            <Badge variant="proposal" data-testid="conversation-draft-tainted">
               {t('draft.badge')}
             </Badge>
             <span className="text-xs text-muted-foreground">{t('draft.hint')}</span>
