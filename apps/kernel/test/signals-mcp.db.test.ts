@@ -167,7 +167,7 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     expect(await run(actor, 'crm.signals.open_deals')).toHaveLength(1);
   });
 
-  it('runs the rules over MCP for a company grant with the items of the owner\'s own Home, rule 3 quiet while its reads do not exist', async () => {
+  it('runs the rules over MCP for a company grant with the items of the owner\'s own Home, rule 3 quiet while no supplier account changed', async () => {
     const g = await grant(users.owner);
     const actor = mcp(users.owner, g, 'company');
     for (const rule of RULES) expect(await run(actor, rule), rule).toEqual(await run(browser(users.owner), rule));

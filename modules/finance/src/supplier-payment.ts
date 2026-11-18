@@ -301,7 +301,7 @@ export const supplierPaymentList = defineQuery({
 
 // Rule 3's second read (V5, #3113; contract in packages/kernel-contract/src/signals.ts): asked with the suppliers whose account changed recently, it answers for each asked supplier with a payment
 // waiting how many and their total. Waiting is a payment approved and not yet paid (a payment on hold included) or one asked for and not yet approved (a pending finance.supplier_payment.record
-// proposal). A party and the parties marked as its duplicates are one supplier, counted under the asked id. The total adds the payments in dong: a payment in another currency counts in `count`
+// proposal). A party and the parties marked as its duplicates are one supplier, counted once, under the kept party when it is asked, else the first asked id of the group. The total adds the payments in dong: a payment in another currency counts in `count`
 // but not in `amount`, since two currencies are never added. Ids, a count and an amount only.
 //
 // The honesty rule: a supplier that is not listed has nothing waiting, so the read REFUSES a caller who cannot see every legal entity (SIGNAL_PARTIAL_VIEW), never the part they can see; a
@@ -319,16 +319,19 @@ export const financeSupplierPaymentsWaitingSignals = defineQuery({
     const asked = input.partyIds.map((id) => sql`${id}::uuid`);
     const { rows } = await sql<{ party_id: string; count: number; amount: string }>`
       WITH asked AS (
-        SELECT a.id, coalesce(a.duplicate_of, a.id) AS kept
-          FROM crove_kernel.party a
-         WHERE a.org_id = ${ctx.orgId}::uuid AND a.id IN (${sql.join(asked)})
+        SELECT id, kept FROM (
+          SELECT a.id, coalesce(a.duplicate_of, a.id) AS kept,
+                 row_number() OVER (PARTITION BY coalesce(a.duplicate_of, a.id) ORDER BY (a.id = coalesce(a.duplicate_of, a.id)) DESC, a.id) AS rn
+            FROM crove_kernel.party a
+           WHERE a.org_id = ${ctx.orgId}::uuid AND a.id IN (${sql.join(asked)})
+        ) g WHERE rn = 1
       ), waiting AS (
         SELECT coalesce(pa.duplicate_of, pa.id) AS kept, p.amount, p.currency
           FROM crove_finance.supplier_payment p
           JOIN crove_kernel.party pa ON pa.org_id = p.org_id AND pa.id = p.party_id
          WHERE p.org_id = ${ctx.orgId}::uuid AND p.status = 'approved'
         UNION ALL
-        SELECT coalesce(pa.duplicate_of, pa.id) AS kept, (q.payload ->> 'amount')::numeric AS amount, q.payload ->> 'currency' AS currency
+        SELECT coalesce(pa.duplicate_of, pa.id) AS kept, CASE WHEN q.payload ->> 'amount' ~ '^[0-9]{1,15}(\\.[0-9]{1,4})?$' THEN (q.payload ->> 'amount')::numeric ELSE 0 END AS amount, q.payload ->> 'currency' AS currency
           FROM crove_kernel.proposal q
           JOIN crove_kernel.party pa ON pa.org_id = q.org_id AND pa.id::text = pg_catalog.lower(q.payload ->> 'partyId')
          WHERE q.org_id = ${ctx.orgId}::uuid AND q.command = ${SUPPLIER_PAYMENT_COMMAND} AND q.status = 'pending'

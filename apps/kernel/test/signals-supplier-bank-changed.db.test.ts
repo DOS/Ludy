@@ -144,6 +144,18 @@ suite('rule 3: a supplier bank account changed while a payment waits (#3113 S4)'
     expect(await waiting(o, [other])).toEqual([]);
   });
 
+  it('counts a supplier and its duplicate as one: one row for the kept party when both are asked, one row for the asked one when only a duplicate is', async () => {
+    const o = await org();
+    const duplicate = await party(o.orgId, 'Nhà cung cấp trùng');
+    await rows('UPDATE crove_kernel.party SET duplicate_of = $2 WHERE org_id = $1 AND id = $3', [o.orgId, o.supplier, duplicate]);
+    await addAccount(o);
+    await addAccount(o, duplicate, '5544332211');
+    await ask(o, await invoice(o));
+    await ask(o, await invoice(o, duplicate, '200'));
+    expect(await waiting(o, [duplicate, o.supplier])).toEqual([{ partyId: o.supplier, count: 2, amount: '310' }]);
+    expect(await waiting(o, [duplicate])).toEqual([{ partyId: duplicate, count: 2, amount: '310' }]);
+  });
+
   it('is quiet when nothing waits, when the waiting payment is another supplier\'s, and when the change is older than 30 days', async () => {
     const o = await org();
     const other = await party(o.orgId, 'Nhà cung cấp khác');
