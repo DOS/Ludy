@@ -193,8 +193,8 @@ describe('a video-only recording', () => {
     const mp4 = video(4000);
     const run = setup({ download: {}, body: [mp4.slice(0, 1000)], declared: mp4.byteLength });
     // The body fails after its first piece, as a connection over the byte cap or past the deadline does.
-    const original = run.deps.stream as () => Promise<EgressStream>;
-    (run.deps as { stream: () => Promise<EgressStream> }).stream = async () => {
+    const original = run.deps.stream as unknown as () => Promise<EgressStream>;
+    (run.deps as unknown as { stream: () => Promise<EgressStream> }).stream = async () => {
       const response = await original();
       return {
         ...response,
