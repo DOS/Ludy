@@ -238,6 +238,9 @@ export const zMarketplaceSettlementProposal = zJournalVoucherProposal.extend({
   sales: zJournalAmount,
   sellerDiscount: zJournalAmount,
   refund: zJournalAmount,
+  // A household seller's withheld tax is one amount the platform gave, split into VAT and PIT only as an estimate (research D1, #3711 slice 5): what the platform withheld, what the household's rate pair
+  // would take from the revenue, and the difference (negative when the platform withheld less). A fact beside the estimate for the annual certificate, never posted; absent for a seller with no withheld tax.
+  taxEstimate: z.strictObject({ withheld: zJournalAmount, expected: zJournalAmount, difference: z.string().regex(/^-?\d+(\.\d{1,4})?$/) }).optional(),
 });
 export type MarketplaceSettlementProposal = z.infer<typeof zMarketplaceSettlementProposal>;
 

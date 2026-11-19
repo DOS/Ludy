@@ -247,6 +247,22 @@ describe('the tax a platform withheld from a household seller (slice C2)', () =>
     expect(p.total).toBe('600');
     expect(code(() => settlementProposal({ ...zero, tax: null }, maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
   });
+  it('marks the split as an estimate in the memo of the tax lines and carries the difference to what the rate pair would withhold (research D1)', () => {
+    const exact = settlementProposal(taxed('150000'), maps);
+    expect(exact.taxEstimate).toEqual({ withheld: '150000', expected: '150000', difference: '0' });
+    for (const l of exact.lines.filter((x) => ['3331', '3335', '4212'].includes(x.account) || (x.account === '511' && x.debit !== '0' && x.debit !== exact.sales))) expect(l.memo).toContain('ước tính');
+    expect(exact.lines.filter((l) => l.account === '131').every((l) => !l.memo.includes('ước tính'))).toBe(true);
+    // The platform withheld less than the pair would: a negative difference. More: a positive one.
+    expect(settlementProposal(taxed('140000'), maps).taxEstimate).toEqual({ withheld: '140000', expected: '150000', difference: '-10000' });
+    expect(settlementProposal(taxed('165000'), maps).taxEstimate).toEqual({ withheld: '165000', expected: '150000', difference: '15000' });
+  });
+  it('takes the rate pair of the revenue net of the seller discounts and the refunds, and has no estimate without withheld tax or for a non-household', () => {
+    const lines = [{ sales: '10000000', sellerDiscount: '1000000', refund: '1000000', taxWithheld: '120000' }];
+    const p = settlementProposal(input(lines, { tax: { vatPercent: '1', pitPercent: '0.5' } }), maps);
+    expect(p.taxEstimate).toEqual({ withheld: '120000', expected: '120000', difference: '0' });
+    expect(settlementProposal(taxed('0'), maps).taxEstimate).toBeNull();
+    expect(settlementProposal(taxed('150000', { tax: null }), maps).taxEstimate).toBeNull();
+  });
   it('refuses a rate pair that cannot split the tax', () => {
     expect(code(() => settlementProposal(taxed('150000', { tax: { vatPercent: '0', pitPercent: '0' } }), maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
   });

@@ -1783,6 +1783,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if ('sweep' in job.data) {
         const { rows } = await sql<{ n: number }>`SELECT crove_ads.manage_requeue(${Object.keys(adManagers)}::text[], 200) AS n`.execute(deps.workerDb);
         if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-manage] ${rows[0]?.n} waiting change(s) queued again`);
+        // A change that ended unclear is settled by reading its object (#3898): the pick names the ones due (a call old enough, nothing newer of the family, an active write connection
+        // of a provider this worker has a manager for), ids only, and each is its own job that reads and calls nothing. A read that cannot be made leaves it unclear and it comes round again.
+        const due = await sql<{ org_id: string; change_id: string }>`SELECT org_id, change_id FROM crove_ads.manage_unclear_pick(${Object.keys(adManagers)}::text[], 50)`.execute(deps.workerDb);
+        for (const pick of due.rows) {
+          await boss.send(QUEUES.adsManage, { orgId: pick.org_id, changeId: pick.change_id, settle: true } satisfies AdsManageJob, {
+            singletonKey: jobKey(pick.org_id, QUEUES.adsManage, `settle:${pick.change_id}`),
+            retryLimit: 1,
+            retryDelay: 60,
+          });
+        }
+        if (due.rows.length > 0) console.log(`[ads-manage] ${due.rows.length} unclear change(s) queued to be read`);
         return;
       }
       const done = await runAdsManage({ runtime: deps.runtime, broker: adsBroker, managers: adManagers }, job.data);

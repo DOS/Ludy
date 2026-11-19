@@ -73,13 +73,12 @@ export function MeetingAdherence({ meetingId, isRecorder, onJump }: { meetingId:
           <label htmlFor="adherence-typed" className="text-sm font-medium">
             {t('typedLabel', { max: String(ADHERENCE_TYPED_MAX) })}
           </label>
-          <Textarea id="adherence-typed" value={text} onChange={(event) => setText(event.target.value)} rows={3} placeholder={t('typedPlaceholder')} data-testid="adherence-typed" />
-          <p className="text-xs text-muted-foreground">{t('typedHint', { chars: String(ADHERENCE_LINE_CHARS) })}</p>
-          {typedOverflow(text) && (
-            <p className="text-xs text-muted-foreground" role="status" data-testid="adherence-typed-overflow">
-              {t('typedOverflow', { max: String(ADHERENCE_TYPED_MAX) })}
-            </p>
-          )}
+          <Textarea id="adherence-typed" value={text} onChange={(event) => setText(event.target.value)} rows={3} placeholder={t('typedPlaceholder')} aria-describedby="adherence-typed-hint" data-testid="adherence-typed" />
+          <p id="adherence-typed-hint" className="text-xs text-muted-foreground">{t('typedHint', { chars: String(ADHERENCE_LINE_CHARS) })}</p>
+          {/* Always in the page, filled when more than eight lines are typed: a status inserted with its text is often not announced (WCAG 4.1.3). */}
+          <p className="text-xs text-muted-foreground empty:hidden" role="status" data-testid="adherence-typed-overflow-status">
+            {typedOverflow(text) ? t('typedOverflow', { max: String(ADHERENCE_TYPED_MAX) }) : ''}
+          </p>
         </div>
         {lines === 0 && <p className="text-xs text-muted-foreground" data-testid="adherence-no-agenda">{t('noAgenda')}</p>}
         {!data.transcriptFits && <p className="text-xs text-muted-foreground" data-testid="adherence-too-long">{t('transcriptTooLong')}</p>}

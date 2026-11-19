@@ -155,6 +155,13 @@ const monthLines = (built: Built, month: SettlementProposal, party: Party) =>
     memo: l.memo,
   }));
 
+// The estimated split's facts of all the months added up (marketplace-settlement-posting.ts taxEstimate), or undefined when no month carries withheld tax.
+function taxEstimateOf(months: SettlementProposal[]): MarketplaceSettlementProposal['taxEstimate'] {
+  const own = months.flatMap((m) => (m.taxEstimate ? [m.taxEstimate] : []));
+  if (own.length === 0) return undefined;
+  return { withheld: toMoney(sum(own.map((t) => t.withheld))), expected: toMoney(sum(own.map((t) => t.expected))), difference: toMoney(sum(own.map((t) => t.difference))) };
+}
+
 // The proposal of a built settlement: ONE proposal for all its months. `lines` shows the entry of each month one after the other (each line's memo names its month), `months` lists the months with the
 // date and total of their entries, and `total`, `sales`, `sellerDiscount` and `refund` are the sums, so the Inbox reads it as a voucher and the refund stays visible beside the net.
 function proposalPayload(built: Built, party: Party = built.party): MarketplaceSettlementProposal {
@@ -173,6 +180,7 @@ function proposalPayload(built: Built, party: Party = built.party): MarketplaceS
     sales: sums((m) => m.sales),
     sellerDiscount: sums((m) => m.sellerDiscount),
     refund: sums((m) => m.refund),
+    taxEstimate: taxEstimateOf(built.months),
   });
 }
 
