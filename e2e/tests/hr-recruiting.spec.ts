@@ -392,6 +392,7 @@ test('Phase 7 non-admin (member + Kế toán trưởng) recruiting and wage isol
   // Invite a second user as org `member` and assign `Kế toán trưởng`.
   const memberEmail = newEmail('hr-rec-member');
   await page.goto(`/o/${slug}/settings/members`);
+  await page.getByRole('button', { name: 'Mời thành viên' }).click();
   await page.getByPlaceholder(/^email@/).fill(memberEmail);
   await page.getByLabel('Vai trò', { exact: true }).selectOption('member');
   await page.getByRole('button', { name: 'Mời', exact: true }).click();

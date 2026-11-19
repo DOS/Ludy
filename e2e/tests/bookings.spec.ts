@@ -118,10 +118,13 @@ test('a visitor books on the public page, the host sees it in the app, cancels i
     // An ISO value from the browser's picker reads dd/mm/yyyy in the field; a typed dd/mm/yyyy is taken as such.
     const from = day(21);
     const to = day(23);
-    await page.getByRole('form', { name: 'Thêm ngày nghỉ' }).locator('input[type="date"]').first().fill(from);
-    await expect(page.getByLabel('Từ ngày', { exact: true })).toHaveValue(dmy(from));
-    await page.getByLabel('Đến ngày', { exact: true }).fill(dmy(to));
+    // The day off is asked in a dialog behind the button (#3608).
     await page.getByRole('button', { name: 'Thêm ngày nghỉ' }).click();
+    const dayOff = page.getByRole('form', { name: 'Thêm ngày nghỉ' });
+    await dayOff.locator('input[type="date"]').first().fill(from);
+    await expect(dayOff.getByLabel('Từ ngày', { exact: true })).toHaveValue(dmy(from));
+    await dayOff.getByLabel('Đến ngày', { exact: true }).fill(dmy(to));
+    await dayOff.getByRole('button', { name: 'Thêm ngày nghỉ' }).click();
     await expect(page.getByText(`${dmy(from)} đến ${dmy(to)}`)).toBeVisible();
     const off = sql<{ starts: string; ends: string }>(
       `SELECT to_char(e.starts_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD HH24:MI') AS starts,
