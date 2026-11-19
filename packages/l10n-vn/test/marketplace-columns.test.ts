@@ -88,8 +88,8 @@ describe('what a model may see', () => {
 describe('finding the header row', () => {
   it('never takes a row of values for the header: a file with no header row gives no sheet and shows no buyer value', () => {
     const headerless = grid([
-      ['SO1', 'Nguyễn Văn A', '0912000001', '12 Lê Lợi, Q1', '2', '100000'],
-      ['SO2', 'Trần B', '0912000002', '13 Lê Lợi, Q1', '1', '50000'],
+      ['SO1', 'Nguyễn Văn A', '0900000004', '12 Lê Lợi, Q1', '2', '100000'],
+      ['SO2', 'Trần B', '0900000005', '13 Lê Lợi, Q1', '1', '50000'],
     ]);
     expect(columnSheet(headerless)).toBeNull();
     expect(JSON.stringify(columnSheet(headerless))).not.toContain('Nguyễn');
