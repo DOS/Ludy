@@ -168,6 +168,16 @@ describe('the language picker of the transcript panel (E3, #3186)', () => {
     }
   });
 
+  it('keeps the picker when this language is finished or a run is going, so a second language can be asked for (disabled while it runs)', () => {
+    const done = render({ status: { to: 'en', targets: ['en', 'zh'], translated: 144, remaining: 0, chunksDone: 20 }, onTarget: true });
+    expect(done).toContain(en.meetings.transcript.translation.done);
+    expect(done).toContain('data-testid="translation-target"');
+    expect(done).not.toContain('disabled=""');
+    const running = render({ status: { to: 'en', targets: ['en', 'zh'], state: 'running' }, onTarget: true });
+    expect(running).toContain('data-testid="translation-target"');
+    expect(running).toContain('disabled=""');
+  });
+
   it('tags a translated line with its own language, Chinese as Simplified', () => {
     const line = (to: string) =>
       renderToStaticMarkup(

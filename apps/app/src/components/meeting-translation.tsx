@@ -3,7 +3,7 @@
 // the recorder for their own draft: the button says the language it will translate into (the other of Vietnamese and English), what it is expected to cost and, when it cannot be
 // pressed, why. Vy translates on the click; the answer is the member's alone, shown beside the original as "Bản dịch máy" and never in its place. A line the checks refused shows
 // the original with a fixed word; a line with a mark shows the translation and the mark. A translation is never shared, mailed or turned into a task from here.
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { AiMeter, Translated, TranslationSegment, TranslationStatus, TranslationTarget, Translations } from '@crove/kernel-contract';
@@ -127,7 +127,7 @@ export function MeetingTranslation({ meetingId, stage, original }: { meetingId: 
   const tt = useTranslations('meetings.translationTargets');
   // The language the member picked; none until they do (the server then takes the other language of the pair, as before the picker).
   const [picked, setPicked] = useState<TranslationTarget | undefined>(undefined);
-  const status = useQuery({ ...orpc.meetings.translation.status.queryOptions({ input: { meetingId, stage, ...(picked ? { to: picked } : {}) } }), ...READ_ONCE });
+  const status = useQuery({ ...orpc.meetings.translation.status.queryOptions({ input: { meetingId, stage, ...(picked ? { to: picked } : {}) } }), ...READ_ONCE, placeholderData: keepPreviousData });
   const meter = useQuery({ ...orpc.ai.meter.queryOptions({ input: { module: 'meetings' } }), staleTime: 15_000 });
   const mine = useQuery({ ...orpc.meetings.translation.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   const ask = useMutation({ mutationFn: (): Promise<Translated> => orpc.meetings.translation.translate.call({ meetingId, stage, ...(picked ? { to: picked } : {}) }), onSuccess: refresh });
@@ -135,10 +135,13 @@ export function MeetingTranslation({ meetingId, stage, original }: { meetingId: 
   if (!status.data) return null;
   const blocked = translateBlocked(status.data, meter.data);
   // The member's own translation into the language shown (one per stage and language).
-  const translation = mine.data?.translations.find((x) => x.stage === stage && x.to === status.data.to);
+  // The language shown: the member's pick at once (the status of a new pick takes a moment to arrive and the card keeps the previous one meanwhile), else what the server answered.
+  const shown = picked ?? status.data.to;
+  const switching = status.isPlaceholderData;
+  const translation = mine.data?.translations.find((x) => x.stage === stage && x.to === shown);
   const answer = ask.data;
   const failure = answer?.state === 'failed' ? ((KNOWN_FAILURES as readonly string[]).includes(answer.errorCode ?? '') ? (answer.errorCode as (typeof KNOWN_FAILURES)[number]) : 'default') : null;
-  const label = translateLabel(t, tt, status.data.to);
+  const label = translateLabel(t, tt, shown);
   const cost = status.data.estimate?.cost ?? null;
   return (
     <div className="space-y-2 rounded-lg border p-3" data-testid="meeting-translation" data-stage={stage}>
@@ -153,8 +156,12 @@ export function MeetingTranslation({ meetingId, stage, original }: { meetingId: 
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        {hasChoice(status.data.targets) && <TranslationTargetPicker id={`translate-to-${stage}`} targets={status.data.targets} value={status.data.to} disabled={ask.isPending} onChange={(to) => setPicked(pickedTarget(to, status.data.targets))} />}
-        <Button size="sm" variant={translation && !translation.stale ? 'outline' : 'default'} loading={ask.isPending} disabled={blocked !== null || ask.isPending} onClick={() => ask.mutate()}>
+        {hasChoice(status.data.targets) && <TranslationTargetPicker id={`translate-to-${stage}`} targets={status.data.targets} value={shown} disabled={ask.isPending} onChange={(to) => {
+          // A new language is a new request: the answer or the failure of the one before is not shown beside it.
+          ask.reset();
+          setPicked(pickedTarget(to, status.data.targets));
+        }} />}
+        <Button size="sm" variant={translation && !translation.stale ? 'outline' : 'default'} loading={ask.isPending} disabled={blocked !== null || ask.isPending || switching} onClick={() => ask.mutate()}>
           {translation ? (translation.stale ? t('again') : t('againFresh')) : label}
         </Button>
         {blocked !== null && (

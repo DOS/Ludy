@@ -4,7 +4,7 @@
 // this page is open it asks again as each batch ends, until the transcript is translated, a chunk is refused for the budget ("Chờ ngân sách AI"), the member stops it or a request
 // fails; with the page closed the next click goes on from the parts already kept. The translation sits under each original line as "Bản dịch máy", never in its place, only the member who
 // asked reads it, and it is never the source of a task, mail, post, webhook, search hit or export.
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { TranscriptTranslationView, TranslationTarget } from '@crove/kernel-contract';
@@ -22,12 +22,15 @@ type KnownCode = (typeof KNOWN_CODES)[number];
 const knownCode = (code: unknown): KnownCode | 'default' => ((KNOWN_CODES as readonly string[]).includes(code as string) ? (code as KnownCode) : 'default');
 
 // Only what the panel shows: the status and the member's parts (not the summary's own reads, which are audited).
-const refresh = () => Promise.all([queryClient.refetchQueries({ queryKey: orpc.meetings.translation.transcriptStatus.key() }), queryClient.refetchQueries({ queryKey: orpc.meetings.translation.transcriptGet.key() })]);
+// Only the queries on screen: the member may have read another language before, and its audited read is not repeated.
+const refresh = () => Promise.all([queryClient.refetchQueries({ queryKey: orpc.meetings.translation.transcriptStatus.key(), type: 'active' }), queryClient.refetchQueries({ queryKey: orpc.meetings.translation.transcriptGet.key(), type: 'active' })]);
 
 /** The member's own translated parts of the transcript, by the line they translate; empty until they asked. The read is audited, so it is not refetched on focus. */
 export function useTranscriptParts(meetingId: string, target?: TranslationTarget): { parts: ReadonlyMap<string, Part>; to: string } {
   const query = useQuery({ ...orpc.meetings.translation.transcriptGet.queryOptions({ input: { meetingId, ...(target ? { to: target } : {}) } }), staleTime: 5 * 60_000, refetchOnWindowFocus: false });
-  return { parts: new Map((query.data?.parts ?? []).map((p) => [p.lineId, p])), to: query.data?.to ?? 'en' };
+  // Only parts of the language asked for are shown: while another language's parts load, the lines show none rather than the previous language's.
+  const data = query.data && (target === undefined || query.data.to === target) ? query.data : undefined;
+  return { parts: new Map((data?.parts ?? []).map((p) => [p.lineId, p])), to: data?.to ?? target ?? 'en' };
 }
 
 /** The second line under an original line: the translation with its label and marks, or the fixed word when the line could not be translated. */
@@ -60,7 +63,7 @@ export function TranscriptTranslationPanel({ meetingId, target, onTarget }: { me
   const t = useTranslations('meetings.transcript.translation');
   const tt = useTranslations('meetings.translationTargets');
   const f = useFormat();
-  const status = useQuery({ ...orpc.meetings.translation.transcriptStatus.queryOptions({ input: { meetingId, ...(target ? { to: target } : {}) } }), refetchOnWindowFocus: false });
+  const status = useQuery({ ...orpc.meetings.translation.transcriptStatus.queryOptions({ input: { meetingId, ...(target ? { to: target } : {}) } }), refetchOnWindowFocus: false, placeholderData: keepPreviousData });
   const meter = useQuery({ ...orpc.ai.meter.queryOptions({ input: { module: 'meetings' } }), staleTime: 15_000 });
   // On while this page goes on from one batch to the next; off at the end, at a failure, at a refusal and at the member's stop.
   const [auto, setAuto] = useState(false);
@@ -98,7 +101,10 @@ export function TranscriptTranslationPanel({ meetingId, target, onTarget }: { me
   if (!data) return null;
   const blocked = translateBlocked(data, meter.data);
   const running = translate.isPending || auto || data.state === 'running';
-  const label = translateLabel(t, tt, data.to);
+  // The language shown: the member's pick at once (the status of a new pick takes a moment and the panel keeps the previous one meanwhile), else what the server answered.
+  const shown = target ?? data.to;
+  const switching = status.isPlaceholderData;
+  const label = translateLabel(t, tt, shown);
   const begun = data.translated > 0 || data.stale > 0;
   const finished = begun && data.remaining === 0;
   const cost = data.estimate?.cost ?? null;
@@ -115,6 +121,23 @@ export function TranscriptTranslationPanel({ meetingId, target, onTarget }: { me
         </p>
       )}
       {data.stale > 0 && <p className="text-xs text-warning">{t('stale', { count: String(data.stale) })}</p>}
+      {/* Whenever there is a choice, also when this language is finished or a run is going (the picker is disabled then): a second language is the main use of it. */}
+      {hasChoice(data.targets) && onTarget && (
+        <TranslationTargetPicker
+          id="transcript-translate-to"
+          targets={data.targets}
+          value={shown}
+          disabled={running}
+          onChange={(to) => {
+            // A new language is a new request: the answer or the failure of the one before is not shown beside it.
+            translate.reset();
+            stop.reset();
+            setAuto(false);
+            lastRemaining.current = null;
+            onTarget(pickedTarget(to, data.targets));
+          }}
+        />
+      )}
       {running ? (
         <div className="space-y-2">
           <p role="status" className="text-xs">
@@ -139,12 +162,11 @@ export function TranscriptTranslationPanel({ meetingId, target, onTarget }: { me
         </p>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          {hasChoice(data.targets) && onTarget && <TranslationTargetPicker id="transcript-translate-to" targets={data.targets} value={data.to} disabled={translate.isPending} onChange={(to) => onTarget(pickedTarget(to, data.targets))} />}
           <Button
             size="sm"
             variant={begun ? 'outline' : 'default'}
             loading={translate.isPending}
-            disabled={blocked !== null || translate.isPending}
+            disabled={blocked !== null || translate.isPending || switching}
             onClick={() => {
               stop.reset();
               translate.reset();
