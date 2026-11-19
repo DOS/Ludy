@@ -72,8 +72,8 @@ export const morningNotice = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<{ notified: boolean; mailed: boolean }> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới báo cuộc họp trong ngày');
-    const { rows: found } = await sql<{ events: number; language: string }>`
-      SELECT events, language FROM crove_meetings.morning_notices_due(1::int, ${ctx.orgId}::uuid, ${input.userId}::uuid, ${input.day}::date)`.execute(ctx.trx);
+    const { rows: found } = await sql<{ events: number; english: boolean }>`
+      SELECT events, english FROM crove_meetings.morning_notices_due(1::int, ${ctx.orgId}::uuid, ${input.userId}::uuid, ${input.day}::date)`.execute(ctx.trx);
     const due = found[0];
     // Nothing due any more (no meeting that day, turned off, muted, told already): nothing is written, not even an audit row.
     if (!due) return { notified: false, mailed: false };
@@ -91,7 +91,8 @@ export const morningNotice = defineCommand({
     // The member's address while they are a member with an account that is not disabled (the worker's member_emails: no name, no other account column).
     const { rows } = await sql<{ email: string | null }>`SELECT email FROM crove_kernel.member_emails(${[input.userId]}::uuid[])`.execute(ctx.trx);
     const email = rows[0]?.email ?? null;
-    const lang = due.language === 'en' ? 'en' : 'vi';
+    // The function returns a flag, not the language's text (no text leaves a definer of crove_meetings, meetings-readers.db.test.ts).
+    const lang = due.english ? 'en' : 'vi';
     const mail = email
       ? await createMailMessage(ctx, {
           stream: 'transactional',

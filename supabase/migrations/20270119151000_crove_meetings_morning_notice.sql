@@ -39,7 +39,7 @@ CREATE OR REPLACE FUNCTION crove_meetings.morning_notices_due(
   p_user_id uuid DEFAULT NULL,
   p_day date DEFAULT NULL
 )
-RETURNS TABLE (org_id uuid, user_id uuid, day date, events integer, language text)
+RETURNS TABLE (org_id uuid, user_id uuid, day date, events integer, english boolean)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
   WITH known AS MATERIALIZED (
     -- Only zones the database knows, decided before any time is computed in them: a name it does not know would otherwise fail the whole pass (the planner may compute the local time before it filters).
@@ -71,7 +71,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
       AND (pg_catalog.date_part('hour', l.local_now) * 60 + pg_catalog.date_part('minute', l.local_now))::integer < l.send_minute + 360
       AND (p_day IS NULL OR l.local_now::date = p_day)
   )
-  SELECT d.org_id, d.user_id, d.day, pg_catalog.count(*)::integer, d.language
+  SELECT d.org_id, d.user_id, d.day, pg_catalog.count(*)::integer, (d.language OPERATOR(pg_catalog.=) 'en')
   FROM due d
   JOIN crove_meetings.calendar_agenda a
     ON a.org_id = d.org_id AND a.user_id = d.user_id
