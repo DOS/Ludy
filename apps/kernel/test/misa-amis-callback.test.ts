@@ -136,11 +136,11 @@ describe('the MISA AMIS callback route', () => {
   });
 
   it("records a refusal with MISA's own text, for a row whose answer was lost too, and one command per organisation", async () => {
-    const rows = [row({ state: 'ambiguous', attempts: 3 }), row({ org_refid: REF2, org_id: ORG_B, connection_id: CONN_B, org_company_code: CODE })];
+    const rows = [row({ state: 'ambiguous', attempts: 1 }), row({ org_refid: REF2, org_id: ORG_B, connection_id: CONN_B, org_company_code: CODE })];
     const on = fixture(rows);
     await on.post(message([item({ success: false, error_message: REASON_TEXT }), item({ org_refid: REF2, success: true })]));
     expect(on.executed.map((e) => [e.options.orgId, e.input.connectionId, e.input.rows.map((r) => [r.orgRefid, r.attempts, r.from, r.to, r.reason])])).toEqual([
-      [ORG_A, CONN_A, [[REF1, 3, 'ambiguous', 'refused', REASON_TEXT]]],
+      [ORG_A, CONN_A, [[REF1, 1, 'ambiguous', 'refused', REASON_TEXT]]],
       [ORG_B, CONN_B, [[REF2, 1, 'sent', 'accepted', null]]],
     ]);
   });
@@ -198,6 +198,18 @@ describe('the MISA AMIS callback route', () => {
     expect(otherType.executed).toEqual([]);
   });
 
+  it('does not record a refusal for a row that was sent again (an old refusal could be replayed against the second send), but still records an acceptance', async () => {
+    const refusal = fixture([row({ attempts: 2 })]);
+    expect((await refusal.post(message([item({ success: false, error_message: REASON_TEXT })]))).status).toBe(200);
+    expect(refusal.executed).toEqual([]);
+    const acceptance = fixture([row({ attempts: 2 })]);
+    await acceptance.post(message([item()]));
+    expect(acceptance.executed.map((e) => e.input.rows.map((r) => [r.attempts, r.to]))).toEqual([[[2, 'accepted']]]);
+    const first = fixture([row({ attempts: 1 })]);
+    await first.post(message([item({ success: false, error_message: REASON_TEXT })]));
+    expect(first.executed.map((e) => e.input.rows.map((r) => r.to))).toEqual([['refused']]);
+  });
+
   it('is not moved by the unsigned fields: a swapped company code moves nothing, data_type and a batch error move nothing more or less', async () => {
     const swapped = fixture();
     await swapped.post(message([item()], { org_company_code: OTHER_CODE }));
@@ -225,10 +237,13 @@ describe('the MISA AMIS callback route', () => {
   it("does not make MISA retry for a refusal of the command, and does for an outage", async () => {
     const refusal = fixture([row()], {}, ['kernel', 'finance'], new DomainError('MODULE_OFF', 403, 'off'));
     expect((await refusal.post(message([item()]))).status).toBe(200);
-    const outage = fixture([row()], {}, ['kernel', 'finance'], new Error('connection reset'));
-    const down = await outage.post(message([item()]));
-    expect(down.status).toBe(503);
-    expect(await bodyOf(down)).toEqual({ code: 'CALLBACK_UNAVAILABLE' });
+    // Runtime.execute turns every failure into a DomainError: an outage is one with a 5xx status (or RETRY), and MISA must retry it.
+    for (const outage of [new DomainError('INTERNAL', 500, 'x'), new DomainError('OVERLOADED', 503, 'x'), new DomainError('RETRY', 409, 'x')]) {
+      const down = await fixture([row()], {}, ['kernel', 'finance'], outage).post(message([item()]));
+      expect(down.status, outage.code).toBe(503);
+      expect(await bodyOf(down)).toEqual({ code: 'CALLBACK_UNAVAILABLE' });
+    }
+    expect((await fixture([row()], {}, ['kernel', 'finance'], new Error('connection reset')).post(message([item()]))).status).toBe(503);
   });
 
   it('refuses a body over the cap before reading it, and the cap is large enough for a thousand results', async () => {
@@ -249,6 +264,24 @@ describe('the MISA AMIS callback route', () => {
     for (let i = 0; i < 4; i++) statuses.push((await on.post('not json')).status);
     expect(statuses).toEqual([400, 400, 429, 429]);
     expect(on.sqlSeen).toEqual([]);
+  });
+
+  it('limits the address before the body cap reads a chunked body: a refused address reads nothing', async () => {
+    const limit = new RateLimiter({ perMinute: 1 });
+    const on = fixture([row()], { misaAmisCallbackLimit: limit });
+    await on.post('not json');
+    let pulled = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new TextEncoder().encode('x'.repeat(1024)));
+        if (pulled > 3) controller.close();
+      },
+    });
+    const response = await on.http.request(PATH, { method: 'POST', headers: { 'content-type': 'application/json' }, body: stream, duplex: 'half' } as RequestInit);
+    expect(response.status).toBe(429);
+    // A stream is primed with one chunk when it is made; a refused address must not read on from there.
+    expect(pulled).toBeLessThanOrEqual(1);
   });
 
   it('puts nothing of a body, a signature, MISA text or the ClientID in a log line', async () => {

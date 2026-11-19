@@ -249,6 +249,16 @@ suite('MISA AMIS callback (#3903)', () => {
       expect(after?.updated_at).toEqual(before?.updated_at);
     });
 
+    it('records no refusal for a row that was sent again, and still records its acceptance', async () => {
+      const refid = randomUUID();
+      await seed(A, refid, 'sent');
+      await rows('UPDATE crove_finance.misa_amis_push SET attempts = 2 WHERE org_id = $1 AND org_refid = $2', [A.org, refid]);
+      await post(message([{ org_refid: refid, voucher_type: 1, success: false, error_message: REASON_TEXT }]));
+      expect(await stateOf(A, refid)).toMatchObject({ state: 'sent', reason: null });
+      await post(message([{ org_refid: refid, voucher_type: 1, success: true }]));
+      expect(await stateOf(A, refid)).toMatchObject({ state: 'accepted' });
+    });
+
     it('moves nothing for a row still being sent, a swapped company code, a wrong voucher type or an unknown refid, and answers the same', async () => {
       const sending = randomUUID();
       const swapped = randomUUID();

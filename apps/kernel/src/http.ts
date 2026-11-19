@@ -1004,27 +1004,35 @@ export function createHttpApp(deps: HttpDeps) {
   // MISA AMIS's callback with the result of a save (#3903, S4 of #3854): public, checked by the HMAC of its signed `data` before anything else is read, capped in size and rate limited per client
   // address before the body is read. The signature proves MISA sent it, not for which organisation (one key per deployment): the organisation is found from our own stored push row, never from the
   // envelope (misa-amis-callback.ts). A verified message is always answered 200, so the answer says nothing about an org_refid; a refusal is a fixed code, and nothing of the body, the signature,
-  // MISA's text or the ClientID is logged or kept. Without the ClientID the route does not exist.
+  // MISA's text or the ClientID is logged or kept. Without the ClientID the route is not registered: a POST to the path falls through to the session check of /api/* (401) and reaches nothing.
   const misaAmisCallback = deps.misaAmisCallback;
   if (misaAmisCallback && runtime.installed('finance')) {
     const callbackLimit = deps.misaAmisCallbackLimit ?? new RateLimiter({ perMinute: BANK_FEED_WEBHOOKS_PER_MINUTE });
-    app.post('/api/webhooks/misa-amis', bodyLimit({ maxSize: MAX_MISA_AMIS_CALLBACK_BYTES }), async (c) => {
-      const decision = callbackLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
-      if (!decision.allowed) {
-        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
-        c.header('retry-after', String(decision.retryAfterSeconds));
-        return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
-      }
-      try {
-        const outcome = await acceptMisaAmisCallback(runtime, misaAmisCallback.clientId, await c.req.text());
-        if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
-        return c.json({ ok: true }, 200);
-      } catch {
-        // Not problem(): it logs the error's message, and a database error can quote the row it refused, which holds MISA's own text. A short code is all that is logged; MISA retries a 503.
-        console.error('[misa-amis-callback] not recorded: CALLBACK_UNAVAILABLE');
-        return c.json({ code: 'CALLBACK_UNAVAILABLE' }, 503);
-      }
-    });
+    // The limit is its own middleware, ahead of the body cap: a chunked body (no Content-Length) is read up to the cap before the cap's own check passes, and that read must not be free for a flooder.
+    app.post(
+      '/api/webhooks/misa-amis',
+      async (c, next) => {
+        const decision = callbackLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+        if (!decision.allowed) {
+          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+          c.header('retry-after', String(decision.retryAfterSeconds));
+          return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+        }
+        await next();
+      },
+      bodyLimit({ maxSize: MAX_MISA_AMIS_CALLBACK_BYTES }),
+      async (c) => {
+        try {
+          const outcome = await acceptMisaAmisCallback(runtime, misaAmisCallback.clientId, await c.req.text());
+          if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
+          return c.json({ ok: true }, 200);
+        } catch {
+          // Not problem(): it logs the error's message, and a database error can quote the row it refused, which holds MISA's own text. A short code is all that is logged; MISA retries a 503.
+          console.error('[misa-amis-callback] not recorded: CALLBACK_UNAVAILABLE');
+          return c.json({ code: 'CALLBACK_UNAVAILABLE' }, 503);
+        }
+      },
+    );
   }
 
   // Zalo OA's webhook of customers' messages (conversation core, #2304): the signature is checked before the body is read or kept, the

@@ -52,6 +52,9 @@ export function moveFor(result: AmisCallbackResult, rows: readonly Located[], or
   if (row.org_company_code !== orgCompanyCode || row.voucher_type !== result.voucherType) return null;
   // Only a request MISA may still answer: sent, or one whose answer was lost.
   if (row.state !== 'sent' && row.state !== 'ambiguous') return null;
+  // The signed `data` carries no attempt, session or time, so a refusal of the first send could be replayed against the second send of the same voucher and mark a request AMIS may have accepted as refused.
+  // A refusal is therefore recorded only for a row never sent again; for the others polling, or a person, settles it (an acceptance is never wrong: the voucher is in AMIS).
+  if (!result.success && row.attempts > 1) return null;
   const reason = result.success ? null : (result.errorMessage ?? result.errorCode ?? 'REFUSED');
   return { orgId: row.org_id, connectionId: row.connection_id, move: { orgRefid: row.org_refid, attempts: row.attempts, from: row.state, to: result.success ? 'accepted' : 'refused', reason } };
 }
@@ -60,7 +63,7 @@ export async function acceptMisaAmisCallback(runtime: Runtime, clientId: string,
   const read = readCallback(rawBody, clientId);
   if (!read.ok) return read.reason === 'signature' || read.reason === 'app_id' ? { status: 401, code: 'WEBHOOK_SIGNATURE' } : { status: 400, code: 'WEBHOOK_MALFORMED' };
   const { callback } = read;
-  // The first result of a refid decides (a message that repeats one is MISA's own noise, and the second would find the row moved anyway).
+  // A message that repeats a refid keeps its last result, as polling does (the second would find the row moved anyway).
   const results = [...new Map(callback.results.map((r) => [r.orgRefId, r] as const)).values()];
   if (results.length === 0) return { status: 200 };
 
@@ -85,8 +88,9 @@ export async function acceptMisaAmisCallback(runtime: Runtime, clientId: string,
     try {
       await runtime.execute('finance.misa_amis.push_record', { connectionId: group.connectionId, rows: group.moves, call: null }, { actor: SYSTEM, orgId: group.orgId });
     } catch (error) {
-      // A refusal of the command (an organisation whose Finance went off meanwhile, a state the graph does not allow) is not a reason to make MISA retry; an outage is, and propagates.
-      if (!(error instanceof DomainError)) throw error;
+      // Runtime.execute turns every failure into a DomainError, so the kind is read from it: a refusal of the command (an organisation whose Finance went off meanwhile, a state the graph does not allow) is
+      // not a reason to make MISA retry; an outage (INTERNAL, OVERLOADED, a retryable conflict: status 500 and over, or RETRY) is, and propagates. The rows stay `sent`, so polling recovers them in any case.
+      if (!(error instanceof DomainError) || error.status >= 500 || error.code === 'RETRY') throw error;
     }
   }
   return { status: 200 };
