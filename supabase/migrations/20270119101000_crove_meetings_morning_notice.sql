@@ -45,7 +45,9 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
     -- Only zones the database knows, decided before any time is computed in them: a name it does not know would otherwise fail the whole pass (the planner may compute the local time before it filters).
     SELECT n.org_id, n.user_id, n.send_minute, n.time_zone, n.language
     FROM crove_meetings.morning_notice n
-    WHERE n.time_zone IN (SELECT z.name FROM pg_catalog.pg_timezone_names z)
+    WHERE (p_org_id IS NULL OR n.org_id = p_org_id)
+      AND (p_user_id IS NULL OR n.user_id = p_user_id)
+      AND n.time_zone IN (SELECT z.name FROM pg_catalog.pg_timezone_names z)
   ),
   local AS (
     SELECT n.org_id, n.user_id, n.send_minute, n.time_zone, n.language, pg_catalog.now() AT TIME ZONE n.time_zone AS local_now

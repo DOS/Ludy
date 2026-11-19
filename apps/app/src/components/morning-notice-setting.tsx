@@ -3,8 +3,9 @@
 // when they turn it on or change the time). The notice, in the app and by mail, says only how many meetings they have today and links to the meetings page: no title, no name, no word of a brief. One more switch
 // of the same page (the kind "Meetings today") mutes it too.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { MORNING_DEFAULT_MINUTE, type MorningState } from '@crove/kernel-contract';
+import { MORNING_DEFAULT_MINUTE, MORNING_KIND, type MorningState } from '@crove/kernel-contract';
 import { Card } from '@crove/ui/components/card';
 import { Checkbox } from '@crove/ui/components/checkbox';
 import { Input } from '@crove/ui/components/input';
@@ -30,20 +31,34 @@ function browserZone(): string {
   }
 }
 
-export function MorningNoticeSetting() {
+export function MorningNoticeSetting({ muted = false }: { muted?: boolean }) {
   const t = useTranslations('notifications.morningNotice');
   const queryClient = useQueryClient();
   // The mail is written in the language the member uses in the app when they turn it on.
   const language = useLocale() === 'en' ? 'en' : 'vi';
   const setting = useQuery(orpc.meetings.morning.get.queryOptions({ input: {} }));
   const set = useMutation({
-    mutationFn: (input: { enabled: boolean; minute: number }) => client.meetings.morning.set({ enabled: input.enabled, minute: input.minute, timeZone: browserZone(), language }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: orpc.meetings.morning.get.queryOptions({ input: {} }).queryKey }),
+    mutationFn: async (input: { enabled: boolean; minute: number }) => {
+      // One switch: turning the notice on also lifts an earlier mute of its kind in the notification settings, or nothing would ever be sent.
+      if (input.enabled && muted) await client.notifications.mute({ kind: MORNING_KIND, muted: false });
+      return client.meetings.morning.set({ enabled: input.enabled, minute: input.minute, timeZone: browserZone(), language });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.morning.get.queryOptions({ input: {} }).queryKey });
+      void queryClient.invalidateQueries({ queryKey: orpc.notifications.list.key() });
+    },
   });
   const state: MorningState | undefined = setting.data;
   const minute = set.isPending ? set.variables.minute : (state?.minute ?? MORNING_DEFAULT_MINUTE);
   const enabled = set.isPending ? set.variables.enabled : (state?.enabled ?? false);
   const mailOn = getConfig().mailEnabled;
+  // The time is saved when the field is left (a browser fires a change for each part of a time while it is typed).
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    const next = draft === null ? null : timeToMinute(draft);
+    setDraft(null);
+    if (next !== null && next !== minute) set.mutate({ enabled: true, minute: next });
+  };
   return (
     <Card className="block space-y-3 p-4" data-testid="morning-notice-setting">
       <div>
@@ -60,12 +75,10 @@ export function MorningNoticeSetting() {
           type="time"
           aria-label={t('at')}
           className="w-32"
-          value={minuteToTime(minute)}
-          disabled={!enabled || setting.isPending || set.isPending}
-          onChange={(e) => {
-            const next = timeToMinute(e.target.value);
-            if (next !== null) set.mutate({ enabled: true, minute: next });
-          }}
+          value={draft ?? minuteToTime(minute)}
+          disabled={!enabled || setting.isPending}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
           data-testid="morning-notice-time"
         />
       </label>

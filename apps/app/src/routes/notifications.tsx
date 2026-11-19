@@ -3,6 +3,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
+import { MORNING_KIND } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Checkbox } from '@crove/ui/components/checkbox';
@@ -194,7 +195,7 @@ export function NotificationsPage() {
       {list.data && <Settings muted={list.data.muted} />}
       {/* The daily "Hôm nay cần bạn" brief by email: the member's own opt-in (#2406). */}
       <TodayMailSetting />
-      {meetingsInstalled() && <MorningNoticeSetting />}
+      {meetingsInstalled() && <MorningNoticeSetting muted={list.data?.muted.includes(MORNING_KIND) ?? false} />}
     </div>
   );
 }
