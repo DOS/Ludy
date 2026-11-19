@@ -146,7 +146,8 @@ suite('the privacy pin of finance.mcp.open_balances (#3849)', () => {
     await expect(o.read(o.owner, { side: 'payable' })).rejects.toMatchObject({ code: SIGNAL_PARTIAL_VIEW_CODE, status: 403 });
     const plain = await org();
     await expect(rt.query('finance.mcp.open_balances', { side: 'payable' }, { actor: user(plain.owner), orgId: plain.orgId })).rejects.toMatchObject({ status: 403 });
-    await expect(rt.query('finance.mcp.open_balances', { side: 'payable' }, { actor: mcp(plain.owner, await plain.grant(plain.owner), ['ludy.other']), orgId: plain.orgId })).rejects.toBeTruthy();
+    const noScope = await rt.query('finance.mcp.open_balances', { side: 'payable' }, { actor: mcp(plain.owner, await plain.grant(plain.owner), ['ludy.other']), orgId: plain.orgId }).then(() => null, (e: { status?: number; details?: unknown }) => e);
+    expect([noScope?.status, noScope?.details]).toEqual([403, expect.objectContaining({ rule: 'mcp_scope' })]);
     await expect(plain.read(plain.member, { side: 'payable' })).rejects.toMatchObject({ status: 401, code: 'MCP_GRANT_INVALID' });
   });
 });

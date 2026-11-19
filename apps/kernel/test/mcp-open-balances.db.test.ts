@@ -100,8 +100,20 @@ suite('finance.mcp.open_balances on PostgreSQL (#3849)', () => {
         await c.query('COMMIT');
       });
     }
+    // A voided invoice, as a restore would write it (a superuser's statement that skips the triggers), and a request to pay one that waits for approval.
+    const voidIt = (docId: string) =>
+      admin(async (c) => {
+        await c.query("SET session_replication_role = 'replica'");
+        await c.query("INSERT INTO crove_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'sai')", [orgId, docId, randomUUID()]);
+      });
+    const pendingRequest = (docId: string) =>
+      rows(
+        `INSERT INTO crove_kernel.proposal (org_id, id, kind, command, status, title, payload, authors, eligible_approvers)
+         VALUES ($1, $2, 'finance.supplier_payment', 'finance.supplier_payment.record', 'pending', 'Chi nhà cung cấp', $3::jsonb, $4::jsonb, $5::uuid[])`,
+        [orgId, randomUUID(), JSON.stringify({ purchaseDocumentId: docId }), JSON.stringify([{ type: 'user', id: owner }]), [owner]],
+      );
     const read = async (userId: string, input: unknown) => rt.query<Record<string, unknown>>('finance.mcp.open_balances', input, { actor: mcp(userId, await grant(userId)), orgId });
-    return { orgId, owner, member, branchAdmin, grant, party, invoice, manualReceivable, read };
+    return { orgId, owner, member, branchAdmin, grant, party, invoice, manualReceivable, voidIt, pendingRequest, read };
   }
 
   beforeAll(async () => {
@@ -173,6 +185,21 @@ suite('finance.mcp.open_balances on PostgreSQL (#3849)', () => {
     expect(parties[0]?.buckets).toMatchObject({ over90: '2000000', d1to30: '0' });
   });
 
+  it('leaves out of the payables a voided invoice and one with a request waiting for approval, as the Ask-to-pay list does', async () => {
+    const o = await org();
+    const supplier = await o.party('NCC');
+    const open = await o.invoice(supplier, 'P1', daysAgo(40), '1000000', 'purchase');
+    const voided = await o.invoice(supplier, 'P2', daysAgo(40), '2000000', 'purchase');
+    const asked = await o.invoice(supplier, 'P3', daysAgo(40), '4000000', 'purchase');
+    expect(open).toBeTruthy();
+    await o.voidIt(voided);
+    await o.pendingRequest(asked);
+    const out = await o.read(o.owner, { side: 'payable' });
+    const parties = out.parties as Array<{ open: string; invoiceCount: number }>;
+    expect(parties).toHaveLength(1);
+    expect(parties[0]).toMatchObject({ open: '1000000', invoiceCount: 1 });
+  });
+
   it('refuses a grant that sees only part of the books and an org with more than one legal entity', async () => {
     const o = await org(true);
     const p = await o.party('A');
@@ -186,8 +213,11 @@ suite('finance.mcp.open_balances on PostgreSQL (#3849)', () => {
     await expect(o.read(o.owner, {})).rejects.toBeTruthy();
     await expect(o.read(o.owner, { side: 'both' })).rejects.toBeTruthy();
     await expect(o.read(o.owner, { side: 'payable', limit: 51 })).rejects.toBeTruthy();
+    // The entity is not the caller's to choose: an extra key is refused before any query runs.
+    await expect(o.read(o.owner, { side: 'payable', legalEntityId: randomUUID() })).rejects.toMatchObject({ status: 422 });
     await expect(rt.query('finance.mcp.open_balances', { side: 'payable' }, { actor: user(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
-    await expect(rt.query('finance.mcp.open_balances', { side: 'payable' }, { actor: mcp(o.owner, await o.grant(o.owner), ['ludy.other']), orgId: o.orgId })).rejects.toBeTruthy();
+    const noScope = await rt.query('finance.mcp.open_balances', { side: 'payable' }, { actor: mcp(o.owner, await o.grant(o.owner), ['ludy.other']), orgId: o.orgId }).then(() => null, (e: { status?: number; details?: unknown }) => e);
+    expect([noScope?.status, noScope?.details]).toEqual([403, expect.objectContaining({ rule: 'mcp_scope' })]);
     await expect(o.read(o.member, { side: 'payable' })).rejects.toMatchObject({ status: 401, code: 'MCP_GRANT_INVALID' });
   });
 });
