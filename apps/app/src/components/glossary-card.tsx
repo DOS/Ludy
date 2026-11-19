@@ -157,7 +157,7 @@ export function GlossaryCard() {
     <Card role="region" aria-labelledby="glossary-title" className="block p-4" data-testid="glossary-card">
       <h2 id="glossary-title" className="text-sm font-medium text-muted-foreground">{t('title')}</h2>
       <details className="mt-2 text-sm">
-        <summary className="cursor-pointer font-medium">{t('open')}</summary>
+        <summary className="cursor-pointer py-1 font-medium">{t('open')}</summary>
         <p className="mt-2 text-muted-foreground">{t('intro')}</p>
         <p className="mt-1 font-medium">{t('noPersonalData')}</p>
         {list.isLoading ? (
