@@ -13526,6 +13526,7 @@ export const en = {
       MISA_AMIS_PUSH_STALE: 'The data changed since you looked; preview again, then send.',
       MISA_AMIS_PUSH_STATE: 'This voucher cannot move to that state.',
       MISA_AMIS_PUSH_TOO_MANY: 'This period has too many vouchers; choose a shorter range.',
+      MISA_AMIS_PUSH_PENDING: 'Some vouchers sent to MISA AMIS have no result yet; settle them before removing the connection.',
       MARKETPLACE_PROVIDER_NOT_READY: 'This connector cannot be tested or pulled from the screen yet; it can once its connector is finished.',
       MARKETPLACE_NOT_STAGED: 'This report was already handled or was read again; reload the list.',
       MARKETPLACE_BUSY: 'Another report is being imported at the same moment; try again in a few minutes.',

@@ -13540,6 +13540,7 @@ export const vi = {
       MISA_AMIS_PUSH_STALE: 'Dữ liệu đã thay đổi từ lúc bạn xem; hãy xem trước lại rồi gửi.',
       MISA_AMIS_PUSH_STATE: 'Chứng từ này không thể chuyển sang trạng thái đó.',
       MISA_AMIS_PUSH_TOO_MANY: 'Kỳ này có quá nhiều chứng từ; hãy chọn khoảng ngắn hơn.',
+      MISA_AMIS_PUSH_PENDING: 'Còn chứng từ đã gửi sang MISA AMIS chưa có kết quả; hãy xử lý xong trước khi xóa kết nối.',
       MARKETPLACE_PROVIDER_NOT_READY: 'Bộ kết nối này chưa kiểm tra hoặc lấy đơn được từ màn hình; sẽ có khi bộ kết nối của nó hoàn thành.',
       MARKETPLACE_NOT_STAGED: 'Báo cáo này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách.',
       MARKETPLACE_BUSY: 'Có báo cáo khác đang được nhập cùng lúc; hãy thử lại sau ít phút.',

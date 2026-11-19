@@ -77,6 +77,8 @@ suite('MISA AMIS push (#3902)', () => {
   let worker: Runtime;
   // The vouchers the stand-in loader answers: a test sets what the "ledger" holds now.
   let vouchers: CashVoucher[] = [];
+  // The vouchers of the ledger before the split voucher tests replaced them.
+  let base: CashVoucher[] = [];
   const users: Record<(typeof MEMBER_ROLES)[number] | 'outsider', string> = { owner: '', admin: '', member: '', viewer: '', outsider: '' };
   let orgId = '';
   let otherOrgId = '';
@@ -261,9 +263,12 @@ suite('MISA AMIS push (#3902)', () => {
     expect(again).toEqual({ queued: 0, requeued: 0, already: 2, revised: 0 });
     const fresh = ids(4);
     vouchers = [...vouchers, ...fresh.map((id, i) => cash(id, `PC0010${i}`))];
-    const [a, b] = await Promise.all([push('owner'), push('admin')]);
+    base = vouchers;
+    // A second set of choices (another end of the period), so the worker takes these rows as a batch of their own.
+    const [a, b] = await Promise.all([push('owner', { to: '2026-10-30' }), push('admin', { to: '2026-10-30' })]);
     expect(a.queued + b.queued).toBe(4);
-    expect(a.already + b.already).toBe(2 + 2 * 4 - 4);
+    // Each press sees six parts (the two queued before and the four new): twelve in all, four of them queued by one press and the rest found.
+    expect(a.already + b.already).toBe(8);
     const all = await pushRows();
     expect(all).toHaveLength(6);
     expect(new Set(all.map((r) => r.org_refid)).size).toBe(6);
@@ -331,31 +336,27 @@ suite('MISA AMIS push (#3902)', () => {
   });
 
   it('a batch with no answer for too long is ambiguous, is never sent again, and leaves only with MISA\'s own answer', async () => {
-    const queued = await rows<{ org_refid: string }>("SELECT org_refid FROM crove_finance.misa_amis_push WHERE connection_id = $1 AND state = 'queued'", [connectionId]);
-    // Take whatever is queued into a sending batch and let it age past the in-flight time.
-    let begun = await begin({ branchKnown: true, checked: true });
-    const batches: string[] = [];
-    while (begun.action === 'send') {
-      batches.push(...begun.rows.map((r) => r.orgRefid));
-      begun = await begin({ branchKnown: true, checked: true });
-    }
-    expect(batches.length).toBe(queued.length);
+    // The batch of the other choices is still `sending` from the previous test: nothing answered for it. Let it age past the in-flight time.
+    const sending = (await rows<{ org_refid: string }>("SELECT org_refid FROM crove_finance.misa_amis_push WHERE connection_id = $1 AND state = 'sending' ORDER BY org_refid", [connectionId])).map((r) => r.org_refid);
+    expect(sending).toHaveLength(4);
     await rows("UPDATE crove_finance.misa_amis_push SET updated_at = pg_catalog.now() - interval '10 minutes' WHERE connection_id = $1 AND state = 'sending'", [connectionId]);
     const check = await begin({ branchKnown: true, checked: false });
     if (check.action !== 'check') throw new Error(`expected a check, got ${check.action}`);
-    expect(check.rows.some((r) => r.state === 'ambiguous')).toBe(true);
-    for (const id of batches) expect(await stateOf(id)).toBe('ambiguous');
+    expect(check.rows.filter((r) => r.state === 'ambiguous').map((r) => r.orgRefid).sort()).toEqual(sending);
+    // The sent rows of the first batch are asked about too.
+    expect(check.rows.filter((r) => r.state === 'sent').length).toBe(4);
+    for (const id of sending) expect(await stateOf(id)).toBe('ambiguous');
     // Nothing is queued any more, and the ambiguous rows are not taken for a send.
     const after = await begin({ branchKnown: true, checked: true });
     expect(after).toEqual({ action: 'none', reason: 'nothing', waiting: true });
     // MISA's answer moves them: refused or accepted. A person cannot, and nothing else can.
-    const [one, two] = batches;
+    const [one, two, three] = sending as [string, string, string];
     expect(await record({ rows: [{ orgRefid: one, from: 'ambiguous', to: 'accepted', reason: null }, { orgRefid: two, from: 'ambiguous', to: 'refused', reason: 'Số chứng từ đã tồn tại' }], call: null })).toEqual({ applied: 2, ignored: 0 });
-    expect(await stateOf(one as string)).toBe('accepted');
-    expect(await stateOf(two as string)).toBe('refused');
+    expect(await stateOf(one)).toBe('accepted');
+    expect(await stateOf(two)).toBe('refused');
     // The graph is closed on the worker's side too: ambiguous cannot go back to queued.
-    await expect(record({ rows: [{ orgRefid: batches[2], from: 'ambiguous', to: 'queued', reason: null }], call: null })).rejects.toMatchObject({ status: 422 });
-    await expect(rows("UPDATE crove_finance.misa_amis_push SET state = 'queued' WHERE org_refid = $1", [batches[2]])).resolves.toBeDefined();
+    await expect(record({ rows: [{ orgRefid: three, from: 'ambiguous', to: 'queued', reason: null }], call: null })).rejects.toMatchObject({ status: 422 });
+    expect(await stateOf(three)).toBe('ambiguous');
   });
 
   it('after three days without MISA\'s answer an owner or admin says what they found in AMIS: "in AMIS" is sent (no call), "not in AMIS" is failed and needs a new confirmed push', async () => {
@@ -378,13 +379,15 @@ suite('MISA AMIS push (#3902)', () => {
   });
 
   it('a person sends a refused row again only through a new confirmed push: one more attempt, the new digest, the reason cleared', async () => {
+    vouchers = base;
     const refused = (await pushRows()).find((r) => r.state === 'refused');
     if (!refused) throw new Error('expected a refused row');
     const source = (await rows<{ source_id: string }>('SELECT source_id FROM crove_finance.misa_amis_push WHERE org_refid = $1', [refused.org_refid]))[0]?.source_id as string;
     // The voucher was corrected in Ludy meanwhile: another amount, so another digest.
     vouchers = vouchers.map((v) => (v.sourceId === source ? { ...v, lines: [{ lineNo: 1, account: '331', amount: '1650002', memo: null }] } : v));
+    // The row a person found "not in AMIS" (failed) goes back too, with the same digest: both are one more attempt.
     const result = await push('owner');
-    expect(result.requeued).toBe(1);
+    expect(result.requeued).toBe(2);
     const row = (await pushRows()).find((r) => r.org_refid === refused.org_refid);
     expect(row).toMatchObject({ state: 'queued', attempts: 2, reason: null, sent_at: null, answered_at: null });
     expect(row?.payload_digest).not.toBe(refused.payload_digest);
@@ -442,10 +445,16 @@ suite('MISA AMIS push (#3902)', () => {
     expect(await tenant('outsider', otherOrgId, async (c) => (await c.query("UPDATE crove_finance.misa_amis_push SET reason = 'x' WHERE org_refid = $1", [queued])).rowCount)).toBe(0);
   });
 
-  it('a disconnect takes the connection\'s rows with it (the audit trail and the ledger keep the history)', async () => {
+  it('a connection is not removed while vouchers MISA took have no result; once they have, the removal takes the rows with it (the audit trail and the ledger keep the history)', async () => {
     const before = (await pushRows()).length;
     expect(before).toBeGreaterThan(0);
-    await rows('DELETE FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]);
+    // The channel connection is revoked first (as the API does), then the row is removed by the command: refused while a row is sending, sent or ambiguous.
+    await rows("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1", [orgId]);
+    expect((await pushRows()).some((r) => ['sending', 'sent', 'ambiguous'].includes(r.state))).toBe(true);
+    await expect(api.execute('finance.misa_amis_connection.unlink', { id: connectionId }, asUser('owner'))).rejects.toMatchObject({ code: 'MISA_AMIS_PUSH_PENDING' });
+    expect(await pushRows()).toHaveLength(before);
+    await rows("UPDATE crove_finance.misa_amis_push SET state = 'failed', reason = 'x' WHERE connection_id = $1 AND state IN ('sending', 'sent', 'ambiguous')", [connectionId]);
+    expect(await api.execute('finance.misa_amis_connection.unlink', { id: connectionId }, asUser('owner'))).toEqual({ removed: true });
     expect(await pushRows()).toEqual([]);
     expect((await rows('SELECT 1 FROM crove_kernel.external_call WHERE org_id = $1', [orgId])).length).toBeGreaterThan(0);
     expect((await rows('SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2', [orgId, 'finance.misa_amis.push'])).length).toBeGreaterThan(0);

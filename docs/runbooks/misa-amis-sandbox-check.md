@@ -29,7 +29,10 @@ Every item is **unconfirmed** today. For each, the result is written on #3902 (w
 9. **What a second `save` does under one `org_refid`.** The push never sends one: a row that is queued, sending, sent, accepted or `ambiguous` is not sent again by anything. If AMIS answers "idempotent" (the document implies it), a later change may let a person resend an `ambiguous` row; if it makes a second request, the rule stays as it is. Also: whether a voucher revised after AMIS took it must be deleted and sent again (the push counts it as `revised` and does nothing).
 10. **That AMIS creates a request and not the voucher.** The PO's approval of R2 (not R3) for the push rests on AMIS turning a "đề nghị sinh chứng từ" into a voucher only when a person in AMIS does it. If AMIS creates the voucher directly, the decision is reopened before the gate opens.
 11. **The 20 character voucher number.** MISA's limit on `org_refno` as the document says; the push blocks a longer number, including after the `/N` of a split voucher, and never cuts one.
-12. **The callback** (S4, [#3903](https://github.com/DOS/Ludy/issues/3903)) is a separate check once that slice exists: `app_id` against the ClientID, the signature, the reply AMIS expects.
+12. **A refused `save`.** When MISA answers `Success: false` with an error code to a whole batch, the push takes it as "nothing was created" and marks every row `refused` (with the text Ludy has for that code). Check that a refusal never leaves some vouchers of the batch created.
+13. **A refused row sent again.** A person's new confirmed push sends a `refused` row again under the same `org_refid`; check that MISA takes it (a corrected voucher) and does not answer that the id exists.
+14. **Results.** `get_call_back_detail_error` returns one entry per `org_refid` (if it returns several, the worker keeps the last), and an entry's `success` is final.
+15. **The callback** (S4, [#3903](https://github.com/DOS/Ludy/issues/3903)) is a separate check once that slice exists: `app_id` against the ClientID, the signature, the reply AMIS expects.
 
 ## Turning the push on, and off
 

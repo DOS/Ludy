@@ -99,6 +99,7 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
   let branchKnown = false;
   let branchId: string | null = null;
   let waiting = false;
+  const built = new Map<string, Map<string, AmisPartRow>>();
 
   for (let step = 0; step < MAX_STEPS * 2; step++) {
     const begun = await deps.runtime.execute<MisaAmisPushBegin>('finance.misa_amis.push_begin', { connectionId: job.connectionId, branchKnown, checked }, options);
@@ -154,9 +155,25 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
     if (branchId === null) {
       for (const row of begun.rows) moves.push({ orgRefid: row.orgRefid, from: 'sending', to: 'failed', reason: 'BRANCH_UNKNOWN' });
     } else {
-      // Rebuilt from the source with the real branch; a part that is gone, blocked or different from what the person approved is `failed` and never sent.
-      const { entries } = await loadAmisEntries(query, ask, amisContextOf(ask, branchId), MISA_AMIS_PREVIEW_LIMIT + 1);
-      const parts = new Map(amisPartRows(entries).map((p) => [p.orgRefid, p]));
+      // Rebuilt from the source with the real branch (once per set of choices in a run: a long queue of one batch does not reload the period for every 50 vouchers); a part that is gone, blocked or different from
+      // what the person approved is `failed` and never sent.
+      const cacheKey = JSON.stringify(begun.params);
+      let parts = built.get(cacheKey);
+      if (!parts) {
+        try {
+          const { entries } = await loadAmisEntries(query, ask, amisContextOf(ask, branchId), MISA_AMIS_PREVIEW_LIMIT + 1);
+          parts = new Map(amisPartRows(entries).map((p) => [p.orgRefid, p]));
+          built.set(cacheKey, parts);
+        } catch (error) {
+          // The batch could not be built: nothing was sent, so the rows go back to the queue and the run asks to be tried again.
+          console.warn(`[misa-amis] push ${job.connectionId.slice(0, 8)}: batch not built (${error instanceof Error ? error.name : 'error'})`);
+          await record(
+            begun.rows.map((row) => ({ orgRefid: row.orgRefid, from: 'sending' as const, to: 'queued' as const, reason: 'BUILD_FAILED' })),
+            { key: begun.callKey, end: { state: 'failed', kind: 'transient', code: 'BUILD_FAILED' } },
+          );
+          return { state: 'unreachable', waiting: true };
+        }
+      }
       for (const row of begun.rows) {
         const part = parts.get(row.orgRefid);
         if (!part || part.digest !== row.digest || part.voucherType !== begun.voucherType || !isOrgRefId(part.orgRefid)) moves.push({ orgRefid: row.orgRefid, from: 'sending', to: 'failed', reason: 'STALE' });
@@ -182,6 +199,13 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
           await record(moves, { key: begun.callKey, end });
           tally.failed += moves.filter((m) => m.to === 'failed').length;
           return { state: 'credentials', waiting: false };
+        }
+        if (error instanceof AmisError && error.kind === 'unreachable') {
+          // The host could not be reached, so nothing was sent (the adapter's own contract): the rows go back to the queue and the run asks to be tried again.
+          end = { state: 'failed', kind: 'transient', code: 'UNREACHABLE' };
+          for (const orgRefid of sentRows) moves.push({ orgRefid, from: 'sending', to: 'queued', reason: 'UNREACHABLE' });
+          await record(moves, { key: begun.callKey, end });
+          return { state: 'unreachable', waiting: true };
         }
         if (error instanceof AmisError && error.kind === 'refused') {
           // MISA understood the request and refused all of it: nothing was created.

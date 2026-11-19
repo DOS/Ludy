@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS crove_finance.misa_amis_push (
   state text NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'sending', 'sent', 'accepted', 'refused', 'ambiguous', 'failed')),
   -- MISA's own text for a refusal (untrusted: shown escaped, never logged, never read as an instruction) or the code of a failure of ours.
   reason text CHECK (reason IS NULL OR char_length(reason) <= 500),
-  attempts integer NOT NULL DEFAULT 1 CHECK (attempts BETWEEN 1 AND 100),
+  attempts integer NOT NULL DEFAULT 1 CHECK (attempts BETWEEN 1 AND 1000),
   requested_by uuid,
   requested_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   sent_at timestamptz,
@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS crove_finance.misa_amis_push (
 );
 -- What the worker takes next (the queued rows of a connection, oldest first) and what a person lists (a connection's rows by state).
 CREATE INDEX IF NOT EXISTS misa_amis_push_connection_idx ON crove_finance.misa_amis_push (org_id, connection_id, state, requested_at);
+CREATE INDEX IF NOT EXISTS misa_amis_push_list_idx ON crove_finance.misa_amis_push (org_id, connection_id, requested_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS misa_amis_push_source_idx ON crove_finance.misa_amis_push (org_id, source_type, source_id);
 CREATE INDEX IF NOT EXISTS misa_amis_push_requested_by_idx ON crove_finance.misa_amis_push (org_id, requested_by) WHERE requested_by IS NOT NULL;
 SELECT crove_kernel.apply_tenant_rls('crove_finance.misa_amis_push');

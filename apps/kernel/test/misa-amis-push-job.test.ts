@@ -218,7 +218,7 @@ describe('the MISA AMIS push job: how a send ends', () => {
   };
 
   it('a lost answer leaves the rows `ambiguous` and the call ambiguous, and nothing is sent again in this run', async () => {
-    for (const lost of [new AmisError('timeout'), new AmisError('lost_answer'), new AmisError('unreachable')]) {
+    for (const lost of [new AmisError('timeout'), new AmisError('lost_answer')]) {
       const { h, amis } = await setup((path) => {
         if (path === '/amiskt/v1/save') throw lost;
         return undefined;
@@ -228,6 +228,40 @@ describe('the MISA AMIS push job: how a send ends', () => {
       expect(records(h)[0]?.rows).toEqual([{ orgRefid: SOURCE, from: 'sending', to: 'ambiguous', reason: 'LOST_ANSWER' }]);
       expect(records(h)[0]?.call?.end).toMatchObject({ state: 'ambiguous' });
     }
+  });
+
+  it('an unreachable AMIS (nothing was sent) puts the rows back in the queue and asks to be tried again, and the call is closed as never made', async () => {
+    const { h, amis } = await setup((path) => {
+      if (path === '/amiskt/v1/save') throw new AmisError('unreachable');
+      return undefined;
+    });
+    expect(await run(h, amis)).toEqual({ state: 'unreachable', waiting: true });
+    expect(records(h)).toEqual([
+      { connectionId: CONNECTION, rows: [{ orgRefid: SOURCE, from: 'sending', to: 'queued', reason: 'UNREACHABLE' }], call: { key: 'misa_amis:save:test', end: { state: 'failed', kind: 'transient', code: 'UNREACHABLE' } } },
+    ]);
+  });
+
+  it('a batch that cannot be built (a failed read of the source) goes back to the queue, nothing is sent, and the run asks to be tried again', async () => {
+    const rows = await approved([cash()]);
+    const h = harness({ script: [{ action: 'need_branch' }, send(rows)] });
+    const amis = fakeAmis();
+    const failingRuntime = { ...h.runtime, query: async (name: string, input: unknown) => {
+      if (name === 'finance.vouchers.cash') throw new Error('database down');
+      return (h.runtime.query as (n: string, i: unknown) => Promise<unknown>)(name, input);
+    } } as unknown as Runtime;
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(await runMisaAmisPush({ runtime: failingRuntime, broker: h.broker, client: createAmisClient({ clientId: CLIENT_ID, transport: amis.transport }) }, { orgId: ORG, connectionId: CONNECTION })).toEqual({ state: 'unreachable', waiting: true });
+    expect(amis.calls.some((c) => c.path === '/amiskt/v1/save')).toBe(false);
+    expect(records(h)[0]?.rows).toEqual([{ orgRefid: SOURCE, from: 'sending', to: 'queued', reason: 'BUILD_FAILED' }]);
+  });
+
+  it('reads the source once for a long queue of one set of choices', async () => {
+    const rows = await approved([cash()]);
+    const h = harness({ script: [{ action: 'need_branch' }, send(rows), send(rows)] });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await run(h, fakeAmis());
+    expect(h.queries.filter((q) => q.name === 'finance.vouchers.cash')).toHaveLength(1);
   });
 
   it('a 5xx (it may have been processed) is ambiguous too, never a refusal', async () => {

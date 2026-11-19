@@ -93,6 +93,16 @@ export const misaAmisConnectionUnlink = defineCommand({
       .where('ch.status', '<>', 'revoked')
       .executeTakeFirst();
     if (live) throw new DomainError('MISA_AMIS_CONNECTION_LIVE', 409, 'Hãy ngắt kết nối MISA AMIS trước khi xóa dòng này');
+    // Vouchers MISA took or may have taken stay on record while they await an answer: deleting the connection would delete the record, and a reconnect could send the same voucher again.
+    const pending = await ctx.trx
+      .selectFrom('crove_finance.misa_amis_push')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('connection_id', '=', input.id)
+      .where('state', 'in', ['sending', 'sent', 'ambiguous'])
+      .limit(1)
+      .executeTakeFirst();
+    if (pending) throw new DomainError('MISA_AMIS_PUSH_PENDING', 409, 'Còn chứng từ đã gửi sang MISA AMIS chưa có kết quả; hãy xử lý xong trước khi xóa kết nối');
     const gone = await ctx.trx.deleteFrom('crove_finance.misa_amis_connection').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
     const removed = Number(gone.numDeletedRows) > 0;
     ctx.audit({ removed });

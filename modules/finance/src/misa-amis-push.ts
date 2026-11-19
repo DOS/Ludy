@@ -35,6 +35,8 @@ export const PUSH_IN_FLIGHT_SECONDS = 120;
 const CHECK_ROWS_MAX = 1000;
 // How long MISA is asked for the result of a row it took (or whose answer was lost) before the row is left as it is for a person to read.
 export const PUSH_RESULT_WINDOW_HOURS = 24;
+// A queued row older than this is `failed` (EXPIRED): the person's confirmation does not last for ever.
+export const PUSH_QUEUED_EXPIRY_DAYS = 7;
 // MISA's text for a refusal, capped like the column.
 const REASON_MAX = 500;
 
@@ -205,7 +207,7 @@ export const misaAmisPush = defineCommand({
         }
       }
     }
-    // Always: a press that queued nothing new still nudges the job (rows left `queued` after a refused connection are sent once the connection works again; a run with nothing to do ends at once).
+    // Always: a press that queued nothing new still nudges the job (rows left `queued` after a refused connection are sent once the connection works again, within a week; a run with nothing to do ends at once).
     await ctx.emit(MISA_AMIS_PUSH_REQUESTED, { connection_id: connection.id });
     ctx.audit({ connectionId: connection.id, kind: ask.kind, queued: result.queued, requeued: result.requeued, already: result.already, revised: result.revised });
     return result;
@@ -285,6 +287,17 @@ export const misaAmisPushBegin = defineCommand({
       .where('updated_at', '<', new Date(ctx.now.getTime() - PUSH_IN_FLIGHT_SECONDS * 1000))
       .execute();
 
+    // A confirmation does not wait forever: a row still queued a week later (the worker off, the connection unusable) is `failed` as EXPIRED and needs a new confirmed push, so turning the push on later never
+    // sends an old approval.
+    await ctx.trx
+      .updateTable(table)
+      .set({ state: 'failed', reason: 'EXPIRED', updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('connection_id', '=', input.connectionId)
+      .where('state', '=', 'queued')
+      .where('requested_at', '<', new Date(ctx.now.getTime() - PUSH_QUEUED_EXPIRY_DAYS * 24 * 3600 * 1000))
+      .execute();
+
     // 1. Rows MISA took, or whose answer was lost (a batch begun and never answered is `ambiguous` above): MISA is asked for their results once per run, before anything else is sent.
     if (!input.checked) {
       const checkable = await ctx.trx
@@ -319,7 +332,7 @@ export const misaAmisPushBegin = defineCommand({
       if (!input.branchKnown) return { action: 'need_branch' };
       const batch = await ctx.trx
         .selectFrom(table)
-        .select(['id', 'org_refid', 'payload_digest', 'source_id', 'part', 'attempts', 'params'])
+        .select(['id', 'org_refid', 'payload_digest', 'source_id', 'part', 'attempts', 'params', 'updated_at'])
         .where('org_id', '=', ctx.orgId)
         .where('connection_id', '=', input.connectionId)
         .where('state', '=', 'queued')
@@ -331,8 +344,9 @@ export const misaAmisPushBegin = defineCommand({
         .limit(AMIS_SAVE_BATCH_MAX)
         .forUpdate()
         .execute();
-      // The key names the rows and their attempt, so the same rows sent again after a person's retry are a new call, and a replay of this begin finds the same one.
-      const callKey = `misa_amis:save:${input.connectionId}:${sha256(batch.map((r) => `${r.org_refid}:${r.attempts}`).sort().join(','))}`;
+      // The key names the rows, their attempt and when they were last queued, so rows put back in the queue (a person's retry, or a call that never left Ludy: a refused connection, an unreachable AMIS) are a new
+      // call, while a call that ended (a finished call never changes) is never made again for the same queueing.
+      const callKey = `misa_amis:save:${input.connectionId}:${sha256(batch.map((r) => `${r.org_refid}:${r.attempts}:${new Date(r.updated_at).getTime()}`).sort().join(','))}`;
       const started = await startCall(ctx, callKey);
       if (started === 'closed') {
         // The same rows and attempt were begun before and that call has ended: never sent again. The rows are `failed` (a person may confirm a new push, a new attempt, a new call).
