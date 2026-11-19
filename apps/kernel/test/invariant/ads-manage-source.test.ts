@@ -11,6 +11,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { suggestionFor } from '@crove/mod-ads';
+import { activeAdPlatformNamedImports, escapeRe, pkgImportMatches, resolveAdPlatformPackages, stripComments } from './fixtures/ad-platform-imports.ts';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const SKIP = new Set(['node_modules', 'dist', 'test', 'tests', '.git', '.turbo', 'coverage']);
@@ -27,12 +28,8 @@ function sources(dir: string, out: string[] = []): string[] {
 
 const ALL = ['apps', 'packages', 'modules', 'tools'].filter((d) => existsSync(join(ROOT, d))).flatMap((d) => sources(join(ROOT, d)));
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
-const adPlatformPkg = (JSON.parse(read('packages/ad-platform/package.json')) as { name: string }).name;
-if (adPlatformPkg !== '@crove/ad-platform' && adPlatformPkg !== '@ludy/ad-platform') {
-  throw new Error(`Unexpected ad-platform package name: ${adPlatformPkg}`);
-}
-const otherAdPlatformPkg = adPlatformPkg === '@crove/ad-platform' ? '@ludy/ad-platform' : '@crove/ad-platform';
-const adPlatformRe = adPlatformPkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const { activePkg: adPlatformPkg, inactivePkg: otherAdPlatformPkg } = resolveAdPlatformPackages(ROOT);
+const adPlatformRe = escapeRe(adPlatformPkg);
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
 const code = (path: string) => read(path).split('\n').filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*')).join('\n');
@@ -94,8 +91,14 @@ describe('what may change a running ad at the platform (#3835, W4)', () => {
     const job = code('apps/kernel/src/ads-manage.ts');
     expect(job).not.toMatch(/LaunchWriter|AdPauser|AdRevoker|AdActivator|AdStateReader|\.setStatus\(|\.activate\(|createCampaign|createAdSet|createCreative|createAd\(|revokeToken|findByTag|\.verify\(/);
     // The platform package's names the job imports are the error and the two types of the view.
-    expect(job).not.toContain(otherAdPlatformPkg);
-    expect(job).toMatch(new RegExp(`import \\{ AdPlatformError, type AdManager, type ManagedRead \\} from '${adPlatformRe}';`));
+    const rawManage = read('apps/kernel/src/ads-manage.ts');
+    expect(pkgImportMatches(rawManage, otherAdPlatformPkg)).toEqual([]);
+    expect(activeAdPlatformNamedImports(rawManage, adPlatformPkg, otherAdPlatformPkg).sort()).toEqual(['AdManager', 'AdPlatformError', 'ManagedRead']);
+    expect(stripComments(rawManage)).toMatch(new RegExp(`import \\{ AdPlatformError, type AdManager, type ManagedRead \\} from '${adPlatformRe}';`));
+    const commentOnly = `// migrating ${adPlatformPkg} -> ${otherAdPlatformPkg}\n/* from '${otherAdPlatformPkg}' */\nimport { AdPlatformError, type AdManager, type ManagedRead } from '${adPlatformPkg}';`;
+    expect(activeAdPlatformNamedImports(commentOnly, adPlatformPkg, otherAdPlatformPkg).sort()).toEqual(['AdManager', 'AdPlatformError', 'ManagedRead']);
+    const mixed = `import { AdPlatformError } from '${adPlatformPkg}';\nimport { AdWriter } from '${otherAdPlatformPkg}';`;
+    expect(() => activeAdPlatformNamedImports(mixed, adPlatformPkg, otherAdPlatformPkg)).toThrow(/Unexpected mixed ad-platform import/);
   });
 
   it('bounds the time between begin and the platform call, inside the wait of the wind-down: a begin that waited too long is never called', () => {
