@@ -473,10 +473,8 @@ suite('private notes on PostgreSQL (#1671, ADR-0037)', () => {
 
     await admin(async (c) => {
       const feat = await aiRunFeature(c);
-      const featCols = Object.keys(feat);
-      const featSqlCols = featCols.length > 0 ? `, ${featCols.join(', ')}` : '';
-      const featSqlVals = featCols.map((k) => `'${String(feat[k as keyof typeof feat])}'`).join(', ');
-      const featValsClause = featCols.length > 0 ? `, ${featSqlVals}` : '';
+      const featSqlCols = feat.cols;
+      const featValsClause = feat.vals;
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
@@ -511,6 +509,10 @@ suite('private notes on PostgreSQL (#1671, ADR-0037)', () => {
       );
     });
 
+    // The note search of notes.note.search: a note by its own words or by one of its attachments' (#3561).
+    const noteSearchSql = (q: string) =>
+      `SELECT n.id FROM crove_notes.note n WHERE n.search @@ crove_kernel.search_query('${q}')
+          OR EXISTS (SELECT 1 FROM crove_notes.attachment a WHERE a.org_id = n.org_id AND a.note_id = n.id AND a.search @@ crove_kernel.search_query('${q}'))`;
     const memberVyOther: Actor = {
       name: 'Member Vy of another member',
       url: () => workerUrl,
@@ -529,12 +531,15 @@ suite('private notes on PostgreSQL (#1671, ADR-0037)', () => {
       // Author reads both attachments and finds the private note via unaccented attachment extracted_text search.
       const authorSeen = await run(author, async (c) => ({
         ids: (await c.query<{ id: string }>('SELECT id FROM crove_notes.attachment ORDER BY id')).rows.map((r) => r.id),
-        bySearch: (await c.query<{ id: string }>(`SELECT id FROM crove_notes.note WHERE search @@ crove_kernel.search_query('ngan quy noi bo')`)).rows.map((r) => r.id),
-        byFilename: (await c.query<{ id: string }>(`SELECT id FROM crove_notes.note WHERE search @@ crove_kernel.search_query('hop dong rieng')`)).rows.map((r) => r.id),
+        bySearch: (await c.query<{ id: string }>(noteSearchSql('ngan quy noi bo'))).rows.map((r) => r.id),
+        byFilename: (await c.query<{ id: string }>(noteSearchSql('hop dong rieng'))).rows.map((r) => r.id),
+        // The note's own vector holds none of its attachments' words, so a Member Vy that reads the note learns none of them.
+        byNoteVector: (await c.query(`SELECT id FROM crove_notes.note WHERE search @@ crove_kernel.search_query('ngan quy noi bo')`)).rowCount,
       }));
       expect(authorSeen.ids).toEqual([privAtt, sharedAtt].sort());
       expect(authorSeen.bySearch).toEqual([notes.private]);
       expect(authorSeen.byFilename).toEqual([notes.private]);
+      expect(authorSeen.byNoteVector).toBe(0);
 
       // Every non-author actor (and both Member Vy contexts) cannot read, probe by sha256, search, update or delete the private attachment.
       const probes: Array<{ actor: Actor; readsSharedAttachment: boolean; canDeleteShared: boolean }> = [
@@ -552,8 +557,8 @@ suite('private notes on PostgreSQL (#1671, ADR-0037)', () => {
           ids: (await c.query<{ id: string }>('SELECT id FROM crove_notes.attachment')).rows.map((r) => r.id),
           byId: (await c.query('SELECT id FROM crove_notes.attachment WHERE id = $1', [privAtt])).rowCount,
           bySha: (await c.query('SELECT id FROM crove_notes.attachment WHERE sha256 = $1', [privSha])).rowCount,
-          byExtractedSearch: (await c.query(`SELECT id FROM crove_notes.note WHERE search @@ crove_kernel.search_query('ngan quy noi bo')`)).rowCount,
-          byFilenameSearch: (await c.query(`SELECT id FROM crove_notes.note WHERE search @@ crove_kernel.search_query('hop dong rieng')`)).rowCount,
+          byExtractedSearch: (await c.query(noteSearchSql('ngan quy noi bo'))).rowCount,
+          byFilenameSearch: (await c.query(noteSearchSql('hop dong rieng'))).rowCount,
         }));
         expect(seen.byId, `${actor.name} reading private attachment by id`).toBe(0);
         expect(seen.bySha, `${actor.name} probing private attachment by sha256`).toBe(0);

@@ -3323,6 +3323,7 @@ export interface NotesAttachmentTable {
   extracted_text: ColumnType<string | null, string | null, NotGranted>;
   extract_status: ColumnType<string, string | undefined, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  search: ColumnType<string, string | undefined, NotGranted>;
 }
 
 /** crove_notes.link */

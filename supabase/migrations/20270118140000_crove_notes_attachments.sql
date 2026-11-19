@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Notes v2 E2 (#3561, docs/plan/notes-v2.md V2-5, owner decision A3, ADR-0037):
--- isolated note attachments (<= 25 MiB), full-text search folding over attachment filenames
--- and extracted text, narrow worker-only extraction definers, doomed blob queue for all
+-- isolated note attachments (<= 25 MiB), a full-text search vector of their own over file names
+-- and extracted text (matched with the parent note's by the note search), narrow worker-only extraction definers, doomed blob queue for all
 -- deletion paths, and PDPL private-item matching/notice/erasure coverage.
 -- Never touches or references crove_kernel.file.
 SET LOCAL lock_timeout = '2s';
@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS crove_notes.attachment (
   extracted_text text,
   extract_status text NOT NULL DEFAULT 'pending',
   created_at     timestamptz NOT NULL DEFAULT now(),
+  -- The attachment's own search vector (file name and extracted text), written by its trigger. Kept here, not folded into
+  -- crove_notes.note.search, so it stays behind this table's policy: a member's Vy reads their notes but none of their attachments.
+  search         tsvector NOT NULL DEFAULT ''::tsvector,
   PRIMARY KEY (org_id, id),
   CONSTRAINT attachment_org_fk
     FOREIGN KEY (org_id) REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
@@ -197,7 +200,8 @@ CREATE OR REPLACE FUNCTION crove_notes.attachment_blob_claim(p_limit integer)
 RETURNS TABLE (blob_key text)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
-  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
+  -- The worker login's own sweep, outside any org, user or agent context (a Vy run on the worker login is refused).
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') OR crove_kernel.ctx_org_id() IS NOT NULL THEN
     RAISE EXCEPTION 'NOTES_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
   RETURN QUERY
@@ -222,7 +226,7 @@ CREATE OR REPLACE FUNCTION crove_notes.attachment_blob_done(p_keys text[])
 RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
-  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') OR crove_kernel.ctx_org_id() IS NOT NULL THEN
     RAISE EXCEPTION 'NOTES_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
   DELETE FROM crove_notes.attachment_blob_doomed d WHERE d.storage_key = ANY (p_keys);
@@ -234,116 +238,39 @@ GRANT EXECUTE ON FUNCTION crove_notes.attachment_blob_claim(integer), crove_note
   TO crove_worker;
 
 -- ---------------------------------------------------------------------------
--- Full-text search folding into crove_notes.note.search (title, tags, body + attachments)
+-- Full-text search of an attachment (file name and extracted text). The note search matches a note by its own vector
+-- OR by one of its attachments' (modules/notes/src/notes.ts), the attachment read through this table's policy. The note's
+-- own search vector and trigger are untouched, so editing a note never drops what its attachments add.
 -- ---------------------------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION crove_notes.note_search_compose(
-  p_org_id uuid,
-  p_note_id uuid,
-  p_title text,
-  p_tags text[],
-  p_body text
-) RETURNS tsvector
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+CREATE OR REPLACE FUNCTION crove_notes.attachment_search() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
-  v_base tsvector;
-  v_names text;
-  v_texts text;
-  v_attach tsvector;
+  v_names text := pg_catalog.left(COALESCE(NEW.filename, ''), 1024);
+  v_texts text := pg_catalog.left(COALESCE(NEW.extracted_text, ''), 200000);
 BEGIN
-  v_base :=
-    pg_catalog.setweight(crove_kernel.search_vector(COALESCE(p_title, '')), 'A')
-    || pg_catalog.setweight(
-      crove_kernel.search_vector(pg_catalog.array_to_string(COALESCE(p_tags, '{}'::text[]), ' ') || ' ' || COALESCE(p_body, '')),
-      'B'
-    );
-
-  IF p_org_id IS NULL OR p_note_id IS NULL THEN
-    RETURN v_base;
-  END IF;
-
-  SELECT COALESCE(pg_catalog.string_agg(a.filename, ' ' ORDER BY a.created_at, a.id), ''),
-         pg_catalog.left(
-           COALESCE(pg_catalog.string_agg(pg_catalog.left(COALESCE(a.extracted_text, ''), 65536), ' ' ORDER BY a.created_at, a.id), ''),
-           200000
-         )
-    INTO v_names, v_texts
-    FROM crove_notes.attachment a
-   WHERE a.org_id = p_org_id AND a.note_id = p_note_id;
-
-  IF v_names = '' AND v_texts = '' THEN
-    RETURN v_base;
-  END IF;
-
   BEGIN
-    v_attach :=
-      pg_catalog.setweight(crove_kernel.search_vector(pg_catalog.left(v_names, 16384)), 'C')
+    NEW.search := pg_catalog.setweight(crove_kernel.search_vector(v_names), 'C')
       || pg_catalog.setweight(pg_catalog.strip(crove_kernel.search_vector(v_texts)), 'D');
-    RETURN v_base || v_attach;
   EXCEPTION WHEN program_limit_exceeded THEN
     BEGIN
-      RETURN pg_catalog.strip(v_base)
-        || pg_catalog.setweight(pg_catalog.strip(crove_kernel.search_vector(pg_catalog.left(v_names, 8192))), 'C')
+      NEW.search := pg_catalog.setweight(crove_kernel.search_vector(v_names), 'C')
         || pg_catalog.setweight(pg_catalog.strip(crove_kernel.search_vector(pg_catalog.left(v_texts, 32768))), 'D');
     EXCEPTION WHEN program_limit_exceeded THEN
-      RETURN pg_catalog.strip(v_base);
+      NEW.search := pg_catalog.setweight(crove_kernel.search_vector(v_names), 'C');
     END;
   END;
-END $$;
-REVOKE ALL ON FUNCTION crove_notes.note_search_compose(uuid, uuid, text, text[], text)
-  FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-
-CREATE OR REPLACE FUNCTION crove_notes.note_search() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-BEGIN
-  IF TG_OP = 'INSERT' THEN
-    NEW.search := crove_notes.note_search_compose(NULL, NULL, NEW.title, NEW.tags, NEW.body);
-  ELSE
-    NEW.search := crove_notes.note_search_compose(NEW.org_id, NEW.id, NEW.title, NEW.tags, NEW.body);
-  END IF;
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION crove_notes.note_search()
+REVOKE ALL ON FUNCTION crove_notes.attachment_search()
   FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
-DROP TRIGGER IF EXISTS b_search ON crove_notes.note;
-CREATE TRIGGER b_search BEFORE INSERT OR UPDATE OF title, body, tags ON crove_notes.note
-  FOR EACH ROW EXECUTE FUNCTION crove_notes.note_search();
+DROP TRIGGER IF EXISTS b_search ON crove_notes.attachment;
+CREATE TRIGGER b_search BEFORE INSERT OR UPDATE OF filename, extracted_text ON crove_notes.attachment
+  FOR EACH ROW EXECUTE FUNCTION crove_notes.attachment_search();
 
-CREATE OR REPLACE FUNCTION crove_notes.attachment_sync_note_search() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-DECLARE
-  v_org uuid;
-  v_note uuid;
-BEGIN
-  IF TG_OP = 'DELETE' THEN
-    v_org := OLD.org_id;
-    v_note := OLD.note_id;
-  ELSE
-    v_org := NEW.org_id;
-    v_note := NEW.note_id;
-  END IF;
-
-  -- Only updates when the parent note still exists (an ON DELETE CASCADE from note deletion finds 0 rows here).
-  UPDATE crove_notes.note n
-     SET search = crove_notes.note_search_compose(n.org_id, n.id, n.title, n.tags, n.body)
-   WHERE n.org_id = v_org AND n.id = v_note;
-
-  IF TG_OP = 'DELETE' THEN
-    RETURN OLD;
-  END IF;
-  RETURN NEW;
-END $$;
-REVOKE ALL ON FUNCTION crove_notes.attachment_sync_note_search()
-  FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-
-DROP TRIGGER IF EXISTS attachment_sync_note_search ON crove_notes.attachment;
-CREATE TRIGGER attachment_sync_note_search AFTER INSERT OR UPDATE OF filename, extracted_text ON crove_notes.attachment
-  FOR EACH ROW EXECUTE FUNCTION crove_notes.attachment_sync_note_search();
-
-DROP TRIGGER IF EXISTS attachment_sync_note_search_delete ON crove_notes.attachment;
-CREATE TRIGGER attachment_sync_note_search_delete AFTER DELETE ON crove_notes.attachment
-  FOR EACH ROW EXECUTE FUNCTION crove_notes.attachment_sync_note_search();
+CREATE INDEX IF NOT EXISTS attachment_search_idx
+  ON crove_notes.attachment USING gin (search);
 
 -- ---------------------------------------------------------------------------
 -- Narrow worker-only extraction definers (never return note title, body or tags)

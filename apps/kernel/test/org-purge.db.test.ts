@@ -792,6 +792,6 @@ suite('org purge on PostgreSQL (#1024)', () => {
       held = null;
     }
     expect(store.blobs.has(s.loose.storageKey)).toBe(true);
-    expect((await purgeAudits(s.org.orgId))[0]?.detail).toMatchObject({ blobs: { deleted: 1, held: 1 } });
+    expect((await purgeAudits(s.org.orgId))[0]?.detail).toMatchObject({ blobs: { deleted: 2, held: 1 } });
   });
 });
