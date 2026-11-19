@@ -1421,6 +1421,10 @@ export function createRpcHandler(
           inMeetings(context, (orgId, actor) => runMeetingAssignee({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingAssignees, price: aiPrice }, orgId, actor, input)),
         ),
       },
+      // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read as the member in one call (no model, nothing in the background); see modules/meetings/src/today.ts.
+      today: {
+        facts: os.meetings.today.facts.handler(meetingsQuery('meetings.today.facts')),
+      },
       // Agenda adherence (#3959): `agenda` is the open-item list the recorder sees before clicking (no model), `status` the button, `check` the click that has the recorder's own Vy compare the agenda with the transcript
       // and answer, per agenda line, covered with the transcript lines it cites, or not heard. Nothing is stored; see member-vy-ports.ts.
       adherence: {
@@ -3525,6 +3529,14 @@ export function createRpcHandler(
             // The credential goes first: a failure after it leaves a row of a closed connection that a second disconnect removes, never a live access code with no row.
             await runtime.execute('kernel.channel.disconnect', { connectionId: row.connectionId }, { actor, orgId });
             return runtime.execute<{ removed: boolean }>('finance.misa_amis_connection.unlink', { id: row.id }, { actor, orgId });
+          }),
+        ),
+        // The test is the worker's (S2b, #3885): the command queues it and the worker opens the access code and asks AMIS. The answer here is only "queued"; the list shows the state when it lands.
+        test: os.misaAmis.connections.test.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được kết nối MISA AMIS');
+            if (!channels?.misaAmis) throw new DomainError('MISA_AMIS_DISABLED', 404, 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+            return runtime.execute<{ queued: boolean }>('finance.misa_amis_connection.request_test', { id: input.id }, { actor, orgId });
           }),
         ),
       },

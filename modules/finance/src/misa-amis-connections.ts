@@ -4,12 +4,14 @@
 // - finance.misa_amis_connection.connect (owners and admins; R2 external): runs kernel.channel.connect (provider `accounting_misa_amis`, the access code sealed in crove_kernel.credential)
 //   and files the connection under the legal entity in ONE transaction. It sees no credential: the sealing is the API edge's, and only a worker opens it.
 // - finance.misa_amis_connection.unlink (same; R2): deletes the row. The API revokes the channel connection first, which drops the credential.
-// - finance.misa_amis_connection.list: every member reads the connections ("connected since", the channel's status).
+// - finance.misa_amis_connection.request_test (owners and admins; R2 external): queues the connection test (S2b, #3885). The worker's job opens the access code, asks AMIS for a token and the company's
+//   information, and records the state through finance.misa_amis_connection.record_test (system only: a state and a time, nothing else). The test_target query hands the worker what it needs.
+// - finance.misa_amis_connection.list: every member reads the connections ("connected since", the channel's status, the last test).
 // No query, audit fact or error carries the access code, the integrator's ClientID or MISA's own text: only ids and states. The connection's opaque org_company_code (what AMIS is told and what a
 // later slice's callback finds the organisation by) is not in any answer either.
 import { z } from 'zod';
 import { zChannelConnect } from '@crove/kernel';
-import { zId, type MisaAmisConnection } from '@crove/kernel-contract';
+import { zId, zMisaAmisConnectionRecordTest, type MisaAmisConnection, type MisaAmisTestState } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -98,6 +100,80 @@ export const misaAmisConnectionUnlink = defineCommand({
   },
 });
 
+const notFound = () => new DomainError('MISA_AMIS_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối MISA AMIS này');
+
+// The test the worker runs is queued by this event (apps/kernel/src/worker.ts). Ids only.
+export const MISA_AMIS_TEST_REQUESTED = 'finance.misa_amis_connection.test_requested';
+
+export const misaAmisConnectionRequestTest = defineCommand({
+  name: 'finance.misa_amis_connection.request_test',
+  input: z.strictObject({ id: zId }),
+  // The event it emits starts a job that calls AMIS with the org's sealed access code: it derives R2 external (plan section 4.7), though the call only reads (a token and the company's information).
+  risk: 'R2',
+  sideEffect: 'external',
+  access: MANAGERS,
+  target: (input) => ({ type: 'finance.misa_amis_connection', id: input.id }),
+  handler: async (ctx, input): Promise<{ queued: boolean }> => {
+    const row = await ctx.trx
+      .selectFrom('crove_finance.misa_amis_connection as c')
+      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .select('ch.status')
+      .where('c.org_id', '=', ctx.orgId)
+      .where('c.id', '=', input.id)
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    if (row.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối này không còn hoạt động, hãy kết nối lại');
+    await ctx.emit(MISA_AMIS_TEST_REQUESTED, { connection_id: input.id });
+    ctx.audit({ requested: true });
+    return { queued: true };
+  },
+});
+
+// What the worker needs to test one connection, or why it must not: a connection that is gone, or whose channel connection is no longer active (revoked, expired, in error), is left alone.
+// The company code is the opaque one AMIS is told (not a secret); it reaches the worker and nothing else.
+export type MisaAmisTestTarget = { action: 'none'; reason: 'not_found' | 'not_active' } | { action: 'test'; id: string; channelConnectionId: string; orgCompanyCode: string };
+
+export const misaAmisConnectionTestTarget = defineQuery({
+  name: 'finance.misa_amis_connection.test_target',
+  input: z.strictObject({ id: zId }),
+  access: 'system',
+  handler: async (ctx, input): Promise<MisaAmisTestTarget> => {
+    const row = await ctx.trx
+      .selectFrom('crove_finance.misa_amis_connection as c')
+      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .select(['c.id', 'c.channel_connection_id', 'c.org_company_code', 'ch.status'])
+      .where('c.org_id', '=', ctx.orgId)
+      .where('c.id', '=', input.id)
+      .executeTakeFirst();
+    if (!row) return { action: 'none', reason: 'not_found' };
+    if (row.status !== 'active') return { action: 'none', reason: 'not_active' };
+    return { action: 'test', id: row.id, channelConnectionId: row.channel_connection_id, orgCompanyCode: row.org_company_code };
+  },
+});
+
+export const misaAmisConnectionRecordTest = defineCommand({
+  name: 'finance.misa_amis_connection.record_test',
+  input: zMisaAmisConnectionRecordTest,
+  // A state and a time on a row; no voucher, no money, no credential.
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'finance.misa_amis_connection', id: input.id }),
+  handler: async (ctx, input): Promise<{ recorded: boolean; state: MisaAmisTestState }> => {
+    const found = await ctx.trx.selectFrom('crove_finance.misa_amis_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).forUpdate().executeTakeFirst();
+    // A connection closed while its test ran: nothing to record.
+    if (!found) return { recorded: false, state: input.state };
+    await ctx.trx
+      .updateTable('crove_finance.misa_amis_connection')
+      .set({ last_test_state: input.state, last_tested_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .execute();
+    ctx.audit({ state: input.state });
+    return { recorded: true, state: input.state };
+  },
+});
+
 export const misaAmisConnectionList = defineQuery({
   name: 'finance.misa_amis_connection.list',
   input: z.object({}),
@@ -106,7 +182,7 @@ export const misaAmisConnectionList = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.legal_entity_id', 'c.created_at', 'ch.display_name', 'ch.status'])
+      .select(['c.id', 'c.channel_connection_id', 'c.legal_entity_id', 'c.created_at', 'c.last_test_state', 'c.last_tested_at', 'ch.display_name', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .orderBy('c.created_at')
       .orderBy('c.id')
@@ -118,9 +194,11 @@ export const misaAmisConnectionList = defineQuery({
       displayName: r.display_name,
       status: r.status,
       connectedAt: new Date(r.created_at).toISOString(),
+      lastTestState: r.last_test_state,
+      lastTestedAt: r.last_tested_at ? new Date(r.last_tested_at).toISOString() : null,
     }));
   },
 });
 
-export const misaAmisConnectionCommands = [misaAmisConnectionConnect, misaAmisConnectionUnlink];
-export const misaAmisConnectionQueries = [misaAmisConnectionList, misaAmisConnectionTarget];
+export const misaAmisConnectionCommands = [misaAmisConnectionConnect, misaAmisConnectionUnlink, misaAmisConnectionRequestTest, misaAmisConnectionRecordTest];
+export const misaAmisConnectionQueries = [misaAmisConnectionList, misaAmisConnectionTarget, misaAmisConnectionTestTarget];

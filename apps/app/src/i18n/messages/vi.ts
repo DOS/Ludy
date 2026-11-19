@@ -2675,6 +2675,10 @@ export const vi = {
     },
     agenda: {
       title: 'Cuộc họp hôm nay trong lịch của bạn',
+      summary: 'Hôm nay có {count} cuộc họp, tổng cộng {duration}.',
+      durationM: '{minutes} phút',
+      durationH: '{hours} giờ',
+      durationHM: '{hours} giờ {minutes} phút',
       none: 'Hôm nay lịch của bạn không có cuộc họp nào. Nếu bạn vừa bật công tắc, lần đọc đầu tiên có thể mất tới 15 phút.',
       untitled: '(không có tên)',
       invitees: '{count} người được mời',
@@ -5458,7 +5462,7 @@ export const vi = {
   misaAmisConnections: {
     title: 'MISA AMIS Kế toán: gửi chứng từ cho kế toán',
     intro:
-      'Kết nối dữ liệu AMIS Kế toán của công ty để sau này gửi chứng từ sang AMIS dưới dạng đề nghị sinh chứng từ; người của bạn trong AMIS vẫn là người lập chứng từ. Bước này chỉ lưu kết nối, chưa gửi gì sang AMIS.',
+      'Kết nối dữ liệu AMIS Kế toán của công ty để sau này gửi chứng từ sang AMIS dưới dạng đề nghị sinh chứng từ; người của bạn trong AMIS vẫn là người lập chứng từ. Bạn có thể kiểm tra kết nối (chỉ đọc thông tin công ty); chưa có chứng từ nào được gửi sang AMIS.',
     off: 'Bộ kết nối MISA AMIS đang tắt trên hệ thống này.',
     noConnections: 'Chưa kết nối AMIS nào.',
     connectTitle: 'Kết nối AMIS',
@@ -5471,6 +5475,16 @@ export const vi = {
     disconnectConfirm: 'Ngắt kết nối này? Mã kết nối đã lưu sẽ bị xóa; chứng từ đã có trong AMIS không bị ảnh hưởng.',
     disconnectYes: 'Ngắt kết nối',
     keep: 'Giữ lại',
+    test: 'Kiểm tra kết nối',
+    testing: 'Đang kiểm tra...',
+    testSlow: 'Chưa có kết quả sau nửa phút. Hãy tải lại trang sau ít phút để xem.',
+    neverTested: 'Chưa kiểm tra',
+    testedAt: 'Kiểm tra lần cuối {when}',
+    testState: {
+      works: 'Kết nối dùng được',
+      wrong_credentials: 'AMIS từ chối kết nối. Hãy kiểm tra mã kết nối và dữ liệu kế toán đã nối trong AMIS; nếu cần, tạo mã mới rồi ngắt kết nối và kết nối lại',
+      unreachable: 'Chưa kiểm tra được với AMIS (AMIS không trả lời hoặc báo lỗi). Hãy thử lại sau; nếu vẫn lỗi, báo quản trị viên Ludy',
+    },
     status: {
       active: 'Đang kết nối',
       expired: 'Đã hết hạn, hãy ngắt kết nối rồi kết nối lại',
@@ -13542,6 +13556,7 @@ export const vi = {
       MISA_AMIS_DISABLED: 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này.',
       MISA_AMIS_CONNECTION_EXISTS: 'Pháp nhân này đã có một kết nối MISA AMIS.',
       MISA_AMIS_CONNECTION_LIVE: 'Hãy ngắt kết nối MISA AMIS trước khi xóa dòng này.',
+      MISA_AMIS_CONNECTION_NOT_FOUND: 'Không tìm thấy kết nối MISA AMIS này.',
       MARKETPLACE_PROVIDER_NOT_READY: 'Bộ kết nối này chưa kiểm tra hoặc lấy đơn được từ màn hình; sẽ có khi bộ kết nối của nó hoàn thành.',
       MARKETPLACE_NOT_STAGED: 'Báo cáo này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách.',
       MARKETPLACE_BUSY: 'Có báo cáo khác đang được nhập cùng lúc; hãy thử lại sau ít phút.',
@@ -14537,7 +14552,10 @@ export const vi = {
       misa_amis_connection: {
         connect: 'Kết nối MISA AMIS Kế toán',
         list: 'Xem các kết nối MISA AMIS',
+        record_test: 'Ghi kết quả kiểm tra kết nối MISA AMIS',
+        request_test: 'Yêu cầu kiểm tra kết nối MISA AMIS',
         target: 'Kiểm tra pháp nhân của kết nối MISA AMIS',
+        test_target: 'Lấy thông tin kết nối MISA AMIS để kiểm tra',
         unlink: 'Ngắt kết nối MISA AMIS',
       },
       misa_goods_code: {
@@ -15295,6 +15313,9 @@ export const vi = {
         facts: 'Xem tên được nhắc cho một việc cần làm và những người có thể nhận việc',
         start: 'Nhờ Vy xem một việc cần làm là của ai, theo tên được nhắc trong cuộc họp',
         status: 'Xem Vy có thể cho biết một việc cần làm là của ai hay không',
+      },
+      today: {
+        facts: 'Xem các cuộc họp hôm nay trong lịch của bạn, kèm những gì đã chốt lần trước, việc còn dở và cơ hội đang mở của khách cho từng cuộc',
       },
       brief: {
         facts: 'Xem những gì đã chốt, việc còn dở và cơ hội đang mở của khách trước một cuộc họp',
