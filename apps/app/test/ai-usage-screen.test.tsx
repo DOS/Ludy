@@ -31,13 +31,14 @@ vi.mock('../src/lib/api.ts', async () => {
   };
 });
 vi.mock('../src/lib/auth.ts', () => ({
-  getConfig: () => ({ modules: ['kernel', 'accounting'] }),
+  getConfig: () => ({ modules: ['kernel', 'accounting'], mcpEnabled: false }),
   auth: {},
   authErrorText: () => '',
   authFailure: () => ({}),
 }));
 
 const { AiUsagePage } = await import('../src/routes/ai-usage.tsx');
+const { AiConnectionsPage } = await import('../src/routes/ai-connections.tsx');
 
 const chart = { root: [], positions: [], agents: [{ id: 'a1', templateKey: 'accountant', displayName: 'Kế toán AI', status: 'active', maxRisk: 'R1', dailyRunCap: 50 }], killSwitches: [] };
 
@@ -79,5 +80,41 @@ describe('AiUsagePage', () => {
     const html = page('member');
     expect(html).toContain(en.aiUsagePage.noAccess);
     expect(html).not.toContain(`>${en.agents.budgetsTitle}<`);
+  });
+
+  it('shows the AI-off banner once without assuming a fixed currency unit (#3594)', () => {
+    const qc = client.current;
+    qc.clear();
+    qc.setQueryData(['org', 'get'], { role: 'owner', members: [] });
+    qc.setQueryData(['chart', 'get'], chart);
+    qc.setQueryData(['agents', 'budgets'], []);
+    qc.setQueryData(['ai', 'usage'], { aiOn: false, spent: '0', calls: 0, resetAt: '2026-12-01T00:00:00Z', byFeature: [], byAgent: [] });
+    qc.setQueryData(['ai', 'meter', {}], { aiOn: false, state: 'none', percent: null, resetAt: '2026-12-01T00:00:00Z' });
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="vi" messages={catalog('vi')}>
+          <AiUsagePage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    const matches = html.match(/AI đang tắt trên máy chủ này/g) ?? [];
+    expect(matches).toHaveLength(1);
+    expect(html).not.toContain('₫ mỗi tháng');
+    expect(html).not.toContain('VND');
+  });
+
+  it('uses plain wording with zero MCP jargon on AI connections when disabled (#3594)', () => {
+    const qc = client.current;
+    qc.clear();
+    for (const locale of ['vi', 'en'] as const) {
+      const html = renderToStaticMarkup(
+        <QueryClientProvider client={qc}>
+          <IntlProvider locale={locale} messages={catalog(locale)}>
+            <AiConnectionsPage />
+          </IntlProvider>
+        </QueryClientProvider>,
+      );
+      expect(html).not.toMatch(/\bMCP\b/i);
+    }
   });
 });
