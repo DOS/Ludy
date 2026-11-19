@@ -45,6 +45,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'crove_kernel_org_purge_misa_amis_connection.sql',
       'crove_meetings_translation_targets.sql',
       'crove_meetings_translation_targets_validate.sql',
+      // #3955 (morning notice): the purge restatement that adds crove_meetings.morning_notice restates the whole list, the translation table included; its body is the previous one.
+      'crove_kernel_org_purge_morning_notice.sql',
     ]);
   });
 });
