@@ -23,6 +23,7 @@ import { loadConfig } from '../../src/config.ts';
 import { moduleDefinitions, moduleManifests, serverRuntime } from '../../src/kernel.ts';
 import { orgPurgeCommand } from '../../src/org-purge.ts';
 import { numberReseedCommand } from '../../src/restore-report.ts';
+import { pkgImportMatches } from './fixtures/ad-platform-imports.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
 const noDatabase = (): never => {
@@ -354,8 +355,7 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
     const runtimePkg = (JSON.parse(readFileSync(join(ROOT, 'packages/kernel-runtime/package.json'), 'utf8')) as { name: string }).name;
     expect(['@crove/kernel-runtime', '@ludy/kernel-runtime']).toContain(runtimePkg);
     const otherRuntimePkg = runtimePkg === '@crove/kernel-runtime' ? '@ludy/kernel-runtime' : '@crove/kernel-runtime';
-    const escapedOtherPkg = otherRuntimePkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    expect(kernel).not.toMatch(new RegExp(`\\b(?:from\\s*|import\\s*(?:\\(\\s*)?|require\\s*\\(\\s*)['"]${escapedOtherPkg}(?:/[^'"]*)?['"]`));
+    expect(pkgImportMatches(importers[0]?.text ?? '', otherRuntimePkg)).toEqual([]);
     const escapedPkg = runtimePkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const runtimeImport = [...kernel.matchAll(new RegExp(`\\bimport\\b[^;]*?\\bfrom\\s*'${escapedPkg}';`, 'g'))];
     expect(runtimeImport).toHaveLength(1);

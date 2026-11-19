@@ -9,7 +9,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { activeAdPlatformNamedImports, pkgImportMatches, resolveAdPlatformPackages } from './fixtures/ad-platform-imports.ts';
+import { activeAdPlatformNamedImports, collectModuleImports, pkgImportMatches, resolveAdPlatformPackages } from './fixtures/ad-platform-imports.ts';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const SKIP = new Set(['node_modules', 'dist', 'test', 'tests', '.git', '.turbo', 'coverage']);
@@ -28,8 +28,11 @@ function sources(dir: string, out: string[] = []): string[] {
 const ALL = ['apps', 'packages', 'modules', 'tools'].filter((d) => existsSync(join(ROOT, d))).flatMap((d) => sources(join(ROOT, d)));
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
 const { activePkg: adPlatformPkg, inactivePkg: otherAdPlatformPkg } = resolveAdPlatformPackages(ROOT);
-const singleActiveAdPlatformImport = (src: string): boolean => pkgImportMatches(src, otherAdPlatformPkg).length === 0 && pkgImportMatches(src, adPlatformPkg).length === 1;
-const pauseNamedImports = (src: string): string[] => activeAdPlatformNamedImports(src, adPlatformPkg, otherAdPlatformPkg);
+const singleActiveAdPlatformImport = (src: string): boolean => {
+  const records = collectModuleImports(src);
+  return pkgImportMatches(src, otherAdPlatformPkg, records).length === 0 && pkgImportMatches(src, adPlatformPkg, records).length === 1;
+};
+const pauseNamedImports = (src: string): string[] => activeAdPlatformNamedImports(src, adPlatformPkg, otherAdPlatformPkg).names;
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
 const code = (path: string) => read(path).split('\n').filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*')).join('\n');
@@ -61,10 +64,10 @@ describe('what the pause job may reach of the platform\'s writer (#2296, W2-4a)'
     expect(step).not.toMatch(/runtime\.|\.execute\(|\.query\(/);
     expect(step).not.toMatch(/error\.message|String\(error\)/);
     expect(singleActiveAdPlatformImport(read('apps/kernel/src/ads-pause-run.ts'))).toBe(true);
-    // Comments mentioning both package scopes during migration do not count as an import.
-    const commentOnly = `// migrating ${adPlatformPkg} -> ${otherAdPlatformPkg}\n/* from '${otherAdPlatformPkg}' */\nimport type { AdPauser } from '${adPlatformPkg}';`;
-    expect(singleActiveAdPlatformImport(commentOnly)).toBe(true);
-    expect(pauseNamedImports(commentOnly)).toEqual(['AdPauser']);
+    // Comments and string literals mentioning both package scopes during migration do not count as imports.
+    const commentOrStringOnly = `// migrating ${adPlatformPkg} -> ${otherAdPlatformPkg}\n/* from '${otherAdPlatformPkg}' */\nconst note = "Use imports from '${otherAdPlatformPkg}' after the rename";\nimport type { AdPauser } from '${adPlatformPkg}';`;
+    expect(singleActiveAdPlatformImport(commentOrStringOnly)).toBe(true);
+    expect(pauseNamedImports(commentOrStringOnly)).toEqual(['AdPauser']);
     // Tripwire: mixing both scopes in pause source fails the same predicate even when one import uses the active name.
     const mixed = `import type { AdPauser } from '${adPlatformPkg}';\nimport type { AdWriter } from '${otherAdPlatformPkg}';`;
     expect(singleActiveAdPlatformImport(mixed)).toBe(false);

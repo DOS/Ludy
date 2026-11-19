@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { legacyCroveInvariantBridge } from '../../vitest.invariant.config.ts';
+import { legacyCroveInvariantBridge } from '../../../../vitest.invariant.config.ts';
 
-const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL('../../../..', import.meta.url));
 const VITEST_BIN = resolve(REPO_ROOT, 'node_modules/vitest/vitest.mjs');
 const tempDirs: string[] = [];
 

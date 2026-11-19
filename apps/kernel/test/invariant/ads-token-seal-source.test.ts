@@ -26,7 +26,7 @@ function sources(dir: string, out: string[] = []): string[] {
 const ALL = ['apps', 'packages', 'modules', 'tools'].filter((d) => existsSync(join(ROOT, d))).flatMap((d) => sources(join(ROOT, d)));
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
 const { activePkg: adPlatformPkg, inactivePkg: otherAdPlatformPkg } = resolveAdPlatformPackages(ROOT);
-const revokeNamedImports = (src: string): string[] => activeAdPlatformNamedImports(src, adPlatformPkg, otherAdPlatformPkg);
+const revokeNamedImports = (src: string): string[] => activeAdPlatformNamedImports(src, adPlatformPkg, otherAdPlatformPkg).names;
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
 const code = (path: string) => read(path).split('\n').filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*')).join('\n');
@@ -52,8 +52,8 @@ describe('what may open or name the sealed copy of a closed ads connection token
     // The platform adapters it is built on are the revoke view and the typed error, never a writer.
     const rawRevoke = read('apps/kernel/src/ads-revoke.ts');
     expect(revokeNamedImports(rawRevoke).sort()).toEqual(['AdPlatformError', 'AdRevoker']);
-    const commentOnly = `// migrating ${adPlatformPkg} -> ${otherAdPlatformPkg}\n/* from '${otherAdPlatformPkg}' */\nimport { AdRevoker, AdPlatformError } from '${adPlatformPkg}';`;
-    expect(revokeNamedImports(commentOnly).sort()).toEqual(['AdPlatformError', 'AdRevoker']);
+    const commentOrStringOnly = `// migrating ${adPlatformPkg} -> ${otherAdPlatformPkg}\n/* from '${otherAdPlatformPkg}' */\nconst note = "Use imports from '${otherAdPlatformPkg}' after the rename";\nimport { AdRevoker, AdPlatformError } from '${adPlatformPkg}';`;
+    expect(revokeNamedImports(commentOrStringOnly).sort()).toEqual(['AdPlatformError', 'AdRevoker']);
     const mixed = `import { AdRevoker } from '${adPlatformPkg}';\nimport { AdWriter } from '${otherAdPlatformPkg}';`;
     expect(() => revokeNamedImports(mixed)).toThrow(/Unexpected mixed ad-platform import/);
   });
