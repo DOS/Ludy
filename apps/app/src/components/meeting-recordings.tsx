@@ -17,7 +17,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { canRetry, canSubmitImport, errorKey, importBlock, lengthParts, pollMs } from '../lib/meeting-platform.ts';
+import { canRetry, canSubmitImport, errorKey, importBlock, isTranscriptImport, lengthParts, pollMs } from '../lib/meeting-platform.ts';
 import { formatBytes } from '../lib/offboarding.ts';
 import { toast } from '../lib/toast.ts';
 import { useConsentPolicy } from './consent-policy.tsx';
@@ -36,7 +36,11 @@ const refreshRecordings = () => Promise.all([queryClient.invalidateQueries({ que
 export function ImportForm({ recording, onDone, onCancel }: { recording: MeetingPlatformRecordingView; onDone: () => void; onCancel: () => void }) {
   const t = useTranslations('meetings.platform.dialog');
   const tm = useTranslations('meetings');
+  const tp = useTranslations('meetings.platform');
   const locale = useLocale();
+  // A recording with only the platform's own transcript (C2, #3174): its lines are copied, no audio, and it says whose transcription it is.
+  const transcriptOnly = isTranscriptImport(recording);
+  const platform = tp(`provider.${recording.provider}`);
   const policy = useConsentPolicy();
   const strict = policy === 'strict';
   const [title, setTitle] = useState(recording.title);
@@ -103,10 +107,10 @@ export function ImportForm({ recording, onDone, onCancel }: { recording: Meeting
         </NativeSelect>
       </div>
       <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground" data-testid="meeting-import-terms">
-        <li>{t('copyAudio')}</li>
+        <li>{transcriptOnly ? t('copyTranscript', { platform }) : t('copyAudio')}</li>
         <li>{t('keepOriginal')}</li>
         <li>{t('noParticipants')}</li>
-        <li>{t('ownTranscript')}</li>
+        <li>{transcriptOnly ? t('platformTranscript', { platform }) : t('ownTranscript')}</li>
       </ul>
       <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
         <div className="text-xs font-medium text-foreground">{t('noticeHeading')}</div>
@@ -146,7 +150,7 @@ function ImportDialog({ recording, onClose }: { recording: MeetingPlatformRecord
       <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto" showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>{t('title')}</DialogTitle>
-          <DialogDescription>{t('desc')}</DialogDescription>
+          <DialogDescription>{recording && isTranscriptImport(recording) ? t('descTranscript') : t('desc')}</DialogDescription>
         </DialogHeader>
         {recording && <ImportForm key={recording.id} recording={recording} onDone={onClose} onCancel={onClose} />}
       </DialogContent>
@@ -199,6 +203,11 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
               {t('videoKeepsAudio')}
             </p>
           )}
+          {isTranscriptImport(row) && (
+            <p className="text-xs text-subtle-foreground" data-testid="meeting-recording-transcript-note">
+              {t('transcriptKeepsText', { platform: tp(`provider.${row.provider}`) })}
+            </p>
+          )}
           <p className="text-xs text-subtle-foreground">{t('offers', { items: offers(row, { audio: t('offerAudio'), video: t('offerVideo'), transcript: t('offerTranscript'), nothing: t('offerNothing') }) })}</p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -219,7 +228,7 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
           {row.status === 'suggested' && block !== null && (
             <>
               <span className="text-xs text-muted-foreground" data-testid="meeting-recording-blocked">
-                {block === 'video_only' ? t('videoOnly') : block === 'too_long' ? t('tooLong') : t('tooLarge')}
+                {block === 'video_only' ? t('videoOnly') : block === 'transcript_only' ? t('transcriptOnly') : block === 'too_long' ? t('tooLong') : t('tooLarge')}
               </span>
               {quiet(t('dismiss'), t('dismissOf', { title }))}
             </>

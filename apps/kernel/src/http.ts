@@ -30,6 +30,7 @@ import {
   LIVE_CHUNK_MAX_BYTES,
   LIVE_CHUNK_MAX_COUNT,
   LIVE_CHUNK_MAX_SECONDS,
+  MEETING_PLATFORM_TRANSCRIPT_MAX_BYTES,
   RECORDING_STOP_REASONS,
   type RecordingStopReason,
   zExtensionAuthorize,
@@ -51,6 +52,7 @@ import {
   type StockCard,
   type StockReportRow,
   type UploadPurpose,
+  zMeetingTranscriptImport,
 } from '@crove/kernel-contract';
 import {
   BlobConflictError,
@@ -3318,6 +3320,72 @@ export function createHttpApp(deps: HttpDeps) {
         releaseJsonVideo?.();
         dataKey?.fill(0);
         wrapSubkey?.fill(0);
+        release();
+      }
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  // The member's request that finishes a TRANSCRIPT-ONLY import (C2, #3174). The worker's job staged the platform's own transcript as JSON under the recording's staging key (meetings-import.ts); this request, like
+  // the media route does for audio, claims the row (the member's own, begun for THIS meeting), reads the staged lines back under a size cap, bounds them again with the command's own schema (the bytes are tainted
+  // input, whoever wrote them) and runs meetings.import.take_transcript as the recorder, which writes them as the recorder's tainted draft labelled with the platform and ends the meeting. The staged bytes are deleted
+  // in every outcome; a failure after the claim fails the row with a short code. No audio is made, no model is called, and only the recorder may do this (as for media).
+  app.post('/api/meetings/:id/transcript-import', bodyLimit({ maxSize: 1024 }), async (c) => {
+    try {
+      if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const meetingId = c.req.param('id') ?? '';
+      const body = (await c.req.json().catch(() => null)) as { importId?: unknown } | null;
+      if (!UUID_TEXT.test(meetingId) || !body || typeof body.importId !== 'string' || !UUID_TEXT.test(body.importId)) {
+        throw new DomainError('BAD_REQUEST', 400, 'importId must be a uuid');
+      }
+      const importId = body.importId;
+      const release = completes.tryAcquire(user.userId);
+      if (!release) throw busy(c);
+      let claimedImportId: string | null = null;
+      let stagingKeyToDelete: string | null = null;
+      try {
+        const meeting = await meetingFacts(user, orgId, meetingId);
+        if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may import a transcript');
+        // The claim names this route's meeting, so a recording begun for another meeting is refused before the row moves.
+        const imported = await runtime.execute<{ stagingKey: string; meetingId: string }>(
+          'kernel.meeting_platform.import.claim',
+          { recordingId: importId, meetingId },
+          { actor: actorOf(user), orgId },
+        );
+        claimedImportId = importId;
+        stagingKeyToDelete = imported.stagingKey;
+        if (imported.meetingId !== meetingId) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy bản ghi này');
+        const missing = (error: unknown): never => {
+          if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
+          throw error;
+        };
+        const bytes = direct
+          ? (await direct.readStaged(imported.stagingKey, MEETING_PLATFORM_TRANSCRIPT_MAX_BYTES).catch(missing)).bytes
+          : await store.get(imported.stagingKey, null, MEETING_PLATFORM_TRANSCRIPT_MAX_BYTES).catch(missing);
+        let staged: unknown;
+        try {
+          staged = JSON.parse(new TextDecoder().decode(bytes));
+        } catch {
+          throw new DomainError('BAD_REQUEST', 400, 'Bản chép lời đã lưu không đọc được');
+        }
+        const lines = typeof staged === 'object' && staged !== null ? (staged as { segments?: unknown }).segments : undefined;
+        const input = zMeetingTranscriptImport.safeParse({ meetingId, segments: lines });
+        if (!input.success) throw new DomainError('BAD_REQUEST', 400, 'Bản chép lời đã lưu không hợp lệ');
+        const result = await runtime.execute('meetings.import.take_transcript', input.data, { actor: actorOf(user), orgId });
+        return c.json(result);
+      } catch (error) {
+        // A claimed recording whose transcript was not taken fails with a short code the member can read (never the error's own text), best effort.
+        if (claimedImportId) {
+          await runtime
+            .execute('kernel.meeting_platform.import.claim_failed', { recordingId: claimedImportId, code: 'claim_failed' }, { actor: actorOf(user), orgId })
+            .catch((err) => console.error('[http] meeting import failure not recorded', err));
+        }
+        throw error;
+      } finally {
+        if (stagingKeyToDelete) await store.delete(stagingKeyToDelete).catch((err) => console.error('[http] meeting staging deletion failed', err));
         release();
       }
     } catch (error) {
