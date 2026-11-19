@@ -5441,7 +5441,7 @@ export const en = {
   misaAmisConnections: {
     title: 'MISA AMIS Kế toán: send vouchers to your accountant',
     intro:
-      'Connect the company\'s AMIS Kế toán data so that vouchers can later be sent to AMIS as requests to generate a voucher; your people in AMIS still make the voucher. This step only saves the connection and sends nothing to AMIS.',
+      'Connect the company\'s AMIS Kế toán data so that vouchers can later be sent to AMIS as requests to generate a voucher; your people in AMIS still make the voucher. You can test the connection (it only reads the company\'s information); no voucher is sent to AMIS yet.',
     off: 'The MISA AMIS connector is turned off in this system.',
     noConnections: 'No AMIS connected yet.',
     connectTitle: 'Connect AMIS',
@@ -5454,6 +5454,16 @@ export const en = {
     disconnectConfirm: 'Disconnect this? The saved connection code will be deleted; vouchers already in AMIS are not affected.',
     disconnectYes: 'Disconnect',
     keep: 'Keep',
+    test: 'Test connection',
+    testing: 'Testing...',
+    testSlow: 'No result after half a minute. Reload the page in a few minutes to see it.',
+    neverTested: 'Not tested yet',
+    testedAt: 'Last tested {when}',
+    testState: {
+      works: 'The connection works',
+      wrong_credentials: 'AMIS refused the connection. Check the connection code and the accounting data connected in AMIS; if needed, make a new code, then disconnect and connect again',
+      unreachable: 'The test could not be made (AMIS did not answer or reported an error). Try again later; if it stays, tell the Ludy administrator',
+    },
     status: {
       active: 'Connected',
       expired: 'Expired, disconnect, then connect again',
@@ -13508,6 +13518,7 @@ export const en = {
       MISA_AMIS_DISABLED: 'The MISA AMIS connector is not turned on in this system.',
       MISA_AMIS_CONNECTION_EXISTS: 'This legal entity already has a MISA AMIS connection.',
       MISA_AMIS_CONNECTION_LIVE: 'Disconnect MISA AMIS before removing this row.',
+      MISA_AMIS_CONNECTION_NOT_FOUND: 'That MISA AMIS connection was not found.',
       MARKETPLACE_PROVIDER_NOT_READY: 'This connector cannot be tested or pulled from the screen yet; it can once its connector is finished.',
       MARKETPLACE_NOT_STAGED: 'This report was already handled or was read again; reload the list.',
       MARKETPLACE_BUSY: 'Another report is being imported at the same moment; try again in a few minutes.',
@@ -14516,7 +14527,10 @@ export const en = {
       misa_amis_connection: {
         connect: 'Connect MISA AMIS Kế toán',
         list: 'View the MISA AMIS connections',
+        record_test: 'Record the result of a MISA AMIS connection test',
+        request_test: 'Ask for a test of a MISA AMIS connection',
         target: 'Check the legal entity of a MISA AMIS connection',
+        test_target: 'Read a MISA AMIS connection to test it',
         unlink: 'Disconnect MISA AMIS',
       },
       misa_goods_code: {

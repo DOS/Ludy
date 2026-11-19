@@ -91,6 +91,7 @@ export type { EInvoiceSuggestSource, EInvoiceSuggestParty, RateCount } from './e
 
 export { AI_BUDGET_MESSAGE, AI_BUDGET_RECHECK_MS, aiCost, extractAndPropose, recordExtractionFailure, type ExtractDeps } from './extract.ts';
 export { MARKETPLACE_POLL_DUE_PAGE, MARKETPLACE_POLL_REQUESTED, marketplacePollDue, marketplaceAdapterOf, type MarketplacePollTarget } from './marketplace-connections.ts';
+export { MISA_AMIS_TEST_REQUESTED, type MisaAmisTestTarget } from './misa-amis-connections.ts';
 export * from './marketplace-provider.ts';
 export { NOT_A_REPORT, readMarketplaceFile, recordMarketplaceReadFailure, type MarketplaceFileDeps } from './marketplace-orders.ts';
 export { createMarketplaceSettlementCommands } from './marketplace-settlement-record.ts';

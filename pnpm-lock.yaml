@@ -554,6 +554,9 @@ importers:
       '@crove/media-contract':
         specifier: workspace:*
         version: link:../../packages/media-contract
+      '@crove/misa-amis':
+        specifier: workspace:*
+        version: link:../../packages/misa-amis
       '@crove/mod-ads':
         specifier: workspace:*
         version: link:../../modules/ads
