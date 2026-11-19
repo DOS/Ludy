@@ -1807,6 +1807,7 @@ export const vi = {
     closeWarning: 'Đóng sổ kho tháng {month}: giá vốn của những gì đã xuất trong tháng được tính theo bình quân gia quyền và ghi sổ thành một bút toán (Nợ 632, Có 156) sau khi chủ sở hữu hoặc quản trị viên duyệt. Tháng đã đóng không mở lại được và kho không nhận thêm phát sinh ghi ngày trong tháng; sửa sai bằng phát sinh của tháng sau.',
     closeSubmit: 'Gửi đề xuất đóng sổ',
     closeRequested: 'Đã gửi đề xuất đóng sổ kho tháng {month}, chờ duyệt.',
+    close1381Warning: 'Tài khoản 1381 (tài sản thiếu chờ xử lý) còn dư nợ {amount} đến cuối tháng. Theo Thông tư 99, số dư 1381 không có chứng cứ về nguyên nhân phải được ghi nhận vào chi phí tại ngày lập báo cáo: hãy nhờ kế toán xử lý. Đây chỉ là cảnh báo, không chặn việc đóng sổ.',
     closeViewProposal: 'Xem đề xuất',
     closeStepUp: 'đóng sổ kho tháng {month}',
     closeDirectWarning: 'Tháng {month} không có giá vốn để ghi sổ nên không cần duyệt: đóng sổ ngay sẽ khóa các phát sinh kho của tháng và không mở lại được.',
@@ -14044,6 +14045,7 @@ export const vi = {
       stock: {
         assign: 'Gán dòng hóa đơn cho mặt hàng',
         card: 'Xem thẻ kho của mặt hàng',
+        close_check: 'Xem cảnh báo trước khi đóng sổ kho',
         close_empty: 'Đóng sổ kho tháng không có giá vốn',
         close_period: 'Đóng sổ kho và ghi giá vốn hàng bán',
         count_confirm: 'Xác nhận kiểm kê và ghi sổ chênh lệch',
