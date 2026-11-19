@@ -359,7 +359,7 @@ suite('MISA AMIS connections (#3875)', () => {
     // The runtime adds the actor's component (and the worker's instance) to every audit detail; what the command adds is the state alone.
     const own = (detail: unknown) => Object.fromEntries(Object.entries(detail as Record<string, unknown>).filter(([key]) => key !== 'component' && key !== 'workerInstance'));
     for (const a of audits) expect(Object.keys(own(a.detail))).toEqual(['state']);
-    expect(audits.map((a) => (own(a.detail) as { state: string }).state).sort()).toEqual(['unreachable', 'unreachable', 'wrong_credentials', 'works', 'works']);
+    expect(audits.map((a) => (own(a.detail) as { state: string }).state).sort()).toEqual(['unreachable', 'unreachable', 'works', 'works', 'wrong_credentials']);
     for (const table of ['crove_kernel.audit_event', 'crove_kernel.outbox_event', 'crove_kernel.channel_connection', 'crove_finance.misa_amis_connection']) {
       for (const secret of [PLANTED, company, CLIENT_ID, 'planted AMIS text', 'planted gateway text']) {
         // The connection row holds its own company code, which is the one thing here that may be in it.
