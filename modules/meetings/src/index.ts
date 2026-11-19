@@ -10,6 +10,7 @@ export * from './transcribe.ts';
 export * from './transcribe-run.ts';
 export { itemFlags, itemIsClean } from './results.ts';
 export { matchAttendee, parseWhen, plainName } from './summary.ts';
+export { ASSIGNEE_CONNECTORS, ASSIGNEE_HONORIFICS } from './assignee-match.ts';
 export { setSummaryEnabled } from './summary-run.ts';
 export { setMeetingVideoImport } from './import.ts';
 export { translateCommands } from './translate.ts';
