@@ -147,6 +147,18 @@ describe('MeetingPlatforms (Settings)', () => {
     expect(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />))).not.toContain('meeting-platform-connect-sandbox');
   });
 
+  it('hides a test connection where the deployment has the test channels off, and shows it where they are on (ST-4)', () => {
+    reset();
+    client.current.setQueryData(KEYS.connections, [connection(), connection({ id: 'c2', provider: 'zoom', displayName: 'linh@example.test' })]);
+    config.sandbox = false;
+    const off = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
+    expect(count(off, 'data-testid="meeting-platform-connection"')).toBe(1);
+    expect(off).toContain('linh@example.test');
+    expect(off).not.toContain(esc(en.meetings.platform.provider.sandbox));
+    config.sandbox = true;
+    expect(count(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />)), 'data-testid="meeting-platform-connection"')).toBe(2);
+  });
+
   it('offers "Connect Zoom" with its plain-words note only where the deployment has the Zoom app, for a member who can connect, in both languages', () => {
     reset();
     client.current.setQueryData(KEYS.connections, []);
@@ -159,7 +171,7 @@ describe('MeetingPlatforms (Settings)', () => {
     expect(html).toContain(en.meetings.platform.settings.connectZoom);
     expect(html).toContain(esc(en.meetings.platform.settings.zoomNote));
     // The note says where a video-only recording stands, in words a member knows (no setting name).
-    expect(en.meetings.platform.settings.zoomNote).toContain('media sandbox');
+    expect(en.meetings.platform.settings.zoomNote).toContain('system administrator');
     expect(en.meetings.platform.settings.zoomNote).not.toMatch(/MEDIA_URL|[A-Z]{3,}_[A-Z_]+/);
     const vn = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />, 'vi'));
     expect(vn).toContain(viMessages.meetings.platform.settings.connectZoom);

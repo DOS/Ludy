@@ -120,7 +120,8 @@ export function MeetingPlatforms({ canConnect }: { canConnect: boolean }) {
   const offeredTeams = canConnect && (providers.data ?? []).includes('microsoft_teams');
   // The offline test platform is offered only where the deployment turned its test channels on (the same switch as the channels screen).
   const sandbox = getConfig().channels?.sandbox ?? false;
-  const rows = connections.data ?? [];
+  // A test connection left from a build with the test channels on is hidden where they are off, so an owner never sees one (ST-4).
+  const rows = (connections.data ?? []).filter((c) => sandbox || c.provider !== 'sandbox');
   const offerSandbox = canConnect && sandbox && !rows.some((c) => c.provider === 'sandbox');
   return (
     <Card className="block space-y-3 p-4" data-testid="meeting-platforms">

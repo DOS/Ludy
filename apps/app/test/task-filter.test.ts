@@ -15,6 +15,7 @@ import {
   selectTaskStatus,
   selectTaskTainted,
   taskConditionLabel,
+  taskFilterCount,
   taskFilterToAst,
   taskSortOfValue,
   taskSortValue,
@@ -219,5 +220,37 @@ describe('task filter (kernel.task, #2610)', () => {
 
     const updatedTainted = selectTaskTainted({ ...EMPTY_TASK_FILTER, rest: [{ field: 'tainted', op: 'is', value: false }] }, 'true');
     expect(filterIssues('kernel.task', taskFilterToAst(updatedTainted))).toEqual([]);
+  });
+
+  it('counts the filters that are on, for the button of the popover (#3597): the search box is not one of them', () => {
+    expect(taskFilterCount(EMPTY_TASK_FILTER, null)).toBe(0);
+    expect(taskFilterCount({ ...EMPTY_TASK_FILTER, search: 'báo giá' }, null)).toBe(0);
+    expect(taskFilterCount({ ...EMPTY_TASK_FILTER, status: 'todo', due: 'overdue' }, null)).toBe(2);
+    expect(taskFilterCount({ ...EMPTY_TASK_FILTER, assignee: 'me', tainted: 'true' }, { field: 'due', dir: 'asc' })).toBe(3);
+    expect(taskFilterCount({ ...EMPTY_TASK_FILTER, rest: [{ field: 'created', op: 'within_last_days', value: 14 }] }, null)).toBe(1);
+  });
+
+  it('the Tasks bar keeps only the search box and one counted button in view, the project board keeps every control in the row (#3597)', () => {
+    const render = (popover: boolean, bar: typeof EMPTY_TASK_FILTER, sort: { field: 'due'; dir: 'asc' } | null) =>
+      renderToStaticMarkup(
+        createElement(IntlProvider, {
+          locale: 'vi',
+          timeZone: 'Asia/Ho_Chi_Minh',
+          messages: catalog('vi'),
+          children: createElement(TaskFilterBar, { popover, bar, setBar: () => undefined, sort, setSort: () => undefined, positions: [] }),
+        }),
+      );
+    const none = render(true, EMPTY_TASK_FILTER, null);
+    expect(none).toContain('data-testid="task-filter-search"');
+    expect(none).toContain('data-testid="task-filter-button"');
+    expect(none).toContain('aria-label="Bộ lọc"');
+    expect(none).not.toContain('data-testid="task-filter-count"');
+    expect(none).not.toContain('data-testid="task-filter-status"');
+    const two = render(true, { ...EMPTY_TASK_FILTER, status: 'todo' }, { field: 'due', dir: 'asc' });
+    expect(two).toContain('aria-label="Bộ lọc, đang bật 2"');
+    expect(two).toMatch(/data-testid="task-filter-count"[^>]*>2</);
+    const inline = render(false, EMPTY_TASK_FILTER, null);
+    for (const control of ['search', 'status', 'assignee', 'due', 'tainted', 'sort']) expect(inline).toContain(`data-testid="task-filter-${control}"`);
+    expect(inline).not.toContain('data-testid="task-filter-button"');
   });
 });

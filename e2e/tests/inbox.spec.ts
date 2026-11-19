@@ -38,15 +38,14 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   await test.step('the empty Inbox links the quick guide, and the shell the support channel (#310)', async () => {
     const support = page.getByRole('complementary').getByRole('link', { name: 'Góp ý / Hỗ trợ' });
     await expect(support).toHaveAttribute('href', 'mailto:support@e2e.test');
-    await page.getByRole('link', { name: 'Xem hướng dẫn nhanh: tải lên, duyệt, xuất Excel' }).click();
+    await page.getByRole('link', { name: 'Xem hướng dẫn nhanh: tải lên, duyệt, khai thuế, xuất Excel' }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/guide$`));
     await expect(page.getByRole('heading', { name: 'Hướng dẫn nhanh' })).toBeVisible();
-    // The firm guide follows (#661).
-    await expect(page.getByRole('heading', { name: 'Hướng dẫn cho công ty dịch vụ kế toán' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Bước 7. Đưa số liệu sang phần mềm kế toán của hãng' })).toBeVisible();
-    for (const step of ['Bước 1. Tải hóa đơn lên', 'Bước 2. Kiểm tra và duyệt', 'Bước 3. Xuất Excel cho kế toán']) {
+    // The three jobs of the month (#3596); the guide for an accounting firm is gone.
+    for (const step of ['Bước 1. Tải hóa đơn lên và duyệt', 'Bước 2. Khai thuế GTGT của tháng', 'Bước 3. Xuất Excel cho kế toán']) {
       await expect(page.getByRole('heading', { name: step })).toBeVisible();
     }
+    await expect(page.getByRole('heading', { name: 'Hướng dẫn cho công ty dịch vụ kế toán' })).toHaveCount(0);
     await page.getByRole('link', { name: '← Chứng từ chờ duyệt' }).click();
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
   });

@@ -29,6 +29,11 @@ export const EMPTY_TASK_FILTER: TaskFilterState = {
   rest: [],
 };
 
+/** How many filters are on, for the count on the filters button: each of status, assignee, due and tainted that is set, each condition kept as stored, and a sort. The search box is outside the popover and not counted. */
+export function taskFilterCount(state: TaskFilterState, sort: SavedViewSort | null): number {
+  return [state.status, state.assignee, state.due, state.tainted].filter((value) => value !== '').length + state.rest.length + (sort ? 1 : 0);
+}
+
 // "Due soon" matches the next week window.
 export const TASK_SOON_DAYS = 7;
 
