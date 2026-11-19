@@ -28,7 +28,6 @@ import { MeetingAsk } from '../components/meeting-ask.tsx';
 import { TodayAgenda } from '../components/meeting-agenda.tsx';
 import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { PlatformRecordings } from '../components/meeting-recordings.tsx';
-import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { ConsentPolicyCard, useConsentPolicy } from '../components/consent-policy.tsx';
 import { MeetingHookCard } from '../components/meeting-hook.tsx';
 import { MinutesChannelsCard } from '../components/meeting-chat.tsx';
@@ -266,7 +265,6 @@ export function MeetingsPage() {
           </div>
         }
       />
-      <NotesSubnav slug={slug} active="meetings" />
 
       <TodayAgenda slug={slug} />
 
