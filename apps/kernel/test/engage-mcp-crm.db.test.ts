@@ -187,7 +187,7 @@ suite('the CRM MCP reads (#3860)', () => {
     };
     await makeParty('a1', orgA, `Công ty ABC${DIRTY}`, '0312345678');
     await makeParty('a2', orgA, 'Công ty XYZ', '0312345679');
-    await makeParty('b1', orgB, `${CANARY} khách của B`, '0312345680');
+    await makeParty('b1', orgB, `${CANARY} khách của B`, '0312345681');
 
     // ---- deals: four of org A (open, open, won, lost) and one of org B ----
     const stagesA = await exec<PipelineStage[]>('owner', 'crm.pipeline.setup', {}, orgA);
