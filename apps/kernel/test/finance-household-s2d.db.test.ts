@@ -107,18 +107,33 @@ suite('the S2d-HKD goods book of a household business (#2517 slice 2d)', () => {
 
   const item = (o: Org, code: string, entity = o.household) =>
     admin(async (a) => (await a.query<{ id: string }>("INSERT INTO crove_finance.stock_item (org_id, legal_entity_id, code, name, unit, stock_account, trade) VALUES ($1, $2, $3, $3, 'kg', '156', 'goods') RETURNING id", [o.orgId, entity, code])).rows[0]?.id as string);
-  // A purchase document of the entity with one line, and the stock move it makes (quantity in, valued at the line's amount).
+  // A purchase document of the entity with one line, the stock move it makes (quantity in, valued at the line's amount) and its journal entry, all in one transaction: a purchase document commits only together
+  // with its own entry (check_purchase_document_entry).
   const purchase = (o: Org, itemId: string, date: string, quantity: number, amount: number, number: string, entity = o.household) =>
     admin(async (a) => {
-      const party = (await a.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Nhà cung cấp') RETURNING id", [o.orgId])).rows[0]?.id;
-      const document = (
-        await a.query<{ id: string }>(
-          "INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, 'AA', $3, $4, $5, 0, $5, 'purchase', $6) RETURNING id",
-          [o.orgId, party, number, date, amount, entity],
-        )
-      ).rows[0]?.id as string;
-      await a.query("INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account) VALUES ($1, $2, 1, 'Hàng', $3, '156')", [o.orgId, document, amount]);
-      await a.query("INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, $3, $4, $5, 'document_line', $6, 1, 1)", [o.orgId, entity, itemId, date, quantity, document]);
+      await a.query('BEGIN');
+      try {
+        const party = (await a.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Nhà cung cấp') RETURNING id", [o.orgId])).rows[0]?.id;
+        const document = (
+          await a.query<{ id: string }>(
+            "INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, 'AA', $3, $4, $5, 0, $5, 'purchase', $6) RETURNING id",
+            [o.orgId, party, number, date, amount, entity],
+          )
+        ).rows[0]?.id as string;
+        await a.query("INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account) VALUES ($1, $2, 1, 'Hàng', $3, '156')", [o.orgId, document, amount]);
+        await a.query("INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, $3, $4, $5, 'document_line', $6, 1, 1)", [o.orgId, entity, itemId, date, quantity, document]);
+        const entry = (
+          await a.query<{ id: string }>(
+            "INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, 'Mua hàng', 'finance.purchase_document', $3, $4) RETURNING id",
+            [o.orgId, date, document, entity],
+          )
+        ).rows[0]?.id;
+        await a.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '156', $3, 0), ($1, $2, 2, '331', 0, $3)", [o.orgId, entry, amount]);
+        await a.query('COMMIT');
+      } catch (error) {
+        await a.query('ROLLBACK');
+        throw error;
+      }
     });
   const manual = (o: Org, itemId: string, date: string, quantity: number, entity = o.household) =>
     admin((a) => a.query("INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, $5, 'manual')", [o.orgId, entity, itemId, date, quantity]));
