@@ -55,18 +55,8 @@ test('Vy checks the typed agenda against the transcript on a click: nothing runs
   await test.step('a cited line opens the transcript at its time and runs nothing', async () => {
     await page.getByTestId('adherence-item').nth(0).getByRole('button', { name: 'Chúng ta chốt giá cũ cho khách A.' }).click();
     await expect(page.locator('[data-testid="transcript-line"][aria-current="location"]')).toContainText('Chúng ta chốt giá cũ cho khách A.');
-    // The page keeps its one box for the typed lines.
-    await expect(typed).toHaveCount(1, { timeout: 5_000 }).catch(async (error: unknown) => {
-      // Say where each box sits in the page, so a failure shows what rendered the card twice.
-      const where = await typed.evaluateAll((boxes) =>
-        boxes.map((box) => {
-          const chain: string[] = [];
-          for (let node = box.parentElement; node && chain.length < 14; node = node.parentElement) chain.push(node.tagName.toLowerCase() + (node.dataset.testid ? `[${node.dataset.testid}]` : ''));
-          return chain.join(' < ');
-        }),
-      );
-      throw new Error(`${(error as Error).message}\n${where.join('\n')}`);
-    });
+    // One box, not two: sibling components with the same React key once made the card appear twice after a jump (#4066).
+    await expect(typed).toHaveCount(1);
     expect(runsOf(slug, 'meetings.adherence')).toBe(1);
   });
 
