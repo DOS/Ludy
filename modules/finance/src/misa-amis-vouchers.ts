@@ -191,8 +191,14 @@ interface Meta {
   reftype: number;
   reasonTypeId: number | null;
 }
-const done = (meta: Meta, vouchers: AmisVoucher[]): AmisMapping => ({ ...meta, vouchers, blockers: [] });
 const blocked = (meta: Meta, blockers: AmisBlocker[]): AmisMapping => ({ ...meta, vouchers: [], blockers });
+// MISA takes at most 20 characters in a voucher number (org_refno). The number of a split voucher gets "/N" after the number was checked (partNo), so the FINAL number of every part is checked here (#3902,
+// F3 of the S3a review): a part over the limit makes the voucher blocked as a whole, and the number is never cut.
+export const AMIS_REFNO_MAX = 20;
+const done = (meta: Meta, vouchers: AmisVoucher[], sourceId: string): AmisMapping =>
+  vouchers.some((v) => typeof v.org_refno !== 'string' || v.org_refno.length > AMIS_REFNO_MAX)
+    ? blocked(meta, [{ code: 'voucher_number_too_long', sourceId, lineNo: null }])
+    : { ...meta, vouchers, blockers: [] };
 
 // ---------------------------------------------------------------------------------------------------------------
 // Cash and bank vouchers: 5 Phiếu thu, 4 Phiếu chi, 1 Thu tiền gửi (báo Có), 3 Chi tiền gửi (báo Nợ)
@@ -265,7 +271,7 @@ export function cashAmisVouchers(voucher: CashVoucher, ctx: AmisContext): AmisMa
     voucher.sourceId,
     'cash',
   );
-  return done(meta, vouchers);
+  return done(meta, vouchers, voucher.sourceId);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -372,6 +378,7 @@ export function purchaseServiceAmisVouchers(voucher: PurchaseVoucher, ctx: AmisC
       voucher.sourceId,
       'purchase_services',
     ),
+    voucher.sourceId,
   );
 }
 
@@ -426,6 +433,7 @@ export function purchaseGoodsAmisVouchers(
       voucher.sourceId,
       'purchase_goods',
     ),
+    voucher.sourceId,
   );
 }
 
@@ -517,5 +525,6 @@ export function salesAmisVouchers(voucher: SalesVoucher, ctx: AmisContext): Amis
       voucher.sourceId,
       'sales',
     ),
+    voucher.sourceId,
   );
 }

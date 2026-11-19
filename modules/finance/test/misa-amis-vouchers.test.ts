@@ -416,6 +416,33 @@ describe('what the reviewer found', () => {
     expect(mapping.blockers).toEqual([{ code: 'stock_missing', sourceId: SOURCE_ID, lineNo: 1 }]);
   });
 
+  // F3 of the S3a review (#3902): "/N" is added to a split voucher's number after cashVoucherNo checked its 20 characters, so the FINAL number of every part is checked.
+  describe('the final number of a split voucher (20 characters at most)', () => {
+    const manyLines = (code: string, n: number): CashVoucher =>
+      cash({ code, lines: Array.from({ length: n }, (_, i) => ({ lineNo: i + 1, account: '6422', amount: '1000', memo: null })) });
+    it('blocks a 19 character number that a split would take to 21', () => {
+      const mapping = cashAmisVouchers(manyLines('PC12345678901', AMIS_MAX_VOUCHER_LINES + 1), ctx());
+      expect(mapping.voucherNo).toHaveLength(19);
+      expect(mapping.vouchers).toEqual([]);
+      expect(mapping.blockers).toEqual([{ code: 'voucher_number_too_long', sourceId: SOURCE_ID, lineNo: null }]);
+    });
+    it('blocks a 20 character number that a split would take to 22', () => {
+      const mapping = cashAmisVouchers(manyLines('PC123456789012', AMIS_MAX_VOUCHER_LINES + 1), ctx());
+      expect(mapping.voucherNo).toHaveLength(20);
+      expect(mapping.vouchers).toEqual([]);
+      expect(mapping.blockers).toEqual([{ code: 'voucher_number_too_long', sourceId: SOURCE_ID, lineNo: null }]);
+    });
+    it('keeps a 19 and a 20 character number that is not split, and an 18 character one whose "/2" reaches 20', () => {
+      expect(cashAmisVouchers(manyLines('PC12345678901', 1), ctx()).vouchers.map((v) => v.org_refno)).toEqual(['CRPC' + '2026' + '12345678901']);
+      const twenty = cashAmisVouchers(manyLines('PC123456789012', 1), ctx());
+      expect(twenty.blockers).toEqual([]);
+      expect(String(twenty.vouchers[0]?.org_refno)).toHaveLength(20);
+      const split = cashAmisVouchers(manyLines('PC1234567890', AMIS_MAX_VOUCHER_LINES + 1), ctx());
+      expect(split.blockers).toEqual([]);
+      expect(split.vouchers.map((v) => String(v.org_refno).length)).toEqual([18, 20]);
+    });
+  });
+
   it('lists a cash voucher whose number is too long with a blocker instead of throwing', () => {
     const mapping = cashAmisVouchers(cash({ code: 'PC1234567890123' }), ctx());
     expect(mapping.vouchers).toEqual([]);

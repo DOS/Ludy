@@ -85,6 +85,7 @@ export interface CroveFinanceSchema {
   'crove_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
   'crove_finance.marketplace_party': FinanceMarketplacePartyTable;
   'crove_finance.misa_amis_connection': FinanceMisaAmisConnectionTable;
+  'crove_finance.misa_amis_push': FinanceMisaAmisPushTable;
   'crove_finance.misa_goods_code': FinanceMisaGoodsCodeTable;
   'crove_finance.org_account': FinanceOrgAccountTable;
   'crove_finance.period_balance_delta': FinancePeriodBalanceDeltaTable;
@@ -1436,6 +1437,30 @@ export interface FinanceMisaAmisConnectionTable {
   last_tested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.misa_amis_push */
+export interface FinanceMisaAmisPushTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  connection_id: ColumnType<string, string, NotGranted>;
+  source_type: ColumnType<string, string, NotGranted>;
+  source_id: ColumnType<string, string, NotGranted>;
+  voucher_type: ColumnType<number, number, NotGranted>;
+  part: ColumnType<number, number | undefined, NotGranted>;
+  org_refid: ColumnType<string, string, NotGranted>;
+  org_refno: ColumnType<string, string, NotGranted>;
+  payload_digest: string;
+  params: ColumnType<unknown, string | undefined, string>;
+  state: Generated<string>;
+  reason: string | null;
+  attempts: Generated<number>;
+  requested_by: string | null;
+  requested_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  sent_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  answered_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_finance.misa_goods_code */

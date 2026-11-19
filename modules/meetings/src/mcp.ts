@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The five Meetings reads an MCP grant may run (#3731, #3804, #3837, #4016, owner decision 2026-11-18, ADR-0051): `ludy_meetings_list` (meetings.mcp.list), `ludy_meeting_minutes` (meetings.mcp.minutes), `ludy_meetings_open_actions` (meetings.mcp.open_actions), `ludy_meetings_series_open_items` (meetings.mcp.series_open_items) and `ludy_meetings_decisions` (meetings.mcp.decisions). All are R0 reads
+// The six Meetings reads an MCP grant may run (#3731, #3804, #3837, #4016, #4030, owner decision 2026-11-18, ADR-0051): `ludy_meetings_list` (meetings.mcp.list), `ludy_meeting_minutes` (meetings.mcp.minutes), `ludy_meetings_open_actions` (meetings.mcp.open_actions), `ludy_meetings_series_open_items` (meetings.mcp.series_open_items), `ludy_meetings_decisions` (meetings.mcp.decisions) and `ludy_meetings_search` (meetings.mcp.search). All are R0 reads
 // for a COMPANY grant (an owner's or admin's); the scope is `ludy.read`. A member grant reads nothing of Meetings (the hold of 2026-11-13 on member-private tools stays): the tools are not listed for it,
 // the queries refuse it, and the database gives its sealed context no row of the module.
 //
@@ -15,9 +15,10 @@
 //
 // A meeting that is unknown, of another org, of attendees only, not published, or whose text period ended answers one and the same MEETING_NOT_FOUND, so a client learns nothing about meetings it may not read.
 import { sql } from 'kysely';
-import { MCP_ACTIONS_MAX, MCP_DECISIONS_MAX, MCP_LINE_MAX, MCP_SUMMARY_LINES_MAX, plainLine, zMcpDecisionsInput, zMcpMeetingsInput, zMcpMinutesInput, zMcpOpenActionsInput, zMcpSeriesOpenItemsInput } from '@crove/kernel-contract';
+import { MCP_ACTIONS_MAX, MCP_DECISIONS_MAX, MCP_LINE_MAX, MCP_SEARCH_FIELDS, MCP_SEARCH_MEETINGS_MAX, MCP_SUMMARY_LINES_MAX, plainLine, zMcpDecisionsInput, zMcpMeetingsInput, zMcpMinutesInput, zMcpOpenActionsInput, zMcpSearchInput, zMcpSeriesOpenItemsInput } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { foldQuery, matchLine, snippetAround } from './mcp-search.ts';
 import { vnDay } from './retention.ts';
 
 const GRANTORS: readonly MemberRole[] = ['owner', 'admin'];
@@ -62,6 +63,17 @@ export interface McpDecision {
 }
 export interface McpDecisions {
   items: McpDecision[];
+  truncated: boolean;
+}
+export interface McpSearchHit {
+  meetingId: string;
+  meetingTitle: string;
+  meetingStartedAt: string;
+  field: (typeof MCP_SEARCH_FIELDS)[number];
+  snippet: string;
+}
+export interface McpSearch {
+  items: McpSearchHit[];
   truncated: boolean;
 }
 export interface McpMinutes extends McpMeetingRow {
@@ -321,4 +333,75 @@ export const mcpDecisions = defineQuery({
   },
 });
 
-export const mcpMeetingsQueries = [mcpMeetings, mcpMinutes, mcpOpenActions, mcpSeriesOpenItems, mcpDecisions];
+// `ludy_meetings_search` (#4030): a search over the published minutes of the meetings `visibleMeetings` admits, and nothing else. It looks only at the views `ludy_meeting_minutes` can hand out: the title, the first
+// MCP_SUMMARY_LINES_MAX summary lines (each cut at MCP_LINE_MAX), the first MCP_DECISIONS_MAX decisions and the titles of the first MCP_ACTIONS_MAX unflagged published action items, built with the same helpers.
+// A word past those cuts cannot be confirmed by a search either, so a search is no yes-or-no oracle on text the minutes tool would not return. It does not touch the transcript, the notes, a draft, a translation,
+// a reader or the in-app search (`meetings.search`, which reads transcript lines by the caller's reader rights and stays out of reach of a grant). The typed words are folded in code and never reach the database
+// (see mcp-search.ts); a hit is ONE line holding every word as the start of one of its words. At most MCP_SEARCH_MEETINGS_MAX of the newest readable meetings are searched; `truncated` is true when older ones were
+// not searched or more meetings matched than `limit`. One result per meeting, the first matching line (title, then decisions, then summary, then action items), newest meeting first. No total.
+export const mcpSearch = defineQuery({
+  name: 'meetings.mcp.search',
+  input: zMcpSearchInput,
+  access: GRANTORS,
+  mcp: { scope: 'ludy.read' },
+  handler: async (ctx, input): Promise<McpSearch> => {
+    requireCompanyGrant(ctx);
+    const words = foldQuery(input.q);
+    if (words === null) return { items: [], truncated: false };
+    const meetings = await visibleMeetings(ctx)
+      .select(['m.id', 'm.title', startOf.as('at'), 'r.summary', 'r.decisions'])
+      .orderBy(startOf, 'desc')
+      .orderBy('m.id', 'desc')
+      .limit(MCP_SEARCH_MEETINGS_MAX + 1)
+      .execute();
+    let truncated = meetings.length > MCP_SEARCH_MEETINGS_MAX;
+    const scanned = meetings.slice(0, MCP_SEARCH_MEETINGS_MAX);
+    if (scanned.length === 0) return { items: [], truncated };
+    // The unflagged published items of those meetings, the first MCP_ACTIONS_MAX of each in the minutes' order, in one query.
+    const itemRows = await sql<{ meeting_id: string; title: string }>`
+      SELECT x.meeting_id, x.title
+        FROM (
+          SELECT a.meeting_id, a.title, a.transcript_seconds, a.created_at, a.id,
+                 row_number() OVER (PARTITION BY a.meeting_id ORDER BY a.transcript_seconds, a.created_at, a.id) AS n
+            FROM crove_meetings.action_item a
+           WHERE a.org_id = ${ctx.orgId}
+             AND a.stage = 'published'
+             AND a.flags = '[]'::jsonb
+             AND a.meeting_id = ANY(${scanned.map((m) => m.id)}::uuid[])
+        ) x
+       WHERE x.n <= ${MCP_ACTIONS_MAX}
+       ORDER BY x.meeting_id, x.n`.execute(ctx.trx);
+    const titlesOf = new Map<string, string[]>();
+    for (const r of itemRows.rows) titlesOf.set(r.meeting_id, [...(titlesOf.get(r.meeting_id) ?? []), plainLine(r.title, TITLE_MAX)]);
+    const items: McpSearchHit[] = [];
+    for (const row of scanned) {
+      const title = plainLine(row.title, TITLE_MAX);
+      const lines: Array<[(typeof MCP_SEARCH_FIELDS)[number], string[]]> = [
+        ['title', [title]],
+        ['decision', decisionLinesOf(row.decisions).lines.slice(0, MCP_DECISIONS_MAX)],
+        ['summary', linesOf(row.summary, MCP_SUMMARY_LINES_MAX).lines],
+        ['action', titlesOf.get(row.id) ?? []],
+      ];
+      let found: { field: (typeof MCP_SEARCH_FIELDS)[number]; snippet: string } | null = null;
+      for (const [field, texts] of lines) {
+        for (const text of texts) {
+          const hit = matchLine(text, words);
+          if (hit) {
+            found = { field, snippet: snippetAround(text, hit.start) };
+            break;
+          }
+        }
+        if (found) break;
+      }
+      if (!found) continue;
+      if (items.length >= input.limit) {
+        truncated = true;
+        break;
+      }
+      items.push({ meetingId: row.id, meetingTitle: title, meetingStartedAt: (row.at as Date).toISOString(), field: found.field, snippet: found.snippet });
+    }
+    return { items, truncated };
+  },
+});
+
+export const mcpMeetingsQueries = [mcpMeetings, mcpMinutes, mcpOpenActions, mcpSeriesOpenItems, mcpDecisions, mcpSearch];
