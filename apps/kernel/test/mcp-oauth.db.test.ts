@@ -1073,10 +1073,10 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     await admin((client) => client.query(`INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, identity_id, last_seq, last_message_at, last_inbound_at) VALUES ($1, $2, $3, 'comment_thread', 't-e2e', $4, 1, now(), now())`, [orgId, thread, connection, identity]));
     const noted = await mcpModern(engageOnly, 'tools/call', { name: 'ludy_conversation_note', arguments: { conversationId: thread, body: 'Khách hỏi giá (Dy)' } }, 'ludy_conversation_note');
     expect(noted.status).toBe(200);
-    const noteId = (noted.body?.result?.structuredContent as { noteId: string }).noteId;
+    const noteId = ((noted.body?.result?.structuredContent ?? {}) as { noteId: string }).noteId;
     expect((await admin((client) => client.query(`SELECT body FROM crove_kernel.conversation_note WHERE id = $1`, [noteId]))).rows[0].body).toBe('Khách hỏi giá (Dy)');
     const made = await mcpModern(engageOnly, 'tools/call', { name: 'ludy_party_create', arguments: { kind: 'person', name: 'Khách qua MCP' } }, 'ludy_party_create');
-    const partyId = (made.body?.result?.structuredContent as { partyId: string }).partyId;
+    const partyId = ((made.body?.result?.structuredContent ?? {}) as { partyId: string }).partyId;
     expect((await admin((client) => client.query(`SELECT source_trust FROM crove_kernel.party WHERE id = $1`, [partyId]))).rows[0].source_trust).toBe('external');
     const resolved = await mcpModern(engageOnly, 'tools/call', { name: 'ludy_conversation_resolve', arguments: { conversationId: thread } }, 'ludy_conversation_resolve');
     expect(resolved.body?.result?.structuredContent).toEqual({ conversationId: thread });
