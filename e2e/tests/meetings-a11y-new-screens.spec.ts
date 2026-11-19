@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The accessibility pass over the newest Meetings screens in a real browser (#4055, docs/qa/meetings-a11y-2026-11-new-screens.md). The first audit's spec (meetings-a11y.spec.ts) scans the older
-// routes; this one opens what came after it, as a user left it: the Notifications page with the morning-notice card (off, then on), and the meetings list with the Today view (an event of the member's
+// routes; this one opens what came after it, as a user left it: the Settings tab "Thông báo của tôi" with the morning-notice card (moved there from the bell's screen, #3592) (off, then on), and the meetings list with the Today view (an event of the member's
 // calendar that is recorded and one that is not) and the weekly card (a published decision). Each is scanned by axe (WCAG 2.2 AA, serious and critical, plus the landmark and heading rules) in
 // light and dark, at desktop width and at 360px, and must not scroll sideways. A third test walks the same screens by keyboard and by accessible name: the morning switch is named and described,
 // saving says so, each Today row's link names its meeting, and the weekly card says which window it shows. The Vy result screens (title, commitments, adherence, recap) need the fake model of the AI
@@ -101,7 +101,7 @@ async function prepare(page: Page, tag: string): Promise<{ slug: string; screens
   const screens: Screen[] = [
     {
       name: 'notifications (morning notice off)',
-      path: `/o/${slug}/notifications`,
+      path: `/o/${slug}/settings/notifications`,
       ready: (p) => ensureMorning(p, slug, false),
     },
     {
@@ -118,7 +118,7 @@ async function prepare(page: Page, tag: string): Promise<{ slug: string; screens
 
   screens.push({
     name: 'notifications (morning notice on)',
-    path: `/o/${slug}/notifications`,
+    path: `/o/${slug}/settings/notifications`,
     ready: async (p) => {
       await ensureMorning(p, slug, true);
       await expect(p.getByTestId('morning-notice-time')).toBeEnabled();
@@ -160,7 +160,7 @@ test('names, descriptions and announcements: the morning switch, the Today rows 
   const { slug } = await prepare(page, 'meetings-a11y-new-names');
 
   await test.step('the morning notice: the switch has a name and the hint as its description, the time field a name and, once on, the zone', async () => {
-    await page.goto(`/o/${slug}/notifications`);
+    await page.goto(`/o/${slug}/settings/notifications`);
     const card = page.getByTestId('morning-notice-setting');
     await expect(card).toBeVisible();
     await ensureMorning(page, slug, true);

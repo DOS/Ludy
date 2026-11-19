@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Settings is seven tabs, each with its own address (ST-1, #3589): a spec that opens a card clicks the tab that holds it.
+// Settings is eleven tabs, each with its own address (ST-1, #3589): a spec that opens a card clicks the tab that holds it.
 import type { Page } from '@playwright/test';
 
 export const SETTINGS_TAB = {
@@ -11,6 +11,7 @@ export const SETTINGS_TAB = {
   quotes: 'Báo giá',
   accounting: 'Kế toán và thuế',
   connections: 'Kết nối',
+  notifications: 'Thông báo của tôi',
   security: 'Bảo mật tài khoản',
   data: 'Dữ liệu và xóa tổ chức',
 } as const;
