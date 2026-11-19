@@ -15545,6 +15545,12 @@ export const vi = {
         nudge: 'Nhắc việc còn dở trước buổi họp tiếp theo của chuỗi cuộc họp',
         set: 'Nối cuộc họp này với một buổi trước để thành chuỗi, hoặc bỏ khỏi chuỗi',
       },
+      glossary: {
+        add: 'Thêm một thuật ngữ vào từ điển của tổ chức',
+        list: 'Xem từ điển thuật ngữ của tổ chức',
+        remove: 'Xóa một thuật ngữ khỏi từ điển của tổ chức',
+        update: 'Sửa một thuật ngữ trong từ điển của tổ chức',
+      },
       template: {
         archive: 'Lưu trữ một mẫu biên bản của tổ chức',
         create: 'Viết mẫu biên bản cho tổ chức',

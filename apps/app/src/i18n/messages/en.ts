@@ -15545,6 +15545,12 @@ export const en = {
         nudge: 'Remind a person of their open items before the next meeting of a series',
         set: 'Make this meeting follow an earlier one as a series, or take it out of its series',
       },
+      glossary: {
+        add: 'Add a term to the glossary of the organization',
+        list: 'See the glossary of the organization',
+        remove: 'Remove a term from the glossary of the organization',
+        update: 'Edit a term in the glossary of the organization',
+      },
       template: {
         archive: 'Archive a minutes template of the organization',
         create: 'Write a minutes template for the organization',
