@@ -103,6 +103,8 @@ export const zMeetingDetail = zMeetingSummary.extend({
   consentNoticeVersion: z.string(),
   // Set when the recording stopped without the recorder's click; the stop time is `endedAt` (A1, #3159).
   recordingStopReason: zRecordingStopReason.nullable(),
+  // True while the draft is a platform's transcript that was cut (the platform sent more than Ludy reads or the draft takes, #3922): the page tells the recorder the draft stops early.
+  platformTranscriptCut: z.boolean(),
   readers: z.array(zId),
   videoRetentionDate: z.string().nullable(),
   isRecorder: z.boolean(),
@@ -486,6 +488,8 @@ export type TranscriptSegment = z.infer<typeof zTranscriptSegment>;
 export const zMeetingTranscriptImport = z.strictObject({
   meetingId: zId,
   segments: z.array(zTranscriptSegmentInput).min(1).max(TRANSCRIPT_SEGMENTS_MAX),
+  // The platform's transcript was longer than the lines here (#3922): the staged file says so, the route passes it on, the meeting keeps it.
+  platformCut: z.boolean().default(false),
 });
 export type MeetingTranscriptImport = z.infer<typeof zMeetingTranscriptImport>;
 

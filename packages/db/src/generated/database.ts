@@ -3307,6 +3307,7 @@ export interface MeetingsMeetingTable {
   minutes_template_name: string | null;
   minutes_template_sections: ColumnType<unknown, string | null | undefined, string | null>;
   minutes_template_hash: string | null;
+  platform_transcript_cut: ColumnType<boolean, NotGranted, boolean>;
 }
 
 /** crove_meetings.meeting_video */

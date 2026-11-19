@@ -167,6 +167,7 @@ interface MeetingRow {
   consent_confirmed_at: Date | string;
   consent_notice_version: string;
   recording_stop_reason: RecordingStopReason | null;
+  platform_transcript_cut: boolean;
   audio_retention_date: Date | string;
   text_retention_date: Date | string | null;
   created_at: Date | string;
@@ -713,6 +714,7 @@ export const meetingGet = defineQuery({
       consentConfirmedAt: new Date(meeting.consent_confirmed_at).toISOString(),
       consentNoticeVersion: meeting.consent_notice_version,
       recordingStopReason: meeting.recording_stop_reason,
+      platformTranscriptCut: meeting.platform_transcript_cut,
       readers: readerIds,
       videoRetentionDate,
       isRecorder: meeting.recorder_user_id === userId,

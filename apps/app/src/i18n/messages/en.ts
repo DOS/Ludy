@@ -3753,6 +3753,8 @@ export const en = {
       noMedia: 'This meeting has no audio or video yet.',
       notFound: 'Meeting not found.',
       stoppedAt: 'Recording stopped at {time}',
+      // The platform's transcript was longer than Ludy imports (#3922).
+      transcriptCut: 'The meeting platform\'s transcript is longer than Ludy can import, so this draft only has the first part.',
       consentMethodLabel: 'Method',
       consentNoticeVersion: 'Notice version',
       consentConfirmedAt: 'Confirmed at',
