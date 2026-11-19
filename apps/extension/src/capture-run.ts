@@ -69,7 +69,7 @@ export type Failure = 'title' | 'consentMethod' | 'consentAgreed' | 'consentPoli
 export function heldOf(details: unknown): CaptureHeld | null {
   if (typeof details !== 'object' || details === null) return null;
   const { kind, since } = details as { kind?: unknown; since?: unknown };
-  return (kind === 'extension' || kind === 'app') && typeof since === 'string' && since !== '' ? { kind, since } : null;
+  return (kind === 'extension' || kind === 'app') && typeof since === 'string' && !Number.isNaN(new Date(since).getTime()) ? { kind, since } : null;
 }
 
 export interface Running {
@@ -199,9 +199,9 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
       },
       async stop(stopReason) {
         stopRequested = true;
-        // The capture is over now, not 90 seconds from now, so a new recording of the call is not refused by this one (best effort).
+        // The capture is over now, not 90 seconds from now, so a new recording of the call is not refused by this one. Sent and not waited for: a stalled network must never hold up the stop or the upload.
         clearInterval(heartbeat);
-        await client.captureHeartbeat({ meetingId, end: true }).catch(() => undefined);
+        void client.captureHeartbeat({ meetingId, end: true }).catch(() => undefined);
         // How it ended is saved with the recording, so even a retry from the popup later carries the right code.
         await writer.markStopped(stopReason ?? 'user');
         clock.pause(deps.now());

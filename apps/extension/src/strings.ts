@@ -133,6 +133,7 @@ const VI = {
     store: 'Không lưu được bản ghi trên máy này.',
     setup: 'Không bắt đầu được. Hãy thử lại.',
     captureRunning: '{kind} đang ghi cuộc họp này từ {time}. Hãy dùng bản ghi đó, hoặc dừng nó trước khi ghi lại.',
+    captureRunningUnknown: 'Cuộc họp này đang được ghi ở một nơi khác. Hãy dùng bản ghi đó, hoặc dừng nó trước khi ghi lại.',
   },
 } as const;
 
@@ -273,6 +274,7 @@ export const ENGLISH: Strings = {
     store: 'Could not save the recording on this device.',
     setup: 'Could not start. Please try again.',
     captureRunning: '{kind} has been recording this meeting since {time}. Use that recording, or stop it before recording again.',
+    captureRunningUnknown: 'This meeting is already being recorded somewhere else. Use that recording, or stop it before recording again.',
   },
 };
 

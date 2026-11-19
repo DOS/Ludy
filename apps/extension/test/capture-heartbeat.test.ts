@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { createClient, LudyError } from '../src/api.ts';
 import { heldOf } from '../src/capture-run.ts';
-import { parseCaptureStart, parseStartRequest } from '../src/messages.ts';
+import { parseCaptureStart, parseStartRequest, tabAddress } from '../src/messages.ts';
 import { ENGLISH, VIETNAMESE } from '../src/strings.ts';
 
 const answer = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -51,15 +51,23 @@ describe('heldOf', () => {
   it('reads the kind and the time of the capture that holds the call, and nothing else', () => {
     expect(heldOf({ kind: 'extension', since: '2027-01-20T07:02:00.000Z' })).toEqual({ kind: 'extension', since: '2027-01-20T07:02:00.000Z' });
     expect(heldOf({ kind: 'app', since: '2027-01-20T07:02:00.000Z', userId: 'u1' })).toEqual({ kind: 'app', since: '2027-01-20T07:02:00.000Z' });
-    for (const odd of [null, undefined, 'x', {}, { kind: 'bot', since: 'x' }, { kind: 'app' }, { kind: 'app', since: '' }, { kind: 'app', since: 5 }]) expect(heldOf(odd), JSON.stringify(odd)).toBeNull();
+    for (const odd of [null, undefined, 'x', {}, { kind: 'bot', since: 'x' }, { kind: 'app' }, { kind: 'app', since: '' }, { kind: 'app', since: 5 }, { kind: 'app', since: 'not a time' }]) expect(heldOf(odd), JSON.stringify(odd)).toBeNull();
   });
 });
 
 describe('the start messages', () => {
   it('carry the tab address as a short string, and leave anything else out without refusing the start', () => {
     expect(parseStartRequest({ ...BASE, joinUrl: 'https://zoom.us/j/81234567890' })).toEqual({ ...BASE, joinUrl: 'https://zoom.us/j/81234567890' });
-    for (const odd of [5, '', 'x'.repeat(501), null, {}]) expect(parseStartRequest({ ...BASE, joinUrl: odd }), JSON.stringify(odd)).toEqual(BASE);
+    for (const odd of [5, '', 'x'.repeat(501), null, {}, 'http://meet.google.com/abc-defg-hij', 'https://user:pw@zoom.us/j/81234567890', 'not an address']) expect(parseStartRequest({ ...BASE, joinUrl: odd }), JSON.stringify(odd)).toEqual(BASE);
     expect(parseStartRequest(BASE)).toEqual(BASE);
+  });
+
+  it('keep only the host and the path of the tab address: no passcode, no context, no fragment', () => {
+    expect(tabAddress('https://us02web.zoom.us/j/81234567890?pwd=SecretPasscode123&from=addon#frag')).toBe('https://us02web.zoom.us/j/81234567890');
+    expect(tabAddress(`https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0?context=${'x'.repeat(900)}`)).toBe('https://teams.microsoft.com/l/meetup-join/19%3ameeting_abc%40thread.v2/0');
+    expect(parseStartRequest({ ...BASE, joinUrl: 'https://zoom.us/j/81234567890?pwd=Secret' })?.joinUrl).toBe('https://zoom.us/j/81234567890');
+    expect(parseCaptureStart({ target: 'offscreen', type: 'capture-start', address: 'https://app.ludy.vn', token: 'crx_t', orgId: 'org', uploads: 'direct', ...BASE, joinUrl: 'https://meet.google.com/abc-defg-hij?authuser=1' })?.joinUrl).toBe('https://meet.google.com/abc-defg-hij');
+    for (const odd of [undefined, null, 7, '', 'http://zoom.us/j/81234567890', 'chrome://extensions', 'x'.repeat(10)]) expect(tabAddress(odd), String(odd)).toBeUndefined();
   });
 
   it('pass it on to the offscreen document, which checks it the same way', () => {
@@ -74,6 +82,8 @@ describe('the refusal in words', () => {
     for (const strings of [ENGLISH, VIETNAMESE]) {
       expect(strings.blockers.captureRunning).toContain('{kind}');
       expect(strings.blockers.captureRunning).toContain('{time}');
+      // The refusal whose details could not be read says it without a placeholder in sight.
+      expect(strings.blockers.captureRunningUnknown).not.toMatch(/[{}]/);
       expect(Object.keys(strings.captureKinds).sort()).toEqual(['app', 'extension']);
     }
     expect(VIETNAMESE.blockers.captureRunning.replace('{kind}', VIETNAMESE.captureKinds.app).replace('{time}', '14:02')).toBe('Ứng dụng Ludy đang ghi cuộc họp này từ 14:02. Hãy dùng bản ghi đó, hoặc dừng nó trước khi ghi lại.');

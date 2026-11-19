@@ -70,8 +70,10 @@ interface Live {
   liveCapture: LiveCapture | null;
   // Where the finished upload goes: the device store it is read from and the org it opens in.
   ctx: { store: ChunkStore; slug: string };
-  // The capture of this call tells the server it is alive every CAPTURE_HEARTBEAT_SECONDS (ADR-0055 slice 1, #4123); null once it is over.
+  // The capture of this call tells the server it is alive every CAPTURE_HEARTBEAT_SECONDS (ADR-0055 slice 1, #4123); null before the recorder starts and once it is over.
   heartbeat: ReturnType<typeof setInterval> | null;
+  // True once the server has been told the capture is over (it is told once).
+  captureEnded: boolean;
 }
 
 // The server is told the capture is alive, or over when the person stopped. Best effort: a beat that does not get through is only missed, and an answer of "not open" (another capture took the call over after a long
@@ -82,9 +84,12 @@ function beat(meetingId: string, end = false): void {
 
 // The capture ends now, not 90 seconds from now, so a new recording of the call is not refused by this one. Once.
 function endCapture(l: Live): void {
-  if (l.heartbeat === null) return;
-  clearInterval(l.heartbeat);
-  l.heartbeat = null;
+  if (l.heartbeat !== null) {
+    clearInterval(l.heartbeat);
+    l.heartbeat = null;
+  }
+  if (l.captureEnded) return;
+  l.captureEnded = true;
   beat(l.writer.meta().meetingId, true);
 }
 
@@ -321,6 +326,8 @@ export async function startRecording(input: StartInput): Promise<void> {
     // Leaving the recorder screen does not abort a start; only stopAndSave (sign-out, another org) does.
     unmounted: () => abortStart,
   });
+  // The meeting was made (and its capture opened) but the recorder never started: the call is free again at once, not 90 seconds from now. The meeting stays cached for a retry, as before.
+  if (result.status !== 'ready' && createdMeetingId !== null) beat(createdMeetingId, true);
   if (result.status === 'aborted') {
     patch({ phase: 'idle', slug: null });
     return;
@@ -341,7 +348,7 @@ export async function startRecording(input: StartInput): Promise<void> {
   const { stream, recorder, writer } = result;
   // A device that goes away mid-recording (microphone unplugged, permission taken back) ends its tracks: say why it stopped.
   for (const track of stream.getTracks()) track.addEventListener('ended', () => void writer.markStopped('mic_lost'));
-  const l: Live = { stream, recorder, writer, pending: new Set(), wakeLock: result.wakeLock, failed: false, liveCapture: null, ctx: { store, slug }, heartbeat: null };
+  const l: Live = { stream, recorder, writer, pending: new Set(), wakeLock: result.wakeLock, failed: false, liveCapture: null, ctx: { store, slug }, heartbeat: null, captureEnded: false };
   live = l;
   recorder.ondataavailable = (event) => {
     const write = writer.addChunk(event.data, clock.elapsedMs(Date.now())).catch(() => {
@@ -376,6 +383,8 @@ export async function startRecording(input: StartInput): Promise<void> {
     linkedMeetingId = null;
     patch({ phase: 'recording', stream: withVideo ? stream : null });
   } catch (err) {
+    // The recorder never ran: the call is free again at once, not 90 seconds from now.
+    endCapture(l);
     releaseDevices(l, true);
     patch({ phase: 'idle', slug: null, error: errorMessage(err), stream: null });
   }

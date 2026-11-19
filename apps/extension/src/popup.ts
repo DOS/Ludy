@@ -10,7 +10,7 @@ import { AGENDA_SCOPE, agendaLine, type AgendaNext } from './agenda.ts';
 import { connectUrl, deviceName, newPkce, parseConnectResult } from './auth.ts';
 import { createClient, LudyError } from './api.ts';
 import { CONSENT_METHODS, consentBlocker } from './consent.ts';
-import { LOST_KEY, readLost, RECORDING_KEY, type LostState, type RecordingState, type StartReply, type StopReply } from './messages.ts';
+import { LOST_KEY, readLost, RECORDING_KEY, tabAddress, type LostState, type RecordingState, type StartReply, type StopReply } from './messages.ts';
 import { captureActiveTab, CLIP_BODY_MAX, CLIP_TITLE_MAX, NOTES_SCOPE, parseTagsInput, WEB_CLIPPER_PERMISSIONS } from './page-capture.ts';
 import { formatClock, createIndexedDbChunkStore, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingMeta, type RecordingNoticeLanguage } from '@crove/meeting-recorder';
 import { reportEnded, uploadSaved } from './capture-run.ts';
@@ -619,7 +619,7 @@ async function startRecording(): Promise<void> {
     // Only after the member's click here, and only for the tab they are on.
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
     // The tab's address, when the browser gave it, so the server can tell a second capture of the same call; nothing of it is kept.
-    const joinUrl = typeof tab.url === 'string' && tab.url.startsWith('https://') ? tab.url : undefined;
+    const joinUrl = tabAddress(tab.url);
     const reply = (await chrome.runtime.sendMessage({ type: 'start', ...draft, streamId, ...(joinUrl ? { joinUrl } : {}) })) as StartReply;
     if (reply.ok) {
       draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false, liveNotes: false };
@@ -627,10 +627,12 @@ async function startRecording(): Promise<void> {
     } else {
       notice = T.blockers[reply.reason];
       // Another capture of this call exists: which kind of client and since when, in words (ADR-0055 slice 1, #4123).
-      if (reply.reason === 'captureRunning' && reply.held) {
-        const since = new Date(reply.held.since);
-        const time = Number.isNaN(since.getTime()) ? '' : since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        notice = T.blockers.captureRunning.replace('{kind}', T.captureKinds[reply.held.kind]).replace('{time}', time);
+      if (reply.reason === 'captureRunning') {
+        const since = reply.held ? new Date(reply.held.since) : null;
+        notice =
+          reply.held && since && !Number.isNaN(since.getTime())
+            ? T.blockers.captureRunning.replace('{kind}', T.captureKinds[reply.held.kind]).replace('{time}', since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+            : T.blockers.captureRunningUnknown;
       }
       if (reply.reason === 'consentPolicy') {
         strictOrg = true;

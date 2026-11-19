@@ -19,6 +19,20 @@ export interface StartRequest {
   joinUrl?: string;
 }
 
+// The part of a tab's address the server needs to tell which call it is: https, the host and the path, with no query and no fragment (a Zoom address carries the meeting passcode in its query, and a Teams one a long
+// context). Undefined for anything else. The server reads the call from the same host and path, and is the authority on what they mean.
+export function tabAddress(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || raw === '') return undefined;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' || url.username !== '' || url.password !== '') return undefined;
+    const address = `${url.origin}${url.pathname}`;
+    return address.length <= 500 ? address : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface CaptureStart {
   target: 'offscreen';
   type: 'capture-start';
@@ -117,8 +131,9 @@ export function parseStartRequest(raw: unknown): StartRequest | null {
   const { title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId, joinUrl } = raw;
   if (typeof title !== 'string' || typeof consentMethod !== 'string' || typeof streamId !== 'string' || streamId === '') return null;
   if (typeof consentAgreed !== 'boolean' || typeof keepVideo !== 'boolean' || typeof liveNotes !== 'boolean') return null;
-  // The tab's address is a hint: anything that is not a short string is left out, never a reason to refuse the start.
-  return { title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId, ...(typeof joinUrl === 'string' && joinUrl !== '' && joinUrl.length <= 500 ? { joinUrl } : {}) };
+  // The tab's address is a hint: anything that is not an https address is left out, never a reason to refuse the start, and only its host and path are kept.
+  const address = tabAddress(joinUrl);
+  return { title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId, ...(address ? { joinUrl: address } : {}) };
 }
 
 // The worker's capture command for the offscreen document, or null when it is malformed.
