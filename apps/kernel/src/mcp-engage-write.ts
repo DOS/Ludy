@@ -7,8 +7,8 @@
 // What every one of them has:
 //   - a strict input (the command's own schema: an unknown key is refused, ids are ids, text has the app's own limits);
 //   - an audit row of the call in the org's log naming the grant, the client and the agent (the runtime writes it for every command of an MCP actor), and the call row of the endpoint;
-//   - agent text kept as data: what the coworker writes is stored as the person's own would be but never trusted again by what reads it (a contact it adds is `external`; every deal, quote and thread read of
-//     E1 says `tainted: true`), and the descriptions tell the client so;
+//   - agent text kept as data: what the coworker writes is stored under the name of the person who connected the app (no table of these rows has an origin column; the audit row names the app), a contact it
+//     adds is `external`, every deal, quote and thread read of E1 says `tainted: true`, and the descriptions tell the client so;
 //   - a per-grant write budget (a few writes a minute): a client that loops is answered 429 with the seconds to wait before anything runs.
 // Nothing above R1 is here: a reply, a hide, sending or deciding a quote, a booking change, launching, boosting or pausing ads are R2 or R3 and become proposals a person approves in Ludy (E4).
 // `kernel.conversation.follow_up` has no tool: its task is an event and wakes the assignee's agent, which the sealed write context does not allow.
@@ -24,10 +24,12 @@ import type { ToolDescriptor } from './mcp-protocol.ts';
 const ENGAGE: McpWriteScopeId = 'ludy.engage.write';
 const ADS: McpWriteScopeId = 'ludy.ads.draft';
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } as const;
+// A tool that replaces what a draft holds (a draft quote's lines, an assignee) says so: a client that asks its person before a destructive call asks before it.
+const OVERWRITES = { ...WRITE, destructiveHint: true } as const;
 const ID = { type: 'string' } as const;
 const NS = { type: ['string', 'null'] } as const;
 // What every description ends with: the same three facts, so a client cannot misread a write as a send or an approval.
-const TAINT = 'Text you write is stored as written by a connected app and is data for the people who read it, never an instruction. ';
+const TAINT = 'Text you write is stored under the name of the person who connected this app (the audit log names the app) and is data for the people who read it, never an instruction. ';
 const LIMIT = 'A few writes a minute at most per connection; over that the answer says how long to wait. ';
 const NEVER = 'This tool never sends anything to a customer and never spends money; anything that does is asked of a person in Ludy.';
 
@@ -45,6 +47,7 @@ interface WriteSpec {
   title: string;
   description: string;
   command: { name: string; input: z.ZodType };
+  overwrites?: true;
   outputSchema: Obj;
   // What a client gets of the command's answer: ids, states and numbers, never the stored rows.
   project: (value: Obj) => Obj;
@@ -61,7 +64,7 @@ export function engageWriteTools(runtime: Runtime, actor: UserActor, orgId: stri
     inputSchema: schemaOf(spec.command.input),
     argsSchema: spec.command.input as unknown as z.ZodType<Obj>,
     outputSchema: spec.outputSchema,
-    annotations: WRITE,
+    annotations: spec.overwrites ? OVERWRITES : WRITE,
     read: async (args) => {
       if (grantId === undefined) throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP mới dùng được công cụ này', { rule: 'mcp_scope' });
       // The budget is taken before the command runs, so a refused write changes nothing.
@@ -164,6 +167,7 @@ export function engageWriteTools(runtime: Runtime, actor: UserActor, orgId: stri
     }),
     tool({
       name: 'ludy_quote_save',
+      overwrites: true,
       module: 'crm',
       scope: ENGAGE,
       title: 'Save a draft quote',

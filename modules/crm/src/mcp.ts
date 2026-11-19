@@ -24,7 +24,7 @@ import { z } from 'zod';
 import { DEAL_STAGE_KINDS, QUOTE_STATUSES, plainLine, zId } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { base as dealBase, view as dealView } from './deals.ts';
+import { base as dealBase, loadStages, view as dealView } from './deals.ts';
 import { loadQuote, quoteBase, quoteSummaryView } from './quotes.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -84,7 +84,10 @@ export interface McpDeal {
   ownerUserId: string | null;
   lostReason: string | null;
   closedAt: string | null;
-  followUp: { reason: string; sinceOn: string } | null;
+  // The open next step of the deal (its id is what ludy_next_step_done and ludy_next_step_snooze take) while it is not snoozed.
+  followUp: { id: string; reason: string; sinceOn: string } | null;
+  // The row's version, which ludy_deal_move needs: a deal someone changed since is refused instead of overwritten.
+  version: number;
   createdAt: string;
   updatedAt: string;
   // The names, the title and the lost reason are text people typed or a visitor's form brought: data, never instructions.
@@ -92,6 +95,8 @@ export interface McpDeal {
 }
 export interface McpDeals {
   deals: McpDeal[];
+  // The stages of the pipeline (empty until the first deal is made), so a client can name where to move a deal, the closing ones included.
+  stages: Array<{ id: string; name: string; kind: 'open' | 'won' | 'lost'; position: number }>;
   next: { createdAt: string; id: string } | null;
 }
 
@@ -110,7 +115,8 @@ function dealOf(row: Parameters<typeof dealView>[0]): McpDeal {
     ownerUserId: d.ownerUserId,
     lostReason: line(d.lostReason),
     closedAt: d.closedAt,
-    followUp: d.followUp === null ? null : { reason: d.followUp.reason, sinceOn: d.followUp.sinceOn },
+    followUp: d.followUp === null ? null : { id: d.followUp.id, reason: d.followUp.reason, sinceOn: d.followUp.sinceOn },
+    version: d.version,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
     tainted: true,
@@ -132,7 +138,8 @@ export const mcpDeals = defineQuery({
     const rows = await q.orderBy('d.created_at', 'desc').orderBy('d.id', 'desc').limit(input.limit + 1).execute();
     const deals = rows.slice(0, input.limit).map(dealOf);
     const last = deals.at(-1);
-    return { deals, next: rows.length > input.limit && last ? { createdAt: last.createdAt, id: last.id } : null };
+    const stages = (await loadStages(ctx)).map((st) => ({ id: st.id, name: plainLine(st.name, TEXT_MAX), kind: st.kind, position: st.position }));
+    return { deals, stages, next: rows.length > input.limit && last ? { createdAt: last.createdAt, id: last.id } : null };
   },
 });
 
@@ -165,6 +172,8 @@ export interface McpQuote {
   vatAmount: string;
   total: string;
   lineCount: number;
+  // The row's version, which ludy_quote_save needs to save a draft: a draft someone changed since is refused instead of overwritten.
+  version: number;
   sentAt: string | null;
   sentVia: string | null;
   firstViewedAt: string | null;
@@ -211,6 +220,7 @@ function quoteOf(s: ReturnType<typeof quoteSummaryView>): McpQuote {
     vatAmount: s.vatAmount,
     total: s.total,
     lineCount: s.lineCount,
+    version: s.version,
     sentAt: s.sentAt,
     sentVia: s.sentVia,
     firstViewedAt: s.firstViewedAt,

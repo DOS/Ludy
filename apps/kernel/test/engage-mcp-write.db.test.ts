@@ -175,6 +175,22 @@ suite('the Engage R1 write tools (#3861)', () => {
     expect(await one(`SELECT actor_id, agent_id FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'party.created'`, [orgA, party.partyId])).toMatchObject({ actor_id: users.owner, agent_id: null });
   });
 
+  it('links a contact and takes a thread although a colleague resolved another thread of the same customer', async () => {
+    // The link also reaches the customer's other threads of the same kind; one that another member resolved keeps who resolved it.
+    const other = randomUUID();
+    await sqlAdmin(
+      `INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, identity_id, last_seq, last_message_at, last_inbound_at, status, resolved_at, resolved_by)
+       VALUES ($1, $2, $3, 'comment_thread', 't-a-older', $4, 1, now(), now(), 'resolved', now(), $5)`,
+      [orgA, other, channel.a1, identity, users.admin],
+    );
+    const g = await dy();
+    const party = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'person', name: 'Khách quay lại' }, g);
+    await run('kernel.mcp.conversation_link_contact', { conversationId: thread, partyId: party.partyId }, g);
+    expect(await one(`SELECT party_id, resolved_by FROM crove_kernel.conversation WHERE id = $1`, [other])).toMatchObject({ party_id: party.partyId, resolved_by: users.admin });
+    await run('kernel.mcp.conversation_assign', { conversationId: other, assigneeUserId: users.member }, g);
+    expect(await one(`SELECT assignee_user_id, resolved_by FROM crove_kernel.conversation WHERE id = $1`, [other])).toMatchObject({ assignee_user_id: users.member, resolved_by: users.admin });
+  });
+
   it('adds a contact as an outside value, never one a person vouched for', async () => {
     const made = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'organization', name: 'Công ty Dy thêm', email: 'ketoan@example.com' });
     expect(await one(`SELECT source_trust, name FROM crove_kernel.party WHERE id = $1`, [made.partyId])).toMatchObject({ source_trust: 'external', name: 'Công ty Dy thêm' });

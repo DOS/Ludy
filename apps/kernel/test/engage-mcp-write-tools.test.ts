@@ -49,7 +49,8 @@ describe('the Engage write tools in the tool list (#3861)', () => {
   it('makes each a write descriptor of its scope with a strict argument schema that says the text is data and that nothing is sent', () => {
     const tools = listed(grant(['ludy.read', 'ludy.engage.write', 'ludy.ads.draft'])).filter((t) => t.name in ENGAGE || t.name in ADS);
     for (const tool of tools) {
-      expect(tool.annotations, tool.name).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
+      // Never read only, never idempotent; a draft quote's save replaces its lines and says so.
+      expect(tool.annotations, tool.name).toEqual({ readOnlyHint: false, destructiveHint: tool.name === 'ludy_quote_save', idempotentHint: false, openWorldHint: false });
       expect(tool.writeScope, tool.name).toBe(tool.name in ADS ? 'ludy.ads.draft' : 'ludy.engage.write');
       expect(tool.argsSchema.safeParse({ smuggled: 1 }).success, tool.name).toBe(false);
       expect(tool.inputSchema.type, tool.name).toBe('object');

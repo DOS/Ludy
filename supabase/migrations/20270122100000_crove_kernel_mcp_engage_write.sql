@@ -9,11 +9,11 @@
 --                                                        shape of its command (mcp_write_row_ok), and never delete a row but the lines of a draft quote the draft's own save replaces. Every other table, and every
 --                                                        write of any other kind of context, is refused as before. No event (crove_kernel.emit needs a run an MCP grant has not), no outbox row, no key.
 --   policies                                              the engage kind reads and updates a conversation and reads its messages as the company read context does (the whole-org scope '*'), in the same two
---                                                        policies each; the ads kind reads nothing of Hộp thư. The kind is compared inline, never through a function (no function names a kind but its entry).
+--                                                        policies each; the ads kind reads nothing of Hộp thư. The engage kind is asked about through one small definer function, `crove_kernel.ctx_mcp_engage_write()`, so the policies never read the sealed key themselves (an as-built note of ADR-0051 decision 12 says why).
 --   activity_stamp_agent                                  a timeline row written under these kinds is stamped with the grantor as its actor and no agent (the grant is not an org-chart agent, so the foreign key
 --                                                        would refuse it), so a person's timeline shows the entry and the audit row (which names the grant, client and agent) says who really made it.
 -- Stored text written under these contexts is the agent's: a party made here is `external` (a value nobody at the company vouched for), and every deal, quote and conversation read of E1 already says
--- `tainted: true`. Existing grants gain nothing: a scope with no entry runs no command, and the CHECK and definers of 20270119120000 are the only ways to hold a scope. Idempotent; applied files untouched.
+-- `tainted: true`. A grant that already holds one of the two scopes (the consent page offered them since #3858 slice c) gains the tools at deploy; the consent text now says what they do. A scope is still held only through the CHECK and definers of 20270119120000. Idempotent; applied files untouched.
 SET LOCAL lock_timeout = '2s';
 
 -- ---------------------------------------------------------------------------
@@ -116,19 +116,25 @@ BEGIN
       WHEN p_table = 'crove_kernel.conversation' THEN
         p_op = 'UPDATE' AND v_changed <@ ARRAY['assignee_user_id', 'status', 'resolved_at', 'resolved_by', 'party_id', 'updated_at']::text[]
         AND p_new ->> 'status' IN ('new', 'pending', 'resolved')
-        AND (p_new ->> 'resolved_by' IS NULL OR p_new ->> 'resolved_by' = p_grantor::text)
+        -- Who resolved a thread is the grantor when the resolution changes; a thread someone else resolved keeps them when only its assignee or contact changes.
+        AND (p_new ->> 'resolved_by' IS NULL OR p_new ->> 'resolved_by' IS NOT DISTINCT FROM p_old ->> 'resolved_by' OR p_new ->> 'resolved_by' = p_grantor::text)
       -- An internal note, by the grantor, never edited or deleted.
       WHEN p_table = 'crove_kernel.conversation_note' THEN
         p_op = 'INSERT' AND p_new ->> 'author_user_id' = p_grantor::text
       -- A contact the agent adds is an outside value: external, never one a person vouched for.
       WHEN p_table = 'crove_kernel.party' THEN
         p_op = 'INSERT' AND p_new ->> 'source_trust' = 'external'
+      -- The default stages of a first use, exactly as DEFAULT_PIPELINE_STAGES names them (name, kind, position): never a stage of the agent's own invention (the table keeps one row per position and one won and
+      -- one lost stage, so they can be made once). A change of those defaults in the code is a change of this list.
       WHEN p_table = 'crove_crm.pipeline_stage' THEN
-        p_op = 'INSERT'
+        p_op = 'INSERT' AND (p_new ->> 'name') || '|' || (p_new ->> 'kind') || '|' || (p_new ->> 'position') = ANY (ARRAY[
+          'Mới|open|1', 'Đã liên hệ|open|2', 'Báo giá|open|3', 'Thương lượng|open|4', 'Thắng|won|5', 'Thua|lost|6']::text[])
       WHEN p_table = 'crove_crm.deal' THEN
         (p_op = 'INSERT' AND p_new ->> 'created_by' = p_grantor::text AND p_new ->> 'updated_by' = p_grantor::text)
+        -- A move changes the stage, order, close, version and who changed it (the grantor); the rebalance of a crowded stage changes the order of the OTHER deals in it and nothing else.
         OR (p_op = 'UPDATE' AND v_changed <@ ARRAY['stage_id', 'sort_key', 'closed_at', 'lost_reason', 'version', 'updated_by', 'updated_at']::text[]
             AND p_new ->> 'updated_by' = p_grantor::text)
+        OR (p_op = 'UPDATE' AND v_changed = ARRAY['sort_key']::text[])
       WHEN p_table = 'crove_crm.deal_next_step' THEN
         p_op = 'UPDATE' AND v_changed <@ ARRAY['status', 'closed_reason', 'resolved_at', 'resolved_by', 'snoozed_until']::text[]
         AND p_new ->> 'status' IN ('open', 'done', 'closed') AND (p_new ->> 'resolved_by' IS NULL OR p_new ->> 'resolved_by' = p_grantor::text)
@@ -144,10 +150,9 @@ BEGIN
     END;
   ELSIF p_kind = 'mcp_ads_draft' THEN
     RETURN CASE
-      -- An ads campaign draft an AI app made: origin ai, by the grantor, never approved. An edit only of a draft that is one of the agent's kind and stays so.
+      -- A NEW ads campaign draft an AI app made: origin ai, by the grantor, still a draft, with no request waiting, never approved. It edits no draft, a person's or its own.
       WHEN p_table = 'crove_ads.ad_campaign_draft' THEN
-        (p_op = 'INSERT' AND p_new ->> 'origin' = 'ai' AND p_new ->> 'status' = 'draft' AND p_new ->> 'created_by' = p_grantor::text)
-        OR (p_op = 'UPDATE' AND p_old ->> 'origin' = 'ai' AND p_new ->> 'origin' = 'ai' AND p_old ->> 'status' = 'draft' AND p_new ->> 'status' = 'draft')
+        p_op = 'INSERT' AND p_new ->> 'origin' = 'ai' AND p_new ->> 'status' = 'draft' AND p_new ->> 'created_by' = p_grantor::text AND p_new ->> 'proposal_id' IS NULL AND p_new ->> 'approved_at' IS NULL
       ELSE false
     END;
   END IF;

@@ -7,7 +7,7 @@
 // - in the sealed engage context the guard lets in only the writes of the commands: the update of a thread's assignee, status, resolution and contact; a note by the grantor; a contact that is `external`; a deal by the
 //   grantor and its stage, order and close; a draft quote and its lines; a next step marked done by the grantor or snoozed; nothing else on those tables (not a thread's channel, kind, sender or text, a message,
 //   a deal's title or amount, a sent quote, a quote's number, a delete of anything but a draft quote's lines) and nothing on any other table, whatever the table, the statement or the row;
-// - in the sealed ads context only a new AI draft of the grantor, and an edit of an AI draft that stays one, for ads, and nothing else;
+// - in the sealed ads context only a new AI draft of the grantor, for ads, and nothing else (no draft is edited, an AI one included);
 // - the other contexts are as they were: a person's own writes of the same rows still pass, and the read context of a company grant still writes its audit row and nothing else.
 // Part of the invariant suite; it imports package code under test, never helpers from outside test/invariant/. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
@@ -148,10 +148,11 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
     await q(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, users.admin, users.member]);
     // The rows the contexts act on, written by the superuser.
     const id = () => randomUUID();
-    Object.assign(s, { deal2: id(), conn: id(), ident: id(), conv: id(), msg: id(), note: id(), party: id(), stageOpen: id(), stageOpen2: id(), stageWon: id(), deal: id(), quoteDraft: id(), quoteSent: id(), step: id(), step2: id(), account: id(), connAds: id(), aiDraft: id(), humanDraft: id() });
+    Object.assign(s, { conv2: id(), deal2: id(), conn: id(), ident: id(), conv: id(), msg: id(), note: id(), party: id(), stageOpen: id(), stageOpen2: id(), stageWon: id(), deal: id(), quoteDraft: id(), quoteSent: id(), step: id(), step2: id(), account: id(), connAds: id(), aiDraft: id(), humanDraft: id() });
     await q(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'facebook_page', 'ext-1', 'Trang', $3), ($1, $4, 'sandbox_ads', 'act-1', 'QC', $3)`, [orgId, s.conn, users.owner, s.connAds]);
     await q(`INSERT INTO crove_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'facebook', 'u-1-12345678', 'Khách')`, [orgId, s.ident]);
     await q(`INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, identity_id, last_seq, last_message_at, last_inbound_at) VALUES ($1, $2, $3, 'comment_thread', 't-1', $4, 1, now(), now())`, [orgId, s.conv, s.conn, s.ident]);
+    await q(`INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, identity_id, last_seq, last_message_at, last_inbound_at, status, resolved_at, resolved_by) VALUES ($1, $2, $3, 'comment_thread', 't-2', $4, 1, now(), now(), 'resolved', now(), $5)`, [orgId, s.conv2, s.conn, s.ident, users.admin]);
     await q(`INSERT INTO crove_kernel.conversation_message (org_id, id, conversation_id, channel_connection_id, kind, seq, direction, sent_at, author_kind, body, tainted, author_identity_id) VALUES ($1, $2, $3, $4, 'comment_thread', 1, 'in', now(), 'contact', 'Xin chào', true, $5)`, [orgId, s.msg, s.conv, s.conn, s.ident]);
     await q(`INSERT INTO crove_kernel.conversation_note (org_id, id, conversation_id, author_user_id, body) VALUES ($1, $2, $3, $4, 'ghi chú của người')`, [orgId, s.note, s.conv, users.owner]);
     await q(`INSERT INTO crove_kernel.party (org_id, id, kind, name, source_trust) VALUES ($1, $2, 'person', 'Khách A', 'user')`, [orgId, s.party]);
@@ -283,6 +284,10 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
       expect(await attempt(`UPDATE crove_kernel.conversation SET assignee_user_id = $2, updated_at = now() WHERE org_id = $3 AND id = $1`, [s.conv, users.admin, orgId])).toBeNull();
       expect(await attempt(`UPDATE crove_kernel.conversation SET status = 'resolved', resolved_at = now(), resolved_by = $2, updated_at = now() WHERE org_id = $3 AND id = $1`, [s.conv, users.owner, orgId])).toBeNull();
       expect(await attempt(`UPDATE crove_kernel.conversation SET party_id = $2, updated_at = now() WHERE org_id = $3 AND id = $1`, [s.conv, s.party, orgId])).toBeNull();
+      // A thread another member resolved keeps them when only its assignee or contact changes; the grantor becomes the resolver only when the resolution itself changes.
+      expect(await attempt(`UPDATE crove_kernel.conversation SET assignee_user_id = $2, updated_at = now() WHERE org_id = $3 AND id = $1`, [s.conv2, users.owner, orgId])).toBeNull();
+      expect((await c.query(`SELECT resolved_by FROM crove_kernel.conversation WHERE id = $1`, [s.conv2])).rows[0].resolved_by).toBe(users.admin);
+      refused('a resolution taken over by the grantor without reopening it', await attempt(`UPDATE crove_kernel.conversation SET resolved_by = $2 WHERE org_id = $3 AND id = $1`, [s.conv2, users.member, orgId]));
       for (const [label, set] of [
         ['its channel', `channel_connection_id = '${randomUUID()}'`],
         ['its kind', `kind = 'direct'`],
@@ -334,10 +339,16 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
       ] as const) {
         refused(`a deal with ${label} changed`, await attempt(`UPDATE crove_crm.deal SET ${set}, updated_by = $2 WHERE org_id = $3 AND id = $1`, [s.deal, users.owner, orgId]));
       }
+      // The rebalance of a crowded stage changes the order of other deals and nothing else of them (they keep whoever changed them last).
+      expect(await attempt(`UPDATE crove_crm.deal SET sort_key = 'd0' WHERE org_id = $2 AND id = $1`, [s.deal2, orgId])).toBeNull();
+      refused('an order change that also renames', await attempt(`UPDATE crove_crm.deal SET sort_key = 'd1', title = 'đổi' WHERE org_id = $2 AND id = $1`, [s.deal2, orgId]));
       refused('a deal moved in another\'s name', await attempt(`UPDATE crove_crm.deal SET stage_id = $2, updated_by = $3 WHERE org_id = $4 AND id = $1`, [s.deal, s.stageOpen, users.admin, orgId]));
       await kept('a deal deleted', c, attempt, 'crove_crm.deal', s.deal as string);
-      // The default stages of a first use are the one other row of the pipeline; a stage is never changed or removed.
-      expect(await attempt(`INSERT INTO crove_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Thua', 'lost', 9)`, [orgId])).toBeNull();
+      // The default stages of a first use are the one other row of the pipeline, exactly as the code names them; never a stage of the agent's own, and a stage is never changed or removed.
+      expect(await attempt(`INSERT INTO crove_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Thương lượng', 'open', 4)`, [orgId])).toBeNull();
+      refused('a stage of its own', await attempt(`INSERT INTO crove_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Giai đoạn riêng', 'open', 9)`, [orgId]));
+      refused('a default stage in another place', await attempt(`INSERT INTO crove_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Thương lượng', 'open', 9)`, [orgId]));
+      refused('a default stage of another kind', await attempt(`INSERT INTO crove_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Thương lượng', 'lost', 4)`, [orgId]));
       refused('a stage renamed', await attempt(`UPDATE crove_crm.pipeline_stage SET name = 'đổi' WHERE org_id = $2 AND id = $1`, [s.stageOpen, orgId]));
       await kept('a stage deleted', c, attempt, 'crove_crm.pipeline_stage', s.stageWon as string);
     });
@@ -372,17 +383,21 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
     });
   });
 
-  it('lets the ads context save a new AI draft of the grantor and edit one that stays an AI draft, and nothing else', async () => {
+  it('lets the ads context save a new AI draft of the grantor and edit no draft, and nothing else', async () => {
     const g = await grant(orgId, users.owner);
     await inWrite(g, ADS, async (attempt, c) => {
       expect(await attempt(`INSERT INTO crove_ads.ad_campaign_draft (org_id, id, ad_account_id, name, objective, created_by, origin, ai_fields) VALUES ($1, $2, $3, 'AI mới', 'traffic', $4, 'ai', ARRAY['name'])`, [orgId, randomUUID(), s.account, users.owner])).toBeNull();
       refused('a human draft made', await attempt(`INSERT INTO crove_ads.ad_campaign_draft (org_id, id, ad_account_id, name, objective, created_by) VALUES ($1, $2, $3, 'Người', 'traffic', $4)`, [orgId, randomUUID(), s.account, users.owner]));
       refused('an AI draft in another\'s name', await attempt(`INSERT INTO crove_ads.ad_campaign_draft (org_id, id, ad_account_id, name, objective, created_by, origin) VALUES ($1, $2, $3, 'Giả', 'traffic', $4, 'ai')`, [orgId, randomUUID(), s.account, users.admin]));
       refused('an approved draft made', await attempt(`INSERT INTO crove_ads.ad_campaign_draft (org_id, id, ad_account_id, name, objective, created_by, origin, status) VALUES ($1, $2, $3, 'Duyệt', 'traffic', $4, 'ai', 'approved')`, [orgId, randomUUID(), s.account, users.owner]));
-      refused('a person\'s draft edited', await attempt(`UPDATE crove_ads.ad_campaign_draft SET name = 'sửa' WHERE org_id = $2 AND id = $1`, [s.humanDraft, orgId]));
-      refused('an AI draft turned human', await attempt(`UPDATE crove_ads.ad_campaign_draft SET origin = 'human' WHERE org_id = $2 AND id = $1`, [s.aiDraft, orgId]));
-      refused('an AI draft discarded', await attempt(`UPDATE crove_ads.ad_campaign_draft SET status = 'discarded' WHERE org_id = $2 AND id = $1`, [s.aiDraft, orgId]));
-      refused('an AI draft approved', await attempt(`UPDATE crove_ads.ad_campaign_draft SET status = 'approved' WHERE org_id = $2 AND id = $1`, [s.aiDraft, orgId]));
+      // It edits no draft: not a person's, not an AI one (its own included), whatever the column.
+      for (const [label, id] of [['a person\'s draft', s.humanDraft], ['an AI draft', s.aiDraft]] as const) {
+        refused(`${label} renamed`, await attempt(`UPDATE crove_ads.ad_campaign_draft SET name = 'sửa' WHERE org_id = $2 AND id = $1`, [id, orgId]));
+        refused(`${label} budget changed`, await attempt(`UPDATE crove_ads.ad_campaign_draft SET daily_budget = 1 WHERE org_id = $2 AND id = $1`, [id, orgId]));
+        refused(`${label} turned human`, await attempt(`UPDATE crove_ads.ad_campaign_draft SET origin = 'human' WHERE org_id = $2 AND id = $1`, [id, orgId]));
+        refused(`${label} discarded`, await attempt(`UPDATE crove_ads.ad_campaign_draft SET status = 'discarded' WHERE org_id = $2 AND id = $1`, [id, orgId]));
+        refused(`${label} approved`, await attempt(`UPDATE crove_ads.ad_campaign_draft SET status = 'approved' WHERE org_id = $2 AND id = $1`, [id, orgId]));
+      }
       await kept('a draft deleted', c, attempt, 'crove_ads.ad_campaign_draft', s.aiDraft as string);
       // The ads context writes nothing of Hộp thư or the CRM, and the engage context nothing of ads.
       refused('a note from the ads context', await attempt(`INSERT INTO crove_kernel.conversation_note (org_id, id, conversation_id, author_user_id, body) VALUES ($1, $2, $3, $4, 'x')`, [orgId, randomUUID(), s.conv, users.owner]));
@@ -394,7 +409,7 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
   });
 
   it('refuses both contexts every other table, whatever the statement: no event, no key, no grant, no member, no file, no money', async () => {
-    const revokedBefore = (await q(`SELECT count(*)::int AS n FROM crove_kernel.agent_grant WHERE org_id = $1 AND revoked_at IS NOT NULL`, [orgId])).rows[0].n as number;
+    const revokedBefore = (await q(`SELECT count(*)::int AS n FROM crove_kernel.agent_grant WHERE org_id = $1 AND revoked_at IS NOT NULL`, [orgId])).rows[0]?.n as number;
     const tables = (await q<{ t: string }>(
       `SELECT n.nspname || '.' || c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
        WHERE n.nspname LIKE 'crove\\_%' AND n.nspname NOT IN ('crove_meta', 'crove_jobs') AND c.relkind IN ('r', 'p') AND NOT c.relispartition ORDER BY 1`,
@@ -404,10 +419,14 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
       const g = await grant(orgId, users.owner);
       await inWrite(g, scope, async (attempt, c) => {
         const other = tables.filter((t) => !allowed.includes(t) && !['crove_kernel.activity', 'crove_kernel.task', 'crove_kernel.task_comment', 'crove_kernel.ai_run', 'crove_kernel.outbox_event', 'crove_kernel.refusal_tally'].includes(t));
+        // Each insert is refused by the guard itself (or by a missing privilege): not by a missing value, which would hide a guard that stopped refusing.
+        const unguarded: string[] = [];
         for (const t of other) {
           const result = await attempt(`INSERT INTO ${t} DEFAULT VALUES`);
           expect(result, `${kind}: insert into ${t}`).not.toBeNull();
+          if (!/AGENT_FORBIDDEN|AGENT_LEASE_REQUIRED|permission denied/.test(result as string)) unguarded.push(`${t}: ${result}`);
         }
+        expect(unguarded, kind).toEqual([]);
         // A delete that reaches no row is not a write; one that reaches a row must not succeed (counted, in a savepoint that is rolled back).
         for (const t of other) {
           const before = await countOf(c, t);
@@ -428,8 +447,8 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
       });
     }
     // Nothing that was refused changed a row of the people and the keys the contexts must not reach.
-    expect((await q(`SELECT count(*)::int AS n FROM crove_kernel.agent_grant WHERE org_id = $1 AND revoked_at IS NOT NULL`, [orgId])).rows[0].n).toBe(revokedBefore);
-    expect((await q(`SELECT count(*)::int AS n FROM crove_kernel.tenant_member WHERE org_id = $1`, [orgId])).rows[0].n).toBe(3);
+    expect((await q(`SELECT count(*)::int AS n FROM crove_kernel.agent_grant WHERE org_id = $1 AND revoked_at IS NOT NULL`, [orgId])).rows[0]?.n).toBe(revokedBefore);
+    expect((await q(`SELECT count(*)::int AS n FROM crove_kernel.tenant_member WHERE org_id = $1`, [orgId])).rows[0]?.n).toBe(3);
   });
 
   it('writes the timeline row of a call as the grantor and no agent, and leaves a person\'s and an org-chart agent\'s as they were', async () => {
