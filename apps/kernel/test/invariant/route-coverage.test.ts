@@ -91,6 +91,8 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
+  '/api/meeting-platform/zoom/webhook':
+    "Zoom's signed notice that a cloud recording finished (meetings integrations C3, #3175, plan docs/plan/meetings-integrations.md section 6.3; design comment on the issue): a doorbell, never data. It refuses a body over its size cap before reading it, then checks x-zm-signature (HMAC-SHA256 of v0:<timestamp>:<body> with the app's secret token, constant time, a 5 minute timestamp window) over the raw body before it looks at the event; it is rate limited per address, answers the same for a missing, malformed or wrong signature, and stores and logs nothing of the body. The one event it answers without a verified signature, if Zoom sends none, is the URL validation challenge, and only for a plainToken of [A-Za-z0-9_-]{1,128}, so the HMAC it returns can never be the signature of a v0: message. A verified recording.completed only asks the sweep to list the matching connections again at its next pass (a definer clears their last listing time; it names no org in the path or the answer, writes no recording row and downloads nothing), and answers 200 whether or not a connection matched. It exists only when ZOOM_WEBHOOK_SECRET_TOKEN is set",
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 

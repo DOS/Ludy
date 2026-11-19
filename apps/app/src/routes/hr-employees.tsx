@@ -448,6 +448,34 @@ export function filterDepartmentsForEntity(
 
 const deptCodeOk = (code: string): boolean => code.trim() === '' || /^[A-Za-z0-9._-]+$/.test(code.trim());
 
+export interface DepartmentEditDraft {
+  id: string;
+  origName: string;
+  origCode: string;
+  origPayFunction: HrPayFunction;
+  name: string;
+  code: string;
+  payFunction: HrPayFunction;
+}
+
+export function clearEditingDepartmentOnComplete(
+  current: DepartmentEditDraft | null,
+  completedDepartmentId: string,
+): DepartmentEditDraft | null {
+  return current?.id === completedDepartmentId ? null : current;
+}
+
+export function formatDepartmentFilterOptionLabel(
+  department: Pick<HrDepartmentView, 'name' | 'legalEntityId' | 'archivedAt'>,
+  entities: readonly Pick<LegalEntity, 'id' | 'name'>[],
+  archivedBadge: string,
+): string {
+  const entityName =
+    entities.length > 1 ? entities.find((e) => e.id === department.legalEntityId)?.name : undefined;
+  const withEntity = entityName ? `${department.name} - ${entityName}` : department.name;
+  return department.archivedAt !== null ? `${withEntity} (${archivedBadge})` : withEntity;
+}
+
 export function DepartmentsSection({
   departments,
   entities,
@@ -474,15 +502,7 @@ export function DepartmentsSection({
   const [newCode, setNewCode] = useState('');
   const [newPayFunction, setNewPayFunction] = useState<HrPayFunction>('admin');
   const targetNewEntityId = newLegalEntityId || defaultEntityId;
-  const [editing, setEditing] = useState<{
-    id: string;
-    origName: string;
-    origCode: string;
-    origPayFunction: HrPayFunction;
-    name: string;
-    code: string;
-    payFunction: HrPayFunction;
-  } | null>(null);
+  const [editing, setEditing] = useState<DepartmentEditDraft | null>(null);
 
   const createDept = useMutation({
     mutationFn: () =>
@@ -503,20 +523,19 @@ export function DepartmentsSection({
   });
 
   const updateDept = useMutation({
-    mutationFn: () => {
-      if (!editing) throw new Error('no editing department');
-      const trimmedName = editing.name.trim();
-      const trimmedCode = editing.code.trim();
+    mutationFn: (draft: DepartmentEditDraft) => {
+      const trimmedName = draft.name.trim();
+      const trimmedCode = draft.code.trim();
       return client.hr.departments.edit({
-        departmentId: editing.id,
-        ...(trimmedName !== editing.origName ? { name: trimmedName } : {}),
-        ...(trimmedCode !== editing.origCode ? { code: trimmedCode === '' ? null : trimmedCode } : {}),
-        ...(editing.payFunction !== editing.origPayFunction ? { payFunction: editing.payFunction } : {}),
+        departmentId: draft.id,
+        ...(trimmedName !== draft.origName ? { name: trimmedName } : {}),
+        ...(trimmedCode !== draft.origCode ? { code: trimmedCode === '' ? null : trimmedCode } : {}),
+        ...(draft.payFunction !== draft.origPayFunction ? { payFunction: draft.payFunction } : {}),
       });
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, draft) => {
       await refresh();
-      setEditing(null);
+      setEditing((current) => clearEditingDepartmentOnComplete(current, draft.id));
     },
   });
 
@@ -524,7 +543,7 @@ export function DepartmentsSection({
     mutationFn: (departmentId: string) => client.hr.departments.archive({ departmentId }),
     onSuccess: async (_data, departmentId) => {
       await refresh();
-      if (editing?.id === departmentId) setEditing(null);
+      setEditing((current) => clearEditingDepartmentOnComplete(current, departmentId));
     },
   });
 
@@ -556,6 +575,7 @@ export function DepartmentsSection({
             size="sm"
             disabled={adding}
             onClick={() => {
+              if (!updateDept.isPending) updateDept.reset();
               setEditing(null);
               setAdding(true);
             }}
@@ -651,7 +671,7 @@ export function DepartmentsSection({
               id="hr-dept-edit-name"
               value={editing.name}
               maxLength={HR_DEPARTMENT_NAME_MAX}
-              onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+              onChange={(e) => setEditing((cur) => (cur ? { ...cur, name: e.target.value } : null))}
               data-testid="hr-dept-edit-name"
             />
           </div>
@@ -661,7 +681,7 @@ export function DepartmentsSection({
               id="hr-dept-edit-code"
               value={editing.code}
               maxLength={HR_DEPARTMENT_CODE_MAX}
-              onChange={(e) => setEditing({ ...editing, code: e.target.value })}
+              onChange={(e) => setEditing((cur) => (cur ? { ...cur, code: e.target.value } : null))}
               data-testid="hr-dept-edit-code"
             />
           </div>
@@ -670,7 +690,7 @@ export function DepartmentsSection({
             <NativeSelect
               id="hr-dept-edit-function"
               value={editing.payFunction}
-              onChange={(e) => setEditing({ ...editing, payFunction: e.target.value as HrPayFunction })}
+              onChange={(e) => setEditing((cur) => (cur ? { ...cur, payFunction: e.target.value as HrPayFunction } : null))}
               data-testid="hr-dept-edit-pay-function"
             >
               {HR_PAY_FUNCTIONS.map((k) => (
@@ -680,7 +700,7 @@ export function DepartmentsSection({
               ))}
             </NativeSelect>
           </div>
-          {updateDept.error && (
+          {updateDept.error !== null && updateDept.error !== undefined && updateDept.variables?.id === editing.id && (
             <div className="sm:col-span-3">
               <ErrorText>{errorMessage(updateDept.error)}</ErrorText>
             </div>
@@ -688,20 +708,30 @@ export function DepartmentsSection({
           <div className="flex flex-wrap gap-2 sm:col-span-3">
             <Button
               size="sm"
-              loading={updateDept.isPending}
-              disabled={editing.name.trim() === '' || !deptCodeOk(editing.code) || !editChanged}
-              onClick={() => updateDept.mutate()}
+              loading={updateDept.isPending && updateDept.variables?.id === editing.id}
+              disabled={editing.name.trim() === '' || !deptCodeOk(editing.code) || !editChanged || updateDept.isPending}
+              onClick={() => updateDept.mutate(editing)}
               data-testid="hr-dept-edit-save"
             >
               {t('save')}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                if (!updateDept.isPending) updateDept.reset();
+                setEditing(null);
+              }}
+            >
               {t('cancel')}
             </Button>
           </div>
         </div>
       )}
 
+      {(!editing || updateDept.variables?.id !== editing.id) && updateDept.error !== null && updateDept.error !== undefined && (
+        <ErrorText>{errorMessage(updateDept.error)}</ErrorText>
+      )}
       {archiveDept.error && <ErrorText>{errorMessage(archiveDept.error)}</ErrorText>}
 
       {loading ? (
@@ -761,7 +791,9 @@ export function DepartmentsSection({
                       <Button
                         variant="ghost"
                         size="sm"
+                        disabled={archiveDept.isPending && archiveDept.variables === d.id}
                         onClick={() => {
+                          if (!updateDept.isPending) updateDept.reset();
                           setAdding(false);
                           setEditing({
                             id: d.id,
@@ -780,6 +812,7 @@ export function DepartmentsSection({
                       <Button
                         variant="ghost"
                         size="sm"
+                        disabled={updateDept.isPending && updateDept.variables?.id === d.id}
                         loading={archiveDept.isPending && archiveDept.variables === d.id}
                         onClick={() => archiveDept.mutate(d.id)}
                         data-testid="hr-department-archive"
@@ -1647,7 +1680,7 @@ export function HrEmployeesPage() {
             <NativeSelectOption value="">{t('departments.allDepartments')}</NativeSelectOption>
             {departments.map((d) => (
               <NativeSelectOption key={d.id} value={d.id}>
-                {d.archivedAt !== null ? `${d.name} (${t('departments.archivedBadge')})` : d.name}
+                {formatDepartmentFilterOptionLabel(d, entities, t('departments.archivedBadge'))}
               </NativeSelectOption>
             ))}
           </NativeSelect>
