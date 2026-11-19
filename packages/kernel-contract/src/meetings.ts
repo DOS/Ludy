@@ -656,6 +656,9 @@ export const zActionItemView = z.strictObject({
   // The seats the attendee holds now (a person picks one at accept); clean only with exactly one, a parsed date and no flag.
   positions: z.array(z.strictObject({ id: zId, title: z.string() })),
   clean: z.boolean(),
+  // Who the said name probably means (#3921), found by code when the item names nobody yet: the one attendee, else the one other member, whose name the said words match; null when none or
+  // when two or more match. Only a suggestion: nothing is stored until a person makes the task, and the seats are those the person holds now.
+  suggestion: z.strictObject({ userId: zId, name: z.string(), source: z.enum(['attendee', 'member']), positions: z.array(z.strictObject({ id: zId, title: z.string() })) }).nullable(),
 });
 export const zMeetingResults = z.strictObject({
   meetingId: zId,

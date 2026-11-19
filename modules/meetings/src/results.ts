@@ -37,6 +37,8 @@ import {
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { enqueueMinutesHook } from './hook.ts';
 import { vnDayStart } from './retention.ts';
+import { suggestAssignee, type Person, type Suggested } from './assignee-match.ts';
+import { attendeeNames, cleanName } from './speaker.ts';
 import { ROLES, missingAnchors, openMeeting, userOf } from './transcript.ts';
 
 // What code finds wrong with an item's text: a link, an email address or a phone number in a title (a task is read by every member, and a title the model
@@ -399,6 +401,18 @@ export const actionItemAccept = defineCommand({
   },
 });
 
+// The people of the org a said name may be matched with when no attendee answers to it (#3921): the members, by the display name the org knows them by (member_profiles answers for members only; a
+// member with no display name has no name to match, and an email address is never one). At most 500, which is far above a small business.
+async function memberNames(ctx: QueryContext | CommandContext): Promise<Person[]> {
+  const ids = (await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).limit(500).execute()).map((r) => r.user_id);
+  if (ids.length === 0) return [];
+  const { rows } = await sql<{ user_id: string; display_name: string | null }>`SELECT user_id, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
+  return rows.flatMap((r) => {
+    const name = cleanName(r.display_name);
+    return name === '' ? [] : [{ userId: r.user_id, name }];
+  });
+}
+
 // The seats an attendee holds now: active positions whose holder they are.
 async function seatsOf(trx: Trx, orgId: string, userIds: readonly string[]): Promise<Map<string, Array<{ id: string; title: string }>>> {
   const seats = new Map<string, Array<{ id: string; title: string }>>();
@@ -470,7 +484,18 @@ export const meetingResultGet = defineQuery({
       .orderBy('created_at')
       .orderBy('id')
       .execute();
-    const seats = await seatsOf(ctx.trx, ctx.orgId, items.flatMap((i) => (i.who_parsed ? [i.who_parsed] : [])));
+    // A suggestion for an open item that names nobody yet (#3921): by code, from the said name; read here and never stored.
+    const unnamed = items.filter((i) => i.status === 'suggested' && i.who_parsed === null && i.who_drafted.trim() !== '');
+    const suggestions = new Map<string, Suggested>();
+    if (unnamed.length > 0) {
+      const attendees = await attendeeNames(ctx, input.meetingId, meeting.recorder_user_id);
+      const members = await memberNames(ctx);
+      for (const i of unnamed) {
+        const found = suggestAssignee(i.who_drafted, attendees, members);
+        if (found) suggestions.set(i.id, found);
+      }
+    }
+    const seats = await seatsOf(ctx.trx, ctx.orgId, [...items.flatMap((i) => (i.who_parsed ? [i.who_parsed] : [])), ...[...suggestions.values()].map((s) => s.userId)]);
     const view = (stage: 'draft' | 'published') => {
       const r = results.find((x) => x.stage === stage);
       return r ? { id: r.id, feature: r.feature as 'manual' | 'meetings.summary', stage, summary: r.summary, decisions: Array.isArray(r.decisions) ? (r.decisions as string[]) : [], tainted: r.tainted } : null;
@@ -498,6 +523,10 @@ export const meetingResultGet = defineQuery({
           taskId: i.task_id,
           positions: held,
           clean: i.status === 'suggested' && itemIsClean({ flags, whoUserId: i.who_parsed, whenDate: i.when_parsed }, held.length),
+          suggestion: ((): ActionItemView['suggestion'] => {
+            const s = suggestions.get(i.id);
+            return s ? { userId: s.userId, name: s.name, source: s.source, positions: seats.get(s.userId) ?? [] } : null;
+          })(),
         };
       }),
     };
