@@ -14,6 +14,7 @@ import {
   type Transcript,
   type TranscriptSegmentInput,
   type TranscriptStage,
+  type TranscriptionMaker,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { dayText, vnDay } from './retention.ts';
@@ -43,15 +44,23 @@ export async function openMeeting(trx: QueryContext['trx'], orgId: string, meeti
 // A new run replaces the earlier draft, corrections included: the recorder asked for it. The caller has checked that the caller is the recorder.
 // `fromRun` is set only by the copy of a Vy result (meetings.transcript.copy_result): those rows are the model's text, so they are born tainted and name the run they came
 // from (source_run_id), and nothing can change either afterwards but the recorder's review (crove_meetings.draft_review). What the recorder typed is not tainted.
+// `source` names whose transcription the rows are when it is not Ludy's own (C2, #3174: the transcript Google Meet wrote, taken by meetings.import.take_transcript); such rows are tainted too and
+// name no run. Nothing updates `source` afterwards.
 export async function replaceDraft(
   ctx: { trx: QueryContext['trx']; orgId: string },
   meetingId: string,
   segments: readonly TranscriptSegmentInput[],
-  fromRun?: { tainted: true; sourceRunId: string },
+  fromRun?: { tainted: true; sourceRunId?: string; source?: TranscriptionMaker },
 ): Promise<void> {
   for (const segment of segments) {
     if (segment.endSeconds < segment.startSeconds) throw new DomainError('INVALID', 422, 'A transcript segment ends before it starts');
   }
+  // The meeting row is held first, in the order a publish, a chapters save and the personal-data erasure take it (the meeting, then its rows): a re-transcription is one after the other with them, so
+  // a chapter checked against the lines cannot be saved or published against lines that a concurrent replacement is deleting (#3916). The caller may already hold the meeting's media lock (an
+  // advisory lock taken before any row of the meeting), which is the same order.
+  const held = await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', meetingId).forNoKeyUpdate().executeTakeFirst();
+  // A meeting deleted while this waited is gone, not a foreign key error from the insert below.
+  if (!held) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
   await ctx.trx.deleteFrom('crove_meetings.transcript_segment').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).where('stage', '=', 'draft').execute();
   // The batch transcript replaces the live preview (ADR-0052 L4a, #3110): once a real transcript is stored the "Bản nháp trực tiếp" lines are gone, with the text they held.
   if (segments.length > 0) await ctx.trx.deleteFrom('crove_meetings.live_line').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).execute();
@@ -64,7 +73,7 @@ export async function replaceDraft(
       speaker_label: s.speakerLabel,
       text: s.text,
       stage: 'draft' as const,
-      ...(fromRun ? { tainted: fromRun.tainted, source_run_id: fromRun.sourceRunId } : {}),
+      ...(fromRun ? { tainted: fromRun.tainted, ...(fromRun.sourceRunId === undefined ? {} : { source_run_id: fromRun.sourceRunId }), ...(fromRun.source === undefined ? {} : { source: fromRun.source }) } : {}),
     }));
     await ctx.trx.insertInto('crove_meetings.transcript_segment').values(rows).execute();
   }
@@ -136,7 +145,7 @@ export const transcriptGet = defineQuery({
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     const rows = await ctx.trx
       .selectFrom('crove_meetings.transcript_segment')
-      .select(['id', sql<string>`start_seconds::text`.as('start_seconds'), sql<string>`end_seconds::text`.as('end_seconds'), 'speaker_label', 'text', 'stage', 'corrected'])
+      .select(['id', sql<string>`start_seconds::text`.as('start_seconds'), sql<string>`end_seconds::text`.as('end_seconds'), 'speaker_label', 'text', 'stage', 'corrected', 'source'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .orderBy('start_seconds')
@@ -155,7 +164,21 @@ export const transcriptGet = defineQuery({
         text: r.text,
         stage: r.stage as TranscriptStage,
         corrected: r.corrected,
+        source: r.source as TranscriptionMaker,
       })),
     };
   },
 });
+
+// The whole seconds, among `seconds`, at which no line of the meeting's transcript starts (a line starts at a second when its start, cut to the whole second, is that second). The caller is the
+// recorder, who reads every line of their meeting (the draft as well as a published one), so every line counts. Chapters are saved against this and checked against it again at publish (#3881), so a
+// re-transcription that replaced the lines since the save cannot leave a chapter pointing at a second where no line starts.
+export async function missingAnchors(ctx: { trx: QueryContext['trx']; orgId: string }, meetingId: string, seconds: readonly number[]): Promise<number[]> {
+  if (seconds.length === 0) return [];
+  const found = await sql<{ second: number }>`
+    SELECT DISTINCT pg_catalog.floor(s.start_seconds)::int AS second
+      FROM crove_meetings.transcript_segment s
+     WHERE s.org_id = ${ctx.orgId}::uuid AND s.meeting_id = ${meetingId}::uuid AND pg_catalog.floor(s.start_seconds)::int = ANY(${sql.val([...seconds])}::int[])`.execute(ctx.trx);
+  const anchored = new Set(found.rows.map((r) => r.second));
+  return seconds.filter((s) => !anchored.has(s));
+}

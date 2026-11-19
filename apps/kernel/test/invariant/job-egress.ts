@@ -56,6 +56,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   extractor: ['provider:ai'],
   // The speech to text endpoint of packages/agent (#2578, M4b): the recorder's audio goes to the provider the deployment names, in the recorder's own Vy run.
   meetingsTranscribe: ['provider:ai'],
+  // The audio extraction of a video-only meeting platform recording (C2a, #3306): the import job streams the video into crove-media, a service of the stack itself (its network has no route out), which returns
+  // mono Opus. The job's call to the platform still goes through guardedStream; this field reaches only crove-media, so it classifies as nothing. Classified before the field exists (step 0, the PENDING_DEPS pattern).
+  meetingsImportExtractor: [],
   // The reply drafter of packages/agent (CV8, #2310): the model reads a conversation's text and writes a draft.
   conversationWriter: ['provider:ai'],
   // The campaign drafter of packages/agent (ads W1b, #2295): the model reads a Social post and the account's caps and writes
@@ -98,6 +101,11 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // frozen view of @crove/ad-platform with `activate` and `readStatus` and nothing else (it cannot create, pause or revoke), apart from the writers so the creating view
   // cannot activate. Each is bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the activation job reaches the field.
   'channels.adActivators': ['provider:ad_platform'],
+  // The managers of the ad platforms (#3835 W4): what the manage job may call to change a live launch's objects, a frozen view of @crove/ad-platform with a status change (pause,
+  // archive and, for an approved resume, the switch-on), the ad set's daily budget and end date, and a read of an object's status, budget and end date, and nothing else (it
+  // cannot create, find by a tag or revoke). Each is bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the manage job reaches the field.
+  // Classified before the field exists (#3835, step one): the base copy of this suite must know it when the field lands.
+  'channels.adManagers': ['provider:ad_platform'],
   // The state readers of the ad platforms (#3301): what the account's sync job may call to read the status of the objects of a launch (`GET` of one object, with the review feedback);
   // a frozen view with that one call, never the writer. Each is bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the sync job reaches the field.
   // Classified before the field exists (#3301, step 0): the base copy of this suite must know it when the field lands.

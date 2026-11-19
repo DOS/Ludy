@@ -4,6 +4,7 @@
 import { expect, test } from '@playwright/test';
 import { exec, sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 test.use({ timezoneId: 'Asia/Ho_Chi_Minh' });
 
@@ -100,6 +101,7 @@ test('a visitor books on the public page, the host sees it in the app, cancels i
     const day = (offset: number) => new Date(today + offset * 86_400_000).toISOString().slice(0, 10);
     const dmy = (iso: string) => iso.split('-').reverse().join('/');
     await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+    await openSettingsTab(page, 'bookings');
     // The host's hours run all day: from 00:00 to midnight at the end of the day, which reads 00:00 too.
     await expect(page.getByLabel('Giờ bắt đầu Thứ Hai')).toHaveValue('00:00');
     await expect(page.getByLabel('Giờ kết thúc Thứ Hai')).toHaveValue('00:00');

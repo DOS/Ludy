@@ -8,6 +8,7 @@ import { sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser, signUp } from '../lib/session.ts';
 import { tabTo } from '../lib/inbox.ts';
 import { nextTotp } from '../lib/totp.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 const INVOICE = fileURLToPath(new URL('../../apps/extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SELLER = 'CÔNG TY TNHH DỊCH VỤ MẪU';
@@ -102,9 +103,13 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     // what it ran: the invoice's posting, which names the proposal. The invoice's reading, whose object is the file, is
     // not listed.
     const rows = page.getByRole('row').filter({ has: page.getByRole('cell') });
-    await expect(rows.filter({ hasText: 'kernel.proposal.approve' })).toHaveCount(2);
-    await expect(rows.filter({ hasText: 'finance.purchase.record' })).toHaveCount(1);
-    await expect(rows.filter({ hasText: 'kernel.extraction.record' })).toHaveCount(0);
+    // The log speaks in sentences (#3595): the refused approval says it was tried, the approval says it was done, and no command
+    // name is in the list.
+    await expect(rows.filter({ hasText: 'Đã thử duyệt đề xuất' })).toHaveCount(1);
+    await expect(rows.filter({ hasText: 'Đã duyệt đề xuất' })).toHaveCount(1);
+    await expect(rows.filter({ hasText: 'Đã ghi sổ hóa đơn mua vào' })).toHaveCount(1);
+    await expect(rows.filter({ hasText: 'Đã ghi kết quả đọc tệp' })).toHaveCount(0);
+    await expect(rows.filter({ hasText: 'kernel.' })).toHaveCount(0);
     await page.goBack();
     await page.goBack();
   });
@@ -245,6 +250,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   await test.step('add a sub-account in Settings and make it the vendor default (#319)', async () => {
     const nav = page.getByRole('navigation');
     await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await openSettingsTab(page, 'accounting');
     const add = page.getByRole('form', { name: 'Thêm tài khoản con' });
     await add.getByLabel('Tài khoản cha').selectOption('6422');
     await expect(add.getByLabel('Mã tài khoản con')).toHaveValue('6422');
@@ -261,6 +267,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
     // While it is a vendor's default, the sub-account stays in use, and the refusal names the vendor.
     await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await openSettingsTab(page, 'accounting');
     await page.getByRole('button', { name: 'Ngừng dùng tài khoản 6422.VP · Văn phòng Hà Nội' }).click();
     await expect(page.getByText(`Tài khoản 6422.VP đang là tài khoản mặc định của ${SELLER}`, { exact: false })).toBeVisible();
   });

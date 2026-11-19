@@ -14,6 +14,13 @@ export const MEETING_PLATFORM_OAUTH_PROVIDERS = ['google_recordings', 'zoom_reco
 export type MeetingPlatformOAuthProvider = (typeof MEETING_PLATFORM_OAUTH_PROVIDERS)[number];
 export const zMeetingPlatformOAuthProvider = z.enum(MEETING_PLATFORM_OAUTH_PROVIDERS);
 
+// The platforms a member connects through the platform's own OAuth dialog (C3 onwards; the sandbox connects without one), and the name of their attempt in the oauth_state table. The return address of the
+// dialog is `<APP_URL>/meetings/oauth/<platform>/callback`, a page of the app.
+export const MEETING_PLATFORM_CONNECT_PROVIDERS = ['zoom', 'microsoft_teams'] as const;
+export type MeetingPlatformConnectProvider = (typeof MEETING_PLATFORM_CONNECT_PROVIDERS)[number];
+export const zMeetingPlatformConnectProvider = z.enum(MEETING_PLATFORM_CONNECT_PROVIDERS);
+export const MEETING_PLATFORM_OAUTH_NAME: Record<MeetingPlatformConnectProvider, MeetingPlatformOAuthProvider> = { zoom: 'zoom_recordings', microsoft_teams: 'teams_recordings' };
+
 export const MEETING_PLATFORM_CONNECTION_STATUSES = ['active', 'expired'] as const;
 // suggested -> importing (the click) -> staged (the worker's bytes wait in staging) -> claimed (the member's request took them) -> imported; failed and dismissed branch off.
 export const MEETING_PLATFORM_RECORDING_STATUSES = ['suggested', 'importing', 'staged', 'claimed', 'imported', 'failed', 'dismissed'] as const;
@@ -25,6 +32,9 @@ export const MEETING_PLATFORM_LIST_DAYS = 14;
 export const MEETING_PLATFORM_STAGING_MINUTES = 55;
 // The job buffers a download in memory (the blob store has no streaming write to a staging key), so the declared size and the counted stream stay under the audio cap of an upload (MAX_MEETING_AUDIO_BYTES).
 export const MEETING_PLATFORM_IMPORT_MAX_BYTES = 300 * 1024 * 1024;
+// The most a platform's video file may be when its audio is taken out of it (C2a, #3306): the product's video upload cap (plan section 10) and crove-media's own MEDIA_MAX_INPUT_BYTES default. The audio
+// cap above is unchanged and counts the audio that comes out. A video over this fails `too_large`.
+export const MEETING_PLATFORM_VIDEO_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 // The connection's list is refreshed at most this often by the sweep, unless the member asked (last_synced_at cleared).
 export const MEETING_PLATFORM_SYNC_MINUTES = 10;
 
@@ -43,6 +53,9 @@ export const MEETING_PLATFORM_ERROR_CODES = [
   'not_claimed',
   'claim_failed',
   'timeout',
+  // Microsoft Teams (C4): the customer's tenant administrator has not turned on Graph access to meeting transcripts, or the speaker names; only they can.
+  'transcripts_disabled',
+  'speakers_disabled',
 ] as const;
 export type MeetingPlatformErrorCode = (typeof MEETING_PLATFORM_ERROR_CODES)[number];
 export const zMeetingPlatformErrorCode = z.enum(MEETING_PLATFORM_ERROR_CODES);
@@ -71,6 +84,9 @@ export const zMeetingPlatformRecordingView = z.strictObject({
   hasAudio: z.boolean(),
   hasVideo: z.boolean(),
   hasTranscript: z.boolean(),
+  // The most bytes of a video file this deployment can take the audio out of (C2a, #3306), or null when it cannot (no crove-media): a recording that has only a video file can then be imported when its
+  // size fits; null, it is refused as before. It is the video cap lowered to crove-media's own input limit where the deployment sets one.
+  videoImportMaxBytes: z.number().int().positive().nullable(),
   status: z.enum(MEETING_PLATFORM_RECORDING_STATUSES),
   meetingId: zId.nullable(),
   errorCode: z.string().nullable(),

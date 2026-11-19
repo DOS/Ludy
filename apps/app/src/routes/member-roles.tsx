@@ -51,7 +51,6 @@ function AssignedRole({ assignment, entities, canRevoke, name }: { assignment: R
       {revoke.error &&
         (isStepUpRequired(revoke.error) ? (
           <StepUpPrompt
-            enroll={false}
             action={t('stepUpRevoke', { role: label, name })}
             onVerified={() => revoke.variables && revoke.mutate(revoke.variables)}
             onCancel={() => revoke.reset()}
@@ -170,7 +169,6 @@ function AssignRole({ userId, name, baseRole, catalog, held, entities }: {
       {assign.error &&
         (isStepUpRequired(assign.error) ? (
           <StepUpPrompt
-            enroll={false}
             action={t('stepUpAssign', { role: role ? t(`roles.${role.key}`) : '', name })}
             onVerified={() => assign.variables && assign.mutate(assign.variables)}
             onCancel={() => assign.reset()}

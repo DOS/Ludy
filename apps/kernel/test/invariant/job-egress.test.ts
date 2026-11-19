@@ -310,6 +310,7 @@ describe('job egress (#1653)', () => {
     expect(depsCoverage(['mailer', 'webhooks'], { mailer: [] }, { webhooks: '#1234' })).toEqual(['WorkerDeps field webhooks is not classified in DEPS_REACH']);
   });
 
+  // Walks every source file of the modules and packages/kernel, which takes about 5 s on a slow CI runner; the default 5000 ms timeout made it flaky (#3624).
   it('keeps the network out of the modules and packages/kernel, so the worker reaches it only from apps/kernel', () => {
     const files = sources.list(['modules', 'packages/kernel/src']).filter((f) => f.includes('/src/'));
     expect(files.length).toBeGreaterThan(50);
@@ -324,7 +325,7 @@ describe('job egress (#1653)', () => {
     expect([...reachOf(planted.get('modules/planted/src/a.ts').program, planted)]).toEqual(['provider:telegram']);
     expect([...reachOf(planted.get('modules/planted/src/b.ts').program, planted)]).toEqual(['raw_network']);
     expect([...reachOf(planted.get('modules/planted/src/c.ts').program, planted)]).toEqual(['raw_network']);
-  });
+  }, 60_000);
 
   it('hands the egress guard to the adapters of the providers whose host the tenant names, and to no other', () => {
     const kernel = sources.get('apps/kernel/src/kernel.ts').text;

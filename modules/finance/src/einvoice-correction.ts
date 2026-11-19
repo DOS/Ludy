@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { computeLineTotals, money, normalizeVatRate, sumLineTotals } from '@crove/l10n-vn';
 import { ADJUST_REPLACE_REASON_CODES, isReasonCode, type ReasonCode } from '@crove/einvoice';
-import { zEInvoiceCorrectionRateInput, zEInvoiceStartCorrection, type EInvoiceCorrectionOptions, type EInvoiceCorrectionRate, type EInvoiceDraft, type EInvoiceRateNature } from '@crove/kernel-contract';
+import { zEInvoiceCorrectionRateInput, zEInvoiceReasonSourceInput, zEInvoiceStartCorrection, type EInvoiceCorrectionOptions, type EInvoiceCorrectionRate, type EInvoiceDraft, type EInvoiceRateNature, type EInvoiceReasonSource } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { CORRECTION_RATE_PRECEDENT_NOTE, correctionRateReason, proposeCorrectionRate, proposeCorrectionRates, reducedEnd, type CorrectionRateProposal } from './domain/einvoice-correction-rate.ts';
@@ -213,5 +213,38 @@ export const einvoiceCorrectionRate = defineQuery({
   },
 });
 
+// What the accounting coworker may see when it proposes the reason code of a correction (#3690): the list of codes, the buyer's KIND and the original's lines without a price or an amount, read in the
+// member's own transaction (the row policies of the draft tables decide what the caller sees). No name, address, tax code, email or ID of the buyer, no number of the invoice, no amount, nothing stored. The
+// model is asked outside any transaction, by the API (apps/kernel einvoice-reason-ai.ts). Only an invoice issued here has a source; any other is the same not-found as in `start_correction`.
+export const einvoiceReasonSource = defineQuery({
+  name: 'finance.einvoice.reason_source',
+  input: zEInvoiceReasonSourceInput,
+  access: EDITORS,
+  handler: async (ctx, input): Promise<EInvoiceReasonSource> => {
+    const originalId = input.originalDraftId.toLowerCase();
+    const original = await ctx.trx
+      .selectFrom('crove_finance.einvoice_draft')
+      .select(['invoice_date', 'state', 'issued_number', 'buyer_kind'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', originalId)
+      .executeTakeFirst();
+    if (!original) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy hóa đơn gốc');
+    if (original.state !== 'issued' || original.issued_number === null) throw new DomainError('EINVOICE_ORIGINAL_NOT_ISSUED', 409, 'Chỉ điều chỉnh hoặc thay thế được hóa đơn đã phát hành');
+    const lines = await ctx.trx
+      .selectFrom('crove_finance.einvoice_draft_line')
+      .select(['description', 'unit', 'quantity', 'vat_rate'])
+      .where('org_id', '=', ctx.orgId)
+      .where('draft_id', '=', originalId)
+      .orderBy('line_no')
+      .execute();
+    return {
+      codes: correctionReasonCodes().map((c) => ({ code: c.code, label: c.label })),
+      buyerKind: original.buyer_kind,
+      originalDate: dayOf(original.invoice_date),
+      lines: lines.map((l) => ({ description: l.description, unit: l.unit, quantity: plain(l.quantity), vatRate: l.vat_rate })),
+    };
+  },
+});
+
 export const einvoiceCorrectionCommands = [einvoiceStartCorrection];
-export const einvoiceCorrectionQueries = [einvoiceCorrectionOptions, einvoiceCorrectionRate];
+export const einvoiceCorrectionQueries = [einvoiceCorrectionOptions, einvoiceCorrectionRate, einvoiceReasonSource];

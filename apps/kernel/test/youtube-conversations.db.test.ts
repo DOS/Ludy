@@ -12,7 +12,7 @@ import { metered, type AiUsage, type ReplyDraftRequest, type ReplyDraftResult } 
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { YOUTUBE_COMMENT_SCOPE, YOUTUBE_POLL_BUDGET_UNITS, YOUTUBE_POLL_MAX_UNITS, type ConversationDetail, type ConversationListed, type YoutubeCommentsStatus } from '@crove/kernel-contract';
+import { CONVERSATION_PROVIDER_RULES, YOUTUBE_COMMENT_SCOPE, YOUTUBE_POLL_BUDGET_UNITS, YOUTUBE_POLL_MAX_UNITS, type ConversationDetail, type ConversationListed, type YoutubeCommentsStatus } from '@crove/kernel-contract';
 import { CredentialVault, Runtime } from '@crove/kernel-runtime';
 import { dueConversationSync, runConversationDraft, runConversationJob, runConversationSync } from '../src/conversations-worker.ts';
 import { systemMeter } from '../src/ai-meter.ts';
@@ -207,10 +207,9 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
     expect(detail.messages).toHaveLength(1);
     expect(platform.filter((c) => c.method === 'POST')).toHaveLength(0);
 
-    // A reply: over the rule is refused, hiding is not offered in v1, and the person's own Send goes out exactly once as comments.insert under the thread.
+    // A reply: over the rule is refused, and the person's own Send goes out exactly once as comments.insert under the thread (hiding has its own test below).
     // YouTube's rule is the core's own 8,000, which the input schema already enforces.
     await expect(rt.execute('kernel.conversation.reply', { conversationId: convId, body: 'x'.repeat(8001), lastSeenSeq: 1 }, asOwner)).rejects.toMatchObject({ code: 'VALIDATION' });
-    await expect(rt.execute('kernel.conversation.hide', { messageId: detail.messages[0]!.id, hidden: true }, asOwner)).rejects.toMatchObject({ code: 'HIDE_NOT_SUPPORTED' });
     const { messageId } = await rt.execute<{ messageId: string }>('kernel.conversation.reply', { conversationId: convId, body: 'Dạ bột mì số 11 ạ!', lastSeenSeq: 1 }, asOwner);
     expect(await runConversationJob(sendDeps, { orgId, connectionId, messageId, action: 'reply' })).toBe('accepted');
     expect(await runConversationJob(sendDeps, { orgId, connectionId, messageId, action: 'reply' })).toBe('settled');
@@ -304,5 +303,98 @@ suite('YouTube comments on PostgreSQL (#3134)', () => {
       const leaked = await admin((c) => c.query(`SELECT 1 FROM crove_kernel.${table} t WHERE org_id = $1 AND (row_to_json(t)::text ILIKE $2 OR row_to_json(t)::text ILIKE $3 OR row_to_json(t)::text ILIKE $4 OR row_to_json(t)::text ILIKE $5)`, [orgId, '%0909123456%', '%le.thi.hoa%', `%${CUSTOMER}%`, '%Mua ở đâu%']));
       expect(leaked.rows).toHaveLength(0);
     }
+  });
+
+  it('hides a comment (held for review) and shows it again, counted in units, refused without the scope or while the quota is spent (#3808)', async () => {
+    const owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `owner-${randomUUID().slice(0, 8)}@yt-hide.test`, name: null });
+    const viewer = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `viewer-${randomUUID().slice(0, 8)}@yt-hide.test`, name: null });
+    const { orgId } = await createOrg(rt, asUser(owner), `YouTube hide ${randomUUID().slice(0, 6)}`);
+    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer]));
+    const asOwner = { actor: asUser(owner), orgId };
+    const sealed = broker.seal(JSON.stringify({ accessToken: 'ya29.token-1', refreshToken: '1//refresh-1' }), { orgId, provider: 'youtube', externalAccountId: CHANNEL });
+    const { connectionId } = await rt.execute<{ connectionId: string }>(
+      'kernel.channel.connect',
+      { provider: 'youtube', externalAccountId: CHANNEL, displayName: 'Tiệm Bánh C', scopes: SCOPES, expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+      asOwner,
+    );
+    await rt.execute('kernel.conversation.youtube_comments_set', { connectionId, enabled: true }, asOwner);
+    const at = new Date().toISOString();
+    await worker.execute(
+      'kernel.conversation.ingest',
+      { connectionId, events: [{ kind: 'comment_thread', threadId: THREAD, postId: VIDEO, messageId: THREAD, direction: 'in', contact: { id: CUSTOMER }, text: SECRET_TEXT, at }] },
+      { actor: SYSTEM, orgId },
+    );
+    const convId = (await rt.query<ConversationListed>('kernel.conversation.list', {}, asOwner)).conversations[0]!.id;
+    const message = async () => (await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: convId }, asOwner)).messages[0]!;
+    const messageId = (await message()).id;
+
+    const platform: { method: string; path: string; id: string | null; status: string | null; body: unknown }[] = [];
+    let answer: { status: number; body?: unknown } = { status: 204 };
+    const fetchImpl: Fetch = async (input, init) => {
+      const url = new URL(input);
+      platform.push({ method: init?.method ?? 'GET', path: url.pathname, id: url.searchParams.get('id'), status: url.searchParams.get('moderationStatus'), body: init?.body });
+      return answer.status === 204 ? new Response(null, { status: 204 }) : new Response(JSON.stringify(answer.body ?? {}), { status: answer.status });
+    };
+    const deps = { runtime: worker, broker, adapter: (p: string) => (p === 'youtube' ? new YouTubePublisher(APP, fetchImpl).conversations : undefined) };
+    const job = { orgId, connectionId, messageId, action: 'hide' as const };
+    const units = async () => (await rt.query<YoutubeCommentsStatus[]>('kernel.conversation.youtube_comments', {}, asOwner)).find((s) => s.connectionId === connectionId)!.replyUnitsUsed;
+    const calls = () => admin(async (c) => (await c.query<{ target: string; state: string; retry_safety: string; calls: number }>("SELECT target, state, retry_safety, calls FROM crove_kernel.external_call WHERE org_id = $1 AND step = 'hide' ORDER BY started_at", [orgId])).rows);
+
+    // The contract: YouTube hides, and the thread says this grant may.
+    expect(CONVERSATION_PROVIDER_RULES.youtube?.canHide).toBe(true);
+    expect((await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: convId }, asOwner)).hideAllowed).toBe(true);
+    // A viewer cannot hide.
+    await expect(rt.execute('kernel.conversation.hide', { messageId, hidden: true }, { actor: asUser(viewer), orgId })).rejects.toMatchObject({ status: 403 });
+
+    // Hide: the command queues it, the job makes one call that holds the comment for review (never `rejected`, which cannot be undone), 50 units counted.
+    await rt.execute('kernel.conversation.hide', { messageId, hidden: true }, asOwner);
+    expect(await message()).toMatchObject({ hidden: false, hideRequest: 'hide' });
+    expect(platform).toEqual([]);
+    expect(await runConversationJob(deps, job)).toBe('done');
+    expect(platform).toEqual([{ method: 'POST', path: '/youtube/v3/comments/setModerationStatus', id: THREAD, status: 'heldForReview', body: undefined }]);
+    expect(await message()).toMatchObject({ hidden: true, hideRequest: null, hideErrorCode: null });
+    expect(await units()).toBe(50);
+    expect(await calls()).toEqual([{ target: 'youtube', state: 'succeeded', retry_safety: 'idempotent', calls: 1 }]);
+    // The same job again makes no second call (the call is settled).
+    expect(await runConversationJob(deps, job)).toBe('none');
+    expect(platform).toHaveLength(1);
+
+    // Show again: published, 50 more units, the message is visible again.
+    await rt.execute('kernel.conversation.hide', { messageId, hidden: false }, asOwner);
+    expect(await runConversationJob(deps, job)).toBe('done');
+    expect(platform[1]).toMatchObject({ status: 'published', id: THREAD });
+    expect(await message()).toMatchObject({ hidden: false, hideRequest: null });
+    expect(await units()).toBe(100);
+
+    // A refusal (the quota spent on YouTube's side) leaves the comment as it was, shows the code, and spends no unit of ours.
+    answer = { status: 403, body: { error: { code: 403, message: 'refused', errors: [{ reason: 'quotaExceeded' }] } } };
+    await rt.execute('kernel.conversation.hide', { messageId, hidden: true }, asOwner);
+    expect(await runConversationJob(deps, job)).toBe('rejected');
+    expect(await message()).toMatchObject({ hidden: false, hideRequest: null, hideErrorCode: 'YOUTUBE_QUOTA' });
+    expect(await units()).toBe(100);
+    expect((await calls()).at(-1)).toMatchObject({ state: 'failed' });
+    answer = { status: 204 };
+
+    // While the quota is known to be spent the command is refused up front with the reason, and no call is made.
+    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET quota_blocked_until = now() + interval '2 hours' WHERE org_id = $1 AND id = $2", [orgId, connectionId]));
+    const before = platform.length;
+    await expect(rt.execute('kernel.conversation.hide', { messageId, hidden: true }, asOwner)).rejects.toMatchObject({ code: 'YOUTUBE_QUOTA_SPENT' });
+    expect(platform).toHaveLength(before);
+    await admin((c) => c.query('UPDATE crove_kernel.channel_connection SET quota_blocked_until = NULL WHERE org_id = $1 AND id = $2', [orgId, connectionId]));
+
+    // A grant without the comment scope (narrowed by the owner after the comments came in): no button (hideAllowed false) and the command is refused.
+    await admin((c) => c.query('UPDATE crove_kernel.channel_connection SET scopes = $3 WHERE org_id = $1 AND id = $2', [orgId, connectionId, SCOPES.slice(0, 2)]));
+    expect((await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: convId }, asOwner)).hideAllowed).toBe(false);
+    await expect(rt.execute('kernel.conversation.hide', { messageId, hidden: true }, asOwner)).rejects.toMatchObject({ code: 'YOUTUBE_SCOPE_MISSING' });
+    expect(platform).toHaveLength(before);
+    expect(await message()).toMatchObject({ hidden: false, hideRequest: null });
+
+    // The audit rows and events of the whole flow carry no comment text, name or channel id.
+    for (const table of ['audit_event', 'outbox_event']) {
+      const leaked = await admin((c) => c.query(`SELECT 1 FROM crove_kernel.${table} t WHERE org_id = $1 AND (row_to_json(t)::text ILIKE $2 OR row_to_json(t)::text ILIKE $3)`, [orgId, '%0909123456%', `%${CUSTOMER}%`]));
+      expect(leaked.rows).toHaveLength(0);
+    }
+    const audited = await admin((c) => c.query<{ n: string }>("SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.hide' AND outcome = 'ok'", [orgId]));
+    expect(Number(audited.rows[0]?.n)).toBeGreaterThanOrEqual(3);
   });
 });

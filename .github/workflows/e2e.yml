@@ -89,17 +89,67 @@ jobs:
         if: always()
         run: pnpm --filter @crove/e2e stack:down
 
+  # The specs that need a model run on their own stack (#3805): the recorder's Vy summary is switched on by the deployment (MEETINGS_SUMMARY and an AI endpoint), so it cannot share a stack with the specs of the
+  # shards, which rely on AI being off. This job brings up the same stack plus a fake model service with a fixed answer (e2e/compose.ai.yml, e2e/fake-model: it reaches no other host) and runs the specs of
+  # e2e/tests-ai with their own Playwright config. The shards never run them and this job never runs the shards' files. The gate below needs it.
+  ai:
+    name: Playwright AI stack (fake model)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@crove/e2e"
+
+      - name: Install Chromium
+        run: pnpm --filter @crove/e2e exec playwright install --with-deps chromium
+
+      # Fresh volumes on every run: the runner starts empty.
+      - name: Build and start the stack with the fake model
+        run: pnpm --filter @crove/e2e stack:up:ai
+
+      - name: Playwright (AI specs)
+        run: pnpm --filter @crove/e2e test:ai
+
+      - name: Stack logs
+        if: failure()
+        run: pnpm --filter @crove/e2e stack:logs:ai
+
+      - name: Traces of the failed tests
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-traces-ai
+          path: e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Stop the stack
+        if: always()
+        run: pnpm --filter @crove/e2e stack:down:ai
+
   # The required check keeps its name: one job that fails unless every shard passed (a cancelled or skipped shard fails it).
   inbox:
     name: Playwright on docker compose
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [shard]
+    needs: [shard, ai]
     if: always()
     steps:
-      - name: Every shard passed
+      - name: Every shard and the AI stack passed
         env:
           SHARDS: ${{ needs.shard.result }}
+          AI: ${{ needs.ai.result }}
         run: |
-          echo "Playwright shards: $SHARDS"
-          test "$SHARDS" = success
+          echo "Playwright shards: $SHARDS, AI stack: $AI"
+          test "$SHARDS" = success && test "$AI" = success

@@ -43,7 +43,7 @@ export { normalizeEntityName } from './legal-entities.ts';
 export { busyOf, workingHoursOf } from './calendar.ts';
 export { acquireAdvisoryXactLock, advisoryLockKey } from './advisory-lock.ts';
 export { LIVE_CONNECTION_PER_MINUTE, LIVE_ORG_PER_MINUTE, busyPieces, cutOut, writeBackEventId, writeBackHash, type SealedCalendarCredential, type WriteBackAction } from './calendar-connections.ts';
-export { zMeetingPlatformConnect, type MeetingPlatformImportOpen, type MeetingPlatformSyncDue, type SealedMeetingPlatformCredential } from './meeting-platform.ts';
+export { setMeetingPlatformVideoImport, zMeetingPlatformConnect, type MeetingPlatformImportOpen, type MeetingPlatformSyncDue, type SealedMeetingPlatformCredential } from './meeting-platform.ts';
 export * from './numbering.ts';
 export * from './manifest.ts';
 export { zMcpPartiesInput } from './mcp.ts';

@@ -4,6 +4,7 @@
 // with #1280; nothing here claims it.
 import { expect, test } from '@playwright/test';
 import { createOrg, newEmail, signUp } from '../lib/session.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 import { nextTotp } from '../lib/totp.ts';
 
 test('an owner invites an outside accountant for one legal entity', async ({ page, browser }) => {
@@ -12,7 +13,8 @@ test('an owner invites an outside accountant for one legal entity', async ({ pag
   const slug = await createOrg(page, 'Công ty nhiều pháp nhân');
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
 
-  // Inviting is R3: turn on the second factor first, so the code is fresh.
+  // Inviting is R3: turn on the second factor first (Security tab), so the code is fresh.
+  await openSettingsTab(page, 'security');
   await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
   const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
   await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
@@ -20,7 +22,9 @@ test('an owner invites an outside accountant for one legal entity', async ({ pag
   await expect(page.getByText('Đang bật')).toBeVisible();
 
   // With one legal entity there is nothing to limit to.
+  await openSettingsTab(page, 'members');
   await expect(page.getByRole('checkbox', { name: 'Giới hạn theo pháp nhân' })).toHaveCount(0);
+  await openSettingsTab(page, 'org');
   const add = page.getByRole('form', { name: 'Thêm pháp nhân' });
   await add.getByLabel('Tên pháp nhân').fill('Chi nhánh Hà Nội');
   await add.getByRole('button', { name: 'Thêm', exact: true }).click();
@@ -28,6 +32,7 @@ test('an owner invites an outside accountant for one legal entity', async ({ pag
   await expect(page.getByRole('main').getByText('Chi nhánh Hà Nội').first()).toBeVisible();
 
   const member = newEmail('scoped-member');
+  await openSettingsTab(page, 'members');
   await page.getByPlaceholder('email@congty.vn').fill(member);
   const role = page.getByLabel('Vai trò', { exact: true });
   await role.selectOption('admin');

@@ -26,6 +26,7 @@ import { installedApps, type AppId } from '../lib/apps.ts';
 import { deadlineTone } from '../lib/clients.ts';
 import { WAITING_LINKS, appsLayout, gapsFromYear, tasksNotListed, unreadNotices, waitingItems, type WaitingKey } from '../lib/overview.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
+import { PHONE_TARGET } from '../lib/touch-target.ts';
 import { entityToMark, markableEntities } from '../lib/tax-calendar.ts';
 import { useWorkNotifications } from './notifications.tsx';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
@@ -152,7 +153,7 @@ function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { peri
                           </p>
                         ),
                       )}
-                    <Link to={target(id, app)} params={{ slug }} className="mt-auto text-xs text-link hover:underline">
+                    <Link to={target(id, app)} params={{ slug }} className={`mt-auto text-xs text-link hover:underline ${PHONE_TARGET}`}>
                       {t('open', { app: tn(`appNames.${id}`) })}
                     </Link>
                   </Card>
@@ -170,7 +171,7 @@ function AppCards({ slug, vat, vatLoaded, manager }: { slug: string; vat: { peri
             .map((app, i) => (
               <span key={app.id}>
                 {i > 0 && ' · '}
-                <Link to={target(app.id, app)} params={{ slug }} className="text-link hover:underline">
+                <Link to={target(app.id, app)} params={{ slug }} className={`text-link hover:underline ${PHONE_TARGET}`}>
                   {tn(`appNames.${app.id}`)}
                 </Link>
               </span>
@@ -265,7 +266,7 @@ export function OverviewPage() {
   const noFilingPeriod = overview.data !== undefined && overview.data.vatFilingPeriod === null;
   // The choice is a button where the gap is (#3591), not a link in a sentence.
   const chooseVat = canChooseVat ? (
-    <Link to="/o/$slug/settings" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'sm' })}>
+    <Link to="/o/$slug/settings" params={{ slug }} hash="tax-profile" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
       {tcl('chooseFilingPeriod')}
     </Link>
   ) : undefined;

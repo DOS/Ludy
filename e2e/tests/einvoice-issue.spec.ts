@@ -6,6 +6,7 @@ import { expect, test } from '@playwright/test';
 import { createOrg, newEmail, signUp } from '../lib/session.ts';
 import { confirmUnverifiedSignature } from '../lib/inbox.ts';
 import { nextTotp } from '../lib/totp.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 // Synthetic tax codes with a valid check digit (the draft's checks read the buyer's).
 const SELLER_TAX_CODE = '0100109106';
@@ -26,6 +27,7 @@ test('asks to issue a draft, sees it issued by the worker with its original stor
     await form.getByLabel('Mã số thuế').fill(SELLER_TAX_CODE);
     await form.getByRole('button', { name: 'Lưu' }).click();
     await expect(page.getByRole('definition').getByText(SELLER_TAX_CODE, { exact: true })).toBeVisible();
+    await openSettingsTab(page, 'connections');
     const card = page.getByLabel('Hóa đơn điện tử: nhà cung cấp của bạn');
     await card.getByRole('button', { name: 'Kết nối', exact: true }).click();
     await expect(card.getByText('Nhà cung cấp hóa đơn thử nghiệm', { exact: true })).toBeVisible();

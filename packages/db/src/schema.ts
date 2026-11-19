@@ -618,6 +618,10 @@ export const MARKETPLACE_TEST_STATES = ['works', 'wrong_credentials', 'api_not_e
 export type MarketplaceTestState = (typeof MARKETPLACE_TEST_STATES)[number];
 export const MARKETPLACE_POLL_STATES = ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const;
 export type MarketplacePollState = (typeof MARKETPLACE_POLL_STATES)[number];
+// A connection to MISA AMIS Kế toán (#3875): the result of its last test, as a state and never MISA's own text; a tenant updates only that (the entity, the channel connection and the code are fixed for the row's life).
+export const MISA_AMIS_TEST_STATES = ['works', 'wrong_credentials', 'unreachable'] as const;
+export type MisaAmisTestState = (typeof MISA_AMIS_TEST_STATES)[number];
+export type MisaAmisConnectionTable = Refine<G.FinanceMisaAmisConnectionTable, { last_test_state: MisaAmisTestState | null; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type MarketplaceConnectionTable = Refine<
   G.FinanceMarketplaceConnectionTable,
   { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; legal_entity_id: LegalEntityColumn },
@@ -1189,11 +1193,15 @@ export type MeetingsMeetingTable = Refine<
 // The transcript of a meeting (#2578): a segment is a draft, the recorder's own copy, until the recorder publishes it.
 export const TRANSCRIPT_STAGES = ['draft', 'published'] as const;
 export type TranscriptStageValue = (typeof TRANSCRIPT_STAGES)[number];
+// Whose transcription a line is (C2, #3174; C4, #3176): Ludy's own (or typed by the recorder), or the one Google Meet or Microsoft Teams wrote.
+export const TRANSCRIPTION_MAKERS = ['ludy', 'google_meet', 'microsoft_teams'] as const;
+export type TranscriptionMakerValue = (typeof TRANSCRIPTION_MAKERS)[number];
 
 export type MeetingsTranscriptSegmentTable = Refine<
   G.MeetingsTranscriptSegmentTable,
   {
     stage: ColumnType<TranscriptStageValue, TranscriptStageValue | undefined, never>;
+    source: ColumnType<TranscriptionMakerValue, TranscriptionMakerValue | undefined, never>;
   }
 >;
 
@@ -1209,6 +1217,14 @@ export type MeetingsMeetingResultTable = Refine<
   G.MeetingsMeetingResultTable,
   {
     feature: MeetingResultFeature;
+    stage: Generated<MeetingResultStage>;
+  }
+>;
+
+// The chapters (table of contents) of a meeting (#3844): a draft the recorder writes, published with the minutes.
+export type MeetingsMeetingChapterTable = Refine<
+  G.MeetingsMeetingChapterTable,
+  {
     stage: Generated<MeetingResultStage>;
   }
 >;
@@ -1356,6 +1372,7 @@ type Refined = Tables<{
   'crove_meetings.chat_channel': MeetingsChatChannelTable;
   'crove_meetings.chat_post': MeetingsChatPostTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
+  'crove_meetings.meeting_chapter': MeetingsMeetingChapterTable;
   'crove_meetings.meeting_result': MeetingsMeetingResultTable;
   'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
   'crove_meetings.translation': MeetingsTranslationTable;
@@ -1432,6 +1449,7 @@ type Refined = Tables<{
   'crove_finance.einvoice_connection': EInvoiceConnectionTable;
   'crove_finance.einvoice_notice': EInvoiceNoticeTable;
   'crove_finance.marketplace_connection': MarketplaceConnectionTable;
+  'crove_finance.misa_amis_connection': MisaAmisConnectionTable;
   'crove_finance.stock_item': StockItemTable;
   'crove_finance.channel_order': ChannelOrderTable;
   'crove_finance.channel_order_line': ChannelOrderLineTable;

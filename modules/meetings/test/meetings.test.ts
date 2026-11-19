@@ -96,7 +96,10 @@ describe('meetings commands and queries construction', () => {
       'meetings.action_item.accept',
       'meetings.action_item.accept_clean',
       'meetings.notes.save',
+      'meetings.chapters.save',
+      'meetings.chapters.start',
       'meetings.summary.copy_result',
+      'meetings.chapters.copy_result',
       'meetings.speaker.name',
       'meetings.series.set',
       'meetings.series.nudge',
@@ -142,6 +145,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.hook.record',
       'meetings.import.start',
       'meetings.import.discard_empty',
+      'meetings.import.take_transcript',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');
@@ -169,6 +173,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.result.get',
       'meetings.action_item.source',
       'meetings.notes.get',
+      'meetings.chapters.get',
+      'meetings.chapters.status',
       'meetings.notes.preview',
       'meetings.summary.attendees',
       'meetings.speaker.suggestions',
@@ -206,6 +212,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.mcp.list',
       'meetings.mcp.minutes',
       'meetings.mcp.open_actions',
+      'meetings.mcp.series_open_items',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

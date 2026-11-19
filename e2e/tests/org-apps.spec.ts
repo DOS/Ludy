@@ -3,6 +3,7 @@
 // (the address goes to the overview, as for an app the deployment leaves out); switching it back on opens it again. The AI coworker here: none acts, every change is a person's.
 import { expect, test, type Page } from '@playwright/test';
 import { createOrg, newEmail, signUp } from '../lib/session.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 // The receiving tab's stream is up before the owner changes anything: a hint sent before it subscribed would never reach it.
 const streamUp = (page: Page) => page.waitForResponse((r) => /\/api\/stream(\?|$)/.test(r.url()) && !r.url().includes('/tickets'));
@@ -11,6 +12,7 @@ test('an owner switches Social off and on again from Settings', async ({ page })
   await signUp(page, newEmail('org-apps'));
   const slug = await createOrg(page, 'Công ty chọn ứng dụng');
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await openSettingsTab(page, 'apps');
 
   const social = page.getByTestId('org-app-social');
   await expect(social).toBeVisible();
@@ -35,7 +37,7 @@ test('an owner switches Social off and on again from Settings', async ({ page })
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/overview$`));
 
   // Back on: everything is where it was.
-  await page.goto(`/o/${slug}/settings`);
+  await page.goto(`/o/${slug}/settings/apps`);
   await page.getByTestId('org-app-social').getByRole('checkbox').click();
   await expect(page.getByTestId('org-app-social').getByText('Đang dùng')).toBeVisible();
   await page.goto(`/o/${slug}/social`);
@@ -55,7 +57,7 @@ test('an open screen of an app goes to the overview when the owner switches the 
   await expect(other).toHaveURL(new RegExp(`/o/${slug}/social`));
   await up;
 
-  await page.goto(`/o/${slug}/settings`);
+  await page.goto(`/o/${slug}/settings/apps`);
   await page.getByTestId('org-app-social').getByRole('checkbox').click();
   await page.getByRole('dialog').getByRole('button', { name: 'Xác nhận tắt' }).click();
   await expect(page.getByTestId('org-app-social').getByText('Đã tắt')).toBeVisible();
@@ -69,18 +71,19 @@ test('the Settings of another open tab drops the cards of an app that was switch
   const slug = await createOrg(page, 'Công ty giữ nội dung');
   const other = await context.newPage();
   const up = streamUp(other);
-  await other.goto(`/o/${slug}/settings`);
-  await expect(other.getByText('Kỳ khai thuế GTGT').first()).toBeVisible();
+  // The members tab holds the approval rule, a finance card, and the invite form.
+  await other.goto(`/o/${slug}/settings/members`);
+  await expect(other.getByText('Nhắc duyệt đề xuất').first()).toBeVisible();
   // Typed into a field the screen itself owns (the invite form's email), not sent.
   await other.getByPlaceholder('email@congty.vn').fill('dang-go-do@example.test');
   await up;
 
-  await page.goto(`/o/${slug}/settings`);
+  await page.goto(`/o/${slug}/settings/apps`);
   await page.getByTestId('org-app-finance').getByRole('checkbox').click();
   await page.getByRole('dialog').getByRole('button', { name: 'Xác nhận tắt' }).click();
   await expect(page.getByTestId('org-app-finance').getByText('Đã tắt')).toBeVisible();
 
-  // Finance's cards are gone from the other tab, and the typed text is still there: the screen was rendered again, not rebuilt.
-  await expect(other.getByText('Kỳ khai thuế GTGT')).toHaveCount(0, { timeout: 15_000 });
+  // Finance's cards (the approval rule with its reminders) are gone from the other tab, and the typed text is still there: the screen was rendered again, not rebuilt.
+  await expect(other.getByText('Nhắc duyệt đề xuất')).toHaveCount(0, { timeout: 15_000 });
   await expect(other.getByPlaceholder('email@congty.vn')).toHaveValue('dang-go-do@example.test');
 });
