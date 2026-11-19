@@ -25,7 +25,7 @@ export const HOUSEHOLD_S1A_ROW_LIMIT = 20_000;
 const notRequired = (book: string) =>
   new DomainError('HOUSEHOLD_BOOK_NOT_REQUIRED', 422, `Hồ sơ hộ kinh doanh của pháp nhân này không yêu cầu sổ ${book} trong kỳ đã chọn`);
 
-// The days a household book covers and who it is for, shared by the books that are views of account 511 (S1a, S2a, S2b, S2c, S2e): the book starts the day the household's first profile took effect (days before
+// The days a household book covers and who it is for, shared by the books that are views of account 511 (S1a, S2a, S2b, S2c, S2d, S2e): the book starts the day the household's first profile took effect (days before
 // it are outside it, so a household that sets its profile today still gets this month's book from today), and every profile in force inside its days must require the book: the one at its first day
 // and each one that starts after it, so a change of method inside the period is asked for in shorter parts. Refused (HOUSEHOLD_BOOK_NOT_REQUIRED) otherwise. S2a and S2b also refuse a period whose profiles name different trades (HOUSEHOLD_TRADES_CHANGED, #3714).
 export interface HouseholdBookWindow {
@@ -39,7 +39,7 @@ export interface HouseholdBookWindow {
   representativeName: string | null;
 }
 
-export async function householdBookWindow(ctx: QueryContext, legalEntityId: string, period: string, book: 'S1a' | 'S2a' | 'S2b' | 'S2c' | 'S2e'): Promise<HouseholdBookWindow> {
+export async function householdBookWindow(ctx: QueryContext, legalEntityId: string, period: string, book: 'S1a' | 'S2a' | 'S2b' | 'S2c' | 'S2d' | 'S2e'): Promise<HouseholdBookWindow> {
   const entity = await resolveLegalEntity(ctx, legalEntityId);
   const ledger = await accountLedgerOf(ctx, period, entity, SALES_ACCOUNT);
   const { to } = ledger.period;

@@ -26,6 +26,7 @@ export type MeetingPlatformErrorCode =
   | 'not_claimed'
   | 'claim_failed'
   | 'timeout'
+  | 'no_transcript'
   // Microsoft Teams (C4): a tenant administrator has not turned on Graph access to meeting transcripts, or speaker names; only the administrator can fix either.
   | 'transcripts_disabled'
   | 'speakers_disabled';
@@ -191,6 +192,8 @@ export interface SandboxMeetingRecording {
   hasTranscript: boolean;
   audio?: Uint8Array | undefined;
   video?: Uint8Array | undefined;
+  // The platform's own transcript of the call (C2, #3174), for a recording that has one; the offline sandbox labels it like Google Meet's.
+  transcript?: MeetingPlatformTranscriptEntry[] | undefined;
 }
 
 export interface SandboxMeetingPlatformOptions {
@@ -231,6 +234,13 @@ export class SandboxMeetingPlatform implements MeetingPlatformAdapter {
         hasVideo: r.hasVideo,
         hasTranscript: r.hasTranscript,
       }));
+  }
+
+  async transcript(_credential: MeetingPlatformCredential, recordingId: string, _signal?: AbortSignal): Promise<MeetingPlatformTranscript> {
+    const recording = this.recordings.get(recordingId);
+    if (!recording) throw new MeetingPlatformError('recording_gone');
+    if (!recording.hasTranscript || !recording.transcript) throw new MeetingPlatformError('no_transcript');
+    return { source: 'google_meet', language: null, truncated: false, entries: recording.transcript.map((entry) => ({ ...entry })) };
   }
 
   async prepareDownload(_credential: MeetingPlatformCredential, recordingId: string, format: MeetingPlatformFormat, _signal?: AbortSignal): Promise<MeetingPlatformDownload> {

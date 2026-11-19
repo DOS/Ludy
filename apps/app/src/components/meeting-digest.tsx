@@ -7,15 +7,14 @@ import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { DIGEST_DAYS, briefItemDue, digestLines, vnDateOf, type DigestAnswer, type DigestAsk, type DigestFacts } from '@crove/kernel-contract';
+import { DIGEST_DAYS, digestLines, vnDateOf, type DigestAnswer, type DigestAsk, type DigestFacts } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { ErrorText } from './ui.tsx';
 import { askBlocked } from './meeting-ask.tsx';
-import { memberLabel } from './meeting-results.tsx';
-import { useMe } from './conversation-inbox.tsx';
+import { FactNumber, OpenItemLine } from './meeting-open-item.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 
@@ -27,12 +26,6 @@ const KNOWN_FAILURES = ['AI_BUDGET_EXHAUSTED', 'AI_STOPPED', 'DIGEST_TIMEOUT', '
 export function digestFailureKey(code: string | null): (typeof KNOWN_FAILURES)[number] | 'default' {
   return (KNOWN_FAILURES as readonly string[]).includes(code ?? '') ? (code as (typeof KNOWN_FAILURES)[number]) : 'default';
 }
-
-const FactNumber = ({ n }: { n: number }) => (
-  <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted px-1 text-xs text-muted-foreground" aria-label={String(n)}>
-    {n}
-  </span>
-);
 
 export function MeetingDigest({ slug }: { slug: string }) {
   const t = useTranslations('meetings.digest');
@@ -91,8 +84,6 @@ export function MeetingDigest({ slug }: { slug: string }) {
 // The numbered facts, meeting by meeting: the number is the one a sentence of Vy cites (decisions, then open items, in the order `digestLines` numbers them).
 function Meetings({ slug, facts }: { slug: string; facts: DigestFacts }) {
   const t = useTranslations('meetings.digest');
-  const series = useTranslations('meetings.series');
-  const { members } = useMe();
   let n = 0;
   return (
     <div className="space-y-4 text-sm">
@@ -116,19 +107,9 @@ function Meetings({ slug, facts }: { slug: string; facts: DigestFacts }) {
                 </span>
               </li>
             ))}
-            {meeting.items.map((item) => {
-              const who = item.whoUserId ? memberLabel(members, item.whoUserId, item.who) : (item.assigneeSeat ?? item.who);
-              return (
-                <li key={item.id} className="flex flex-wrap items-center gap-2" data-testid="digest-fact" data-kind="item" data-assigned={item.assigned}>
-                  <FactNumber n={(n += 1)} />
-                  <Badge variant="outline">{t('open')}</Badge>
-                  <span className="font-medium">{item.title}</span>
-                  {who !== '' && <span className="text-muted-foreground">{who}</span>}
-                  {item.assigned ? item.taskStatus && <Badge variant="outline">{series(`status.${item.taskStatus}`)}</Badge> : <Badge variant="secondary">{series('unassigned')}</Badge>}
-                  {briefItemDue(item) !== null && <span className="text-xs text-muted-foreground">{series('due', { date: briefItemDue(item) as string })}</span>}
-                </li>
-              );
-            })}
+            {meeting.items.map((item) => (
+              <OpenItemLine key={item.id} n={(n += 1)} item={item} testId="digest-fact" kind="item" lead={<Badge variant="outline">{t('open')}</Badge>} />
+            ))}
           </ol>
         </section>
       ))}

@@ -25,6 +25,7 @@ import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
 import { digestCommands, digestQueries } from './digest.ts';
+import { todayQueries } from './today.ts';
 import { assigneeCommands, assigneeQueries } from './assignee.ts';
 import { adherenceCommands, adherenceQueries } from './adherence.ts';
 import { agendaCommands, agendaQueries } from './agenda.ts';
@@ -1068,6 +1069,7 @@ export const meetingsQueries = [
   ...askRunQueries,
   ...briefQueries,
   ...digestQueries,
+  ...todayQueries,
   ...assigneeQueries,
   ...adherenceQueries,
   ...agendaQueries,

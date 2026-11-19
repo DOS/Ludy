@@ -29,7 +29,7 @@ function More({ children }: { children: React.ReactNode }) {
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.calendar.connections.key() });
 // The member's own meetings list (B1) follows the switch: it is shown or emptied as soon as the switch changes.
-const refreshAgenda = () => Promise.all([refresh(), queryClient.invalidateQueries({ queryKey: orpc.meetings.agenda.key() })]);
+const refreshAgenda = () => Promise.all([refresh(), queryClient.invalidateQueries({ queryKey: orpc.meetings.agenda.key() }), queryClient.invalidateQueries({ queryKey: orpc.meetings.today.key() })]);
 
 function ConnectionRow({
   connection,
