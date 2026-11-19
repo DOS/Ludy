@@ -80,6 +80,9 @@ export const AI_FEATURES = {
   // The finance coworker's one line above the MISA export check (#3848 slice B): code ran the deterministic check over the rows of the file and counted what it found per kind, the model only explains those
   // counts (what each kind means in MISA and how to fix it in Ludy); a line that states a number it was not given, sets a count against the wrong kind, has a link or says something was fixed is refused. A read.
   'finance.misa_check_line': 'finance',
+  // The finance coworker's notes on the AMIS preview (#3904, S5 of #3854): code built the preview and listed its blockers, the model only words what each KIND of blocker on the list means in AMIS and how to fix it in Ludy,
+  // told the set of kinds and nothing else (no count, voucher, item or party); a note with a number, a link, a claim that something was done or a promise is dropped. A read: the list decides, a person sends.
+  'finance.misa_amis_blocker_notes': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
   // The sales coworker's proposal for the lines of a quote (#2698): from the deal, what the customer wrote and the earlier quotes to them; a price no source holds stays empty, and a person applies each line.

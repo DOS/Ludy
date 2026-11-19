@@ -73,3 +73,15 @@ export const zMisaAmisPreview = z.strictObject({
   items: z.array(zMisaAmisPreviewItem).max(MISA_AMIS_PREVIEW_LIMIT),
 });
 export type MisaAmisPreview = z.infer<typeof zMisaAmisPreview>;
+
+// The accounting coworker's notes on the blocker kinds of the preview (#3904, S5 of #3854): a second read that runs the preview again on the server (so the model is told what the books say, never what the caller
+// says), takes the SET of blocker kinds on the list, and answers one plain note per kind, or why there are none: `off` (no model), `busy` (too frequent), `budget` (the AI budget is spent), `failed` (the call failed or
+// every note was dropped by the checks; the reason is logged as a code, never the words) or `none` (nothing is blocked). The notes never change the list of blockers and never decide what is sent; the screen shows
+// a note only beside a kind that is on the list it shows.
+export const zMisaAmisBlockerNotesAsk = zMisaAmisPreviewAsk.extend({ lang: z.enum(['vi', 'en']).optional() });
+export type MisaAmisBlockerNotesAsk = z.infer<typeof zMisaAmisBlockerNotesAsk>;
+export const zMisaAmisBlockerNotes = z.strictObject({
+  ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']),
+  notes: z.array(z.strictObject({ code: z.enum(MISA_AMIS_BLOCKERS), text: z.string().max(300) })).max(MISA_AMIS_BLOCKERS.length),
+});
+export type MisaAmisBlockerNotes = z.infer<typeof zMisaAmisBlockerNotes>;

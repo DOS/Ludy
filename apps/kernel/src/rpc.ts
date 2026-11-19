@@ -80,6 +80,7 @@ import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
 import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
 import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
 import { misaCheck } from './misa-check.ts';
+import { explainMisaAmisBlockers, misaAmisBlockerNotesAi } from './finance-misa-amis-blocker-notes-ai.ts';
 import { explainMisaCheckLine, misaCheckLineAi } from './finance-misa-check-line-ai.ts';
 import { misaAmisPreview } from './misa-amis-preview.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
@@ -451,6 +452,8 @@ export function createRpcHandler(
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeSupplierPayableLineAi = supplierPayableLineAi(conversationReader?.supplierPayableLineSentence ? { supplierPayableLineSentence: conversationReader.supplierPayableLineSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMisaCheckLineAi = misaCheckLineAi(conversationReader?.misaCheckLineSentence ? { misaCheckLineSentence: conversationReader.misaCheckLineSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The accounting coworker's notes on the kinds of blocker on the AMIS preview (#3904): the same reader and model, a budget of its own; told the kinds on the list and nothing else.
+  const financeMisaAmisBlockerNotesAi = misaAmisBlockerNotesAi(conversationReader?.misaAmisBlockerNotes ? { misaAmisBlockerNotes: conversationReader.misaAmisBlockerNotes.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker on payroll (#2534, #2815): the same reader and model, independent budgets per action so `Promise.all([prepare, flag])` in the UI does not self-contend on `running`.
   const payrollPrepareBudget = suggestionBudget();
   const payrollAi: PayrollAi = {
@@ -3075,6 +3078,14 @@ export function createRpcHandler(
       // What would be sent to MISA AMIS Kế toán (#3901): a read over the same vouchers as the MISA SME export, in the caller's own context. It sends nothing and calls no one.
       misaAmisPreview: os.vouchers.misaAmisPreview.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => misaAmisPreview((name, query) => runtime.query(name, query, { actor, orgId }), input)),
+      ),
+      // The preview is run again here, so what the model is told comes from the books, never from the caller; the notes are a read and change no voucher, blocker or push.
+      misaAmisBlockerNotes: os.vouchers.misaAmisBlockerNotes.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const preview = await misaAmisPreview((name, query) => runtime.query(name, query, { actor, orgId }), ask);
+          return explainMisaAmisBlockers(financeMisaAmisBlockerNotesAi, orgId, actor.userId, preview, lang ?? 'vi');
+        }),
       ),
       // What MISA's import will refuse or cut in one of the seven exports (#3848): a read over the rows the file is built from, in the caller's own context. The export is unchanged and never waits for it.
       misaCheck: os.vouchers.misaCheck.handler(({ context, input }) =>
