@@ -974,27 +974,36 @@ export function createHttpApp(deps: HttpDeps) {
   const bankFeedWebhooks = deps.bankFeedWebhooks;
   if (bankFeedWebhooks && Object.keys(bankFeedWebhooks).length > 0 && runtime.installed('finance')) {
     const noticeLimit = deps.bankFeedWebhookLimit ?? new RateLimiter({ perMinute: BANK_FEED_WEBHOOKS_PER_MINUTE });
-    app.post('/api/bank-feed/:provider/webhook', bodyLimit({ maxSize: MAX_BANK_FEED_WEBHOOK_BYTES }), async (c) => {
-      const name = c.req.param('provider');
-      if (!Object.hasOwn(bankFeedWebhooks, name)) return c.json({ code: 'NOT_FOUND' }, 404);
-      const decision = noticeLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
-      if (!decision.allowed) {
-        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
-        c.header('retry-after', String(decision.retryAfterSeconds));
-        return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
-      }
-      try {
-        const headers: Record<string, string | undefined> = {};
-        c.req.raw.headers.forEach((value, header) => {
-          headers[header.toLowerCase()] = value;
-        });
-        const outcome = await acceptBankFeedWebhook(runtime, bankFeedWebhooks[name] as BankFeedProvider, { headers, body: await c.req.text() });
-        if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
-        return c.json({ queued: outcome.queued }, outcome.status);
-      } catch (error) {
-        return problem(c, error);
-      }
-    });
+    // The per-address limit is its own middleware ahead of the cap: bodyLimit reads a body sent without a Content-Length (a chunked one) up to the cap before it calls the next handler,
+    // so a limiter inside the handler would refuse an address only after its body was read (#4047).
+    app.post(
+      '/api/bank-feed/:provider/webhook',
+      async (c, next) => {
+        if (!Object.hasOwn(bankFeedWebhooks, c.req.param('provider'))) return c.json({ code: 'NOT_FOUND' }, 404);
+        const decision = noticeLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+        if (!decision.allowed) {
+          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+          c.header('retry-after', String(decision.retryAfterSeconds));
+          return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+        }
+        await next();
+      },
+      bodyLimit({ maxSize: MAX_BANK_FEED_WEBHOOK_BYTES }),
+      async (c) => {
+        const name = c.req.param('provider');
+        try {
+          const headers: Record<string, string | undefined> = {};
+          c.req.raw.headers.forEach((value, header) => {
+            headers[header.toLowerCase()] = value;
+          });
+          const outcome = await acceptBankFeedWebhook(runtime, bankFeedWebhooks[name] as BankFeedProvider, { headers, body: await c.req.text() });
+          if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
+          return c.json({ queued: outcome.queued }, outcome.status);
+        } catch (error) {
+          return problem(c, error);
+        }
+      },
+    );
   }
 
   // Zalo OA's webhook of customers' messages (conversation core, #2304): the signature is checked before the body is read or kept, the
