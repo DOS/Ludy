@@ -52,6 +52,16 @@ export const morningSet = defineCommand({
       ctx.audit({ enabled: false });
       return zMorningState.parse({ enabled: false, minute: input.minute, timeZone: input.timeZone, language: input.language });
     }
+    // The member's own membership row, locked FOR KEY SHARE until this command commits: a removal of the member (a DELETE of that row, whose trigger deletes the setting) waits for the save, so the save cannot land
+    // after the trigger and leave a setting for a departed member; and a save that meets a removal already committed finds no row and is refused. (A KEY SHARE does not block another save or a role change.)
+    const member = await ctx.trx
+      .selectFrom('crove_kernel.tenant_member')
+      .select('user_id')
+      .where('org_id', '=', ctx.orgId)
+      .where('user_id', '=', userId)
+      .forKeyShare()
+      .executeTakeFirst();
+    if (member === undefined) throw new DomainError('FORBIDDEN', 403, 'Bạn không còn là thành viên của tổ chức này');
     await ctx.trx
       .insertInto('crove_meetings.morning_notice')
       .values({ org_id: ctx.orgId, user_id: userId, send_minute: input.minute, time_zone: input.timeZone, language: input.language })

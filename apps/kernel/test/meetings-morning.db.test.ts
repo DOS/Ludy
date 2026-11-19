@@ -89,10 +89,10 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry);
-    for (const key of ['owner', 'lan', 'nam', 'quiet', 'muted', 'odd', 'gone', 'busy', 'twin', 'pa', 'pb', 'pc', 'pd']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'morning', subject: key, email: `${key}@morning.test`, name: key });
+    for (const key of ['owner', 'lan', 'nam', 'quiet', 'muted', 'odd', 'gone', 'busy', 'twin', 'pa', 'pb', 'pc', 'pd', 'racer']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'morning', subject: key, email: `${key}@morning.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Buổi Sáng')).orgId;
     await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'member'), ($1, $8, 'member')`, [orgId, users.lan, users.nam, users.quiet, users.muted, users.odd, users.gone, users.busy]);
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) SELECT $1, u, 'member' FROM unnest($2::uuid[]) u`, [orgId, [users.twin, users.pa, users.pb, users.pc, users.pd]]);
+    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) SELECT $1, u, 'member' FROM unnest($2::uuid[]) u`, [orgId, [users.twin, users.pa, users.pb, users.pc, users.pd, users.racer]]);
   }, 300_000);
 
   afterAll(async () => {
@@ -258,5 +258,27 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
       }
     });
     for (const key of who) expect(seen.has(users[key] as string), `${key} was handed out`).toBe(true);
+  });
+
+  it('waits for a removal of the member in flight and is refused once they are gone, so a save cannot outlive the trigger that drops the setting', async () => {
+    const holder = new pg.Client({ connectionString: adminUrl });
+    await holder.connect();
+    try {
+      await holder.query('BEGIN');
+      // The removal is under way: the membership row is deleted but not committed (the trigger has dropped the setting, which was never there).
+      await holder.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgId, users.racer]);
+      let settled = false;
+      const saving = refuses(set('racer', { enabled: true, minute: 480, timeZone: ZONE, language: 'vi' })).then((code) => {
+        settled = true;
+        return code;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      expect(settled, 'the save waits for the removal').toBe(false);
+      await holder.query('COMMIT');
+      expect(await saving).toBe('FORBIDDEN');
+    } finally {
+      await holder.end();
+    }
+    expect((await sqlAdmin(`SELECT 1 FROM crove_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users.racer])).rowCount).toBe(0);
   });
 });
