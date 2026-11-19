@@ -65,14 +65,15 @@ describe('the fake model', () => {
 // The member-Vy fixtures (#4050)
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 const segments = TRANSCRIPT.map((l) => ({ startSeconds: l.from, endSeconds: l.to, speakerLabel: l.who, text: l.said }));
-const clock = (s: number): string => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+const clock = (s: number): string => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 const transcriptText = TRANSCRIPT.map((l) => `[${clock(l.from)}] ${l.who}: ${l.said}`).join('\n');
 const FACTS = [
   { n: 1, kind: 'decision', meeting: 'Giao ban tuần trước', date: '2026-11-12', text: 'Chốt giá gói kế toán 15.000.000 đồng' },
   { n: 2, kind: 'item', meeting: 'Giao ban tuần trước', date: '2026-11-12', text: 'Gửi báo giá bản cuối (not given to anyone yet; owner: Lan)' },
 ];
 
-// A request as the product's runFeature builds it: the feature's instruction (and the nonce line) as the system message, the data between the tags of the user message.
+// A request shaped like the one runFeature builds: the feature's instruction (and the nonce line) as the system message, the data between the tags of the user message. The data is a hand-written
+// stand-in for what each feature sends (the digest and brief facts, the agenda and transcript lines), close enough for the checks; the specs send the real ones.
 // A scenario token is part of the data a spec stores: a transcript line, a typed agenda line, a decision. `subject` is the data as the product sends it, so a token is already inside it.
 const ask = async (route: Route, subject: string, parts = false): Promise<{ status: number; text: string }> => {
   const data = subject;
