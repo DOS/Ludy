@@ -51,8 +51,10 @@ describe('extension secrets', () => {
 });
 
 describe('the routes an extension token may reach', () => {
+  // Landing in two steps (ADR-0055 slice 1, issue #4123): the route of the capture heartbeat may be on the list or not; the step that adds it moves it into the list below and empties this one.
+  const ROUTES_NEXT = ['POST /api/rpc/meetings/captureHeartbeat meetings'];
   it('lists each route with its reason, the meetings ones with the meetings scope', () => {
-    expect(EXTENSION_ROUTES.map((r) => `${r.method} ${r.path} ${r.scope}`)).toEqual([
+    expect(EXTENSION_ROUTES.map((r) => `${r.method} ${r.path} ${r.scope}`).filter((route) => !ROUTES_NEXT.includes(route))).toEqual([
       'GET /api/extension/me null',
       'POST /api/rpc/meetings/create meetings',
       'POST /api/rpc/meetings/extensionStatus meetings',
