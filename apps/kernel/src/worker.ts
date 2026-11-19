@@ -91,6 +91,7 @@ import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
 import { runAdsDeletions } from './ads-deletion.ts';
+import { runMisaAmisCallbacks } from './misa-amis-callback-relay.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import type { EInvoiceProvider } from '@crove/einvoice';
 import type { AmisClient } from '@crove/misa-amis';
@@ -3189,6 +3190,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           if (claimed < BANK_FEED_NOTICE_CLAIM) break;
         }
       }
+      // The results MISA AMIS posted to its callback (#3903, S4 of #3854): the route stored the signed ones; the organisation of each is found from our own stored push row and the answer is recorded here, because the
+      // system context is the worker's alone. Nothing is waiting where the route does not exist (no ClientID).
+      if (finance) await runMisaAmisCallbacks({ runtime: deps.runtime, workerDb: deps.workerDb });
       // Meta's data deletion requests for the Ads connection (plan section 9, #2219): the ad accounts a request names are
       // closed and erased in their orgs, then the request is completed. Without the callback nothing is waiting.
       if (ads) await runAdsDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
