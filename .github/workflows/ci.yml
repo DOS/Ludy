@@ -60,10 +60,11 @@ jobs:
         run: shellcheck tools/deploy/deploy.sh tools/test/deploy-stubs/docker tools/test/deploy-stubs/curl
 
       # One package at a time (`pnpm -r --workspace-concurrency=1` in the root script, #4023): the `tsc` of apps/kernel and
-      # apps/app each use 6 to 10 GB, so two of them together (and four module checks, 14 GB) exhausted the runner's 16 GB
-      # and it was killed ("The runner has received a shutdown signal"), on about one run in three. One at a time peaks at
-      # 8 GB and takes about the same time (4 to 5 minutes). The step limit makes a stall fail here, by name, in place of
-      # eating the job's 25 minutes.
+      # apps/app are each several GB, so two of them together (or four module checks, 14 GB) exhausted the runner's 16 GB
+      # and it was killed ("The runner has received a shutdown signal"), on about one run in three. One at a time the
+      # machine peaks at about 14.6 GB used while apps/kernel is checked (apps/app: 8 GB), so the headroom is thin
+      # (#4062) and this must not go back to parallel. It takes about the same time (4 to 5 minutes). The step limit
+      # makes a stall fail here, by name, instead of using up the job's 25 minutes.
       - name: Typecheck
         timeout-minutes: 12
         run: pnpm typecheck
