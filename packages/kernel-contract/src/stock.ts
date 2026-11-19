@@ -189,6 +189,18 @@ export type StockCloseProposal = z.infer<typeof zStockCloseProposal>;
 export const zStockCloseEmptyResult = z.object({ periodId: zId, items: z.number().int().min(0) });
 export type StockCloseEmptyResult = z.infer<typeof zStockCloseEmptyResult>;
 
+// What a person should know before closing a month of stock (#3712 slice 3): the books regime of the entity on the month's last day, the balance of account 1381 (goods waiting to be resolved,
+// a count's shortage beyond the norm) at that day in whole dong, and whether Circular 99's rule applies: a 1381 balance with no evidence of its cause is expensed at the reporting date.
+// A warning for the screen, never a block: the close goes on whatever it says.
+export const zStockCloseCheck = z.object({
+  month: zStockMonth,
+  legalEntityId: zId,
+  regime: z.string(),
+  balance1381: z.string(),
+  applies: z.boolean(),
+});
+export type StockCloseCheck = z.infer<typeof zStockCloseCheck>;
+
 // The finance coworker on stock (#2514). Read-only: a suggestion is never a match (a person assigns the line, which teaches the name), and the low-stock list and the reorder text
 // move nothing and send nothing.
 // How many days a supplier takes to deliver when the org has not said (a week count of the average sales is read against it), and the bounds a person may set.
