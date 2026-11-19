@@ -141,6 +141,7 @@ export * from './meeting-brief.ts';
 export * from './meeting-digest.ts';
 export * from './meeting-assignee.ts';
 export * from './meeting-chapters.ts';
+export * from './meeting-title.ts';
 export * from './meeting-minutes-templates.ts';
 export * from './meeting-templates.ts';
 export * from './meetings.ts';

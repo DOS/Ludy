@@ -3387,6 +3387,29 @@ export const en = {
       copyReplaces: 'Copying into the draft replaces what Vy wrote there before. What you typed yourself stays.',
     },
     // The table of contents of a meeting (#3844): a title and the line of the transcript each chapter starts at.
+    // The recorder's own Vy offers up to three titles for the meeting on a click (#3947); a pick renames it.
+    titleSuggest: {
+      button: 'Suggest a title',
+      note: 'Vy reads the transcript and offers up to three titles. Nothing changes until you pick one.',
+      running: 'Vy is reading the transcript…',
+      pickTitle: 'Titles Vy suggests',
+      use: 'Use this title',
+      dismiss: 'None of these',
+      dropped: '{count} of Vy\'s suggestions were left out because they did not pass the checks.',
+      none: 'No suggestion this time. You can try again or keep the title.',
+      renamed: 'The meeting has a new title.',
+      failed: 'Vy could not suggest a title.',
+      codes: {
+        default: 'Try again in a few minutes, or type the title by hand.',
+        AI_BUDGET_EXHAUSTED: 'The AI budget for this period is used up.',
+        AI_STOPPED: 'AI is switched off for now.',
+        TITLE_TIMEOUT: 'It took too long.',
+        TITLE_FAILED: 'The AI service did not answer.',
+        TITLE_TOO_LONG: 'The transcript is too long for Vy to read in one go.',
+        TITLE_NO_TRANSCRIPT: 'There is no transcript yet.',
+        TITLE_BUSY: 'A suggestion is already running. Wait a moment.',
+      },
+    },
     chapters: {
       title: 'Chapters',
       readerNote: 'Parts of this meeting, each with the time in the transcript. Click one to go to that line.',
@@ -8947,6 +8970,7 @@ export const en = {
       meetings_assignee: 'Reading the name said for an action item and picking the person it most likely means',
       meetings_brief: 'Writing a few sentences to prepare for a meeting from what was decided, what is open and the customer\'s deals',
       meetings_chapters: 'Writing the table of contents of a meeting from its transcript, each chapter at the second of its first line',
+      meetings_title: 'Suggesting up to three titles for a meeting from its transcript, on the recorder\'s click',
       meetings_followup_words: 'Wording the opening and closing of a meeting follow-up email',
       projects_weekly_status: 'Summarizing a project week from counts and task titles/comments',
       projects_tasks_from_note: 'Proposing project tasks from a note',
@@ -13026,6 +13050,9 @@ export const en = {
       ASSIGNEE_OFF: 'Vy naming who an action item belongs to is not turned on on this system.',
       ASSIGNEE_BUSY: 'Vy is busy reading names. Try again in a few minutes.',
       BRIEF_BUSY: 'Vy is busy writing preparations. Try again in a few minutes.',
+      TITLE_BUSY: 'Vy is busy suggesting titles. Try again in a few minutes.',
+      MEETING_TITLE_EMPTY: 'A meeting needs a title.',
+      MEETING_TITLE_TOO_LONG: 'A meeting title holds at most 200 characters.',
       DIGEST_OFF: 'Vy writing the weekly recap is not turned on on this system.',
       DIGEST_BUSY: 'Vy is busy writing recaps. Try again in a few minutes.',
       TRANSLATION_NOT_FOUND: 'There is no summary you can read to translate.',
@@ -15232,6 +15259,7 @@ export const en = {
         list: 'List meetings',
         recording_now: 'See the meeting the extension is recording',
         recording_stopped: 'Report that a recording ended with no media',
+        rename: 'Give a meeting a new title',
         media_meta: 'Read meeting media metadata',
         owner_delete: 'Compliance delete meeting',
         owner_list: 'List meetings for compliance deletion (no content)',
@@ -15251,6 +15279,10 @@ export const en = {
       result: {
         get: 'Read the summary and the action items of a meeting',
         publish: 'Share the summary and the action items with the meeting\'s attendees',
+      },
+      title: {
+        start: 'Ask Vy to suggest a title for a meeting',
+        status: 'See whether Vy can suggest a title for a meeting',
       },
       chapters: {
         copy_result: 'Copy the chapters Vy finished for a meeting into the draft',
