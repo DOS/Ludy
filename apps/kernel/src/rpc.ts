@@ -1431,6 +1431,11 @@ export function createRpcHandler(
       today: {
         facts: os.meetings.today.facts.handler(meetingsQuery('meetings.today.facts')),
       },
+      // The opt-in morning notice of the day's meetings (#3955, part B): the member's own setting; see modules/meetings/src/morning.ts.
+      morning: {
+        get: os.meetings.morning.get.handler(meetingsQuery('meetings.morning.get')),
+        set: os.meetings.morning.set.handler(meetingsCommand('meetings.morning.set')),
+      },
       // Agenda adherence (#3959): `agenda` is the open-item list the recorder sees before clicking (no model), `status` the button, `check` the click that has the recorder's own Vy compare the agenda with the transcript
       // and answer, per agenda line, covered with the transcript lines it cites, or not heard. Nothing is stored; see member-vy-ports.ts.
       adherence: {
@@ -3548,6 +3553,8 @@ export function createRpcHandler(
             const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
             const row = rows.find((r) => r.id === input.id);
             if (!row) return { removed: false };
+            // Vouchers still awaiting MISA's answer refuse the disconnect before anything is revoked: the access code stays, so their results can still be read.
+            await runtime.query('finance.misa_amis_connection.can_disconnect', { id: row.id }, { actor, orgId });
             // The credential goes first: a failure after it leaves a row of a closed connection that a second disconnect removes, never a live access code with no row.
             await runtime.execute('kernel.channel.disconnect', { connectionId: row.connectionId }, { actor, orgId });
             return runtime.execute<{ removed: boolean }>('finance.misa_amis_connection.unlink', { id: row.id }, { actor, orgId });

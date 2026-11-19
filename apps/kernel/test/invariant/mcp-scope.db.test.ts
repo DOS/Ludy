@@ -76,6 +76,9 @@ const SIGNALS = [
   'finance.signals.supplier_payments_waiting:ludy.read',
   'crm.signals.won_deals:ludy.read',
   'crm.signals.open_deals:ludy.read',
+  // The Meetings read that searches the published minutes (#4030, company grants only, the Meetings PO's direction of 2026-11-19, inside the owner's decision of 2026-11-18). Optional here so the name can
+  // be accepted before the query lands (two steps); the next tests-only step moves it to REACHABLE, where its absence fails.
+  'meetings.mcp.search:ludy.read',
   // The one query behind the `ludy_signals` tool (step S4): it runs the three rules above as the grant and returns their items.
   'kernel.mcp.signals:ludy.read',
 ];

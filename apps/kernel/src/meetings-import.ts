@@ -245,7 +245,7 @@ async function audioOfVideo(deps: MeetingsImportDeps, job: MeetingsImportJob, do
   }
 }
 
-// The lines of a platform's transcript as the staged JSON `{ segments }`, bounded again here: the platform's text is tainted, so every line is cut to the draft's limits, an empty one is dropped, the times are
+// The lines of a platform's transcript as the staged JSON `{ segments }` (and `truncated: true` when the transcript was cut, #3922), bounded again here: the platform's text is tainted, so every line is cut to the draft's limits, an empty one is dropped, the times are
 // clamped to the longest call the draft takes and a line with no speaker gets a neutral label. Nothing of the platform but the lines is staged (no participant list, no title). `no_transcript` when no line is left.
 export const UNKNOWN_SPEAKER = 'Người nói';
 export function stageTranscript(transcript: MeetingPlatformTranscript): Uint8Array {
@@ -260,7 +260,10 @@ export function stageTranscript(transcript: MeetingPlatformTranscript): Uint8Arr
     segments.push({ startSeconds, endSeconds: Math.max(startSeconds, clamp(entry.endSeconds)), speakerLabel, text });
   }
   if (segments.length === 0) throw new MeetingPlatformError('no_transcript');
-  const bytes = new TextEncoder().encode(JSON.stringify({ segments }));
+  // Cut by the adapter (its own cap) or by the draft's (the lines beyond TRANSCRIPT_SEGMENTS_MAX are dropped above): the member is told the draft stops early. Absent when whole, so the staged bytes of a whole
+  // transcript are what they always were.
+  const cut = transcript.truncated || transcript.entries.length > TRANSCRIPT_SEGMENTS_MAX;
+  const bytes = new TextEncoder().encode(JSON.stringify(cut ? { segments, truncated: true } : { segments }));
   if (bytes.byteLength > MEETING_PLATFORM_TRANSCRIPT_MAX_BYTES) throw new MeetingPlatformError('too_large');
   return bytes;
 }

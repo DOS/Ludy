@@ -96,7 +96,6 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
-  'crove_finance.misa_amis_push',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -112,7 +111,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
-  'crove_meetings.morning_notice',
   'crove_notes.attachment',
   'crove_notes.link',
   'crove_notes.note',

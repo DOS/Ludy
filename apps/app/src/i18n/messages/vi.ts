@@ -446,6 +446,14 @@ export const vi = {
     },
   },
   notifications: {
+    morningNotice: {
+      title: 'Các cuộc họp hôm nay, vào buổi sáng',
+      hint: 'Mỗi ngày một lần, vào giờ bạn chọn, một thông báo trong ứng dụng và qua email cho biết hôm nay bạn có bao nhiêu cuộc họp, kèm đường dẫn để xem. Chỉ có số lượng và đường dẫn: không có tiêu đề hay tên. Ngày không có cuộc họp thì không gửi gì.',
+      label: 'Báo cho tôi các cuộc họp trong ngày vào mỗi buổi sáng',
+      at: 'Lúc',
+      zone: 'Theo múi giờ của bạn: {zone}',
+      noMail: 'Máy chủ này chưa gửi được email, nên chỉ có thông báo trong ứng dụng cho đến khi người cài đặt thiết lập thư.',
+    },
     todayMail: {
       title: 'Tóm tắt hằng ngày qua email',
       hint: 'Mỗi sáng, một thư ngắn cho biết hôm nay có bao nhiêu việc cần bạn kèm liên kết về Tổng quan. Thư chỉ có số lượng và liên kết, không có số tiền hay nội dung.',
@@ -478,6 +486,7 @@ export const vi = {
       projects_weekly_status: 'Báo cáo tuần dự án được gửi qua email',
       meetings_series_open_items: 'Việc còn dở từ buổi họp trước của chuỗi cuộc họp',
       meetings_summary_ready: 'Bản nháp biên bản của cuộc họp tôi ghi đã sẵn sàng (gửi cả qua email; tắt ở đây là tắt cả hai)',
+      meetings_morning: 'Các cuộc họp hôm nay của tôi, nếu tôi đã bật thông báo buổi sáng (gửi cả qua email; tắt ở đây là tắt cả hai)',
       kernel_channel_expired: 'Kết nối tài khoản quảng cáo hết hạn hoặc bị từ chối',
       kernel_ai_budget: 'Ngân sách AI sắp hết hoặc đã hết',
       kernel_conversation_new: 'Có hội thoại mới cần trả lời',
@@ -500,6 +509,7 @@ export const vi = {
       projects_weekly_status: 'Có báo cáo tuần mới của dự án {title}',
       series_open_items: 'Sắp họp tiếp: bạn còn {count, plural, other {# việc}} dở từ buổi họp trước. Mở buổi họp trước để xem.',
       summary_ready: 'Bản nháp biên bản của cuộc họp bạn ghi đã sẵn sàng. Mở cuộc họp để xem và chỉnh.',
+      morning: 'Hôm nay bạn có {count, plural, other {# cuộc họp}}. Mở trang Cuộc họp để xem.',
       ai_budget_warn: 'Ngân sách AI đã dùng {percent}%. Hết ngân sách thì chỉ phần AI dừng, sổ sách vẫn chạy.',
       ai_budget_stop: 'Ngân sách AI tháng này đã hết. Việc cần AI sẽ chờ; hãy nâng ngân sách hoặc đợi sang tháng mới. Sổ sách vẫn chạy bình thường.',
       channel_expired: 'Một tài khoản quảng cáo bị tạm dừng cập nhật vì kết nối hết hạn hoặc bị từ chối. Hãy kết nối lại để lấy tiếp số liệu, không mất ngày nào.',
@@ -3165,6 +3175,7 @@ export const vi = {
       draftNote: 'Chỉ bạn thấy bản nháp này. Hãy đọc lại và sửa dòng nào nghe sai; từ đây chưa chia sẻ gì cho người dự họp.',
       publishedNote: 'Bản ghi lời mà người ghi đã chia sẻ cho cuộc họp.',
       platformSource: 'Bản chép lời của {platform}: do nền tảng viết, không phải của Ludy.',
+      platformCutKnown: 'Bản chép lời của {platform} dài hơn mức Ludy nhập được, nên ở đây chỉ có phần đầu.',
       platformCut: 'Bản chép lời của {platform} có đúng {max, number} dòng, mức nhiều nhất Ludy nhập được. Nếu cuộc họp dài hơn, phần sau không có ở đây.',
       emptyRecorder: 'Chưa có bản ghi lời. Ghi âm và nghe lại vẫn dùng được khi không có.',
       vy: {
@@ -3762,6 +3773,7 @@ export const vi = {
       noMedia: 'Cuộc họp này chưa có bản ghi âm hoặc video.',
       notFound: 'Không tìm thấy cuộc họp.',
       stoppedAt: 'Ghi âm đã dừng lúc {time}',
+      // Bản chép lời của nền tảng dài hơn mức Ludy nhập được (#3922).
       consentMethodLabel: 'Hình thức',
       consentNoticeVersion: 'Phiên bản thông báo',
       consentConfirmedAt: 'Xác nhận lúc',
@@ -13593,6 +13605,14 @@ export const vi = {
       MISA_AMIS_CONNECTION_EXISTS: 'Pháp nhân này đã có một kết nối MISA AMIS.',
       MISA_AMIS_CONNECTION_LIVE: 'Hãy ngắt kết nối MISA AMIS trước khi xóa dòng này.',
       MISA_AMIS_CONNECTION_NOT_FOUND: 'Không tìm thấy kết nối MISA AMIS này.',
+      MISA_AMIS_NOT_TESTED: 'Hãy kiểm tra kết nối MISA AMIS thành công trước khi gửi chứng từ.',
+      MISA_AMIS_ENTITY_MISMATCH: 'Kết nối MISA AMIS này thuộc pháp nhân khác.',
+      MISA_AMIS_PUSH_BLOCKED: 'Có chứng từ chưa đủ điều kiện gửi sang MISA AMIS; hãy xem lại bản xem trước.',
+      MISA_AMIS_PUSH_EMPTY: 'Không có chứng từ nào để gửi sang MISA AMIS.',
+      MISA_AMIS_PUSH_STALE: 'Dữ liệu đã thay đổi từ lúc bạn xem; hãy xem trước lại rồi gửi.',
+      MISA_AMIS_PUSH_STATE: 'Chứng từ này không thể chuyển sang trạng thái đó.',
+      MISA_AMIS_PUSH_TOO_MANY: 'Kỳ này có quá nhiều chứng từ; hãy chọn khoảng ngắn hơn.',
+      MISA_AMIS_PUSH_PENDING: 'Còn chứng từ đã gửi sang MISA AMIS chưa có kết quả; hãy xử lý xong trước khi xóa kết nối.',
       MARKETPLACE_PROVIDER_NOT_READY: 'Bộ kết nối này chưa kiểm tra hoặc lấy đơn được từ màn hình; sẽ có khi bộ kết nối của nó hoàn thành.',
       MARKETPLACE_NOT_STAGED: 'Báo cáo này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách.',
       MARKETPLACE_BUSY: 'Có báo cáo khác đang được nhập cùng lúc; hãy thử lại sau ít phút.',
@@ -14586,6 +14606,7 @@ export const vi = {
         payment_reminder: 'Cho ứng dụng AI xem bản nháp nhắc nợ của một khách hàng quá hạn',
       },
       misa_amis_connection: {
+        can_disconnect: 'Kiểm tra xem có ngắt được kết nối MISA AMIS không',
         connect: 'Kết nối MISA AMIS Kế toán',
         list: 'Xem các kết nối MISA AMIS',
         record_test: 'Ghi kết quả kiểm tra kết nối MISA AMIS',
@@ -14593,6 +14614,14 @@ export const vi = {
         target: 'Kiểm tra pháp nhân của kết nối MISA AMIS',
         test_target: 'Lấy thông tin kết nối MISA AMIS để kiểm tra',
         unlink: 'Ngắt kết nối MISA AMIS',
+      },
+      misa_amis: {
+        push: 'Gửi chứng từ sang MISA AMIS',
+        push_begin: 'Bắt đầu một lượt gửi chứng từ sang MISA AMIS',
+        push_list: 'Xem các chứng từ đã gửi sang MISA AMIS',
+        push_record: 'Ghi kết quả gửi chứng từ sang MISA AMIS',
+        push_resolve: 'Xác nhận chứng từ chưa có phản hồi từ MISA AMIS',
+        push_target: 'Lấy thông tin kết nối MISA AMIS để gửi chứng từ',
       },
       misa_goods_code: {
         remove: 'Xóa mã hàng MISA',
@@ -15354,6 +15383,11 @@ export const vi = {
       today: {
         facts: 'Xem các cuộc họp hôm nay trong lịch của bạn, kèm những gì đã chốt lần trước, việc còn dở và cơ hội đang mở của khách cho từng cuộc',
       },
+      morning: {
+        get: 'Xem cài đặt thông báo buổi sáng về các cuộc họp trong ngày của bạn',
+        notice: 'Gửi cho một thành viên thông báo buổi sáng về các cuộc họp trong ngày (lượt quét của hệ thống)',
+        set: 'Bật hoặc tắt thông báo buổi sáng về các cuộc họp trong ngày, và chọn giờ',
+      },
       brief: {
         facts: 'Xem những gì đã chốt, việc còn dở và cơ hội đang mở của khách trước một cuộc họp',
         start: 'Nhờ Vy viết vài câu chuẩn bị trước một cuộc họp',
@@ -15365,6 +15399,7 @@ export const vi = {
         open_actions: 'Cho ứng dụng AI xem các việc còn mở từ biên bản đã công bố của những cuộc họp chia sẻ cho cả công ty',
         series_open_items: 'Cho ứng dụng AI xem các việc còn mở trong chuỗi các cuộc họp lặp lại của một cuộc họp đã công bố và chia sẻ cho cả công ty',
         decisions: 'Cho ứng dụng AI xem các quyết định trong biên bản đã công bố của những cuộc họp gần đây được chia sẻ cho cả công ty',
+        search: 'Cho ứng dụng AI tìm trong biên bản đã công bố của những cuộc họp được chia sẻ cho cả công ty',
       },
       hook: {
         clear: 'Gỡ địa chỉ nhận biên bản của bạn',
