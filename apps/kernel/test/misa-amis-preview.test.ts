@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The preview of a MISA AMIS push on the API side (#3901): for each of the seven kinds it asks for the same vouchers the MISA SME export of that kind asks for, writes them as the push would, and lists them with their
 // blockers. A fake query stands in for the runtime, so this needs no database.
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { MISA_AMIS_KINDS, MISA_AMIS_PREVIEW_BLOCKERS, MISA_AMIS_PREVIEW_LIMIT, zMisaAmisPreview } from '@crove/kernel-contract';
 import type { CashVoucher, PurchaseVoucher, SalesVoucher } from '@crove/mod-finance';
@@ -77,7 +78,7 @@ describe('misaAmisPreview', () => {
     for (const kind of MISA_AMIS_KINDS) {
       const { query, calls } = fake(all);
       const result = await misaAmisPreview(query, { kind, ...range, legalEntityId: entity });
-      expect(result).toEqual({ kind, vouchers: 0, ready: 0, blocked: 0, checkedAgainstAmis: false, purchasePurpose: '1', more: false, items: [] });
+      expect(result).toEqual({ kind, vouchers: 0, ready: 0, blocked: 0, checkedAgainstAmis: false, purchasePurpose: '1', more: false, digest: createHash('sha256').update('').digest('hex'), items: [] });
       expect(calls.find((c) => c.name === expected[kind])?.input, kind).toMatchObject({ ...range, limit: MISA_AMIS_PREVIEW_LIMIT + 1, legalEntityId: entity });
       expect(calls.some((c) => c.name === 'finance.misa_goods_codes.list'), kind).toBe(kind === 'purchase_goods');
     }

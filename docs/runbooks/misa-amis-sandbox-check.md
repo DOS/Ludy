@@ -1,0 +1,48 @@
+# Runbook: the MISA AMIS sandbox check, before the push is turned on
+
+Why this exists: the push of vouchers to MISA AMIS Kế toán ([#3902](https://github.com/DOS/Ludy/issues/3902), S3b of [#3854](https://github.com/DOS/Ludy/issues/3854)) was built and tested only against a fake MISA server written from MISA's documentation. Nothing in it has run against a real MISA sandbox. Until this check has confirmed or corrected what the push assumes, **no deployment turns the push on** and no org's vouchers go to MISA.
+
+Who runs it: only the coordinator, with the integrator's ClientID and a test access code handed over by the secret procedure ([production, secret and credential steps](../contributing.md#production-secret-and-credential-steps)). No worker or team lead runs it, and nothing in this file asks the owner to run a command: the owner's part is the handover of the ClientID and a sandbox company in AMIS, and the coordinator does the rest.
+
+## The three gates, all closed by default
+
+| Gate | What it is | Closed means |
+|---|---|---|
+| Deployment | `MISA_AMIS_PUSH` is `on` (and `MISA_AMIS_CLIENT_ID` is set) | The worker does not register the push queue and does not queue the push job. The API route and the button are S3b-2's and are drawn only when this is on. |
+| Connection | The connection's last test is `works` (S2b, [#3885](https://github.com/DOS/Ludy/issues/3885)) | `finance.misa_amis.push` answers `MISA_AMIS_NOT_TESTED`. |
+| This check | The list below is done and written in the issue | Nobody sets `MISA_AMIS_PUSH`. |
+
+A person (owner or admin) still approves every push, bound to the digest of what they saw (`MISA_AMIS_PUSH_STALE` if the data changed), and nothing is sent for a voucher with a blocker.
+
+## What to confirm, in order
+
+Every item is **unconfirmed** today. For each, the result is written on #3902 (what was sent, what MISA answered, in plain words, with no secret) and, where Ludy's assumption was wrong, a follow-up issue is opened before the gate opens.
+
+1. **The connection test.** `get_company_info` returns the shape the test job reads (it only needs a non-empty object). The token call works with the access code and the connection's `org_company_code`. ([misa-amis-api.md](../integrations/misa-amis-api.md): "Unconfirmed in MISA's documentation".)
+2. **The base path and the token.** `https://developer.misa.vn/apis` plus `/amiskt/v1/...`; the token's real life (the text says 24 hours, the field says 12); whether a rate limit shows up at a batch of 50.
+3. **The AMIS branch.** `get_dictionary` with `data_type` 6 (organisation units): which field carries the id that goes in `branch_id` (the worker reads `organization_unit_id`, then `branch_id`, then `id`, and takes only a single well-formed id; with none or several the batch is `failed` with `BRANCH_UNKNOWN`). If a customer has several branches, decide how a person chooses one (a follow-up: today the push refuses rather than guesses).
+4. **The shape of a save's answer, and of the results.** `save` answers `Success` with no data; `get_call_back_detail_error` returns the entries of a callback's `data` (assumed), for a date range (the worker asks from one day before the first row was sent to tomorrow, since the time zone is not documented). Check a refused voucher's `error_message` and `error_code`.
+5. **Amounts.** Numbers (as the adapter sends them) are accepted; a string would not be needed.
+6. **Ludy's three own choices** ([#3902 comment](https://github.com/DOS/Ludy/issues/3902#issuecomment-6994702640)): the purchase purpose defaults to 1; a bank payment is `reftype` 1510 (ủy nhiệm chi); the `reason_type_id` of a cash or bank voucher is derived from its accounts (331 a supplier, 131 a customer).
+7. **Unpaid purchases and parties.** A purchase with `reftype` 330 and no `is_paid` is read as unpaid; AMIS accepts a party by name and tax code when no `account_object_code` is given (the push sends no party code).
+8. **Sales and discounts.** A sales line without `stock_code` and `stock_name` (the table marks them required); a trade discount as a negative line rather than in `discount_*`. Sales stay out of the first org's push until this is answered.
+9. **What a second `save` does under one `org_refid`.** The push never sends one: a row that is queued, sending, sent, accepted or `ambiguous` is not sent again by anything. If AMIS answers "idempotent" (the document implies it), a later change may let a person resend an `ambiguous` row; if it makes a second request, the rule stays as it is. Also: whether a voucher revised after AMIS took it must be deleted and sent again (the push counts it as `revised` and does nothing).
+10. **That AMIS creates a request and not the voucher.** The PO's approval of R2 (not R3) for the push rests on AMIS turning a "đề nghị sinh chứng từ" into a voucher only when a person in AMIS does it. If AMIS creates the voucher directly, the decision is reopened before the gate opens.
+11. **The 20 character voucher number.** MISA's limit on `org_refno` as the document says; the push blocks a longer number, including after the `/N` of a split voucher, and never cuts one.
+12. **A refused `save`.** When MISA answers `Success: false` with an error code to a whole batch, the push takes it as "nothing was created" and marks every row `refused` (with the text Ludy has for that code). Check that a refusal never leaves some vouchers of the batch created.
+13. **A refused row sent again.** A person's new confirmed push sends a `refused` row again under the same `org_refid`; check that MISA takes it (a corrected voucher) and does not answer that the id exists.
+14. **Results.** `get_call_back_detail_error` returns one entry per `org_refid` (if it returns several, the worker keeps the last), and an entry's `success` is final. Also check how its date range is filtered (by the day of the request, which the worker assumes, asking from one day before the first send day to tomorrow) and that a range of several days is accepted: a row a person confirmed "in AMIS" days later is read from its original send day.
+15. **A result of an older send.** The worker matches a result to a row by `org_refid` alone. After a refused row is sent again (the same `org_refid`, one more attempt), check that `get_call_back_detail_error` does not still return the old refusal for it, and whether a result carries something (a session id) that names the send it belongs to; if it does, the worker is to match on it too, before any refused row is sent again for real.
+16. **The callback** (S4, [#3903](https://github.com/DOS/Ludy/issues/3903)) is a separate check once that slice exists: `app_id` against the ClientID, the signature, the reply AMIS expects.
+
+## Turning the push on, and off
+
+Only after the list above is done and written on #3902, and only for the deployment the coordinator names: the coordinator sets `MISA_AMIS_PUSH=on` the way any deployment setting is changed, under the owner's approval for that run. Turning it off is the same setting set to empty or `off`: the worker does not register the push job at its next start, so **both sending and reading MISA's results stop** (they are one job; there is no separate gate). Rows already `sending`, `sent` or `ambiguous` stay as they are, nothing is asked of MISA and nothing is sent again. When the setting is turned back on, the first run of the job (a follow-up already waiting in the queue, or any press of the push button) turns a `sending` row older than two minutes into `ambiguous` and asks MISA for the results of `sent` and `ambiguous` rows changed in the last 24 hours; an `ambiguous` row older than that is settled by an owner or admin after three days (`push_resolve`). Nothing already accepted by AMIS is undone from Ludy.
+
+**A known limit of this slice (S3b-1):** the worker asks MISA for the result of a `sent` or `ambiguous` row only for 24 hours after the row's last change, and `push_resolve` settles only an `ambiguous` row (after three days). A `sent` row MISA gave no result for in that day therefore stays `sent` and pending, is never sent again, and blocks removing the connection; there is no supported way to settle it until S3b-2 ([#3902](https://github.com/DOS/Ludy/issues/3902)) adds one. The sandbox check should be done with a person watching the results, so no row is left in that state.
+
+If a push goes wrong in the sandbox: nothing is deleted from Ludy; a voucher MISA refused shows on its row with MISA's reason, and a person sends it again through a new confirmed push (one more attempt). Rows in AMIS that must go are removed in AMIS by a person.
+
+## What the push does not log or store
+
+No access code, token, ClientID, party name or amount is in a row, an audit fact, an event, a ledger row or a log line: ids, codes, dates, counts and states. The one piece of MISA's own text kept is the capped `reason` of a refused voucher, shown escaped and never logged.

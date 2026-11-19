@@ -121,6 +121,8 @@ export const EXPORT_TABLES = {
   'finance.marketplace_connection': { from: 'crove_finance.marketplace_connection', omit: ['poll_cursor'] },
   // The code AMIS is told for this connection is a routing id of the deployment, not the org's data; the access code is sealed in crove_kernel.credential, which is never exported.
   'finance.misa_amis_connection': { from: 'crove_finance.misa_amis_connection', omit: ['org_company_code'] },
+  // What was pushed to AMIS and where it stands: ids, codes, dates and states (MISA's own text for a refusal is the reason column). No voucher body is stored.
+  'finance.misa_amis_push': { from: 'crove_finance.misa_amis_push', omit: [] },
   'finance.marketplace_party': { from: 'crove_finance.marketplace_party', omit: [] },
   'finance.stock_item': { from: 'crove_finance.stock_item', omit: [] },
   'finance.stock_alias': { from: 'crove_finance.stock_alias', omit: [] },

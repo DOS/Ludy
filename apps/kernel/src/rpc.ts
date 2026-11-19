@@ -3548,6 +3548,8 @@ export function createRpcHandler(
             const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
             const row = rows.find((r) => r.id === input.id);
             if (!row) return { removed: false };
+            // Vouchers still awaiting MISA's answer refuse the disconnect before anything is revoked: the access code stays, so their results can still be read.
+            await runtime.query('finance.misa_amis_connection.can_disconnect', { id: row.id }, { actor, orgId });
             // The credential goes first: a failure after it leaves a row of a closed connection that a second disconnect removes, never a live access code with no row.
             await runtime.execute('kernel.channel.disconnect', { connectionId: row.connectionId }, { actor, orgId });
             return runtime.execute<{ removed: boolean }>('finance.misa_amis_connection.unlink', { id: row.id }, { actor, orgId });
