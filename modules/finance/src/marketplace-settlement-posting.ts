@@ -2,6 +2,7 @@
 // The proposed entry of a stored marketplace settlement (#2516, ADR-0045 point 6, plan docs/plan/stock-and-marketplaces.md section 8.4), as pure functions over decimal strings.
 // ONE entry per settlement AND MONTH of delivery (marketplace-settlement-months.ts says which pieces of the settlement belong to which month): Dr 131 (the platform) / Cr 511 for the sum of the
 // pieces' sales minus the sum of their seller discounts. The commission, service, payment and shipping fees and the withheld tax stay in the settlement record and are not posted here (they are cleared at the payout).
+// Refunds under a map whose refund account is not the revenue account (TT99: 521, research C3, #4017): the refund is its own debit line, Dr 131 (sales - seller discounts - refunds) + Dr 521 (refunds) / Cr 511 (sales - seller discounts).
 // Refunds (PO decision 2026-11-08): an order the platform refunded within the settlement was not paid for, so Cr 511 = sales - seller discounts - refunds, and Dr 131 the same (TT133 has no 521,
 // the return reduces 511 directly). A refund of an earlier period's sale reduces 511 in the period the refund occurs (PO decision 2026-11-08, the usual practice; only a material prior-year error is restated). When refunds and discounts exceed the sales the entry runs the other way, Dr 511 / Cr 131 for the excess. The refund total stays visible on the proposal. The rule is commentary until the accountant confirms it (#2520). The income line cannot say whether a refund
 // belongs to this period's sale or an earlier one's (the row has the order's paid date and amounts, not the original sale's period), so a refund of an earlier sale is netted the same way here, by that decision.
@@ -73,24 +74,43 @@ function settlementProposalLines(input: SettlementProposalInput, map: Pick<Marke
       if (typeof v !== 'string' || !/^\d+(\.\d{1,4})?$/.test(v)) throw bad('Số tiền của dòng đối soát không hợp lệ', { amount: String(v) });
     }
   }
-  // A map that books a refund on its own account (TT99 521) is not built yet: the entry nets a refund into the revenue line, which is right only where the refund account is the revenue account (TT133). Refused, never booked wrong.
-  if (map.salesReturn.code !== map.revenue.code && money(toMoney(sum(input.lines.map((l) => l.refund)))).greaterThan(0)) {
-    throw bad('Kỳ đối soát có hoàn hàng; chế độ kế toán này ghi hoàn hàng vào tài khoản giảm trừ doanh thu riêng, chưa hỗ trợ. Kế toán xử lý', { reason: 'REFUND_ACCOUNT', account: map.salesReturn.code });
-  }
-  const net = money(toMoney(sum(input.lines.map((l) => l.sales)))).minus(money(toMoney(sum(input.lines.map((l) => l.sellerDiscount))))).minus(money(toMoney(sum(input.lines.map((l) => l.refund)))));
-  // A negative net (refunds and discounts above the sales, for example a quiet month with returns from the one before) is legitimate: the entry runs the other way, the platform owing less.
-  const amount = toMoney(net.abs());
+  const grossAfterDiscount = money(toMoney(sum(input.lines.map((l) => l.sales)))).minus(money(toMoney(sum(input.lines.map((l) => l.sellerDiscount)))));
+  const refunds = money(toMoney(sum(input.lines.map((l) => l.refund))));
+  const net = grossAfterDiscount.minus(refunds);
+  // A map whose refund account differs from its revenue account (TT99: 521) books the refund as its own debit line there; one whose refund account is the revenue account (TT133) nets it into 511.
+  const separateReturn = map.salesReturn.code !== map.revenue.code;
   const tax = withheldSplit(input);
-  // A zero net has no 131 / 511 pair; a month that carries withheld tax still posts that tax (the tax lines alone balance), anything else has nothing to post.
-  if (money(amount).isZero() && !tax) throw bad('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: amount });
+  // Nothing to post: no tax and nothing on any of the lines of the entry (a zero net with a separate refund line still has that line, so it is posted).
+  if (net.isZero() && !tax && !(separateReturn && !refunds.isZero())) throw bad('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: toMoney(net.abs()) });
   const memo = `${input.platform} ${input.periodFrom} đến ${input.periodTo}, tháng ${input.month}`;
-  const owed = net.greaterThan(0);
-  const lines: ProposedJournalLine[] = money(amount).isZero()
-    ? []
-    : [
+  const lines: ProposedJournalLine[] = [];
+  if (!separateReturn) {
+    // A negative net (refunds and discounts above the sales, for example a quiet month with returns from the one before) is legitimate: the entry runs the other way, the platform owing less.
+    const amount = toMoney(net.abs());
+    const owed = net.greaterThan(0);
+    if (!money(amount).isZero()) {
+      lines.push(
         { account: owed ? map.receivable.code : map.revenue.code, debit: amount, credit: '0', partyId: owed ? input.partyId : null, memo },
         { account: owed ? map.revenue.code : map.receivable.code, debit: '0', credit: amount, partyId: owed ? null : input.partyId, memo },
-      ];
+      );
+    }
+  } else {
+    // Dr 131 for what the platform owes (net of discounts and refunds), Dr 521 for the refunds, Cr 511 for the sales less the seller discounts. The three balance: net + refunds = sales - discounts. Each of 131 and 511
+    // runs the other way when its own amount is negative (refunds and discounts above the sales; discounts above the sales), and a zero amount posts no line. The payout clears the same 131 amount (sales - discounts - refunds).
+    const debitFirst: ProposedJournalLine[] = [];
+    const creditSide: ProposedJournalLine[] = [];
+    const place = (account: string, signedDebit: ReturnType<typeof money>, partyId: string | null, lineMemo: string) => {
+      if (signedDebit.isZero()) return;
+      const line: ProposedJournalLine = signedDebit.greaterThan(0)
+        ? { account, debit: toMoney(signedDebit), credit: '0', partyId, memo: lineMemo }
+        : { account, debit: '0', credit: toMoney(signedDebit.abs()), partyId, memo: lineMemo };
+      (signedDebit.greaterThan(0) ? debitFirst : creditSide).push(line);
+    };
+    place(map.receivable.code, net, input.partyId, memo);
+    place(map.salesReturn.code, refunds, null, `${memo}, hoàn hàng`);
+    place(map.revenue.code, grossAfterDiscount.negated(), null, memo);
+    lines.push(...debitFirst, ...creditSide);
+  }
   if (tax) {
     const taxMemo = `${memo}, thuế sàn đã khấu trừ`;
     if (!money(tax.vat).isZero()) lines.push({ account: map.revenue.code, debit: tax.vat, credit: '0', partyId: null, memo: taxMemo }, { account: map.vatPayable.code, debit: '0', credit: tax.vat, partyId: null, memo: taxMemo });
