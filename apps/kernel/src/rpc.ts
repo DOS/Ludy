@@ -3085,12 +3085,11 @@ export function createRpcHandler(
         inFinance(context, (orgId, actor) => misaAmisPreview((name, query) => runtime.query(name, query, { actor, orgId }), input)),
       ),
       // F4 (security review of #4013): with the push switched off the command is not reached at all, so a confirmation made while it is off can never be sent within its seven days once it is turned on.
-      misaAmisPush: os.vouchers.misaAmisPush.handler(({ context, input }) =>
-        inFinance(context, async (orgId, actor) => {
-          if (!channels?.misaAmis || !channels.misaAmisPush) throw new DomainError('MISA_AMIS_PUSH_DISABLED', 404, 'Việc gửi chứng từ sang MISA AMIS chưa được bật trên hệ thống này');
-          return runtime.execute('finance.misa_amis.push', input, { actor, orgId });
-        }),
-      ),
+      // The switch is read before anything else (membership included): with it off the answer is the same 404 for everyone.
+      misaAmisPush: os.vouchers.misaAmisPush.handler(async ({ context, input }) => {
+        if (!channels?.misaAmis || !channels.misaAmisPush) throw new DomainError('MISA_AMIS_PUSH_DISABLED', 404, 'Việc gửi chứng từ sang MISA AMIS chưa được bật trên hệ thống này');
+        return inFinance(context, (orgId, actor) => runtime.execute('finance.misa_amis.push', input, { actor, orgId }));
+      }),
       // The preview is run again here, so what the model is told comes from the books, never from the caller; the notes are a read and change no voucher, blocker or push.
       misaAmisBlockerNotes: os.vouchers.misaAmisBlockerNotes.handler(({ context, input }) =>
         inFinance(context, async (orgId, actor) => {

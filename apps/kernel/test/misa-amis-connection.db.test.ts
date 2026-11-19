@@ -330,6 +330,8 @@ suite('MISA AMIS connections (#3875)', () => {
     const vouchers = async (who: Account, on: ReturnType<typeof createHttpApp>) => rpc('vouchers/misaAmisPush', await tokenFor(who), confirm, slug, on);
     // Switch off (the ClientID alone is not enough) or no connector at all: the route is a 404 for everyone, an owner included.
     for (const on of [app, offApp]) await expect(vouchers(owner, on)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_PUSH_DISABLED' } });
+    // The switch is read before membership: someone who is not a member of the org gets the same 404, not a 403 that tells the org exists.
+    await expect(vouchers(outsider, app)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_PUSH_DISABLED' } });
     // Switch on: a member or viewer is refused by role, an owner reaches the command (the connection was not tested here, so it says so and queues nothing).
     for (const who of [member, viewer]) expect((await vouchers(who, pushApp)).status).toBe(403);
     await expect(vouchers(owner, pushApp)).resolves.toMatchObject({ status: 409, body: { code: 'MISA_AMIS_NOT_TESTED' } });
