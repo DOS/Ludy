@@ -68,9 +68,9 @@ describe('approval preview', () => {
 });
 
 // Sales (#313): the line's account is its revenue account; the receivable (131) balances the rounded lines.
-function salesServer(lines: PreviewLine[], vat: string) {
+function salesServer(lines: PreviewLine[], vat: string, regime?: string) {
   const proposed = lines.map((l, i) => ({ ...l, lineNo: i + 1, description: '', unit: null, quantity: null, unitPrice: null, reason: '' }));
-  return buildSalesJournal(proposed, vat, 'memo').map((j) => [j.accountCode, j.debit, j.credit]);
+  return buildSalesJournal(proposed, vat, 'memo', regime).map((j) => [j.accountCode, j.debit, j.credit]);
 }
 
 const SALES_CASES: Array<[string, PreviewLine[], string]> = [
@@ -94,6 +94,22 @@ const SALES_CASES: Array<[string, PreviewLine[], string]> = [
 describe('approval preview of a sale', () => {
   it.each(SALES_CASES)('matches the server entry: %s', (_name, lines, vat) => {
     expect(previewSalesJournal(lines, vat).map((j) => [j.accountCode, j.debit, j.credit])).toEqual(salesServer(lines, vat));
+  });
+
+  // Circular 99 (#3712 slice 4): the net reduction of a sales-revenue account is one debit to 521, in the preview as in the entry; Circular 133 and no regime keep the revenue account.
+  it.each([...SALES_CASES, ['a credit and a sale on one account, and a sub-account net below zero', [
+    { debitAccount: '5113', amount: '3000000', vatRate: '10%' },
+    { debitAccount: '5113', amount: '-500000', vatRate: '10%' },
+    { debitAccount: '5111', amount: '-400000', vatRate: '10%' },
+    { debitAccount: '5112', amount: '-100000', vatRate: '10%' },
+  ], '200000'] as [string, PreviewLine[], string]])('matches the server entry under Circular 99: %s', (_name, lines, vat) => {
+    expect(previewSalesJournal(lines, vat, 'tt99').map((j) => [j.accountCode, j.debit, j.credit])).toEqual(salesServer(lines, vat, 'tt99'));
+  });
+
+  it('shows the reduction on 521 under Circular 99 and on 511 under Circular 133', () => {
+    const lines: PreviewLine[] = [{ debitAccount: '511', amount: '-1000000', vatRate: '10%' }];
+    expect(previewSalesJournal(lines, '-100000', 'tt99').map((j) => j.accountCode)).toEqual(['131', '521', '3331']);
+    expect(previewSalesJournal(lines, '-100000', 'tt133').map((j) => j.accountCode)).toEqual(['131', '511', '3331']);
   });
 });
 describe('zero amounts and balance', () => {

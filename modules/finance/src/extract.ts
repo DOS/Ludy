@@ -738,6 +738,7 @@ export async function extractAndPropose(
       ...(converted ? { foreign: { ...converted.foreign, source: 'invoice' as const } } : {}),
     },
     lines,
+    ...(sale && lookup.regime ? { regime: lookup.regime } : {}),
     journal: sale ? buildSalesJournal(lines, booked.vatTotal, memo, lookup.regime) : buildPurchaseJournal(lines, booked.vatTotal, memo),
     checks,
     sourceFileId: fileId,

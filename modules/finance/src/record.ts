@@ -366,7 +366,7 @@ export const revisePurchase = defineCommand({
     const classification = payload.checks.some((c) => c.id === 'accounts') ? classificationCheck(lines) : null;
     const checks = classification ? payload.checks.map((c) => (c.id === 'accounts' ? classification : c)) : payload.checks;
     const regime = await saleRegime(ctx, directionOf(payload), payload.legalEntityId ?? (await proposalEntity(ctx)), payload.invoice.issueDate);
-    const revised = { ...payload, lines, checks, journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload), regime) };
+    const revised = { ...payload, lines, checks, ...(regime ? { regime } : {}), journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload), regime) };
     return { changed: true as const, payload: revised };
   },
 });
