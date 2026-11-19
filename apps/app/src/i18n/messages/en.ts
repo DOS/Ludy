@@ -14116,6 +14116,7 @@ export const en = {
         invoices: 'Show an AI app the list of recorded invoices',
         open_balances: 'Let an AI app read the open receivables and payables per party',
         overview: 'Let an AI app read the cash, profit, receivables and payables overview of a period',
+        payment_reminder: 'Let an AI app read the payment reminder draft of one overdue customer',
       },
       misa_amis_connection: {
         connect: 'Connect MISA AMIS Kế toán',
