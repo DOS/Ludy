@@ -58,9 +58,12 @@ function within(a: string, b: string, limit: number): boolean {
 }
 
 // Titles before a name and the words that start a description of the person, folded. The same lists as the code step (modules/meetings/src/assignee-match.ts; this package cannot import a module). A title is
-// dropped only before the name and only while a word remains ("Dương" and "Chu" are names too), a description is cut off after the first word of the name.
-const TITLES = new Set(['anh', 'chi', 'em', 'bac', 'co', 'chu', 'ong', 'ba', 'ban', 'thay', 'cau', 'mo', 'di', 'duong', 'sep', 'anh/chi', 'chi/anh']);
-const CONNECTORS = new Set(['ben', 'cua', 'nhom', 'team', 'thuoc']);
+// dropped only before the name and only while a word remains ("Dương" and "Chu" are names too), a description is cut off after the first word of the name. Exported so that a test in the kernel app, which sees both
+// sides, pins the two copies as equal (#4089): change one and that test fails until the other follows.
+export const ASSIGNEE_TITLES: readonly string[] = ['anh', 'chi', 'em', 'bac', 'co', 'chu', 'ong', 'ba', 'ban', 'thay', 'cau', 'mo', 'di', 'duong', 'sep', 'anh/chi', 'chi/anh'];
+export const ASSIGNEE_CONNECTORS: readonly string[] = ['ben', 'cua', 'nhom', 'team', 'thuoc'];
+const TITLES = new Set(ASSIGNEE_TITLES);
+const CONNECTORS = new Set(ASSIGNEE_CONNECTORS);
 
 // The words of the name a said text holds: titles before it and the description after it dropped; none for a text that is only a title.
 function saidWords(said: string): string[] {

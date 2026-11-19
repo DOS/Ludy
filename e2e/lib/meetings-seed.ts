@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Rows the AI specs of the meetings line store directly (#4050): a meeting of the signed-in user with the stored transcript the fake model's answers are written for, published decisions and open action items
-// of an earlier meeting, an agenda event on the Today view, and the count of the member-Vy runs of a feature. Speech to text, the recorder and publishing have their own specs; here the data is stored so that
+// of an earlier meeting, an agenda event on the Today view (seeded clear of Vietnam midnight), and the count of the member-Vy runs of a feature. Speech to text, the recorder and publishing have their own specs; here the data is stored so that
 // each spec is about one click on one feature. Every statement runs as the database superuser (e2e/lib/db.ts), so it sees what was stored.
 import { randomUUID } from 'node:crypto';
 import { TRANSCRIPT } from '../fake-model/fixtures.ts';
@@ -64,11 +64,22 @@ export function publishOutcome(meetingId: string, decisions: readonly string[], 
 const VN_NINE = `(date_trunc('day', now() at time zone 'Asia/Ho_Chi_Minh') at time zone 'Asia/Ho_Chi_Minh' + interval '9 hours')`;
 
 /**
+ * Waits out the last `windowSeconds` of the Vietnam day (17:00 UTC), so the events a spec seeds and the page it then loads fall on one Vietnam day (#4089). Without it a run that crosses midnight between the
+ * seed and the page load puts the event on yesterday or tomorrow, and the Today view does not list it. It waits at most `windowSeconds` plus a second and only in that minute of the day; the whole test has 180 s.
+ */
+export function waitOutVietnamMidnight(windowSeconds = 60): void {
+  const [row] = sql<{ left: number }>(`SELECT extract(epoch FROM ((date_trunc('day', now() at time zone 'Asia/Ho_Chi_Minh') + interval '1 day') at time zone 'Asia/Ho_Chi_Minh') - now())::float8 AS "left"`);
+  const left = row?.left ?? Number.POSITIVE_INFINITY;
+  if (left < windowSeconds) exec(`SELECT pg_sleep((:'seconds')::float8)`, { seconds: String(left + 1) });
+}
+
+/**
  * An event on the user's agenda today, `hoursAfterNine` hours after 09:00 Vietnam time, of the given series (so it is briefed from the earlier meeting of that series). The first call connects the user's
  * calendar for reading events; no calendar adapter is configured in the e2e stack, so nothing syncs over these rows. Returns the event's id.
  */
 export function seedTodayEvent(slug: string, email: string, title: string, seriesId: string, hoursAfterNine = 0): string {
   const id = randomUUID();
+  waitOutVietnamMidnight();
   exec(
     `INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events)
      SELECT t.org_id, gen_random_uuid(), u.id, 'google', lower(:'email'), 'e2e', '{}', true
