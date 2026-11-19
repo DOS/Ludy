@@ -508,6 +508,7 @@ import {
 } from './meeting-minutes-templates.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
+import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
 import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
@@ -1315,6 +1316,14 @@ export const contract = {
       facts: oc.input(zBriefTarget).output(zBriefFacts),
       status: oc.input(zBriefEmpty).output(zBriefStatus),
       write: oc.input(zBriefTarget).output(zBriefAnswer),
+    },
+    // This week's decisions and what is still open, across the meetings the member reads (#3949): `facts` are read by code as the member (published decisions and open action items of the meetings that started in the
+    // last 7, 14 or 30 days) and work with AI off; `status` is the button (may Vy be used now, the cost of one recap), `recap` the click that has the member's own Vy write two or three sentences from those facts. Nothing
+    // is stored or sent.
+    digest: {
+      facts: oc.input(zDigestAsk).output(zDigestFacts),
+      status: oc.input(zBriefEmpty).output(zDigestStatus),
+      recap: oc.input(zDigestAsk).output(zDigestAnswer),
     },
     // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read by code as the member in one call and working with AI off. Vy's sentences stay the brief's own click.
     today: {

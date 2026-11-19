@@ -43,6 +43,7 @@ export type ModelFeature =
   | 'meetings.translate'
   | 'meetings.ask'
   | 'meetings.brief'
+  | 'meetings.digest'
   | 'meetings.assignee'
   | 'meetings.chapters'
   | 'projects.tasks_from_note'
