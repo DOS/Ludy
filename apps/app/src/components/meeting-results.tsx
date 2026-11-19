@@ -226,13 +226,16 @@ function NewItem({ meetingId, readers }: { meetingId: string; readers: readonly 
 function Item({ item, isRecorder }: { item: ActionItemView; isRecorder: boolean }) {
   const t = useTranslations('meetings.results');
   const chart = useQuery(orpc.chart.get.queryOptions());
-  // The attendee's own seats first, then the others (a person may give the work to any seat).
-  const own = new Set(item.positions.map((p) => p.id));
+  // Who the item points at: the attendee it names, else the person the said name probably means (a suggestion only, found by code).
+  const suggested = item.whoUserId === null ? item.suggestion : null;
+  const offered = suggested ? suggested.positions : item.positions;
+  // Their own seats first, then the others (a person may give the work to any seat).
+  const own = new Set(offered.map((p) => p.id));
   const seats = (chart.data?.positions ?? []).filter((p) => p.status !== 'archived').sort((a, b) => Number(own.has(b.id)) - Number(own.has(a.id)));
   const [title, setTitle] = useState(item.title);
   const [due, setDue] = useState(item.whenDate ?? '');
-  // The seat is preselected only when the attendee holds exactly one; otherwise a person picks it (the code never picks).
-  const [seat, setSeat] = useState(item.positions.length === 1 ? (item.positions[0] as { id: string }).id : '');
+  // The seat is preselected only when that person holds exactly one; otherwise a person picks it (the code never picks).
+  const [seat, setSeat] = useState(offered.length === 1 ? (offered[0] as { id: string }).id : '');
   const accept = useMutation({
     mutationFn: () => orpc.meetings.actionItems.accept.call({ itemId: item.id, confirmed: true, title: title.trim(), due: due || null, positionId: seat }),
     onSuccess: refresh,
@@ -272,7 +275,12 @@ function Item({ item, isRecorder }: { item: ActionItemView; isRecorder: boolean 
               </Button>
             )}
           </div>
-          {item.positions.length > 1 && <p className="text-xs text-muted-foreground">{t('severalSeats')}</p>}
+          {suggested && (
+            <p className="text-xs text-muted-foreground" data-testid="assignee-suggestion">
+              <Badge variant="outline">{t('suggestedBadge')}</Badge> {t(suggested.source === 'attendee' ? 'suggestedAttendee' : 'suggestedMember', { name: suggested.name })} {t(offered.length === 0 ? 'suggestedNoSeat' : offered.length === 1 ? 'suggestedOneSeat' : 'suggestedSeveralSeats')}
+            </p>
+          )}
+          {!suggested && item.positions.length > 1 && <p className="text-xs text-muted-foreground">{t('severalSeats')}</p>}
           {(accept.error || remove.error) && <ErrorText>{errorMessage(accept.error ?? remove.error)}</ErrorText>}
         </div>
       ) : (
