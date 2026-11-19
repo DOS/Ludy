@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The widening of the invisible-character class (Meetings #4137, point 2) on PostgreSQL 17: the database is made as it was before 20270122010000, rows that hold the four ranges the class missed
+// The widening of the invisible-character class (Meetings #4137, point 2) on PostgreSQL 17: the database is made as it was before 20270122100000, rows that hold the four ranges the class missed
 // (U+180B to U+180D, U+206A to U+206F, U+FFA0, U+1D173 to U+1D17A) are written as the old CHECKs allowed them, then the migration runs. The rows come out clean (a title that would be empty is a dash, a
 // name that would equal another active template's takes the last eight characters of its id, the meeting's copy of a template has its hash made again), the CHECKs refuse each new range at both
 // edges, and what lies just outside the class still passes. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
@@ -18,7 +18,7 @@ import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
-const VERSION = '20270122010000';
+const VERSION = '20270122100000';
 const suite = ADMIN ? describe : describe.skip;
 // The first and the last code point of each range the class missed.
 const NEW_EDGES = [0x180b, 0x180d, 0x206a, 0x206f, 0xffa0, 0x1d173, 0x1d17a];

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // One character class for a chapter title (#3882): the database's CHECK on meeting_chapter (20270117210000), the minutes templates' CHECK it copies (20270109090000), the contract's
-// chapterTitleProblem and the AI run's cleanChapterTitle must agree, and since #4137 the class is the one that 20270122010000 widened (the four ranges the first one missed), so a title one of them lets in is never refused by another (a run's chapter that the database would reject, a typed title the
+// chapterTitleProblem and the AI run's cleanChapterTitle must agree, and since #4137 the class is the one that 20270122100000 widened (the four ranges the first one missed), so a title one of them lets in is never refused by another (a run's chapter that the database would reject, a typed title the
 // model path would strip). Pure file and function checks: no database.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -37,7 +37,7 @@ const classesOf = (sql: string): string[] => [...sql.matchAll(new RegExp(CLASS.s
 describe('the character class of a chapter title (#3882)', () => {
   const chapters = classOf(read('20270117210000_crove_meetings_chapters_run.sql'));
   const templates = classOf(read('20270109090000_crove_meetings_minutes_template.sql'));
-  const widened = classesOf(read('20270122010000_crove_meetings_invisible_chars_widen.sql'));
+  const widened = classesOf(read('20270122100000_crove_meetings_invisible_chars_widen.sql'));
 
   it('is the minutes templates\' class, written once in the same way', () => {
     expect(chapters).not.toBe('');
