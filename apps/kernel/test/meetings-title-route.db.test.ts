@@ -143,6 +143,9 @@ suite('the recorder\'s Vy title route (#3947)', () => {
 
   it('is the recorder\'s alone, and a meeting with no transcript is refused before any call', async () => {
     const meetingId = await seedMeeting('recorder');
+    // A member who is not a reader cannot see the meeting at all; once a reader, they may read it but not ask Vy for its title.
+    expect(await refuses(ask('attendee', meetingId))).toBe('MEETING_NOT_FOUND');
+    await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users.attendee]);
     expect(await refuses(ask('attendee', meetingId))).toBe('FORBIDDEN');
     expect(await refuses(ask('foreign', meetingId))).not.toBeNull();
     const empty = await seedMeeting('recorder', []);
