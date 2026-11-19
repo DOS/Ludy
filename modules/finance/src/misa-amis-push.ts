@@ -31,8 +31,11 @@ const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 // The event that starts the worker's job for a connection (apps/kernel/src/worker.ts relays it to the queue). Ids only.
 export const MISA_AMIS_PUSH_REQUESTED = 'finance.misa_amis.push_requested';
 
-// A `sending` row older than this has an unknown fate (the worker died between the commit and the answer): it is asked about, never sent again.
-export const PUSH_IN_FLIGHT_SECONDS = 120;
+// A `sending` row older than this has an unknown fate (the worker died between the commit and the answer): it is asked about, never sent again. The rows are `sending` from the begin commit, and the worker then
+// rebuilds the batch, may renew the token once and makes the call: at worst four requests at the transport's 30 s deadline each (a token request, a save refused for its token, a second token request and a second
+// save: 120 s), plus the rebuild and the record. The window is well beyond that (apps/kernel/test/misa-amis-push-job.test.ts ties it to the transport's deadline), so another run's begin does not flip a row that is
+// still on its way (#4041).
+export const PUSH_IN_FLIGHT_SECONDS = 300;
 // The most rows one check asks about (MISA's own page of results is as large).
 const CHECK_ROWS_MAX = 1000;
 // How long MISA is asked for the result of a row it took (or whose answer was lost) before the row is left as it is for a person to read.

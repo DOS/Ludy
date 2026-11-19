@@ -109,6 +109,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
+  'crove_meetings.capture_session',
   'crove_meetings.glossary_term',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
@@ -193,6 +194,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.action_item', () => 'false'], // As above (action items, ADR-0047).
   ['crove_meetings.audio_segment', () => 'false'], // Meetings read through the recorder and the readers, who are users (ADR-0047).
   ['crove_meetings.calendar_agenda', () => 'false'], // A member's own calendar meetings, read by that member, a user (meetings integrations B1, #3165).
+  ['crove_meetings.capture_session', () => 'false'], // The recorder's own running-capture record, read by the recorder, a user (ADR-0055 slice 1, #4123); an agent context reads none.
   ['crove_meetings.chat_post', () => 'false'], // The recorder's own log of minutes posted to a channel, read by the recorder, a user (meetings integrations B4, #3168).
   ['crove_meetings.glossary_term', () => 'false'], // The org's glossary is for owners and admins in a user context (#4043); an agent context reads none, the recorder's run reads it through a definer.
   ['crove_meetings.live_chunk', () => 'false'], // The recorder's own live pieces, read by the recorder, a user (ADR-0052 L4a, #3109).
@@ -293,6 +295,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.audio_segment', 'false'],
   // A member's own calendar meetings (meetings integrations B1, #3165): the member's alone; worker system context reads and writes nothing (its one writer is a definer).
   ['crove_meetings.calendar_agenda', 'false'],
+  // The recorder's own running-capture record (ADR-0055 slice 1, #4123): the recorder's alone, in a user context; the worker system context reads and writes nothing.
+  ['crove_meetings.capture_session', 'false'],
   // The recorder's own log of minutes posted to a channel (meetings integrations B4, #3168): the recorder's alone; the worker system context reads and writes nothing.
   ['crove_meetings.chat_post', 'false'],
   // The org's glossary (#4043): owners and admins alone, in a user context; the system context sees and changes none of it.
@@ -2868,6 +2872,19 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           ends_at: new Date(start.getTime() + 1_800_000).toISOString(),
           time_zone: 'Asia/Ho_Chi_Minh',
         },
+      };
+    },
+  },
+  // #4123 (ADR-0055 slice 1): the record that a meeting is being captured right now, by which kind of client, since when and last heard from when. Read and updated (the heartbeat and the end)
+  // by the recorder alone, like a live piece; its rows are written by one definer only (insert is refused to the tenant roles); tenant roles update only the three columns of the heartbeat (a column grant), so the update probes assign one to itself. Its factory lands before the table (step 1),
+  // so PENDING_TABLES holds it until the migration of the next step.
+  'crove_meetings.capture_session': {
+    update: { set: 'last_seen_at = last_seen_at' },
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, recorder_user_id: o.owner, kind: 'app' },
       };
     },
   },

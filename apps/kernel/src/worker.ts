@@ -77,7 +77,7 @@ import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts
 import { runMarketplacePoll, type MarketplacePollJob } from './marketplace-poll-job.ts';
 import { runMisaAmisMatch, type MisaAmisMatchJob } from './misa-amis-match-job.ts';
 import { runMisaAmisTest, type MisaAmisTestJob } from './misa-amis-test-job.ts';
-import { pushFollowUp, runMisaAmisPush, type MisaAmisPushJob } from './misa-amis-push-job.ts';
+import { pushFollowUp, pushGiveUp, runMisaAmisPush, type MisaAmisPushJob } from './misa-amis-push-job.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
 import { runAdsActivate, type AdsActivateJob } from './ads-activate.ts';
 import { runAdsManage, type AdsManageJob } from './ads-manage.ts';
@@ -1656,6 +1656,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           retryDelay: 30,
           retryBackoff: true,
         });
+      } else {
+        const gaveUp = pushGiveUp(job.data, done);
+        if (gaveUp) console.warn(gaveUp);
       }
     });
   }

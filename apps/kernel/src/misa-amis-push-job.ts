@@ -270,6 +270,18 @@ export interface PushFollowUp {
   startAfterSeconds: number;
 }
 
+// A chain that stops while rows may still wait says so in one line (ids and a code only, never a name, an amount or MISA's text): without it a chain that gave up leaves no trace until a person looks at the
+// screen (#4041). Null when the chain goes on, or when nothing waits.
+export function pushGiveUp(job: MisaAmisPushJob, outcome: MisaAmisPushOutcome): string | null {
+  if (pushFollowUp(job, outcome) !== null) return null;
+  const round = job.round ?? 0;
+  const head = `[misa-amis] push ${job.connectionId.slice(0, 8)} (org ${job.orgId.slice(0, 8)}): chain stopped at round ${round}`;
+  if (outcome.state === 'done') return outcome.waiting ? `${head}, rows still wait for MISA's answer` : null;
+  if (outcome.state === 'unreachable') return `${head}, AMIS unreachable, queued rows stay queued`;
+  if (outcome.state === 'credentials') return `${head}, access code not usable, queued rows stay queued`;
+  return `${head}, connection left alone (${outcome.reason}), rows are not followed up`;
+}
+
 export function pushFollowUp(job: MisaAmisPushJob, outcome: MisaAmisPushOutcome): PushFollowUp | null {
   const round = job.round ?? 0;
   const next = (startAfterSeconds: number): PushFollowUp => ({ data: { orgId: job.orgId, connectionId: job.connectionId, round: round + 1 }, keyTail: `${job.connectionId}:r${round + 1}`, startAfterSeconds });
