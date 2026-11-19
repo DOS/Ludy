@@ -588,7 +588,7 @@ import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure,
 import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStatesInput, zAdsBoostStateView } from './ads-boost.ts';
 import { zAdsBudgetLowerCall, zAdsManageCancelCall, zAdsManageChanged, zAdsManageStateView, zAdsManageSuggestion, zAdsObjectCall, zAdsScheduleShortenCall } from './ads-manage.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
-import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
+import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdS2e, zHouseholdS2eGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -2454,6 +2454,8 @@ export const contract = {
     s2b: oc.input(zHouseholdS2bGet).output(zHouseholdS2b),
     // S2c-HKD, the revenue and expense detail of a household that pays PIT on income: expenses by the dated account-to-group map, unmapped ones apart (#2517 slice 2b); labelled provisional while its rows are unconfirmed.
     s2c: oc.input(zHouseholdS2cGet).output(zHouseholdS2c),
+    // S2e-HKD, the cash and bank book of a household that pays PIT on income: per account of 111 and 112 the opening balance, the lines and the closing balance (#2517 slice 2e); labelled provisional while its layout row is unconfirmed.
+    s2e: oc.input(zHouseholdS2eGet).output(zHouseholdS2e),
   },
   // A supplier's bank accounts and the history of their changes (#3113 S1). Owners and admins only; a change needs a fresh second factor (STEP_UP_REQUIRED otherwise). The full number is sealed
   // and never returned: an account is its bank and its last four digits. SUPPLIER_NOT_FOUND, SUPPLIER_BANK_ACCOUNT_NOT_FOUND (404), SUPPLIER_BANK_NUMBER_INVALID (422),
