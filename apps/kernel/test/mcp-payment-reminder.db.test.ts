@@ -149,6 +149,26 @@ suite('finance.mcp.payment_reminder on PostgreSQL (#3849)', () => {
     for (const w of Object.values(out.words as Record<string, string>)) expect(w.length).toBeGreaterThan(0);
   });
 
+  it('keeps the oldest 50 invoices, and counts and totals all of them', async () => {
+    const o = await org();
+    const p = await o.party('Khách nhiều hóa đơn');
+    // 51 overdue invoices of 1000 each, the oldest dated 200 days ago.
+    for (let i = 0; i < 51; i += 1) await o.invoice(p, `C${String(i).padStart(2, '0')}`, daysAgo(200 - i), '1000');
+    const out = await o.read(o.owner, { partyId: p });
+    const invoices = out.invoices as Array<{ number: string }>;
+    expect(invoices).toHaveLength(50);
+    expect(invoices[0]?.number).toBe('C00');
+    expect(out).toMatchObject({ invoiceCount: 51, total: '51000' });
+  }, 60_000);
+
+  it('refuses a customer whose reminders are paused, as the screen does', async () => {
+    const o = await org();
+    const p = await o.party('Khách tạm dừng');
+    await o.invoice(p, 'T1', daysAgo(90), '1000000');
+    await rows("INSERT INTO crove_finance.customer_collection (org_id, party_id, paused_until) VALUES ($1, $2, (now() + interval '10 days')::date)", [o.orgId, p]);
+    await expect(o.read(o.owner, { partyId: p })).rejects.toMatchObject({ code: 'CUSTOMER_PAUSED', status: 409 });
+  });
+
   it('refuses a customer with nothing overdue, as the screen does', async () => {
     const o = await org();
     const p = await o.party('Khách mới');
