@@ -3,7 +3,7 @@
 // meeting that day gets one in-app notice and one mail with the count and a link, never a title. It reaches no URL and sends nothing itself: it reads ids, a day and a count through the worker-only definer
 // crove_meetings.morning_notices_due and runs the command meetings.morning.notice in the org's system context, which derives the row again before it writes (once per member and day: the notice's key; the mail
 // is queued only when that notice was written, and the mail queues do the sending).
-// The definer lists only notices still to send (not told, not muted, Meetings on), so a pass that hits the limit goes on with the rest on the next one. A failure for one member never stops the others.
+// The definer lists only notices still to send (not told, not muted, Meetings on), in no fixed order, so a pass that hits the limit goes on with the rest on the next one and a group of members that fail the same way cannot hold the same first rows for ever (#4085). A failure for one member never stops the others.
 // Nothing here runs Vy: the briefs stay the member's own click.
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';

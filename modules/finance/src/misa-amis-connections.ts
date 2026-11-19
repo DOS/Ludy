@@ -11,7 +11,7 @@
 // later slice's callback finds the organisation by) is not in any answer either.
 import { z } from 'zod';
 import { zChannelConnect } from '@crove/kernel';
-import { zId, zMisaAmisConnectionRecordTest, type MisaAmisConnection, type MisaAmisTestState } from '@crove/kernel-contract';
+import { zId, zMisaAmisConnectionRecordTest, zMisaAmisProduct, type MisaAmisConnection, type MisaAmisProduct, type MisaAmisTestState } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -23,6 +23,9 @@ const pgCode = (error: unknown) => (error as { code?: string } | null)?.code;
 
 // The channel layer's provider id for this connector (ADR-0025). One connection per entity, so the external account id is the entity's.
 export const MISA_AMIS_CHANNEL_PROVIDER = 'accounting_misa_amis';
+// MISA ASP's own provider id (#4111, S2 of #4103): its access code is sealed under this binding, so the code of one product is never opened as the other's.
+export const MISA_ASP_CHANNEL_PROVIDER = 'accounting_misa_asp';
+export const misaChannelProvider = (product: MisaAmisProduct): string => (product === 'asp' ? MISA_ASP_CHANNEL_PROVIDER : MISA_AMIS_CHANNEL_PROVIDER);
 
 export const misaAmisConnectionTarget = defineQuery({
   name: 'finance.misa_amis_connection.target',
@@ -37,6 +40,8 @@ export const misaAmisConnectionConnect = defineCommand({
   // connection under the entity, so a refusal of either rolls back both: a refused connect never replaces the credential of a connection that is already live.
   input: z.strictObject({
     legalEntityId: zId.nullable(),
+    // AMIS Kế toán or MISA ASP (#4111): the channel connection is made under that product's provider id, and a legal entity has one connection across both.
+    product: zMisaAmisProduct.default('amis'),
     displayName: z.string().trim().min(1).max(200),
     credential: zChannelConnect.shape.credential,
   }),
@@ -47,7 +52,7 @@ export const misaAmisConnectionConnect = defineCommand({
   handler: async (ctx, input): Promise<{ id: string; existing: boolean }> => {
     const entityId = await resolveLegalEntity(ctx, input.legalEntityId);
     const channel = await ctx.run<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', {
-      provider: MISA_AMIS_CHANNEL_PROVIDER,
+      provider: misaChannelProvider(input.product),
       externalAccountId: entityId,
       displayName: input.displayName,
       scopes: [],
@@ -58,7 +63,7 @@ export const misaAmisConnectionConnect = defineCommand({
     try {
       const row = await ctx.trx
         .insertInto('crove_finance.misa_amis_connection')
-        .values({ org_id: ctx.orgId, legal_entity_id: entityId, channel_connection_id: channel.connectionId, created_by: userId })
+        .values({ org_id: ctx.orgId, legal_entity_id: entityId, product: input.product, channel_connection_id: channel.connectionId, created_by: userId })
         // Two connects of one entity at once: the channel connection's own lock serialises them, and the second finds the first's row and answers with it.
         .onConflict((conflict) => conflict.columns(['org_id', 'channel_connection_id']).doNothing())
         .returning('id')
@@ -66,10 +71,10 @@ export const misaAmisConnectionConnect = defineCommand({
       const id =
         row?.id ??
         (await ctx.trx.selectFrom('crove_finance.misa_amis_connection').select('id').where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', channel.connectionId).executeTakeFirstOrThrow()).id;
-      ctx.audit({ connectionId: channel.connectionId, legalEntityId: entityId, reconnected: channel.reconnected });
+      ctx.audit({ connectionId: channel.connectionId, legalEntityId: entityId, product: input.product, reconnected: channel.reconnected });
       return { id, existing: !row };
     } catch (error) {
-      if (pgCode(error) === '23505') throw new DomainError('MISA_AMIS_CONNECTION_EXISTS', 409, 'Pháp nhân này đã có một kết nối MISA AMIS');
+      if (pgCode(error) === '23505') throw new DomainError('MISA_AMIS_CONNECTION_EXISTS', 409, 'Pháp nhân này đã có một kết nối MISA (AMIS Kế toán hoặc ASP); hãy ngắt kết nối cũ trước khi kết nối lại');
       throw error;
     }
   },
@@ -157,7 +162,7 @@ export const misaAmisConnectionRequestTest = defineCommand({
 
 // What the worker needs to test one connection, or why it must not: a connection that is gone, or whose channel connection is no longer active (revoked, expired, in error), is left alone.
 // The company code is the opaque one AMIS is told (not a secret); it reaches the worker and nothing else.
-export type MisaAmisTestTarget = { action: 'none'; reason: 'not_found' | 'not_active' } | { action: 'test'; id: string; channelConnectionId: string; orgCompanyCode: string };
+export type MisaAmisTestTarget = { action: 'none'; reason: 'not_found' | 'not_active' } | { action: 'test'; id: string; product: MisaAmisProduct; channelConnectionId: string; orgCompanyCode: string };
 
 export const misaAmisConnectionTestTarget = defineQuery({
   name: 'finance.misa_amis_connection.test_target',
@@ -167,13 +172,13 @@ export const misaAmisConnectionTestTarget = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.org_company_code', 'ch.status'])
+      .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.org_company_code', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
       .executeTakeFirst();
     if (!row) return { action: 'none', reason: 'not_found' };
     if (row.status !== 'active') return { action: 'none', reason: 'not_active' };
-    return { action: 'test', id: row.id, channelConnectionId: row.channel_connection_id, orgCompanyCode: row.org_company_code };
+    return { action: 'test', id: row.id, product: row.product, channelConnectionId: row.channel_connection_id, orgCompanyCode: row.org_company_code };
   },
 });
 
@@ -208,13 +213,14 @@ export const misaAmisConnectionList = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.legal_entity_id', 'c.created_at', 'c.last_test_state', 'c.last_tested_at', 'ch.display_name', 'ch.status'])
+      .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.legal_entity_id', 'c.created_at', 'c.last_test_state', 'c.last_tested_at', 'ch.display_name', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .orderBy('c.created_at')
       .orderBy('c.id')
       .execute();
     return rows.map((r) => ({
       id: r.id,
+      product: r.product,
       connectionId: r.channel_connection_id,
       legalEntityId: r.legal_entity_id,
       displayName: r.display_name,

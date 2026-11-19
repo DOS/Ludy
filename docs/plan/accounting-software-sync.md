@@ -115,6 +115,8 @@ AI never decides what is sent:
 | 6 | Fast Excel export | Ludy | the real Fast import templates (a firm or the partner on Fast) | Icebox, P3 until a pilot firm uses Fast |
 | 7 | BRAVO, Effect, SAS Innova, Smart Pro, Base, 1C, KiotViet | none | not a fit, or nothing confirmed | Icebox, P3 |
 
+**Step 5, built so far (design and approval: [#4103](https://github.com/DOS/Ludy/issues/4103)).** S1 ([#4110](https://github.com/DOS/Ludy/issues/4110)): the client takes a product (`amis` or `asp`). S2 ([#4111](https://github.com/DOS/Ludy/issues/4111)): the connection gets a product, so an entity is connected to AMIS or to ASP (one connection per entity across both), the ASP access code is sealed under its own provider id, each product is on only with its own ClientID (`MISA_ASP_CLIENT_ID`), and the ASP connection test is a token plus one organization-unit row; no push to ASP yet. Details in [the integration notes](../integrations/misa-amis-api.md#misa-asp-4103).
+
 Steps 2 and 6 follow the MISA SME pattern exactly:
 - one mapping array per template;
 - a golden header test;

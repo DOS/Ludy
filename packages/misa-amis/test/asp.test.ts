@@ -112,4 +112,15 @@ describe('an AMIS client', () => {
       expect(fake.calls.map((c) => c.path)).toEqual(['/amiskt/v1/token', '/amiskt/v1/get_company_info', '/amiskt/v1/get_dictionary', '/amiskt/v1/get_call_back_detail_error']);
     }
   });
+
+  it('asks for a new token when a catalogue read says `freshToken` (the ASP connection test, #4111), and keeps the new one for later calls', async () => {
+    const { fake, client } = setup('asp');
+    const tokens = () => fake.calls.filter((c) => c.path === '/asp/v1/token').length;
+    await client.dictionary(conn, { dataType: AMIS_DICTIONARIES.organizationUnit, skip: 0, take: 1 });
+    expect(tokens()).toBe(1);
+    await client.dictionary(conn, { dataType: AMIS_DICTIONARIES.organizationUnit, skip: 0, take: 1 }, { freshToken: true });
+    expect(tokens()).toBe(2);
+    await client.dictionary(conn, { dataType: AMIS_DICTIONARIES.organizationUnit, skip: 0, take: 1 });
+    expect(tokens()).toBe(2);
+  });
 });
