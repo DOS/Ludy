@@ -75,6 +75,10 @@ describe('the Engage reads in the tool list (#3860)', () => {
       ['ludy_social_metrics_summary', { limit: 51 }],
       ['ludy_social_metrics_summary', { days: 366 }],
       ['ludy_social_metrics_totals', { days: 366 }],
+      // An impossible day, and a message number past what the database holds, are refused as input, not left to fail in the query.
+      ['ludy_ads_spend', { from: '2026-02-30' }],
+      ['ludy_ads_spend', { to: '2026-13-01' }],
+      ['ludy_conversation', { conversationId: '00000000-0000-4000-8000-000000000001', beforeSeq: 2_147_483_648 }],
     ];
     for (const [name, input] of over) expect(args(name).safeParse(input).success, `${name} ${JSON.stringify(input)}`).toBe(false);
     const defaults: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [

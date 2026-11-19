@@ -12,7 +12,7 @@
 // The reads write nothing, call no model and move no money; Row-level security and the `org_id` filters keep other orgs out.
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
-import { plainLine, zId, type AdsFlag, type AdsSummary, type TodayItem } from '@crove/kernel-contract';
+import { plainLine, zId, zLocalDate, type AdsFlag, type AdsSummary, type TodayItem } from '@crove/kernel-contract';
 import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { loadSpendSummary } from './summary.ts';
 import { loadFlags } from './spend-flags.ts';
@@ -27,11 +27,10 @@ const NAME_MAX = 200;
 // The most flags one read returns (the evaluation yields a handful per account plus the campaigns; the cap bounds a long list of accounts).
 export const MCP_ADS_FLAGS_MAX = 200;
 
-const zIsoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD');
 export const zMcpAdsSpendInput = z.strictObject({
   adAccountId: zId.optional().describe('The ad account to summarize (an id from this tool\'s `accounts`). Leave out to only list the accounts.'),
-  from: zIsoDay.optional().describe('First day (YYYY-MM-DD, in the account\'s time zone). Default: 29 days before `to`.'),
-  to: zIsoDay.optional().describe('Last day (YYYY-MM-DD). Default: today in UTC.'),
+  from: zLocalDate.optional().describe('First day (YYYY-MM-DD, in the account\'s time zone). Default: 29 days before `to`.'),
+  to: zLocalDate.optional().describe('Last day (YYYY-MM-DD). Default: today in UTC.'),
 });
 export const zMcpAdsFlagsInput = z.strictObject({});
 export const zMcpAdsTodayInput = z.strictObject({});

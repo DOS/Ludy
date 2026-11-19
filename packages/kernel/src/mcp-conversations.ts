@@ -46,7 +46,7 @@ export const zMcpConversationsInput = z.strictObject({
 export const zMcpConversationInput = z.strictObject({
   conversationId: zId,
   limit: z.number().int().min(1).max(MCP_CONVERSATION_MESSAGES_MAX).default(MCP_CONVERSATION_MESSAGES_DEFAULT).describe(`How many of the latest messages (1 to ${MCP_CONVERSATION_MESSAGES_MAX}, default ${MCP_CONVERSATION_MESSAGES_DEFAULT}).`),
-  beforeSeq: z.number().int().min(1).optional().describe('Only messages numbered below this (the `earlierBefore` of the previous answer), to read further back.'),
+  beforeSeq: z.number().int().min(1).max(2_147_483_647).optional().describe('Only messages numbered below this (the `earlierBefore` of the previous answer), to read further back.'),
 });
 
 export interface McpConversation {
