@@ -322,15 +322,20 @@ suite('MISA AMIS push (#3902)', () => {
     expect(ledger).toEqual([{ key: sent.callKey, state: 'started', step: 'save', target: 'misa_amis', retry_safety: 'reconcile_only', calls: 1 }]);
     const moved = await pushRows();
     for (const row of sent.rows) expect(moved.find((r) => r.org_refid === row.orgRefid)?.state).toBe('sending');
-    // The rows left in the queue (other choices) are still queued and the begin that follows takes them, not the ones sending.
-    const next = await begin({ branchKnown: true, checked: true });
-    if (next.action === 'send') expect(next.rows.map((r) => r.orgRefid).filter((id) => sent.rows.some((s) => s.orgRefid === id))).toEqual([]);
+    // One batch at a time per connection: while this batch is sending, another run waits (the rows of the other choices are still queued).
+    expect(await begin({ branchKnown: true, checked: true })).toEqual({ action: 'none', reason: 'busy', waiting: true });
     // Record the first batch as sent: the rows move along, the ledger call ends.
     const done = await record({ rows: sent.rows.map((r) => ({ orgRefid: r.orgRefid, from: 'sending', to: 'sent', reason: null })), call: { key: sent.callKey, end: { state: 'succeeded' } } });
     expect(done).toEqual({ applied: sent.rows.length, ignored: 0 });
     expect((await rows<{ state: string }>('SELECT state FROM crove_kernel.external_call WHERE key = $1', [sent.callKey]))[0]?.state).toBe('succeeded');
     const after = await pushRows();
     for (const row of sent.rows) expect(after.find((r) => r.org_refid === row.orgRefid)).toMatchObject({ state: 'sent', sent_at: expect.any(Date) });
+    // Now the batch of the other choices goes out, and is left `sending` (no answer yet) for the next test.
+    const other = await begin({ branchKnown: true, checked: true });
+    if (other.action !== 'send') throw new Error(`expected a send, got ${other.action}`);
+    expect(other.rows.map((r) => r.orgRefid).filter((id) => sent.rows.some((s) => s.orgRefid === id))).toEqual([]);
+    expect(other.rows).toHaveLength(4);
+    expect(other.callKey).not.toBe(sent.callKey);
     // The same record again changes nothing (the rows are not where it says they were).
     expect(await record({ rows: sent.rows.map((r) => ({ orgRefid: r.orgRefid, from: 'sending', to: 'sent', reason: null })), call: null })).toEqual({ applied: 0, ignored: sent.rows.length });
   });

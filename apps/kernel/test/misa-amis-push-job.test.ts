@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AmisError, createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@crove/misa-amis';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { amisContextOf, amisPartRows, loadAmisEntries, type CashVoucher, type MisaAmisPushBegin } from '@crove/mod-finance';
-import { runMisaAmisPush } from '../src/misa-amis-push-job.ts';
+import { PUSH_PRESS_RECHECK_SECONDS, PUSH_RECHECK_SECONDS, PUSH_UNREACHABLE_ROUNDS, PUSH_WAIT_ROUNDS, pushFollowUp, runMisaAmisPush, type MisaAmisPushOutcome } from '../src/misa-amis-push-job.ts';
 
 const CLIENT_ID = 'planted-client-id-0123456789';
 const ACCESS_CODE = 'planted-access-code-abcdef';
@@ -404,5 +404,43 @@ describe('the MISA AMIS push job: when it does nothing', () => {
     const amis = fakeAmis({ behave: (path) => (path === '/amiskt/v1/get_dictionary' ? fail('InvalidAccessToken') : undefined) });
     expect(await run(h, amis)).toEqual({ state: 'credentials', waiting: false });
     expect(records(h)).toEqual([]);
+  });
+});
+
+describe('the MISA AMIS push job: when it comes back', () => {
+  const job = { orgId: ORG, connectionId: CONNECTION };
+  const done = (waiting: boolean): MisaAmisPushOutcome => ({ state: 'done', batches: 0, sent: 0, failed: 0, accepted: 0, refused: 0, waiting });
+
+  it('queues the next round under a key of its own round, never the key of the run that is active, so the exclusive queue does not drop it', () => {
+    const keys = new Set<string>([CONNECTION]);
+    let current: typeof job & { round?: number } = job;
+    for (let i = 0; i < 5; i++) {
+      const next = pushFollowUp(current, done(true));
+      expect(next).not.toBeNull();
+      expect(keys.has(next?.keyTail as string)).toBe(false);
+      keys.add(next?.keyTail as string);
+      expect(next?.startAfterSeconds).toBe(PUSH_RECHECK_SECONDS);
+      current = next?.data as typeof current;
+      expect(current.round).toBe(i + 1);
+    }
+    expect([...keys].every((k) => k.startsWith(CONNECTION))).toBe(true);
+  });
+
+  it('while rows wait for MISA it keeps coming back for a day, and then stops', () => {
+    expect(pushFollowUp({ ...job, round: PUSH_WAIT_ROUNDS - 1 }, done(true))).not.toBeNull();
+    expect(pushFollowUp({ ...job, round: PUSH_WAIT_ROUNDS }, done(true))).toBeNull();
+  });
+
+  it('a run that came from a press asks once more a minute later even when nothing waits, so a press whose send was dropped is found; later rounds with nothing waiting stop', () => {
+    const once = pushFollowUp(job, done(false));
+    expect(once).toMatchObject({ startAfterSeconds: PUSH_PRESS_RECHECK_SECONDS, data: { round: 1 } });
+    expect(pushFollowUp({ ...job, round: 1 }, done(false))).toBeNull();
+  });
+
+  it('an unreachable AMIS is tried a few more times, a refused connection or a skipped connection is not', () => {
+    expect(pushFollowUp(job, { state: 'unreachable', waiting: true })).not.toBeNull();
+    expect(pushFollowUp({ ...job, round: PUSH_UNREACHABLE_ROUNDS }, { state: 'unreachable', waiting: true })).toBeNull();
+    expect(pushFollowUp(job, { state: 'credentials', waiting: false })).toBeNull();
+    expect(pushFollowUp(job, { state: 'skipped', reason: 'not_found' })).toBeNull();
   });
 });

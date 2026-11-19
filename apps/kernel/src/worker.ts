@@ -75,7 +75,7 @@ import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJo
 import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
 import { runMarketplacePoll, type MarketplacePollJob } from './marketplace-poll-job.ts';
 import { runMisaAmisTest, type MisaAmisTestJob } from './misa-amis-test-job.ts';
-import { runMisaAmisPush, type MisaAmisPushJob } from './misa-amis-push-job.ts';
+import { pushFollowUp, runMisaAmisPush, type MisaAmisPushJob } from './misa-amis-push-job.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
 import { runAdsActivate, type AdsActivateJob } from './ads-activate.ts';
 import { runAdsManage, type AdsManageJob } from './ads-manage.ts';
@@ -455,10 +455,6 @@ const MARKETPLACE_POLL_RETRY_LIMIT = 3;
 const MISA_AMIS_TEST_RETRY_LIMIT = 2;
 // A push run that fails is tried again with backoff; rows begun and never answered are asked about, never sent twice (the ledger and the table's states say so).
 const MISA_AMIS_PUSH_RETRY_LIMIT = 2;
-// While rows wait for MISA's answer the job comes back every two minutes for the day MISA is asked about; for an unreachable AMIS with queued rows it tries ten more times.
-const MISA_AMIS_PUSH_RECHECK_SECONDS = 120;
-const MISA_AMIS_PUSH_WAIT_ROUNDS = 720;
-const MISA_AMIS_PUSH_UNREACHABLE_ROUNDS = 10;
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
 // The hourly sweep of every ad account (ADR-0040, #2217), at ten past; a sync retries a few times, then dead-letters. The
 // sweep also prunes the old sync runs (an indexed delete of what is past 90 days, nothing most hours).
@@ -1626,11 +1622,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.work<MisaAmisPushJob>(QUEUES.misaAmisPush, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
       const done = await runMisaAmisPush({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient }, job.data);
-      const round = job.data.round ?? 0;
-      if ((done.state === 'done' || done.state === 'unreachable') && done.waiting && round < (done.state === 'done' ? MISA_AMIS_PUSH_WAIT_ROUNDS : MISA_AMIS_PUSH_UNREACHABLE_ROUNDS)) {
-        await boss.send(QUEUES.misaAmisPush, { orgId: job.data.orgId, connectionId: job.data.connectionId, round: round + 1 } satisfies MisaAmisPushJob, {
-          singletonKey: jobKey(job.data.orgId, QUEUES.misaAmisPush, `${job.data.connectionId}:later`),
-          startAfter: MISA_AMIS_PUSH_RECHECK_SECONDS,
+      // The follow-up has a key of its own round: a send under the key of a queued or ACTIVE job is dropped by the exclusive queue.
+      const again = pushFollowUp(job.data, done);
+      if (again) {
+        await boss.send(QUEUES.misaAmisPush, again.data satisfies MisaAmisPushJob, {
+          singletonKey: jobKey(job.data.orgId, QUEUES.misaAmisPush, again.keyTail),
+          startAfter: again.startAfterSeconds,
           retryLimit: MISA_AMIS_PUSH_RETRY_LIMIT,
           retryDelay: 30,
           retryBackoff: true,

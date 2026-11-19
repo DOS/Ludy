@@ -246,3 +246,30 @@ async function readResults(client: AmisClient, connection: AmisConnection, from:
   }
   return all;
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// When the job comes back. pg-boss's exclusive queue drops a send whose singleton key is queued or ACTIVE, so a run never queues itself under its own key: every follow-up has a key of its own round.
+// While rows wait for MISA's answer the job comes back every two minutes for the day MISA is asked about; for an unreachable AMIS with queued rows it tries ten more times; and a run that came from a press
+// (round 0) always asks once more a minute later, so a press whose own send was dropped because a run was active is found (the rows it queued are in the table either way).
+export const PUSH_RECHECK_SECONDS = 120;
+export const PUSH_PRESS_RECHECK_SECONDS = 60;
+export const PUSH_WAIT_ROUNDS = 720;
+export const PUSH_UNREACHABLE_ROUNDS = 10;
+
+export interface PushFollowUp {
+  data: MisaAmisPushJob;
+  /** The singleton key's tail, after the org and queue: the connection and the round, never the same for two rounds. */
+  keyTail: string;
+  startAfterSeconds: number;
+}
+
+export function pushFollowUp(job: MisaAmisPushJob, outcome: MisaAmisPushOutcome): PushFollowUp | null {
+  const round = job.round ?? 0;
+  const next = (startAfterSeconds: number): PushFollowUp => ({ data: { orgId: job.orgId, connectionId: job.connectionId, round: round + 1 }, keyTail: `${job.connectionId}:r${round + 1}`, startAfterSeconds });
+  if (outcome.state === 'done') {
+    if (outcome.waiting && round < PUSH_WAIT_ROUNDS) return next(PUSH_RECHECK_SECONDS);
+    return round === 0 ? next(PUSH_PRESS_RECHECK_SECONDS) : null;
+  }
+  if (outcome.state === 'unreachable') return round < PUSH_UNREACHABLE_ROUNDS ? next(PUSH_RECHECK_SECONDS) : null;
+  return null;
+}

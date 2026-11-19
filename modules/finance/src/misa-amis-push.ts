@@ -246,7 +246,7 @@ export interface PushRowRef {
 
 export type MisaAmisPushBegin =
   // `waiting`: rows MISA took (or may have) still await their result inside the window, so the job comes back later.
-  | { action: 'none'; reason: 'not_found' | 'not_active' | 'nothing'; waiting: boolean }
+  | { action: 'none'; reason: 'not_found' | 'not_active' | 'nothing' | 'busy'; waiting: boolean }
   // The AMIS branch is read from AMIS's dictionary by the worker; the batch is not begun without it.
   | { action: 'need_branch' }
   | { action: 'send'; callKey: string; voucherType: number; params: PushParams; rows: PushRowRef[]; sourceType: MisaAmisPushSource }
@@ -329,6 +329,16 @@ export const misaAmisPushBegin = defineCommand({
       .limit(1)
       .executeTakeFirst();
     if (first) {
+      // One batch at a time per connection (MISA's rate limits are unpublished): while another run's batch is `sending` and young, this run waits; the other run records it within one call's time.
+      const inFlight = await ctx.trx
+        .selectFrom(table)
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('connection_id', '=', input.connectionId)
+        .where('state', '=', 'sending')
+        .limit(1)
+        .executeTakeFirst();
+      if (inFlight) return { action: 'none', reason: 'busy', waiting: true };
       if (!input.branchKnown) return { action: 'need_branch' };
       const batch = await ctx.trx
         .selectFrom(table)
@@ -348,8 +358,8 @@ export const misaAmisPushBegin = defineCommand({
       // call, while a call that ended (a finished call never changes) is never made again for the same queueing.
       const callKey = `misa_amis:save:${input.connectionId}:${sha256(batch.map((r) => `${r.org_refid}:${r.attempts}:${new Date(r.updated_at).getTime()}`).sort().join(','))}`;
       const started = await startCall(ctx, callKey);
-      if (started === 'closed') {
-        // The same rows and attempt were begun before and that call has ended: never sent again. The rows are `failed` (a person may confirm a new push, a new attempt, a new call).
+      if (started !== 'new') {
+        // The same rows and attempt were begun before (a call that is still `started` is asked about, never made again; a call that ended never changes): never sent again. The rows are `failed` (a person may confirm a new push, a new attempt, a new call).
         await ctx.trx
           .updateTable(table)
           .set({ state: 'failed', reason: 'CALL_ENDED', updated_at: ctx.now })
