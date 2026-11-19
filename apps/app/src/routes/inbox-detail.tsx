@@ -13,6 +13,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { AdsProposalCard } from '../components/ads-proposal-card.tsx';
+import { EngageProposalCard } from '../components/engage-proposal-card.tsx';
 import { EInvoiceIssueCard } from '../components/einvoice-issue-card.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DateInput } from '../components/date-input.tsx';
@@ -536,7 +537,9 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   // A general journal voucher (NVK, #888) is approved as shown too.
   const journalVoucher = item?.journalVoucher ?? null;
   const journalVoucherCode = (journalVoucher && item?.status === 'executed' && item.result?.voucherCode) || null;
-  const plain = reversal !== null || voucher !== null || journalVoucher !== null || ads || issue;
+  // What an AI coworker asks to do in an Engage line (E4 #3863): approved as shown, on its own card, like an ads change.
+  const engage = item?.engage ?? null;
+  const plain = reversal !== null || voucher !== null || journalVoucher !== null || ads || issue || engage !== null;
   const failed = payload?.checks.filter((c) => c.status === 'fail').length ?? 0;
   const blocked = payload?.checks.some((c) => c.status === 'fail' && BLOCKING_CHECK_IDS.includes(c.id)) ?? false;
   // As the kernel decides (kernel.proposal.approve): an XML invoice whose signature is not verified, including one read
@@ -921,6 +924,13 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
           {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('adsFourEyes')}</p>}
           {pending && !item.canApprove && item.approveReason === 'not_eligible' && <p className="mb-4 text-sm text-subtle-foreground">{t('adsNotEligible')}</p>}
           <AdsProposalCard id={item.id} title={item.title} slug={slug} />
+        </div>
+      )}
+      {engage && (
+        <div className="mb-6">
+          {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('engageFourEyes')}</p>}
+          {pending && !item.canApprove && item.approveReason === 'not_eligible' && <p className="mb-4 text-sm text-subtle-foreground">{t('engageNotEligible')}</p>}
+          <EngageProposalCard engage={engage} kind={item.kind} client={item.requestedByMcp ?? null} slug={slug} />
         </div>
       )}
       {issue && (

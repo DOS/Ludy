@@ -11,7 +11,8 @@
 // - Scheduling needs the variant's latest decision to be an approval of its current revision and hash.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_IMAGE_TYPES, SOCIAL_QUEUE_SLOTS_MAX, SOCIAL_REVIEW_CHECKS_MAX, SOCIAL_VIDEO_TYPES, zId, zSocialMemberFilter } from '@crove/kernel-contract';
+import { SOCIAL_IMAGE_TYPES, SOCIAL_QUEUE_SLOTS_MAX, SOCIAL_REVIEW_CHECKS_MAX, SOCIAL_VIDEO_TYPES, zApprovedCall, zId, zSocialMemberFilter } from '@crove/kernel-contract';
+import { requireApprover } from '@crove/kernel';
 import type { MemberRole, SocialDecision, SocialVariantStatus } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { approvalCovers, approvalsInRound, effectiveContent, type BaseContent, type PostMedia } from './domain/approval.ts';
@@ -2001,7 +2002,47 @@ export const queueOpenSlots = defineQuery({
   },
 });
 
+// The proposal-only twins of the two Social commands an AI coworker may ask for beyond a draft (epic #3857, E4 #3863; ADR-0051 decision 10): sending variants to review and scheduling them. A grant that
+// holds `ludy.engage.write` calls `social.post.submit_approved` or `social.variant.schedule_approved`; the call never runs, it leaves a pending proposal (tainted) that a person approves in Ludy,
+// and the approval runs the original as the approver, so the channel limits (#1081), the blocked words, the platform's rules and the queue's slots are judged then, on what stands then. The
+// payload is the original's own strict input.
+export const postSubmitApproved = defineCommand({
+  name: 'social.post.submit_approved',
+  input: zApprovedCall(postSubmit.input),
+  risk: 'R2',
+  sideEffect: 'external',
+  access: 'proposal',
+  proposalKind: 'social.post_submit',
+  mcp: { scope: 'ludy.engage.write', mode: 'proposal' },
+  target: (input) => ({ type: 'social.post', id: input.payload.postId }),
+  handler: async (ctx, input) => {
+    requireApprover(ctx);
+    const submitted = await ctx.run<Record<string, unknown>>('social.post.submit', input.payload);
+    ctx.audit({ approved_command: 'social.post.submit' });
+    return submitted;
+  },
+});
+
+export const variantScheduleApproved = defineCommand({
+  name: 'social.variant.schedule_approved',
+  input: zApprovedCall(variantSchedule.input),
+  risk: 'R2',
+  sideEffect: 'internal',
+  access: 'proposal',
+  proposalKind: 'social.variant_schedule',
+  mcp: { scope: 'ludy.engage.write', mode: 'proposal' },
+  target: (input) => ({ type: 'social.post', id: input.payload.postId }),
+  handler: async (ctx, input) => {
+    requireApprover(ctx);
+    const scheduled = await ctx.run<Record<string, unknown>>('social.variant.schedule', input.payload);
+    ctx.audit({ approved_command: 'social.variant.schedule' });
+    return scheduled;
+  },
+});
+
 export const socialCommands = [
+  postSubmitApproved,
+  variantScheduleApproved,
   postCreate,
   mcpDraftCreate,
   postImport,

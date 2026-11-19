@@ -3,6 +3,7 @@
 import { sql, type Transaction } from 'kysely';
 import { z } from 'zod';
 import type { Database, MemberRole } from '@crove/db';
+import { ENGAGE_PROPOSALS } from '@crove/kernel-contract';
 import { DomainError, type Actor, type CommandInfo, type QueryContext, type Risk } from '@crove/kernel-runtime';
 
 // Who produced (part of) a revision's content. Only user entries are humans; system and agent entries never count
@@ -71,6 +72,10 @@ const ADS: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEy
 const EINVOICE: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEyes: true, live: true };
 // A payment to a supplier (#3113 S2): posts nothing to the ledger (Ludy moves no money). Owners and admins approve, with four-eyes and the one-person path (P10), judged on the members now.
 const SUPPLIER_PAYMENT: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEyes: true, live: true };
+// What an AI coworker proposes in the Engage lines (a reply, a quote, a booking change, a post, an ad that only stops or reduces spend; E4 #3863, ADR-0051 decision 10): an owner or an admin approves, never
+// the grant (an agent entry, never an approver). Four-eyes with the one-person path (P10) counts the person who connected the AI app as an author, judged on the members now: an owner alone approves what their
+// own coworker asked, flagged self_approved; with two eligible approvers someone other than the grantor approves. No approval permission and no ledger.
+const ENGAGE: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEyes: true, live: true };
 const POLICIES: Record<string, CommandPolicy> = {
   'finance.purchase.record': LEDGER,
   // A reversal is itself a posting (#138): the same roles approve it, with four-eyes.
@@ -114,6 +119,8 @@ const POLICIES: Record<string, CommandPolicy> = {
   'ads.schedule.extend': ADS,
   'finance.einvoice.issue': EINVOICE,
   'finance.supplier_payment.record': SUPPLIER_PAYMENT,
+  // The proposal-only twins of the Engage commands (E4 #3863): the list is ENGAGE_PROPOSALS, which the database's policy function must name too (a test compares the two).
+  ...Object.fromEntries(ENGAGE_PROPOSALS.map((p) => [p.command, ENGAGE])),
 };
 
 // Whether the command has an approval policy that names someone who may approve it (#3858 slice d): a command with none has no approver, so a proposal of it would wait for nobody. An MCP call to a
@@ -150,7 +157,9 @@ export function liveApprovalCommands(): string[] {
 // 15: the payment of a supplier invoice to the supplier's bank account (finance.supplier_payment.record, #3699) was given its approval policy.
 // 16: the settlement of an approved supplier payment by its bank line (finance.supplier_payment.settle.record, #3700 S3c) was given its approval policy (a ledger posting).
 // 17: a resume, a raised daily budget and a longer schedule of a running ad (ads.object.resume, ads.budget.raise, ads.schedule.extend, #3835) were given their approval policy (the launch's).
-export const APPROVAL_POLICY_VERSION = 17;
+// 18: the proposal-only twins of the Engage commands an AI coworker asks for (a reply, a private reply, hiding a comment, sending a quote, moving or cancelling a booking, submitting or scheduling a post, and the ads
+// that only stop or reduce spend; E4 #3863, ENGAGE_PROPOSALS) were given their approval policy.
+export const APPROVAL_POLICY_VERSION = 18;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).

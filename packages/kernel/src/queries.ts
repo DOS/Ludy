@@ -26,6 +26,7 @@ import {
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { engageViewOf } from './engage-view.ts';
 import { EDITOR_ROLES, decideApproval, proposalEditable } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, executedButVoided, latestExtraction, voidedProposals } from './extraction.ts';
 import { archiveQueries } from './archives.ts';
@@ -476,6 +477,7 @@ export const inboxGet = defineQuery({
       reversal: parseReversal(row.kind, row.payload),
       voucher: parseVoucher(row.kind, row.payload),
       journalVoucher: parseJournalVoucher(row.kind, row.payload),
+      engage: engageViewOf(row.kind, row.command, row.payload),
       error: null,
       file: file ? { id: file.id, filename: file.filename, contentType: file.content_type, sizeBytes: file.size_bytes } : null,
       decidedAt: row.decided_at ? row.decided_at.toISOString() : null,

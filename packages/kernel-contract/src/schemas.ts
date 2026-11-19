@@ -725,6 +725,12 @@ export const zInboxOriginal = z.object({
 });
 export type InboxOriginal = z.infer<typeof zInboxOriginal>;
 
+// What an AI coworker asks for in the Engage lines (E4 #3863), as the card shows it: the twin's command and the stored payload's fields, in order, each a name and a text. Every value is the AI's and is not
+// trusted: the card marks it so and renders it as plain text. The proposal's own `requestedByMcp` says which app asked.
+export const zEngageProposalField = z.object({ key: z.string(), value: z.string(), long: z.boolean() });
+export const zEngageProposalView = z.object({ command: z.string(), fields: z.array(zEngageProposalField).max(40) });
+export type EngageProposalView = z.infer<typeof zEngageProposalView>;
+
 export const zInboxDetail = zInboxItem.extend({
   revision: z.number().int(),
   // Parsed by kind: a purchase (kind finance.purchase), a reversal (kind finance.journal_reversal) or a cash or bank
@@ -734,6 +740,8 @@ export const zInboxDetail = zInboxItem.extend({
   voucher: zCashVoucherProposal.nullable(),
   // A general journal voucher (kind finance.journal_voucher, #888).
   journalVoucher: zJournalVoucherProposal.nullable(),
+  // The ask of an AI coworker in an Engage line (a reply, a quote, a booking change, a post, an ad change), for its card; null for every other proposal.
+  engage: zEngageProposalView.nullable(),
   error: z.string().nullable(),
   file: z.object({ id: zId, filename: z.string(), contentType: z.string(), sizeBytes: z.string() }).nullable(),
   decidedAt: z.string().nullable(),

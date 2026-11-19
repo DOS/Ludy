@@ -6,6 +6,8 @@ export { companyCandidates, companySuggestQueries, domainLabelOf, emailDomainOf,
 import { contactQueries } from './contacts.ts';
 import { dealCommands, dealQueries } from './deals.ts';
 import { boardQueries, stageCommands } from './stages.ts';
+import { crmEngageProposalCommands } from './engage-proposals.ts';
+export { crmEngageProposalCommands, bookingCancelApproved, bookingMoveApproved, quoteSendApproved } from './engage-proposals.ts';
 import { eventTypeCommands, eventTypeQueries } from './event-types.ts';
 import { importCommands, importQueries } from './import.ts';
 import { mcpCrmQueries } from './mcp.ts';
@@ -49,6 +51,6 @@ export { dealSalesOrders, quoteAccept, quoteDecline, salesOrderCancel, salesOrde
 
 export { crmToday } from './today.ts';
 
-export const crmCommands = [...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...stageCommands, ...importCommands, ...nextStepCommands, ...quoteCommands, ...quotePdfCommands, ...salesOrderCommands];
+export const crmCommands = [...crmEngageProposalCommands, ...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...stageCommands, ...importCommands, ...nextStepCommands, ...quoteCommands, ...quotePdfCommands, ...salesOrderCommands];
 export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, ...quoteQueries, quoteSuggestSource, ...followupQueries, ...meetingBriefQueries, quoteReport, ...quotePdfQueries, ...salesOrderQueries, crmToday, crmWonDealsSignals, crmOpenDealsSignals, ...mcpCrmQueries];
 export { crmManifest } from './manifest.ts';

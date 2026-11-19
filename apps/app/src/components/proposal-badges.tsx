@@ -5,7 +5,7 @@ import { useTranslations } from 'use-intl';
 import { JOURNAL_VOUCHER_KIND } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { REVERSAL_KIND } from '../lib/reversal.ts';
-import { isAdsProposalKind, showMatched } from '../lib/review.ts';
+import { isAdsProposalKind, isEngageKind, showMatched } from '../lib/review.ts';
 import { VOUCHER_KIND } from '../lib/vouchers.ts';
 
 // What the badges read of a list item (kernel.inbox.list).
@@ -39,6 +39,7 @@ export function ProposalBadges({ item, hideSignature = false }: { item: Proposal
       {item.kind === JOURNAL_VOUCHER_KIND && <Badge variant="secondary">{t('journalVoucherKind')}</Badge>}
       {/* A request to open the way to spend on an ad platform (#2294) posts nothing and ran no check: its kind, no "matched". */}
       {isAdsProposalKind(item.kind) && <Badge variant="secondary">{t('adsKind')}</Badge>}
+      {isEngageKind(item.kind) && <Badge variant="secondary">{t('engageKind')}</Badge>}
       {item.direction === 'sale' && <Badge variant="secondary">{t('saleKind')}</Badge>}
       {item.duplicateOf && <Badge variant="warning">{t('maybeDuplicate')}</Badge>}
       {item.signatureStatus === 'unverified' && !hideSignature && <Badge variant="destructive">{t('signatureUnverified')}</Badge>}
