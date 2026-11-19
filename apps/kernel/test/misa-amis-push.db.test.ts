@@ -303,7 +303,8 @@ suite('MISA AMIS push (#3902)', () => {
       expect(list.length, who).toBe(8);
       expect(JSON.stringify(list)).not.toContain(PARTY);
     }
-    expect(await api.query<MisaAmisPushRow[]>('finance.misa_amis.push_list', { connectionId: otherConnectionId }, asUser('outsider'))).toEqual([]);
+    // A user of another org is not a member of this one at all, and another org's connection is not seen from here.
+    await expect(api.query('finance.misa_amis.push_list', { connectionId: otherConnectionId }, asUser('outsider'))).rejects.toMatchObject({ code: 'NOT_A_MEMBER', status: 403 });
     expect(await api.query<MisaAmisPushRow[]>('finance.misa_amis.push_list', { connectionId }, asUser('outsider', otherOrgId))).toEqual([]);
   });
 
