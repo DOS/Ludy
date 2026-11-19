@@ -69,6 +69,26 @@ export const MARKETPLACE_POSTING_MAPS: Readonly<Record<string, MarketplacePostin
     accruedExpense: row('335', 'AI consensus 2026-11-15 (A1): Cr 335 for that accrual; it is reversed on the first day of the next month so the invoice\'s own expense is not counted twice.'),
     pitOwnerEquity: row('4212', 'Research 2026-11-18 (A4, D2): the PIT a platform withheld on a household\'s revenue is never an expense; it is booked against the owner\'s equity in the internal ledger, Dr this account / Cr 3335. 4212 is a proposal: the accountant names the account (#2520, #3711), and until then this row stays commentary and the household tax path is closed. It replaces the earlier proposal of 6422 (an expense), which no posting ever used because the gate was closed.'),
   },
+  // Circular 99/2025/TT-BTC (#3711 slice 4). The same shape as tt133, from the same research (docs/plan/accounting-rules-research-2026-11-18.md, A1, A5, C3): the platform's fees are a selling expense (641, sub-account 6417
+  // "Chi phí dịch vụ mua ngoài", not 6421, which is staff cost in this chart), accrued to 335 at month end; a sale the platform refunded is a deduction from revenue on 521, not 511. Every row is `commentary`, so no path
+  // opens from this map until the accountant confirms it (#2520); every code below is in the TT99 2026.1 chart (pinned by finance-marketplace-map-chart.db.test.ts). The settlement posting nets a refund into the revenue line
+  // today (the TT133 rule), so a TT99 settlement that carries a refund is refused (MARKETPLACE_SETTLEMENT_NOT_POSTABLE, REFUND_ACCOUNT) until the 521 split is built.
+  tt99: {
+    regime: 'tt99',
+    status: 'commentary',
+    receivable: row('131', 'Same as tt133 (plan 8.4 Income reports): Dr 131, the platform as an organization party linked through crove_finance.marketplace_party.'),
+    revenue: row('511', 'Same as tt133: Cr 511 for the sales the platform paid for net of the seller discounts; the recognition point is the successful delivery (research A5).'),
+    salesReturn: row('521', 'Research C3: under Circular 99 a refunded sale is a deduction from revenue on 521, where TT133 has none and reduces 511. Not posted yet: the settlement posting refuses a refund under this map until the split exists.'),
+    cash: row('112', 'Same as tt133: Dr 112 for the money received at the payout.'),
+    feePayable: row('331', 'Research A1: the payout debits 331 of the platform for the fees it kept; the platform\'s fee invoice credits it (Dr 641 / Dr 1331 / Cr 331).'),
+    feeAwaitingInvoice: row('1388', 'Retired with the fee clearing path (#3315): the fees wait on 331, never on 1388 (research A1). The row stays only while the retired code reads it.'),
+    taxWithheld: row('333', 'Same as tt133: unused, the withheld tax goes through 3331 and 3335 at the settlement posting.'),
+    vatPayable: row('3331', 'Same as tt133 (research A4): a household seller credits 3331 for the VAT the platform withheld at the settlement posting.'),
+    pitPayable: row('3335', 'Same as tt133 (research A4): a household seller credits 3335 for the PIT the platform withheld at the settlement posting.'),
+    feeExpense: row('6417', 'Research A1: the fees accrued at month end for an invoice that has not come are Dr 641 (sub-account 6417, Chi phí dịch vụ mua ngoài) under Circular 99; 6421 is staff cost in the TT99 chart, so it is not used here.'),
+    accruedExpense: row('335', 'Research A1: Cr 335 for that accrual, reversed on the first day of the next month so the invoice\'s own expense is not counted twice.'),
+    pitOwnerEquity: row('4212', 'Research A4, D2: the PIT a platform withheld on a household\'s revenue is never an expense; booked against the owner\'s equity. 4212 is a proposal: the accountant names the account (#2520, #3711), and the household tax path stays closed until then.'),
+  },
 });
 
 // The postings a map gates, each with the rows it posts to (#3711 slice 1). `sales`: the settlement voucher without household tax (131 against 511, a refund reducing 511). `payout`: the money received
