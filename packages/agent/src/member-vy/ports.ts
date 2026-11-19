@@ -44,6 +44,7 @@ export type ModelFeature =
   | 'meetings.ask'
   | 'meetings.brief'
   | 'meetings.assignee'
+  | 'meetings.adherence'
   | 'meetings.chapters'
   | 'projects.tasks_from_note'
   | 'projects.tasks_from_source'

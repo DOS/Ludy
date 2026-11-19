@@ -4,9 +4,9 @@
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
 import { z } from 'zod';
-import { ASK_TIMEOUT_MS, ASSIGNEE_TIMEOUT_MS, AssigneeModelError, generateMeetingAssigneeText, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, CHAPTERS_TIMEOUT_MS, ChaptersModelError, generateMeetingBriefText, generateMeetingChaptersText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
-import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, AssigneeError, pickAssignee, BriefError, writeBrief, ChaptersError, chapterMeeting, NoteAiError, NoteAiModelError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind } from '@crove/agent/member-vy';
-import { ASK_ESTIMATE, ASK_HITS_MAX, type AssigneeAnswer, type AssigneeAsk, type AssigneeFacts, type AssigneeStatus, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationTarget, type TranslationStatus } from '@crove/kernel-contract';
+import { ADHERENCE_TIMEOUT_MS, AdherenceModelError, generateMeetingAdherenceText, ASK_TIMEOUT_MS, ASSIGNEE_TIMEOUT_MS, AssigneeModelError, generateMeetingAssigneeText, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, CHAPTERS_TIMEOUT_MS, ChaptersModelError, generateMeetingBriefText, generateMeetingChaptersText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
+import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AdherenceError, checkAgenda, AskError, AssigneeError, pickAssignee, BriefError, writeBrief, ChaptersError, chapterMeeting, NoteAiError, NoteAiModelError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind } from '@crove/agent/member-vy';
+import { ADHERENCE_ESTIMATE, type AdherenceAnswer, type AdherenceAsk, type AdherenceFacts, type AdherenceStatus, ASK_ESTIMATE, ASK_HITS_MAX, type AssigneeAnswer, type AssigneeAsk, type AssigneeFacts, type AssigneeStatus, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationTarget, type TranslationStatus } from '@crove/kernel-contract';
 import { readTasksFromSourceData, type SourceQueryFn } from '@crove/mod-projects';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
@@ -111,7 +111,9 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
   // A question about meetings counts under meetings.ask (#3161) for the same reason.
   return {
     generate: (_who, prompt) =>
-      prompt.feature === 'meetings.assignee'
+      prompt.feature === 'meetings.adherence'
+        ? generateMeetingAdherenceText(config, prompt, Math.min(timeoutMs, ADHERENCE_TIMEOUT_MS))
+        : prompt.feature === 'meetings.assignee'
         ? generateMeetingAssigneeText(config, prompt, Math.min(timeoutMs, ASSIGNEE_TIMEOUT_MS))
         : prompt.feature === 'meetings.brief'
         ? generateMeetingBriefText(config, prompt, Math.min(timeoutMs, BRIEF_TIMEOUT_MS))
@@ -857,6 +859,117 @@ export async function runMeetingAssignee(deps: MeetingBriefDeps, orgId: string, 
     }
     const person = checked.pick === null ? undefined : facts.people[checked.pick - 1];
     return person ? { state: 'suggested', errorCode: null, suggestion: person } : none();
+  } finally {
+    ticket.release();
+  }
+}
+
+// The recorder's Vy checking whether a meeting covered its agenda (#3959, ADR-0049 stage A). The agenda is the series' open items plus up to eight lines the recorder typed; the transcript is the one the recorder
+// reads. In order:
+//   1. meetings.adherence.status, as the recorder: the deployment's switch, the right to work with Vy, a kill switch, a spent budget; a refusal here has made no run and spent nothing;
+//   2. meetings.adherence.facts: the agenda lines and the numbered transcript lines, read as the recorder (row security). Nothing to ask (no agenda line, no transcript, a transcript longer than the model is
+//      given): no run and no call, and the answer says why;
+//   3. meetings.adherence.start, then the kernel's run.start (vy.use, the kill switches, the budget) makes the member's Vy and the run;
+//   4. the one model call, outside any transaction, through the member's own meter under meetings.adherence (the scope carries the run), with a hard timeout. The model has no tools and answers numbers only;
+//      code keeps a "covered" claim only when it cites one to three transcript lines that were given (see member-vy/meetings-adherence.ts);
+//   5. the result row holds counts only; the answer is the agenda lines as given and, for a covered one, the transcript lines it cites, as the recorder reads them. Nothing is stored and nothing of the model's words
+//      is shown.
+// The answer goes back to the browser and nowhere else. An agenda or transcript line is never logged: a failure is named by a fixed code.
+function adherenceEstimate(price: MeetingBriefDeps['price']): NonNullable<AdherenceStatus['estimate']> {
+  const priced = price !== undefined && (isPositivePrice(price.inputPerMTok) || isPositivePrice(price.outputPerMTok));
+  return { ...ADHERENCE_ESTIMATE, cost: priced ? aiCost([ADHERENCE_ESTIMATE], price) : null };
+}
+
+export async function adherenceStatusOf(deps: Pick<MeetingBriefDeps, 'runtime' | 'price' | 'model' | 'meter'>, orgId: string, actor: UserActor, meetingId: string): Promise<AdherenceStatus> {
+  if (!deps.model || !deps.meter(actor)) return { meetingId, enabled: false, reason: 'off', estimate: null };
+  const status = await deps.runtime.query<AdherenceStatus>('meetings.adherence.status', { meetingId }, { actor, orgId });
+  return status.enabled ? { ...status, estimate: adherenceEstimate(deps.price) } : status;
+}
+
+function adherenceCodeOf(error: unknown): string {
+  if (error instanceof AdherenceError) return error.code;
+  if (error instanceof AdherenceModelError) return error.kind === 'timeout' ? 'ADHERENCE_TIMEOUT' : 'ADHERENCE_FAILED';
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' || code === 'SUMMARY_TIMEOUT' ? 'ADHERENCE_FAILED' : code;
+}
+
+export async function runMeetingAdherence(deps: MeetingBriefDeps, orgId: string, actor: UserActor, ask: AdherenceAsk): Promise<AdherenceAnswer> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  if (!model || !meter) throw new DomainError('ADHERENCE_OFF', 422, 'Vy checking an agenda is not turned on here');
+  const failed = (errorCode: string): AdherenceAnswer => ({ state: 'failed', errorCode, reason: null, items: [], dropped: 0 });
+  const status = await deps.runtime.query<AdherenceStatus>('meetings.adherence.status', { meetingId: ask.meetingId }, as);
+  if (!status.enabled) {
+    if (status.reason === 'off') throw new DomainError('ADHERENCE_OFF', 422, 'Vy checking an agenda is not turned on here');
+    if (status.reason === 'not_recorder') throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy to check its agenda');
+    if (status.reason === 'forbidden') throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Vy đang tạm dừng hoặc đã hết ngân sách tháng này; sổ sách và mọi việc không cần AI vẫn chạy bình thường');
+  }
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('ADHERENCE_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+  try {
+    const facts = await deps.runtime.query<AdherenceFacts>('meetings.adherence.facts', ask, as);
+    if (!facts.eligible) return { state: 'none', errorCode: null, reason: facts.reason, items: [], dropped: 0 };
+    let started: { runId: string };
+    try {
+      started = await deps.runtime.execute<{ runId: string }>('meetings.adherence.start', { meetingId: ask.meetingId }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'ADHERENCE_BUSY' : error.code;
+        console.error(`[meetings-adherence] run not started: ${errorCode}`);
+        return failed(errorCode);
+      }
+      throw error;
+    }
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<AdherenceAnswer> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        // The run stays open until it expires; the caller still gets the failure, and only the codes are logged.
+        console.error(`[meetings-adherence] failed result not stored: ${adherenceCodeOf(storeError)}`);
+      }
+      console.error(`[meetings-adherence] run failed: ${errorCode}`);
+      return failed(errorCode);
+    };
+    let checked: Awaited<ReturnType<typeof checkAgenda>>['answer'];
+    try {
+      const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
+      const result = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter }, () =>
+          checkAgenda({ agenda: facts.agenda.map((a) => a.text), transcript: facts.transcript.map((l) => ({ startSeconds: l.startSeconds, text: l.text })) }, bindPorts({ orgId, memberUserId: actor.userId }, ports)),
+        ),
+        timeoutMs,
+      );
+      checked = result.answer;
+    } catch (error: unknown) {
+      return await fail(error instanceof SummaryModelError ? 'ADHERENCE_TIMEOUT' : adherenceCodeOf(error));
+    }
+    // Counts only: never an agenda line or a transcript line.
+    const body = JSON.stringify({ v: 1, agenda: facts.agenda.length, transcript: facts.transcript.length, covered: checked.items.filter((i) => i.covered).length, dropped: checked.dropped });
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body } }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') return failed('AI_STOPPED');
+      return await fail(adherenceCodeOf(error));
+    }
+    // The kernel re-checked the switches and the budget at the store and may have stopped the run: nothing of the model's answer is shown for a stopped run.
+    if (stored.status === 'failed') {
+      console.error('[meetings-adherence] run failed: AI_STOPPED');
+      return failed('AI_STOPPED');
+    }
+    const items: AdherenceAnswer['items'] = facts.agenda.map((line) => {
+      const found = checked.items[line.n - 1];
+      const cites = (found?.covered ? found.lines : []).flatMap((n) => {
+        const cited = facts.transcript[n - 1];
+        return cited ? [{ n, startSeconds: cited.startSeconds, text: cited.text }] : [];
+      });
+      return { n: line.n, text: line.text, source: line.source, covered: cites.length > 0, cites };
+    });
+    return { state: 'checked', errorCode: null, reason: null, items, dropped: checked.dropped };
   } finally {
     ticket.release();
   }
