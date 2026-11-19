@@ -229,6 +229,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.mcp.minutes',
       'meetings.mcp.open_actions',
       'meetings.mcp.series_open_items',
+      'meetings.mcp.decisions',
+      'meetings.mcp.search',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

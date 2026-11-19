@@ -32,6 +32,8 @@ export const KERNEL_ERROR_CODES = [
   'MCP_PROPOSAL_CAP',
   'MCP_GRANT_TOO_MANY',
   'MCP_WAKE_GRANT_NOT_FOUND',
+  // A line's wake-up event for a connection that does not hold that line's permission (ADR-0051 decision 13).
+  'MCP_WAKE_SCOPE',
   'MCP_WAKE_NOT_FOUND',
   'MCP_WAKE_TOO_SOON',
   // A member's minutes webhook (Meetings A6, #3164).
@@ -925,6 +927,15 @@ export const KERNEL_ERROR_CODES = [
   'MISA_AMIS_CONNECTION_EXISTS',
   'MISA_AMIS_CONNECTION_LIVE',
   'MISA_AMIS_CONNECTION_NOT_FOUND',
+  // The push to MISA AMIS (#3902).
+  'MISA_AMIS_NOT_TESTED',
+  'MISA_AMIS_ENTITY_MISMATCH',
+  'MISA_AMIS_PUSH_BLOCKED',
+  'MISA_AMIS_PUSH_EMPTY',
+  'MISA_AMIS_PUSH_STALE',
+  'MISA_AMIS_PUSH_STATE',
+  'MISA_AMIS_PUSH_TOO_MANY',
+  'MISA_AMIS_PUSH_PENDING',
   'MARKETPLACE_PROVIDER_NOT_READY',
   // Marketplace order reports (#2515).
   'MARKETPLACE_NOT_STAGED',

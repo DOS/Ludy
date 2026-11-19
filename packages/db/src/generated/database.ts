@@ -85,6 +85,7 @@ export interface CroveFinanceSchema {
   'crove_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
   'crove_finance.marketplace_party': FinanceMarketplacePartyTable;
   'crove_finance.misa_amis_connection': FinanceMisaAmisConnectionTable;
+  'crove_finance.misa_amis_push': FinanceMisaAmisPushTable;
   'crove_finance.misa_goods_code': FinanceMisaGoodsCodeTable;
   'crove_finance.org_account': FinanceOrgAccountTable;
   'crove_finance.period_balance_delta': FinancePeriodBalanceDeltaTable;
@@ -161,6 +162,7 @@ export interface CroveKernelSchema {
   'crove_kernel.mail_suppression': KernelMailSuppressionTable;
   'crove_kernel.mcp_member_table': KernelMcpMemberTableTable;
   'crove_kernel.mcp_proposal_command': KernelMcpProposalCommandTable;
+  'crove_kernel.mcp_wake_event_type': KernelMcpWakeEventTypeTable;
   'crove_kernel.meeting_platform_connection': KernelMeetingPlatformConnectionTable;
   'crove_kernel.meeting_platform_recording': KernelMeetingPlatformRecordingTable;
   'crove_kernel.member_availability': KernelMemberAvailabilityTable;
@@ -1437,6 +1439,30 @@ export interface FinanceMisaAmisConnectionTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
+/** crove_finance.misa_amis_push */
+export interface FinanceMisaAmisPushTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  connection_id: ColumnType<string, string, NotGranted>;
+  source_type: ColumnType<string, string, NotGranted>;
+  source_id: ColumnType<string, string, NotGranted>;
+  voucher_type: ColumnType<number, number, NotGranted>;
+  part: ColumnType<number, number | undefined, NotGranted>;
+  org_refid: ColumnType<string, string, NotGranted>;
+  org_refno: ColumnType<string, string, NotGranted>;
+  payload_digest: string;
+  params: ColumnType<unknown, string | undefined, string>;
+  state: Generated<string>;
+  reason: string | null;
+  attempts: Generated<number>;
+  requested_by: string | null;
+  requested_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  sent_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  answered_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_finance.misa_goods_code */
 export interface FinanceMisaGoodsCodeTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -2607,6 +2633,14 @@ export interface KernelMcpProposalCommandTable {
   command: ColumnType<string, NotGranted, NotGranted>;
   scope: ColumnType<string, NotGranted, NotGranted>;
   kind: ColumnType<string, NotGranted, NotGranted>;
+  adr: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** crove_kernel.mcp_wake_event_type */
+export interface KernelMcpWakeEventTypeTable {
+  type: ColumnType<string, NotGranted, NotGranted>;
+  scope: ColumnType<string, NotGranted, NotGranted>;
+  fields: ColumnType<unknown, NotGranted, NotGranted>;
   adr: ColumnType<string, NotGranted, NotGranted>;
 }
 

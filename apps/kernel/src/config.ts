@@ -398,6 +398,8 @@ const schema = z.object({
   // The integrator's ClientID that MISA issued for the MISA AMIS Kế toán API (#3854): a SECRET of the deployment (it is also the key that signs the callbacks of AMIS), never logged, never in an
   // error or an audit row. Unset, the connector is off: the card says so and no route that uses it is reachable. Crove Cloud sets DOS's own; a self-hoster sets the one MISA issued to their app.
   MISA_AMIS_CLIENT_ID: optional.pipe(z.string().regex(/^[0-9A-Za-z._-]{8,128}$/, 'MISA_AMIS_CLIENT_ID is not in the shape of a ClientID').optional()),
+  // The push of vouchers to MISA AMIS (S3b, #3902) is OFF unless this is `on`, and it needs MISA_AMIS_CLIENT_ID. It stays off until the sandbox check (docs/runbooks/misa-amis-sandbox-check.md) has confirmed what the push assumes; only the coordinator runs that check and sets this.
+  MISA_AMIS_PUSH: optional.pipe(z.enum(['on', 'off']).optional()),
   // The offline sandbox bank feed (ADR-0039, #2044): off unless asked for, so a deployment shows no bank feed until it
   // has one.
   BANK_FEED_SANDBOX: z.enum(['true', 'false']).default('false'),
@@ -546,6 +548,11 @@ const schema = z.object({
   // (docs/runbooks/meetings-zoom.md). Needs the OAuth app above. Unset: no route; the sweep alone lists. The token it replaces is kept while Zoom may still sign with it (a rotation in the app, then here).
   ZOOM_WEBHOOK_SECRET_TOKEN: optional,
   ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS: optional,
+  // Google Meet transcripts (Meetings C2, #3174): a Google OAuth web client of its own for the Meet connection (not the calendar's, so the calendar consent stays narrow), with the sensitive scope
+  // meetings.space.readonly on its consent screen, the Google Meet REST API on in its project and the redirect URL APP_URL/meetings/oauth/google_meet/callback (docs/runbooks/meetings-google.md). Off by default:
+  // with neither set there is no Google Meet adapter and no Google Meet connection. Both or neither. The value of the calendar's client may be used here if the owner decides so.
+  MEETINGS_GOOGLE_CLIENT_ID: optional,
+  MEETINGS_GOOGLE_CLIENT_SECRET: optional,
   // Microsoft Teams recordings and transcripts (Meetings C4, #3176): the operator's own multi-tenant Microsoft Entra app (work and school accounts; authorization code with PKCE) with the delegated
   // permissions of docs/runbooks/meetings-teams.md and the redirect URL APP_URL/meetings/oauth/microsoft_teams/callback. Two of the permissions need a customer's tenant administrator to consent. Off by default: with
   // neither set there is no Teams adapter and no Teams connection. Both or neither. Its own pair, apart from CALENDAR_MICROSOFT_*: a calendar app asks for calendar scopes only.
@@ -944,6 +951,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.CALENDAR_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CALENDAR_GOOGLE_CLIENT_ID)) throw new Error('CALENDAR_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.CALENDAR_MICROSOFT_CLIENT_ID) !== Boolean(config.CALENDAR_MICROSOFT_CLIENT_SECRET)) throw new Error('set both CALENDAR_MICROSOFT_CLIENT_ID and CALENDAR_MICROSOFT_CLIENT_SECRET, or neither');
   if (config.CALENDAR_MICROSOFT_CLIENT_ID && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(config.CALENDAR_MICROSOFT_CLIENT_ID)) throw new Error('CALENDAR_MICROSOFT_CLIENT_ID is the application (client) id of a Microsoft Entra app registration, a UUID');
+  if (Boolean(config.MEETINGS_GOOGLE_CLIENT_ID) !== Boolean(config.MEETINGS_GOOGLE_CLIENT_SECRET)) throw new Error('set both MEETINGS_GOOGLE_CLIENT_ID and MEETINGS_GOOGLE_CLIENT_SECRET, or neither');
+  if (config.MEETINGS_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.MEETINGS_GOOGLE_CLIENT_ID)) throw new Error('MEETINGS_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.ZOOM_OAUTH_CLIENT_ID) !== Boolean(config.ZOOM_OAUTH_CLIENT_SECRET)) throw new Error('set both ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET, or neither');
   if (Boolean(config.TEAMS_OAUTH_CLIENT_ID) !== Boolean(config.TEAMS_OAUTH_CLIENT_SECRET)) throw new Error('set both TEAMS_OAUTH_CLIENT_ID and TEAMS_OAUTH_CLIENT_SECRET, or neither');
   if (config.TEAMS_OAUTH_CLIENT_ID && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(config.TEAMS_OAUTH_CLIENT_ID)) throw new Error('TEAMS_OAUTH_CLIENT_ID is the application (client) id of a Microsoft Entra app registration, a UUID');

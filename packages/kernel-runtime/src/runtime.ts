@@ -3247,10 +3247,11 @@ export class Runtime {
       // membership was established (plan §4.4 steps 7 and 14: a record the actor named is not in the org, such as
       // MEMBER_NOT_FOUND for a member of another org) is audited as failed like 409 and 422. Other statuses are not
       // audited today.
+      // A line's wake event for a grant that does not hold the line's scope (MCP_WAKE_SCOPE, #3858 slice e) is the same: the sweep offers a line's source to every due grant and the database says which are not for it.
       // A refusal because the app is off is the org's state, not an attempt to audit, and the worker, a sweep and the relay meet it every
       // tick for every item of an off org: it writes no row and spends none of the refusal budget when the system is the actor. A person's
       // or an AI agent's call keeps its failed row.
-      if (entered && !orgIsNew && AUDITED_REFUSAL_STATUSES.has(domain.status) && !(domain.code === 'MODULE_OFF' && actor.type === 'system')) {
+      if (entered && !orgIsNew && AUDITED_REFUSAL_STATUSES.has(domain.status) && !((domain.code === 'MODULE_OFF' || domain.code === 'MCP_WAKE_SCOPE') && actor.type === 'system')) {
         // The refusal of an MCP call to a proposal command is audited under the target's name with NO target: the target's id would come from the client's payload.
         await this.writeRefusalAudit((mcpTarget ?? def).name, mcpTarget ? withoutTarget(mcpTarget) : def, mcpTarget ? { payload: (input as { payload: unknown }).payload } : input, canonical, actor, orgId, domain);
       } else if ((!entered || orgIsNew) && isPreMembershipRefusal(domain)) {

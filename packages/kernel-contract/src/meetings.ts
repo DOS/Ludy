@@ -1184,6 +1184,28 @@ export const zMcpSeriesOpenItemsInput = z.strictObject({
   limit: z.number().int().min(1).max(MCP_OPEN_ACTIONS_MAX).default(MCP_OPEN_ACTIONS_DEFAULT).describe(`How many items to return (1 to ${MCP_OPEN_ACTIONS_MAX}, default ${MCP_OPEN_ACTIONS_DEFAULT}).`),
 });
 
+// The published decisions of the meetings of the last 7, 14 or 30 days (#4016): the window counts from the meeting's start, at most MCP_OPEN_ACTIONS_MAX decisions, the newest meeting first.
+export const MCP_DECISIONS_DAYS = [7, 14, 30] as const;
+export const MCP_DECISIONS_DAYS_DEFAULT = 14;
+export const zMcpDecisionsInput = z.strictObject({
+  days: z.literal([...MCP_DECISIONS_DAYS]).default(MCP_DECISIONS_DAYS_DEFAULT).describe(`How far back to look, counted from now: ${MCP_DECISIONS_DAYS.join(', ')} days (default ${MCP_DECISIONS_DAYS_DEFAULT}). A meeting counts by its start.`),
+  limit: z.number().int().min(1).max(MCP_OPEN_ACTIONS_MAX).default(MCP_OPEN_ACTIONS_DEFAULT).describe(`How many decisions to return (1 to ${MCP_OPEN_ACTIONS_MAX}, default ${MCP_OPEN_ACTIONS_DEFAULT}).`),
+});
+
+// A search over the published minutes (#4030): the typed words are folded in code (lower case, Vietnamese marks and đ removed) and never reach the database; at most MCP_SEARCH_WORDS_MAX words, each the
+// start of a word of ONE line (the title, a summary line, a decision or an action item title) of a meeting the grant may already read; at most MCP_SEARCH_MEETINGS_MAX of the newest such meetings are searched.
+export const MCP_SEARCH_QUERY_MAX = 200;
+export const MCP_SEARCH_WORDS_MAX = 8;
+export const MCP_SEARCH_DEFAULT = 10;
+export const MCP_SEARCH_MAX = 50;
+export const MCP_SEARCH_MEETINGS_MAX = 200;
+export const MCP_SNIPPET_MAX = 200;
+export const MCP_SEARCH_FIELDS = ['title', 'decision', 'summary', 'action'] as const;
+export const zMcpSearchInput = z.strictObject({
+  q: z.string().trim().min(2).max(MCP_SEARCH_QUERY_MAX).describe(`The words to look for (2 to ${MCP_SEARCH_QUERY_MAX} characters). Case and Vietnamese marks do not matter ("chiet khau" finds "chiết khấu"). Every word must start a word of the same line; at most ${MCP_SEARCH_WORDS_MAX} words count.`),
+  limit: z.number().int().min(1).max(MCP_SEARCH_MAX).default(MCP_SEARCH_DEFAULT).describe(`How many meetings to return (1 to ${MCP_SEARCH_MAX}, default ${MCP_SEARCH_DEFAULT}).`),
+});
+
 
 // The "minutes draft ready" notice of the recorder (#3730): kind, event and mail template. The notice holds no text of the draft and no title: the in-app line is a fixed text that opens the meeting through its
 // subject, and the mail holds a fixed line and the link, so no copy of the title or of the draft exists to erase.
