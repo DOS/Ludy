@@ -211,7 +211,8 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
 }
 
 // `focusSecond`: a chapter was clicked (#3844): the first line that starts at that whole second is marked and scrolled to; `token` changes on each click.
-export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond }: { meetingId: string; focusSegmentId?: string; focusSecond?: { second: number; token: number } | undefined }) {
+// `platformCut`: the meeting's own flag that the platform's transcript was cut on import (#3922); without it the panel can only guess from the line count.
+export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond, platformCut = false }: { meetingId: string; focusSegmentId?: string; focusSecond?: { second: number; token: number } | undefined; platformCut?: boolean }) {
   const t = useTranslations('meetings.transcript');
   const tp = useTranslations('meetings.platform');
   const query = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
@@ -248,9 +249,9 @@ export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond }: { 
             {t('platformSource', { platform: tp(`provider.${platform.platform}`) })}
           </p>
         )}
-        {platform?.cut && (
+        {platform && (platformCut || platform.cut) && (
           <p className="text-xs text-muted-foreground" data-testid="transcript-cut">
-            {t('platformCut', { platform: tp(`provider.${platform.platform}`), max: TRANSCRIPT_SEGMENTS_MAX })}
+            {platformCut ? t('platformCutKnown', { platform: tp(`provider.${platform.platform}`) }) : t('platformCut', { platform: tp(`provider.${platform.platform}`), max: TRANSCRIPT_SEGMENTS_MAX })}
           </p>
         )}
       </CardHeader>
