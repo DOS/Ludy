@@ -699,6 +699,15 @@ suite('the changes of a running ad (#3835, W4)', () => {
     expect(await pick()).toEqual([]);
     await settle(r, raise.id, 'failed', 'REFUSED');
     expect(await pick()).toEqual([{ org_id: r.org.orgId, change_id: unclear }]);
+    // What begin could only answer "not now" for is not picked, so it cannot crowd out the rest: a schedule change of an account whose zone is not read yet.
+    const shorten = await request(r, SHORTEN(r));
+    await settle(r, shorten, 'unclear', 'reconcile_unclear');
+    await owner(`INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety, started_at) VALUES ($1, $2, 'ads', 'launch', 'manage_schedule_shorten', 'idempotent', now())`, [r.org.orgId, `ads.manage:${shorten}:apply`]);
+    await owner(`UPDATE crove_kernel.external_call SET state = 'ambiguous', error_kind = 'unknown', error_code = 'NETWORK', updated_at = now() - interval '11 minutes' WHERE org_id = $1 AND key = $2`, [r.org.orgId, `ads.manage:${shorten}:apply`]);
+    expect((await pick()).map((x) => x.change_id).sort()).toEqual([shorten, unclear].sort());
+    await owner(`UPDATE crove_ads.ad_account SET time_zone = NULL WHERE org_id = $1 AND id = $2`, [r.org.orgId, r.account]);
+    expect(await pick()).toEqual([{ org_id: r.org.orgId, change_id: unclear }]);
+    await owner(`UPDATE crove_ads.ad_account SET time_zone = $3 WHERE org_id = $1 AND id = $2`, [r.org.orgId, r.account, ZONE]);
     // Only the worker's login picks, and it settles nothing: a login of the API refuses.
     await withClient(appUrl, async (c) => {
       await expect(c.query(`SELECT * FROM crove_ads.manage_unclear_pick(ARRAY['sandboxwrite_ads'], 10)`)).rejects.toMatchObject({ code: '42501' });

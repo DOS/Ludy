@@ -27,7 +27,7 @@ import { boostPlan, type BoostRefusal } from './boost-plan.ts';
 import { accountOf, pendingProposal, rows, saveCampaignDraft, type DraftRow } from './campaign-draft.ts';
 import { todayIn } from './domain.ts';
 import { launchesOfDrafts } from './launch-ledger.ts';
-import { heldValues } from './manage-rules.ts';
+import { SCHEDULE_KINDS, heldValues } from './manage-rules.ts';
 import { changesOfMany } from './manage-state.ts';
 import { currentSetting } from './write.ts';
 
@@ -71,7 +71,11 @@ async function boostsOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, postIds: reado
     list.filter((r) => r.status === 'approved').map((r) => r.id),
   );
   // The changes of the launches (one read for all): an extension of the schedule moves the day the launch holds.
-  const changes = await changesOfMany(ctx, [...launches.values()].map((l) => l.id));
+  const changes = await changesOfMany(
+    ctx,
+    [...launches.values()].map((l) => l.id),
+    SCHEDULE_KINDS,
+  );
   const out: Array<{ row: DraftRow; state: AdsBoostState; proposalId: string | null; launch: ReturnType<typeof launches.get> }> = [];
   const zones = new Map<string, string>();
   const now = new Date();

@@ -29,6 +29,10 @@ BEGIN
   WHERE c.state = 'unclear'
     AND k.provider = ANY (COALESCE(p_providers, ARRAY[]::text[]))
     AND e.updated_at < pg_catalog.now() - pg_catalog.make_interval(mins => 10)
+    -- What begin could only answer "not now" for is left out, so it cannot crowd out the others every sweep: the object the launch recorded for the slot, and the account's zone for a
+    -- schedule change (its end time is the first moment after the last day in that zone).
+    AND EXISTS (SELECT 1 FROM crove_ads.ad_object o WHERE o.org_id = c.org_id AND o.launch_id = c.launch_id AND o.slot = c.slot)
+    AND (c.kind NOT IN ('schedule_shorten', 'schedule_extend') OR a.time_zone IS NOT NULL)
     AND NOT EXISTS (SELECT 1 FROM crove_ads.ad_manage_change x
                     WHERE x.org_id = c.org_id AND x.launch_id = c.launch_id AND x.family = c.family AND x.seq > c.seq AND x.state IN ('queued', 'applied', 'unclear'))
   ORDER BY e.updated_at
