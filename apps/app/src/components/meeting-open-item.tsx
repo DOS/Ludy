@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The two small pieces of a numbered list of meeting facts, shared by the brief before a meeting (#3543), the Today view of the day's meetings (#3955) and the weekly card (#3949): the number a sentence of Vy cites, and the line of an
+// The two small pieces of a numbered list of meeting facts, shared by the brief before a meeting (#3543, which the Today view of the day's meetings (#3955) shows inline) and the weekly card (#3949): the number a sentence of Vy cites, and the line of an
 // open action item (its title, who it is with, whether it is accepted as a task and its status, and the day it is due). A person is named by the org's own names, never by an id.
 import type { ReactNode } from 'react';
 import { useTranslations } from 'use-intl';

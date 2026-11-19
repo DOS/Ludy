@@ -17,6 +17,7 @@ test('Vy lists what each speaker committed to on a click: nothing runs before it
   const good = seedMeeting(slug, email, 'Họp báo giá khách A');
   const empty = seedMeeting(slug, email, 'Họp không có gì giữ lại', { segments: withToken('bad') });
   const garbled = seedMeeting(slug, email, 'Họp đọc không ra', { segments: withToken('garbage') });
+  const down = seedMeeting(slug, email, 'Họp mất dịch vụ', { segments: withToken('down') });
   const card = page.getByTestId('meeting-commitments');
   const run = page.getByTestId('commitments-run');
 
@@ -86,5 +87,16 @@ test('Vy lists what each speaker committed to on a click: nothing runs before it
     const rows = runRows(slug, 'meetings.commitments');
     expect(rows).toHaveLength(3);
     expect(rows[2]).toMatchObject({ status: 'failed', error_code: 'COMMITMENTS_UNPARSABLE' });
+  });
+
+  await test.step('when the model service is down the recorder is told in words, no line is shown, and the run says it failed with a code', async () => {
+    await page.goto(`/o/${slug}/meetings/${down}`);
+    await run.click();
+    await expect(page.getByTestId('commitments-failed')).toContainText('Vy chưa liệt kê được các cam kết.');
+    await expect(page.getByTestId('commitments-failed')).toContainText('Dịch vụ AI không trả lời.');
+    await expect(page.getByTestId('commitments-line')).toHaveCount(0);
+    const rows = runRows(slug, 'meetings.commitments');
+    expect(rows).toHaveLength(4);
+    expect(rows[3]).toMatchObject({ status: 'failed', error_code: 'COMMITMENTS_FAILED' });
   });
 });

@@ -29,6 +29,7 @@ import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, errorMessage, fetchVideoTicket, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
+import type { TranscriptFocus } from '../lib/transcript-focus.ts';
 import { createVideoTicketPlayer, videoStreamUrl, type VideoTicketPlayer } from '../lib/video-ticket.ts';
 
 const CONSENT_KEYS = { told_at_start: 'toldAtStart', in_invite: 'inInvite', in_writing: 'inWriting', in_call_chat: 'inCallChat', platform_notice: 'platformNotice' } as const;
@@ -65,11 +66,11 @@ export function MeetingDetailPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // A chapter was clicked (#3844): the transcript goes to its line, and a recording that is already loaded is set to that second (it is never started by the click).
-  const [jump, setJump] = useState<{ second: number; token: number } | undefined>(undefined);
+  const [jump, setJump] = useState<TranscriptFocus | undefined>(undefined);
   // The page links to another meeting in place: a jump to a line of one meeting never carries over to the next.
   useEffect(() => setJump(undefined), [id]);
-  const jumpTo = (second: number) => {
-    setJump((j) => ({ second, token: (j?.token ?? 0) + 1 }));
+  const jumpTo = (second: number, speaker?: string) => {
+    setJump((j) => ({ second, speaker, token: (j?.token ?? 0) + 1 }));
     if (audioRef.current) audioRef.current.currentTime = second;
     if (videoRef.current) videoRef.current.currentTime = second;
   };
@@ -353,12 +354,12 @@ export function MeetingDetailPage() {
       {meeting.isRecorder && <AgendaAttach meetingId={id} />}
 
       <MeetingLive meetingId={id} liveNotes={meeting.liveNotes} isRecorder={meeting.isRecorder} />
-      {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       {/* Each keyed child below has a key of its own: the same key on siblings makes React duplicate or drop children on a re-render (#4066) */}
       {/* The chapters (#3844): the published table of contents for every reader, the recorder's own draft editor; a click takes the transcript below to the line */}
       <MeetingChapters key={`chapters-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* What each speaker said they would do or decided (#3954): the recorder's own Vy on a click, each line opens the transcript where it was said, nothing is saved */}
       <MeetingCommitments key={`commitments-${id}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
+      {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       <MeetingTranscript key={`transcript-${id}`} meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} platformCut={meeting.platformTranscriptCut} />
       {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}
       <MeetingAdherence key={`adherence-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />

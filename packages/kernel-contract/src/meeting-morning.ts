@@ -43,10 +43,12 @@ export const zMorningNotice = z.strictObject({ userId: z.uuid(), day: z.iso.date
 export type MorningNotice = z.infer<typeof zMorningNotice>;
 
 // The mail's merge data: the org's name, the number of meetings, the app path of the meetings page and the language. No other key can be stored.
+// The most meetings the mail names: a day with more is told as this many (a member with that many events in a day is not a case the count has to be exact for; the mail must still be written).
+export const MORNING_COUNT_MAX = 1000;
 export const zMorningMail = z.strictObject({
   lang: z.enum(['vi', 'en']),
   org: z.string().trim().min(1).max(200),
-  count: z.number().int().min(1).max(1000),
+  count: z.number().int().min(1).max(MORNING_COUNT_MAX),
   path: z.string().regex(/^\/o\/[a-z0-9][a-z0-9-]{0,62}\/meetings$/),
 });
 export type MorningMail = z.infer<typeof zMorningMail>;
