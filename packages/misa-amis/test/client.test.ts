@@ -57,6 +57,16 @@ describe('the token', () => {
     expect(tokenCalls(fake)).toBe(2);
   });
 
+  it('is asked for again when a call says `freshToken`, so the access code is checked by MISA each time, and the new token is kept for later calls', async () => {
+    const { fake, client } = setup();
+    await client.companyInfo(conn);
+    await client.companyInfo(conn, null, { freshToken: true });
+    expect(tokenCalls(fake)).toBe(2);
+    await client.companyInfo(conn);
+    expect(tokenCalls(fake)).toBe(2);
+    expect(fake.calls.at(-1)?.headers['X-MISA-AccessToken']).toBe('token-2');
+  });
+
   it('is renewed once when MISA says it expired, and the call goes through', async () => {
     const { fake, client } = setup();
     await client.companyInfo(conn);

@@ -8,6 +8,7 @@ import { AmisError, type AmisClient } from '@crove/misa-amis';
 import type { MisaAmisTestState } from '@crove/kernel-contract';
 import type { MisaAmisTestTarget } from '@crove/mod-finance';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { MISA_AMIS_CHANNEL_PROVIDER } from '@crove/mod-finance';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.misa_amis' };
 
@@ -48,6 +49,11 @@ export async function runMisaAmisTest(deps: MisaAmisTestDeps, job: MisaAmisTestJ
   let accessCode: string;
   try {
     const sealed = await deps.runtime.query<SealedChannelCredential>('kernel.channel.credential', { connectionId: target.channelConnectionId }, options);
+    // Only an access code sealed for this connector is opened here: a channel connection of another provider is never read as one.
+    if (sealed.provider !== MISA_AMIS_CHANNEL_PROVIDER) {
+      console.warn(`[misa-amis] ${job.connectionId.slice(0, 8)}: credential of another provider, not opened`);
+      return record('wrong_credentials');
+    }
     accessCode = String(deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, { orgId: job.orgId, provider: sealed.provider, externalAccountId: sealed.externalAccountId }));
   } catch (error) {
     if (error instanceof DomainError && (error.code === 'CHANNEL_OWNER_LEFT' || error.code === 'CHANNEL_NOT_ACTIVE')) {
@@ -58,7 +64,8 @@ export async function runMisaAmisTest(deps: MisaAmisTestDeps, job: MisaAmisTestJ
   }
 
   try {
-    await deps.client.companyInfo({ accessCode, orgCompanyCode: target.orgCompanyCode });
+    // A fresh token each time: the client keeps one for half an hour, and a test that reused it would not send the access code, so a code revoked in AMIS could still read "works".
+    await deps.client.companyInfo({ accessCode, orgCompanyCode: target.orgCompanyCode }, null, { freshToken: true });
   } catch (error) {
     // Only the adapter's own kind is kept: its message and whatever else a failure carries are neither stored nor logged, and pg-boss never keeps them in the job's output.
     const kind = error instanceof AmisError ? error.kind : 'unreachable';

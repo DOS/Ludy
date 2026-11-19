@@ -85,6 +85,34 @@ describe('the MISA AMIS connection test job', () => {
     expect(recorded(h)).toEqual([{ id: CONNECTION, state: 'works' }]);
   });
 
+  it('asks AMIS for a new token on every test, so a code revoked in AMIS cannot read "works" from a token kept from an earlier test', async () => {
+    const amis = fakeAmis();
+    const client = createAmisClient({ clientId: CLIENT_ID, transport: amis.transport });
+    const first = harness();
+    expect(await runMisaAmisTest({ runtime: first.runtime, broker: first.broker, client }, { orgId: ORG, connectionId: CONNECTION })).toEqual({ state: 'works' });
+    expect(amis.calls.filter((c) => c.path === '/amiskt/v1/token')).toHaveLength(1);
+    // The same client, a second test, minutes later: the access code goes to AMIS again.
+    const second = harness();
+    expect(await runMisaAmisTest({ runtime: second.runtime, broker: second.broker, client }, { orgId: ORG, connectionId: CONNECTION })).toEqual({ state: 'works' });
+    expect(amis.calls.filter((c) => c.path === '/amiskt/v1/token')).toHaveLength(2);
+    // And when the code has been revoked meanwhile, the second test says so.
+    const revoked = fakeAmis((_request, path) => (path === '/amiskt/v1/token' ? fail('InvalidAccessToken') : undefined));
+    const third = harness();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(await runMisaAmisTest({ runtime: third.runtime, broker: third.broker, client: createAmisClient({ clientId: CLIENT_ID, transport: revoked.transport }) }, { orgId: ORG, connectionId: CONNECTION })).toEqual({ state: 'wrong_credentials' });
+  });
+
+  it('opens only a credential sealed for this connector: another provider\'s is not opened, AMIS is not asked, and the state is "wrong_credentials"', async () => {
+    const h = harness({ credential: () => ({ provider: 'marketplace_sandbox', externalAccountId: 'entity', keyId: 'k1', envelope: Buffer.from('sealed').toString('base64') }) });
+    const amis = fakeAmis();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(await runMisaAmisTest({ runtime: h.runtime, broker: h.broker, client: createAmisClient({ clientId: CLIENT_ID, transport: amis.transport }) }, { orgId: ORG, connectionId: CONNECTION })).toEqual({ state: 'wrong_credentials' });
+    expect(h.opened).toEqual([]);
+    expect(amis.calls).toEqual([]);
+    expect(recorded(h)).toEqual([{ id: CONNECTION, state: 'wrong_credentials' }]);
+    expect(warn.mock.calls).toEqual([['[misa-amis] 22222222: credential of another provider, not opened']]);
+  });
+
   it('runs as the system and reads the target and the credential of this connection only', async () => {
     const h = harness();
     await runMisaAmisTest({ runtime: h.runtime, broker: h.broker, client: createAmisClient({ clientId: CLIENT_ID, transport: fakeAmis().transport }) }, { orgId: ORG, connectionId: CONNECTION });

@@ -67,8 +67,11 @@ export interface AmisClientOptions {
 }
 
 export interface AmisClient {
-  /** The test of a connection: asks for a token, then for the company's information. Rejects with `credentials` when the access code or the app is refused. */
-  companyInfo(connection: AmisConnection, branchId?: string | null): Promise<AmisRecord | null>;
+  /**
+   * The test of a connection: asks for a token, then for the company's information. Rejects with `credentials` when the access code or the app is refused.
+   * `freshToken` drops any token kept for this connection first, so the access code is sent to MISA again: a test must not pass on a token made before the code was revoked.
+   */
+  companyInfo(connection: AmisConnection, branchId?: string | null, options?: { freshToken?: boolean }): Promise<AmisRecord | null>;
   dictionary(connection: AmisConnection, query: AmisDictionaryQuery): Promise<AmisRecord[]>;
   /** Creates catalogue entries (parties, items, ...): only for rows a person confirmed. */
   saveDictionary(connection: AmisConnection, dataType: AmisDictionaryType, rows: readonly AmisRecord[]): Promise<void>;
@@ -201,8 +204,9 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
   const snapshot = (c: AmisConnection): AmisConnection => ({ accessCode: c.accessCode, orgCompanyCode: c.orgCompanyCode });
 
   return {
-    async companyInfo(connection, branchId = null) {
+    async companyInfo(connection, branchId = null, options = {}) {
       const c = snapshot(connection);
+      if (options.freshToken === true) tokens.delete(keyOf(c));
       const data = await authed(c, '/amiskt/v1/get_company_info', 'POST', toJsonText({ branch_id: branchId }));
       let value = data;
       if (typeof value === 'string') {
