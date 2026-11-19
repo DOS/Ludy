@@ -61,10 +61,13 @@ test('Team tasks: one name, one filter popover, the keys, and the first row on a
     await expect(page.getByTestId('task-row')).toHaveCount(1);
     await expect(page.getByTestId('task-filter-count')).toHaveCount(0);
     await page.keyboard.press('Escape');
+    await expect(page.getByTestId('task-filter-popover')).toHaveCount(0);
   });
 
   await test.step('TK-4: the hint line is here, N opens the new-task panel, J selects the row and E edits it', async () => {
     await expect(page.getByTestId('tasks-shortcuts')).toContainText('Phím tắt: N thêm việc');
+    // Leave the filter button: the keys are the screen's, and a popover still closing is a dialog that keeps them.
+    await page.getByRole('heading', { name: 'Việc nhóm', level: 1 }).click();
     await page.keyboard.press('n');
     await expect(panel().getByLabel('Tên việc')).toBeFocused();
     await page.keyboard.press('Escape');
