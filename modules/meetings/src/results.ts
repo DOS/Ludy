@@ -402,10 +402,10 @@ export const actionItemAccept = defineCommand({
 });
 
 // The people of the org a said name may be matched with when no attendee answers to it (#3921): the members, by the display name the org knows them by (member_profiles answers for members only; a
-// member with no display name has no name to match, and an email address is never one). At most 500, which is far above a small business.
+// member with no display name has no name to match, and an email address is never one). Above 500 members none are offered: a cut list could make a name that two people share look like it is one person's.
 async function memberNames(ctx: QueryContext | CommandContext): Promise<Person[]> {
-  const ids = (await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).limit(500).execute()).map((r) => r.user_id);
-  if (ids.length === 0) return [];
+  const ids = (await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).limit(501).execute()).map((r) => r.user_id);
+  if (ids.length === 0 || ids.length > 500) return [];
   const { rows } = await sql<{ user_id: string; display_name: string | null }>`SELECT user_id, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
   return rows.flatMap((r) => {
     const name = cleanName(r.display_name);

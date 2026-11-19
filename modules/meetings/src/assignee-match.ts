@@ -3,25 +3,51 @@
 // attendee, else the one member of the org, they can mean, or nobody. It only suggests: the person who makes the task confirms it, and nothing is stored here.
 import { plainName } from './plain-name.ts';
 
-// Words that come before a name (folded, so "chị" is "chi"): said, not part of the name. Stripped only while another word remains, because "Chi", "Ba" and "Cô" are given names too.
-const HONORIFICS = new Set(['anh', 'chi', 'em', 'bac', 'co', 'chu', 'ong', 'ba', 'ban', 'thay', 'cau', 'mo', 'di', 'duong', 'sep', 'anh/chi', 'chi/anh']);
+// Words that come before a name, as said ("chị") and folded ("chi"). A word written with marks must be the exact form ("Chí" and "Dương" are names, not "chị" and "dượng"); a word written with no marks
+// is compared folded, because that is how many people type. A text that is only one of them ("chị", "anh") names no one: it is a pronoun, and Anh and Chi are given names too.
+const HONORIFICS = ['anh', 'chị', 'em', 'bác', 'cô', 'chú', 'ông', 'bà', 'bạn', 'thầy', 'cậu', 'mợ', 'dì', 'dượng', 'sếp', 'anh/chị', 'chị/anh'];
+const HONORIFICS_PLAIN = new Set(HONORIFICS.map(plainName));
+const HONORIFICS_EXACT = new Set(HONORIFICS);
 // Words that start a description of the person and not a name ("chị Lan bên kế toán", "anh Nam của team bán hàng"). Words that are given names (Phong, Tú, Trọng) are not here; the cut is
 // made only after the first word, so a name that starts with one is kept.
 const CONNECTORS = new Set(['ben', 'cua', 'nhom', 'team', 'thuoc']);
 
-/** The words of the name a said text holds: folded, honorifics before it and the description after it dropped. Empty when it holds no name. */
-export function saidNameWords(said: string): string[] {
-  const words = plainName(said)
+/** One word of a name: as written (lower case, composed) and folded. It is compared exactly when it was written with marks, folded otherwise. */
+interface Word {
+  exact: string;
+  plain: string;
+  marked: boolean;
+}
+
+function wordsOf(text: string): Word[] {
+  return text
+    .normalize('NFC')
+    .toLowerCase()
     .replace(/[^\p{L}\p{N}/ ]+/gu, ' ')
-    .split(' ')
-    .filter((w) => w !== '');
+    .split(/\s+/)
+    .filter((w) => w !== '')
+    .map((exact) => {
+      const plain = plainName(exact);
+      return { exact, plain, marked: plain !== exact };
+    });
+}
+const same = (said: Word, name: Word) => (said.marked ? said.exact === name.exact : said.plain === name.plain);
+const isHonorific = (w: Word) => (w.marked ? HONORIFICS_EXACT.has(w.exact) : HONORIFICS_PLAIN.has(w.plain));
+
+/** The words of the name a said text holds: honorifics before it and the description after it dropped. Empty when it holds no name. */
+export function saidNameWords(said: string): string[] {
+  return nameWords(said).map((w) => w.exact);
+}
+function nameWords(said: string): Word[] {
+  const words = wordsOf(said);
+  if (words.length === 1 && isHonorific(words[0] as Word)) return [];
   let start = 0;
-  while (start < words.length - 1 && HONORIFICS.has(words[start] as string)) start += 1;
+  while (start < words.length - 1 && isHonorific(words[start] as Word)) start += 1;
   const rest = words.slice(start);
   let end = rest.length;
   for (let i = 1; i < rest.length; i += 1) {
-    const w = rest[i] as string;
-    if (CONNECTORS.has(w) || (w === 'bo' && rest[i + 1] === 'phan')) {
+    const w = (rest[i] as Word).plain;
+    if (CONNECTORS.has(w) || (w === 'bo' && (rest[i + 1] as Word | undefined)?.plain === 'phan')) {
       end = i;
       break;
     }
@@ -29,13 +55,18 @@ export function saidNameWords(said: string): string[] {
   return rest.slice(0, end);
 }
 
-// Whether the said words are this person: the whole name, a run of two or more of its words, or the given name (the last word) alone. A family name alone or a middle word alone is not enough.
-function answersTo(said: readonly string[], name: string): boolean {
-  const words = plainName(name).split(' ').filter((w) => w !== '');
-  if (said.length === 0 || words.length === 0) return false;
-  if (said.length === 1) return said[0] === words[words.length - 1];
-  for (let i = 0; i + said.length <= words.length; i += 1) if (said.every((w, j) => w === words[i + j])) return true;
-  return false;
+// The name a display name holds: what comes before a bracket, a dash or a comma ("Nguyễn Văn Nam - Kế toán" is Nam, not Toán), in the same words as a said text.
+function personWords(name: string): Word[] {
+  return wordsOf(name.split(/[([|,]| [-\u2013\u2014] /)[0] as string);
+}
+
+// Whether the said words are this person: the whole name, a run of two or more words that ends with the given name (the last word), or the given name alone. A family name alone, a middle word alone and
+// a run that leaves out the given name ("Trần Văn") are not enough.
+function answersTo(said: readonly Word[], name: string): boolean {
+  const words = personWords(name);
+  if (said.length === 0 || words.length < said.length) return false;
+  const tail = words.slice(words.length - said.length);
+  return said.every((w, i) => same(w, tail[i] as Word));
 }
 
 export interface Person {
@@ -51,7 +82,7 @@ export interface Suggested extends Person {
  * in the room never becomes a guess about someone outside it). With no attendee hit the other members of the org are tried the same way. Nobody when the text holds no name or the answer is not one person.
  */
 export function suggestAssignee(said: string, attendees: readonly Person[], members: readonly Person[]): Suggested | null {
-  const words = saidNameWords(said);
+  const words = nameWords(said);
   if (words.length === 0) return null;
   const inRoom = attendees.filter((p) => answersTo(words, p.name));
   if (inRoom.length > 1) return null;

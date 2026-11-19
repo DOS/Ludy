@@ -124,6 +124,14 @@ describe('MeetingResults', () => {
     expect(member.replace(/<[^>]*>/g, ' ')).not.toContain('u9');
     expect(open(lan)).toContain(en.meetings.results.suggestedNoSeat);
     expect(open(several)).toContain(en.meetings.results.suggestedSeveralSeats);
+    // A seat is preselected only when the suggested person holds exactly one; with none or several a person picks it.
+    client.current.setQueryData(['chart', 'get'], { root: [], agents: [], killSwitches: [], positions: ['p9', 'p1', 'p2'].map((id) => ({ id, title: id, status: 'active' })) });
+    expect(open(quan)).toContain('<option value="p9" selected="">');
+    expect(open(lan)).toContain('<option value="" selected="">');
+    expect(open(lan)).not.toContain('<option value="p9" selected="">');
+    const picked = open(several);
+    expect(picked).toContain('<option value="" selected="">');
+    expect(picked).not.toMatch(/<option value="p\d" selected/);
     expect(open(null)).not.toContain('data-testid="assignee-suggestion"');
     // An item that already names an attendee shows no suggestion, even if one came along.
     expect(open(quan, { whoUserId: 'u1' })).not.toContain('data-testid="assignee-suggestion"');

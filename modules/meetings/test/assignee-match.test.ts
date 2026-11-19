@@ -13,28 +13,35 @@ const quan = p('quan', 'Nguyễn Minh Quân');
 const ID = (s: ReturnType<typeof suggestAssignee>) => (s === null ? null : `${s.source}:${s.userId}`);
 
 describe('saidNameWords', () => {
-  it('folds the case and the marks and drops honorifics before the name', () => {
+  it('lowers the case and drops honorifics before the name, keeping the marks the speaker wrote', () => {
     expect(saidNameWords('Anh Minh')).toEqual(['minh']);
     expect(saidNameWords('chị Lan')).toEqual(['lan']);
-    expect(saidNameWords('bác Hùng')).toEqual(['hung']);
-    expect(saidNameWords('ông Nguyễn Văn Nam')).toEqual(['nguyen', 'van', 'nam']);
-    expect(saidNameWords('anh/chị Hà')).toEqual(['ha']);
-    expect(saidNameWords('  em   Đạt ')).toEqual(['dat']);
+    expect(saidNameWords('bác Hùng')).toEqual(['hùng']);
+    expect(saidNameWords('chi Lan')).toEqual(['lan']);
+    expect(saidNameWords('ông Nguyễn Văn Nam')).toEqual(['nguyễn', 'văn', 'nam']);
+    expect(saidNameWords('anh/chị Hà')).toEqual(['hà']);
+    expect(saidNameWords('  em   Đạt ')).toEqual(['đạt']);
   });
   it('drops the description after the name, but keeps a name that is also a word of one', () => {
     expect(saidNameWords('chị Lan bên kế toán')).toEqual(['lan']);
     expect(saidNameWords('anh Nam của team bán hàng')).toEqual(['nam']);
-    expect(saidNameWords('Hoàng bộ phận kho')).toEqual(['hoang']);
+    expect(saidNameWords('Hoàng bộ phận kho')).toEqual(['hoàng']);
     // Phong, Tú and Trọng are given names, so they are never cut.
-    expect(saidNameWords('anh Văn Phong')).toEqual(['van', 'phong']);
-    expect(saidNameWords('anh Tú')).toEqual(['tu']);
-    expect(saidNameWords('chị Trọng Hà')).toEqual(['trong', 'ha']);
+    expect(saidNameWords('anh Văn Phong')).toEqual(['văn', 'phong']);
+    expect(saidNameWords('anh Tú')).toEqual(['tú']);
+    expect(saidNameWords('chị Trọng Hà')).toEqual(['trọng', 'hà']);
   });
-  it('keeps a lone word that is an honorific and also a given name', () => {
-    expect(saidNameWords('Chi')).toEqual(['chi']);
+  it('does not take a word written with marks for an honorific it only looks like when folded', () => {
+    // Dương (a family name), Chí and Bá are names; "dượng", "chị" and "bà" are the honorifics.
+    expect(saidNameWords('Dương Văn Hùng')).toEqual(['dương', 'văn', 'hùng']);
+    expect(saidNameWords('anh Chí Thanh')).toEqual(['chí', 'thanh']);
+    expect(saidNameWords('Bá Hùng')).toEqual(['bá', 'hùng']);
+    expect(saidNameWords('dượng Hùng')).toEqual(['hùng']);
+  });
+  it('is empty for a bare pronoun, which names no one, but keeps a name that follows one', () => {
+    for (const said of ['anh', 'chị', 'Chi', 'em', 'Em', 'bạn', 'anh/chị']) expect(saidNameWords(said), said).toEqual([]);
     expect(saidNameWords('chị Chi')).toEqual(['chi']);
     expect(saidNameWords('anh Ba')).toEqual(['ba']);
-    expect(saidNameWords('Em')).toEqual(['em']);
   });
   it('is empty when there is no name, and ignores punctuation', () => {
     expect(saidNameWords('')).toEqual([]);
@@ -53,10 +60,50 @@ describe('suggestAssignee', () => {
     for (const said of ['chị Lan', 'chi lan', 'Lan', 'chị Lan bên kế toán', 'thị Lan']) expect(ID(suggestAssignee(said, room, org)), said).toBe('attendee:lan');
   });
 
-  it('does not take a family name or a middle word alone for a person', () => {
+  it('does not take a family name, a middle word, or a run that leaves out the given name for a person', () => {
     expect(suggestAssignee('Trần', room, org)).toBeNull();
     expect(suggestAssignee('anh Văn', room, org)).toBeNull();
     expect(suggestAssignee('Thị', room, org)).toBeNull();
+    expect(suggestAssignee('Trần Văn', room, org)).toBeNull();
+    expect(suggestAssignee('Lê Thị', room, org)).toBeNull();
+    expect(suggestAssignee('Nguyễn Minh', [], org)).toBeNull();
+  });
+
+  it('never takes a bare pronoun for a given name: "chị" is not Chi and "anh" is not Anh', () => {
+    const anh = p('anh', 'Nguyễn Tuấn Anh');
+    expect(suggestAssignee('chị', [lan], [chi])).toBeNull();
+    expect(suggestAssignee('Chi', [lan], [chi])).toBeNull();
+    expect(suggestAssignee('anh', [anh, lan], [])).toBeNull();
+    expect(ID(suggestAssignee('chị Chi', [lan], [chi]))).toBe('member:chi');
+    expect(ID(suggestAssignee('anh Anh', [anh, lan], []))).toBe('attendee:anh');
+  });
+
+  it('keeps a family name or a given name that looks like an honorific once its marks are dropped', () => {
+    const duong = p('duong', 'Dương Văn Hùng');
+    const tran = p('tran', 'Trần Văn Hùng');
+    const chiThanh = p('ct', 'Nguyễn Chí Thanh');
+    const leThanh = p('lt', 'Lê Văn Thanh');
+    // "Dương Văn Hùng" names Dương, not the attendee Trần Văn Hùng, who matches only by "Văn Hùng".
+    expect(ID(suggestAssignee('Dương Văn Hùng', [tran], [duong]))).toBe('member:duong');
+    expect(ID(suggestAssignee('anh Chí Thanh', [leThanh], [chiThanh]))).toBe('member:ct');
+  });
+
+  it('compares with the marks the speaker wrote, and folds only when they wrote none', () => {
+    const thu = p('thu', 'Nguyễn Thị Thu');
+    const thuMarked = p('thuM', 'Lê Anh Thư');
+    expect(ID(suggestAssignee('chị Thư', [thu], [thuMarked]))).toBe('member:thuM');
+    expect(suggestAssignee('chị Thư', [thu], [])).toBeNull();
+    // No marks: both Thu and Thư answer, so it is ambiguous when both are in the room.
+    expect(suggestAssignee('chị Thu', [thu, thuMarked], [])).toBeNull();
+    expect(ID(suggestAssignee('chi thu', [thu], []))).toBe('attendee:thu');
+    expect(ID(suggestAssignee('Ha', [p('ha', 'Trần Thu Hà')], []))).toBe('attendee:ha');
+  });
+
+  it('reads a display name by what comes before a bracket, a dash or a comma', () => {
+    expect(suggestAssignee('anh Toán', [p('n', 'Nguyễn Văn Nam - Kế toán')], [])).toBeNull();
+    expect(ID(suggestAssignee('anh Nam', [p('n', 'Nguyễn Văn Nam - Kế toán')], []))).toBe('attendee:n');
+    expect(ID(suggestAssignee('chị Lan', [p('l', 'Lê Thị Lan (KT)')], []))).toBe('attendee:l');
+    expect(ID(suggestAssignee('chị Lan', [p('l', 'Lê Thị Lan, Kế toán')], []))).toBe('attendee:l');
   });
 
   it('falls back to the one other member of the org when no attendee answers', () => {
