@@ -22,6 +22,7 @@ import { MISA_INVOICE_NUMBER_LIMIT, checkMisaRows } from '../src/misa-check.ts';
 import { MISA_CHECK_EXAMPLES, accountParents } from '@crove/kernel-contract';
 
 const ENTRY_ID = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5c';
+const SOURCE_ID = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5d';
 const CHART = new Set(['111', '1111', '112', '131', '331', '3331', '1331', '1332', '511', '6422', '152', '156']);
 
 const line = (lineNo: number, amount: string, vatRate: string | null, debitAccount = '6422'): PurchaseVoucher['lines'][number] => ({
@@ -37,6 +38,7 @@ const line = (lineNo: number, amount: string, vatRate: string | null, debitAccou
 
 function purchase(overrides: Partial<PurchaseVoucher> = {}): PurchaseVoucher {
   return {
+    sourceId: SOURCE_ID,
     entryId: ENTRY_ID,
     entryDate: '2026-09-30',
     description: 'Mua dịch vụ',
@@ -50,6 +52,7 @@ function purchase(overrides: Partial<PurchaseVoucher> = {}): PurchaseVoucher {
 
 function sale(overrides: Partial<SalesVoucher> = {}): SalesVoucher {
   return {
+    sourceId: SOURCE_ID,
     entryId: ENTRY_ID,
     entryDate: '2026-10-05',
     description: 'Bán hàng',
@@ -65,6 +68,7 @@ function sale(overrides: Partial<SalesVoucher> = {}): SalesVoucher {
 
 function cash(overrides: Partial<CashVoucher> = {}): CashVoucher {
   return {
+    sourceId: SOURCE_ID,
     type: 'cash_payment',
     code: 'PC00012',
     numberPeriod: '2026',
