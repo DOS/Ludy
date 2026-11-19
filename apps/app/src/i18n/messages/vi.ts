@@ -14702,6 +14702,12 @@ export const vi = {
         test_target: 'Lấy thông tin kết nối MISA AMIS để kiểm tra',
         unlink: 'Ngắt kết nối MISA AMIS',
       },
+      misa_amis_match: {
+        check_target: 'Lấy thông tin để kiểm tra chứng từ với danh mục MISA',
+        record_check: 'Ghi kết quả kiểm tra chứng từ với danh mục MISA',
+        request_check: 'Yêu cầu kiểm tra chứng từ với danh mục MISA',
+        results: 'Xem kết quả kiểm tra chứng từ với danh mục MISA',
+      },
       misa_amis: {
         push: 'Gửi chứng từ sang MISA AMIS',
         push_begin: 'Bắt đầu một lượt gửi chứng từ sang MISA AMIS',

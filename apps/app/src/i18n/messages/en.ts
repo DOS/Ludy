@@ -14703,6 +14703,12 @@ export const en = {
         test_target: 'Read a MISA AMIS connection to test it',
         unlink: 'Disconnect MISA AMIS',
       },
+      misa_amis_match: {
+        check_target: 'Getting what a check of vouchers against the MISA catalogue needs',
+        record_check: 'Recording the result of a check of vouchers against the MISA catalogue',
+        request_check: 'Asking for a check of vouchers against the MISA catalogue',
+        results: 'Viewing the result of a check of vouchers against the MISA catalogue',
+      },
       misa_amis: {
         push: 'Send vouchers to MISA AMIS',
         push_begin: 'Begin a run of sending vouchers to MISA AMIS',
