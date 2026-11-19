@@ -104,6 +104,17 @@ function landed(work: Work, read: ManagedRead): boolean {
   return false;
 }
 
+// What a read of the object says of an unclear change (#3898): `found` when it shows the change, `missing` ONLY when it positively shows what the object had before (the old budget,
+// the old end time, or a known status other than the one asked for), anything else `unknown`. A read that shows a third value (the owner set one in the platform's own tools, a budget
+// the platform no longer reports, a time zone that moved) says nothing of this change, and failing it would release what it holds: the change stays unclear and counted.
+function settled(work: Work, read: ManagedRead): 'found' | 'missing' | 'unknown' {
+  if (landed(work, read)) return 'found';
+  if (work.toStatus !== null) return read.status !== 'other' ? 'missing' : 'unknown';
+  if (work.toBudget !== null) return read.dailyBudget !== null && work.fromBudget !== null && sameAmount(read.dailyBudget, work.fromBudget) ? 'missing' : 'unknown';
+  if (work.toEndTime !== null) return read.endTime !== null && work.fromEndTime !== null && sameInstant(read.endTime, work.fromEndTime) ? 'missing' : 'unknown';
+  return 'unknown';
+}
+
 // The one call of the change, by what the change is.
 async function make(manager: AdManager, secret: string, work: Work): Promise<void> {
   const target = { level: work.level, id: work.objectId };
@@ -143,8 +154,10 @@ async function runChange(deps: AdsManageDeps, job: AdsManageJob, manager: AdMana
     let result: ManageResult;
     try {
       const read = await timed(() => manager.read(secret, target, work.account));
-      // Landed: recorded, never asked again. Not landed: the call may be made again (begin re-checked everything and the record checks the stop conditions once more).
-      result = landed(work, read) ? { kind: 'found' } : { kind: 'missing' };
+      // Landed: recorded, never asked again. Not landed: the call may be made again (begin re-checked everything and the record checks the stop conditions once more). A settle's
+      // read that shows neither the new nor the old value is no answer.
+      const answer = work.action === 'settle' ? settled(work, read) : landed(work, read) ? 'found' : 'missing';
+      result = answer === 'found' ? { kind: 'found' } : answer === 'missing' ? { kind: 'missing' } : { kind: 'unknowable', code: 'READ_UNEXPECTED' };
     } catch (error) {
       result = { kind: 'unknowable', code: codeOf(error) };
     }

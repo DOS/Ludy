@@ -3642,6 +3642,29 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(await lower(owner, launch.id, '70000')).toMatchObject({ status: 200 });
             });
 
+            it('does not fail an unclear change on a read that shows neither its value nor the old one: a third value, or no budget at all, leaves it unclear and counted (#3898)', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await live('Đọc ra giá trị thứ ba', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              const { rig, raise } = await unclearRaise(w, launch.id, '150000', false);
+              const object = w.objects.get(adSet) as NonNullable<ReturnType<typeof w.objects.get>>;
+              // The owner set another budget in the platform's own tools: the read says nothing of the raise.
+              for (const shown of ['180000', undefined]) {
+                if (shown === undefined) delete object.dailyBudget;
+                else object.dailyBudget = shown;
+                await ageCall(raise.id, 700);
+                expect(await settleRun(rig, raise.id), String(shown)).toEqual({ steps: 1, ended: 'unknowable' });
+                expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'unclear' }]);
+                expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+                expect(await commit(account)).toMatchObject({ daily_budget: '150000' });
+              }
+              // The object shows the old budget again: that is the answer, and the raise did not land.
+              object.dailyBudget = '100000';
+              await ageCall(raise.id, 700);
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 1, ended: 'not_applied' });
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+            });
+
             it('settles an unclear pause the same way, reads nothing for a change that is not unclear, and never from a worker with no manager or no credential key (#3898)', async () => {
               const w = new SandboxAdWriter();
               const rig = rigOf(w);

@@ -559,6 +559,9 @@ export type ManageBegin =
       toStatus: 'active' | 'paused' | 'archived' | null;
       toBudget: string | null;
       toEndTime: string | null;
+      // What the object had before the change (budget, end time), for a settle's read: "it did not land" needs the old value shown, not just "not the new one" (#3898).
+      fromBudget: string | null;
+      fromEndTime: string | null;
     };
 
 const none = (reason: string): ManageBegin => ({ action: 'none', reason });
@@ -620,6 +623,8 @@ function workOf(
     toStatus: kindStatus,
     toBudget: change.toBudget,
     toEndTime: change.toEndOn && zone ? zonedMidnight(dayAfter(change.toEndOn), zone) : null,
+    fromBudget: change.fromBudget,
+    fromEndTime: change.fromEndOn && zone ? zonedMidnight(dayAfter(change.fromEndOn), zone) : null,
   };
 }
 
