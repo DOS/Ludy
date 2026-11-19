@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The facts the Meetings screens use about recordings a meeting platform finished (meetings integrations C1, #3173): what a row offers, why it cannot be imported, how often to look again
 // and which words a failure code gets. Pure functions, so the screens and their tests share one reading of a row.
-import { MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_TRANSCRIPT_PROVIDERS, MEETING_PLATFORM_VIDEO_MAX_BYTES, type MeetingPlatformErrorCode, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
+import { MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_TRANSCRIPT_PROVIDERS, MEETING_PLATFORM_VIDEO_MAX_BYTES, TRANSCRIPT_SEGMENTS_MAX, type MeetingPlatformErrorCode, type MeetingPlatformRecordingView, type TranscriptionMaker } from '@crove/kernel-contract';
 
 // The guide for the Microsoft 365 administrator of a Teams connection (the two steps in their own admin pages): the runbook of the repository, which is public.
 export const MEETINGS_TEAMS_GUIDE = 'https://github.com/DOS/Ludy/blob/main/docs/runbooks/meetings-teams.md';
@@ -78,4 +78,13 @@ export function rowsToClaim(rows: readonly MeetingPlatformRecordingView[] | unde
 export function isBenignClaimRefusal(error: unknown): boolean {
   const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
   return code === 'MEETING_PLATFORM_STATE' || code === 'MEETING_PLATFORM_NOT_FOUND';
+}
+
+// Whose transcription a meeting's lines are, when they came from a meeting platform (C2, #3174; C4, #3176): the platform that wrote them, and whether the transcript may have been cut. A draft holds at most
+// TRANSCRIPT_SEGMENTS_MAX lines and the import reads no more, so a platform transcript of exactly that many lines is cut or just at the limit; the screen says so in words that hold either way (#3922).
+// Null for Ludy's own transcription.
+export function platformTranscript(segments: ReadonlyArray<{ source: TranscriptionMaker }>): { platform: Exclude<TranscriptionMaker, 'ludy'>; cut: boolean } | null {
+  const platform = segments.find((s) => s.source !== 'ludy')?.source;
+  if (platform === undefined || platform === 'ludy') return null;
+  return { platform, cut: segments.length >= TRANSCRIPT_SEGMENTS_MAX };
 }

@@ -3157,6 +3157,10 @@ export const en = {
       draftTitle: 'Draft transcript',
       draftNote: 'Only you see this draft. Check it and correct a line where the speech was misheard; nothing is shared with the other attendees from here.',
       publishedNote: 'The transcript the recorder shared with the meeting.',
+      platformSource: 'The {platform} transcript: written by the platform, not by Ludy.',
+      // The platform said it cut the transcript, or sent more lines than a draft holds (#3922); the next line is the guess for a transcript imported before that was kept.
+      platformCutKnown: 'The {platform} transcript was longer than Ludy can import, so only the first part is here.',
+      platformCut: 'The {platform} transcript has exactly {max, number} lines, the most Ludy imports. If the meeting ran longer, the rest is not here.',
       emptyRecorder: 'No transcript yet. The recording and its playback work without one.',
       vy: {
         title: 'Vy transcribes this meeting',
@@ -3753,8 +3757,6 @@ export const en = {
       noMedia: 'This meeting has no audio or video yet.',
       notFound: 'Meeting not found.',
       stoppedAt: 'Recording stopped at {time}',
-      // The platform's transcript was longer than Ludy imports (#3922).
-      transcriptCut: 'The meeting platform\'s transcript is longer than Ludy can import, so this draft only has the first part.',
       consentMethodLabel: 'Method',
       consentNoticeVersion: 'Notice version',
       consentConfirmedAt: 'Confirmed at',

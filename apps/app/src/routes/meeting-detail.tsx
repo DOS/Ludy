@@ -25,7 +25,6 @@ import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { RecordingStoppedNote } from '../components/recording-stopped.tsx';
-import { TranscriptCutNote } from '../components/transcript-cut-note.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, errorMessage, fetchVideoTicket, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
@@ -286,8 +285,6 @@ export function MeetingDetailPage() {
       />
       {/* A recording that ended without the recorder's click leaves a visible line (A1, #3159): when it stopped and why, in plain words. */}
       <RecordingStoppedNote meeting={meeting} />
-      {/* A platform's transcript that was cut when it was imported (#3922): the draft stops early, said once and for as long as the draft is that transcript */}
-      <TranscriptCutNote meeting={meeting} />
       {/* The recorder's own Vy offers up to three titles on a click (#3947); a pick renames the meeting, nothing changes before it */}
       <MeetingTitleSuggest key={id} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} />
 
@@ -361,7 +358,7 @@ export function MeetingDetailPage() {
       <MeetingChapters key={id} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* What each speaker said they would do or decided (#3954): the recorder's own Vy on a click, each line opens the transcript where it was said, nothing is saved */}
       <MeetingCommitments key={id} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
-      <MeetingTranscript key={id} meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} />
+      <MeetingTranscript key={id} meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} platformCut={meeting.platformTranscriptCut} />
       {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}
       <MeetingAdherence key={id} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}

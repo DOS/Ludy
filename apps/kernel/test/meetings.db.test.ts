@@ -2025,6 +2025,35 @@ suite('meetings module database integration tests (#2576)', () => {
     }
   });
 
+  it('34f. C2 follow-up (#3923): each import route refuses a row of the other kind before the claim moves it, so the row stays staged with its bytes for the right request', async () => {
+    const postTranscript = async (meetingId: string, importId: string) => {
+      const response = await app.request(`/api/meetings/${meetingId}/transcript-import`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-crove-org': slug },
+        body: JSON.stringify({ importId }),
+      });
+      return response.status;
+    };
+    // An audio recording posted to the transcript route: refused, still staged, bytes kept.
+    const audioId = await suggest('recorder');
+    const audio = await startImport('recorder', { recordingId: audioId, language: 'vi', visibility: 'attendees' });
+    const audioKey = await stage(audioId);
+    expect(await postTranscript(audio.meetingId, audioId)).toBe(400);
+    expect((await recordingRow(audioId)).status).toBe('staged');
+    expect(store.staged.has(audioKey)).toBe(true);
+    // A transcript-only recording posted to the media route: refused, still staged, bytes kept.
+    const textId = await suggest('recorder', { hasAudio: false, hasTranscript: true });
+    const text = await startImport('recorder', { recordingId: textId, language: 'vi', visibility: 'attendees' });
+    const textKey = await stage(textId, Buffer.from(JSON.stringify({ segments: [{ startSeconds: 0, endSeconds: 2, speakerLabel: 'Lan', text: 'Xin chào.' }] })));
+    expect((await claimImport('recorder', text.meetingId, { importId: textId, kind: 'audio' })).status).toBe(400);
+    expect((await recordingRow(textId)).status).toBe('staged');
+    expect(store.staged.has(textKey)).toBe(true);
+    // The right routes still take them.
+    expect(await postTranscript(text.meetingId, textId)).toBe(200);
+    expect((await recordingRow(textId)).status).toBe('imported');
+    expect((await claimImport('recorder', audio.meetingId, { importId: audioId, kind: 'audio' })).status).toBe(200);
+  });
+
   it('35. #3337: a video uploaded with extract=audio keeps only the extracted Opus, whatever the shape of the upload', async () => {
     const mp4 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypmp42'), Buffer.from('video frames '.repeat(300))]);
     const opus = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('extracted opus '.repeat(20))]);
