@@ -50,7 +50,7 @@ export async function replaceDraft(
   ctx: { trx: QueryContext['trx']; orgId: string },
   meetingId: string,
   segments: readonly TranscriptSegmentInput[],
-  fromRun?: { tainted: true; sourceRunId?: string; source?: TranscriptionMaker },
+  fromRun?: { tainted: true; sourceRunId?: string; source?: TranscriptionMaker; platformCut?: boolean },
 ): Promise<void> {
   for (const segment of segments) {
     if (segment.endSeconds < segment.startSeconds) throw new DomainError('INVALID', 422, 'A transcript segment ends before it starts');
@@ -77,6 +77,10 @@ export async function replaceDraft(
     }));
     await ctx.trx.insertInto('crove_meetings.transcript_segment').values(rows).execute();
   }
+  // The note that a platform's transcript was cut (#3922) belongs to the lines just stored: set with a cut platform transcript, cleared by every other replacement (the recorder's own transcription, a
+  // draft cleared), so it never outlives the partial draft. Only written when it changes.
+  const cut = fromRun?.platformCut === true;
+  await ctx.trx.updateTable('crove_meetings.meeting').set({ platform_transcript_cut: cut }).where('org_id', '=', ctx.orgId).where('id', '=', meetingId).where('platform_transcript_cut', '<>', cut).execute();
 }
 
 export const transcriptDraftStore = defineCommand({
