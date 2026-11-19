@@ -69,3 +69,46 @@ export function matchItems(wanted: Iterable<string>, catalogue: readonly Catalog
   return [...new Set(wanted)].sort().map((code) => result('item', code, byCode.get(code) ?? []));
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Sent only fresh (#4124, S3b of #4103; the Accounting PO's M2 on #4128). A stored match is a view of the catalogue at the time of a check: before a person confirms a push the check must be this young, and
+// before the worker sends it reads the entries it relies on once more and refuses what changed in MISA since.
+
+/** How old the last check of a connection may be when a person confirms a push (15 minutes). */
+export const MISA_AMIS_CHECK_MAX_AGE_MS = 15 * 60 * 1000;
+
+/** Whether a check finished at `checkedAt` (an ISO time, null when none ever finished) is young enough for a confirmation made at `now`. A time in the future is not fresh. */
+export function checkIsFresh(checkedAt: string | null, now: Date): boolean {
+  if (checkedAt === null) return false;
+  const age = now.getTime() - Date.parse(checkedAt);
+  return Number.isFinite(age) && age >= 0 && age <= MISA_AMIS_CHECK_MAX_AGE_MS;
+}
+
+/** What a send relies on, and the catalogue entries it relies on, as the worker holds them. */
+export interface StoredMatches {
+  /** Tax code to the matched party's code, as stored by the last check; null when no check has been made. */
+  partyCodes: ReadonlyMap<string, string> | null;
+  /** The item codes that matched; null when no check has been made. */
+  itemCodes: ReadonlySet<string> | null;
+}
+
+/** The stored matches a send relies on, to be re-read: the tax codes and item codes of the batch that a check matched. A reference that did not match is a blocker and is never sent, so it is not looked at. */
+export function relied(stored: StoredMatches, wanted: { taxCodes: readonly string[]; itemCodes: readonly string[] }): { taxCodes: string[]; itemCodes: string[] } {
+  return {
+    taxCodes: wanted.taxCodes.filter((taxCode) => stored.partyCodes?.has(taxCode) === true),
+    itemCodes: wanted.itemCodes.filter((code) => stored.itemCodes?.has(code) === true),
+  };
+}
+
+/** True when a catalogue read now disagrees with a stored match the send relies on: the entry is gone, inactive, several now carry the tax code, or the matched code is not the one stored. */
+export function staleMatches(stored: StoredMatches, fresh: readonly MisaAmisMatchResult[]): boolean {
+  const now = new Map(fresh.map((r) => [`${r.kind}:${r.ref}`, r]));
+  for (const [taxCode, code] of stored.partyCodes ?? []) {
+    const found = now.get(`party:${taxCode}`);
+    if (found !== undefined && !(found.state === 'matched' && found.code === code)) return true;
+  }
+  for (const code of stored.itemCodes ?? []) {
+    const found = now.get(`item:${code}`);
+    if (found !== undefined && found.state !== 'matched') return true;
+  }
+  return false;
+}

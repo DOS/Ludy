@@ -24,6 +24,16 @@ export function previewSendable(result: Pick<MisaAmisPreview, 'vouchers' | 'bloc
   return result.vouchers > 0 && result.blocked === 0 && !result.more;
 }
 
+/** How young the last check against the MISA catalogue must be for the server to take a confirmation (15 minutes, as modules/finance MISA_AMIS_CHECK_MAX_AGE_MS: the server decides, this only tells the person first). */
+export const PUSH_CHECK_MAX_AGE_MS = 15 * 60 * 1000;
+
+/** Whether a check that finished at `checkedAt` (null when none did) is young enough at `now`. */
+export function checkIsYoung(checkedAt: string | null, now: number): boolean {
+  if (checkedAt === null) return false;
+  const age = now - Date.parse(checkedAt);
+  return Number.isFinite(age) && age >= 0 && age <= PUSH_CHECK_MAX_AGE_MS;
+}
+
 /** What a person may say about a row MISA never answered for: a `sent` row after 24 hours, an `ambiguous` one after 3 days. Anything else has no decision to make. */
 export function canSettle(row: Pick<MisaAmisPushRow, 'state' | 'changedAt'>, now: number): boolean {
   const age = now - Date.parse(row.changedAt);
