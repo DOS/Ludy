@@ -3049,6 +3049,23 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect((await runAdsPause({ runtime: worker, broker: vault, pausers: adPausers({ sandbox: w }) }, { orgId, launchId: launch.id })).ended).not.toBe('manage_in_flight');
             });
 
+            it('does not make the pause of a stopped launch wait for an unclear change whose reads keep failing: no call is pending for it, and the sweep\'s reads only touch its clock (#3898)', async () => {
+              const w = new SandboxAdWriter();
+              const { launch } = await live('Dừng khi có thay đổi chưa rõ', w);
+              const { rig, raise } = await unclearRaise(w, launch.id, '150000', false);
+              expect((await stopLaunchAs(owner, launch.id)).status).toBe(200);
+              // The sweep's read of the unclear raise cannot be answered: it stays unclear and the ledger row's clock is touched (a read of the object, no call).
+              await ageCall(raise.id, 700);
+              w.inject({ level: 'ad_set', when: 'read' });
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 1, ended: 'unknowable' });
+              expect(await callOf(raise.id)).toMatchObject({ state: 'ambiguous' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'unclear' }]);
+              // The pause goes on at once, whatever the clock says: it is not held back as a call in flight.
+              const pausing = await runAdsPause({ runtime: worker, broker: vault, pausers: adPausers({ sandbox: w }) }, { orgId, launchId: launch.id });
+              expect(pausing.ended).not.toBe('manage_in_flight');
+              expect(pausing.ended).not.toBe('activation_in_flight');
+            });
+
             // Writing and launches back to what the tests below expect: on, not blocked.
             afterEach(async () => {
               await open();
