@@ -918,10 +918,18 @@ suite('the changes of a running ad (#3835, W4)', () => {
         await expect(runtime.execute(name, input, { actor, orgId: r.org.orgId }), name).rejects.toMatchObject({ status: 403 });
       }
     }
-    // A raise, a resume and an extension run only inside an approval: never called directly, by an owner or the system.
-    for (const name of ['ads.object.resume', 'ads.budget.raise', 'ads.schedule.extend']) {
+    // A raise, a resume and an extension run only inside an approval: never called directly, by an owner or the system. The payloads are VALID ones for this very launch (they would
+    // pass the approval path), so the refusal can only be the missing approval, not a payload the command could not read.
+    const base = { launchId: r.launch, adAccountId: r.account, adAccountName: 'Thử', campaignName: 'Thử', currency: 'VND', startOn: r.start, previousAmount: String(100000 * 14) };
+    for (const [name, payload] of [
+      ['ads.object.resume', { ...base, slot: 'ad_1', objectName: 'Thử ad', dailyBudget: '100000', endOn: r.end, amount: String(100000 * 14) }],
+      ['ads.budget.raise', { ...base, slot: 'ad_set', fromBudget: '100000', toBudget: '150000', endOn: r.end, amount: String(150000 * 14) }],
+      ['ads.schedule.extend', { ...base, slot: 'ad_set', dailyBudget: '100000', fromEndOn: r.end, toEndOn: D(20), amount: String(100000 * 24) }],
+    ] as const) {
       for (const actor of [{ type: 'user' as const, userId: r.org.owner, aal: 'aal1' as const }, { type: 'system' as const, component: 'test' }]) {
-        await expect(runtime.execute(name, { payload: {} }, { actor, orgId: r.org.orgId }), name).rejects.toBeTruthy();
+        const refusal = await runtime.execute(name, { payload }, { actor, orgId: r.org.orgId }).then(() => null, (e: unknown) => e as { code?: string; status?: number });
+        // The runtime refuses a proposal-only command called outside the approval path (access 'proposal'), before the handler reads the payload.
+        expect(refusal, `${name} as ${actor.type}`).toMatchObject({ code: 'FORBIDDEN', status: 403 });
       }
     }
     expect((await rows<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_manage_change WHERE org_id = $1`, [r.org.orgId]))[0]?.n).toBe('0');

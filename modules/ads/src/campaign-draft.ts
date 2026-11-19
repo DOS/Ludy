@@ -25,7 +25,7 @@ import {
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { canonicalJson, completePlan, flightDays, maxSpendOf, planHash, validatePlan, type PlanContext } from './campaign-plan.ts';
 import { todayIn } from './domain.ts';
-import { manageStateOf } from './manage-state.ts';
+import { manageStatesOf } from './manage-state.ts';
 import { cancelQueuedLaunches, launchesOfDrafts, lockedLaunch, queueLaunch, refuseOverCaps } from './launch-ledger.ts';
 import { currentSetting, lockedSetting, onlyApproved, refuseOpenRequest } from './write.ts';
 
@@ -530,9 +530,14 @@ export const adsCampaignDraft = defineQuery({
 
 // The management state of the launches that are live (W4, #3835), added to their view: members read it, the screen shows the controls to owners and admins.
 async function withManage(ctx: QueryContext, launches: Iterable<AdsLaunchView>): Promise<void> {
-  for (const launch of launches) {
-    if (launch.state !== 'live') continue;
-    launch.manage = await manageStateOf(ctx, { id: launch.id, ad_account_id: launch.adAccountId, state: launch.state, currency: launch.currency, daily_budget: launch.dailyBudget, end_text: launch.endOn });
+  const live = [...launches].filter((l) => l.state === 'live');
+  const states = await manageStatesOf(
+    ctx,
+    live.map((l) => ({ id: l.id, ad_account_id: l.adAccountId, state: l.state, currency: l.currency, daily_budget: l.dailyBudget, end_text: l.endOn })),
+  );
+  for (const launch of live) {
+    const state = states.get(launch.id);
+    if (state) launch.manage = state;
   }
 }
 

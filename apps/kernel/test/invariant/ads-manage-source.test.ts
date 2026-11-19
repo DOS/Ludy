@@ -91,6 +91,23 @@ describe('what may change a running ad at the platform (#3835, W4)', () => {
     expect(job).toMatch(/import \{ AdPlatformError, type AdManager, type ManagedRead \} from '@crove\/ad-platform';/);
   });
 
+  it('bounds the time between begin and the platform call, inside the wait of the wind-down: a begin that waited too long is never called', () => {
+    const job = code('apps/kernel/src/ads-manage.ts');
+    const bound = /export const BEGIN_TO_CALL_MS = (\d[\d_]*);/.exec(job);
+    const callTimeout = /const CALL_TIMEOUT_MS = (\d[\d_]*);/.exec(job);
+    expect(bound).not.toBeNull();
+    // The longest a call can be sent after its begin (the bound plus the call's own timeout) is inside the wind-down's wait for a begun manage call.
+    const pause = code('modules/ads/src/launch-pause.ts');
+    const wait = Number(/const ACTIVATION_IN_FLIGHT_SECONDS = (\d+);/.exec(pause)?.[1]);
+    expect((Number(String(bound?.[1]).replaceAll('_', '')) + Number(String(callTimeout?.[1]).replaceAll('_', ''))) / 1000).toBeLessThan(wait);
+    expect(pause).toMatch(/ads\.manage:' \|\| c\.id::text \|\| ':apply'/);
+    // The check is before the call, after the token is opened, on the call path and after the read on the reconcile path.
+    expect(job).toMatch(/if \(work\.action === 'call' && stale\(\)\) return ended\(await record\('call', \{ kind: 'blocked', code: 'STALE_BEGIN' \}\)/);
+    expect(job.indexOf("stale()) return ended(await record('call'")).toBeLessThan(job.indexOf('await timed(() => make('));
+    expect(job.indexOf('broker.open(')).toBeLessThan(job.indexOf("stale()) return ended(await record('call'"));
+    expect(job).toMatch(/if \(stale\(\)\) return 'stale_begin';/);
+  });
+
   it('calls the platform only after the begin command that re-checked everything, for the object that command named, and opens the token once', () => {
     const job = code('apps/kernel/src/ads-manage.ts');
     // Each of the view's calls has one call site, in this file, and no other file of the apps or the modules makes them.

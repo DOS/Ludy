@@ -639,6 +639,9 @@ export const adsManageBegin = defineCommand({
     const running = lockedLaunchRow.state === 'live' || (change.kind === 'pause' && lockedLaunchRow.state === 'needs_attention');
     if (!running && !begun) return settle('cancelled', `launch_${lockedLaunchRow.state}`);
     if (!object) return begun ? none('object_missing') : settle('cancelled', 'object_missing');
+    // A lower budget or a shorter schedule (no approval) behind an unclear raise or extension of its family could really be a raise (the platform may already run the higher value):
+    // the request refuses it, and begin refuses it again for one that was queued before the other became unclear. Never called.
+    if (!begun && (change.kind === 'budget_lower' ? unclearOpen(changes, BUDGET_KINDS) : change.kind === 'schedule_shorten' ? unclearOpen(changes, SCHEDULE_KINDS) : false)) return settle('cancelled', 'unclear_family');
     // The stop conditions, before EVERY call. A pause needs no switch (stopping spend is always allowed), only a connection that can still be used.
     const stops = stopConditions(setting, account, connection);
     if (stopsChange(stops, change.kind) && !begun) {

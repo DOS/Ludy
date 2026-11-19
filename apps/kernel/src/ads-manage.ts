@@ -19,6 +19,11 @@ import { recordAfterCall } from './record-after-call.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'ads.manage' };
 const CALL_TIMEOUT_MS = 90_000;
+// The longest a begun change may wait between `ads.manage.begin` (which re-checked that the launch is live, the switches and the caps) and the platform call. The wind-down of a
+// stopped launch waits for a manage call begun less than ACTIVATION_IN_FLIGHT_SECONDS (360) ago, so a call is sent at most this long plus CALL_TIMEOUT_MS (150 seconds) after its
+// begin, always inside that wait: a resume, a raise or an extension can never reach the platform after the launch was wound down. A begin that waited longer is never called (the
+// change fails as `STALE_BEGIN` and the person asks again).
+export const BEGIN_TO_CALL_MS = 60_000;
 
 export interface AdsManageJob {
   orgId: string;
@@ -30,6 +35,8 @@ export interface AdsManageDeps {
   // Without one that can open a token (no credential key) nothing is begun.
   broker: CredentialBroker;
   managers: Readonly<Record<string, AdManager>>;
+  // The clock the bound above is read with (milliseconds); the real one unless a test sets it.
+  now?: () => number;
 }
 
 export interface AdsManageRunResult {
@@ -102,7 +109,9 @@ async function make(manager: AdManager, secret: string, work: Work): Promise<voi
 }
 
 // The change from the work begin handed out. Returns why the run ended.
-async function runChange(deps: AdsManageDeps, job: AdsManageJob, manager: AdManager, work: Work): Promise<string> {
+async function runChange(deps: AdsManageDeps, job: AdsManageJob, manager: AdManager, work: Work, beganAt: number): Promise<string> {
+  const now = deps.now ?? Date.now;
+  const stale = () => now() - beganAt > BEGIN_TO_CALL_MS;
   const options = { actor: SYSTEM, orgId: job.orgId };
   const record = (phase: 'call' | 'reconcile', result: ManageResult) =>
     recordAfterCall('ads.manage.record', () => deps.runtime.execute<ManageRecorded>('ads.manage.record', { changeId: work.changeId, callKey: work.callKey, phase, result }, options));
@@ -133,7 +142,11 @@ async function runChange(deps: AdsManageDeps, job: AdsManageJob, manager: AdMana
     }
     const recorded = await record('reconcile', result);
     if (!(result.kind === 'missing' && recorded.recorded && recorded.next === 'call')) return ended(recorded, result.kind);
+    // The read took too long since begin: no call now (the change stays queued, and a later begin reads it again before anything is sent).
+    if (stale()) return 'stale_begin';
   }
+  // A begin that waited too long (a stalled worker) is never called: the launch may have been stopped and wound down meanwhile.
+  if (work.action === 'call' && stale()) return ended(await record('call', { kind: 'blocked', code: 'STALE_BEGIN' }), 'STALE_BEGIN');
 
   let result: ManageResult;
   try {
@@ -150,9 +163,10 @@ export async function runAdsManage(deps: AdsManageDeps, job: AdsManageJob): Prom
   if (deps.broker.id === 'none') return { steps: 0, ended: 'no_broker' };
   const options = { actor: SYSTEM, orgId: job.orgId };
   const providers = Object.keys(deps.managers);
+  const beganAt = (deps.now ?? Date.now)();
   const work = await deps.runtime.execute<ManageBegin>('ads.manage.begin', { changeId: job.changeId, providers }, options);
   if (work.action === 'none') return { steps: 0, ended: work.reason };
   const manager = Object.hasOwn(deps.managers, work.provider) ? deps.managers[work.provider] : undefined;
   if (!manager) return { steps: 0, ended: 'no_manager' };
-  return { steps: 1, ended: await runChange(deps, job, manager, work) };
+  return { steps: 1, ended: await runChange(deps, job, manager, work, beganAt) };
 }

@@ -25,7 +25,7 @@ import { acceptAdsDeletion, adsDeletionStatus, runAdsDeletions } from '../src/ad
 import { runAdsActivate } from '../src/ads-activate.ts';
 import { runAdsStateSync } from '../src/ads-state.ts';
 import { runAdsLaunch } from '../src/ads-launch.ts';
-import { runAdsManage } from '../src/ads-manage.ts';
+import { BEGIN_TO_CALL_MS, runAdsManage } from '../src/ads-manage.ts';
 import { runAdsPause } from '../src/ads-pause.ts';
 import { runAdsRevoke } from '../src/ads-revoke.ts';
 import { acceptMetaDeletion, metaDeletionStatus } from '../src/meta-deletion.ts';
@@ -2977,6 +2977,29 @@ suite('ads on PostgreSQL (#2217)', () => {
               await dropCap(lowered);
             });
 
+            it('never calls the platform for a begin that waited too long (a stalled worker): the change fails as STALE_BEGIN, nothing is sent, and a resume can never land after the launch was wound down', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Worker bị treo sau khi begin', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              expect((await manage(rig, changeId(await pause(owner, launch.id, 'ad_set')))).ended).toBe('applied');
+              const resumeId = await approved(await askResume(launch.id, 'ad_set'));
+              void resumeId;
+              const resume = (await changesOf(launch.id)).find((c) => c.kind === 'resume') as NonNullable<Awaited<ReturnType<typeof lastChange>>>;
+              // Begin is made at time 0; the worker stalls and the next look at the clock, right before the call, is a minute and a second later.
+              let reads = 0;
+              const stalled = () => (reads++ === 0 ? 0 : BEGIN_TO_CALL_MS + 1000);
+              const ran = await runAdsManage({ runtime: worker, broker: vault, managers: rig.managers, now: stalled }, { orgId, changeId: resume.id });
+              expect(ran).toEqual({ steps: 1, ended: 'STALE_BEGIN' });
+              expect(rig.manager.changes.filter((c) => c.set === 'status' && c.value === 'active')).toEqual([]);
+              expect(w.objects.get(adSet)?.status).toBe('paused');
+              expect(await lastChange(launch.id)).toMatchObject({ id: resume.id, state: 'failed', code: 'STALE_BEGIN' });
+              // The launch is stopped and wound down afterwards: the object stays paused, nothing can switch it on.
+              expect((await stopLaunchAs(owner, launch.id)).status).toBe(200);
+              await runAdsPause({ runtime: worker, broker: vault, pausers: adPausers({ sandbox: w }) }, { orgId, launchId: launch.id });
+              expect(w.objects.get(adSet)?.status).toBe('paused');
+            });
+
             it('makes the pause of a stopped launch wait for a change of its objects that may still be in flight (a resume could switch an object on after it was paused)', async () => {
               const w = new SandboxAdWriter();
               const { launch } = await live('Dừng khi đang bật lại', w);
@@ -3500,6 +3523,12 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(await lower(owner, launch.id, '90000')).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_UNCLEAR' } });
               expect(await changesOf(launch.id)).toHaveLength(1);
               expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+              // A lower that was queued before (put in by the table's owner: no command can make one now) is refused again by begin: it is never called, whatever the platform runs.
+              const queuedLower = (await row<{ id: string }>(`INSERT INTO crove_ads.ad_manage_change (org_id, ad_account_id, legal_entity_id, launch_id, kind, slot, level, object_id, from_budget, to_budget, requested_by)
+                SELECT l.org_id, l.ad_account_id, l.legal_entity_id, l.id, 'budget_lower', 'ad_set', 'ad_set', $3, 150000, 120000, l.created_by FROM crove_ads.ad_launch l WHERE l.org_id = $1 AND l.id = $2 RETURNING id`, [orgId, launch.id, adSet]))[0]?.id as string;
+              expect(await manage(rig, queuedLower)).toEqual({ steps: 0, ended: 'unclear_family' });
+              expect((await changesOf(launch.id)).find((c) => c.id === queuedLower)).toMatchObject({ state: 'cancelled', code: 'unclear_family' });
+              expect(rig.manager.changes).toEqual([]);
             });
 
             it('lets a pause through whatever is switched off, and refuses every other change then (ADS_WRITE_OFF); a queued raise is cancelled by begin once writing went off', async () => {

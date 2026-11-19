@@ -17,11 +17,15 @@ export interface ChangeRecord extends ChangeRow {
   settledAt: Date | null;
 }
 
-export async function changesOf(ctx: Db, launchId: string): Promise<ChangeRecord[]> {
+// The changes of several launches in one read, by launch, oldest first.
+export async function changesOfMany(ctx: Db, launchIds: readonly string[]): Promise<Map<string, ChangeRecord[]>> {
+  const out = new Map<string, ChangeRecord[]>(launchIds.map((id) => [id, []]));
+  if (launchIds.length === 0) return out;
   const rows = await ctx.trx
     .selectFrom('crove_ads.ad_manage_change')
     .select([
       'id',
+      'launch_id',
       'seq',
       'kind',
       'slot',
@@ -36,10 +40,11 @@ export async function changesOf(ctx: Db, launchId: string): Promise<ChangeRecord
       sql<string | null>`to_end_on::text`.as('to_end_on'),
     ])
     .where('org_id', '=', ctx.orgId)
-    .where('launch_id', '=', launchId)
+    .where('launch_id', 'in', [...launchIds])
     .orderBy('seq', 'asc')
     .execute();
-  return rows.map((r) => ({
+  for (const r of rows) {
+    out.get(r.launch_id)?.push({
     id: r.id,
     seq: Number(r.seq),
     kind: r.kind,
@@ -53,7 +58,13 @@ export async function changesOf(ctx: Db, launchId: string): Promise<ChangeRecord
     toBudget: r.to_budget,
     fromEndOn: r.from_end_on,
     toEndOn: r.to_end_on,
-  }));
+    });
+  }
+  return out;
+}
+
+export async function changesOf(ctx: Db, launchId: string): Promise<ChangeRecord[]> {
+  return (await changesOfMany(ctx, [launchId])).get(launchId) ?? [];
 }
 
 export const changeView = (c: ChangeRecord): AdsManageChangeView => ({
@@ -71,38 +82,63 @@ export const changeView = (c: ChangeRecord): AdsManageChangeView => ({
 });
 
 // The recorded objects of a launch that have a status of their own, by slot.
-export async function objectsOf(ctx: Db, launchId: string) {
+export type ManagedObject = { slot: AdsManageSlot; level: ChangeRecord['level']; externalId: string; name: string };
+export async function objectsOfMany(ctx: Db, launchIds: readonly string[]): Promise<Map<string, ManagedObject[]>> {
+  const out = new Map<string, ManagedObject[]>(launchIds.map((id) => [id, []]));
+  if (launchIds.length === 0) return out;
   const rows = await ctx.trx
     .selectFrom('crove_ads.ad_object')
-    .select(['slot', 'level', 'external_id', 'name'])
+    .select(['launch_id', 'slot', 'level', 'external_id', 'name'])
     .where('org_id', '=', ctx.orgId)
-    .where('launch_id', '=', launchId)
+    .where('launch_id', 'in', [...launchIds])
     .where('level', 'in', ['campaign', 'ad_set', 'ad'])
     .orderBy('created_at', 'asc')
     .orderBy('id', 'asc')
     .execute();
-  return rows.map((r) => ({ slot: r.slot as AdsManageSlot, level: r.level as ChangeRecord['level'], externalId: r.external_id, name: r.name }));
+  for (const r of rows) out.get(r.launch_id)?.push({ slot: r.slot as AdsManageSlot, level: r.level as ChangeRecord['level'], externalId: r.external_id, name: r.name });
+  return out;
 }
 
-// The management state of a launch, as the Campaigns screen shows it: members read it (the state only), owners and admins get the controls.
-export async function manageStateOf(ctx: Db, launch: { id: string; ad_account_id: string; state: string; currency: string; daily_budget: string; end_text: string }): Promise<AdsManageStateView> {
-  const objects = await objectsOf(ctx, launch.id);
-  const changes = await changesOf(ctx, launch.id);
-  const held = heldValues({ dailyBudget: launch.daily_budget, endOn: launch.end_text }, changes);
-  const setting = await currentSetting(ctx);
-  const account = await ctx.trx.selectFrom('crove_ads.ad_account').select(['write_enabled', 'write_connection_id']).where('org_id', '=', ctx.orgId).where('id', '=', launch.ad_account_id).executeTakeFirst();
-  const canChange = launch.state === 'live' && setting?.write_enabled === true && setting.launches_blocked === false && account?.write_enabled === true && account.write_connection_id !== null;
-  const views: AdsManageObjectView[] = objects.map((o) => ({ slot: o.slot, level: o.level, name: o.name, ...objectStatusOf(o.slot, changes) }));
-  return {
-    launchId: launch.id,
-    currency: launch.currency,
-    dailyBudget: held.confirmedBudget,
-    endOn: held.confirmedEndOn,
-    heldDailyBudget: held.dailyBudget,
-    heldEndOn: held.endOn,
-    canChange,
-    objects: views,
-    changes: changes.slice(-20).reverse().map(changeView),
-  };
+export async function objectsOf(ctx: Db, launchId: string): Promise<ManagedObject[]> {
+  return (await objectsOfMany(ctx, [launchId])).get(launchId) ?? [];
 }
 
+type StateLaunch = { id: string; ad_account_id: string; state: string; currency: string; daily_budget: string; end_text: string };
+
+// The management state of several launches, as the Campaigns screen shows it, in four reads in all (the objects, the changes, the org's switches and the accounts' flags), whatever
+// the number of launches: members read it (the state only), owners and admins get the controls.
+export async function manageStatesOf(ctx: Db, launches: readonly StateLaunch[]): Promise<Map<string, AdsManageStateView>> {
+  const out = new Map<string, AdsManageStateView>();
+  if (launches.length === 0) return out;
+  const ids = launches.map((l) => l.id);
+  const [objects, changes, setting, accounts] = await Promise.all([
+    objectsOfMany(ctx, ids),
+    changesOfMany(ctx, ids),
+    currentSetting(ctx),
+    ctx.trx.selectFrom('crove_ads.ad_account').select(['id', 'write_enabled', 'write_connection_id']).where('org_id', '=', ctx.orgId).where('id', 'in', [...new Set(launches.map((l) => l.ad_account_id))]).execute(),
+  ]);
+  const accountOf = new Map(accounts.map((a) => [a.id, a]));
+  for (const launch of launches) {
+    const mine = changes.get(launch.id) ?? [];
+    const held = heldValues({ dailyBudget: launch.daily_budget, endOn: launch.end_text }, mine);
+    const account = accountOf.get(launch.ad_account_id);
+    const canChange = launch.state === 'live' && setting?.write_enabled === true && setting.launches_blocked === false && account?.write_enabled === true && account.write_connection_id !== null;
+    const views: AdsManageObjectView[] = (objects.get(launch.id) ?? []).map((o) => ({ slot: o.slot, level: o.level, name: o.name, ...objectStatusOf(o.slot, mine) }));
+    out.set(launch.id, {
+      launchId: launch.id,
+      currency: launch.currency,
+      dailyBudget: held.confirmedBudget,
+      endOn: held.confirmedEndOn,
+      heldDailyBudget: held.dailyBudget,
+      heldEndOn: held.endOn,
+      canChange,
+      objects: views,
+      changes: mine.slice(-20).reverse().map(changeView),
+    });
+  }
+  return out;
+}
+
+export async function manageStateOf(ctx: Db, launch: StateLaunch): Promise<AdsManageStateView> {
+  return (await manageStatesOf(ctx, [launch])).get(launch.id) as AdsManageStateView;
+}
