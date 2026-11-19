@@ -433,9 +433,12 @@ suite('MISA AMIS push (#3902)', () => {
     expect(row).toMatchObject({ state: 'queued', attempts: 2, reason: null, sent_at: null, answered_at: null });
     expect(row?.payload_digest).not.toBe(refused.payload_digest);
     // A voucher AMIS accepted whose source was revised afterwards is counted, never sent again.
-    const accepted = (await pushRows()).find((r) => r.state === 'accepted');
+    // An accepted row whose voucher is in the books this test builds (the row the 24-hour test settled was written by hand, with a source of its own).
+    const known = new Set(vouchers.map((v) => v.sourceId));
+    const acceptedRows = await rows<{ org_refid: string; source_id: string }>("SELECT org_refid, source_id FROM crove_finance.misa_amis_push WHERE connection_id = $1 AND state = 'accepted' ORDER BY org_refid", [connectionId]);
+    const accepted = acceptedRows.find((r) => known.has(r.source_id));
     if (!accepted) throw new Error('expected an accepted row');
-    const acceptedSource = (await rows<{ source_id: string }>('SELECT source_id FROM crove_finance.misa_amis_push WHERE org_refid = $1', [accepted.org_refid]))[0]?.source_id as string;
+    const acceptedSource = accepted.source_id;
     vouchers = vouchers.map((v) => (v.sourceId === acceptedSource ? { ...v, lines: [{ lineNo: 1, account: '331', amount: '1650003', memo: null }] } : v));
     const revised = await push('owner');
     expect(revised.revised).toBe(1);
