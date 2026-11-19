@@ -6,7 +6,7 @@
 // HTTP 500 (a failure said in words). What the model says is chosen by a scenario token in a decision of the earlier meeting (e2e/fake-model/fixtures.ts). Its own user and org, created without the sign-up form.
 import { expect, test } from '@playwright/test';
 import { SCENARIO_TOKENS } from '../fake-model/fixtures.ts';
-import { publishOutcome, runRows, runsOf, seedMeeting, seedTodayEvent } from '../lib/meetings-seed.ts';
+import { publishOutcome, runRows, runsOf, seedMeeting, seedTodayEvent, waitOutVietnamMidnight } from '../lib/meetings-seed.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
 
 const SERIES = ['3f2a8c10-0000-4000-8000-000000000001', '3f2a8c10-0000-4000-8000-000000000002', '3f2a8c10-0000-4000-8000-000000000003'] as const;
@@ -21,6 +21,8 @@ test('Vy briefs one event of the Today view on a click: nothing runs before it, 
     { series: SERIES[1], title: 'Họp khách C tuần trước', decision: `Giữ nguyên lịch giao hàng ${SCENARIO_TOKENS.bad}`, event: 'Họp khách C', hours: 2 },
     { series: SERIES[2], title: 'Họp nhà cung cấp tuần trước', decision: `Đổi nhà cung cấp mực in ${SCENARIO_TOKENS.down}`, event: 'Họp nhà cung cấp', hours: 4 },
   ];
+  // Once, before the first seed: a run in the last minutes before Vietnam midnight waits for the new day, so all three events and the page load fall on one day (#4089).
+  waitOutVietnamMidnight(90);
   for (const e of earlier) {
     const meeting = seedMeeting(slug, email, e.title, { daysAgo: 7, seriesId: e.series, segments: [] });
     publishOutcome(meeting, [e.decision], ['Gửi báo giá bản cuối']);
