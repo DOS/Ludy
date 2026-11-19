@@ -6,7 +6,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { AgendaEvent } from '@crove/kernel-contract';
+import type { AgendaEvent, BriefFacts } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
@@ -57,6 +57,8 @@ const wrap = (node: ReactNode) => (
     </IntlProvider>
   </QueryClientProvider>
 );
+const briefOf = (over: Partial<BriefFacts> = {}): BriefFacts => ({ previous: null, decisions: [], items: [], customer: null, deals: [], empty: true, ...over });
+const todayOf = (events: AgendaEvent[], briefs: Record<string, BriefFacts> = {}, totalMinutes = 60) => ({ enabled: true, totalMinutes, items: events.map((e) => ({ event: e, brief: briefs[e.id] ?? briefOf() })) });
 const reset = () => {
   client.current.clear();
   modules.list = ['kernel', 'crm', 'meetings'];
@@ -76,7 +78,7 @@ describe('joinService', () => {
 describe('TodayAgenda', () => {
   it('lists the events, links a recorded one to its meeting and an unrecorded one to the record screen with the title', () => {
     reset();
-    client.current.setQueryData(['meetings', 'agenda', 'list'], { enabled: true, events: [event({}), event({ id: 'a2', title: 'Chốt báo giá', meetingId: 'm9', joinUrl: null, invitees: 0 })] });
+    client.current.setQueryData(['meetings', 'today', 'facts'], todayOf([event({}), event({ id: 'a2', title: 'Chốt báo giá', meetingId: 'm9', joinUrl: null, invitees: 0 })]));
     const html = renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />));
     expect(html.match(/data-testid="meeting-agenda-event"/g)).toHaveLength(2);
     expect(html).toContain('Họp với khách A');
@@ -94,10 +96,10 @@ describe('TodayAgenda', () => {
 
   it('says so when today has no meetings, and shows the opt-in line when the switch is off and Google can be connected', () => {
     reset();
-    client.current.setQueryData(['meetings', 'agenda', 'list'], { enabled: true, events: [] });
+    client.current.setQueryData(['meetings', 'today', 'facts'], todayOf([], {}, 0));
     expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />))).toContain(en.meetings.agenda.none);
     reset();
-    client.current.setQueryData(['meetings', 'agenda', 'list'], { enabled: false, events: [] });
+    client.current.setQueryData(['meetings', 'today', 'facts'], { enabled: false, totalMinutes: 0, items: [] });
     client.current.setQueryData(['calendar', 'providers'], ['google_calendar']);
     const off = renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />));
     expect(off).toContain('data-testid="meeting-agenda-off"');
@@ -107,15 +109,50 @@ describe('TodayAgenda', () => {
 
   it('draws nothing when no calendar can be connected, while loading, or without the meetings module', () => {
     reset();
-    client.current.setQueryData(['meetings', 'agenda', 'list'], { enabled: false, events: [] });
+    client.current.setQueryData(['meetings', 'today', 'facts'], { enabled: false, totalMinutes: 0, items: [] });
     client.current.setQueryData(['calendar', 'providers'], []);
     expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />))).toBe('');
     reset();
     expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />))).toBe('');
     reset();
     modules.list = ['kernel'];
-    client.current.setQueryData(['meetings', 'agenda', 'list'], { enabled: true, events: [event({})] });
+    client.current.setQueryData(['meetings', 'today', 'facts'], todayOf([event({})]));
     expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />))).toBe('');
+  });
+  it('says how many meetings there are today and how long they take in all', () => {
+    reset();
+    client.current.setQueryData(['meetings', 'today', 'facts'], todayOf([event({}), event({ id: 'a2', title: 'Chốt báo giá' })], {}, 150));
+    expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />))).toContain('2 meeting(s) today, 2 h 30 min in all.');
+    client.current.setQueryData(['meetings', 'today', 'facts'], todayOf([event({})], {}, 45));
+    expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />))).toContain('1 meeting(s) today, 45 min in all.');
+    client.current.setQueryData(['meetings', 'today', 'facts'], todayOf([event({})], {}, 120));
+    expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />))).toContain('2 h in all.');
+    // Nothing is said about the total on an empty day.
+    client.current.setQueryData(['meetings', 'today', 'facts'], todayOf([], {}, 0));
+    expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />))).not.toContain('meeting-agenda-total');
+  });
+
+  it('shows the facts of an event\'s brief with the event, by code, for a recorded event too, and nothing for an event with nothing to say; Vy has no button without the switch', () => {
+    reset();
+    const brief = briefOf({
+      previous: { meetingId: '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5d', title: 'Giao ban tuần trước', startedAt: '2026-11-10T02:00:00.000Z' },
+      decisions: ['Chốt giá gói kế toán 15.000.000 đồng'],
+      items: [{ id: '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a01', title: 'Gửi báo giá', who: 'Nam', whoUserId: null, assigneeSeat: null, when: 'thứ sáu', whenDate: null, assigned: false, taskStatus: null, due: null }],
+      empty: false,
+    });
+    client.current.setQueryData(['meetings', 'today', 'facts'], todayOf([event({}), event({ id: 'a2', title: 'Chốt báo giá', meetingId: 'm9' }), event({ id: 'a3', title: 'Không có gì' })], { a1: brief, a2: brief }));
+    const html = renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />));
+    expect(html.match(/data-testid="meeting-agenda-brief"/g)).toHaveLength(2);
+    // Two briefs, each with one decision and one open item.
+    expect(html.match(/data-testid="brief-fact"/g)).toHaveLength(4);
+    expect(html).toContain('Chốt giá gói kế toán 15.000.000 đồng');
+    expect(html).toContain('Gửi báo giá');
+    // AI off (no status answered): the facts show and Vy has no button.
+    expect(html).not.toContain('data-testid="brief-vy"');
+    // With the switch on, each brief has Vy's button under its facts.
+    client.current.setQueryData(['meetings', 'brief', 'status'], { enabled: true, reason: null, estimate: null });
+    client.current.setQueryData(['ai', 'meter'], { aiOn: true, state: 'ok', percent: 10 });
+    expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />)).match(/data-testid="brief-write"/g)).toHaveLength(2);
   });
 });
 

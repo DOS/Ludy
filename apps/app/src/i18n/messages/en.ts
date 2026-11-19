@@ -2678,6 +2678,10 @@ export const en = {
     },
     agenda: {
       title: "Today's meetings in your calendar",
+      summary: '{count} meeting(s) today, {duration} in all.',
+      durationM: '{minutes} min',
+      durationH: '{hours} h',
+      durationHM: '{hours} h {minutes} min',
       none: 'Your calendar has no meetings today. If you just turned the switch on, the first read can take up to 15 minutes.',
       untitled: '(no title)',
       invitees: '{count} invited',
@@ -15074,6 +15078,9 @@ export const en = {
         facts: 'See the name said for an action item and the people it may be given to',
         start: 'Ask Vy who an action item belongs to, from the name said in the meeting',
         status: 'See whether Vy can say who an action item belongs to',
+      },
+      today: {
+        facts: "See today's meetings in your calendar with what was decided last time, what is still open and the customer's open deals for each",
       },
       brief: {
         facts: "See what was decided, what is still open and the customer's open deals before a meeting",

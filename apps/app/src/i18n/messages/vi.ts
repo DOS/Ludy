@@ -2675,6 +2675,10 @@ export const vi = {
     },
     agenda: {
       title: 'Cuộc họp hôm nay trong lịch của bạn',
+      summary: 'Hôm nay có {count} cuộc họp, tổng cộng {duration}.',
+      durationM: '{minutes} phút',
+      durationH: '{hours} giờ',
+      durationHM: '{hours} giờ {minutes} phút',
       none: 'Hôm nay lịch của bạn không có cuộc họp nào. Nếu bạn vừa bật công tắc, lần đọc đầu tiên có thể mất tới 15 phút.',
       untitled: '(không có tên)',
       invitees: '{count} người được mời',
@@ -15073,6 +15077,9 @@ export const vi = {
         facts: 'Xem tên được nhắc cho một việc cần làm và những người có thể nhận việc',
         start: 'Nhờ Vy xem một việc cần làm là của ai, theo tên được nhắc trong cuộc họp',
         status: 'Xem Vy có thể cho biết một việc cần làm là của ai hay không',
+      },
+      today: {
+        facts: 'Xem các cuộc họp hôm nay trong lịch của bạn, kèm những gì đã chốt lần trước, việc còn dở và cơ hội đang mở của khách cho từng cuộc',
       },
       brief: {
         facts: 'Xem những gì đã chốt, việc còn dở và cơ hội đang mở của khách trước một cuộc họp',

@@ -22,6 +22,7 @@ import { translateCommands } from './translate.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
+import { todayQueries } from './today.ts';
 import { assigneeCommands, assigneeQueries } from './assignee.ts';
 import { agendaCommands, agendaQueries } from './agenda.ts';
 import { chatCommands, chatQueries } from './chat.ts';
@@ -1057,6 +1058,7 @@ export const meetingsQueries = [
   ...translateRunQueries,
   ...askRunQueries,
   ...briefQueries,
+  ...todayQueries,
   ...assigneeQueries,
   ...agendaQueries,
   ...chatQueries,

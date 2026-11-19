@@ -192,6 +192,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.ask.status',
       'meetings.brief.facts',
       'meetings.brief.status',
+      'meetings.today.facts',
       'meetings.assignee.facts',
       'meetings.assignee.status',
       'meetings.agenda.list',
