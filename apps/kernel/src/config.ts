@@ -542,6 +542,10 @@ const schema = z.object({
   // cloud recording read scopes and the redirect URL APP_URL/meetings/oauth/zoom/callback (docs/runbooks/meetings-zoom.md). Off by default: with neither set there is no Zoom adapter and no Zoom connection. Both or neither.
   ZOOM_OAUTH_CLIENT_ID: optional,
   ZOOM_OAUTH_CLIENT_SECRET: optional,
+  // The Zoom app's secret token (Feature, Event Subscriptions): signs the webhook that rings the recording import when a recording finishes, at APP_URL's API host /api/meeting-platform/zoom/webhook
+  // (docs/runbooks/meetings-zoom.md). Needs the OAuth app above. Unset: no route; the sweep alone lists. The token it replaces is kept while Zoom may still sign with it (a rotation in the app, then here).
+  ZOOM_WEBHOOK_SECRET_TOKEN: optional,
+  ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS: optional,
   // Google Meet transcripts (Meetings C2, #3174): a Google OAuth web client of its own for the Meet connection (not the calendar's, so the calendar consent stays narrow), with the sensitive scope
   // meetings.space.readonly on its consent screen, the Google Meet REST API on in its project and the redirect URL APP_URL/meetings/oauth/google_meet/callback (docs/runbooks/meetings-google.md). Off by default:
   // with neither set there is no Google Meet adapter and no Google Meet connection. Both or neither. The value of the calendar's client may be used here if the owner decides so.
@@ -951,6 +955,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (Boolean(config.TEAMS_OAUTH_CLIENT_ID) !== Boolean(config.TEAMS_OAUTH_CLIENT_SECRET)) throw new Error('set both TEAMS_OAUTH_CLIENT_ID and TEAMS_OAUTH_CLIENT_SECRET, or neither');
   if (config.TEAMS_OAUTH_CLIENT_ID && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(config.TEAMS_OAUTH_CLIENT_ID)) throw new Error('TEAMS_OAUTH_CLIENT_ID is the application (client) id of a Microsoft Entra app registration, a UUID');
   if (config.ZOOM_OAUTH_CLIENT_ID && !/^[A-Za-z0-9_-]{8,64}$/.test(config.ZOOM_OAUTH_CLIENT_ID)) throw new Error('ZOOM_OAUTH_CLIENT_ID is the client id of the Zoom app (letters, digits, - and _)');
+  if (config.ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS !== undefined && config.ZOOM_WEBHOOK_SECRET_TOKEN === undefined) throw new Error('ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS is set without ZOOM_WEBHOOK_SECRET_TOKEN');
+  for (const name of ['ZOOM_WEBHOOK_SECRET_TOKEN', 'ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS'] as const) {
+    const value = config[name];
+    // 16 at least: an unsigned URL validation challenge hands anyone the HMAC of a plainToken they choose, so a short token could be guessed offline. Zoom's own are random and about 22 characters.
+    if (value !== undefined && !/^\S{16,200}$/.test(value)) throw new Error(`${name} is the secret token of the Zoom app: 16 to 200 characters, no whitespace`);
+  }
+  if (config.ZOOM_WEBHOOK_SECRET_TOKEN !== undefined && !config.ZOOM_OAUTH_CLIENT_ID) throw new Error('ZOOM_WEBHOOK_SECRET_TOKEN needs ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET');
+  if (config.ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS !== undefined && config.ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS === config.ZOOM_WEBHOOK_SECRET_TOKEN) throw new Error('ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS is the same as ZOOM_WEBHOOK_SECRET_TOKEN: remove it');
   if (config.CALENDAR_MICROSOFT_TENANT && !/^(?:common|organizations|consumers|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|(?:[A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63})$/.test(config.CALENDAR_MICROSOFT_TENANT)) throw new Error('CALENDAR_MICROSOFT_TENANT is common, organizations, consumers, a directory id or a verified domain');
   if (config.CHANNEL_GOOGLE_BUSINESS === 'true' && !config.CHANNEL_GOOGLE_CLIENT_ID) throw new Error('CHANNEL_GOOGLE_BUSINESS needs CHANNEL_GOOGLE_CLIENT_ID and CHANNEL_GOOGLE_CLIENT_SECRET');
   if (config.CHANNEL_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CHANNEL_GOOGLE_CLIENT_ID)) throw new Error('CHANNEL_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
