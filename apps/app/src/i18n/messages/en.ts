@@ -16367,7 +16367,6 @@ export const en = {
       pickFile: 'Choose PDF file',
       selectedFile: 'Selected: {name}',
       submitCreate: 'Create template',
-      creating: 'Creating template...',
       searchLabel: 'Search templates',
       searchPlaceholder: 'Filter by template title...',
       tabAll: 'All',
@@ -16377,6 +16376,7 @@ export const en = {
       emptyTitle: 'No templates yet',
       emptyHint: 'Upload your first PDF to create a reusable template for your team.',
       selectPrompt: 'Select a template from the list to edit roles, place fields, or instantiate an envelope.',
+      retryButton: 'Try again',
       status: {
         draft: 'Draft',
         active: 'Active',
@@ -16400,7 +16400,6 @@ export const en = {
       recipientPhoneLabel: 'Phone ({role})',
       recipientDeliveryLabel: 'Delivery mode ({role})',
       submitInstantiate: 'Create envelope',
-      instantiating: 'Creating envelope...',
       mintedLinksTitle: 'Envelope created and sent',
       mintedLinksHint: 'Copy the signing links below now (raw tokens are shown once and never stored).',
       openEnvelopeButton: 'Open envelope',

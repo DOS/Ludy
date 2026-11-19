@@ -1171,14 +1171,22 @@ export const templateFieldsSet = defineCommand({
     const roleByKey = new Map(roles.map((r) => [r.role_key, r]));
 
     const resolvedFields = input.fields.map((f) => {
-      const targetRole =
-        (f.templateRoleId ? roleById.get(f.templateRoleId) : undefined) ??
-        (f.roleKey ? roleByKey.get(f.roleKey) : undefined);
-      if (!targetRole) {
-        throw new DomainError('SIGN_ROLE_NOT_FOUND', 404, `Template role ${f.templateRoleId ?? f.roleKey ?? 'unknown'} not found`);
-      }
-      if (f.templateRoleId && f.roleKey && targetRole.role_key !== f.roleKey) {
-        throw new DomainError('SIGN_INVALID_FIELD', 422, 'templateRoleId and roleKey point to different template roles');
+      let targetRole: (typeof roles)[number];
+      if (f.templateRoleId) {
+        const byId = roleById.get(f.templateRoleId);
+        if (!byId) {
+          throw new DomainError('SIGN_ROLE_NOT_FOUND', 422, `Template role ${f.templateRoleId} not found`);
+        }
+        if (f.roleKey && byId.role_key !== f.roleKey) {
+          throw new DomainError('SIGN_INVALID_FIELD', 422, 'templateRoleId and roleKey point to different template roles');
+        }
+        targetRole = byId;
+      } else {
+        const byKey = f.roleKey ? roleByKey.get(f.roleKey) : undefined;
+        if (!byKey) {
+          throw new DomainError('SIGN_ROLE_NOT_FOUND', 422, `Template role ${f.roleKey ?? 'unknown'} not found`);
+        }
+        targetRole = byKey;
       }
       if (targetRole.signer_role === 'cc') {
         throw new DomainError('SIGN_INVALID_FIELD', 422, 'Fields cannot be assigned to CC template roles');
