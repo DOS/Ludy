@@ -38,6 +38,19 @@ async function problemsOf(page: Page, label: string): Promise<string[]> {
   return problems;
 }
 
+// Puts the morning notice on or off from the card and waits until the database says so (the switch moves at once, before the save), so the next page load reads what was saved.
+async function ensureMorning(page: Page, slug: string, on: boolean): Promise<void> {
+  const toggle = page.getByTestId('morning-notice-setting').getByRole('checkbox', { name: /mỗi buổi sáng/ });
+  await expect(toggle).toBeVisible();
+  if ((await toggle.isChecked()) !== on) await toggle.click();
+  await expect(toggle).toBeChecked({ checked: on });
+  const stored = () =>
+    sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_meetings.morning_notice m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })[0]?.n ?? 0;
+  await expect.poll(stored).toBe(on ? 1 : 0);
+  // Saved: the switch can be used again (it waits while the save is on its way).
+  await expect(toggle).toBeEnabled();
+}
+
 // A user with a published meeting (a decision the weekly card lists) and a connected calendar with two events today, one of them recorded: the data the screens read. Each width runs in its own test
 // with its own user, so both fit the 180 second budget and one width failing does not hide the other.
 async function prepare(page: Page, tag: string): Promise<{ slug: string; screens: Screen[] }> {
@@ -73,13 +86,13 @@ async function prepare(page: Page, tag: string): Promise<{ slug: string; screens
     );
     exec(
       `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, meeting_id)
-       SELECT c.org_id, c.id, c.user_id, 'a11y-recorded', :'recorded', now(), now() + interval '30 minutes', 'Asia/Ho_Chi_Minh', :'meeting'::uuid
+       SELECT c.org_id, c.id, c.user_id, 'a11y-recorded', :'recorded', (date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + interval '12 hours') AT TIME ZONE 'Asia/Ho_Chi_Minh', (date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + interval '12 hours') AT TIME ZONE 'Asia/Ho_Chi_Minh' + interval '30 minutes', 'Asia/Ho_Chi_Minh', :'meeting'::uuid
          FROM crove_kernel.calendar_connection c JOIN crove_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`,
       { slug, recorded: EVENT_TITLES.recorded, meeting: meetingId },
     );
     exec(
       `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone)
-       SELECT c.org_id, c.id, c.user_id, 'a11y-open', :'open', now(), now() + interval '45 minutes', 'Asia/Ho_Chi_Minh'
+       SELECT c.org_id, c.id, c.user_id, 'a11y-open', :'open', (date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + interval '12 hours') AT TIME ZONE 'Asia/Ho_Chi_Minh', (date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') + interval '12 hours') AT TIME ZONE 'Asia/Ho_Chi_Minh' + interval '45 minutes', 'Asia/Ho_Chi_Minh'
          FROM crove_kernel.calendar_connection c JOIN crove_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`,
       { slug, open: EVENT_TITLES.open },
     );
@@ -89,7 +102,7 @@ async function prepare(page: Page, tag: string): Promise<{ slug: string; screens
     {
       name: 'notifications (morning notice off)',
       path: `/o/${slug}/notifications`,
-      ready: (p) => expect(p.getByTestId('morning-notice-setting')).toBeVisible(),
+      ready: (p) => ensureMorning(p, slug, false),
     },
     {
       name: 'meetings list (Today view and weekly card)',
@@ -103,20 +116,13 @@ async function prepare(page: Page, tag: string): Promise<{ slug: string; screens
     },
   ];
 
-  await test.step('the morning notice turned on, so the Notifications page is scanned in that state too', async () => {
-    await page.goto(`/o/${slug}/notifications`);
-    const card = page.getByTestId('morning-notice-setting');
-    await expect(card).toBeVisible();
-    await card.getByRole('checkbox', { name: /mỗi buổi sáng/ }).click();
-    await expect(card.getByTestId('morning-notice-time')).toBeEnabled();
-    screens.push({
-      name: 'notifications (morning notice on)',
-      path: `/o/${slug}/notifications`,
-      ready: async (p) => {
-        await expect(p.getByTestId('morning-notice-setting')).toBeVisible();
-        await expect(p.getByTestId('morning-notice-time')).toBeEnabled();
-      },
-    });
+  screens.push({
+    name: 'notifications (morning notice on)',
+    path: `/o/${slug}/notifications`,
+    ready: async (p) => {
+      await ensureMorning(p, slug, true);
+      await expect(p.getByTestId('morning-notice-time')).toBeEnabled();
+    },
   });
 
   return { slug, screens };
@@ -151,18 +157,18 @@ test('the newest Meetings screens pass axe and fit the screen at 360px, in light
 });
 
 test('names, descriptions and announcements: the morning switch, the Today rows and the weekly card tell a screen reader what they do (#4055)', async ({ page }) => {
-  test.setTimeout(180_000);
   const { slug } = await prepare(page, 'meetings-a11y-new-names');
 
   await test.step('the morning notice: the switch has a name and the hint as its description, the time field a name and, once on, the zone', async () => {
     await page.goto(`/o/${slug}/notifications`);
     const card = page.getByTestId('morning-notice-setting');
     await expect(card).toBeVisible();
+    await ensureMorning(page, slug, true);
     const toggle = card.getByRole('checkbox', { name: 'Báo cho tôi các cuộc họp trong ngày vào mỗi buổi sáng' });
     await expect(toggle).toBeVisible();
     await expect(toggle).toHaveAccessibleDescription(/Chỉ có số lượng và đường dẫn/);
     await expect(card.getByLabel('Lúc')).toBeVisible();
-    // The preparation turned it on: the zone line describes the field.
+    // On: the zone line describes the field.
     await expect(toggle).toBeChecked();
     await expect(card.getByTestId('morning-notice-time')).toHaveAccessibleDescription(/Theo múi giờ của bạn/);
   });
@@ -191,6 +197,8 @@ test('names, descriptions and announcements: the morning switch, the Today rows 
     await expect(picker).toBeVisible();
     const status = card.getByTestId('digest-window-status');
     await expect(status).toBeEmpty();
+    // Focused first: selectOption sets the value but does not move the focus, and the point is that a member who changes the window from the picker stays on it.
+    await picker.focus();
     await picker.selectOption('14');
     await expect(status).toHaveText('Đang xem 14 ngày gần đây');
     await expect(picker).toBeFocused();
