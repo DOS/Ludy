@@ -7,6 +7,7 @@ import {
   zCashVoucherProposal,
   zJournalVoucherProposal,
   zId,
+  plainLine,
   LEARNED_RULE_IDS_MAX,
   zJournalReversal,
   zLocalDate,
@@ -204,6 +205,9 @@ function toInboxItem(row: {
   decided_at: Date | null;
   extraction_id: string | null;
   requested_by_agent: string | null;
+  requested_by_grant?: string | null;
+  mcp_client_name?: string | null;
+  mcp_client_host?: string | null;
   legal_entity_id: string;
 }, agentName: string | null) {
   const payload = parsePayload(row.kind, row.payload);
@@ -266,9 +270,14 @@ function expiredAfterDays(row: { status: string; created_at: Date; decided_at: D
 
 // Whether an AI agent asked for the proposal and whether an extraction run read it (#435). An agent's proposal has no
 // extraction, so no invoice checks ran and the Inbox must not show it as matched.
-function agentFields(row: { extraction_id: string | null; requested_by_agent: string | null }, agentName: string | null) {
+function agentFields(
+  row: { extraction_id: string | null; requested_by_agent: string | null; requested_by_grant?: string | null; mcp_client_name?: string | null; mcp_client_host?: string | null },
+  agentName: string | null,
+) {
   return {
     requestedByAgent: row.requested_by_agent ? { id: row.requested_by_agent, name: agentName ?? '' } : null,
+    // An outside AI app connected over MCP asked for it (ADR-0051 decision 10): the client's self-declared name and the host it returns to, both stamped from the grant by the database, so the card says who asked.
+    requestedByMcp: row.requested_by_grant && row.mcp_client_name ? { client: plainLine(row.mcp_client_name, 120), host: plainLine(row.mcp_client_host ?? '', 253) } : null,
     extracted: row.extraction_id !== null,
   };
 }
@@ -282,7 +291,7 @@ export const inboxList = defineQuery({
       sql<string>`(SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(payload -> 'checks') = 'array' THEN payload -> 'checks' ELSE '[]'::jsonb END) c WHERE c ->> 'status' = ${status})`;
     let query = ctx.trx
       .selectFrom('crove_kernel.proposal')
-      .select(['id', 'kind', 'status', 'title', 'revision', 'duplicate_of', 'created_at', 'decided_at', 'extraction_id', 'requested_by_agent'])
+      .select(['id', 'kind', 'status', 'title', 'revision', 'duplicate_of', 'created_at', 'decided_at', 'extraction_id', 'requested_by_agent', 'requested_by_grant', 'mcp_client_name', 'mcp_client_host'])
       .select([
         sql<string | null>`left(payload #>> '{seller,name}', 500)`.as('seller_name'),
         sql<boolean>`coalesce(payload ->> 'direction' = 'sale', false)`.as('is_sale'),
