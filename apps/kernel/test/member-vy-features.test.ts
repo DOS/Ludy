@@ -18,6 +18,7 @@ describe('member-Vy features (kernel side)', () => {
       'meetings.ask': { module: 'meetings', expiryMinutes: 30 },
       'meetings.brief': { module: 'meetings', expiryMinutes: 30 },
       'meetings.chapters': { module: 'meetings', expiryMinutes: 30 },
+      'meetings.title': { module: 'meetings', expiryMinutes: 30 },
       'meetings.digest': { module: 'meetings', expiryMinutes: 30 },
       'meetings.assignee': { module: 'meetings', expiryMinutes: 30 },
       'meetings.adherence': { module: 'meetings', expiryMinutes: 30 },

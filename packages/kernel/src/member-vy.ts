@@ -50,6 +50,7 @@ export const MEMBER_VY_FEATURES = {
   'meetings.assignee': { module: 'meetings', expiryMinutes: 30 },
   'meetings.adherence': { module: 'meetings', expiryMinutes: 30 },
   'meetings.chapters': { module: 'meetings', expiryMinutes: 30 },
+  'meetings.title': { module: 'meetings', expiryMinutes: 30 },
   'projects.tasks_from_note': { module: 'projects', expiryMinutes: 30 },
   'projects.tasks_from_source': { module: 'projects', expiryMinutes: 30 },
 } as const;
