@@ -346,7 +346,7 @@ suite('sales e-invoices (#313)', () => {
   it('exports the sales vouchers for MISA, and only purchases in the purchase export', async () => {
     const sales = await runtime.query<SalesVoucher[]>('finance.vouchers.sales', {}, { actor: asUser(viewer.userId), orgId: org.orgId });
     expect(sales.map((v) => v.entryId)).toEqual([saleEntry]);
-    expect(sales[0]).toMatchObject({ customer: { taxCode: BUYER_TAX_CODE }, receivableAccount: '131', vatAccount: '3331' });
+    expect(sales[0]).toMatchObject({ sourceId: expect.any(String), customer: { taxCode: BUYER_TAX_CODE }, receivableAccount: '131', vatAccount: '3331' });
     const rows = salesRows(sales[0] as SalesVoucher);
     expect(rows.map((r) => r.line.revenueAccount)).toEqual(['511', '511', '511']);
     expect(sum(rows.map((r) => r.vatAmount)).eq(money('180000'))).toBe(true);

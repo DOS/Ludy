@@ -84,7 +84,7 @@ import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { projectsCommands, projectsManifest, projectsQueries } from '@crove/mod-projects';
 import { adsBusy, adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setMeetingVideoImport, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled } from '@crove/mod-meetings';
+import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setMeetingVideoImport, setSummaryEnabled, setTranscribeBroker, setTranscribeEnabled, setTranslationTargets } from '@crove/mod-meetings';
 import { signAiCommands, signAiQueries, signCommands, signManifest, signQueries } from '@crove/mod-sign';
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adManagers, adPausers, adPlatforms, adRevokers, adStateReaders, type AdActivator, type AdManager, type AdPauser, type AdPlatform, type AdRevoker, type AdStateReader, type LaunchWriter } from '@crove/ad-platform';
 import { createMisaEInvoiceProvider, createSandboxEInvoiceProvider, misaBlockers, type EInvoiceProvider } from '@crove/einvoice';
@@ -178,7 +178,7 @@ export interface KernelAdapters {
   summaryModel?: ModelPort | null;
   // Vy's eSign field placement and risky clause review (#3351); null runs manual signing without AI.
   signAi?: Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> | null;
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'supplierPayableLineSentence' | 'misaCheckLineSentence' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'supplierPayableLineSentence' | 'misaCheckLineSentence' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -256,6 +256,8 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
   // The worker takes a transcription job only with the credential key (a broker); without it the start is refused with its own code instead of queueing a job nobody works (#2863).
   setTranscribeBroker(Boolean(config.CREDENTIAL_KEY ?? config.CREDENTIAL_KEY_FILE));
   setSummaryEnabled(summaryEnabled(config));
+  // The translation languages besides vi and en this deployment offers (#3186): none unless MEETINGS_TRANSLATION_LANGUAGES names them.
+  setTranslationTargets(config.MEETINGS_TRANSLATION_LANGUAGES);
   // A platform's video-only recording can be imported only where crove-media can take its audio out (C2a, #3306): MEDIA_URL.
   setMeetingVideoImport(Boolean(config.MEDIA_URL));
   setMeetingPlatformVideoImport(config.MEDIA_URL ? Math.min(MEETING_PLATFORM_VIDEO_MAX_BYTES, config.MEDIA_MAX_INPUT_BYTES ?? Number.POSITIVE_INFINITY) : null);

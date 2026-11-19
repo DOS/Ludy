@@ -432,6 +432,7 @@ export const journalExport = defineCommand({
 });
 
 interface VoucherSource {
+  sourceId: string;
   entryId: string;
   entryDate: string;
   description: string;
@@ -521,6 +522,7 @@ async function loadVouchers(
     byDocument.set(l.document_id, list);
   }
   return rows.map((r) => ({
+    sourceId: r.document_id,
     entryId: r.entry_id,
     entryDate: r.entry_date,
     description: r.description,

@@ -322,6 +322,32 @@ export const zStockCount = z.object({
   lines: z.array(zStockCountLine),
 });
 export type StockCount = z.infer<typeof zStockCount>;
+
+// What a person needs to decide where the surplus of a confirmed count goes (#3712 slice 2b). All of it is the code's, read from the books: the items in surplus (the largest by value first, at most
+// STOCK_SURPLUS_NOTE_ITEMS and how many more), the total in whole dong, the supplier the goods were last received from when there is one (a hint, never chosen for the person), whether a person made
+// a manual entry on 3381 since the count (the surplus may already be settled by hand), and where the resolution stands. `explanation` is the accounting coworker's plain words about it, or null; `ai`
+// says why there is none ('off': no model on this deployment; 'busy': the member asks too often; 'budget': the AI budget is spent; 'failed': the call failed; 'refused': the answer named something
+// the facts do not). The core works the same with AI off, and the person chooses the account.
+export const STOCK_SURPLUS_NOTE_ITEMS = 8;
+export const STOCK_SURPLUS_NOTE_STATES = ['used', 'off', 'busy', 'budget', 'failed', 'refused'] as const;
+export const zStockSurplusNoteInput = z.strictObject({ countId: zId, lang: z.enum(['vi', 'en']).optional() });
+export const zStockSurplusSource = z.object({
+  countId: zId,
+  countDate: zLocalDate,
+  total: z.string(),
+  items: z.array(z.object({ name: z.string(), quantity: z.string(), unit: z.string(), value: z.string() })).max(STOCK_SURPLUS_NOTE_ITEMS),
+  moreItems: z.number().int().min(0),
+  supplier: z.object({ partyId: zId, name: z.string(), lastReceived: zLocalDate }).nullable(),
+  manualEntry: z.boolean(),
+  voucherId: zId.nullable(),
+  proposalId: zId.nullable(),
+});
+export type StockSurplusSource = z.infer<typeof zStockSurplusSource>;
+export const zStockSurplusNote = zStockSurplusSource.extend({
+  ai: z.enum(STOCK_SURPLUS_NOTE_STATES),
+  explanation: z.string().nullable(),
+});
+export type StockSurplusNote = z.infer<typeof zStockSurplusNote>;
 export const STOCK_COUNT_COMMAND = 'finance.stock.count_confirm';
 // The proposal (kind finance.journal_voucher, shown as one) with the count it posts. The lines of the count are not in it: approving builds them again from the books, and lineCount and
 // figuresHash (SHA-256 of the canonical figures) are what make a proposal stale when a figure changed since it was asked for.

@@ -926,6 +926,13 @@ export type MeetingLinkSuggested = z.infer<typeof zMeetingLinkSuggested>;
 // as "Bản dịch máy", tainted, and never the source of a task, mail, post, webhook, search hit or export. `stage` is the summary the member read: the published one (any reader) or
 // their own draft (the recorder).
 export const TRANSLATION_STAGES = ['draft', 'published'] as const;
+// The languages a translation can be made INTO (E3, #3186): a meeting is held in `vi` or `en` (MEETING_LANGUAGES), and Chinese (Simplified), Japanese and Korean are targets only. Each of the three is offered
+// only where the deployment has switched it on (MEETINGS_TRANSLATION_LANGUAGES), after a native reader's check of its quality; `vi` and `en` are always the other language of the pair.
+export const TRANSLATION_TARGETS = ['vi', 'en', 'zh', 'ja', 'ko'] as const;
+export type TranslationTarget = (typeof TRANSLATION_TARGETS)[number];
+export const zTranslationTarget = z.enum(TRANSLATION_TARGETS);
+export const TRANSLATION_FLAGGED_TARGETS = ['zh', 'ja', 'ko'] as const;
+export type TranslationFlaggedTarget = (typeof TRANSLATION_FLAGGED_TARGETS)[number];
 export const TRANSLATION_STATES = ['ok', 'warn', 'refused'] as const;
 // A fixed word for what code found: a refusal (MISSING, EMPTY, TOO_LONG, UNCHANGED, INVENTED_NUMBER, CONTACT_ADDED) or a warning (NUMBER_DROPPED, NAME_ADDED).
 export const TRANSLATION_CODES = ['MISSING', 'EMPTY', 'TOO_LONG', 'UNCHANGED', 'INVENTED_NUMBER', 'CONTACT_ADDED', 'NUMBER_DROPPED', 'NAME_ADDED'] as const;
@@ -947,20 +954,23 @@ export type TranslationSegment = z.infer<typeof zTranslationSegment>;
 export const zTranslationResult = z.strictObject({
   v: z.literal(1),
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
   stage: zTranslationStage,
   hash: zTranslationHash,
   segments: z.array(zTranslationSegment).min(1).max(TRANSLATION_SEGMENTS_MAX),
 });
 export type TranslationResult = z.infer<typeof zTranslationResult>;
 
-export const zTranslationRef = z.strictObject({ meetingId: zId, stage: zTranslationStage });
+// `to`: the language asked for; absent, the other language of the vi/en pair (what the screens did before the picker, #3186).
+export const zTranslationRef = z.strictObject({ meetingId: zId, stage: zTranslationStage, to: zTranslationTarget.optional() });
+// The same for the transcript, which has no stage in the request.
+export const zTranscriptTranslationRef = z.strictObject({ meetingId: zId, to: zTranslationTarget.optional() });
 // The text the caller reads and may translate: the original segments in the order the screen shows them, the language pair and the hash of the text (a changed original has another hash).
 export const zTranslationSource = z.strictObject({
   meetingId: zId,
   stage: zTranslationStage,
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
   hash: zTranslationHash,
   segments: z.array(z.strictObject({ key: zTranslationKey, text: z.string() })).min(1).max(TRANSLATION_SEGMENTS_MAX),
 });
@@ -991,7 +1001,9 @@ export const zTranslationStatus = z.strictObject({
   enabled: z.boolean(),
   reason: z.enum(['off', 'nothing']).nullable(),
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
+  // The languages the member may pick for this meeting: the other language of the pair, and each of Chinese, Japanese and Korean the deployment has switched on (#3186).
+  targets: z.array(zTranslationTarget).max(TRANSLATION_TARGETS.length).default([]),
   estimate: z.strictObject({ inputTokens: z.number().int().min(0), outputTokens: z.number().int().min(0), cost: z.string().regex(/^\d+(?:\.\d+)?$/).nullable() }).nullable(),
 });
 export type TranslationStatus = z.infer<typeof zTranslationStatus>;
@@ -999,12 +1011,13 @@ export type TranslationStatus = z.infer<typeof zTranslationStatus>;
 export const zTranslationView = z.strictObject({
   stage: zTranslationStage,
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
   stale: z.boolean(),
   createdAt: z.string(),
   segments: z.array(zTranslationSegment),
 });
-export const zTranslations = z.strictObject({ meetingId: zId, translations: z.array(zTranslationView).max(TRANSLATION_STAGES.length) });
+// One per stage and language the member asked for.
+export const zTranslations = z.strictObject({ meetingId: zId, translations: z.array(zTranslationView).max(TRANSLATION_STAGES.length * TRANSLATION_TARGETS.length) });
 export type Translations = z.infer<typeof zTranslations>;
 
 // The machine translation of a meeting's transcript (meetings integrations E2, #3185, plan section 7a). The member's own Vy translates the lines the member reads, a few chunks at a time, in
@@ -1032,7 +1045,7 @@ export const zTranscriptTranslationResult = z.strictObject({
   v: z.literal(1),
   kind: z.literal('transcript'),
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
   stage: zTranslationStage,
   parts: z.array(zTranscriptPart).min(1).max(TRANSCRIPT_TRANSLATE_LINES_MAX),
 });
@@ -1047,7 +1060,9 @@ export const zTranscriptTranslationStatus = z.strictObject({
   enabled: z.boolean(),
   reason: z.enum(['off', 'nothing']).nullable(),
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
+  // The languages the member may pick for this meeting (as the summary's status says).
+  targets: z.array(zTranslationTarget).max(TRANSLATION_TARGETS.length).default([]),
   // Lines of the transcript the member reads, and those with a current translation (a refused line counts: it will not be asked again), those stale, and those still to translate.
   lines: z.number().int().min(0),
   translated: z.number().int().min(0),
@@ -1080,7 +1095,7 @@ export const zTranscriptStarted = z.strictObject({
   runId: zId,
   stage: zTranslationStage,
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
   remaining: z.number().int().min(1),
   lineIds: z.array(zId).min(1).max(TRANSCRIPT_TRANSLATE_LINES_MAX),
 });
@@ -1095,7 +1110,7 @@ export const zTranscriptTranslationView = z.strictObject({
   meetingId: zId,
   stage: zTranslationStage.nullable(),
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
   parts: z.array(z.strictObject({ lineId: zId, text: z.string(), state: z.enum(TRANSLATION_STATES), codes: z.array(z.enum(TRANSLATION_CODES)), stale: z.boolean() })).max(TRANSCRIPT_TRANSLATE_LINES_MAX),
 });
 export type TranscriptTranslationView = z.infer<typeof zTranscriptTranslationView>;

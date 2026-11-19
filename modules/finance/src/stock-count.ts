@@ -33,7 +33,7 @@ import { assertUsableAccounts } from './accounts.ts';
 import { journalVoucherProblems, journalVoucherTitle } from './domain/journal-voucher.ts';
 import { stockMoveLockKey } from './domain/stock-close.ts';
 import { surplusAmount } from './domain/stock-surplus.ts';
-import { surplusStanding } from './stock-surplus.ts';
+import { surplusSource, surplusStanding } from './stock-surplus.ts';
 import { countDescription, countDifferences, type CountItem, type CountLine, type CountResult } from './domain/stock-count.ts';
 import { monthFigures, nextMonth, previousMonth } from './domain/stock-cost.ts';
 import { postJournalVoucher } from './journal-voucher.ts';
@@ -518,4 +518,4 @@ export const listStockCounts = defineQuery({
 });
 
 export const stockCountCommands = [createStockCount, cancelStockCount, confirmEmptyStockCount, prepareStockCount, confirmStockCount];
-export const stockCountQueries = [previewStockCount, listStockCounts];
+export const stockCountQueries = [previewStockCount, listStockCounts, surplusSource];
