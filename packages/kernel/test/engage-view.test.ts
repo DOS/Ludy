@@ -20,14 +20,15 @@ describe('engageViewOf', () => {
     ]);
   });
 
-  it('drops the characters that make text read in another order or hide, keeps newlines and tabs, bounds a value, and skips odd keys', () => {
-    const body = `ok‮gnp.exe⁦x⁩​\u0000\u007F${'a'.repeat(9000)}\tend\n`;
+  it('writes out the characters that make text read in another order or hide as visible markers (the approval sends them as they are), keeps newlines and tabs, bounds a value, and skips odd keys', () => {
+    const body = `ok\u202Egnp.exe\u2066x\u2069\u200B\u0000\u007F${'a'.repeat(9000)}\tend\n`;
     const view = engageViewOf(REPLY?.kind ?? '', REPLY?.command ?? '', { body, 'bad key': 'x', '__proto__x': 'y', $set: 'z' });
     const field = view?.fields.find((f) => f.key === 'body');
-    expect(field?.value.startsWith('okgnp.exex')).toBe(true);
+    expect(field?.value.startsWith('ok<U+202E>gnp.exe<U+2066>x<U+2069><U+200B><U+0000><U+007F>aaa')).toBe(true);
     expect(field?.value.length).toBe(8000);
-    expect(field?.value).not.toMatch(/[‮⁦⁩​\u0000\u007F]/);
+    expect([...(field?.value ?? '')].some((ch) => ['\u202E', '\u2066', '\u2069', '\u200B', '\u0000', '\u007F'].includes(ch))).toBe(false);
     expect(view?.fields.map((f) => f.key)).toEqual(['body']);
+    expect(engageViewOf(REPLY?.kind ?? '', REPLY?.command ?? '', { body: 'a\tb\nc' })?.fields[0]?.value).toBe('a\tb\nc');
   });
 
   it('is nothing for another kind, or a payload that is not an object', () => {

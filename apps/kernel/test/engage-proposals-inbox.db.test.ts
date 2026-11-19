@@ -4,6 +4,7 @@
 // counts for nothing. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { upsertIdentity } from '@crove/kernel';
 import type { ConversationEvent, ConversationIngested } from '@crove/kernel-contract';
 import { ADMIN, startHarness, type Harness } from './engage-proposals-harness.ts';
 
@@ -105,6 +106,27 @@ suite('the Hộp thư proposal twins (#3863)', () => {
     expect((await hiddenAt(other.message))?.hide_request).toBeNull();
   });
 
+  it('erases the text an AI coworker proposed with the customer\'s thread: a waiting proposal is rejected and blanked, a decided one is blanked, and nothing can be sent into the erased thread', async () => {
+    const waiting = await comment('Số của mình là 0912345678');
+    const done = await comment('Đơn của mình giao ở đâu?');
+    const { actor } = await h.grant();
+    const pending = await h.propose(actor, 'kernel.conversation.reply_approved', { conversationId: waiting.conversation, body: 'Dạ chị Lan, em gọi 0912345678 nhé', lastSeenSeq: 1 });
+    const sent = await h.propose(actor, 'kernel.conversation.reply_approved', { conversationId: done.conversation, body: 'Dạ đơn giao tới 12 Lê Lợi ạ', lastSeenSeq: 1 });
+    await h.approve(sent.proposalId);
+    expect((await h.proposal(sent.proposalId)).status).toBe('executed');
+    for (const c of [waiting.conversation, done.conversation]) await h.runtime.execute('kernel.conversation.erase_contact', { conversationId: c, confirm: true }, { actor: h.person(h.owner, true), orgId: h.orgId });
+    for (const id of [pending.proposalId, sent.proposalId]) {
+      const row = await h.proposal(id);
+      expect(row.payload, id).toEqual({ erased: true });
+      expect(JSON.stringify(row), id).not.toContain('0912345678');
+      expect(JSON.stringify(row), id).not.toContain('Lê Lợi');
+    }
+    expect((await h.proposal(pending.proposalId)).status).toBe('rejected');
+    expect((await h.proposal(sent.proposalId)).status).toBe('executed');
+    await expect(h.approve(pending.proposalId)).rejects.toBeDefined();
+    expect(await h.executions('kernel.conversation.reply', pending.proposalId)).toBe(0);
+  });
+
   it('shows the card the text and the asker (marked as an AI app\'s), and with a second owner the person who connected the app cannot approve their own coworker\'s ask', async () => {
     const { conversation } = await comment('Cho mình hỏi giá');
     const { actor } = await h.grant();
@@ -114,6 +136,22 @@ suite('the Hộp thư proposal twins (#3863)', () => {
     expect(detail.requestedByMcp).toEqual({ client: 'Dy', host: 'dy.example.org' });
     expect(detail.engage?.command).toBe('kernel.conversation.reply_approved');
     expect(detail.engage?.fields.find((f) => f.key === 'body')?.value).toBe('Dạ <b>100k</b> ạ');
+    // One eligible approver: the owner approves what their own coworker asked (the one-person path).
+    expect(detail.canApprove).toBe(true);
+    // Who and what it is about is read from the thread: the channel, the customer and what the customer wrote, so the approver does not read ids.
+    expect((detail.engage as { about?: Array<{ label: string; value: string }> } | null)?.about).toEqual([
+      { label: 'channel', value: 'sandbox: Kênh thử' },
+      { label: 'contact', value: 'Trần Thị Khách' },
+      { label: 'customerMessage', value: 'Cho mình hỏi giá' },
+    ]);
+    // The text may be a reply in a thread a member or a viewer may not read (a private message, an email): only the people who approve, owners and admins, see it.
+    for (const role of ['member', 'viewer'] as const) {
+      const id = await upsertIdentity(h.db, { issuer: 'engage-inbox', subject: `${role}-${randomUUID()}`, email: `${role}-${randomUUID().slice(0, 8)}@engage-inbox.test`, name: role });
+      await h.q('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [h.orgId, id, role]);
+      const asRole = await h.runtime.query<{ engage: unknown; kind: string; title: string }>('kernel.inbox.get', { id: made.proposalId }, { actor: h.person(id), orgId: h.orgId });
+      expect(asRole.engage, role).toBeNull();
+      expect(JSON.stringify(asRole), role).not.toContain('Dạ <b>100k</b> ạ');
+    }
     // One eligible approver: the owner approves what their own coworker asked (the one-person path).
     expect(detail.canApprove).toBe(true);
 

@@ -2701,6 +2701,12 @@ async function deleteThreads(ctx: CommandContext, filter: ReturnType<typeof sql>
     WHERE mm.org_id = ${ctx.orgId}::uuid AND mm.source = ${EMAIL_REPLY_SOURCE} AND (mm.to_address IS NOT NULL OR mm.subject IS NOT NULL OR mm.payload IS NOT NULL)
       AND mm.source_id IN (SELECT m.id FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
                            WHERE m.org_id = ${ctx.orgId}::uuid AND c.kind = 'email' AND ${filter})`.execute(ctx.trx);
+  // What an AI coworker proposed to send into these threads (E4 #3863: a reply, a private reply, hiding a comment) holds the thread's or the message's id and, for a reply, the text, in the proposal's payload. It goes
+  // with the thread, pending or decided (a decided proposal is frozen against the tenant, so the database's definer does it): the text is blanked, and a proposal still waiting is rejected.
+  await sql`
+    SELECT crove_kernel.engage_proposal_erase(
+      ARRAY(SELECT c.id FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND ${filter}),
+      ARRAY(SELECT m.id FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id WHERE m.org_id = ${ctx.orgId}::uuid AND ${filter}))`.execute(ctx.trx);
   const { rows } = await sql<{ threads: string; messages: string }>`
     WITH gone AS (DELETE FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND ${filter} RETURNING c.id)
     SELECT (SELECT count(*) FROM gone)::text AS threads,

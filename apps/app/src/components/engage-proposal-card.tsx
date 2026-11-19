@@ -5,6 +5,7 @@ import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
 import { Card } from '@crove/ui/components/card';
+import { useFormat } from '../i18n/provider.tsx';
 import type { EngageProposalView } from '@crove/kernel-contract';
 
 // The screen where the thing the AI asked about can be seen, when there is one.
@@ -36,11 +37,15 @@ const KIND_KEYS = [
   'ads_schedule_shorten',
 ] as const;
 const FIELD_KEYS = ['body', 'conversationId', 'lastSeenSeq', 'draftId', 'savedReplyId', 'messageId', 'hidden', 'quoteId', 'version', 'via', 'to', 'bookingId', 'startsAt', 'postId', 'variantIds', 'at', 'queue', 'slotAt', 'times', 'launchId', 'slot', 'dailyBudget', 'endOn'] as const;
+// A time the AI wrote as an ISO instant is shown in the reader's own clock beside what was written, so 09:00Z is not read as 09:00 in Vietnam.
+const TIME_KEYS = ['startsAt', 'at', 'slotAt'] as const;
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 const isKindKey = (key: string): key is (typeof KIND_KEYS)[number] => (KIND_KEYS as readonly string[]).includes(key);
 const isFieldKey = (key: string): key is (typeof FIELD_KEYS)[number] => (FIELD_KEYS as readonly string[]).includes(key);
 
-export function EngageProposalCard({ engage, kind, client, slug }: { engage: EngageProposalView; kind: string; client: { client: string; host: string } | null; slug: string }) {
+export function EngageProposalCard({ engage, kind, status, client, slug }: { engage: EngageProposalView; kind: string; status: string; client: { client: string; host: string } | null; slug: string }) {
   const t = useTranslations('inboxDetail');
+  const fmt = useFormat();
   const kindKey = kind.replaceAll('.', '_');
   const screen = screenOf(kind, engage.fields);
   return (
@@ -48,8 +53,19 @@ export function EngageProposalCard({ engage, kind, client, slug }: { engage: Eng
       <p className="text-sm font-medium text-muted-foreground">{t('engageChange')}</p>
       <p className="break-words text-base font-semibold text-foreground">{isKindKey(kindKey) ? t(`engageKinds.${kindKey}`) : kind}</p>
       <div className="flex flex-wrap items-center gap-2">
-        <Badge variant="proposal">{t('engageTainted')}</Badge>
+        <Badge variant="proposal">{t('engageBadge')}</Badge>
       </div>
+      <p className="text-sm text-muted-foreground">{t('engageTainted')}</p>
+      {engage.about.length > 0 && (
+        <dl className="space-y-2 rounded-md border border-border p-3" data-testid="engage-about">
+          {engage.about.map((a) => (
+            <div key={a.label}>
+              <dt className="text-sm text-muted-foreground">{t(`engageAbout.${a.label}`)}</dt>
+              <dd className="whitespace-pre-wrap break-words text-base text-foreground">{a.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
       <dl className="space-y-2" data-testid="engage-fields">
         {engage.fields.map((f) => (
           <div key={f.key}>
@@ -61,28 +77,29 @@ export function EngageProposalCard({ engage, kind, client, slug }: { engage: Eng
               </dd>
             ) : (
               <dd className="break-words text-base text-foreground" data-testid={`engage-field-${f.key}`}>
-                {f.value}
+                {(TIME_KEYS as readonly string[]).includes(f.key) && ISO_INSTANT.test(f.value) ? `${fmt.dateTime(f.value)} (${f.value})` : f.value}
               </dd>
             )}
           </div>
         ))}
       </dl>
       {client && <p className="text-sm text-muted-foreground">{t('engageWhoAsked', { client: client.client, host: client.host })}</p>}
+      {/* What is true now: nothing yet while it waits; once decided, what was decided. */}
       <p role="note" className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm text-foreground">
-        {t('engageNothingYet')}
+        {status === 'pending' ? t('engageNothingYet') : status === 'executed' ? t('engageDone') : status === 'rejected' ? t('engageRejected') : t('engageClosed')}
       </p>
       {screen?.to === 'social' && screen.postId && (
-        <Link to="/o/$slug/social/$id" params={{ slug, id: screen.postId }} className="inline-block text-sm text-link hover:underline">
+        <Link to="/o/$slug/social/$id" params={{ slug, id: screen.postId }} className="inline-flex min-h-11 items-center text-sm text-link hover:underline">
           {t(screen.label)}
         </Link>
       )}
       {screen?.to === 'ads' && (
-        <Link to="/o/$slug/ads" params={{ slug }} className="inline-block text-sm text-link hover:underline">
+        <Link to="/o/$slug/ads" params={{ slug }} className="inline-flex min-h-11 items-center text-sm text-link hover:underline">
           {t(screen.label)}
         </Link>
       )}
       {screen?.to === 'bookings' && (
-        <Link to="/o/$slug/bookings" params={{ slug }} className="inline-block text-sm text-link hover:underline">
+        <Link to="/o/$slug/bookings" params={{ slug }} className="inline-flex min-h-11 items-center text-sm text-link hover:underline">
           {t(screen.label)}
         </Link>
       )}

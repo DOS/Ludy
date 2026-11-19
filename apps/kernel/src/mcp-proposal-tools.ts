@@ -32,6 +32,18 @@ interface ToolSpec {
   module?: string;
 }
 
+// Eight of the fourteen twins have a tool. The other six need an id an AI app cannot read yet: a quote's `version` (the read of a quote leaves versions out, E1 #3860) and the id of a live ad launch (no read lists
+// launches). Their twins are declared and approved like the rest; each gets its tool with the read it needs (follow-up), so no tool is listed that a client cannot use.
+const NO_TOOL_YET: readonly string[] = [
+  'crm.quote.send_approved',
+  'ads.launch.stop_approved',
+  'ads.object.pause_approved',
+  'ads.object.archive_approved',
+  'ads.budget.lower_approved',
+  'ads.schedule.shorten_approved',
+];
+export const ENGAGE_PROPOSAL_COMMANDS_WITHOUT_TOOL = NO_TOOL_YET;
+
 const SPECS: readonly ToolSpec[] = [
   {
     command: 'kernel.conversation.reply_approved',
@@ -53,15 +65,6 @@ const SPECS: readonly ToolSpec[] = [
     tool: 'ludy_conversation_hide',
     title: 'Propose hiding or showing a comment',
     description: 'Proposes hiding (hidden: true) or showing again (hidden: false) a customer\'s comment on the platform (messageId: the id of the comment message from ludy_conversation).' + HOW,
-  },
-  {
-    command: 'crm.quote.send_approved',
-    tool: 'ludy_quote_send',
-    title: 'Propose sending a quote',
-    description:
-      'Proposes sending a DRAFT quote (quoteId and version from ludy_quote; via: "email" queues a mail to the customer, to an address you may name in `to`, else the customer\'s; via: "link" only marks it sent by a link the person copies). The quote must be a draft with a priced line, a total above zero and a validity date that has not passed; a change to the draft since you read it refuses the approval.' +
-      HOW,
-    module: 'crm',
   },
   {
     command: 'crm.booking.move_approved',
@@ -95,45 +98,10 @@ const SPECS: readonly ToolSpec[] = [
     module: 'social',
   },
   {
-    command: 'ads.launch.stop_approved',
-    tool: 'ludy_ads_launch_stop',
-    title: 'Propose stopping a running ad launch',
-    description: 'Proposes stopping an ad launch that has started (launchId from ludy_ads_today): the campaign is paused at the platform and the launch never resumes. It only ever reduces spend.' + HOW,
-    module: 'ads',
-  },
-  {
     command: 'ads.pause_all_approved',
     tool: 'ludy_ads_pause_all',
     title: 'Propose stopping all ads',
     description: 'Proposes the kill switch: blocks new ad launches for the organization, cancels the ones not started and stops the ones running. It only ever reduces spend; a person must open launches again to run ads.' + HOW,
-    module: 'ads',
-  },
-  {
-    command: 'ads.object.pause_approved',
-    tool: 'ludy_ads_object_pause',
-    title: 'Propose pausing part of a running ad',
-    description: 'Proposes pausing the campaign, the ad set or one ad of a live launch (launchId; slot: campaign, ad_set, ad_1, ad_2 or ad_3).' + HOW,
-    module: 'ads',
-  },
-  {
-    command: 'ads.object.archive_approved',
-    tool: 'ludy_ads_object_archive',
-    title: 'Propose archiving part of a running ad',
-    description: 'Proposes archiving the campaign, the ad set or one ad of a live launch (launchId; slot: campaign, ad_set, ad_1, ad_2 or ad_3). An archived object cannot run again.' + HOW,
-    module: 'ads',
-  },
-  {
-    command: 'ads.budget.lower_approved',
-    tool: 'ludy_ads_budget_lower',
-    title: 'Propose lowering a daily ad budget',
-    description: 'Proposes lowering the daily budget of a live launch (launchId; dailyBudget: a decimal string in the account\'s own currency, lower than the budget held now). It never raises a budget.' + HOW,
-    module: 'ads',
-  },
-  {
-    command: 'ads.schedule.shorten_approved',
-    tool: 'ludy_ads_schedule_shorten',
-    title: 'Propose shortening an ad schedule',
-    description: 'Proposes ending a live launch earlier (launchId; endOn: a local date earlier than the end held now). It never extends a schedule.' + HOW,
     module: 'ads',
   },
 ];
@@ -149,18 +117,29 @@ const schemaOf = (schema: z.ZodType): Record<string, unknown> => {
 // The scope of a twin is the one its definition declares (the catalog and the invariants keep the three equal): the tool is listed, and callable, only for a company grant that holds it.
 const scopeOf = (command: string): McpWriteScopeId => (command.startsWith('ads.') ? 'ludy.ads.draft' : 'ludy.engage.write');
 
+// The argument schema and its JSON Schema, once per tool: the list is built on every call, the schemas never change.
+const SCHEMAS = new Map<string, { payload: z.ZodType<Record<string, unknown>>; inputSchema: Record<string, unknown> }>();
+function schemasOf(spec: ToolSpec) {
+  const known = SCHEMAS.get(spec.command);
+  if (known) return known;
+  const twin = TWINS.get(spec.command);
+  if (!twin) throw new Error(`engage proposal tool ${spec.tool}: ${spec.command} is not registered`);
+  const payload = (twin.input as z.ZodObject<{ payload: z.ZodType<Record<string, unknown>> }>).shape.payload;
+  const made = { payload, inputSchema: schemaOf(payload) };
+  SCHEMAS.set(spec.command, made);
+  return made;
+}
+
 export function engageProposalTools(runtime: Runtime, actor: UserActor, orgId: string): ToolDescriptor[] {
   return SPECS.map((spec): ToolDescriptor => {
-    const twin = TWINS.get(spec.command);
-    if (!twin) throw new Error(`engage proposal tool ${spec.tool}: ${spec.command} is not registered`);
-    const payload = (twin.input as z.ZodObject<{ payload: z.ZodType<Record<string, unknown>> }>).shape.payload;
+    const { payload, inputSchema } = schemasOf(spec);
     return {
       name: spec.tool,
       ...(spec.module ? { module: spec.module } : {}),
       writeScope: scopeOf(spec.command),
       title: spec.title,
       description: spec.description,
-      inputSchema: schemaOf(payload),
+      inputSchema,
       argsSchema: payload,
       outputSchema: PROPOSED,
       // Not read only; it changes nothing by itself (a proposal waits), so it is not destructive; a second call is a second proposal, so not idempotent.
