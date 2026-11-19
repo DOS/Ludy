@@ -163,6 +163,7 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
     expect(new Set(REACHABLE).size).toBe(REACHABLE.length);
     expect(REACHABLE_NEXT.filter((entry) => REACHABLE.includes(entry))).toEqual([]);
     const reachable = defs.filter((d) => d.extension !== undefined).map((d) => `${d.name}:${d.extension?.scope}`);
+    for (const next of REACHABLE_NEXT) expect(reachable.filter((entry) => entry === next).length).toBeLessThanOrEqual(1);
     expect(reachable.filter((entry) => !REACHABLE_NEXT.includes(entry)).sort()).toEqual([...REACHABLE].sort());
     expect([...EXTENSION_SCOPES]).toEqual([...EXTENSION_SCOPE_IDS]);
   });
