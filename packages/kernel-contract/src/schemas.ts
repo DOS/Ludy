@@ -579,6 +579,8 @@ export const zInboxItem = z.object({
   createdAt: z.string(),
   // The AI agent that asked for the proposal (#435); null for a proposal a person or an upload made.
   requestedByAgent: z.object({ id: zId, name: z.string() }).nullable(),
+  // The outside AI app (connected over MCP) that asked for the proposal (ADR-0051 decision 10): its self-declared name and the host it returns to, stamped from its grant; null for any other proposal.
+  requestedByMcp: z.object({ client: z.string(), host: z.string() }).nullable(),
   // Whether an extraction run read the proposal's source (so its invoice checks ran); an agent's proposal has none.
   extracted: z.boolean(),
   // An expired proposal (#876): the whole days it waited for approval before it expired, its reason; null otherwise.

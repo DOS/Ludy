@@ -8049,6 +8049,7 @@ export const vi = {
     warnChecks: '{count, number} lưu ý',
     matched: 'Khớp',
     agentProposed: 'AI agent đề xuất: {name}',
+    mcpProposed: 'Do ứng dụng AI “⁨{client}⁩” (⁨{host}⁩) đề xuất, tên do chính ứng dụng tự khai',
     expiredReason: 'Hết hạn sau {days, number} ngày chờ duyệt',
     reversalKind: 'Đảo bút toán',
     // A posted invoice whose entry was reversed (#2054), as the file's chip says it.
@@ -8284,6 +8285,7 @@ export const vi = {
     rereadVoided: 'Chứng từ đã ghi sổ trước đây đã bị hủy do đảo bút toán; nếu đọc được, một đề xuất mới sẽ được tạo để ghi sổ lại hóa đơn.',
     voidedBadge: 'Chứng từ đã hủy do đảo bút toán',
     agentProposed: 'AI agent đề xuất: {name}',
+    mcpProposed: 'Do ứng dụng AI “⁨{client}⁩” (⁨{host}⁩) đề xuất, tên do chính ứng dụng tự khai',
     expiredNotice: 'Đề xuất đã hết hạn lúc {at}: chờ duyệt {days, number} ngày mà chưa ai duyệt, quá hạn tổ chức đặt trong Cài đặt → Nhắc duyệt đề xuất. Đề xuất đã hết hạn không duyệt được nữa.',
     expiredResubmitHint: 'Nếu vẫn cần, bạn có thể gửi lại để tạo một đề xuất mới từ cùng nguồn.',
     expiredAuthorHint: 'Nếu vẫn cần, người soạn đề xuất có thể gửi lại.',
@@ -12852,6 +12854,7 @@ export const vi = {
       NOT_EDITABLE: 'Đề xuất này không chỉnh sửa được',
       NOT_ELIGIBLE: 'Bạn không có quyền duyệt đề xuất này',
       FOUR_EYES_REQUIRED: 'Cần một người khác duyệt (bạn đã tải lên hoặc chỉnh sửa đề xuất này)',
+      MCP_PROPOSAL_CAP: 'Ứng dụng AI này đã có quá nhiều đề xuất đang chờ duyệt. Hãy duyệt hoặc từ chối bớt rồi thử lại.',
       CONTENT_CHANGED: 'Bạn đã đổi tài khoản nhưng chưa lưu; hãy lưu chỉnh sửa trước khi duyệt',
       EXTRACTION_PENDING: 'Tệp đang được đọc; hãy chờ kết quả rồi thử lại',
       READ_FROM_ORIGINAL: 'Đề xuất này đã được cập nhật từ hóa đơn gốc XML nên đọc lại tệp PDF sẽ không đổi gì; hãy đọc lại tệp XML',
@@ -15213,6 +15216,7 @@ export const vi = {
           set: 'Bật hoặc tắt việc cho thành viên tự kết nối ứng dụng AI',
         },
         parties: 'Cho ứng dụng AI xem danh sách khách hàng, nhà cung cấp và liên hệ',
+        propose: 'Ghi lại điều một ứng dụng AI yêu cầu thành đề xuất chờ một người duyệt',
         signals: 'Cho ứng dụng AI xem các việc cần chú ý giữa các ứng dụng (deal thắng chưa có hóa đơn, công nợ quá hạn còn deal mở)',
         wake: {
           clear: 'Gỡ địa chỉ nhận báo thức của một ứng dụng AI',
