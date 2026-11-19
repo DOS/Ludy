@@ -2917,6 +2917,9 @@ export interface KernelProposalTable {
   resubmitted_from: string | null;
   legal_entity_id: string;
   co_authors: string[] | null;
+  requested_by_grant: string | null;
+  mcp_client_name: string | null;
+  mcp_client_host: string | null;
 }
 
 /** crove_kernel.record_le */

@@ -8016,6 +8016,7 @@ export const vi = {
     warnChecks: '{count, number} lưu ý',
     matched: 'Khớp',
     agentProposed: 'AI agent đề xuất: {name}',
+    mcpProposed: 'Do ứng dụng AI “{client}” ({host}) đề xuất, tên do chính ứng dụng tự khai',
     expiredReason: 'Hết hạn sau {days, number} ngày chờ duyệt',
     reversalKind: 'Đảo bút toán',
     // A posted invoice whose entry was reversed (#2054), as the file's chip says it.
@@ -8251,6 +8252,7 @@ export const vi = {
     rereadVoided: 'Chứng từ đã ghi sổ trước đây đã bị hủy do đảo bút toán; nếu đọc được, một đề xuất mới sẽ được tạo để ghi sổ lại hóa đơn.',
     voidedBadge: 'Chứng từ đã hủy do đảo bút toán',
     agentProposed: 'AI agent đề xuất: {name}',
+    mcpProposed: 'Do ứng dụng AI “{client}” ({host}) đề xuất, tên do chính ứng dụng tự khai',
     expiredNotice: 'Đề xuất đã hết hạn lúc {at}: chờ duyệt {days, number} ngày mà chưa ai duyệt, quá hạn tổ chức đặt trong Cài đặt → Nhắc duyệt đề xuất. Đề xuất đã hết hạn không duyệt được nữa.',
     expiredResubmitHint: 'Nếu vẫn cần, bạn có thể gửi lại để tạo một đề xuất mới từ cùng nguồn.',
     expiredAuthorHint: 'Nếu vẫn cần, người soạn đề xuất có thể gửi lại.',

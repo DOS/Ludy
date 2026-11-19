@@ -11,11 +11,13 @@
 // - kernel.mcp.about: `ludy_about`: the org's name, the grant and its scope. It holds no business data.
 // - kernel.mcp.parties: `ludy_parties_list` (slice 1b), the party register as the contacts screen shows it to an owner or admin; its comment is its privacy review.
 // No command of the kernel declares `mcp`. The one command an MCP grant may run, the Social draft (#3227), is declared in modules/social, and a test pins that it is the only one.
+// - kernel.mcp.propose: what an MCP grant's call to an R2 or R3 command becomes (ADR-0051 decision 10, #3858 slice d): a pending proposal, never an execution.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { MCP_SCOPE_IDS, plainLine, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMemberGrantsView, type McpGrantView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
+import { DomainError, MCP_PROPOSE_COMMAND, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
+import { eligibleApprovers, hasApprovalPolicy } from './approval.ts';
 import { mcpSignals } from './mcp-signals.ts';
 import { mcpWakeCommands, mcpWakeQueries } from './mcp-wake.ts';
 
@@ -288,5 +290,63 @@ export const mcpMemberGrantsGet = defineQuery({
   },
 });
 
-export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpMemberGrantsSet, ...mcpWakeCommands];
+// The proposal an MCP grant's call to an R2 or R3 command becomes (ADR-0051 decision 10, #3858 slice d). The runtime runs this command in place of the command the call named, for an MCP actor and for nobody else:
+// a person calling it is refused. It never runs the command: it writes one pending proposal of the command and the (already parsed) input, in the sealed proposal context of the call's scope, which the database
+// lets insert that one row of that one shape. The client and its host, the grant's id and the taint are stamped from the grant of the call, never from the input; the author is the grant, an agent entry that
+// never counts as an approver or for four-eyes, so the person who consented can approve it. A person approves it in Ludy through kernel.proposal.approve, with the policy's approvers, four-eyes and step-up;
+// the command then runs under the approver's authority and the usual checks, once. A cap of pending proposals per grant and per org is the database's (crove_kernel.mcp_proposal_cap).
+const PROPOSAL_PAYLOAD_MAX_BYTES = 64 * 1024;
+export const mcpPropose = defineCommand({
+  name: MCP_PROPOSE_COMMAND,
+  input: z.strictObject({ command: z.string().min(1).max(200), payload: z.record(z.string(), z.unknown()) }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: GRANTORS,
+  handler: async (ctx, input) => {
+    const mcp = ctx.actor.type === 'user' ? ctx.actor.mcp : undefined;
+    if (!mcp || mcp.kind === 'member') throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP của công ty mới tạo được đề xuất này', { rule: 'mcp_scope' });
+    const info = ctx.command(input.command);
+    // The command must be reachable by a grant as a proposal under a scope this grant holds (the runtime checked the scope against the command's own declaration; this checks it is that command), run
+    // through a proposal, and have an approval policy that names an approver. R3 without one is refused (the database refuses the same row).
+    if (!info || info.mcp?.mode !== 'proposal' || info.access !== 'proposal' || !mcp.scopes.includes(info.mcp.scope) || !hasApprovalPolicy(input.command)) {
+      throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+    }
+    if (Buffer.byteLength(JSON.stringify(input.payload), 'utf8') > PROPOSAL_PAYLOAD_MAX_BYTES) throw new DomainError('INVALID', 422, 'Nội dung đề xuất quá lớn');
+    const kind = info.proposalKind;
+    // The Inbox renders a proposal by its kind and a title built here from the client's self-declared name (marked as such), never from text the call supplied.
+    const title = `Ứng dụng AI “${mcp.clientName}” đề xuất: ${kind}`.slice(0, 300);
+    const approvers = await eligibleApprovers(ctx.trx, ctx.orgId, input.command);
+    let proposalId: string;
+    try {
+      const row = await ctx.trx
+        .insertInto('crove_kernel.proposal')
+        .values({
+          org_id: ctx.orgId,
+          kind,
+          command: input.command,
+          title,
+          payload: JSON.stringify(input.payload),
+          eligible_approvers: approvers,
+          authors: JSON.stringify([{ type: 'agent', id: mcp.grantId, run: mcp.grantId }]),
+          tainted: true,
+          requested_by_grant: mcp.grantId,
+          mcp_client_name: mcp.clientName.slice(0, 120),
+          // Placeholders the database overwrites from the grant's own record (crove_kernel.mcp_proposal_cap), so what the Inbox card names is never what a caller passed.
+          mcp_client_host: '-',
+        })
+        .returning('id')
+        .executeTakeFirstOrThrow();
+      proposalId = row.id;
+    } catch (error) {
+      const message = (error as { message?: unknown } | null)?.message;
+      if (message === 'MCP_PROPOSAL_CAP') throw new DomainError('MCP_PROPOSAL_CAP', 409, 'Có quá nhiều đề xuất của ứng dụng AI này đang chờ duyệt, hãy duyệt hoặc từ chối bớt rồi thử lại');
+      throw error;
+    }
+    // Ids only: the proposal, the command it is for, the grant and the client (the runtime adds them); never the payload.
+    ctx.audit({ proposal_id: proposalId, proposal_command: input.command, mcp_proposal: true });
+    return { proposalId, status: 'pending' as const };
+  },
+});
+
+export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpMemberGrantsSet, mcpPropose, ...mcpWakeCommands];
 export const mcpQueries = [mcpGrantList, mcpMemberGrantsGet, mcpAbout, mcpParties, mcpSignals, ...mcpWakeQueries];

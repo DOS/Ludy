@@ -116,6 +116,13 @@ const POLICIES: Record<string, CommandPolicy> = {
   'finance.supplier_payment.record': SUPPLIER_PAYMENT,
 };
 
+// Whether the command has an approval policy that names someone who may approve it (#3858 slice d): a command with none has no approver, so a proposal of it would wait for nobody. An MCP call to a
+// command reaches it as a proposal only when this holds, R2 and R3 alike (ADR-0051 decision 10); the database checks the same in the proposal context's guard (approval_command_policy).
+export function hasApprovalPolicy(command: string): boolean {
+  const policy = POLICIES[command];
+  return policy !== undefined && (policy.roles.length > 0 || policy.permission !== null);
+}
+
 const NOBODY: CommandPolicy = { roles: [], permission: null, fourEyes: true };
 
 // The policy table as the database's approval gate must hold it too (crove_kernel.approval_command_policy, #1793):
