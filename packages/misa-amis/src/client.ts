@@ -67,8 +67,11 @@ export interface AmisClientOptions {
 }
 
 export interface AmisClient {
-  /** The test of a connection: asks for a token, then for the company's information. Rejects with `credentials` when the access code or the app is refused. */
-  companyInfo(connection: AmisConnection, branchId?: string | null): Promise<AmisRecord | null>;
+  /**
+   * The test of a connection: asks for a token, then for the company's information. Rejects with `credentials` when the access code or the app is refused.
+   * `freshToken` drops any token kept for this connection first, so the access code is sent to MISA again: a test must not pass on a token made before the code was revoked.
+   */
+  companyInfo(connection: AmisConnection, branchId?: string | null, options?: { freshToken?: boolean }): Promise<AmisRecord | null>;
   dictionary(connection: AmisConnection, query: AmisDictionaryQuery): Promise<AmisRecord[]>;
   /** Creates catalogue entries (parties, items, ...): only for rows a person confirmed. */
   saveDictionary(connection: AmisConnection, dataType: AmisDictionaryType, rows: readonly AmisRecord[]): Promise<void>;
@@ -155,12 +158,15 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
     for (const [k, v] of tokens) if (now() >= v.until) tokens.delete(k);
     const inFlight = pending.get(key);
     if (inFlight) return inFlight;
-    const request = fetchToken(c)
+    // A request that was set aside (a call with `freshToken` asked for its own) still answers the call that made it, but neither keeps its token nor clears the newer request's place.
+    const request: Promise<string> = fetchToken(c)
       .then((token) => {
-        tokens.set(key, { token, until: now() + AMIS_TOKEN_TTL_MS });
+        if (pending.get(key) === request) tokens.set(key, { token, until: now() + AMIS_TOKEN_TTL_MS });
         return token;
       })
-      .finally(() => pending.delete(key));
+      .finally(() => {
+        if (pending.get(key) === request) pending.delete(key);
+      });
     pending.set(key, request);
     return request;
   }
@@ -201,8 +207,13 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
   const snapshot = (c: AmisConnection): AmisConnection => ({ accessCode: c.accessCode, orgCompanyCode: c.orgCompanyCode });
 
   return {
-    async companyInfo(connection, branchId = null) {
+    async companyInfo(connection, branchId = null, options = {}) {
       const c = snapshot(connection);
+      // The kept token and any token request already on its way are both set aside: this call's own request is the one that sends the access code to MISA now.
+      if (options.freshToken === true) {
+        tokens.delete(keyOf(c));
+        pending.delete(keyOf(c));
+      }
       const data = await authed(c, '/amiskt/v1/get_company_info', 'POST', toJsonText({ branch_id: branchId }));
       let value = data;
       if (typeof value === 'string') {
