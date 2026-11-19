@@ -12709,6 +12709,7 @@ export const vi = {
       BRIEF_BUSY: 'Vy đang bận viết các phần chuẩn bị. Hãy thử lại sau vài phút.',
       TRANSLATION_NOT_FOUND: 'Không có bản tóm tắt nào bạn đọc được để dịch.',
       TRANSLATION_NOTHING: 'Chưa có gì để dịch.',
+      TRANSLATION_LANGUAGE_OFF: 'Hệ thống này chưa bật ngôn ngữ dịch này.',
       TRANSLATE_RUNNING: 'Bạn đang có một bản dịch khác chạy. Hãy đợi xong hoặc dừng nó.',
       TRANSLATION_DONE: 'Bản ghi lời đã được dịch hết.',
       TRANSLATION_TOO_LARGE: 'Bản dịch quá lớn để giữ lại.',

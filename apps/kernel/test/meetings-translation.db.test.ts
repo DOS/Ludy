@@ -13,9 +13,9 @@ import type { ModelPort } from '@crove/agent/member-vy';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { TranslationStatus, Translations } from '@crove/kernel-contract';
+import type { TranscriptTranslationStatus, TranslationStatus, Translations } from '@crove/kernel-contract';
 import { Runtime, defineQuery } from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@crove/mod-meetings';
+import { meetingsCommands, meetingsQueries, setSummaryEnabled, setTranslationTargets } from '@crove/mod-meetings';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { runMeetingTranslation, translationEstimate, translationStatusOf, type MeetingTranslationDeps } from '../src/member-vy-ports.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -76,6 +76,7 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
     logged.length = 0;
     modelCalls = 0;
     setSummaryEnabled(true);
+    setTranslationTargets([]);
   });
 
   // A model that translates by prefixing "English: " (digits and names untouched), or by a function of each segment; null leaves a segment out.
@@ -571,5 +572,47 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
     expect(Number(priced.cost)).toBe(priced.inputTokens);
     // A refused member sees no estimate: the status of a stage they do not read is the refusal itself.
     expect(await refuses(translationStatusOf({ runtime, price: undefined }, orgId, asUser('outsider'), meetingId, 'published'))).toBe('MEETING_NOT_FOUND');
+  });
+  it('E3 (#3186): Chinese, Japanese and Korean are targets only where the deployment switched them on; each is the member\'s own row, and a language that is off or is the meeting\'s own is refused before any call', async () => {
+    const meetingId = await seedPublished();
+    // A model that answers in Chinese and keeps the source's figures, as the prompt asks.
+    const zhModel = translating((t) => `这是对下面内容的中文翻译 ${(t.match(/\d[\d.]*/g) ?? []).join(' ')}`);
+    const asked = (to: 'zh' | 'ja' | 'vi', over: Partial<MeetingTranslationDeps> = {}) => runMeetingTranslation(deps({ model: zhModel, ...over }), orgId, asUser('attendee'), meetingId, 'published', to);
+    const status = (to?: 'zh' | 'ja' | 'vi') => translationStatusOf({ runtime, price: undefined }, orgId, asUser('attendee'), meetingId, 'published', to);
+
+    // Off (the default): the pair is the only choice, and a flagged language is refused on every path, with no call made and nothing kept.
+    expect(await status()).toMatchObject({ to: 'en', targets: ['en'] });
+    expect(await refuses(status('zh'))).toBe('TRANSLATION_LANGUAGE_OFF');
+    expect(await refuses(asked('zh'))).toBe('TRANSLATION_LANGUAGE_OFF');
+    expect(await refuses(query('attendee', 'meetings.translation.transcript_status', { meetingId, to: 'zh' }))).toBe('TRANSLATION_LANGUAGE_OFF');
+    expect(modelCalls).toBe(0);
+    expect(await stored(meetingId)).toEqual([]);
+
+    // Chinese on: offered beside English, and Japanese (still off) and the meeting's own language are refused.
+    setTranslationTargets(['zh']);
+    expect(await status()).toMatchObject({ to: 'en', targets: ['en', 'zh'] });
+    expect(await status('zh')).toMatchObject({ enabled: true, from: 'vi', to: 'zh', targets: ['en', 'zh'] });
+    expect(await refuses(status('ja'))).toBe('TRANSLATION_LANGUAGE_OFF');
+    expect(await refuses(status('vi'))).toBe('TRANSLATION_LANGUAGE_OFF');
+    expect(await query<TranscriptTranslationStatus>('attendee', 'meetings.translation.transcript_status', { meetingId, to: 'zh' })).toMatchObject({ to: 'zh', targets: ['en', 'zh'] });
+    expect(await refuses(asked('ja'))).toBe('TRANSLATION_LANGUAGE_OFF');
+    expect(modelCalls).toBe(0);
+
+    // The translation into Chinese is the member's own row, checked like the rest, and one into English beside it is another row (the unique key names the language).
+    expect(await asked('zh')).toMatchObject({ meetingId, stage: 'published', state: 'ready', errorCode: null });
+    expect(modelCalls).toBe(1);
+    expect(await translate('attendee', meetingId, 'published')).toMatchObject({ state: 'ready' });
+    const mine = await get('attendee', meetingId);
+    expect(mine.translations.map((t) => t.to).sort()).toEqual(['en', 'zh']);
+    const zh = mine.translations.find((t) => t.to === 'zh');
+    expect(zh).toMatchObject({ from: 'vi', stale: false });
+    expect(zh?.segments.map((x) => x.state)).toEqual(['ok', 'ok', 'ok']);
+    expect(await sqlAdmin<{ target_language: string }>('SELECT target_language FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2 ORDER BY target_language', [orgId, meetingId]).then((r) => r.rows.map((x) => x.target_language))).toEqual(['en', 'zh']);
+    // A model that leaves the text in Vietnamese is not a translation into Chinese: every segment is refused, so nothing is kept for it.
+    const stillVietnamese = await asked('zh', { model: translating((t) => `${t}.`) }).then((out) => out.errorCode);
+    expect(stillVietnamese).toBe('TRANSLATE_EMPTY');
+    // Switched off again, the stored row stays the member's own but no new request for the language is accepted.
+    setTranslationTargets([]);
+    expect(await refuses(asked('zh'))).toBe('TRANSLATION_LANGUAGE_OFF');
   });
 });

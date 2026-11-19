@@ -1334,18 +1334,18 @@ export function createRpcHandler(
       // The machine translation of the summary the member reads (meetings integrations E1, #3184): the member's own Vy, the answer theirs alone; see member-vy-ports.ts.
       translation: {
         status: os.meetings.translation.status.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => translationStatusOf({ runtime, price: aiPrice }, orgId, actor, input.meetingId, input.stage)),
+          inMeetings(context, (orgId, actor) => translationStatusOf({ runtime, price: aiPrice }, orgId, actor, input.meetingId, input.stage, input.to)),
         ),
         translate: os.meetings.translation.translate.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => runMeetingTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: translations, price: aiPrice }, orgId, actor, input.meetingId, input.stage)),
+          inMeetings(context, (orgId, actor) => runMeetingTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: translations, price: aiPrice }, orgId, actor, input.meetingId, input.stage, input.to)),
         ),
         get: os.meetings.translation.get.handler(meetingsQuery('meetings.translation.get')),
         // The transcript (E2, #3185): the member's own Vy translates the next batch of the lines they read, in the request; the page asks again while it is open.
         transcriptStatus: os.meetings.translation.transcriptStatus.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => transcriptTranslationStatusOf({ runtime, price: aiPrice, hasModel: summaryModel !== null }, orgId, actor, input.meetingId)),
+          inMeetings(context, (orgId, actor) => transcriptTranslationStatusOf({ runtime, price: aiPrice, hasModel: summaryModel !== null }, orgId, actor, input.meetingId, input.to)),
         ),
         transcriptTranslate: os.meetings.translation.transcriptTranslate.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => runTranscriptTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: transcriptTranslations, price: aiPrice }, orgId, actor, input.meetingId)),
+          inMeetings(context, (orgId, actor) => runTranscriptTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: transcriptTranslations, price: aiPrice }, orgId, actor, input.meetingId, input.to)),
         ),
         transcriptStop: os.meetings.translation.transcriptStop.handler(meetingsCommand('meetings.translation.transcript_stop')),
         transcriptGet: os.meetings.translation.transcriptGet.handler(meetingsQuery('meetings.translation.transcript_get')),
