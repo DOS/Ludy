@@ -71,6 +71,7 @@ import { payrollPaymentCommands } from './payroll-payment.ts';
 import { payrollSettlement } from './payroll-settlement.ts';
 import { payrollPostingCommands } from './payroll-posting.ts';
 import { stockCloseCommands } from './stock-close.ts';
+import { stockCloseQueries } from './stock-close-check.ts';
 import { stockCountCommands, stockCountQueries } from './stock-count.ts';
 import { stockExportCommands } from './stock-export.ts';
 import { householdCommands, householdQueries } from './household.ts';
@@ -288,6 +289,7 @@ export const financeQueries = [
   ...stockReportQueries,
   ...stockLowQueries,
   ...stockCountQueries,
+  ...stockCloseQueries,
   ...marketplaceQueries,
   ...marketplaceIncomeQueries,
   ...marketplaceBalanceQueries,
