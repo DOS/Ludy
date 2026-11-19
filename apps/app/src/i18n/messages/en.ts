@@ -3150,6 +3150,12 @@ export const en = {
       saved: 'The retention settings were saved.',
       adminOnly: 'Only an owner or admin changes these periods.',
     },
+    // The language to translate into (E3, #3186): each name is written in its own language.
+    translationTargets: {
+      label: 'Translate to',
+      to: 'Translate to {language}',
+      names: { vi: 'Tiếng Việt', en: 'English', zh: '中文 (简体)', ja: '日本語', ko: '한국어' },
+    },
     transcript: {
       title: 'Transcript',
       draftTitle: 'Draft transcript',
