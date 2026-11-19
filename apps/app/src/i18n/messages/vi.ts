@@ -5166,6 +5166,7 @@ export const vi = {
     cnkdNotice: 'Đây là bảng tính. {brand} không nộp tờ khai và không gửi gì cho cơ quan thuế: bạn hoặc kế toán nộp trên cổng thuế hoặc eTax Mobile.',
     cnkdDraft: 'Các số này là số liệu tạm: những quy tắc dưới đây còn chờ kế toán đối chiếu. Bạn vẫn xem và tải file Excel được, mỗi con số và file đều ghi rõ là số liệu tạm.',
     cnkdProvisional: 'Số liệu tạm, kế toán chưa xác nhận tỷ lệ',
+    layoutProvisional: 'Số liệu tạm, kế toán chưa xác nhận bố cục sổ',
     cnkdUnconfirmedForm: 'Mẫu {key}, có hiệu lực từ {date}',
     cnkdUnconfirmedReduction: 'Mức giảm thuế GTGT theo Nghị định 174, từ {date}',
     vatCutQuestion: 'Hàng hóa, dịch vụ của hộ có được giảm thuế GTGT theo Nghị định 174 không?',

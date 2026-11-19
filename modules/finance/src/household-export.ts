@@ -4,7 +4,7 @@
 // checks it against the appendix of the circular (#2520), and the file says so while the book's row is still `commentary`. Same cell rules as the other exports (export.ts): amounts exact,
 // text never read as a formula. Labels stay Vietnamese in every locale.
 import ExcelJS from 'exceljs';
-import { HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a, type HouseholdS2b, type HouseholdS2c, type HouseholdS2d, type HouseholdS2e, type HouseholdYearToDate } from '@crove/kernel-contract';
+import { HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL, HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a, type HouseholdS2b, type HouseholdS2c, type HouseholdS2d, type HouseholdS2e, type HouseholdYearToDate } from '@crove/kernel-contract';
 import { money as decimal, toMoney } from '@crove/l10n-vn';
 import { setMoneyCell, setTextCell } from './export.ts';
 
@@ -511,7 +511,7 @@ export async function buildS2eWorkbook(book: HouseholdS2e, brand = 'Ludy'): Prom
   ];
   const provisional = book.commentary;
   const mark = (row: ExcelJS.Row) => {
-    if (provisional) setTextCell(row.getCell('note'), HOUSEHOLD_PROVISIONAL_LABEL);
+    if (provisional) setTextCell(row.getCell('note'), HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL);
   };
   const line = (text: string, bold = false) => {
     const row = sheet.addRow([]);
@@ -526,7 +526,7 @@ export async function buildS2eWorkbook(book: HouseholdS2e, brand = 'Ludy'): Prom
   line(`Ngày mở sổ: ${dateLabel(book.household.openedOn)}`);
   line('Đây là sổ kế toán của hộ kinh doanh. Ludy không nộp tờ khai và không gửi dữ liệu cho cơ quan thuế.');
   if (provisional) {
-    line(HOUSEHOLD_PROVISIONAL_LABEL.toUpperCase(), true);
+    line(HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL.toUpperCase(), true);
     for (const u of book.unconfirmed) line(`  Chưa xác nhận: mẫu ${u.key}, hiệu lực từ ${dateLabel(u.effectiveFrom)}`);
   }
   for (const a of book.accounts) {
@@ -565,7 +565,7 @@ export async function buildS2eWorkbook(book: HouseholdS2e, brand = 'Ludy'): Prom
     const closing = sheet.addRow([]);
     setTextCell(closing.getCell('description'), 'Số dư cuối kỳ');
     setMoneyCell(closing.getCell('balance'), a.closing);
-    if (a.negative) setTextCell(closing.getCell('note'), provisional ? `Số dư âm: kiểm tra các khoản thu chi chưa ghi sổ. ${HOUSEHOLD_PROVISIONAL_LABEL}` : 'Số dư âm: kiểm tra các khoản thu chi chưa ghi sổ');
+    if (a.negative) setTextCell(closing.getCell('note'), provisional ? `Số dư âm: kiểm tra các khoản thu chi chưa ghi sổ. ${HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL}` : 'Số dư âm: kiểm tra các khoản thu chi chưa ghi sổ');
     else mark(closing);
     closing.font = { bold: true };
   }
@@ -626,7 +626,7 @@ export async function buildS2dWorkbook(book: HouseholdS2d, brand = 'Ludy'): Prom
   ];
   const provisional = book.commentary;
   const mark = (row: ExcelJS.Row) => {
-    if (provisional) setTextCell(row.getCell('note'), HOUSEHOLD_PROVISIONAL_LABEL);
+    if (provisional) setTextCell(row.getCell('note'), HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL);
   };
   const line = (text: string, bold = false) => {
     const row = sheet.addRow([]);
@@ -642,7 +642,7 @@ export async function buildS2dWorkbook(book: HouseholdS2d, brand = 'Ludy'): Prom
   line('Đây là sổ kế toán của hộ kinh doanh. Ludy không nộp tờ khai và không gửi dữ liệu cho cơ quan thuế.');
   if (!book.monthClosed) line('Tháng này chưa chốt: giá vốn hàng xuất là số tạm tính theo bình quân tháng và có thể đổi khi chốt tháng.', true);
   if (provisional) {
-    line(HOUSEHOLD_PROVISIONAL_LABEL.toUpperCase(), true);
+    line(HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL.toUpperCase(), true);
     for (const u of book.unconfirmed) line(`  Chưa xác nhận: mẫu ${u.key}, hiệu lực từ ${dateLabel(u.effectiveFrom)}`);
   }
   for (const item of book.items) {

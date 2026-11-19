@@ -144,6 +144,8 @@ export type HouseholdYearToDate = z.infer<typeof zHouseholdYearToDate>;
 // posted to the ledger yet), reversed ones left out. `commentary` is true while any row behind the figures (the form, a percentage) is not confirmed by the accountant: the figures, the screen and the
 // Excel file then carry HOUSEHOLD_PROVISIONAL_LABEL on every figure that depends on those rows, and Ludy still files nothing. The label goes away on its own when the rows are confirmed (data, not code).
 export const HOUSEHOLD_PROVISIONAL_LABEL = 'Số liệu tạm, kế toán chưa xác nhận tỷ lệ';
+// The same for the books no percentage stands behind (S2d and S2e: stock and cash facts from the ledger): only the layout of the book waits for the accountant, so the label says so (PO nit on #3987, 2026-11-19).
+export const HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL = 'Số liệu tạm, kế toán chưa xác nhận bố cục sổ';
 export const HOUSEHOLD_RETURN_FORMS = ['01/CNKD'] as const;
 export const zHouseholdReturnForm = z.enum(HOUSEHOLD_RETURN_FORMS);
 export const zHouseholdCnkdGet = z.strictObject({

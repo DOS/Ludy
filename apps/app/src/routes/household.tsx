@@ -517,7 +517,7 @@ function S2eBook({ entityId }: { entityId: string }) {
   const data = book.data;
   const provisional = data?.commentary ? (
     <span className="block text-xs text-muted-foreground" data-testid="household-s2e-provisional">
-      {t('cnkdProvisional')}
+      {t('layoutProvisional')}
     </span>
   ) : null;
   return (
@@ -678,7 +678,7 @@ function S2dBook({ entityId }: { entityId: string }) {
   const data = book.data;
   const provisional = data?.commentary ? (
     <span className="block text-xs text-muted-foreground" data-testid="household-s2d-provisional">
-      {t('cnkdProvisional')}
+      {t('layoutProvisional')}
     </span>
   ) : null;
   return (

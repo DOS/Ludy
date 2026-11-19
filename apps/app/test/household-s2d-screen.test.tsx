@@ -26,8 +26,8 @@ const { HouseholdPage } = await import('../src/routes/household.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
-const LABEL_EN = 'Provisional figures: the accountant has not confirmed the percentages yet';
-const LABEL_VI = 'Số liệu tạm, kế toán chưa xác nhận tỷ lệ';
+const LABEL_EN = 'Provisional figures: the accountant has not confirmed the book layout yet';
+const LABEL_VI = 'Số liệu tạm, kế toán chưa xác nhận bố cục sổ';
 const E = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
 
 const income = (): HouseholdProfileView => ({

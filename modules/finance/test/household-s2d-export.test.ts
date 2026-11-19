@@ -3,7 +3,7 @@
 // An open month says the cost is provisional; while the layout row is `commentary` the file says so on top and puts the provisional label in a note column; once confirmed there is none. Text is never a formula.
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import { HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdS2d } from '@crove/kernel-contract';
+import { HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL, type HouseholdS2d } from '@crove/kernel-contract';
 import { buildS2dWorkbook } from '../src/household-export.ts';
 
 const E = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;
@@ -93,9 +93,9 @@ describe('the S2d-HKD workbook', () => {
 
   it('labels the figures and lists the unconfirmed row while the layout is commentary, and says nothing once it is confirmed', async () => {
     const draft = await rowsOf(book());
-    expect(draft.flat()).toContain(HOUSEHOLD_PROVISIONAL_LABEL.toUpperCase());
+    expect(draft.flat()).toContain(HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL.toUpperCase());
     expect(draft.flat().some((t) => t.includes('Chưa xác nhận: mẫu S2d 2026.1'))).toBe(true);
-    expect(draft.find((r) => r[REF] === 'AA-0001')![NOTE]).toBe(HOUSEHOLD_PROVISIONAL_LABEL);
+    expect(draft.find((r) => r[REF] === 'AA-0001')![NOTE]).toBe(HOUSEHOLD_LAYOUT_PROVISIONAL_LABEL);
     const confirmed = await rowsOf(book({ commentary: false, unconfirmed: [], form: { book: 'S2d', version: '2026.1', name: 'S2d', status: 'confirmed' } }));
     expect(confirmed.flat().some((t) => t.includes('Số liệu tạm'))).toBe(false);
   });

@@ -5168,6 +5168,7 @@ export const en = {
     cnkdNotice: 'This is a worksheet. {brand} does not file the return and does not send anything to the tax authority: you or your accountant file it on the tax portal or eTax Mobile.',
     cnkdDraft: 'These figures are provisional: the following rules are still waiting for the accountant to check them. You can still read them and download the Excel file; every figure and the file say they are provisional.',
     cnkdProvisional: 'Provisional figures: the accountant has not confirmed the percentages yet',
+    layoutProvisional: 'Provisional figures: the accountant has not confirmed the book layout yet',
     cnkdUnconfirmedForm: 'The form {key}, from {date}',
     cnkdUnconfirmedReduction: 'The VAT cut of Decree 174, from {date}',
     vatCutQuestion: 'Do the household goods and services get the VAT cut of Decree 174?',
