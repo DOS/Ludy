@@ -129,6 +129,10 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   // The push to MISA AMIS (S3b, #3902): while rows wait for MISA's answer the job queues itself again a little later, for a connection whose vouchers an owner or admin confirmed through
   // finance.misa_amis.push, which declares the external effect; the job's own send is committed to the external_call ledger by finance.misa_amis.push_begin before it is made.
   'finance-misa-amis-push handler': { command: 'finance.misa_amis.push' },
+  // The sweep (every ten minutes) hands the unclear manage changes that are due to the same queue, to be settled by a READ of the object (#3898): each exists only for a change an owner or
+  // an admin asked for (a pause, a lower or raised budget, a shorter or longer schedule) that ended unclear. The job's first step is ads.manage.begin, which declares the external effect and,
+  // for a settle, hands out a read and makes no call and no ledger row; the queue's egress is the ad platform's and nothing else.
+  [`${QUEUES.adsManage} handler`]: { command: 'ads.manage.begin' },
 };
 
 // Reviewed send sites that may be listed before the site exists, so the two steps of an invariant change can land apart (the PENDING_DEPS pattern): each names the issue that adds
@@ -137,6 +141,7 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
 const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'kernel-mcp-wake-sweep handler': '#3024',
   'finance-misa-amis-push handler': '#3902',
+  'ads-manage handler': '#3898',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.

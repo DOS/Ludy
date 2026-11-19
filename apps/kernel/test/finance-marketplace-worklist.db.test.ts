@@ -228,7 +228,7 @@ suite("the Sàn screen's work list on PostgreSQL (#2516)", () => {
     const o = await org();
     expect((await worklist(o, rtShipped)).postingConfirmed).toBe(false);
     expect((await worklist(o)).postingConfirmed).toBe(true);
-    // A chart with no marketplace map yet (TT99) is closed too, and an entity the caller does not name is not looked at.
+    // A chart whose map is not in the injected set (TT99; the shipped TT99 map is commentary, #3711 slice 4) is closed too, and an entity the caller does not name is not looked at.
     const tt99 = await org('tt99');
     expect((await worklist(tt99)).postingConfirmed).toBe(false);
     expect((await worklist(o, rt, o.entity)).postingConfirmed).toBe(true);
