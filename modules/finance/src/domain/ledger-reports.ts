@@ -139,7 +139,7 @@ function toMoney(a: Amounts): TrialBalanceAmounts {
 // hold every account a line names: the TT133 accounts and the org's sub-accounts (#319), whose parent_code makes them
 // roll up. An account missing from it (the database refuses such a line) would be its own top. A cycle (also
 // impossible) stops at the first repeat.
-class Chart {
+export class Chart {
   readonly byCode: ReadonlyMap<string, ChartAccount>;
   constructor(accounts: ReadonlyArray<ChartAccount>) {
     this.byCode = new Map(accounts.map((a) => [a.code, a]));

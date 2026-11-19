@@ -4,7 +4,7 @@
 // checks it against the appendix of the circular (#2520), and the file says so while the book's row is still `commentary`. Same cell rules as the other exports (export.ts): amounts exact,
 // text never read as a formula. Labels stay Vietnamese in every locale.
 import ExcelJS from 'exceljs';
-import { HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a, type HouseholdS2b, type HouseholdS2c, type HouseholdYearToDate } from '@crove/kernel-contract';
+import { HOUSEHOLD_PROVISIONAL_LABEL, type HouseholdCnkd, type HouseholdS1a, type HouseholdS2a, type HouseholdS2b, type HouseholdS2c, type HouseholdS2e, type HouseholdYearToDate } from '@crove/kernel-contract';
 import { money as decimal, toMoney } from '@crove/l10n-vn';
 import { setMoneyCell, setTextCell } from './export.ts';
 
@@ -478,6 +478,114 @@ export async function buildS2cWorkbook(book: HouseholdS2c, brand = 'Ludy'): Prom
     sheet.addRow([]);
     line('Ghi chú: còn chi phí chưa xếp nhóm (tài khoản chưa có dòng quy tắc nhóm) nên chưa tính thu nhập; kế toán bổ sung quy tắc rồi lập lại sổ.');
   }
+  sheet.addRow([]);
+  line('Người đại diện hộ kinh doanh', true);
+  line('(Ký, họ tên)');
+  sheet.addRow([]);
+  line(book.household.representativeName ?? '');
+  if (book.form.status !== 'confirmed') {
+    sheet.addRow([]);
+    line('Ghi chú: bố cục sổ đang chờ kế toán đối chiếu với phụ lục của Thông tư 152/2025/TT-BTC.');
+  }
+  return new Uint8Array(await workbook.xlsx.writeBuffer());
+}
+
+// Excel export of S2e-HKD (#2517 slice 2e, Circular 152/2025/TT-BTC), the cash and bank book of a household that pays PIT on income: the household's name and tax code, the title and the period, the day the books
+// were opened, then one section per account of 111 and 112 (opening balance, one row per line with the document, description, the accounts on the other side, cash in, cash out and the running balance, the totals and
+// the closing balance), the total of all accounts and a place for the representative's signature. While the layout row is `commentary` the file says so on top and puts HOUSEHOLD_PROVISIONAL_LABEL in a note column
+// on every figure; the label is data and goes once the row is confirmed. A negative balance is written as it is, with a note. Ludy files nothing. Same cell rules as the other exports (exact amounts, text never a formula).
+export async function buildS2eWorkbook(book: HouseholdS2e, brand = 'Ludy'): Promise<Uint8Array> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = brand;
+  workbook.title = `${book.form.name} ${dateLabel(book.period.from)} - ${dateLabel(book.period.to)} ${book.household.name}`;
+  const sheet = workbook.addWorksheet('S2e-HKD');
+  sheet.columns = [
+    { key: 'date', width: 16 },
+    { key: 'reference', width: 22 },
+    { key: 'description', width: 48 },
+    { key: 'counter', width: 18 },
+    { key: 'in', width: 20 },
+    { key: 'out', width: 20 },
+    { key: 'balance', width: 22 },
+    { key: 'note', width: 46 },
+  ];
+  const provisional = book.commentary;
+  const mark = (row: ExcelJS.Row) => {
+    if (provisional) setTextCell(row.getCell('note'), HOUSEHOLD_PROVISIONAL_LABEL);
+  };
+  const line = (text: string, bold = false) => {
+    const row = sheet.addRow([]);
+    setTextCell(row.getCell(1), text);
+    if (bold) row.font = { bold: true };
+    return row;
+  };
+  line(`HỘ, CÁ NHÂN KINH DOANH: ${book.household.name}`, true);
+  line(`Mã số thuế: ${book.household.taxCode ?? ''}`);
+  line(book.form.name.toUpperCase(), true);
+  line(`Kỳ: từ ${dateLabel(book.period.from)} đến ${dateLabel(book.period.to)}`);
+  line(`Ngày mở sổ: ${dateLabel(book.household.openedOn)}`);
+  line('Đây là sổ kế toán của hộ kinh doanh. Ludy không nộp tờ khai và không gửi dữ liệu cho cơ quan thuế.');
+  if (provisional) {
+    line(HOUSEHOLD_PROVISIONAL_LABEL.toUpperCase(), true);
+    for (const u of book.unconfirmed) line(`  Chưa xác nhận: mẫu ${u.key}, hiệu lực từ ${dateLabel(u.effectiveFrom)}`);
+  }
+  for (const a of book.accounts) {
+    sheet.addRow([]);
+    line(`Tài khoản ${a.accountCode}${a.accountName ? ` - ${a.accountName}` : ''}`, true);
+    const head = sheet.addRow([]);
+    setTextCell(head.getCell('date'), 'Ngày tháng ghi sổ');
+    setTextCell(head.getCell('reference'), 'Chứng từ (số hiệu)');
+    setTextCell(head.getCell('description'), 'Diễn giải');
+    setTextCell(head.getCell('counter'), 'TK đối ứng');
+    setTextCell(head.getCell('in'), 'Thu (nợ)');
+    setTextCell(head.getCell('out'), 'Chi (có)');
+    setTextCell(head.getCell('balance'), 'Tồn quỹ');
+    if (provisional) setTextCell(head.getCell('note'), 'Ghi chú');
+    head.font = { bold: true };
+    const opening = sheet.addRow([]);
+    setTextCell(opening.getCell('description'), 'Số dư đầu kỳ');
+    setMoneyCell(opening.getCell('balance'), a.opening);
+    mark(opening);
+    for (const r of a.rows) {
+      const row = sheet.addRow([]);
+      setTextCell(row.getCell('date'), dateLabel(r.date));
+      setTextCell(row.getCell('reference'), r.reference);
+      setTextCell(row.getCell('description'), r.reversal ? `${r.description} (bút toán đảo)` : r.description);
+      setTextCell(row.getCell('counter'), r.counterAccounts.join(', '));
+      setMoneyCell(row.getCell('in'), r.cashIn);
+      setMoneyCell(row.getCell('out'), r.cashOut);
+      setMoneyCell(row.getCell('balance'), r.balance);
+      mark(row);
+    }
+    const total = sheet.addRow([]);
+    setTextCell(total.getCell('description'), 'Cộng phát sinh');
+    setMoneyCell(total.getCell('in'), a.totalIn);
+    setMoneyCell(total.getCell('out'), a.totalOut);
+    total.font = { bold: true };
+    const closing = sheet.addRow([]);
+    setTextCell(closing.getCell('description'), 'Số dư cuối kỳ');
+    setMoneyCell(closing.getCell('balance'), a.closing);
+    if (a.negative) setTextCell(closing.getCell('note'), provisional ? `Số dư âm: kiểm tra các khoản thu chi chưa ghi sổ. ${HOUSEHOLD_PROVISIONAL_LABEL}` : 'Số dư âm: kiểm tra các khoản thu chi chưa ghi sổ');
+    else mark(closing);
+    closing.font = { bold: true };
+  }
+  if (book.accounts.length === 0) {
+    sheet.addRow([]);
+    line('Không có số dư hay phát sinh tiền mặt, tiền gửi ngân hàng trong kỳ này.');
+  }
+  sheet.addRow([]);
+  line('Cộng tất cả tài khoản tiền', true);
+  const all = sheet.addRow([]);
+  setTextCell(all.getCell('description'), 'Số dư đầu kỳ, thu, chi, số dư cuối kỳ');
+  setMoneyCell(all.getCell('in'), book.totals.in);
+  setMoneyCell(all.getCell('out'), book.totals.out);
+  setMoneyCell(all.getCell('balance'), book.totals.closing);
+  mark(all);
+  all.font = { bold: true };
+  const openingAll = sheet.addRow([]);
+  setTextCell(openingAll.getCell('description'), 'Số dư đầu kỳ của tất cả tài khoản');
+  setMoneyCell(openingAll.getCell('balance'), book.totals.opening);
+  mark(openingAll);
   sheet.addRow([]);
   line('Người đại diện hộ kinh doanh', true);
   line('(Ký, họ tên)');
