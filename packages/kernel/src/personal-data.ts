@@ -1225,8 +1225,9 @@ export const personalDataErase = defineCommand({
            RETURNING 1)
         SELECT count(*)::int AS n FROM gone`.execute(ctx.trx);
       add('crove_finance.misa_amis_match.match_key', Number(misaMatches[0]?.n ?? 0));
-      // A check that waits may have read the tax code before this erasure: its time is moved on, so its record is ignored (record_check compares it) and cannot put the code back. The check stays waiting until its
-      // ten minutes pass or a person asks again; a request made after this erasure is the only way a result is written again.
+      // A check that waits may have read the tax code before this erasure: its time is moved on, so a job that took the old time has its record ignored (record_check compares it) and cannot put the code back. The
+      // check stays waiting until its ten minutes pass or a person asks again. Known limit (decided in #4128, noted for #4124): a job that only starts after this erasure takes the new time and may record a match
+      // again for a tax code the books still carry (the vouchers keep their party's tax code under the legal hold); the match is derived data and the next erasure deletes it.
       await sql`UPDATE crove_finance.misa_amis_match_check SET requested_at = pg_catalog.clock_timestamp() WHERE org_id = ${ctx.orgId}::uuid AND state = 'requested'`.execute(ctx.trx);
     }
 
