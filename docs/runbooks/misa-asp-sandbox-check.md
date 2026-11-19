@@ -9,7 +9,7 @@ Who runs it: only the coordinator, with the integrator's ClientID for ASP and a 
 | Gate | What it is | Closed means |
 |---|---|---|
 | Deployment, product | `MISA_ASP_CLIENT_ID` is set (S2, [#4111](https://github.com/DOS/Ludy/issues/4111)) | The connect dialog does not offer ASP, `misaAmis.connections.connect` and `.test` answer `MISA_AMIS_DISABLED` for an ASP connection, and the worker leaves an ASP connection's test alone (`product_off`). |
-| Deployment, push | `MISA_ASP_PUSH` is `on` (S4, [#4113](https://github.com/DOS/Ludy/issues/4113); it also needs `MISA_ASP_CLIENT_ID`) | No push job runs for an ASP connection, and the push command answers `MISA_ASP_PUSH_NOT_AVAILABLE`. Until S4 is merged the switch does not exist and the push command refuses every ASP connection. |
+| Deployment, push | `MISA_ASP_PUSH` is `on` (S4, [#4113](https://github.com/DOS/Ludy/issues/4113); it also needs `MISA_ASP_CLIENT_ID`): its own switch, apart from `MISA_AMIS_PUSH` | The confirm route answers 404 `MISA_AMIS_PUSH_DISABLED` for an ASP connection, the confirm button is not drawn, and the worker hands the push job no ASP client (the connection is `skipped` as `product_off`, its queued rows stay queued). |
 | Connection | The connection's last test is `works` | The push command answers `MISA_AMIS_NOT_TESTED`. |
 | This check | The list below is done and written in the issue | Nobody sets `MISA_ASP_PUSH`. |
 
