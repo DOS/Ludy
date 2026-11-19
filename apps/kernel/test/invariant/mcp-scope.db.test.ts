@@ -79,6 +79,21 @@ const SIGNALS = [
   // The Meetings read that searches the published minutes (#4030, company grants only, the Meetings PO's direction of 2026-11-19, inside the owner's decision of 2026-11-18). Optional here so the name can
   // be accepted before the query lands (two steps); the next tests-only step moves it to REACHABLE, where its absence fails.
   'meetings.mcp.search:ludy.read',
+  // The Engage reads of epic #3857, E1 (#3860, owner decision 2026-11-19: Dy and Uy work Engage through MCP): the results of Social and Ads (company grants), the CRM records (deals, quotes, bookings) and the
+  // Hộp thư conversations (read over the sealed grant contexts of #3858 slice b, within the grant's role and member binding). Optional here so the names can be accepted before the queries land (two steps);
+  // the next tests-only step moves them to REACHABLE. The conversation reads are named `kernel.mcp.*` on purpose: the check below keeps every `kernel.conversation.*` and `kernel.inbox*` name out.
+  'social.mcp.metrics_summary:ludy.read',
+  'social.mcp.metrics_totals:ludy.read',
+  'ads.mcp.spend:ludy.read',
+  'ads.mcp.today:ludy.read',
+  'ads.mcp.flags:ludy.read',
+  'crm.mcp.deals:ludy.read',
+  'crm.mcp.deal:ludy.read',
+  'crm.mcp.quotes:ludy.read',
+  'crm.mcp.quote:ludy.read',
+  'crm.mcp.bookings:ludy.read',
+  'kernel.mcp.conversations:ludy.read',
+  'kernel.mcp.conversation:ludy.read',
   // The one query behind the `ludy_signals` tool (step S4): it runs the three rules above as the grant and returns their items.
   'kernel.mcp.signals:ludy.read',
 ];
