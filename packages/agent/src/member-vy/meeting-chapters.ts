@@ -58,10 +58,15 @@ const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[
 // oxlint-disable-next-line no-control-regex
 const NUL = /\u0000/g;
 
-/** A title as the model wrote it, one line: the characters above removed (a line break becomes a space), spaces folded, trimmed, cut at the limit without splitting a pair. */
-export function cleanChapterTitle(raw: string): string {
+/** A title as the model wrote it, one line, before any cut: the characters above removed (a line break becomes a space), lone surrogates and NUL dropped, spaces folded, trimmed. */
+export function foldTitleText(raw: string): string {
   const spaced = raw.replace(/[\r\n\u2028\u2029]+/g, ' ').replace(NUL, '').replace(LONE_SURROGATE, '').replace(STRIP, '');
-  const folded = spaced.replace(/\s+/g, ' ').trim();
+  return spaced.replace(/\s+/g, ' ').trim();
+}
+
+/** A title as the model wrote it, one line: folded (see foldTitleText), then cut at the limit without splitting a pair. */
+export function cleanChapterTitle(raw: string): string {
+  const folded = foldTitleText(raw);
   // At the limit in UTF-16 units (what the contract and the database count), never through a pair.
   let out = '';
   for (const char of folded) {

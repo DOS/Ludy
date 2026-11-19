@@ -508,8 +508,10 @@ import {
 } from './meeting-minutes-templates.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
+import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
+import { zAdherenceAgenda, zAdherenceAnswer, zAdherenceAsk, zAdherenceRef, zAdherenceStatus } from './meeting-adherence.ts';
 import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import {
   zMeetingHookCleared,
@@ -1233,6 +1235,8 @@ export const contract = {
     recordingStopped: oc.input(zMeetingRecordingStopped).output(zMeetingRecordingStoppedDone),
     // The calling member's meeting the extension is recording right now, for the app's recording chip (A1, #3159).
     recordingNow: oc.input(zMeetingRecordingNowInput).output(zMeetingRecordingNow),
+    // The recorder's own new title for a meeting (#3947): a pick from Vy's suggestions or a title they typed; audited, ids only.
+    rename: oc.input(zMeetingRename).output(zMeetingRenamed),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),
     ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
     // The owner's compliance list (#2703): every meeting of the org as metadata only, no title or text, a page at a time; audited per call.
@@ -1316,6 +1320,12 @@ export const contract = {
       status: oc.input(zBriefEmpty).output(zBriefStatus),
       write: oc.input(zBriefTarget).output(zBriefAnswer),
     },
+    // The recorder's Vy suggesting a title from the transcript (#3947): `status` is the button (the same answer as the chapters'), `suggest` the click that has the recorder's own Vy write up to three candidates.
+    // The candidates go back to the browser and are stored nowhere; the recorder's pick is `meetings.rename`.
+    title: {
+      status: oc.input(zSummaryRef).output(zSummaryStatus),
+      suggest: oc.input(zSummaryRef).output(zTitleAnswer),
+    },
     // This week's decisions and what is still open, across the meetings the member reads (#3949): `facts` are read by code as the member (published decisions and open action items of the meetings that started in the
     // last 7, 14 or 30 days) and work with AI off; `status` is the button (may Vy be used now, the cost of one recap), `recap` the click that has the member's own Vy write two or three sentences from those facts. Nothing
     // is stored or sent.
@@ -1329,6 +1339,14 @@ export const contract = {
     assignee: {
       status: oc.input(zBriefEmpty).output(zAssigneeStatus),
       suggest: oc.input(zAssigneeAsk).output(zAssigneeAnswer),
+    },
+    // Agenda adherence (#3959): after a meeting with a transcript the recorder may click once and have their own Vy compare the agenda (the series' open items and up to eight typed lines) with the transcript. `agenda` is the
+    // list the recorder sees before clicking (with AI off too), `status` the button (may Vy be used now), `check` the click. Per agenda line: covered with the transcript lines it cites, or not heard; no score, nothing per
+    // person, nothing stored.
+    adherence: {
+      agenda: oc.input(zAdherenceRef).output(zAdherenceAgenda),
+      status: oc.input(zAdherenceRef).output(zAdherenceStatus),
+      check: oc.input(zAdherenceAsk).output(zAdherenceAnswer),
     },
     // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): no model; code matches by time and a person confirms. `list` is today's meetings, `suggest` the event
     // a recording overlaps, `setReadEvents` the member's switch (the cache is deleted when it goes off), `link` the click that attaches a recorded meeting to its event.

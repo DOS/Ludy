@@ -9,6 +9,7 @@ import { transcribeCommandList } from './transcribe.ts';
 import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
 import { chaptersCommands, chaptersQueries } from './chapters.ts';
 import { chaptersRunCommands, chaptersRunQueries } from './chapters-run.ts';
+import { titleCommands, titleQueries } from './title.ts';
 import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
 import { minutesTemplateCommands, minutesTemplateQueries } from './minutes-templates.ts';
@@ -24,6 +25,7 @@ import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
 import { digestCommands, digestQueries } from './digest.ts';
 import { assigneeCommands, assigneeQueries } from './assignee.ts';
+import { adherenceCommands, adherenceQueries } from './adherence.ts';
 import { agendaCommands, agendaQueries } from './agenda.ts';
 import { chatCommands, chatQueries } from './chat.ts';
 import { linkCommands, linkQueries } from './links.ts';
@@ -1010,6 +1012,7 @@ export const meetingsCommands = [
   ...notesCommands,
   ...chaptersCommands,
   ...chaptersRunCommands,
+  ...titleCommands,
   ...summaryCommands,
   ...speakerCommands,
   ...seriesCommands,
@@ -1022,6 +1025,7 @@ export const meetingsCommands = [
   ...briefCommands,
   ...digestCommands,
   ...assigneeCommands,
+  ...adherenceCommands,
   ...agendaCommands,
   ...chatCommands,
   ...linkCommands,
@@ -1052,6 +1056,7 @@ export const meetingsQueries = [
   ...notesQueries,
   ...chaptersQueries,
   ...chaptersRunQueries,
+  ...titleQueries,
   ...summaryQueries,
   ...seriesQueries,
   ...minutesTemplateQueries,
@@ -1061,6 +1066,7 @@ export const meetingsQueries = [
   ...briefQueries,
   ...digestQueries,
   ...assigneeQueries,
+  ...adherenceQueries,
   ...agendaQueries,
   ...chatQueries,
   ...linkQueries,

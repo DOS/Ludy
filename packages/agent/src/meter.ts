@@ -103,8 +103,12 @@ export const AI_FEATURES = {
   'meetings.digest': 'meetings',
   // The member's Vy naming who an action item belongs to from the name said in the meeting (#3921): one call over a name and at most 100 names, the member waiting for it, through their own meter.
   'meetings.assignee': 'meetings',
+  // The recorder's Vy checking whether a meeting covered its agenda (#3959): one call over a short agenda and the transcript the recorder reads, the recorder waiting for it, through their own meter.
+  'meetings.adherence': 'meetings',
   // The recorder's Vy writing the table of contents of one meeting (#3844): one call over the transcript, the member waiting for it, through their own meter.
   'meetings.chapters': 'meetings',
+  // The recorder's Vy suggesting a title for one meeting (#3947): one call over the transcript, the member waiting for it, through their own meter.
+  'meetings.title': 'meetings',
   // Vy's weekly status of one project (projects P6, #2597): transient 3 to 5 plain sentences from deterministic counts and task titles/comments only, never reading notes.
   'projects.weekly_status': 'projects',
   // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.
