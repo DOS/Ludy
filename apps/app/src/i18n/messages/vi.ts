@@ -2745,7 +2745,6 @@ export const vi = {
         teamsNote: 'Microsoft Teams: Ludy liệt kê bản ghi của các cuộc họp Teams do bạn tổ chức và bản chép lời của các cuộc họp bạn tham gia, từ tài khoản Microsoft 365 công việc hoặc trường học của bạn. Quản trị viên Microsoft 365 của bạn phải cho phép Ludy một lần, và bật quyền đọc bản chép lời trong Teams admin center nếu muốn lấy bản chép lời; Ludy không tự làm được việc này. Bản ghi là video, nên chỉ nhập được khi người quản trị hệ thống đã bật xử lý video; hãy nhờ họ bật. Không có gì được tải về cho đến khi bạn bấm "Nhập".',
         teamsCost: 'Chi phí: Microsoft không tính phí khi đọc bản ghi và bản chép lời Teams (Microsoft đã ngừng tính phí các API này từ ngày 25/8/2025). Ludy tự chép lời phần âm thanh, và phần đó được tính vào hạn mức như mọi tệp tải lên.',
         teamsGuide: 'Hướng dẫn cho quản trị viên Microsoft 365 của bạn',
-        moreLater: 'Google Meet sẽ có ở bản sau.',
       },
       // Nơi Zoom đưa trình duyệt quay lại (/meetings/oauth/zoom/callback): việc kết nối được hoàn tất ở đây, rồi thành viên trở về Cài đặt.
       oauth: {

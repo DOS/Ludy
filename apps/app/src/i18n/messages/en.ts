@@ -2748,7 +2748,6 @@ export const en = {
         teamsNote: 'Microsoft Teams: Ludy lists the recordings of the Teams meetings you organized and the transcripts of meetings you were in, from your work or school Microsoft 365 account. Your Microsoft 365 administrator has to allow Ludy once, and to turn on transcript access in the Teams admin center for transcripts; Ludy cannot do this for you. A recording is video, so it can be imported only once your system administrator has turned on video processing; ask them to. Nothing is downloaded until you press "Import".',
         teamsCost: 'Cost: Microsoft does not charge for reading Teams recordings and transcripts (Microsoft stopped metering these APIs on 25 August 2025). Ludy transcribes the audio itself, and that is metered like any upload.',
         teamsGuide: 'Guide for your Microsoft 365 administrator',
-        moreLater: 'Google Meet comes in a later version.',
       },
       // Where Zoom's dialog sends the browser back (/meetings/oauth/zoom/callback): the connect is finished here, then the member returns to Settings.
       oauth: {

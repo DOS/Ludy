@@ -112,7 +112,6 @@ describe('MeetingPlatforms (Settings)', () => {
     expect(html).toContain(en.meetings.platform.settings.disconnect);
     expect(html).not.toContain('meeting-platform-confirm');
     expect(html).not.toContain('meeting-platform-reason');
-    expect(html).toContain(en.meetings.platform.settings.moreLater);
   });
 
   it('says why a listing failed and that an expired connection must be connected again, in words', () => {
@@ -184,19 +183,20 @@ describe('MeetingPlatforms (Settings)', () => {
     expect(connected).toContain('meeting-platform-connect-zoom');
   });
 
-  it('offers "Connect Google Meet" with its plain-words note only where the deployment has the Google client, for a member who can connect, in both languages; "comes in a later version" goes once it is offered', () => {
+  it('offers "Connect Google Meet" with its plain-words note only where the deployment has the Google client, for a member who can connect, in both languages; the card never promises Google Meet "in a later version" (#4088)', () => {
     reset();
     client.current.setQueryData(KEYS.connections, []);
     client.current.setQueryData(KEYS.providers, ['zoom']);
     const without = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
     expect(without).not.toContain('meeting-platform-connect-google');
-    expect(without).toContain(en.meetings.platform.settings.moreLater);
+    expect(without).not.toMatch(/later version/i);
+    expect(without).not.toContain('bản sau');
     client.current.setQueryData(KEYS.providers, ['google_meet', 'zoom']);
     const html = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
     expect(html).toContain('data-testid="meeting-platform-connect-google"');
     expect(html).toContain(en.meetings.platform.settings.connectGoogle);
     expect(html).toContain(esc(en.meetings.platform.settings.googleNote));
-    expect(html).not.toContain(en.meetings.platform.settings.moreLater);
+    expect(html).not.toMatch(/later version/i);
     // The note says what is read (the transcript Google makes, no recording, no Drive) and whose words they are, with no setting name.
     expect(en.meetings.platform.settings.googleNote).toContain("Google's transcription, not Ludy's");
     expect(en.meetings.platform.settings.googleNote).toContain('does not touch Drive');
