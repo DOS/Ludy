@@ -660,6 +660,8 @@ suite('MISA AMIS push (#3902)', () => {
     });
 
     it('holds an ASP confirmation to the same fresh check as AMIS: refused with MISA_AMIS_CHECK_REQUIRED until a check of the batch exists (ASP checks come with #4152), and past that gate with a done check seeded (a wrong digest is STALE) (#4113)', async () => {
+      // No source vouchers: the gates before the digest (blockers, too many) have nothing to say, so a wrong digest is what answers once the check gate is passed.
+      vouchers = [];
       const confirm = () => api.execute('finance.misa_amis.push', { connectionId: aspConnection, ...ASK, digest: 'a'.repeat(64) }, asUser('owner'));
       await rows('DELETE FROM crove_finance.misa_amis_match_check WHERE connection_id = $1', [aspConnection]);
       await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_CHECK_REQUIRED', status: 409 });
