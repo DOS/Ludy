@@ -1452,9 +1452,9 @@ export interface FinanceMisaAmisPushTable {
   org_refno: ColumnType<string, string, NotGranted>;
   payload_digest: string;
   params: ColumnType<unknown, string | undefined, string>;
-  state: ColumnType<string, string | undefined, string>;
+  state: Generated<string>;
   reason: string | null;
-  attempts: ColumnType<number, number | undefined, number>;
+  attempts: Generated<number>;
   requested_by: string | null;
   requested_at: ColumnType<Date, Date | string | undefined, Date | string>;
   sent_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
