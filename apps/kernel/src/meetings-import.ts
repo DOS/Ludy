@@ -137,8 +137,8 @@ async function openDownload(deps: MeetingsImportDeps, download: MeetingPlatformD
   };
   try {
     if (signal?.aborted) throw new MeetingPlatformError('platform_unavailable');
-    // 401 is the token: the connection expires and the member connects again. A 403 on a file is this member not being allowed to read this one recording (a co-organizer or a delegate whose calendar says they
-    // organized it, a retention or sharing rule): a failure of this recording only, never of the connection (#3906).
+    // 401 is the token: the recording fails `connection_expired` and the screen sends the member to connect again. A 403 on a file is this member not being allowed to read this one recording (a
+    // co-organizer or a delegate whose calendar says they organized it, a retention or sharing rule): `platform_refused`, so the screen says to check their access and offers no reconnect (#3906).
     if (response.status === 401) throw new MeetingPlatformError('connection_expired');
     if (response.status === 403) throw new MeetingPlatformError('platform_refused');
     if (response.status === 404 || response.status === 410) throw new MeetingPlatformError('recording_gone');
