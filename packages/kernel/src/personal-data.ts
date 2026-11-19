@@ -1223,6 +1223,9 @@ export const personalDataErase = defineCommand({
            RETURNING 1)
         SELECT count(*)::int AS n FROM gone`.execute(ctx.trx);
       add('crove_finance.misa_amis_match.match_key', Number(misaMatches[0]?.n ?? 0));
+      // A check that waits may have read the tax code before this erasure: its time is moved on, so its record is ignored (record_check compares it) and cannot put the code back. The check stays waiting until its
+      // ten minutes pass or a person asks again; a request made after this erasure is the only way a result is written again.
+      await sql`UPDATE crove_finance.misa_amis_match_check SET requested_at = pg_catalog.clock_timestamp() WHERE org_id = ${ctx.orgId}::uuid AND state = 'requested'`.execute(ctx.trx);
     }
 
     if (probe.kind === 'email') {

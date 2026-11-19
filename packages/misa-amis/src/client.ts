@@ -256,7 +256,10 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
       const branchId = query.branchId ?? null;
       page(skip, take);
       const data = await authed(c, `${prefix}/get_dictionary`, 'POST', toJsonText({ data_type: dataType, skip, take, last_sync_time: lastSyncTime, branch_id: branchId }));
-      const rows = records(asList(data));
+      const list = asList(data);
+      // An entry that is not an object is not MISA's documented answer either: dropping it would shorten the page, and a caller that pages by its length would stop early.
+      if (list.some((row) => typeof row !== 'object' || row === null || Array.isArray(row))) throw new AmisError('invalid_response');
+      const rows = records(list);
       // More rows than were asked for is not MISA's documented answer.
       if (rows.length > take) throw new AmisError('invalid_response');
       return rows;

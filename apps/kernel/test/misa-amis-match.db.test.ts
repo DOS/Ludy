@@ -284,12 +284,12 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     expect(JSON.stringify(audit)).not.toMatch(/0101234564|NCC_ABC/);
   });
 
-  it('replaces the results whole with the next check, and a failed check leaves none and says why', async () => {
+  it('replaces the results whole with the next done check, and a failed check keeps the earlier ones and says why', async () => {
     expect(await call('matches/check', owner, { id: connectionId, ask: ASK })).toMatchObject({ body: { queued: true } });
-    // While it waits, the earlier results are not read as the answer: the codes are null until a check is done.
+    // While it waits, the earlier results still stand: asking again does not lift a block the last check raised.
     const waiting = await results(member);
     expect(waiting.status.state).toBe('requested');
-    expect(waiting.partyCodes).toBeNull();
+    expect(waiting.partyCodes).toEqual(new Map([['0101234564', 'NCC_ABC']]));
     expect(await record({ state: 'done', failure: null, results: [{ kind: 'party', ref: '0312345678', state: 'matched', code: 'KH_B', entryId: null }] })).toEqual({ recorded: true, results: 1 });
     expect((await results(member)).partyCodes).toEqual(new Map([['0312345678', 'KH_B']]));
     expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toHaveLength(1);
@@ -298,8 +298,9 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     expect(await record({ state: 'failed', failure: 'catalogue_too_large', results: [] })).toEqual({ recorded: true, results: 0 });
     const failed = await results(owner);
     expect(failed.status).toMatchObject({ state: 'failed', failure: 'catalogue_too_large', checkedAt: null });
-    expect(failed.partyCodes).toBeNull();
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toEqual([]);
+    // The failed re-check changed none of the stored results.
+    expect(failed.partyCodes).toEqual(new Map([['0312345678', 'KH_B']]));
+    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toHaveLength(1);
   });
 
   it('is the entity\'s alone: another org reads no check, and a disconnect takes the check and its results with the connection', async () => {

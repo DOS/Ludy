@@ -150,8 +150,9 @@ export const misaAmisMatchRecordCheck = defineCommand({
     if (!check || check.state !== 'requested' || iso(check.requested_at) !== input.requestedAt) return { recorded: false, results: 0 };
     if (input.state === 'done' && input.failure !== null) throw new DomainError('MISA_AMIS_MATCH_INVALID', 422, 'Một lần kiểm tra thành công không có lý do lỗi');
     if (input.state === 'failed' && (input.failure === null || input.results.length > 0)) throw new DomainError('MISA_AMIS_MATCH_INVALID', 422, 'Một lần kiểm tra lỗi cần một lý do và không có kết quả');
-    // The results are replaced whole: what an earlier check found about a party is never kept beside a newer one.
-    await ctx.trx.deleteFrom('crove_finance.misa_amis_match').where('org_id', '=', ctx.orgId).where('connection_id', '=', input.connectionId).execute();
+    // A done check replaces the results whole: what an earlier check found about a party is never kept beside a newer one. A failed check changes none: the earlier results stay, so a re-check that cannot be made does
+    // not lift the blocks the last one raised.
+    if (input.state === 'done') await ctx.trx.deleteFrom('crove_finance.misa_amis_match').where('org_id', '=', ctx.orgId).where('connection_id', '=', input.connectionId).execute();
     const seen = new Set<string>();
     for (const r of input.results) {
       const key = `${r.kind}:${r.ref}`;
@@ -197,18 +198,18 @@ export const misaAmisMatchResultsQuery = defineQuery({
       requestedAt: iso(check.requested_at),
       checkedAt: check.state === 'done' && check.finished_at ? iso(check.finished_at) : null,
     };
-    if (check.state !== 'done') return { connectionId: check.connection_id, status, partyCodes: null, itemCodes: null };
     const rows = await ctx.trx
       .selectFrom('crove_finance.misa_amis_match')
       .select(['kind', 'match_key', 'state', 'catalogue_code'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', check.connection_id)
-      .where('state', '=', 'matched')
       .execute();
+    // While a re-check waits, or after one failed, the results of the last done check still stand (a block it raised is not lifted by asking again); with none stored there is nothing to judge against.
+    if (check.state !== 'done' && rows.length === 0) return { connectionId: check.connection_id, status, partyCodes: null, itemCodes: null };
     const partyCodes = new Map<string, string>();
     const itemCodes = new Set<string>();
     for (const row of rows) {
-      if (row.catalogue_code === null) continue;
+      if (row.state !== 'matched' || row.catalogue_code === null) continue;
       if (row.kind === 'party') partyCodes.set(row.match_key, row.catalogue_code);
       else itemCodes.add(row.match_key);
     }

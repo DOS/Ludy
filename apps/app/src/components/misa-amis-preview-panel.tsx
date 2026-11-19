@@ -181,8 +181,8 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
         </div>
       )}
       {result && <MisaAmisPreviewResult result={result} notes={notes.data ?? null} />}
-      {result && checkConnectionId && <MisaAmisCheckButton state={result.matchCheck.state} pending={check.isPending} waiting={waiting} slow={slow} error={check.error} onAsk={askCheck} />}
-      {result && push && <MisaAmisPushConfirm key={runs} result={result} ask={ask} connectionId={push.connectionId} offer={push.offer} />}
+      {result && checkConnectionId && <MisaAmisCheckButton state={result.matchCheck.state} pending={check.isPending} waiting={waiting} slow={slow && result.matchCheck.state === 'requested'} error={check.error} onAsk={askCheck} />}
+      {result && push && <MisaAmisPushConfirm key={`${runs}:${result.digest}`} result={result} ask={ask} connectionId={push.connectionId} offer={push.offer} />}
     </details>
   );
 }

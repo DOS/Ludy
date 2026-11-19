@@ -1054,15 +1054,24 @@ suite('finding a person in the org (#923)', () => {
     const taxCode = '0101234564';
     const seed = async (orgId: string, owner: string) => {
       const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id);
-      const channel = randomUUID();
-      const connection = randomUUID();
-      await admin(async (c) => {
-        await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, entity, owner]);
-        await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [orgId, connection, entity, channel]);
-      });
+      // The test before this one may have connected the org's default entity already (one connection per entity): that connection is reused.
+      let connection = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity]))).rows[0]?.id;
+      if (connection === undefined) {
+        const channel = randomUUID();
+        connection = randomUUID();
+        await admin(async (c) => {
+          await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, entity, owner]);
+          await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [orgId, connection, entity, channel]);
+        });
+      }
+      const connectionId = connection;
+      // A check that waits (its job may have read the tax code before the erasure).
+      await admin((c) =>
+        c.query("INSERT INTO crove_finance.misa_amis_match_check (org_id, legal_entity_id, connection_id, params, state, requested_at) VALUES ($1, $2, $3, '{}'::jsonb, 'requested', pg_catalog.now() - interval '5 minutes') ON CONFLICT (org_id, connection_id) DO NOTHING", [orgId, entity, connectionId]),
+      );
       return async (kind: string, key: string) => {
         await admin((c) =>
-          c.query("INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state) VALUES ($1, $2, $3, $4, $5, 'unknown')", [orgId, entity, connection, kind, key]),
+          c.query("INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state) VALUES ($1, $2, $3, $4, $5, 'unknown')", [orgId, entity, connectionId, kind, key]),
         );
       };
     };
@@ -1073,6 +1082,9 @@ suite('finding a person in the org (#923)', () => {
     await mine('item', 'DV_CHUNG');
     await theirs('party', taxCode);
     const count = async (orgId: string) => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId]))).rows[0]?.n);
+    const askedAt = async (orgId: string) => new Date((await admin((c) => c.query<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))).rows[0]!.requested_at).getTime();
+    const mineBefore = await askedAt(org.orgId);
+    const theirsBefore = await askedAt(other.orgId);
 
     const found = await find(taxCode);
     expect(found.matches.filter((m) => m.column === 'crove_finance.misa_amis_match.match_key')).toHaveLength(1);
@@ -1082,6 +1094,9 @@ suite('finding a person in the org (#923)', () => {
     expect(await count(org.orgId)).toBe(2);
     expect(await count(other.orgId)).toBe(1);
     expect((await find(taxCode)).matches.filter((m) => m.column === 'crove_finance.misa_amis_match.match_key')).toHaveLength(0);
+    // The waiting check of the org is moved on (its job's record is then ignored and cannot put the code back); another org's check is not touched.
+    expect(await askedAt(org.orgId)).toBeGreaterThan(mineBefore);
+    expect(await askedAt(other.orgId)).toBe(theirsBefore);
   });
 
   // Only the erase command reaches the clearing: an owner's own context, never an admin's, a member's or a raw tenant call.

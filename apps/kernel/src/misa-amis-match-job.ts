@@ -19,8 +19,8 @@ import {
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.misa_amis' };
-// A page of the catalogue, and how many pages one check reads: 20 000 entries of a kind. A catalogue that is longer is not read in part (a party past the cut would read as unknown): the check fails with
-// `catalogue_too_large` and nothing is recorded as found.
+// A page of the catalogue, and how many pages one check reads: 20 000 entries of a kind. A catalogue that fills all of them (20 000 or more) is not read in part (a party past the cut would read as unknown): the
+// check fails with `catalogue_too_large` and nothing is recorded as found.
 const PAGE = 1000;
 const MAX_PAGES = 20;
 
