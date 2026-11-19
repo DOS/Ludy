@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Hộp thư and contact commands an MCP grant that holds `ludy.engage.write` may run (epic #3857, E2, issue #3861; ADR-0051 decisions 2, 10 and 11, owner decision 2026-11-19): the coworker Dy does the
-// routine steps a person does, as R1 commands in its own sealed write context (the migration 20270122130000). Each is a twin of the app's own command, not the command itself: `register()` opens `mcp`
+// routine steps a person does, as R1 commands in its own sealed write context (the migration 20270122160000). Each is a twin of the app's own command, not the command itself: `register()` opens `mcp`
 // only to a command whose access list is owner and admin alone, and the app's own commands are used by members. A twin keeps the original's input schema (strict: an unknown key is refused), its
 // handler and its checks (a thread the grant may not read is not found, an assignee must be a member who may handle it), and runs in a sealed context where the database lets it write exactly the
 // rows its step writes (crove_kernel.mcp_write_row_ok) and nothing else. It reaches the same audit trail as a person's click, which also names the grant, the client and the agent.
