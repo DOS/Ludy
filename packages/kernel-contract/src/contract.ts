@@ -509,6 +509,7 @@ import {
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
+import { zCommitmentsAnswer } from './meeting-commitments.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
@@ -1326,6 +1327,12 @@ export const contract = {
     title: {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       suggest: oc.input(zSummaryRef).output(zTitleAnswer),
+    },
+    // What each speaker committed to or decided (#3954): `status` is the button (the same answer as the chapters'), `list` the click that has the recorder's own Vy list, from the transcript, each speaker's commitments
+    // and decisions with the second of the line each rests on. The lines go back to the browser and are stored nowhere; nothing is published or made a task from here.
+    commitments: {
+      status: oc.input(zSummaryRef).output(zSummaryStatus),
+      list: oc.input(zSummaryRef).output(zCommitmentsAnswer),
     },
     // This week's decisions and what is still open, across the meetings the member reads (#3949): `facts` are read by code as the member (published decisions and open action items of the meetings that started in the
     // last 7, 14 or 30 days) and work with AI off; `status` is the button (may Vy be used now, the cost of one recap), `recap` the click that has the member's own Vy write two or three sentences from those facts. Nothing
