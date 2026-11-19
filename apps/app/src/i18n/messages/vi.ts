@@ -8946,6 +8946,8 @@ export const vi = {
       read: 'Chỉ đọc: ứng dụng không ghi, sửa, gửi tin hay chi tiền được. Nhưng nó xem được chi tiết khách hàng, nhà cung cấp và các liên hệ khác (kể cả người đã điền biểu mẫu đặt lịch công khai), gồm tên, email, số điện thoại, địa chỉ và mã số thuế, cùng chi tiết hóa đơn (bên mua hoặc bán, số tiền, mô tả từng dòng, lý do hủy), cùng các bài đăng Engage của tổ chức (nội dung, tiêu đề, liên kết, tên kênh, trạng thái, giờ đăng và những bài đang chờ duyệt). Những thông tin này rời khỏi Ludy và do nhà cung cấp ứng dụng AI đó lưu giữ, xử lý theo điều khoản của họ: chỉ cho phép ứng dụng bạn tin cậy.',
       readWriteOn: 'Đọc dữ liệu, và chỉ làm những việc liệt kê ở các dòng dưới, không làm gì khác: ứng dụng không tự gửi tin cho khách, đổi lịch hẹn hay chi tiền được. Nhưng nó xem được chi tiết khách hàng, nhà cung cấp và các liên hệ khác (kể cả người đã điền biểu mẫu đặt lịch công khai), gồm tên, email, số điện thoại, địa chỉ và mã số thuế, cùng chi tiết hóa đơn (bên mua hoặc bán, số tiền, mô tả từng dòng, lý do hủy), cùng các bài đăng Engage của tổ chức (nội dung, tiêu đề, liên kết, tên kênh, trạng thái, giờ đăng và những bài đang chờ duyệt). Những thông tin này rời khỏi Ludy và do nhà cung cấp ứng dụng AI đó lưu giữ, xử lý theo điều khoản của họ: chỉ cho phép ứng dụng bạn tin cậy.',
       meetings: 'Với kết nối của công ty, ứng dụng còn đọc được biên bản đã công bố (tóm tắt, quyết định và việc cần làm) của những cuộc họp mà người ghi đã chia sẻ cho cả công ty. Cuộc họp chỉ dành cho người dự, bản nháp, bản ghi lời nói, ghi chú và bản dịch vẫn không đọc được.',
+      engageReads: 'Với kết nối của công ty, nó còn đọc Hộp thư Engage (bình luận, tin nhắn riêng và email cùng lời lẽ và tên của khách, trạng thái nội bộ của từng cuộc trò chuyện), các cơ hội bán hàng và báo giá (khách hàng, số tiền, từng dòng), các lịch hẹn (tên, email, số điện thoại và ghi chú của từng khách) và kết quả bài đăng Social, quảng cáo (chi tiêu, tên chiến dịch, số liệu). Ghi chú nội bộ, bản nháp và tệp vẫn không đọc được. Những thông tin này cũng rời khỏi Ludy.',
+      engageReadsMember: 'Với kết nối chỉ của bạn, nó còn đọc những gì bạn đọc được trong {org}: các cuộc trò chuyện Engage mà vai trò của bạn được mở (bình luận; tin nhắn riêng và email chỉ khi bạn được đọc), cùng các cơ hội bán hàng và báo giá của cả tổ chức, như bạn thấy trong ứng dụng. Nó không đọc lịch hẹn, kết quả Social hay quảng cáo. Ghi chú nội bộ và bản nháp vẫn không đọc được.',
       draft: 'Soạn bản nháp bài đăng Engage: ứng dụng tạo được bản nháp bài đăng, đánh dấu là do AI soạn và chờ một người duyệt trong Ludy. Nó không duyệt, không đặt lịch đăng, không đăng, không xóa bài và không kết nối hay ngắt kênh được.',
       engage: 'Làm việc trong Hộp thư và CRM của Engage (đang được bổ sung: khi ứng dụng chưa có công cụ tương ứng, đánh dấu mục này chưa thay đổi gì): ứng dụng sẽ làm được các bước nội bộ nhỏ như giao hay đóng một hội thoại, thêm ghi chú, gắn hoặc tạo liên hệ hay cơ hội, lưu báo giá nháp. Việc gì gửi ra cho khách hoặc đổi lịch hẹn chỉ là một đề xuất: phải chờ một người duyệt trong Ludy, và chưa có gì được gửi hay đổi cho tới lúc đó.',
       ads: 'Lưu bản nháp quảng cáo (đang được bổ sung: khi ứng dụng chưa có công cụ tương ứng, đánh dấu mục này chưa thay đổi gì): ứng dụng sẽ lưu được một chiến dịch quảng cáo nháp để một người xem lại. Chạy, đẩy, tạm dừng hay dừng một quảng cáo, và mọi khoản chi, chỉ là đề xuất chờ một người duyệt trong Ludy.',
@@ -14220,6 +14222,11 @@ export const vi = {
         prepare_enable: 'Đề nghị bật chạy quảng cáo cho tổ chức',
         state: 'Xem công tắc và hạn mức chi tiêu của việc chạy quảng cáo',
       },
+      mcp: {
+        flags: 'Cho ứng dụng AI xem các cảnh báo chi tiêu quảng cáo',
+        spend: 'Cho ứng dụng AI xem các tài khoản quảng cáo và chi tiêu của một tài khoản',
+        today: 'Cho ứng dụng AI xem việc cần người xử lý hôm nay trong Quảng cáo',
+      },
     },
     crm: {
       booking: {
@@ -14340,6 +14347,13 @@ export const vi = {
         won_deals: 'Xem các deal đã thắng, để đối chiếu với hóa đơn bán hàng',
       },
       today: 'Xem việc CRM cần bạn trong hôm nay',
+      mcp: {
+        bookings: 'Cho ứng dụng AI xem danh sách lịch hẹn',
+        deal: 'Cho ứng dụng AI xem một cơ hội bán hàng',
+        deals: 'Cho ứng dụng AI xem danh sách cơ hội bán hàng',
+        quote: 'Cho ứng dụng AI xem một báo giá cùng các dòng của nó',
+        quotes: 'Cho ứng dụng AI xem danh sách báo giá',
+      },
     },
     finance: {
       today: 'Xem việc kế toán cần bạn hôm nay',
@@ -15283,6 +15297,8 @@ export const vi = {
         set_shared: 'Chia sẻ hoặc thôi chia sẻ chế độ xem đã lưu',
       },
       mcp: {
+        conversation: 'Cho ứng dụng AI xem một cuộc trò chuyện trong Hộp thư cùng các tin nhắn',
+        conversations: 'Cho ứng dụng AI xem danh sách cuộc trò chuyện trong Hộp thư',
         about: 'Cho ứng dụng AI xem tên tổ chức và quyền kết nối của nó',
         grant: {
           approve: 'Cho phép một ứng dụng AI đọc dữ liệu tổ chức',
@@ -15929,6 +15945,8 @@ export const vi = {
         revoke_for_member: 'Thu hồi liên kết của thành viên đã mất quyền',
       },
       mcp: {
+        metrics_summary: 'Cho ứng dụng AI xem các bài đã đăng đang đạt kết quả ra sao',
+        metrics_totals: 'Cho ứng dụng AI xem tổng kết quả các bài đã đăng',
         draft_create: 'Cho ứng dụng AI soạn bản nháp bài đăng Engage chờ người duyệt',
         posts: 'Cho ứng dụng AI xem danh sách bài đăng Engage',
         review_queue: 'Cho ứng dụng AI xem hàng chờ duyệt của Engage',

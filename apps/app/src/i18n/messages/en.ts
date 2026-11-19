@@ -8949,6 +8949,8 @@ export const en = {
       read: 'Read only: the app cannot write, edit, send a message or spend money. But it sees the details of your customers, suppliers and other contacts (including people who filled in a public booking form), including their names, emails, phone numbers, addresses and tax codes, and the details of your invoices (who it is with, the amounts, each line’s description, why one was voided), and your organization’s Engage posts (their text, titles and links, the channels’ names, each channel’s status and planned time, and what waits for review). That information leaves Ludy and is kept and processed by that AI app’s provider under its own terms: allow only an app you trust.',
       readWriteOn: 'It reads data and does only what is listed in the lines below, and nothing else: it cannot send a message to a customer, change a booking or spend money by itself. But it sees the details of your customers, suppliers and other contacts (including people who filled in a public booking form), including their names, emails, phone numbers, addresses and tax codes, and the details of your invoices (who it is with, the amounts, each line’s description, why one was voided), and your organization’s Engage posts (their text, titles and links, the channels’ names, each channel’s status and planned time, and what waits for review). That information leaves Ludy and is kept and processed by that AI app’s provider under its own terms: allow only an app you trust.',
       meetings: 'For a connection of the company it also reads the published minutes (summary, decisions and action items) of meetings that the person who recorded them shared with the whole company. Meetings for attendees only, drafts, transcripts, notes and translations stay unreadable.',
+      engageReads: 'For a connection of the company it also reads your Engage inbox (comments, private messages and emails with their customers’ words and names, and the internal status of each conversation), your deals and quotes (customers, amounts, line items), your bookings (each guest’s name, email, phone and note), and the results of your Social posts and of your ads (spend, campaign names, counts). Internal notes, drafts and files stay unreadable. That information leaves Ludy too.',
+      engageReadsMember: 'For a connection of yours alone it also reads what you can read in {org}: the Engage conversations your role may open (comments, and private messages and emails only if you may read them), and the whole organization’s deals and quotes, as you see them in the app. It reads no bookings, Social results or ads. Internal notes and drafts stay unreadable.',
       draft: 'Write Engage post drafts: the app can create a draft post, marked as written by AI and waiting for a person to review it in Ludy. It cannot approve, schedule, publish or delete a post, or connect or disconnect a channel.',
       engage: 'Work in the Engage inbox and CRM (being added: until the app has tools for it, ticking this changes nothing): the app will be able to do the small internal steps, such as assign or resolve a conversation, add a note, link or create a contact or deal, and save a draft quote. Anything that goes out to a customer or changes a booking is only a proposal: it waits for a person to approve it in Ludy, and nothing is sent or changed until then.',
       ads: 'Save ad drafts (being added: until the app has tools for it, ticking this changes nothing): the app will be able to save a draft ad campaign for a person to review. Launching, boosting, pausing or stopping an ad, and every spend, is only a proposal that waits for a person to approve it in Ludy.',
@@ -14221,6 +14223,11 @@ export const en = {
         prepare_enable: 'Ask to turn on running ads for the org',
         state: 'Read the switches and spend caps of running ads',
       },
+      mcp: {
+        flags: 'Let an AI app read the ad spend flags',
+        spend: 'Let an AI app read the ad accounts and the spend of one',
+        today: 'Let an AI app read what needs a person in Ads today',
+      },
     },
     crm: {
       booking: {
@@ -14341,6 +14348,13 @@ export const en = {
         won_deals: 'Read the won deals, to check them against sales invoices',
       },
       today: 'Read the CRM items that need you today',
+      mcp: {
+        bookings: 'Let an AI app list the bookings',
+        deal: 'Let an AI app read one deal',
+        deals: 'Let an AI app list the deals',
+        quote: 'Let an AI app read one quote with its lines',
+        quotes: 'Let an AI app list the quotes',
+      },
     },
     finance: {
       today: 'Read what needs you in accounting today',
@@ -15284,6 +15298,8 @@ export const en = {
         set_shared: 'Share or unshare a saved view',
       },
       mcp: {
+        conversation: 'Let an AI app read one inbox conversation with its messages',
+        conversations: 'Let an AI app list the inbox conversations',
         about: 'Show an AI app the organization name and its own connection',
         grant: {
           approve: 'Let an AI app read the organization’s data',
@@ -15930,6 +15946,8 @@ export const en = {
         revoke_for_member: 'Revoke the links of a member who lost access',
       },
       mcp: {
+        metrics_summary: 'Let an AI app read how the published posts are doing',
+        metrics_totals: 'Let an AI app read the totals of the published posts',
         draft_create: 'Let an AI app write an Engage post draft for a person to review',
         posts: 'Let an AI app list the Engage posts',
         review_queue: 'Let an AI app read the Engage review queue',
