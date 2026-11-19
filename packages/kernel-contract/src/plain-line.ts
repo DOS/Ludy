@@ -11,3 +11,20 @@ export function plainLine(value: string, max: number): string {
   const spaced = dropped.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ').replace(/ {2,}/g, ' ').trim();
   return [...spaced].slice(0, max).join('').trim();
 }
+
+// A longer text of a customer (a message, an email) for the same reader, keeping its line breaks: the invisible characters of plainLine are dropped, tabs and other control characters become a space,
+// a carriage return pairs with a line feed or becomes one, runs of blank lines collapse into one blank line, lines are trimmed at the end, and the whole is cut at `max` characters (code points).
+// `truncated` is true when more than `max` characters were left out. Still data for the client, never an instruction.
+export function plainText(value: string, max: number): { text: string; truncated: boolean } {
+  const dropped = value.replace(/[\p{Cf}\p{Co}\p{Cn}\p{Cs}]+/gu, '');
+  const lines = dropped
+    .replace(/\r\n?/g, '\n')
+    .replace(/[\p{Zl}\p{Zp}]+/gu, '\n')
+    .replace(/[^\P{Cc}\n]+/gu, ' ')
+    .split('\n')
+    .map((l) => l.replace(/ {2,}/g, ' ').trimEnd());
+  const whole = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const points = [...whole];
+  const text = points.slice(0, max).join('').trim();
+  return { text, truncated: points.length > max };
+}

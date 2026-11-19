@@ -103,4 +103,12 @@ describe('parseCallbackResults', () => {
     expect(parseCallbackResults('[]')).toEqual([]);
     expect(parseCallbackResults('{')).toBeNull();
   });
+  it("drops NUL and control characters from MISA's text, and a lone surrogate, so a stored reason is always a valid text value", () => {
+    const rows = parseCallbackResults(JSON.stringify([entry({ error_message: 'Lỗi\u0000 một\u0007 dòng\nhai\u0085\u007f\t.\ud800', session_id: 'e6f7\u0000-66' })])) ?? [];
+    expect(rows[0]?.errorMessage).toBe('Lỗi một dònghai.\ufffd');
+    expect(rows[0]?.sessionId).toBe('e6f7-66');
+    // The cap counts what is left, not what was sent.
+    const long = parseCallbackResults(JSON.stringify([entry({ error_message: `${'\u0000'.repeat(400)}${'a'.repeat(600)}` })])) ?? [];
+    expect(long[0]?.errorMessage).toBe('a'.repeat(500));
+  });
 });

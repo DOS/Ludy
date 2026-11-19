@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useId, useState, type FormEvent } from 'react';
+import { useId, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
 import { Checkbox } from '@crove/ui/components/checkbox';
 import type { LegalEntity, MemberRoles } from '@crove/kernel-contract';
 import { Input } from '@crove/ui/components/input';
@@ -13,11 +14,14 @@ import { StepUpPrompt } from '../../components/two-factor.tsx';
 import { MemberRolesRow } from '../member-roles.tsx';
 import { MemberPrivateNotes, usePrivateNotes } from '../../components/notes-panel.tsx';
 import { MemberSessions } from '../../components/sessions.tsx';
-import { ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, isEmailAddress, RowsSkeleton, useFieldErrors } from '../../components/ui.tsx';
+import { FormDialog, useLive } from '../../components/form-dialog.tsx';
+import { DuplicateHint } from '../../components/form-panel.tsx';
+import { ErrorText, Field, focusFirstInvalid, isEmailAddress, RowsSkeleton, useFieldErrors } from '../../components/ui.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../../lib/api.ts';
 import { getConfig } from '../../lib/auth.ts';
 import { useFormat } from '../../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../../lib/members.ts';
+import { invitedEmailState } from '../../lib/duplicates.ts';
 import { asRoleKey, inviteRoleChoices } from '../../lib/member-roles.ts';
 import { MEMBERS_CARD_ID } from '../approval-preset.tsx';
 
@@ -192,15 +196,22 @@ export function InviteMember({
   initialEmail,
   entities,
   catalog,
+  members = [],
 }: {
   isOwner: boolean;
   initialEmail?: string | undefined;
   entities: LegalEntity[];
   catalog: MemberRoles['roles'];
+  // The members, for the warning when the address typed already belongs to one (#3608).
+  members?: readonly { email: string }[];
 }) {
   const root = useTranslations();
   const t = useTranslations('settings');
   const [email, setEmail] = useState(initialEmail ?? '');
+  // The form is a dialog opened by "Mời thành viên" (#3608); onboarding's ?invite= opens it at once with the address filled.
+  const [open, setOpen] = useState(Boolean(initialEmail));
+  const pendingInvites = useQuery(orpc.org.listInvites.queryOptions());
+  const known = invitedEmailState(email, members, pendingInvites.data ?? []);
   const [role, setRole] = useState<InviteRole>('member');
   const [scoped, setScoped] = useState(false);
   const [departmentKey, setDepartmentKey] = useState('');
@@ -217,10 +228,6 @@ export function InviteMember({
   const invite = useMutation(
     orpc.org.invite.mutationOptions({
       onSuccess: () => {
-        setEmail('');
-        setScoped(false);
-        setDepartmentKey('');
-        setEntityIds([]);
         void queryClient.invalidateQueries({ queryKey: orpc.org.listInvites.key() });
       },
     }),
@@ -235,6 +242,8 @@ export function InviteMember({
       focusFirstInvalid(event.currentTarget);
       return;
     }
+    // A member cannot be invited again; an address with an invitation waiting can: the new one replaces it (the hint says so).
+    if (known === 'member') return;
     invite.mutate(scoped ? { email, role, legalEntityIds: entityIds } : department ? { email, role, roleKey: department.key } : { email, role });
   }
   const toggleEntity = (id: string, checked: boolean) => {
@@ -242,113 +251,156 @@ export function InviteMember({
     setEntityIds((ids) => (checked ? [...ids, id] : ids.filter((x) => x !== id)));
   };
 
+  const live = useLive();
+  const inviteButton = useRef<HTMLButtonElement>(null);
+  const reset = () => {
+    invite.reset();
+    setOpen(false);
+    setEmail('');
+    setRole('member');
+    setScoped(false);
+    setDepartmentKey('');
+    setEntityIds([]);
+    setNoEntity(false);
+    fields.reset();
+    // The dialog that closes was not the one that opened (the form gave way to the link): focus goes back to the button by hand.
+    window.setTimeout(() => inviteButton.current?.focus(), 0);
+  };
+  const stepUp = isStepUpRequired(invite.error);
   return (
     <>
-      <form className="mt-4 space-y-2" noValidate onSubmit={submit}>
-        <p id={fieldHintId(emailId)} className="text-xs text-subtle-foreground">
-          {t('inviteHint')}
-        </p>
-        <div className="flex gap-2">
-          <Input
-            {...fieldControl(emailId, { hint: true, error: Boolean(fields.of('email')) })}
-            type="email"
-            required
-            maxLength={320}
-            placeholder={t('emailPlaceholder')}
-            value={email}
-            onChange={(e) => {
-              setEmail(e.target.value);
-              fields.edit('email');
-            }}
-            onBlur={(e) => fields.blur('email', e.target.value)}
-          />
-          <NativeSelect className="shrink-0" value={role} onChange={(e) => setRole(e.target.value as InviteRole)} aria-label={t('role')}>
-            {isOwner && !scoped && <NativeSelectOption value="admin">{root('roles.admin')}</NativeSelectOption>}
-            <NativeSelectOption value="member">{root('roles.member')}</NativeSelectOption>
-            <NativeSelectOption value="viewer">{root('roles.viewer')}</NativeSelectOption>
-          </NativeSelect>
-          <Button type="submit" variant="outline" disabled={invite.isPending}>
-            {t('invite')}
-          </Button>
-        </div>
-        <FieldError id={emailId}>{fields.of('email')}</FieldError>
-        {catalog.length > 0 &&
-          (isOwner ? (
-            <div className="space-y-1">
-              <NativeSelect value={department?.key ?? ''} onChange={(e) => setDepartmentKey(e.target.value)} disabled={scoped} aria-label={t('inviteDepartment')}>
-                <NativeSelectOption value="">{t('inviteDepartmentNone')}</NativeSelectOption>
-                {choices.map((r) => (
-                  <NativeSelectOption key={r.key} value={r.key}>
-                    {root(`memberRoles.roles.${r.key}`)}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-              {department && <p className="text-xs text-subtle-foreground">{root(`memberRoles.hints.${department.key}`)}</p>}
-              {scoped && <p className="text-xs text-subtle-foreground">{t('inviteDepartmentScoped')}</p>}
-            </div>
-          ) : (
-            <p className="text-xs text-subtle-foreground">{t('inviteDepartmentOwnerOnly')}</p>
-          ))}
-        {canScope && (
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-sm text-foreground">
-              <Checkbox
-                checked={scoped}
-                disabled={Boolean(department)}
-                onCheckedChange={(checked) => {
-                  setScoped(checked);
-                  setNoEntity(false);
-                  // A scoped invite is never for an admin.
-                  if (checked && role === 'admin') setRole('member');
-                }}
-              />
-              <span>{t('inviteScoped')}</span>
-            </label>
-            {scoped && (
-              <fieldset
-                className="space-y-1.5 rounded-lg border p-3"
-                aria-invalid={noEntity || undefined}
-                aria-describedby={noEntity ? `${scopeId}-hint ${scopeId}-error` : `${scopeId}-hint`}>
-                <legend className="px-1 text-xs text-subtle-foreground">{t('inviteEntities')}</legend>
-                <p id={`${scopeId}-hint`} className="text-xs text-subtle-foreground">
-                  {t('inviteScopedHint')}
-                </p>
-                {entities.map((e) => (
-                  <label key={e.id} className="flex items-center gap-2 text-sm text-foreground">
-                    <Checkbox checked={entityIds.includes(e.id)} onCheckedChange={(checked) => toggleEntity(e.id, checked)} />
-                    <span>{e.name}</span>
-                  </label>
-                ))}
-                {noEntity && (
-                  <p id={`${scopeId}-error`} role="alert" className="text-xs text-destructive">
-                    {t('inviteNoEntity')}
-                  </p>
-                )}
-              </fieldset>
-            )}
-          </div>
-        )}
-        {invite.error && !isStepUpRequired(invite.error) && <ErrorText>{errorMessage(invite.error)}</ErrorText>}
-      </form>
-      {isStepUpRequired(invite.error) && (
-        // Inviting is R3. Outside the form above: the prompt has a form of its own.
-        <div className="mt-4">
-          <StepUpPrompt
-            action={
-              invite.variables?.roleKey
-                ? t('stepUpInviteRole', {
-                    email: invite.variables.email,
-                    role: root(`roles.${invite.variables.role}`),
-                    department: root(`memberRoles.roles.${invite.variables.roleKey}`),
-                  })
-                : t('stepUpInvite', { email: invite.variables?.email ?? email, role: root(`roles.${invite.variables?.role ?? role}`) })
-            }
-            onVerified={() => invite.variables && invite.mutate(invite.variables)}
-            onCancel={() => invite.reset()}
-          />
-        </div>
+      <div className="mt-4">
+        <Button ref={inviteButton} type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+          {t('inviteTitle')}
+        </Button>
+      </div>
+      {/* The accept link is shown once, so the result stays on screen until it is closed. */}
+      {open && invite.data && (
+        // Escape or the close button ends it; a click on the dimmed page does not, so the link shown once is not lost by a stray click.
+        <Dialog open disablePointerDismissal onOpenChange={(next) => !next && reset()}>
+          <DialogContent closeLabel={root('common.close')}>
+            <DialogHeader>
+              <DialogTitle>{t('inviteTitle')}</DialogTitle>
+            </DialogHeader>
+            <CreatedInvite invite={invite.data} onDone={reset} />
+          </DialogContent>
+        </Dialog>
       )}
-      {invite.data && <CreatedInvite invite={invite.data} onDone={() => invite.reset()} />}
+      {open && !invite.data && (
+        <FormDialog
+          title={t('inviteTitle')}
+          label={t('inviteTitle')}
+          busy={invite.isPending}
+          dirty={email !== (initialEmail ?? '') || role !== 'member' || scoped || departmentKey !== '' || entityIds.length > 0}
+          submitLabel={t('invite')}
+          submitDisabled={known === 'member' || stepUp}
+          onClose={reset}
+          onSubmit={submit}
+          outside={
+            stepUp ? (
+              // Inviting is R3. Outside the form above: the prompt has a form of its own.
+              <StepUpPrompt
+                action={
+                  invite.variables?.roleKey
+                    ? t('stepUpInviteRole', {
+                        email: invite.variables.email,
+                        role: root(`roles.${invite.variables.role}`),
+                        department: root(`memberRoles.roles.${invite.variables.roleKey}`),
+                      })
+                    : t('stepUpInvite', { email: invite.variables?.email ?? email, role: root(`roles.${invite.variables?.role ?? role}`) })
+                }
+                onVerified={() => live.current && invite.variables && invite.mutate(invite.variables)}
+                onCancel={() => invite.reset()}
+              />
+            ) : null
+          }
+        >
+          <Field id={emailId} label={t('inviteEmail')} hint={t('inviteHint')} error={fields.of('email')}>
+            {(control) => (
+              <Input
+                {...control}
+                type="email"
+                required
+                maxLength={320}
+                placeholder={t('emailPlaceholder')}
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  fields.edit('email');
+                }}
+                onBlur={(e) => fields.blur('email', e.target.value)}
+              />
+            )}
+          </Field>
+          <DuplicateHint testId="invite-duplicate">{known ? t(known === 'member' ? 'inviteAlreadyMember' : 'inviteAlreadyInvited', { email: email.trim() }) : null}</DuplicateHint>
+          <Field label={t('role')}>
+            {(control) => (
+              <NativeSelect {...control} value={role} onChange={(e) => setRole(e.target.value as InviteRole)}>
+                {isOwner && !scoped && <NativeSelectOption value="admin">{root('roles.admin')}</NativeSelectOption>}
+                <NativeSelectOption value="member">{root('roles.member')}</NativeSelectOption>
+                <NativeSelectOption value="viewer">{root('roles.viewer')}</NativeSelectOption>
+              </NativeSelect>
+            )}
+          </Field>
+          {catalog.length > 0 &&
+            (isOwner ? (
+              <div className="space-y-1">
+                <NativeSelect value={department?.key ?? ''} onChange={(e) => setDepartmentKey(e.target.value)} disabled={scoped} aria-label={t('inviteDepartment')}>
+                  <NativeSelectOption value="">{t('inviteDepartmentNone')}</NativeSelectOption>
+                  {choices.map((r) => (
+                    <NativeSelectOption key={r.key} value={r.key}>
+                      {root(`memberRoles.roles.${r.key}`)}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+                {department && <p className="text-xs text-subtle-foreground">{root(`memberRoles.hints.${department.key}`)}</p>}
+                {scoped && <p className="text-xs text-subtle-foreground">{t('inviteDepartmentScoped')}</p>}
+              </div>
+            ) : (
+              <p className="text-xs text-subtle-foreground">{t('inviteDepartmentOwnerOnly')}</p>
+            ))}
+          {canScope && (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-foreground">
+                <Checkbox
+                  checked={scoped}
+                  disabled={Boolean(department)}
+                  onCheckedChange={(checked) => {
+                    setScoped(checked);
+                    setNoEntity(false);
+                    // A scoped invite is never for an admin.
+                    if (checked && role === 'admin') setRole('member');
+                  }}
+                />
+                <span>{t('inviteScoped')}</span>
+              </label>
+              {scoped && (
+                <fieldset
+                  className="space-y-1.5 rounded-lg border p-3"
+                  aria-invalid={noEntity || undefined}
+                  aria-describedby={noEntity ? `${scopeId}-hint ${scopeId}-error` : `${scopeId}-hint`}>
+                  <legend className="px-1 text-xs text-subtle-foreground">{t('inviteEntities')}</legend>
+                  <p id={`${scopeId}-hint`} className="text-xs text-subtle-foreground">
+                    {t('inviteScopedHint')}
+                  </p>
+                  {entities.map((e) => (
+                    <label key={e.id} className="flex items-center gap-2 text-sm text-foreground">
+                      <Checkbox checked={entityIds.includes(e.id)} onCheckedChange={(checked) => toggleEntity(e.id, checked)} />
+                      <span>{e.name}</span>
+                    </label>
+                  ))}
+                  {noEntity && (
+                    <p id={`${scopeId}-error`} role="alert" className="text-xs text-destructive">
+                      {t('inviteNoEntity')}
+                    </p>
+                  )}
+                </fieldset>
+              )}
+            </div>
+          )}
+            {invite.error && !stepUp && <ErrorText>{errorMessage(invite.error)}</ErrorText>}
+        </FormDialog>
+      )}
     </>
   );
 }
@@ -453,7 +505,7 @@ export function MembersCard({ members, me, isOwner, canManage, inviteEmail }: { 
       )}
       {canManage && (
         <>
-          <InviteMember isOwner={isOwner} initialEmail={inviteEmail} entities={entities.data ?? []} catalog={memberRoles.data?.roles ?? []} />
+          <InviteMember isOwner={isOwner} initialEmail={inviteEmail} entities={entities.data ?? []} catalog={memberRoles.data?.roles ?? []} members={members} />
           <PendingInvites entities={entities.data ?? []} entitiesLoading={entities.isLoading} />
         </>
       )}

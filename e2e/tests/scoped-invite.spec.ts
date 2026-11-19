@@ -25,6 +25,7 @@ test('an owner invites an outside accountant for one legal entity', async ({ pag
   await openSettingsTab(page, 'members');
   await expect(page.getByRole('checkbox', { name: 'Giới hạn theo pháp nhân' })).toHaveCount(0);
   await openSettingsTab(page, 'org');
+  await page.getByRole('button', { name: 'Thêm pháp nhân' }).click();
   const add = page.getByRole('form', { name: 'Thêm pháp nhân' });
   await add.getByLabel('Tên pháp nhân').fill('Chi nhánh Hà Nội');
   await add.getByRole('button', { name: 'Thêm', exact: true }).click();
@@ -33,6 +34,7 @@ test('an owner invites an outside accountant for one legal entity', async ({ pag
 
   const member = newEmail('scoped-member');
   await openSettingsTab(page, 'members');
+  await page.getByRole('button', { name: 'Mời thành viên' }).click();
   await page.getByPlaceholder('email@congty.vn').fill(member);
   const role = page.getByLabel('Vai trò', { exact: true });
   await role.selectOption('admin');
@@ -48,6 +50,8 @@ test('an owner invites an outside accountant for one legal entity', async ({ pag
   const created = page.getByRole('status').filter({ hasText: `Đã tạo lời mời cho ${member}` });
   const link = (await created.getByText(/\/-\/invite#/).textContent())?.trim() ?? '';
   expect(link).toMatch(/\/-\/invite#/);
+  // The link dialog holds the page behind it until it is closed.
+  await created.getByRole('button', { name: 'Đóng' }).click();
   await expect(page.getByRole('listitem').filter({ hasText: member }).getByText('Kế toán thuê ngoài cho: Chi nhánh Hà Nội', { exact: true })).toBeVisible();
 
   // The invitee accepts in a browser of their own.

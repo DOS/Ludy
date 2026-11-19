@@ -24,6 +24,7 @@ test('an invoice uploaded in an entity stays there and posts in its books', asyn
 
   await test.step('add a second entity and work in it', async () => {
     await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('button', { name: 'Thêm pháp nhân' }).click();
     const add = page.getByRole('form', { name: 'Thêm pháp nhân' });
     await add.getByLabel('Tên pháp nhân').fill(BRANCH);
     await add.getByRole('button', { name: 'Thêm', exact: true }).click();

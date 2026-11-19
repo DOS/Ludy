@@ -19,6 +19,7 @@ import type { MemberRole } from '@crove/db';
 import { DomainError, MCP_PROPOSE_COMMAND, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
 import { hasApprovalPolicy } from './approval.ts';
 import { PROPOSAL_PREPARERS } from './proposal-resubmit.ts';
+import { mcpConversationQueries } from './mcp-conversations.ts';
 import { mcpSignals } from './mcp-signals.ts';
 import { mcpWakeCommands, mcpWakeQueries } from './mcp-wake.ts';
 
@@ -359,4 +360,4 @@ export const mcpPropose = defineCommand({
 });
 
 export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpMemberGrantsSet, mcpPropose, ...mcpWakeCommands];
-export const mcpQueries = [mcpGrantList, mcpMemberGrantsGet, mcpAbout, mcpParties, mcpSignals, ...mcpWakeQueries];
+export const mcpQueries = [mcpGrantList, mcpMemberGrantsGet, mcpAbout, mcpParties, mcpSignals, ...mcpConversationQueries, ...mcpWakeQueries];
