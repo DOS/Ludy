@@ -814,6 +814,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           ...((conversationSecrets || threadsWebhookSecret) && config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN ? { facebookWebhook: { appSecret: conversationSecrets?.primary ?? '', ...(conversationSecrets?.instagram ? { instagramAppSecret: conversationSecrets.instagram } : {}), ...(threadsWebhookSecret ? { threadsAppSecret: threadsWebhookSecret } : {}), appSecretPrevious: config.CHANNEL_META_APP_SECRET_PREVIOUS, verifyToken: config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN } } : {}),
           // WhatsApp Business webhook for customers' messages (conversation core, #3131): with the WhatsApp app secret and its verify token configured.
           ...(config.CHANNEL_WHATSAPP_APP_SECRET && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsappWebhook: { appSecret: config.CHANNEL_WHATSAPP_APP_SECRET, appSecretPrevious: config.CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS, verifyToken: config.CHANNEL_WHATSAPP_VERIFY_TOKEN } } : {}),
+          // MISA AMIS's callback (#3903): the route exists only where the ClientID, the HMAC key of its signature, is set.
+          ...(config.MISA_AMIS_CLIENT_ID ? { misaAmisCallback: { clientId: config.MISA_AMIS_CLIENT_ID } } : {}),
           // The bank feed adapters that take signed notices (ADR-0039): the route exists only for these.
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
