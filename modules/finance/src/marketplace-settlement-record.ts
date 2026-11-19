@@ -72,7 +72,8 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
   const periodTo = String(settlement.period_end).slice(0, 10);
   // The chart of the entity on the day the entry is dated, then the gate: the accountant has not confirmed the map, nothing is requested or posted.
   const regime = (await booksOn(ctx, settlement.legal_entity_id, periodTo)).regime;
-  const map = requireConfirmedMarketplaceMap(regime, maps);
+  // The early gate asks for the sales path; settlementProposal asks again for the household tax rows when the settlement carries withheld tax.
+  const map = requireConfirmedMarketplaceMap(regime, maps, ['sales']);
   if (lock) {
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`channel_settlement:${ctx.orgId}:${settlement.legal_entity_id}:${settlement.platform}`}, 0))`.execute(ctx.trx);
   }

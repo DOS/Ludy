@@ -32,3 +32,20 @@ describe('ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET', () => {
     expect(() => loadConfig({ ...BASE, ...ZOOM, ZOOM_OAUTH_CLIENT_ID: 'has spaces and !' })).toThrow(/ZOOM_OAUTH_CLIENT_ID is the client id/);
   });
 });
+
+describe('ZOOM_WEBHOOK_SECRET_TOKEN and ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS', () => {
+  const TOKEN = 'zoom-secret-token-not-real-0001';
+  it('are off by default, and the token needs the OAuth app', () => {
+    expect(loadConfig({ ...BASE }).ZOOM_WEBHOOK_SECRET_TOKEN).toBeUndefined();
+    expect(loadConfig({ ...BASE, ...ZOOM, ZOOM_WEBHOOK_SECRET_TOKEN: TOKEN }).ZOOM_WEBHOOK_SECRET_TOKEN).toBe(TOKEN);
+    expect(() => loadConfig({ ...BASE, ZOOM_WEBHOOK_SECRET_TOKEN: TOKEN })).toThrow(/ZOOM_WEBHOOK_SECRET_TOKEN needs ZOOM_OAUTH_CLIENT_ID/);
+  });
+
+  it('accept a token being replaced only with the current one, different from it, and of the shape of a secret token', () => {
+    const OLD = 'zoom-secret-token-old-not-real-0002';
+    expect(loadConfig({ ...BASE, ...ZOOM, ZOOM_WEBHOOK_SECRET_TOKEN: TOKEN, ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS: OLD }).ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS).toBe(OLD);
+    expect(() => loadConfig({ ...BASE, ...ZOOM, ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS: OLD })).toThrow(/PREVIOUS is set without ZOOM_WEBHOOK_SECRET_TOKEN/);
+    expect(() => loadConfig({ ...BASE, ...ZOOM, ZOOM_WEBHOOK_SECRET_TOKEN: TOKEN, ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS: TOKEN })).toThrow(/the same as ZOOM_WEBHOOK_SECRET_TOKEN/);
+    for (const bad of ['short', 'fifteen-chars-1', 'has a space in it 12345', 'x'.repeat(201)]) expect(() => loadConfig({ ...BASE, ...ZOOM, ZOOM_WEBHOOK_SECRET_TOKEN: bad }), bad).toThrow(/secret token of the Zoom app/);
+  });
+});

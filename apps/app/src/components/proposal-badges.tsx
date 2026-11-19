@@ -19,6 +19,7 @@ export interface ProposalBadgesItem {
   // Lines of an invoice proposal no rule matched (#2091); absent counts as none.
   unclassifiedLines?: number;
   requestedByAgent: { name: string } | null;
+  requestedByMcp?: { client: string; host: string } | null;
   extracted: boolean;
   voided: boolean;
 }
@@ -45,6 +46,7 @@ export function ProposalBadges({ item, hideSignature = false }: { item: Proposal
       {item.failedChecks > 0 && <Badge variant="destructive">{t('failedChecks', { count: item.failedChecks })}</Badge>}
       {item.warnChecks > 0 && <Badge variant="warning">{t('warnChecks', { count: item.warnChecks })}</Badge>}
       {item.requestedByAgent && <Badge variant="proposal">{t('agentProposed', { name: item.requestedByAgent.name })}</Badge>}
+      {item.requestedByMcp && <Badge variant="proposal">{t('mcpProposed', { client: item.requestedByMcp.client, host: item.requestedByMcp.host })}</Badge>}
       {showMatched(item, REVERSAL_KIND, VOUCHER_KIND, JOURNAL_VOUCHER_KIND) && <Badge variant="success">{t('matched')}</Badge>}
     </div>
   );

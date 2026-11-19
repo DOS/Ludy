@@ -126,6 +126,9 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   // The sweep (every minute) hands the recordings a member chose to import to the download queue; each exists only for a click on "Nhập" through meetings.import.start, which declares the external effect
   // (meetings integrations C1, #3173). The same sweep lists suggestions and expires staged bytes; it downloads nothing.
   'kernel-meeting-import-sweep handler': { command: 'meetings.import.start' },
+  // The push to MISA AMIS (S3b, #3902): while rows wait for MISA's answer the job queues itself again a little later, for a connection whose vouchers an owner or admin confirmed through
+  // finance.misa_amis.push, which declares the external effect; the job's own send is committed to the external_call ledger by finance.misa_amis.push_begin before it is made.
+  'finance-misa-amis-push handler': { command: 'finance.misa_amis.push' },
 };
 
 // Reviewed send sites that may be listed before the site exists, so the two steps of an invariant change can land apart (the PENDING_DEPS pattern): each names the issue that adds
@@ -133,6 +136,7 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
 // any other. Remove the entry here once the site is on the base branch.
 const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'kernel-mcp-wake-sweep handler': '#3024',
+  'finance-misa-amis-push handler': '#3902',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.
