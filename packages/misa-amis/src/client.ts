@@ -15,6 +15,13 @@ export const AMIS_HOSTS = ['developer.misa.vn'] as const;
 // The document's base URL; the paths below follow it. Unconfirmed until the live sandbox check.
 export const AMIS_BASE_URL = 'https://developer.misa.vn/apis';
 
+// Two products share this adapter (#4103): AMIS Kế toán (`/amiskt/v1`) and MISA ASP (`/asp/v1`), on the same host with the same ClientID header, token, answer envelope and voucher numbers. ASP's document has five
+// endpoints only: token, get_dictionary, save, delete and get_list_inventory_balance. It has no company information, no catalogue writes (its catalogues are read-only) and no polling of results, so a client made for
+// `asp` refuses those three calls before it asks for a token or sends anything.
+export const AMIS_PRODUCTS = ['amis', 'asp'] as const;
+export type AmisProduct = (typeof AMIS_PRODUCTS)[number];
+const PATH_PREFIX: Readonly<Record<AmisProduct, string>> = { amis: '/amiskt/v1', asp: '/asp/v1' };
+
 export interface AmisRequest {
   method: 'POST' | 'DELETE';
   url: string;
@@ -48,6 +55,15 @@ export const AMIS_DICTIONARIES = {
   inventoryCategory: 14,
 } as const;
 export type AmisDictionaryType = (typeof AMIS_DICTIONARIES)[keyof typeof AMIS_DICTIONARIES];
+// The six catalogues ASP's document lists (parties, items, stock, unit, accounts, organization unit); AMIS also has bank, expense item and inventory category.
+const ASP_DICTIONARIES: ReadonlySet<number> = new Set([
+  AMIS_DICTIONARIES.accountObject,
+  AMIS_DICTIONARIES.inventoryItem,
+  AMIS_DICTIONARIES.stock,
+  AMIS_DICTIONARIES.unit,
+  AMIS_DICTIONARIES.account,
+  AMIS_DICTIONARIES.organizationUnit,
+]);
 
 export interface AmisDictionaryQuery {
   dataType: AmisDictionaryType;
@@ -61,6 +77,8 @@ export type AmisRecord = Readonly<Record<string, unknown>>;
 
 export interface AmisClientOptions {
   clientId: string;
+  // The product whose paths are used; `amis` when not given.
+  product?: AmisProduct;
   transport: AmisTransport;
   // Milliseconds, for the token's life; a test passes its own.
   now?: () => number;
@@ -95,6 +113,8 @@ interface Answer {
 
 export function createAmisClient(options: AmisClientOptions): AmisClient {
   const { clientId, transport } = options;
+  const product: AmisProduct = options.product ?? 'amis';
+  const prefix = PATH_PREFIX[product];
   const now = options.now ?? Date.now;
   const tokens = new Map<string, { token: string; until: number }>();
   const pending = new Map<string, Promise<string>>();
@@ -137,7 +157,7 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
   async function fetchToken(c: AmisConnection): Promise<string> {
     let answer: Answer;
     try {
-      answer = await send('/amiskt/v1/token', 'POST', toJsonText({ access_code: c.accessCode, org_company_code: c.orgCompanyCode }), null);
+      answer = await send(`${prefix}/token`, 'POST', toJsonText({ access_code: c.accessCode, org_company_code: c.orgCompanyCode }), null);
     } catch (error: unknown) {
       // A refused token request means the access code (or the app) is refused: nothing to renew.
       if (error instanceof AmisError && error.kind === 'token') throw new AmisError('credentials', { code: error.code });
@@ -208,13 +228,14 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
 
   return {
     async companyInfo(connection, branchId = null, options = {}) {
+      if (product !== 'amis') throw new AmisError('unsupported');
       const c = snapshot(connection);
       // The kept token and any token request already on its way are both set aside: this call's own request is the one that sends the access code to MISA now.
       if (options.freshToken === true) {
         tokens.delete(keyOf(c));
         pending.delete(keyOf(c));
       }
-      const data = await authed(c, '/amiskt/v1/get_company_info', 'POST', toJsonText({ branch_id: branchId }));
+      const data = await authed(c, `${prefix}/get_company_info`, 'POST', toJsonText({ branch_id: branchId }));
       let value = data;
       if (typeof value === 'string') {
         try {
@@ -230,10 +251,11 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
       const c = snapshot(connection);
       // Read once: the page size that is asked for is the bound the answer is held to.
       const { dataType, skip, take } = query;
+      if (product === 'asp' && !ASP_DICTIONARIES.has(dataType)) throw new AmisError('unsupported');
       const lastSyncTime = query.lastSyncTime ?? null;
       const branchId = query.branchId ?? null;
       page(skip, take);
-      const data = await authed(c, '/amiskt/v1/get_dictionary', 'POST', toJsonText({ data_type: dataType, skip, take, last_sync_time: lastSyncTime, branch_id: branchId }));
+      const data = await authed(c, `${prefix}/get_dictionary`, 'POST', toJsonText({ data_type: dataType, skip, take, last_sync_time: lastSyncTime, branch_id: branchId }));
       const rows = records(asList(data));
       // More rows than were asked for is not MISA's documented answer.
       if (rows.length > take) throw new AmisError('invalid_response');
@@ -241,6 +263,7 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
     },
 
     async saveDictionary(connection, dataType, input) {
+      if (product !== 'amis') throw new AmisError('unsupported');
       const c = snapshot(connection);
       // Counted and written in one go, before any wait: the text is the snapshot of the rows.
       const rows = input.slice();
@@ -248,7 +271,7 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
       const text = toJsonText({ org_company_code: c.orgCompanyCode, data_type: dataType, dictionary: rows });
       const written = (JSON.parse(text) as { dictionary: unknown[] }).dictionary;
       if (written.length === 0 || written.length > AMIS_SAVE_BATCH_MAX) throw new AmisError('invalid_request', { reason: 'too_many_rows' });
-      await authed(c, '/amiskt/v1/save_dictionary', 'POST', text);
+      await authed(c, `${prefix}/save_dictionary`, 'POST', text);
     },
 
     async save(connection, input) {
@@ -264,7 +287,7 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
       for (const voucher of written) checkVoucherShape(voucher);
       // One kind per call: the document does not say a mixed list is taken.
       if (new Set(written.map((v) => v.voucher_type)).size > 1) throw new AmisError('invalid_request', { reason: 'mixed_voucher_types' });
-      await authed(c, '/amiskt/v1/save', 'POST', text);
+      await authed(c, `${prefix}/save`, 'POST', text);
     },
 
     async remove(connection, input) {
@@ -276,15 +299,16 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
         if (!isOrgRefId(v.org_refid)) throw new AmisError('invalid_request', { reason: 'bad_org_refid' });
         if (!isKnownVoucherType(v.voucher_type)) throw new AmisError('invalid_request', { reason: 'bad_voucher_type' });
       }
-      await authed(c, '/amiskt/v1/delete', 'DELETE', toJsonText({ org_company_code: c.orgCompanyCode, voucher: vouchers }));
+      await authed(c, `${prefix}/delete`, 'DELETE', toJsonText({ org_company_code: c.orgCompanyCode, voucher: vouchers }));
     },
 
     async callbackResults(connection, query) {
+      if (product !== 'amis') throw new AmisError('unsupported');
       const c = snapshot(connection);
       const { from, to, skip, take } = query;
       page(skip, take);
       if (!DATE.test(from) || !DATE.test(to)) throw new AmisError('invalid_request', { reason: 'bad_page' });
-      const data = await authed(c, '/amiskt/v1/get_call_back_detail_error', 'POST', toJsonText({ from_date: from, to_date: to, skip: String(skip), take: String(take) }));
+      const data = await authed(c, `${prefix}/get_call_back_detail_error`, 'POST', toJsonText({ from_date: from, to_date: to, skip: String(skip), take: String(take) }));
       const results = parseCallbackResults(typeof data === 'string' ? data : JSON.stringify(data ?? null));
       if (results === null) throw new AmisError('invalid_response');
       return results;

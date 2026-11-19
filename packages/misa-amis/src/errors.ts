@@ -20,6 +20,8 @@ export const AMIS_ERROR_KINDS = [
   'invalid_request',
   // MISA answered, but not in the shape of its document.
   'invalid_response',
+  // The call does not exist in this product's API (ASP has no company information, no catalogue writes, no polling of results, and only six catalogues): refused here, nothing sent, nothing to retry.
+  'unsupported',
 ] as const;
 export type AmisErrorKind = (typeof AMIS_ERROR_KINDS)[number];
 
