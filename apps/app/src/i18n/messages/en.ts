@@ -14746,12 +14746,12 @@ export const en = {
         results: 'Viewing the result of a check of vouchers against the MISA catalogue',
       },
       misa_amis: {
-        push: 'Send vouchers to MISA AMIS',
-        push_begin: 'Begin a run of sending vouchers to MISA AMIS',
-        push_list: 'View the vouchers sent to MISA AMIS',
-        push_record: 'Record the result of sending vouchers to MISA AMIS',
-        push_resolve: 'Confirm a voucher MISA AMIS never answered for',
-        push_target: 'Get the MISA AMIS connection for sending vouchers',
+        push: 'Send vouchers to MISA',
+        push_begin: 'Begin a run of sending vouchers to MISA',
+        push_list: 'View the vouchers sent to MISA',
+        push_record: 'Record the result of sending vouchers to MISA',
+        push_resolve: 'Confirm a voucher MISA never answered for',
+        push_target: 'Get the MISA connection for sending vouchers',
       },
       misa_goods_code: {
         remove: 'Remove a MISA item code',

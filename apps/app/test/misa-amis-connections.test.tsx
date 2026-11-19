@@ -223,6 +223,9 @@ describe('the product of a connection (#4111, S2 of #4103)', () => {
     const off = card('owner', { aspOffered: true, connections: [asp({ lastTestState: 'works', lastTestedAt: at })] });
     expect(off).not.toContain('data-testid="misa-amis-preview"');
     expect(off).toContain('data-testid="misa-asp-later"');
+    // What was pushed stays listed, and its rows settleable, whether the switch is on or off: an ASP row still `sent` has no polling to end it.
+    expect(on).toContain('data-testid="misa-amis-pushes"');
+    expect(off).toContain('data-testid="misa-amis-pushes"');
   });
 
   it('still shows an ASP connection, with its disconnect button, where the deployment no longer holds the ASP ClientID', () => {

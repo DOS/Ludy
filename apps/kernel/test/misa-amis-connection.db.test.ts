@@ -598,6 +598,12 @@ suite('MISA AMIS connections (#3875)', () => {
     await expect(press(amisOnlyPushApp, asp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_PUSH_DISABLED' } });
     await expect(press(aspApp, asp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_PUSH_DISABLED' } });
     await expect(press(aspApp, amis)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_PUSH_DISABLED' } });
+    // A capital letter in the id (the contract accepts it) does not slip the gate: the AMIS connection of an ASP-only push answers the same 404.
+    await expect(press(aspPushApp, { id: String(amis?.id).toUpperCase(), legal_entity_id: String(amis?.legal_entity_id) })).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_PUSH_DISABLED' } });
+    // The catalogue check is the AMIS job's (it opens only an AMIS code with the AMIS client): a MISA ASP connection answers 404 and nothing is queued, in either case of the id.
+    for (const id of [String(asp?.id), String(asp?.id).toUpperCase()]) {
+      await expect(call('matches/check', owner, { id, ask: { kind: 'purchase_services', legalEntityId: String(asp?.legal_entity_id) } }, aspApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
+    }
   });
 
   // The insert guard fails closed and cannot be skipped (#4132, two LOW items of the security review of #4131).

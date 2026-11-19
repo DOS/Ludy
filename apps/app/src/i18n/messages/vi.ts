@@ -14745,12 +14745,12 @@ export const vi = {
         results: 'Xem kết quả kiểm tra chứng từ với danh mục MISA',
       },
       misa_amis: {
-        push: 'Gửi chứng từ sang MISA AMIS',
-        push_begin: 'Bắt đầu một lượt gửi chứng từ sang MISA AMIS',
-        push_list: 'Xem các chứng từ đã gửi sang MISA AMIS',
-        push_record: 'Ghi kết quả gửi chứng từ sang MISA AMIS',
-        push_resolve: 'Xác nhận chứng từ chưa có phản hồi từ MISA AMIS',
-        push_target: 'Lấy thông tin kết nối MISA AMIS để gửi chứng từ',
+        push: 'Gửi chứng từ sang MISA',
+        push_begin: 'Bắt đầu một lượt gửi chứng từ sang MISA',
+        push_list: 'Xem các chứng từ đã gửi sang MISA',
+        push_record: 'Ghi kết quả gửi chứng từ sang MISA',
+        push_resolve: 'Xác nhận chứng từ chưa có phản hồi từ MISA',
+        push_target: 'Lấy thông tin kết nối MISA để gửi chứng từ',
       },
       misa_goods_code: {
         remove: 'Xóa mã hàng MISA',
