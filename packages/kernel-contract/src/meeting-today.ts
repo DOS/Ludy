@@ -12,7 +12,7 @@ import { zBriefFacts } from './meeting-brief.ts';
 export const zMeetingsTodayItem = z.strictObject({ event: zAgendaEvent, brief: zBriefFacts });
 export type MeetingsTodayItem = z.infer<typeof zMeetingsTodayItem>;
 
-// `enabled` is false when no calendar of the member reads events (the page then says how to turn it on). `totalMinutes` is the sum of the events' lengths, each counted whole.
+// `enabled` is false when no calendar of the member reads events (the page then says how to turn it on). `totalMinutes` is the time the events occupy: events that overlap or touch count once (#4086).
 export const zMeetingsTodayFacts = z.strictObject({
   enabled: z.boolean(),
   totalMinutes: z.number().int().min(0),

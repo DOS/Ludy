@@ -71,7 +71,7 @@ export const briefFacts = defineQuery({
  * The facts of one brief, read in the caller's own transaction (row security on every one): shared by `meetings.brief.facts` and the Today view (#3955), so a day's briefs are exactly the briefs the member would open
  * one by one. Throws MEETING_NOT_FOUND for a meeting the caller does not read and AGENDA_NOT_FOUND for a calendar event that is not in their agenda.
  */
-export async function briefFactsOf(ctx: { trx: Trx; orgId: string; query: QueryContext['query'] }, input: { meetingId: string | null; agendaId: string | null }): Promise<BriefFacts> {
+export async function briefFactsOf(ctx: { trx: Trx; orgId: string; query: QueryContext['query'] }, input: { meetingId: string | null; agendaId: string | null }, stageNames: StageNames = stageNamesOnce(ctx)): Promise<BriefFacts> {
   const target = await targetOf(ctx.trx, ctx.orgId, input);
   const previous = target.seriesId === null ? undefined : await previousMeetingOf(ctx.trx, ctx.orgId, target.seriesId, target.at, target.meetingId);
   let decisions: string[] = [];
@@ -88,7 +88,7 @@ export async function briefFactsOf(ctx: { trx: Trx; orgId: string; query: QueryC
     decisions = (Array.isArray(result?.decisions) ? (result.decisions as unknown[]) : []).filter((d): d is string => typeof d === 'string' && d.trim() !== '').slice(0, BRIEF_DECISIONS_MAX);
     items = (await openItemsOf(ctx.trx, ctx.orgId, previous.id)).slice(0, BRIEF_ITEMS_MAX);
   }
-  const { customer, deals } = await customerOf(ctx, target.meetingId, previous?.id ?? null);
+  const { customer, deals } = await customerOf(ctx, target.meetingId, previous?.id ?? null, stageNames);
   return zBriefFacts.parse({
     previous: previous ? { meetingId: previous.id, title: previous.title, startedAt: previous.at.toISOString() } : null,
     decisions,
@@ -101,7 +101,7 @@ export async function briefFactsOf(ctx: { trx: Trx; orgId: string; query: QueryC
 
 // The customer linked to the meeting, else to the previous meeting of the series (a party link, else the party of a linked deal), and that customer's open deals with their stage. A party is read under the
 // caller's own policy; the deals and the stage names come from the CRM module's queries, which answer `not_installed` where the deployment has no CRM (then the customer is shown with no deals).
-async function customerOf(ctx: { trx: Trx; orgId: string; query: QueryContext['query'] }, meetingId: string | null, previousId: string | null): Promise<{ customer: { partyId: string; name: string } | null; deals: BriefDeal[] }> {
+async function customerOf(ctx: { trx: Trx; orgId: string; query: QueryContext['query'] }, meetingId: string | null, previousId: string | null, stageNames: StageNames): Promise<{ customer: { partyId: string; name: string } | null; deals: BriefDeal[] }> {
   const none = { customer: null, deals: [] };
   for (const id of [meetingId, previousId]) {
     if (id === null) continue;
@@ -122,17 +122,34 @@ async function customerOf(ctx: { trx: Trx; orgId: string; query: QueryContext['q
     const party = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', '=', partyId).executeTakeFirst();
     // A party the caller may not read is no customer for them.
     if (!party) continue;
-    const deals = await openDealsOf(ctx, party.id);
+    const deals = await openDealsOf(ctx, party.id, stageNames);
     return { customer: { partyId: party.id, name: party.name }, deals };
   }
   return none;
 }
 
-async function openDealsOf(ctx: { query: QueryContext['query'] }, partyId: string): Promise<BriefDeal[]> {
+/** The names of the CRM stages by id, read when first asked for. */
+export type StageNames = () => Promise<Map<string, string>>;
+
+/**
+ * A reader of the CRM stage names that asks the CRM module at most once, however many times it is called: the Today view briefs up to 20 events in one transaction and the stages are the same for all of them.
+ * Nothing is read until a brief has a deal to name (a day with no deal reads no stage). The module answers `not_installed` where the deployment has no CRM: no names then.
+ */
+export function stageNamesOnce(ctx: { query: QueryContext['query'] }): StageNames {
+  let pending: Promise<Map<string, string>> | undefined;
+  return () =>
+    (pending ??= (async () => {
+      const stages = await ctx.query<Array<{ id: string; name: string }>>('crm.stage.list', {});
+      return new Map(stages.status === 'ok' ? stages.value.map((s) => [s.id, s.name] as const) : []);
+    })());
+}
+
+async function openDealsOf(ctx: { query: QueryContext['query'] }, partyId: string, stageNames: StageNames): Promise<BriefDeal[]> {
   const listed = await ctx.query<{ items: Array<{ id: string; title: string; amount: string; stageId: string; expectedClose: string | null }> }>('crm.deal.list', { partyId, status: 'open', limit: BRIEF_DEALS_MAX });
   if (listed.status !== 'ok') return [];
-  const stages = await ctx.query<Array<{ id: string; name: string }>>('crm.stage.list', {});
-  const names = new Map(stages.status === 'ok' ? stages.value.map((s) => [s.id, s.name] as const) : []);
+  // No deal, no stage name to look up.
+  if (listed.value.items.length === 0) return [];
+  const names = await stageNames();
   return listed.value.items.slice(0, BRIEF_DEALS_MAX).map((d) => ({
     id: d.id,
     title: d.title,
