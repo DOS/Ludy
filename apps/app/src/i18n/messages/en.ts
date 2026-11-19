@@ -13473,6 +13473,7 @@ export const en = {
       STOCK_SURPLUS_PARTY_UNEXPECTED: 'Choose a supplier only when booking to 331.',
       STOCK_SURPLUS_RESOLVED: 'The surplus of this count has already been resolved.',
       STOCK_SURPLUS_PENDING: 'A proposal to resolve the surplus of this count is already waiting for approval.',
+      BOOKS_REGIME_CHANGED: 'The accounting regime of the books changed since the proposal was made, so the entry would differ from the one shown; reject this proposal and read the invoice again.',
       STOCK_SURPLUS_STALE: 'The surplus figures changed since the proposal was made; reject this proposal and ask again.',
       STOCK_COUNT_ENTRY: 'This entry posted the difference of a stock count, so it cannot be reversed; count again.',
       STOCK_COUNT_ITEM_INACTIVE: 'This item is no longer in use; switch it back on before counting it.',

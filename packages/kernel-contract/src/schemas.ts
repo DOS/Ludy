@@ -240,6 +240,9 @@ export type LookupHint = z.infer<typeof zLookupHint>;
 // 3331. Absent on purchases, including every proposal raised before sales existed.
 export const zPurchaseProposal = z.object({
   direction: z.literal('sale').optional(),
+  // The books regime a sale is posted under on its issue date ('tt133', 'tt99'), for the Inbox preview of the journal (#3712 slice 4: a Circular 99 sale debits its revenue deductions to 521). Display
+  // only: the posting reads the books again. Absent on purchases and on proposals raised before it existed (read as Circular 133).
+  regime: z.string().max(20).optional(),
   seller: zPartyRef,
   buyer: zPartyRef,
   invoice: z.object({
