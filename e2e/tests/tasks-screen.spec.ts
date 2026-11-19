@@ -55,6 +55,8 @@ test('Team tasks: one name, one filter popover, the keys, and the first row on a
     await expect(popover).toHaveCount(0);
     await expect(button).toBeFocused();
     await button.click();
+    await page.getByTestId('task-filter-popover').getByTestId('task-filter-sort').selectOption('due:asc');
+    await expect(button).toHaveAccessibleName('Bộ lọc, đang bật 2');
     await page.getByTestId('task-filter-popover').getByTestId('task-filter-clear').click();
     await expect(page.getByTestId('task-row')).toHaveCount(1);
     await expect(page.getByTestId('task-filter-count')).toHaveCount(0);

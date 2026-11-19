@@ -2652,7 +2652,6 @@ export const vi = {
     },
   },
   meetings: {
-    tab: 'Cuộc họp',
     title: 'Cuộc họp',
     subtitle: 'Bản ghi âm và video được mã hóa, bảo vệ quyền riêng tư và tuân thủ thỏa thuận đồng ý ghi âm.',
     new: 'Ghi lại cuộc họp mới',

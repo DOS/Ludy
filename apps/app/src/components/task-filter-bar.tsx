@@ -181,8 +181,18 @@ export function TaskFilterBar({
       )}
     </>
   );
-  const clear = filtered ? (
-    <Button type="button" variant="ghost" size="sm" data-testid="task-filter-clear" onClick={() => setBar(EMPTY_TASK_FILTER)}>
+  // In the popover the button counts the sort too, so Clear is offered for it and puts the sort back; the search box is outside the popover and Clear leaves it.
+  const clear = (popover ? count > 0 : filtered) ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      data-testid="task-filter-clear"
+      onClick={() => {
+        setBar(popover ? { ...EMPTY_TASK_FILTER, search: bar.search } : EMPTY_TASK_FILTER);
+        if (popover) setSort(null);
+      }}
+    >
       {t('filters.clear')}
     </Button>
   ) : null;

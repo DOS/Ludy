@@ -2654,7 +2654,6 @@ export const en = {
     },
   },
   meetings: {
-    tab: 'Meetings',
     title: 'Meetings',
     subtitle: 'Encrypted audio and video recordings, privacy protected and compliant with recording consent.',
     new: 'Record new meeting',
