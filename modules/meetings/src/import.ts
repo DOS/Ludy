@@ -239,7 +239,7 @@ export const meetingImportTakeTranscript = defineCommand({
     const source = TRANSCRIPT_SOURCE_OF[row.provider];
     // The same lock as every writer of a meeting's media, so a piece or an upload that races with this finds the meeting done or waits for it.
     await lockMeetingMedia(ctx, input.meetingId);
-    await replaceDraft(ctx, input.meetingId, input.segments, { tainted: true, source });
+    await replaceDraft(ctx, input.meetingId, input.segments, { tainted: true, source, platformCut: input.platformCut });
     await sql`SELECT crove_kernel.meeting_platform_recording_imported(${input.meetingId}::uuid)`.execute(ctx.trx);
     // The definer does nothing for a row that is no longer claimed (the sweep may have failed a stale claim since the read above, and the row cannot be locked by this role): then the
     // lines and the end of the meeting go with the rolled-back transaction, and the member is told so, never left with a half-imported meeting and a retry that makes a second one.
@@ -251,7 +251,7 @@ export const meetingImportTakeTranscript = defineCommand({
       UPDATE crove_meetings.meeting
       SET ended_at = LEAST(started_at + (${seconds}::int * interval '1 second'), ${ctx.now}::timestamptz), updated_at = ${ctx.now}::timestamptz
       WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid AND ended_at IS NULL AND started_at IS NOT NULL`.execute(ctx.trx);
-    ctx.audit({ meetingId: input.meetingId, recordingId: row.id, stored: input.segments.length, source });
+    ctx.audit({ meetingId: input.meetingId, recordingId: row.id, stored: input.segments.length, source, cut: input.platformCut });
     return { meetingId: input.meetingId, stored: input.segments.length };
   },
 });
