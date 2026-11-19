@@ -287,6 +287,48 @@ export const zHouseholdS2c = z.strictObject({
 });
 export type HouseholdS2c = z.infer<typeof zHouseholdS2c>;
 
+// S2e-HKD, the cash and bank book of a household that pays PIT on income (Circular 152/2025/TT-BTC; plan 8.5 and 12 row 6, #2517 slice 2e), a view of the ledger like S2c. A BOOK: Ludy never files anything.
+// One section per account that is 111 or 112 or a sub-account of them with an opening balance or a line in the book's days (`period.from` is the day the books opened when that is inside the period). A section holds the
+// opening balance (debit less credit before the book's first day), one row per journal line on that account alone (cash in is the debit, cash out the credit, the accounts on the other side of the entry, the running
+// balance) and the closing balance, so the sections add up without double counting and `totals.closing` ties to the ledger's balance of 111 and 112. A negative balance is shown as it is and flagged (`negative`), never hidden.
+// `commentary` is true while the S2e layout row is not confirmed by the accountant: the screen and the Excel file then carry HOUSEHOLD_PROVISIONAL_LABEL, which goes on its own when a later dated `confirmed` row exists.
+export const zHouseholdS2eGet = z.strictObject({ legalEntityId: zId, period: zLedgerPeriod });
+export type HouseholdS2eGet = z.infer<typeof zHouseholdS2eGet>;
+export const zHouseholdS2eRow = z.strictObject({
+  entryId: zId,
+  lineNo: z.number().int(),
+  date: zLocalDate,
+  reference: z.string().nullable(),
+  description: z.string(),
+  counterAccounts: z.array(z.string()),
+  cashIn: zMoney,
+  cashOut: zMoney,
+  balance: zMoney,
+  reversal: z.boolean(),
+});
+export type HouseholdS2eRow = z.infer<typeof zHouseholdS2eRow>;
+export const zHouseholdS2eAccount = z.strictObject({
+  accountCode: z.string(),
+  accountName: z.string(),
+  opening: zMoney,
+  rows: z.array(zHouseholdS2eRow),
+  totalIn: zMoney,
+  totalOut: zMoney,
+  closing: zMoney,
+  negative: z.boolean(),
+});
+export type HouseholdS2eAccount = z.infer<typeof zHouseholdS2eAccount>;
+export const zHouseholdS2e = z.strictObject({
+  period: z.strictObject({ period: zLedgerPeriod, from: zLocalDate, to: zLocalDate }),
+  household: z.strictObject({ name: z.string(), taxCode: z.string().nullable(), representativeName: z.string().nullable(), openedOn: zLocalDate }),
+  form: zHouseholdBookRule,
+  accounts: z.array(zHouseholdS2eAccount),
+  totals: z.strictObject({ opening: zMoney, in: zMoney, out: zMoney, closing: zMoney }),
+  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form']), key: z.string(), effectiveFrom: zLocalDate })),
+  commentary: z.boolean(),
+});
+export type HouseholdS2e = z.infer<typeof zHouseholdS2e>;
+
 // S2d-HKD, the goods book of a household that pays PIT on income (Circular 152/2025/TT-BTC; plan 8.5 and 12 row 5, #2517 slice 2d): per item the quantity and value in, out and on hand for ONE month, read from #2513's stock
 // data (the same moves, the same weighted average per month and the same stored close as finance.stock.report and the stock card), so the book cannot disagree with them. A BOOK: Ludy never files anything.
 // Per item: the opening quantity and value, one row per stock move of the month (the quantity in or out, the value a purchase line brought in, the document reference, the balance in quantity) and the month's

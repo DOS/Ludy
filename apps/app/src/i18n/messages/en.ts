@@ -3428,6 +3428,31 @@ export const en = {
     },
     // The table of contents of a meeting (#3844): a title and the line of the transcript each chapter starts at.
     // The recorder's own Vy offers up to three titles for the meeting on a click (#3947); a pick renames it.
+    // The recorder's own Vy lists what each speaker committed to or decided, on a click (#3954).
+    commitments: {
+      title: 'Who committed to what',
+      desc: 'Vy reads the transcript and lists, for each speaker, what they said they would do and what they said was decided. Each line opens the transcript where it was said. Nothing is saved, shared or made a task from here. Vy can be wrong.',
+      button: 'List commitments',
+      restart: 'Ask again',
+      running: 'Vy is reading the transcript…',
+      commitment: 'Will do',
+      decision: 'Decided',
+      open: 'Open the transcript at {time}',
+      dropped: '{count} of Vy\'s lines were left out because they did not pass the checks.',
+      none: 'No suggestion this time. Try again, or read the transcript.',
+      private: 'Only you see this, and it is not saved. Read it against the transcript before you use it.',
+      failed: 'Vy could not list the commitments.',
+      codes: {
+        default: 'Try again in a few minutes, or read the transcript.',
+        AI_BUDGET_EXHAUSTED: 'The AI budget for this period is used up.',
+        AI_STOPPED: 'AI is switched off for now.',
+        COMMITMENTS_TIMEOUT: 'It took too long.',
+        COMMITMENTS_FAILED: 'The AI service did not answer.',
+        COMMITMENTS_TOO_LONG: 'The transcript is too long for Vy to read in one go.',
+        COMMITMENTS_NO_TRANSCRIPT: 'There is no transcript yet.',
+        COMMITMENTS_BUSY: 'A run is already going. Wait a moment.',
+      },
+    },
     titleSuggest: {
       button: 'Suggest a title',
       note: 'Vy reads the transcript and offers up to three titles. Nothing changes until you pick one.',
@@ -5234,6 +5259,19 @@ export const en = {
     s2dTotalOut: 'Value out',
     s2dTotalClosing: 'Closing stock value',
     s2dNoItems: 'No stock or stock movement in this month.',
+    s2eTitle: 'S2e-HKD: cash and bank book',
+    s2eHint: 'Cash on hand (111) and bank deposits (112) by account: the opening balance, each receipt and payment, the closing balance; the total equals the ledger. Download as Excel to print and sign.',
+    s2eNotice: 'This is the household\'s book. {brand} files no return and sends nothing to the tax authority.',
+    s2eDraft: 'The layout of this book is still waiting for the accountant to check it, so the figures below are provisional. You can still view and download the Excel file; every figure and the file say they are provisional.',
+    s2eFile: 'so-s2e-hkd-{period}-{org}.xlsx',
+    s2eAccount: 'Account {code}',
+    s2eOpening: 'Opening balance',
+    s2eClosing: 'Closing balance',
+    s2eColumns: { counter: 'Other account', in: 'In', out: 'Out', balance: 'Balance' },
+    s2eTotals: 'Totals',
+    s2eAllAccounts: 'All cash accounts',
+    s2eNegative: 'Negative balance: check receipts and payments not yet recorded.',
+    s2eNoAccounts: 'No cash or bank balance or movement in this period.',
     unmappedGroupName: 'No group yet',
     groupNames: { materials_goods: 'Materials and goods', wages_insurance: 'Wages and insurance', depreciation: 'Depreciation', outside_services: 'Outside services', interest: 'Interest', other: 'Other expenses' },
 
@@ -9030,6 +9068,7 @@ export const en = {
       meetings_brief: 'Writing a few sentences to prepare for a meeting from what was decided, what is open and the customer\'s deals',
       meetings_chapters: 'Writing the table of contents of a meeting from its transcript, each chapter at the second of its first line',
       meetings_title: 'Suggesting up to three titles for a meeting from its transcript, on the recorder\'s click',
+      meetings_commitments: 'Listing what each speaker of a meeting said they would do or decided, from its transcript, on the recorder\'s click',
       meetings_followup_words: 'Wording the opening and closing of a meeting follow-up email',
       projects_weekly_status: 'Summarizing a project week from counts and task titles/comments',
       projects_tasks_from_note: 'Proposing project tasks from a note',
@@ -13113,6 +13152,7 @@ export const en = {
       ASSIGNEE_BUSY: 'Vy is busy reading names. Try again in a few minutes.',
       BRIEF_BUSY: 'Vy is busy writing preparations. Try again in a few minutes.',
       TITLE_BUSY: 'Vy is busy suggesting titles. Try again in a few minutes.',
+      COMMITMENTS_BUSY: 'Vy is busy listing commitments. Try again in a few minutes.',
       MEETING_TITLE_EMPTY: 'A meeting needs a title.',
       MEETING_TITLE_TOO_LONG: 'A meeting title holds at most 200 characters.',
       DIGEST_OFF: 'Vy writing the weekly recap is not turned on on this system.',
@@ -14287,6 +14327,7 @@ export const en = {
         s2b: 'View the household revenue book S2b by business line for a period, with VAT per line',
         s2c: 'View the household revenue and expense detail S2c for a period, expenses by group',
         s2d: 'View the household goods book S2d for a month, stock in, out and on hand per item',
+        s2e: 'View the household cash and bank book S2e for a period, one section per cash and bank account',
         export: 'Download a household book as an Excel file',
       },
       collection_setting: {
@@ -15353,6 +15394,10 @@ export const en = {
       title: {
         start: 'Ask Vy to suggest a title for a meeting',
         status: 'See whether Vy can suggest a title for a meeting',
+      },
+      commitments: {
+        start: 'Ask Vy what each speaker of a meeting committed to',
+        status: 'See whether Vy can list what each speaker of a meeting committed to',
       },
       chapters: {
         copy_result: 'Copy the chapters Vy finished for a meeting into the draft',

@@ -48,6 +48,7 @@ export type ModelFeature =
   | 'meetings.adherence'
   | 'meetings.chapters'
   | 'meetings.title'
+  | 'meetings.commitments'
   | 'projects.tasks_from_note'
   | 'projects.tasks_from_source'
   | 'notes.summary'
