@@ -7,8 +7,8 @@
 // session of the SPA: the provider's own cookies authorize only an interaction, never /api.
 //
 // What this file fixes, so a deployment cannot weaken it:
-//   - one resource, `PUBLIC_URL/mcp`, two scopes, `ludy.read` and `ludy.social.draft` (#3227: the one write, a Social draft for a person to review, which a person must tick on the consent page and a company
-//     grant alone can hold); any other resource is `invalid_target`, any other scope `invalid_scope`;
+//   - one resource, `PUBLIC_URL/mcp`, the scopes `ludy.read` and the write scopes `ludy.social.draft` (#3227: a Social draft for a person to review), `ludy.engage.write` and `ludy.ads.draft` (#3858,
+//     per-line scopes), each of which a person must tick on the consent page and a company grant alone can hold; any other resource is `invalid_target`, any other scope `invalid_scope`;
 //   - public clients only (no client secret, `token_endpoint_auth_method: none`), authorization code with PKCE, refresh token;
 //   - access tokens are JWTs (RFC 9068), ES256, 10 minutes, audience exactly the resource, with the grant and org of the live agent_grant
 //     as claims; the token is refused at the endpoint the moment the grant is no longer in good standing (crove_kernel.mcp_grant_verify);
