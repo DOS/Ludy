@@ -89,9 +89,10 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry);
-    for (const key of ['owner', 'lan', 'nam', 'quiet', 'muted', 'odd', 'gone', 'busy']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'morning', subject: key, email: `${key}@morning.test`, name: key });
+    for (const key of ['owner', 'lan', 'nam', 'quiet', 'muted', 'odd', 'gone', 'busy', 'twin', 'pa', 'pb', 'pc', 'pd']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'morning', subject: key, email: `${key}@morning.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Buổi Sáng')).orgId;
     await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'member'), ($1, $8, 'member')`, [orgId, users.lan, users.nam, users.quiet, users.muted, users.odd, users.gone, users.busy]);
+    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) SELECT $1, u, 'member' FROM unnest($2::uuid[]) u`, [orgId, [users.twin, users.pa, users.pb, users.pc, users.pd]]);
   }, 300_000);
 
   afterAll(async () => {
@@ -220,5 +221,42 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     expect((await sqlAdmin<{ events: number }>(`SELECT events FROM crove_meetings.morning_notices_due(10, $1, $2)`, [orgId, users.busy])).rows).toEqual([{ events: 1000 }]);
     expect(await sweep()).toMatchObject({ found: 1, sent: 1, failures: 0 });
     expect((await notices('busy'))[0]).toMatchObject({ detail: { count: '1000' } });
+  });
+
+  it('counts an event once when two connections of the same member cache it, and counts a different one beside it', async () => {
+    const first = await connect('twin');
+    const second = crypto.randomUUID();
+    await sqlAdmin(`INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', 'twin-two@calendar.test', 'twin two', '{}', true)`, [orgId, second, users.twin]);
+    // One meeting both calendars hold (same provider event id and start), and one only the second holds.
+    await sqlAdmin(
+      `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone)
+       VALUES ($1, $2, $4, 'shared-event', 'Họp chung', now(), now() + interval '30 minutes', $5),
+              ($1, $3, $4, 'shared-event', 'Họp chung', now(), now() + interval '30 minutes', $5),
+              ($1, $3, $4, 'only-second', 'Họp riêng', now(), now() + interval '30 minutes', $5)`,
+      [orgId, first, second, users.twin, ZONE],
+    );
+    const now = await localNow(ZONE);
+    await set('twin', { enabled: true, minute: Math.max(0, now.minute - 10), timeZone: ZONE, language: 'vi' });
+    expect((await sqlAdmin<{ events: number }>(`SELECT events FROM crove_meetings.morning_notices_due(10, $1, $2)`, [orgId, users.twin])).rows).toEqual([{ events: 2 }]);
+  });
+
+  it('hands out the due members in no fixed order, so a pass that is cut short does not give the same first ones every time', async () => {
+    const who = ['pa', 'pb', 'pc', 'pd'];
+    const now = await localNow(ZONE);
+    for (const key of who) {
+      await connect(key);
+      await eventNow(key);
+      await set(key, { enabled: true, minute: Math.max(0, now.minute - 10), timeZone: ZONE, language: 'vi' });
+    }
+    // One row a call, as a pass of one would take: with a fixed order the same member would come back every time. Other due members of the org may come too; every one of the four must show up.
+    const seen = new Set<string>();
+    await admin(async (c) => {
+      for (let call = 0; call < 150; call += 1) {
+        const rows = (await c.query<{ user_id: string }>(`SELECT user_id FROM crove_meetings.morning_notices_due(1, $1)`, [orgId])).rows;
+        expect(rows).toHaveLength(1);
+        seen.add(rows[0]!.user_id);
+      }
+    });
+    for (const key of who) expect(seen.has(users[key] as string), `${key} was handed out`).toBe(true);
   });
 });
