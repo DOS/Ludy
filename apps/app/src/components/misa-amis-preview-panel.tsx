@@ -4,8 +4,8 @@
 // Ludy made for AMIS (reftype, reason, purchase purpose) are shown, because they are not yet confirmed against a MISA sandbox. A row is told by Ludy's voucher number and the line, never a name or an invoice.
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useId, useState } from 'react';
-import { useTranslations } from 'use-intl';
-import { MISA_AMIS_KINDS, type MisaAmisKind, type MisaAmisPreview, type MisaAmisPreviewItem } from '@crove/kernel-contract';
+import { useLocale, useTranslations } from 'use-intl';
+import { MISA_AMIS_BLOCKERS, MISA_AMIS_KINDS, type MisaAmisBlockerNotes, type MisaAmisKind, type MisaAmisPreview, type MisaAmisPreviewItem } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
@@ -19,8 +19,14 @@ type Purpose = (typeof PURPOSES)[number];
 // How many vouchers the list shows on screen (the server sends up to 500).
 const SHOWN = 20;
 
+// The kinds of blocker on the rows the screen shows (the first SHOWN vouchers), each once: the coworker's notes are shown only beside a kind that is on the list on screen, so a note is never read beside a list it was not written for.
+function kindsOnList(result: MisaAmisPreview): Set<string> {
+  return new Set(result.items.slice(0, SHOWN).flatMap((item) => item.blockers.map((b) => b.code)));
+}
+
 export function MisaAmisPreviewPanel({ legalEntityId }: { legalEntityId: string }) {
   const t = useTranslations('misaAmisPreview');
+  const lang = useLocale() === 'en' ? 'en' : 'vi';
   const [kind, setKind] = useState<MisaAmisKind>(MISA_AMIS_KINDS[0]);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -29,24 +35,26 @@ export function MisaAmisPreviewPanel({ legalEntityId }: { legalEntityId: string 
   const [purpose, setPurpose] = useState<Purpose>('1');
   const id = useId();
   const asked = `${kind}|${from}|${to}|${serviceItemCode}|${salesItemCode}|${purpose}|${legalEntityId}`;
-  const preview = useMutation<MisaAmisPreview>({
-    mutationFn: () =>
-      client.vouchers.misaAmisPreview({
-        kind,
-        legalEntityId,
-        purchasePurpose: purpose,
-        ...(from ? { from } : {}),
-        ...(to ? { to } : {}),
-        ...(serviceItemCode.trim() ? { serviceItemCode: serviceItemCode.trim() } : {}),
-        ...(salesItemCode.trim() ? { salesItemCode: salesItemCode.trim() } : {}),
-      }),
-  });
+  const ask = {
+    kind,
+    legalEntityId,
+    purchasePurpose: purpose,
+    ...(from ? { from } : {}),
+    ...(to ? { to } : {}),
+    ...(serviceItemCode.trim() ? { serviceItemCode: serviceItemCode.trim() } : {}),
+    ...(salesItemCode.trim() ? { salesItemCode: salesItemCode.trim() } : {}),
+  };
+  const preview = useMutation<MisaAmisPreview>({ mutationFn: () => client.vouchers.misaAmisPreview(ask) });
+  // The coworker's notes on the kinds of blocker (S5): asked only when something is blocked, after the list is on screen; with AI off or every note dropped the list stands alone.
+  const notes = useMutation<MisaAmisBlockerNotes>({ mutationFn: () => client.vouchers.misaAmisBlockerNotes({ ...ask, lang }) });
   const [answeredFor, setAnsweredFor] = useState<string | null>(null);
   // Anything the answer depended on changing clears it, so an old list is never read beside new choices.
   const { reset } = preview;
+  const { reset: resetNotes } = notes;
   useEffect(() => {
     reset();
-  }, [asked, reset]);
+    resetNotes();
+  }, [asked, reset, resetNotes]);
   const result = preview.data && answeredFor === asked ? preview.data : null;
   return (
     <details className="mt-3 rounded-md border border-border p-3 text-sm" data-testid="misa-amis-preview">
@@ -107,7 +115,14 @@ export function MisaAmisPreviewPanel({ legalEntityId }: { legalEntityId: string 
             </NativeSelect>
           </div>
         )}
-        <Button type="button" variant="outline" size="sm" loading={preview.isPending} onClick={() => preview.mutate(undefined, { onSuccess: () => setAnsweredFor(asked) })} data-testid="misa-amis-preview-run">
+        <Button type="button" variant="outline" size="sm" loading={preview.isPending} onClick={() =>
+            preview.mutate(undefined, {
+              onSuccess: (data) => {
+                setAnsweredFor(asked);
+                if (data.blocked > 0) notes.mutate();
+              },
+            })
+          } data-testid="misa-amis-preview-run">
           {t('run')}
         </Button>
       </div>
@@ -116,7 +131,7 @@ export function MisaAmisPreviewPanel({ legalEntityId }: { legalEntityId: string 
           <ErrorText>{errorMessage(preview.error)}</ErrorText>
         </div>
       )}
-      {result && <MisaAmisPreviewResult result={result} />}
+      {result && <MisaAmisPreviewResult result={result} notes={notes.data ?? null} />}
     </details>
   );
 }
@@ -156,8 +171,10 @@ function ItemRow({ item }: { item: MisaAmisPreviewItem }) {
   );
 }
 
-export function MisaAmisPreviewResult({ result }: { result: MisaAmisPreview }) {
+export function MisaAmisPreviewResult({ result, notes = null }: { result: MisaAmisPreview; notes?: MisaAmisBlockerNotes | null }) {
   const t = useTranslations('misaAmisPreview');
+  const onList = kindsOnList(result);
+  const shown = notes?.ai === 'used' ? notes.notes.filter((n) => onList.has(n.code)) : [];
   if (result.vouchers === 0) {
     return (
       <div className="mt-3" data-testid="misa-amis-preview-empty">
@@ -170,6 +187,26 @@ export function MisaAmisPreviewResult({ result }: { result: MisaAmisPreview }) {
       <p className="mb-1 text-foreground" data-testid="misa-amis-preview-summary">
         {t('summary', { vouchers: String(result.vouchers), ready: String(result.ready), blocked: String(result.blocked) })}
       </p>
+      {shown.length > 0 && (
+        <div className="mb-2 rounded-md border border-border p-2" data-testid="misa-amis-preview-notes">
+          <p className="mb-1 text-xs font-medium text-muted-foreground">{t('notes.title')}</p>
+          <ul className="space-y-1">
+            {MISA_AMIS_BLOCKERS.flatMap((code) => shown.filter((n) => n.code === code)).map((n) => (
+              <li key={n.code} className="text-muted-foreground" data-testid="misa-amis-preview-note">
+                <Badge variant="secondary" className="mr-2">
+                  {t(`blocker.${n.code}`)}
+                </Badge>
+                {n.text}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {(notes?.ai === 'busy' || notes?.ai === 'budget' || notes?.ai === 'failed') && (
+        <p className="mb-1 text-subtle-foreground" data-testid="misa-amis-preview-notes-ai-state">
+          {t(`notes.${notes.ai}`)}
+        </p>
+      )}
       {result.more && (
         <p className="mb-1 text-muted-foreground" data-testid="misa-amis-preview-more">
           {t('more')}
