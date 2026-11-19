@@ -211,7 +211,35 @@ suite('HR departments & employee assignment (#3412)', () => {
       code: 'HR_DEPARTMENT_NAME_TAKEN',
       status: 409,
     });
+    // Direct in-process calls with explicit undefined optional keys must only log the fields that were actually provided (#3433).
+    await o.editDept(o.admin, {
+      departmentId: opsId,
+      name: 'Xưởng sản xuất tạm',
+      code: undefined,
+      payFunction: undefined,
+    });
+    const partialAudit = await adminPool.query<{ detail: { departmentId: string; changed: string[] } }>(
+      `SELECT detail FROM crove_kernel.audit_event
+       WHERE org_id = $1 AND command = 'hr.department.edit' AND outcome = 'ok'
+       ORDER BY occurred_at DESC, id DESC LIMIT 1`,
+      [o.orgId],
+    );
+    expect(partialAudit.rows[0]?.detail).toEqual({
+      departmentId: opsId,
+      changed: ['name'],
+    });
+
     await o.editDept(o.admin, { departmentId: opsId, name: 'Xưởng sản xuất', code: 'SX', payFunction: 'overhead' });
+    const fullAudit = await adminPool.query<{ detail: { departmentId: string; changed: string[] } }>(
+      `SELECT detail FROM crove_kernel.audit_event
+       WHERE org_id = $1 AND command = 'hr.department.edit' AND outcome = 'ok'
+       ORDER BY occurred_at DESC, id DESC LIMIT 1`,
+      [o.orgId],
+    );
+    expect(fullAudit.rows[0]?.detail).toEqual({
+      departmentId: opsId,
+      changed: ['name', 'code', 'payFunction'],
+    });
 
     // Archive is idempotent; editing an archived department is refused; includeArchived surfaces it after active ones.
     await o.archiveDept(o.owner, opsId);

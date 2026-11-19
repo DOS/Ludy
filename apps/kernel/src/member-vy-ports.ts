@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, CHAPTERS_TIMEOUT_MS, ChaptersModelError, generateMeetingBriefText, generateMeetingChaptersText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
 import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, BriefError, writeBrief, ChaptersError, chapterMeeting, NoteAiError, NoteAiModelError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind } from '@crove/agent/member-vy';
-import { ASK_ESTIMATE, ASK_HITS_MAX, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationStatus } from '@crove/kernel-contract';
+import { ASK_ESTIMATE, ASK_HITS_MAX, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationTarget, type TranslationStatus } from '@crove/kernel-contract';
 import { readTasksFromSourceData, type SourceQueryFn } from '@crove/mod-projects';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
@@ -446,20 +446,23 @@ export interface MeetingTranslationDeps extends MeetingSummaryDeps {
 
 // What a translation is expected to use, before the click: the text sent (UTF-8 bytes over a rough 2.5 per token, Vietnamese text weighs more than English) plus the fixed instruction, and
 // an answer about as long as the text (the JSON around it adds a little). An estimate, not a promise: the meter records what the provider reports.
-export function translationEstimate(bytes: number, price: MeetingTranslationDeps['price']): NonNullable<TranslationStatus['estimate']> {
+export function translationEstimate(bytes: number, price: MeetingTranslationDeps['price'], to?: TranslationTarget): NonNullable<TranslationStatus['estimate']> {
   const inputTokens = Math.ceil(bytes / 2.5) + 250;
-  const outputTokens = Math.ceil(bytes / 2.5) + 50;
+  // Chinese, Japanese and Korean weigh about half as much again in tokens for the same meaning (#3186).
+  const outputTokens = Math.ceil((bytes / 2.5) * (to === 'zh' || to === 'ja' || to === 'ko' ? 1.5 : 1)) + 50;
   const priced = price !== undefined && (isPositivePrice(price.inputPerMTok) || isPositivePrice(price.outputPerMTok));
   return { inputTokens, outputTokens, cost: priced ? aiCost([{ inputTokens, outputTokens }], price) : null };
 }
 
 // The button of a stage: the module's status (switch, text to translate, language pair, the size of the text) plus the expected cost. The text itself is not read here: the module says its size.
-export async function translationStatusOf(deps: Pick<MeetingTranslationDeps, 'runtime' | 'price'>, orgId: string, actor: UserActor, meetingId: string, stage: 'draft' | 'published'): Promise<TranslationStatus> {
-  const { bytes, ...status } = await deps.runtime.query<TranslationStatus & { bytes: number }>('meetings.translation.status', { meetingId, stage }, { actor, orgId });
-  return status.enabled ? { ...status, estimate: translationEstimate(bytes, deps.price) } : status;
+export async function translationStatusOf(deps: Pick<MeetingTranslationDeps, 'runtime' | 'price'>, orgId: string, actor: UserActor, meetingId: string, stage: 'draft' | 'published', to?: TranslationTarget): Promise<TranslationStatus> {
+  const { bytes, ...status } = await deps.runtime.query<TranslationStatus & { bytes: number }>('meetings.translation.status', { meetingId, stage, ...(to ? { to } : {}) }, { actor, orgId });
+  return status.enabled ? { ...status, estimate: translationEstimate(bytes, deps.price, status.to) } : status;
 }
 
-export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId: string, actor: UserActor, meetingId: string, stage: 'draft' | 'published'): Promise<Translated> {
+export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId: string, actor: UserActor, meetingId: string, stage: 'draft' | 'published', to?: TranslationTarget): Promise<Translated> {
+  // The language asked for goes with every step below; absent, the module takes the other language of the pair (a target the deployment has not switched on is refused by the module's own status read).
+  const target = to ? { to } : {};
   const as = { actor, orgId };
   const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
   const model = deps.model;
@@ -467,7 +470,7 @@ export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId:
   if (!model || !meter) throw new DomainError('TRANSLATE_OFF', 422, 'Translation by Vy is not turned on here');
   // A member who cannot translate this (the switch is off, no text, a stage they do not read) is refused here with the precise answer, before a ticket is taken (so a member cannot use up the org's
   // few translations a minute by asking about meetings they do not read).
-  const allowed = await deps.runtime.query<TranslationStatus>('meetings.translation.status', { meetingId, stage }, as);
+  const allowed = await deps.runtime.query<TranslationStatus>('meetings.translation.status', { meetingId, stage, ...target }, as);
   if (!allowed.enabled) {
     if (allowed.reason === 'nothing') throw new DomainError('TRANSLATION_NOTHING', 422, 'There is no summary to translate');
     throw new DomainError('TRANSLATE_OFF', 422, 'Translation by Vy is not turned on here');
@@ -476,7 +479,7 @@ export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId:
   if (!ticket.allowed) throw new DomainError('SUMMARY_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
   try {
     // 1. The checks come first: the switch, a stage the member reads, vy.use, the kill switches and the budget. A refusal here has made no run.
-    const started = await deps.runtime.execute<{ meetingId: string; runId: string }>('meetings.translate.start', { meetingId, stage }, as);
+    const started = await deps.runtime.execute<{ meetingId: string; runId: string }>('meetings.translate.start', { meetingId, stage, ...target }, as);
     const runId = started.runId;
     const fail = async (errorCode: string): Promise<Translated> => {
       try {
@@ -491,7 +494,7 @@ export async function runMeetingTranslation(deps: MeetingTranslationDeps, orgId:
     let body: string;
     try {
       // 2. The text the member reads, in their own context.
-      const source = await deps.runtime.query<TranslationSource>('meetings.translation.source', { meetingId, stage }, as);
+      const source = await deps.runtime.query<TranslationSource>('meetings.translation.source', { meetingId, stage, ...target }, as);
       // 3. The one call, outside any transaction, in the scope of this run.
       const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
       const result = await withDeadline(
@@ -770,13 +773,14 @@ export async function transcriptTranslationStatusOf(
   orgId: string,
   actor: UserActor,
   meetingId: string,
+  to?: TranslationTarget,
 ): Promise<TranscriptTranslationStatus> {
-  const { bytes, ...status } = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId }, { actor, orgId });
+  const { bytes, ...status } = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId, ...(to ? { to } : {}) }, { actor, orgId });
   if (!deps.hasModel && status.enabled) return { ...status, enabled: false, reason: 'off', estimate: null };
   if (!status.enabled || status.remaining === 0) return status;
   const calls = Math.max(1, status.chunksTotal - status.chunksDone);
   // The same figure a chunk is admitted on before its call, for as many chunks as are left (each is a call of its own, with the fixed instruction around it).
-  const perChunk = chunkExpectedUsage(Math.ceil(bytes / calls));
+  const perChunk = chunkExpectedUsage(Math.ceil(bytes / calls), status.to);
   const inputTokens = perChunk.inputTokens * calls;
   const outputTokens = perChunk.outputTokens * calls;
   const priced = deps.price !== undefined && (isPositivePrice(deps.price.inputPerMTok) || isPositivePrice(deps.price.outputPerMTok));
@@ -795,7 +799,8 @@ export async function transcriptTranslationStatusOf(
 // Neither the text nor the answer is ever logged: a failure is named by a fixed code. A translation creates no task, mail, post, webhook, search hit or export.
 export type TranscriptTranslationDeps = MeetingTranslationDeps;
 
-export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, orgId: string, actor: UserActor, meetingId: string): Promise<TranscriptTranslated> {
+export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, orgId: string, actor: UserActor, meetingId: string, to?: TranslationTarget): Promise<TranscriptTranslated> {
+  const target = to ? { to } : {};
   const as = { actor, orgId };
   const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
   const model = deps.model;
@@ -803,7 +808,7 @@ export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, 
   if (!model || !meter) throw new DomainError('TRANSLATE_OFF', 422, 'Translation by Vy is not turned on here');
   // A member who cannot translate this (the switch is off, no transcript they read) is refused with the precise answer before a ticket is taken (so a member cannot use up the org's few
   // requests a minute by asking about meetings they do not read).
-  const allowed = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId }, as);
+  const allowed = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId, ...target }, as);
   if (!allowed.enabled) {
     if (allowed.reason === 'nothing') throw new DomainError('TRANSLATION_NOTHING', 422, 'There is no transcript to translate');
     throw new DomainError('TRANSLATE_OFF', 422, 'Translation by Vy is not turned on here');
@@ -812,7 +817,7 @@ export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, 
   if (!ticket.allowed) throw new DomainError('SUMMARY_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
   try {
     // 1. The checks come first. A refusal here has made no run.
-    const started = await deps.runtime.execute<TranscriptStarted>('meetings.translation.transcript_start', { meetingId }, as);
+    const started = await deps.runtime.execute<TranscriptStarted>('meetings.translation.transcript_start', { meetingId, ...target }, as);
     const runId = started.runId;
     const fail = async (errorCode: string): Promise<TranscriptTranslated> => {
       try {
@@ -879,7 +884,7 @@ export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, 
       if (error instanceof DomainError && error.code === 'TRANSLATION_STALE') return { meetingId, runId, state: 'failed', errorCode: 'TRANSLATION_STALE', translated: 0, remaining: started.remaining };
       throw error;
     }
-    const after = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId }, as);
+    const after = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId, ...target }, as);
     return { meetingId, runId, state: 'ready', errorCode: null, translated: kept, remaining: after.remaining };
   } finally {
     ticket.release();

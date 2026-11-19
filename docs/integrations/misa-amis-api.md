@@ -3,7 +3,7 @@
 `packages/misa-amis` (`@crove/misa-amis`) is the adapter for the AMISKT v1.0.0 API, documented at
 [developer.misa.vn](https://developer.misa.vn/products-openapi/AMISKT). It is slice S1 of
 [#3854](https://github.com/DOS/Ludy/issues/3854); the plan is [accounting-software-sync.md](../plan/accounting-software-sync.md).
-The connection (S2, [#3875](https://github.com/DOS/Ludy/issues/3875)) is built on it; the push (S3), the callback route (S4) and the AI check (S5) come next.
+The connection (S2, [#3875](https://github.com/DOS/Ludy/issues/3875)) is built on it, and the mapping and its preview (S3a, [#3901](https://github.com/DOS/Ludy/issues/3901)) use it; the push (S3b), the callback route (S4) and the AI check (S5) come next.
 
 ## The connection (S2)
 
@@ -56,3 +56,60 @@ Checked by the live sandbox check after the credential handover, never assumed t
   `org_refid`, with `session_id` kept to tell results apart.
 - `batchError` is not signed: it never moves the state of a request. At most it is a reason to poll for the signed results.
 - `errorMessage` and `sessionId` are MISA's untrusted text: escape them on display and keep them out of logs. Look up push rows by `org_refid` only.
+
+## How Ludy's vouchers map to AMIS (S3a, #3901)
+
+`modules/finance/src/misa-amis-vouchers.ts` turns the voucher models of the MISA SME export (`PurchaseVoucher`, `SalesVoucher`,
+`CashVoucher`) into the `AmisVoucher`s the push sends. It is pure: nothing is sent and MISA is not called. The field names, the
+required fields and the enums are from the voucher structure tables of the AMISKT documentation; none has run against a MISA
+sandbox yet.
+
+| Ludy | voucher_type | reftype | reason_type_id |
+|---|---|---|---|
+| Phiếu thu | 5 | 1010 | none |
+| Phiếu chi | 4 | 1020 | 24 pay a supplier (a line on 331), else 23 (**unconfirmed**: derived from the accounts) |
+| Giấy báo Có | 1 | 1500 | 29 collect a customer (a line on 131), else 34 (**unconfirmed**: derived from the accounts) |
+| Giấy báo Nợ | 3 | 1510 (ủy nhiệm chi; Ludy has no cheque kind; **unconfirmed**) | 44 pay a supplier (331), else 43 (**unconfirmed**: derived from the accounts) |
+| Purchase, lines off a stock account | 17 | 330 (Ludy books a purchase on 331: unpaid) | |
+| Purchase, lines on a stock account (152, 153, 156) | 18 | 302 | |
+| Sales | 13 | 3530 (domestic, not yet collected: Ludy debits 131) | |
+
+- **`org_refid` is the source id** (the purchase or sales document id, the cash voucher id), in lower case. It is not the journal
+  entry id: an entry is revised, a revision is a new entry, and keyed on that the same voucher would be a second request in AMIS.
+  An invoice with both services and stock lines is two AMIS vouchers: the services one keeps the source id, the goods one gets a
+  derived id (SHA-256 of the source id and a tag, written as a version 5 UUID), the same every time.
+- **A voucher of more than 500 lines** is split into parts of at most 500 (never cut). The first part keeps the id; each later
+  part gets a derived id and `/2`, `/3` on its `org_refno`. The parts' totals add up to the voucher's.
+- **What Ludy cannot know comes in as context**, never invented: the AMIS branch (`branch_id`, required by every kind), the party
+  code (matched by tax code against `get_dictionary`), the AMIS item the service and sales lines go under, the purchase purpose
+  (`mục đích mua vào`, default 1) and a default unit name for a line with none (AMIS requires one). A voucher missing one is not
+  written; the result lists a blocker by code and line (`branch_missing`, `party_code_unknown`, `item_code_unknown`,
+  `vat_rate_unmapped`, `no_lines`), never a sentence. The deterministic list decides; S5's coworker only explains it.
+- A line with no quantity or unit price is one occasion at the line's amount (AMIS requires both). VAT is spread over the lines
+  with the same rule as the MISA SME export (`allocateVat`), so the lines add up to the voucher's VAT exactly. `vat_rate` is the
+  rate itself for 0, 5, 8, 10, and -1 KCT, -2 KKKNT, -3 KHAC with `other_vat_rate`.
+- **The preview** (`vouchers.misaAmisPreview`, a read) lists the vouchers of a period and kind with their AMIS type, parts, lines,
+  total and blockers. The branch and the party codes are not read until the dictionary is (the connection test of #3885), so it
+  says `checkedAgainstAmis: false` and leaves those two blockers out.
+
+Unconfirmed, to check in the sandbox. First, the three choices Ludy made itself, each marked unconfirmed in the code and shown in the
+preview: the purchase purpose defaults to 1 (`purchase_purpose_id` and code, written on purchases and on cash and bank payments), a bank
+payment is written as `reftype` 1510 (ủy nhiệm chi), and the `reason_type_id` of a cash or bank voucher is derived from its accounts
+(331 a supplier, 131 a customer). Nothing is pushed without a person approving the push, and the push (S3b, #3902) is not enabled for
+any org before the sandbox check has confirmed or corrected them. Then: that a purchase with `reftype` 330 and no `is_paid` is read as unpaid; that AMIS accepts a
+party by name and tax code when no `account_object_code` is given; whether `purchase_purpose_id` is a string or the object the
+payments' table shows (the mapper sends the id and the code); what AMIS does with a second push of a revised voucher under the
+same `org_refid`.
+
+Also unconfirmed, found in the review of S3a:
+
+- A sales line is written without `stock_code` and `stock_name`, which the sales detail table marks required; for a service
+  line AMIS may want none (`is_description`), for a stock line it needs one. The sandbox check decides, and the push (S3b) must
+  not be enabled for sales before it does.
+- A trade discount is a negative line in Ludy, so the discount fields are 0 and the line carries a negative `amount` and
+  `unit_price`; AMIS may expect it in `discount_*` instead.
+- A party with no tax code is sent by name and address with no `account_object_code` and is no blocker.
+- Fields the tables of some kinds do not list are written because the documentation's own examples carry them
+  (`account_object_tax_code` on cash and bank lines, `tax_account_object_*` on purchase lines); they are probably ignored.
+- A goods line whose saved warehouse is empty is blocked (`stock_missing`) because `stock_code` is required.
+- A cash or bank voucher number over MISA's 20 characters is a blocker (`voucher_number_too_long`), never cut.

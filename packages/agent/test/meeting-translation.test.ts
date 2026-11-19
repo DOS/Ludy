@@ -7,11 +7,15 @@ import { revealPrivateText } from '../src/private-text.ts';
 import { bindPorts, noKnowledge, type ModelPort, type Ports } from '../src/member-vy/index.ts';
 import {
   TRANSLATION_LIMITS,
+  TRANSLATION_TARGETS,
   TranslationError,
   checkSegment,
   checkTranslation,
+  chunkExpectedUsage,
   contactsIn,
   digitRuns,
+  inTargetScript,
+  scriptShare,
   translateSummary,
   type TranslationSegmentInput,
 } from '../src/member-vy/meeting-translation.ts';
@@ -160,5 +164,80 @@ describe('translateSummary', () => {
     await expect(translateSummary({ ...input, segments: [] }, p)).rejects.toMatchObject({ code: 'TRANSLATE_NOTHING' });
     await expect(translateSummary({ ...input, segments: [seg('x'.repeat(TRANSLATION_LIMITS.sourceBytes + 1))] }, p)).rejects.toMatchObject({ code: 'TRANSLATE_TOO_LONG' });
     expect(seen).toEqual([]);
+  });
+});
+
+describe('Chinese, Japanese and Korean as targets (#3186)', () => {
+  it('lists them besides vi and en', () => {
+    expect([...TRANSLATION_TARGETS]).toEqual(['vi', 'en', 'zh', 'ja', 'ko']);
+  });
+
+  it('measures the share of a text\'s letters in the target\'s script, ignoring digits, spaces and punctuation', () => {
+    expect(scriptShare('Chúng ta chốt giá cũ cho khách A.', 'zh')).toBe(0);
+    expect(scriptShare('我们确定旧价格 1.250.000 !', 'zh')).toBe(1);
+    expect(scriptShare('向Acme发送报价', 'zh')).toBeGreaterThan(0.5);
+    expect(scriptShare('見積もりを送ります', 'ja')).toBe(1);
+    expect(scriptShare('견적서를 보냅니다', 'ko')).toBe(1);
+    // Kana are Japanese, not Chinese or Korean; Hangul is not Chinese.
+    expect(scriptShare('ありがとう', 'zh')).toBe(0);
+    expect(scriptShare('견적서', 'zh')).toBe(0);
+    expect(scriptShare('', 'ja')).toBe(0);
+    expect(scriptShare('1.250.000 - 14/11', 'ko')).toBe(0);
+  });
+
+  it('counts a short sentence about a long Latin name as in the script (a few characters of it are enough), and a text left in the source language as not', () => {
+    expect(inTargetScript('会见Nguyen Van Minh', 'zh')).toBe(true);
+    expect(inTargetScript('Gặp Nguyen Van Minh', 'zh')).toBe(false);
+    expect(inTargetScript('Hợp đồng ký ngày 14/11/2026', 'ja')).toBe(false);
+    expect(inTargetScript('Hợp đồng 契約', 'ko')).toBe(false);
+    expect(inTargetScript('', 'zh')).toBe(false);
+    expect(checkSegment(seg('Gặp Nguyen Van Minh'), '会见Nguyen Van Minh', 'zh')).toMatchObject({ state: 'ok' });
+  });
+
+  it('keeps a translation in the target script and refuses one left in the source language as untranslated', () => {
+    const source = seg('Chốt giá 1.250.000 đồng cho khách A');
+    expect(checkSegment(source, '与客户A确定价格 1.250.000 越南盾', 'zh')).toMatchObject({ state: 'ok', codes: [] });
+    expect(checkSegment(seg('Hợp đồng ký ngày 14/11/2026'), '契約は14/11/2026に締結された', 'ja')).toMatchObject({ state: 'ok' });
+    expect(checkSegment(source, '고객 A와 1.250.000 동으로 가격을 확정했다', 'ko')).toMatchObject({ state: 'ok' });
+    // Still Vietnamese (a changed word or two), and English: not in the script of the target.
+    expect(checkSegment(source, 'Chốt giá 1.250.000 đồng với khách A', 'zh')).toMatchObject({ state: 'refused', codes: ['UNCHANGED'] });
+    expect(checkSegment(source, 'Agreed 1.250.000 dong with customer A', 'ko')).toMatchObject({ state: 'refused', codes: ['UNCHANGED'] });
+  });
+
+  it('still refuses an invented figure, a link and a dropped figure warns, in the target language too', () => {
+    const source = seg('Chốt giá 1.250.000 đồng');
+    expect(checkSegment(source, '价格确定为 2.500.000 越南盾', 'zh')).toMatchObject({ state: 'refused', codes: ['INVENTED_NUMBER'] });
+    expect(checkSegment(source, '价格已确定,见 https://evil.example', 'zh')).toMatchObject({ state: 'refused', codes: ['CONTACT_ADDED'] });
+    expect(checkSegment(source, '价格已经确定', 'zh')).toMatchObject({ state: 'warn', codes: ['NUMBER_DROPPED'] });
+    // A figure written with a number word (125万) is not the source's figure: refused, never guessed at.
+    expect(checkSegment(source, '价格确定为125万越南盾', 'zh')).toMatchObject({ state: 'refused', codes: ['INVENTED_NUMBER'] });
+  });
+
+  it('does not run the Latin capitalised-name check on a CJK text, and runs it as before for vi and en', () => {
+    const source = seg('Chốt giá 500 cho khách hàng');
+    expect(checkSegment(source, '与客户 Nguyen 确定价格 500', 'zh')).toMatchObject({ state: 'ok', codes: [] });
+    expect(checkSegment(source, 'Agreed 500 with customer Nguyen today', 'en')).toMatchObject({ state: 'warn', codes: ['NAME_ADDED'] });
+    expect(checkSegment(source, 'Agreed 500 with customer Nguyen today')).toMatchObject({ state: 'warn', codes: ['NAME_ADDED'] });
+  });
+
+  it('asks for the target by name, says to keep Arabic digits and Latin names, and estimates more output tokens for a CJK target', async () => {
+    const seen: Array<{ system: string; user: string }> = [];
+    const model: ModelPort = {
+      generate: async (_who, prompt) => {
+        seen.push(prompt);
+        return { text: '{"segments":[{"n":1,"text":"与客户A确定价格500"}]}', usage: { inputTokens: 10, outputTokens: 5 } };
+      },
+    };
+    const ports: Ports = { model, memory: { read: async () => [], write: async () => ({ id: 'x' }), forget: async () => undefined }, knowledge: noKnowledge };
+    const out = await translateSummary({ segments: [seg('Chốt giá 500 cho khách A')], from: 'vi', to: 'zh', stage: 'published', hash: HASH }, bindPorts({ orgId: 'o', memberUserId: 'u' }, ports));
+    expect(seen[0]?.system).toContain('Vietnamese into Simplified Chinese');
+    expect(seen[0]?.system).toContain('Arabic digits');
+    expect(JSON.parse(revealPrivateText(out.body))).toMatchObject({ to: 'zh', from: 'vi' });
+    // vi and en keep the old instruction, without the CJK rule.
+    seen.length = 0;
+    await translateSummary({ segments: [seg('Chốt giá 500 cho khách A')], from: 'vi', to: 'en', stage: 'published', hash: HASH }, bindPorts({ orgId: 'o', memberUserId: 'u' }, { ...ports, model: { generate: async (_w, prompt) => { seen.push(prompt); return { text: '{"segments":[{"n":1,"text":"Agreed 500 with customer A"}]}', usage: { inputTokens: 1, outputTokens: 1 } }; } } })).catch(() => undefined);
+    expect(seen[0]?.system).not.toContain('Arabic digits');
+    expect(chunkExpectedUsage(1000, 'zh').outputTokens).toBeGreaterThan(chunkExpectedUsage(1000, 'en').outputTokens);
+    expect(chunkExpectedUsage(1000)).toEqual(chunkExpectedUsage(1000, 'vi'));
   });
 });

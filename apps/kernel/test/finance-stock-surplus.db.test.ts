@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { StockCount } from '@crove/kernel-contract';
+import type { StockCount, StockSurplusSource } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -237,5 +237,95 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
         [o.orgId, countId],
       ),
     ).rejects.toThrow(/journal_voucher_surplus/);
+  });
+
+  // The facts for the explanation of the surplus (#3712 slice 2b): read from the books, the supplier a hint only.
+  const source = (o: Org, countId: string, user = o.member) => query<StockSurplusSource>(o, 'finance.stock_count.surplus_source', { countId }, user);
+  // A posted purchase of one item on a day, written by the database owner with triggers off (the books insist a document is posted with its entry, which this read does not look at).
+  const received = (o: Org, item: string, partyId: string, date: string, quantity: string, invoiceNumber: string) =>
+    admin(async (c) => {
+      await c.query('SET session_replication_role = replica');
+      const [entity] = (await c.query<{ id: string }>('SELECT id::text AS id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default ORDER BY created_at LIMIT 1', [o.orgId])).rows;
+      const doc = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_finance.purchase_document (org_id, legal_entity_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction)
+           VALUES ($1, $2, $3, 'AA', $4, $5::date, 100, 0, 100, 'purchase') RETURNING id`,
+          [o.orgId, entity?.id, partyId, invoiceNumber, date],
+        )
+      ).rows[0];
+      await c.query(
+        `INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, unit, quantity, amount, debit_account) VALUES ($1, $2, 1, 'Hàng hóa', 'cái', $3, 100, '156')`,
+        [o.orgId, doc?.id, quantity],
+      );
+      await c.query(
+        `INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt)
+         VALUES ($1, $2, $3, $4::date, $5, 'document_line', $6, 1, 1)`,
+        [o.orgId, entity?.id, item, date, quantity, doc?.id],
+      );
+    });
+
+  it('gives the facts of a surplus: the items in surplus by value with the total, no supplier when none sold the goods, and a shortage beside it is not in it', async () => {
+    const o = await org();
+    const countId = await confirmedCount(o, true);
+    const facts = await source(o, countId);
+    expect(facts).toMatchObject({ countId, countDate: '2026-09-30', total: '150', moreItems: 0, supplier: null, manualEntry: false, voucherId: null, proposalId: null });
+    expect(facts.items).toHaveLength(1);
+    expect(facts.items[0]).toMatchObject({ quantity: '3', unit: 'cái', value: '150' });
+    // A viewer may not (the answer names a supplier and may spend AI budget); another org's member does not find the count.
+    await expect(source(o, countId, o.viewer)).rejects.toMatchObject({ status: 403 });
+    await expect(source(await org(), countId)).rejects.toMatchObject({ code: 'STOCK_COUNT_NOT_FOUND' });
+  });
+
+  it('refuses a count that is not confirmed and one with no surplus, as a resolution does', async () => {
+    const o = await org();
+    const a = await makeItem(o, `D${randomUUID().slice(0, 4)}`);
+    const draft = await count(o, '2026-09-30', [{ itemId: a, countedQuantity: '2', unitCost: '10' }]);
+    await expect(source(o, draft)).rejects.toMatchObject({ code: 'STOCK_SURPLUS_NOT_CONFIRMED' });
+  });
+
+  it('names the supplier the goods were last received from as a hint, and follows the resolution: the proposal waiting, then the voucher', async () => {
+    const o = await org();
+    const party = await supplier(o);
+    const other = (await rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Nhà cung cấp cũ') RETURNING id", [o.orgId]))[0]?.id as string;
+    const b = await makeItem(o, `S${randomUUID().slice(0, 4)}`);
+    await received(o, b, other, '2026-08-01', '5', '000001');
+    await received(o, b, party, '2026-09-12', '5', '000002');
+    // A receipt after the count day says nothing about what was found on it.
+    await received(o, b, other, '2026-10-15', '5', '000003');
+    // The books hold ten by the count day (two receipts of five, 100 each on the purchase lines, so 20 a unit), twenty are counted: a surplus of ten.
+    const countId = await count(o, '2026-09-30', [{ itemId: b, countedQuantity: '20', unitCost: '50' }]);
+    await approve(o, (await askCount(o, countId)).proposalId);
+    const facts = await source(o, countId);
+    expect(facts.supplier).toEqual({ partyId: party, name: 'Công ty Cung ứng Mẫu', lastReceived: '2026-09-12' });
+    // Choosing is the person's: the hint changes nothing in the books, and a requester's own account and supplier are still validated as before.
+    const { proposalId } = await askSurplus(o, { countId, account: '331', partyId: party });
+    expect(await source(o, countId)).toMatchObject({ proposalId, voucherId: null });
+    const posted = await approve(o, proposalId);
+    expect(await source(o, countId)).toMatchObject({ proposalId: null, voucherId: posted.voucherId });
+  });
+
+  it('flags a manual entry on 3381 made since the count, and not the count\'s own voucher or the resolution', async () => {
+    const o = await org();
+    const countId = await confirmedCount(o);
+    expect((await source(o, countId)).manualEntry).toBe(false);
+    const [entity] = await rows<{ id: string }>('SELECT id::text AS id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default ORDER BY created_at LIMIT 1', [o.orgId]);
+    const manual = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      {
+        command: 'finance.journal_voucher.record',
+        input: {
+          date: '2026-10-01',
+          description: 'Xử lý hàng thừa bằng tay',
+          legalEntityId: entity?.id,
+          lines: [
+            { account: '3381', partyId: null, debit: '150', credit: '0' },
+            { account: '711', partyId: null, debit: '0', credit: '150' },
+          ],
+        },
+      },
+      { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    await approve(o, manual.proposalId);
+    expect((await source(o, countId)).manualEntry).toBe(true);
   });
 });

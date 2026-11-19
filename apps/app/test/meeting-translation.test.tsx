@@ -31,7 +31,7 @@ const { MeetingTranslation, translateBlocked } = await import('../src/components
 
 const ITEM_ID = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b';
 const ORIGINAL = { summary: 'Chốt giá 1.250.000 cho khách A.', decisions: ['Giữ giá cũ'], items: [{ id: ITEM_ID, title: 'Gửi báo giá cho khách' }] };
-const STATUS: TranslationStatus = { meetingId: 'm1', stage: 'published', enabled: true, reason: null, from: 'vi', to: 'en', estimate: { inputTokens: 500, outputTokens: 400, cost: '0.0123' } };
+const STATUS: TranslationStatus = { meetingId: 'm1', stage: 'published', enabled: true, reason: null, from: 'vi', to: 'en', targets: ['en'], estimate: { inputTokens: 500, outputTokens: 400, cost: '0.0123' } };
 const METER = { aiOn: true, state: 'ok', percent: 10, scope: null, resetAt: '2026-12-01T00:00:00Z' };
 const translations = (over: Partial<Translations['translations'][number]> = {}): Translations => ({
   meetingId: 'm1',

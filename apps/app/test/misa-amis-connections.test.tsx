@@ -100,7 +100,9 @@ describe('MisaAmisConnectionsCard', () => {
     const html = card('admin', { entities, connections: [connection({ legalEntityId: 'e2' })] });
     expect(html).toContain('Chi nhánh Hà Nội</span>');
     expect(html).toContain(`>${en.misaAmisConnections.entity}</label>`);
-    const select = /<select[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? '';
+    // The connect form's own selector: the preview panel of a connection has selects of its own.
+    const form = /<form[\s\S]*?<\/form>/.exec(html)?.[0] ?? '';
+    const select = /<select[^>]*>([\s\S]*?)<\/select>/.exec(form)?.[1] ?? '';
     expect(select).toContain('Công ty TNHH Mẫu');
     expect(select).toContain('Chi nhánh Đà Nẵng');
     expect(select).not.toContain('Chi nhánh Hà Nội');
@@ -111,7 +113,7 @@ describe('MisaAmisConnectionsCard', () => {
     const html = card('owner', { entities, connections: [connection({ legalEntityId: 'e1' })] });
     expect(html).toContain('data-testid="misa-amis-target"');
     expect(html).toMatch(/misa-amis-target[^>]*>[^<]*Legal entity[^<]*: [^<]*Chi nhánh Hà Nội/);
-    expect(html).not.toContain('<select');
+    expect(/<form[\s\S]*?<\/form>/.exec(html)?.[0] ?? '').not.toContain('<select');
   });
 
   it('says the connector is off, with no form, where the deployment does not offer it but an org still has a connection', () => {
