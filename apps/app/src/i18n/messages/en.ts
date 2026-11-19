@@ -8869,7 +8869,7 @@ export const en = {
     download: 'Download',
     downloading: 'Downloading...',
     tableRows: '{rows} rows, {size}',
-    people: 'Staff and pay data, downloaded while you close the organization (NDJSON, one record per line).',
+    people: 'Staff, pay and company glossary data, downloaded while you close the organization (NDJSON, one record per line).',
     peopleNote: 'The employees\' identity numbers and bank account numbers are sealed with the organization\'s keys (ADR-0017) and are not in these files; only the organization\'s keys open them, so read them in the app before you close. These files are not kept after the download: save them now.',
     stepUpAction: 'close {name} and export its data',
     errors: {
