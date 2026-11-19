@@ -56,6 +56,9 @@ const REACHABLE = [
   // The Meetings read of the open action items of one series of meetings (#3837, step 3 of the two-step landing): keyed on a meeting, never on a series id, over the same readable meetings as the two reads
   // above, for a company grant only. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
   'meetings.mcp.series_open_items:ludy.read',
+  // The Meetings read of the published decisions of the last 7, 14 or 30 days (#4016, step 3 of the three-step landing): the decisions of the same readable meetings as the reads above, started inside the
+  // window, for a company grant only. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
+  'meetings.mcp.decisions:ludy.read',
 ];
 // The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the kernel rules and the line reads they
 // call (a query run inside a query keeps the caller's identity, so a rule over MCP needs every read it calls to declare the scope as well). They are optional here so each can land
@@ -75,9 +78,6 @@ const SIGNALS = [
   'crm.signals.open_deals:ludy.read',
   // The one query behind the `ludy_signals` tool (step S4): it runs the three rules above as the grant and returns their items.
   'kernel.mcp.signals:ludy.read',
-  // The Meetings read of the published decisions of the last 7, 14 or 30 days (#4016, company grants only, the Meetings PO's direction of 2026-11-19, inside the owner's decision of 2026-11-18). Optional here so
-  // the name can be accepted before the query lands (two steps); the next tests-only step moves it to REACHABLE, where its absence fails.
-  'meetings.mcp.decisions:ludy.read',
 ];
 
 // The finance reads of the connected coworker (#3849, plan docs/plan/vy.md section 5 C2 and C3, owner decision 2026-11-18): the overview figures, the open receivables and payables per party, and one payment
