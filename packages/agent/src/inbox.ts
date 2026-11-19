@@ -30,6 +30,8 @@ import {
   type RecruitingBriefResult,
   type ReviewCandidateProfileOptions,
 } from './recruiting-coworker.ts';
+import { ORDER_FIELDS } from '@crove/l10n-vn';
+import { checkMarketplaceColumns, marketplaceColumnsInstructions, marketplaceColumnsPrompt, type MarketplaceColumnFacts, type MarketplaceColumnsResult } from './marketplace-columns.ts';
 import { checkMarketplaceFeeNotes, marketplaceFeeNotesInstructions, marketplaceFeeNotesPrompt, type MarketplaceFeeNoteFacts, type MarketplaceFeeNotesResult } from './marketplace-fee-note.ts';
 import { checkMisaAmisBlockerNotes, MISA_AMIS_BLOCKER_KINDS, misaAmisBlockerNotesInstructions, misaAmisBlockerNotesPrompt, type MisaAmisBlockerNotesFacts, type MisaAmisBlockerNotesResult } from './misa-amis-blocker-notes.ts';
 import { checkMisaCheckLineSentence, misaCheckLineInstructions, misaCheckLinePrompt, type MisaCheckLineFacts, type MisaCheckLineResult } from './misa-check-line.ts';
@@ -165,6 +167,10 @@ const zMisaAmisBlockerNotesOut = z.object({
 const zMarketplaceFeeNotesOut = z.object({
   notes: z.array(z.object({ row: z.number().int().min(1).describe('The number of the row, as given'), text: z.string().describe('One plain sentence on what the fees waiting on the platform account mean and what to do, using only the numbers given for that row') })).describe('One note for each row, under its row number'),
 });
+const zMarketplaceColumnsOut = z.object({
+  columns: z.array(z.object({ column: z.number().int().min(0).describe('The number of the column, as given'), field: z.enum([...ORDER_FIELDS, 'none']).describe('The standard field this column is, or none') })).describe('One answer for each column given, at most one per column'),
+});
+export type MarketplaceColumnsGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceColumnsOut> | null; usage?: AiUsage }>;
 export type MarketplaceFeeNotesGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceFeeNotesOut> | null; usage?: AiUsage }>;
 export type MisaAmisBlockerNotesGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMisaAmisBlockerNotesOut> | null; usage?: AiUsage }>;
 export type MisaCheckLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMisaCheckLineOut> | null; usage?: AiUsage }>;
@@ -291,6 +297,7 @@ export class InboxReader {
   private readonly generateMisaCheckLine: MisaCheckLineGenerator;
   private readonly generateMisaAmisBlockerNotes: MisaAmisBlockerNotesGenerator;
   private readonly generateMarketplaceFeeNotes: MarketplaceFeeNotesGenerator;
+  private readonly generateMarketplaceColumns: MarketplaceColumnsGenerator;
   private readonly generateEInvoiceRate: EInvoiceRateGenerator;
   private readonly generateStockSurplus: StockSurplusGenerator;
   private readonly generateEInvoiceReason: EInvoiceReasonGenerator;
@@ -304,7 +311,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; marketplaceColumns?: MarketplaceColumnsGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
@@ -434,6 +441,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.marketplace_fee_note', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zMarketplaceFeeNotesOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateMarketplaceColumns =
+      generators.marketplaceColumns ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.stock_columns', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zMarketplaceColumnsOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -677,6 +692,15 @@ export class InboxReader {
     const { output, usage } = await this.generateMarketplaceFeeNotes({ system: marketplaceFeeNotesInstructions(facts.language), prompt: marketplaceFeeNotesPrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkMarketplaceFeeNotes(facts, output);
+  }
+
+  /** The columns of an order report no profile knows (#3850): which standard field each shown column is, from the header texts and masked sample shapes only (no buyer column is ever shown), or why there is no
+   * proposal. A column or field answered twice, a column not given and a field not on the list are dropped; the result is a proposal the caller reads the real file with before a person confirms it
+   * (marketplace-columns.ts). onUsage gets the tokens the call used, for the org's AI cost limit. */
+  async marketplaceColumns(facts: MarketplaceColumnFacts, onUsage?: (usage: AiUsage) => void): Promise<MarketplaceColumnsResult> {
+    const { output, usage } = await this.generateMarketplaceColumns({ system: marketplaceColumnsInstructions(facts.language), prompt: marketplaceColumnsPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkMarketplaceColumns(facts, output);
   }
 
   /** The finance coworker's one line above the received invoices to pay (#3113 S4c), from four facts code read from the books and nothing else, or why there is none: the text is refused when it states a
