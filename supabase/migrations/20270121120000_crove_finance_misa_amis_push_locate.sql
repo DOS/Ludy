@@ -13,6 +13,10 @@
 -- Granted to the API login (crove_app) alone.
 SET LOCAL lock_timeout = '2s';
 
+-- The lookup is by org_refid across every organisation, and the only index that holds it (misa_amis_push_refid_uq) leads with org_id: without this one each verified callback would scan every
+-- organisation's push rows, which nothing deletes. Not a hot table (AGENTS.md lists audit_event, the outbox and crove_jobs), so a plain build in the transaction is the rule.
+CREATE INDEX IF NOT EXISTS misa_amis_push_refid_idx ON crove_finance.misa_amis_push (org_refid);
+
 CREATE OR REPLACE FUNCTION crove_finance.misa_amis_push_locate(p_org_refids uuid[])
 RETURNS TABLE (org_refid uuid, org_id uuid, connection_id uuid, state text, attempts integer, voucher_type integer, org_company_code text)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$

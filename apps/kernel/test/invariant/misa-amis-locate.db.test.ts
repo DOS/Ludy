@@ -73,4 +73,10 @@ suite('the MISA AMIS callback locate function (#3903)', () => {
     const row = await one<{ src: string }>('SELECT prosrc AS src FROM pg_proc WHERE oid = $1::regprocedure', [FN]);
     expect(row?.src).not.toMatch(/\b(insert|update|delete|truncate|merge|alter|drop|create)\b/i);
   });
+  it('has an index that leads with org_refid, so a callback does not scan every organisation (the unique key leads with org_id)', async () => {
+    const row = await one<{ n: number }>(
+      "SELECT count(*)::int AS n FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = i.indkey[0] WHERE n.nspname = 'crove_finance' AND c.relname = 'misa_amis_push' AND a.attname = 'org_refid' AND i.indisvalid",
+    );
+    expect(row?.n).toBeGreaterThanOrEqual(1);
+  });
 });
