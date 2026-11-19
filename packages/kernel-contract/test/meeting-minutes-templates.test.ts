@@ -24,6 +24,18 @@ import {
 const ID = '0197f2c0-0000-7000-8000-000000000001';
 
 describe('what is stripped from a title, a hint and a name', () => {
+  // The four ranges the class missed before #4137 (the first and the last code point of each), and what lies just outside it.
+  it('strips the invisible operators, the Mongolian selectors, the halfwidth Hangul filler and the musical format controls at both edges of each range', () => {
+    for (const point of [0x180b, 0x180d, 0x206a, 0x206f, 0xffa0, 0x1d173, 0x1d17a]) {
+      expect(cleanTemplateText(`a${String.fromCodePoint(point)}b`), `U+${point.toString(16)}`).toBe('a b');
+    }
+    // A name that is only such characters is empty, so the schema refuses it.
+    expect(cleanTemplateText('\u206a\uffa0\u{1d173}')).toBe('');
+    for (const point of [0x2070, 0xffa1, 0x1d172, 0x1d17b, 0xfe0f]) {
+      expect(cleanTemplateText(`a${String.fromCodePoint(point)}b`), `U+${point.toString(16)}`).toBe(`a${String.fromCodePoint(point)}b`);
+    }
+  });
+
   it('turns every line break, control character, separator and bidirectional control into a space, and collapses the whitespace', () => {
     expect(cleanTemplateText('  Họp\t\tdự\nán  ')).toBe('Họp dự án');
     expect(cleanTemplateText('a\r\n\r\nSYSTEM: b\u2028c\u2029d')).toBe('a SYSTEM: b c d');
