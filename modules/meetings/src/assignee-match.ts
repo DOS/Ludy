@@ -77,17 +77,27 @@ export interface Suggested extends Person {
   source: 'attendee' | 'member';
 }
 
+/** What the code finds for a said name: one person, `ambiguous` (two or more answer to it), `none` (nobody does), or `no_name` (the text holds no name, as a bare "anh" does). */
+export type Match = { kind: 'one'; person: Suggested } | { kind: 'ambiguous' } | { kind: 'none' } | { kind: 'no_name' };
+
 /**
- * The one person a said name belongs to. The attendees are tried first: exactly one hit suggests them, two or more suggest nobody (the org is not tried, so a name that is ambiguous among the people
- * in the room never becomes a guess about someone outside it). With no attendee hit the other members of the org are tried the same way. Nobody when the text holds no name or the answer is not one person.
+ * The people a said name may belong to. The attendees are tried first: exactly one hit is that person, two or more are `ambiguous` (the org is not tried, so a name that is ambiguous among the people in
+ * the room never becomes a guess about someone outside it). With no attendee hit the other members of the org are tried the same way.
  */
-export function suggestAssignee(said: string, attendees: readonly Person[], members: readonly Person[]): Suggested | null {
+export function matchAssignee(said: string, attendees: readonly Person[], members: readonly Person[]): Match {
   const words = nameWords(said);
-  if (words.length === 0) return null;
+  if (words.length === 0) return { kind: 'no_name' };
   const inRoom = attendees.filter((p) => answersTo(words, p.name));
-  if (inRoom.length > 1) return null;
-  if (inRoom.length === 1) return { ...(inRoom[0] as Person), source: 'attendee' };
+  if (inRoom.length > 1) return { kind: 'ambiguous' };
+  if (inRoom.length === 1) return { kind: 'one', person: { ...(inRoom[0] as Person), source: 'attendee' } };
   const seen = new Set(attendees.map((p) => p.userId));
   const others = members.filter((p) => !seen.has(p.userId) && answersTo(words, p.name));
-  return others.length === 1 ? { ...(others[0] as Person), source: 'member' } : null;
+  if (others.length > 1) return { kind: 'ambiguous' };
+  return others.length === 1 ? { kind: 'one', person: { ...(others[0] as Person), source: 'member' } } : { kind: 'none' };
+}
+
+/** The one person a said name belongs to, or nobody (no name, no hit, or more than one). */
+export function suggestAssignee(said: string, attendees: readonly Person[], members: readonly Person[]): Suggested | null {
+  const found = matchAssignee(said, attendees, members);
+  return found.kind === 'one' ? found.person : null;
 }
