@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The facts the Meetings screens read from a platform recording (C1, #3173): what blocks an import, how often to look again, the words of a failure, what is claimed and when the dialog may submit.
 import { describe, expect, it } from 'vitest';
-import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_VIDEO_MAX_BYTES, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
+import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_VIDEO_MAX_BYTES, TRANSCRIPT_SEGMENTS_MAX, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
 import { IMPORT_NOTICE } from '@crove/meeting-recorder';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { IMPORT_MAX_SECONDS, POLL_BUSY_MS, POLL_IDLE_MS, canRetry, canSubmitImport, errorKey, importBlock, isBenignClaimRefusal, isInFlight, isTranscriptImport, lengthParts, pollMs, rowsToClaim } from '../src/lib/meeting-platform.ts';
+import { IMPORT_MAX_SECONDS, POLL_BUSY_MS, POLL_IDLE_MS, canRetry, canSubmitImport, errorKey, importBlock, isBenignClaimRefusal, isInFlight, isTranscriptImport, lengthParts, platformTranscript, pollMs, rowsToClaim } from '../src/lib/meeting-platform.ts';
 
 const row = (over: Partial<MeetingPlatformRecordingView> = {}): MeetingPlatformRecordingView => ({
   id: 'r1',
@@ -165,5 +165,17 @@ describe('isBenignClaimRefusal', () => {
     expect(isBenignClaimRefusal({ code: 'MEETING_PLATFORM_STATE', status: 409 })).toBe(true);
     expect(isBenignClaimRefusal({ code: 'MEETING_PLATFORM_NOT_FOUND', status: 404 })).toBe(true);
     for (const error of [{ code: 'MEDIA_PROBE_UNAVAILABLE', status: 503 }, { code: 'IMPORT_ONLY', status: 403 }, new TypeError('Failed to fetch'), new Error('x'), null, undefined, 'x']) expect(isBenignClaimRefusal(error)).toBe(false);
+  });
+});
+
+describe('platformTranscript', () => {
+  it('names the platform whose lines they are and says when the count is the draft\'s limit (#3922); null for Ludy\'s own', () => {
+    const lines = (n: number, source: 'ludy' | 'google_meet' | 'microsoft_teams') => Array.from({ length: n }, () => ({ source }));
+    expect(platformTranscript([])).toBeNull();
+    expect(platformTranscript(lines(3, 'ludy'))).toBeNull();
+    expect(platformTranscript(lines(5000, 'ludy'))).toBeNull();
+    expect(platformTranscript(lines(3, 'google_meet'))).toEqual({ platform: 'google_meet', cut: false });
+    expect(platformTranscript(lines(4999, 'microsoft_teams'))).toEqual({ platform: 'microsoft_teams', cut: false });
+    expect(platformTranscript(lines(TRANSCRIPT_SEGMENTS_MAX, 'google_meet'))).toEqual({ platform: 'google_meet', cut: true });
   });
 });

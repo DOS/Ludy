@@ -168,6 +168,7 @@ import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
 import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, WHATSAPP_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
 import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
+import { ZOOM_MAX_NOTICE_BYTES, ZOOM_SIGNATURE_HEADER, ZOOM_TIMESTAMP_HEADER, ZOOM_WEBHOOK_PATH, ZoomReplayCache, acceptZoomWebhook, type ZoomWebhookConfig } from './zoom-webhook.ts';
 import { TELEGRAM_SECRET_HEADER, TELEGRAM_WEBHOOK_PATH, TELEGRAM_UNAUTHORIZED, TelegramReplayCache, acceptTelegramWebhook, telegramWebhookAuthorized, type TelegramWebhookConfig } from './telegram-webhook.ts';
 import { FACEBOOK_SIGNATURE_HEADER, FACEBOOK_WEBHOOK_PATH, FacebookReplayCache, acceptFacebookWebhook, verifyFacebookWebhookChallenge, type FacebookWebhookConfig } from './facebook-webhook.ts';
 import { WHATSAPP_SIGNATURE_HEADER, WHATSAPP_WEBHOOK_PATH, WhatsAppReplayCache, acceptWhatsAppWebhook, verifyWhatsAppWebhookChallenge, type WhatsAppWebhookConfig } from './whatsapp-webhook.ts';
@@ -313,6 +314,12 @@ export interface HttpDeps {
   zaloWebhookLimit?: RateLimiter;
   // The events that route has parked lately (replay guard); unset: its own, one per process.
   zaloReplays?: ZaloReplayCache;
+  // Zoom's webhook for the recording import (meetings integrations C3, #3175): the app's secret token that signs its notices. Unset, or the Meetings module off: the route does not exist.
+  zoomWebhook?: ZoomWebhookConfig;
+  // Refused or unsigned requests per minute per client address for that route.
+  zoomWebhookLimit?: RateLimiter;
+  // The notices that route has answered lately (replay guard); unset: its own, one per process.
+  zoomReplays?: ZoomReplayCache;
   // Telegram's webhook for the conversation core (#3132): the keys the per-connection secret is derived from. Unset: the route does not exist.
   telegramWebhook?: TelegramWebhookConfig;
   // Refused requests per minute per client address for that route.
@@ -599,6 +606,7 @@ const STATUS_CACHE_MS = 5_000;
 const BANK_FEED_WEBHOOKS_PER_MINUTE = 120;
 // Refused requests (a bad signature, a body that is no notice) one address may send a minute; verified notices are not counted.
 const ZALO_WEBHOOKS_PER_MINUTE = 120;
+const ZOOM_WEBHOOKS_PER_MINUTE = 120;
 const FACEBOOK_WEBHOOKS_PER_MINUTE = 120;
 const WHATSAPP_WEBHOOKS_PER_MINUTE = 120;
 const TELEGRAM_WEBHOOKS_PER_MINUTE = 120;
@@ -1014,6 +1022,39 @@ export function createHttpApp(deps: HttpDeps) {
             return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
           }
         }
+        return c.json({ code: outcome.code }, outcome.status);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // Zoom's webhook of finished cloud recordings (meetings integrations C3, #3175), a doorbell and never data: the body is capped before it is read, the signature (x-zm-signature over
+  // `v0:<timestamp>:<body>`, constant time, 5 minute window) is checked before the event is looked at, and a verified notice only asks the sweep to list the host's connections again (a definer clears
+  // their last listing time). The answer is the same whether or not a connection matched. The per-address limit is charged to refused requests and to a URL validation challenge that came unsigned, so
+  // a flood of forged ones only turns into 429s and costs one HMAC each. Nothing of a body is logged.
+  const zoomWebhook = deps.zoomWebhook;
+  if (zoomWebhook && runtime.installed('meetings')) {
+    const zoomLimit = deps.zoomWebhookLimit ?? new RateLimiter({ perMinute: ZOOM_WEBHOOKS_PER_MINUTE });
+    const zoomReplays = deps.zoomReplays ?? new ZoomReplayCache();
+    app.post(ZOOM_WEBHOOK_PATH, bodyLimit({ maxSize: ZOOM_MAX_NOTICE_BYTES }), async (c) => {
+      try {
+        const outcome = await acceptZoomWebhook(
+          runtime,
+          zoomWebhook,
+          { signature: c.req.header(ZOOM_SIGNATURE_HEADER), timestamp: c.req.header(ZOOM_TIMESTAMP_HEADER), body: new Uint8Array(await c.req.arrayBuffer()) },
+          zoomReplays,
+        );
+        const charged = outcome.status !== 200 || outcome.unsigned === true;
+        if (charged) {
+          const decision = zoomLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+          if (!decision.allowed) {
+            warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+            c.header('retry-after', String(decision.retryAfterSeconds));
+            return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+          }
+        }
+        if (outcome.status === 200) return c.json(outcome.body, 200);
         return c.json({ code: outcome.code }, outcome.status);
       } catch (error) {
         return problem(c, error);
@@ -3009,6 +3050,17 @@ export function createHttpApp(deps: HttpDeps) {
   };
   const mediaBodyLimit: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number; videoSlotHeld: boolean } }> = (c, next) =>
     bodyLimit({ maxSize: c.get('mediaBodyCap') })(c, next);
+  // Which import route a platform recording belongs to (C2, #3174 follow-up #3923): one with neither an audio nor a video file is the transcript's (POST /api/meetings/:id/transcript-import), every other is the
+  // media route's. A request that names the wrong route is refused BEFORE the claim moves the row, so the row stays staged with its bytes for the right request (the app routes by the same rule). A row that is
+  // not in the member's own list is left to the claim, which answers "not found".
+  const refuseWrongImportRoute = async (user: AuthUser, orgId: string, recordingId: string, route: 'media' | 'transcript'): Promise<void> => {
+    const rows = await runtime.query<Array<{ id: string; hasAudio: boolean; hasVideo: boolean }>>('kernel.meeting_platform.recordings', {}, { actor: actorOf(user), orgId });
+    const row = rows.find((r) => r.id === recordingId);
+    if (!row) return;
+    const transcriptOnly = !row.hasAudio && !row.hasVideo;
+    if (route === 'media' && transcriptOnly) throw new DomainError('BAD_REQUEST', 400, 'Bản ghi này chỉ có bản chép lời, hãy nhập nó bằng bản chép lời');
+    if (route === 'transcript' && !transcriptOnly) throw new DomainError('BAD_REQUEST', 400, 'Bản ghi này có âm thanh hoặc video, không nhập được bằng bản chép lời');
+  };
   app.post('/api/meetings/:id/media', mediaGate, mediaBodyLimit, async (c) => {
     try {
       if (!runtime.installed('meetings')) {
@@ -3116,6 +3168,7 @@ export function createHttpApp(deps: HttpDeps) {
 
           let claim: { stagingKey: string; cap: number };
           if (typeof body.importId === 'string') {
+            await refuseWrongImportRoute(user, orgId, body.importId, 'media');
             // The worker staged the bytes; this request takes them, then seals and records them like an upload (the row is the member's own: another's is answered as absent).
             // The claim names this route's meeting, so a recording begun for another meeting is refused before the row moves (it never ends up claimed by a request it cannot serve).
             const imported = await runtime.execute<{ stagingKey: string; meetingId: string }>(
@@ -3353,6 +3406,7 @@ export function createHttpApp(deps: HttpDeps) {
       try {
         const meeting = await meetingFacts(user, orgId, meetingId);
         if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may import a transcript');
+        await refuseWrongImportRoute(user, orgId, importId, 'transcript');
         // The claim names this route's meeting, so a recording begun for another meeting is refused before the row moves.
         const imported = await runtime.execute<{ stagingKey: string; meetingId: string }>(
           'kernel.meeting_platform.import.claim',
