@@ -490,6 +490,15 @@ suite('MISA AMIS push (#3902)', () => {
     await expect(tenant('owner', orgId, (c) => c.query("UPDATE crove_finance.misa_amis_push SET state = 'accepted', reason = 'typed', answered_at = pg_catalog.now() WHERE org_refid = $1", [waiting]))).rejects.toThrow(/MISA_AMIS_PUSH_STATE/);
     await expect(tenant('owner', orgId, (c) => c.query("UPDATE crove_finance.misa_amis_push SET state = 'queued', attempts = attempts + 1, reason = NULL WHERE org_refid = $1", [waiting]))).rejects.toThrow(/MISA_AMIS_PUSH_STATE/);
     expect(await tenant('owner', orgId, async (c) => (await c.query("UPDATE crove_finance.misa_amis_push SET state = 'failed', reason = 'NOT_IN_AMIS' WHERE org_refid = $1", [waiting])).rowCount)).toBe(1);
+    // A person's move is stamped with the database clock: a statement that backdates `updated_at` along with an allowed move (an old `ambiguous` row back to `sent`) gets the real time, so the row is not settled at once.
+    // (The row is put back to `ambiguous` and four days old by the owner of the database, as the worker's history would leave it.)
+    await rows("UPDATE crove_finance.misa_amis_push SET state = 'ambiguous', reason = NULL, answered_at = NULL, updated_at = pg_catalog.now() - interval '4 days' WHERE org_refid = $1", [waiting]);
+    await tenant('owner', orgId, (c) => c.query("UPDATE crove_finance.misa_amis_push SET state = 'sent', reason = 'CONFIRMED_IN_AMIS', updated_at = pg_catalog.now() - interval '2 days' WHERE org_refid = $1", [waiting]));
+    const [after] = await rows<{ fresh: boolean }>("SELECT updated_at > pg_catalog.now() - interval '1 minute' AS fresh FROM crove_finance.misa_amis_push WHERE org_refid = $1", [waiting]);
+    expect(after?.fresh).toBe(true);
+    await expect(tenant('owner', orgId, (c) => c.query("UPDATE crove_finance.misa_amis_push SET state = 'accepted', reason = 'CONFIRMED_IN_AMIS', answered_at = pg_catalog.now() WHERE org_refid = $1", [waiting]))).rejects.toThrow(/MISA_AMIS_PUSH_STATE/);
+    // Back to where the rest of the test expects it.
+    await rows("UPDATE crove_finance.misa_amis_push SET state = 'failed', reason = 'NOT_IN_AMIS' WHERE org_refid = $1", [waiting]);
     // Another org sees none of it and changes none of it.
     expect(await tenant('outsider', otherOrgId, async (c) => (await c.query('SELECT 1 FROM crove_finance.misa_amis_push')).rowCount)).toBe(0);
     expect(await tenant('outsider', otherOrgId, async (c) => (await c.query("UPDATE crove_finance.misa_amis_push SET reason = 'x' WHERE org_refid = $1", [queued])).rowCount)).toBe(0);

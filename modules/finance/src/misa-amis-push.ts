@@ -10,8 +10,9 @@
 //   the rows it took or whose answer was lost (`sent`, `ambiguous`, or `sending` for too long, which becomes `ambiguous`), once per run, then send the next batch of queued rows (at most AMIS_SAVE_BATCH_MAX, one
 //   voucher type and one set of choices). A batch whose call was begun before is never sent again.
 // - finance.misa_amis.push_record (system; R1): writes what came back into the rows and the call. Only moves the graph allows (the table's guard says the same).
-// - finance.misa_amis.push_resolve (owners and admins; R2 internal): after three days without MISA's answer a person who looked in AMIS says "it is in AMIS" (`sent`, no call) or "it is not in AMIS" (`failed`: only a new
-//   confirmed push sends it again).
+// - finance.misa_amis.push_resolve (owners and admins; R2 external, because "in AMIS" on an `ambiguous` row emits the event that starts the job reading MISA's result): a person who looked in AMIS settles a row MISA never
+//   answered for. An `ambiguous` row after three days: "in AMIS" makes it `sent` (its result is then read), "not in AMIS" makes it `failed`. A `sent` row after 24 hours (the worker's polling window): "in AMIS" makes it
+//   `accepted`, "not in AMIS" makes it `failed`; only a new confirmed push sends a failed row again. Ages are the database clock's; the guard stamps the move with it.
 // - finance.misa_amis.push_list (every member; query): the rows of a connection with their state and MISA's reason (untrusted text: the screen shows it escaped).
 // No voucher body is stored, and no row, audit fact, ledger row or error carries a credential, a party name or an amount: ids, codes, dates, counts and states. MISA's own text is only the `reason` of a refused row.
 import { createHash } from 'node:crypto';
