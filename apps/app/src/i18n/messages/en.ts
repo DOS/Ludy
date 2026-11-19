@@ -13663,7 +13663,6 @@ export const en = {
       MARKETPLACE_CONNECTION_LIVE: 'Disconnect from the marketplace before removing this row.',
       MISA_AMIS_DISABLED: 'This MISA connector (AMIS Kế toán or ASP) is not turned on in this system.',
       MISA_AMIS_CONNECTION_EXISTS: 'This legal entity already has a MISA connection (AMIS Kế toán or ASP); disconnect it before connecting again.',
-      MISA_ASP_PUSH_NOT_AVAILABLE: 'Sending vouchers to MISA ASP is not available yet; only a MISA AMIS Kế toán connection can send vouchers now.',
       MISA_AMIS_CONNECTION_LIVE: 'Disconnect MISA AMIS before removing this row.',
       MISA_AMIS_CONNECTION_NOT_FOUND: 'That MISA AMIS connection was not found.',
       MISA_AMIS_NOT_TESTED: 'Test the MISA AMIS connection successfully before sending vouchers.',

@@ -5,11 +5,13 @@
 // (finance.misa_amis.push_record). The voucher body is never stored: it is rebuilt from the source with the same path the preview used, and checked against the digest the person approved before it goes out.
 //
 // One run: read the AMIS branch (once, when something is queued), ask MISA for the results of the rows it took or whose answer was lost, then send queued batches of at most AMIS_SAVE_BATCH_MAX
-// until none is left. Results come by polling in this slice (the callback route is S4, #3903): the run reports `waiting` while rows wait for MISA's answer, and the worker asks again later.
+// until none is left. Results come by polling for AMIS (and by the callback route, #3903): the run reports `waiting` while rows wait for MISA's answer, and the worker asks again later.
+// MISA ASP (#4113, S4 of #4103) has no call that lists results: its connection is pushed by the same steps with ASP's client, and its rows are settled only by the callback or by a person (no result check, no
+// waiting for a `sent` row).
 // Nothing here logs or stores a credential, a party's name, an amount or MISA's own text other than the capped `reason` of a refused voucher: ids, codes and counts.
 import { AMIS_DICTIONARIES, AmisError, amisErrorText, isOrgRefId, type AmisCallbackResult, type AmisClient, type AmisConnection } from '@crove/misa-amis';
 import { MISA_AMIS_PREVIEW_LIMIT, type MisaAmisPreviewAsk } from '@crove/kernel-contract';
-import { amisContextOf, amisPartRows, loadAmisEntries, MISA_AMIS_CHANNEL_PROVIDER, type AmisPartRow, type MisaAmisPushBegin, type MisaAmisPushRecord, type MisaAmisPushTarget } from '@crove/mod-finance';
+import { amisContextOf, amisPartRows, loadAmisEntries, misaChannelProvider, type AmisPartRow, type MisaAmisPushBegin, type MisaAmisPushRecord, type MisaAmisPushTarget } from '@crove/mod-finance';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.misa_amis' };
@@ -33,7 +35,9 @@ export interface MisaAmisPushJob {
 export interface MisaAmisPushDeps {
   runtime: Runtime;
   broker: CredentialBroker;
-  client: AmisClient;
+  // The client of each product, null where the deployment holds no ClientID or has not switched the push on for it (#4113): a connection of that product is left alone, its queued rows stay queued.
+  client: AmisClient | null;
+  aspClient?: AmisClient | null;
   // Today, for the day MISA is asked about; a test passes its own.
   now?: () => Date;
 }
@@ -76,12 +80,16 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
   const now = deps.now ?? (() => new Date());
   const target = await deps.runtime.query<MisaAmisPushTarget>('finance.misa_amis.push_target', { connectionId: job.connectionId }, options);
   if (target.action === 'none') return { state: 'skipped', reason: target.reason };
+  // The product of the connection decides the client, the provider its access code was sealed for, and whether MISA is asked for results (AMIS: by polling; ASP: never, its results come by the callback).
+  const client = target.product === 'asp' ? (deps.aspClient ?? null) : deps.client;
+  if (!client) return { state: 'skipped', reason: 'product_off' };
 
   // The access code: opened from the sealed copy, and refused once the member who connected it may no longer use it or the connection is no longer active.
   let connection: AmisConnection;
   try {
     const sealed = await deps.runtime.query<SealedChannelCredential>('kernel.channel.credential', { connectionId: target.channelConnectionId }, options);
-    if (sealed.provider !== MISA_AMIS_CHANNEL_PROVIDER) {
+    // Only an access code sealed for this connection's product is opened (the other MISA product's, or another provider's, never).
+    if (sealed.provider !== misaChannelProvider(target.product)) {
       console.warn(`[misa-amis] push ${job.connectionId.slice(0, 8)}: credential of another provider, not opened`);
       return { state: 'credentials', waiting: false };
     }
@@ -119,7 +127,7 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
 
     if (begun.action === 'need_branch') {
       try {
-        branchId = await readBranch(deps.client, connection);
+        branchId = await readBranch(client, connection);
       } catch (error) {
         // Nothing was begun: queued rows stay queued.
         if (error instanceof AmisError && error.kind === 'credentials') return { state: 'credentials', waiting: false };
@@ -135,7 +143,7 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
       for (const row of begun.rows) attemptOf.set(row.orgRefid, row.attempts);
       let results: AmisCallbackResult[];
       try {
-        results = await readResults(deps.client, connection, begun.from, now());
+        results = await readResults(client, connection, begun.from, now());
       } catch (error) {
         if (error instanceof AmisError && error.kind === 'credentials') return { state: 'credentials', waiting: false };
         console.warn(`[misa-amis] push ${job.connectionId.slice(0, 8)}: results not read (${error instanceof AmisError ? error.kind : 'error'})`);
@@ -193,7 +201,7 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
     } else {
       const sentRows = ready.map((p) => p.orgRefid);
       try {
-        await deps.client.save(connection, ready.map((p) => p.voucher));
+        await client.save(connection, ready.map((p) => p.voucher));
         end = { state: 'succeeded' };
         for (const orgRefid of sentRows) moves.push({ orgRefid, from: 'sending', to: 'sent', reason: null });
       } catch (error) {

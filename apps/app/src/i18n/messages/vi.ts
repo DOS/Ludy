@@ -13676,7 +13676,6 @@ export const vi = {
       MARKETPLACE_CONNECTION_LIVE: 'Hãy ngắt kết nối với sàn trước khi xóa dòng này.',
       MISA_AMIS_DISABLED: 'Bộ kết nối MISA (AMIS Kế toán hoặc ASP) này chưa được bật trên hệ thống này.',
       MISA_AMIS_CONNECTION_EXISTS: 'Pháp nhân này đã có một kết nối MISA (AMIS Kế toán hoặc ASP); hãy ngắt kết nối cũ trước khi kết nối lại.',
-      MISA_ASP_PUSH_NOT_AVAILABLE: 'Việc gửi chứng từ sang MISA ASP chưa có; hiện chỉ kết nối MISA AMIS Kế toán gửi được chứng từ.',
       MISA_AMIS_CONNECTION_LIVE: 'Hãy ngắt kết nối MISA AMIS trước khi xóa dòng này.',
       MISA_AMIS_CONNECTION_NOT_FOUND: 'Không tìm thấy kết nối MISA AMIS này.',
       MISA_AMIS_NOT_TESTED: 'Hãy kiểm tra kết nối MISA AMIS thành công trước khi gửi chứng từ.',

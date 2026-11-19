@@ -71,6 +71,9 @@ suite('MISA AMIS connections (#3875)', () => {
   let offApp: ReturnType<typeof createHttpApp>;
   // The deployment that also turned the push on (MISA_AMIS_PUSH=on), as against `app`, which holds the ClientID but not the switch.
   let pushApp: ReturnType<typeof createHttpApp>;
+  // ASP's push on and AMIS's off, and the other way round (#4113): each product has a switch of its own.
+  let aspPushApp: ReturnType<typeof createHttpApp>;
+  let amisOnlyPushApp: ReturnType<typeof createHttpApp>;
   // The deployment that also holds the ClientID of MISA ASP (#4111), and one that holds only that one.
   let aspApp: ReturnType<typeof createHttpApp>;
   let aspOnlyApp: ReturnType<typeof createHttpApp>;
@@ -154,6 +157,8 @@ suite('MISA AMIS connections (#3875)', () => {
     offApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false } });
     pushApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAmis: true, misaAmisPush: true } });
     aspApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAmis: true, misaAsp: true } });
+    aspPushApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAmis: true, misaAsp: true, misaAspPush: true } });
+    amisOnlyPushApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAmis: true, misaAsp: true, misaAmisPush: true } });
     aspOnlyApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAsp: true } });
 
     for (const who of [owner, adminUser, member, viewer, outsider]) {
@@ -181,9 +186,9 @@ suite('MISA AMIS connections (#3875)', () => {
   });
 
   it('is offered only where the deployment holds the integrator\'s ClientID, and refuses a connect anywhere else before anything is sealed', async () => {
-    expect((await call('status', member)).body).toEqual({ offered: true, pushOffered: false, aspOffered: false });
-    expect((await call('status', member, undefined, offApp)).body).toEqual({ offered: false, pushOffered: false, aspOffered: false });
-    expect((await call('status', member, undefined, pushApp)).body).toEqual({ offered: true, pushOffered: true, aspOffered: false });
+    expect((await call('status', member)).body).toEqual({ offered: true, pushOffered: false, aspOffered: false, aspPushOffered: false });
+    expect((await call('status', member, undefined, offApp)).body).toEqual({ offered: false, pushOffered: false, aspOffered: false, aspPushOffered: false });
+    expect((await call('status', member, undefined, pushApp)).body).toEqual({ offered: true, pushOffered: true, aspOffered: false, aspPushOffered: false });
     await expect(call('connections/connect', owner, connectInput(), offApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
     expect(await rows('SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([]);
     expect(await rows('SELECT 1 FROM crove_finance.misa_amis_connection WHERE org_id = $1', [orgId])).toEqual([]);
@@ -456,8 +461,8 @@ suite('MISA AMIS connections (#3875)', () => {
   };
 
   it('offers MISA ASP only where the deployment holds its own ClientID, and refuses a connect of a product the deployment does not hold before anything is sealed', async () => {
-    expect((await call('status', member, undefined, aspApp)).body).toEqual({ offered: true, pushOffered: false, aspOffered: true });
-    expect((await call('status', member, undefined, aspOnlyApp)).body).toEqual({ offered: false, pushOffered: false, aspOffered: true });
+    expect((await call('status', member, undefined, aspApp)).body).toEqual({ offered: true, pushOffered: false, aspOffered: true, aspPushOffered: false });
+    expect((await call('status', member, undefined, aspOnlyApp)).body).toEqual({ offered: false, pushOffered: false, aspOffered: true, aspPushOffered: false });
     const entity = await newEntity('Chi nhánh chưa bật ASP');
     await expect(call('connections/connect', owner, connectInput({ legalEntityId: entity, product: 'asp', accessCode: ASP_CODE }), app)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
     await expect(call('connections/connect', owner, connectInput({ legalEntityId: entity, accessCode: ASP_CODE }), aspOnlyApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
@@ -571,13 +576,28 @@ suite('MISA AMIS connections (#3875)', () => {
     expect(await runMisaAmisTest({ runtime: worker, broker: vault, client: fakeAmis('x', 'y').client, aspClient: null }, { orgId, connectionId: id })).toEqual({ state: 'skipped', reason: 'product_off' });
   });
 
-  it('never pushes vouchers to an ASP connection yet: the push is refused for it, and the worker is told to leave it alone', async () => {
+  it('hands the worker the product of an ASP connection, and no longer refuses the push command for it; each product has its own push switch (#4113)', async () => {
     const [asp] = await rows<{ id: string; legal_entity_id: string }>("SELECT id, legal_entity_id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND product = 'asp' ORDER BY created_at LIMIT 1", [orgId]);
+    const [amis] = await rows<{ id: string; legal_entity_id: string }>("SELECT id, legal_entity_id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND product = 'amis' ORDER BY created_at LIMIT 1", [orgId]);
     const target = await worker.query('finance.misa_amis.push_target', { connectionId: String(asp?.id) }, { actor: system, orgId });
-    expect(target).toEqual({ action: 'none', reason: 'other_product' });
+    expect(target).toMatchObject({ action: 'push', id: String(asp?.id), product: 'asp' });
+    // Nothing to send and, for ASP, nothing waits for a poll: no result check is ever asked for an ASP connection.
     const begin = await worker.execute('finance.misa_amis.push_begin', { connectionId: String(asp?.id), branchKnown: false, checked: false }, { actor: system, orgId });
-    expect(begin).toMatchObject({ action: 'none', reason: 'other_product' });
-    await expect(api.execute('finance.misa_amis.push', { connectionId: String(asp?.id), kind: 'purchase_services', digest: 'a'.repeat(64), legalEntityId: String(asp?.legal_entity_id) }, { actor: asUser(owner), orgId })).rejects.toMatchObject({ code: 'MISA_ASP_PUSH_NOT_AVAILABLE' });
+    expect(begin).toEqual({ action: 'none', reason: 'nothing', waiting: false });
+    // Status: each product's push has its own flag.
+    expect((await call('status', member, undefined, aspPushApp)).body).toEqual({ offered: true, pushOffered: false, aspOffered: true, aspPushOffered: true });
+    expect((await call('status', member, undefined, amisOnlyPushApp)).body).toEqual({ offered: true, pushOffered: true, aspOffered: true, aspPushOffered: false });
+    const press = async (on: ReturnType<typeof createHttpApp>, row: { id: string; legal_entity_id: string } | undefined) =>
+      rpc('vouchers/misaAmisPush', await tokenFor(owner), { connectionId: String(row?.id), kind: 'purchase_services', digest: 'a'.repeat(64), legalEntityId: String(row?.legal_entity_id) }, slug, on);
+    // With the ASP push on, a press on the ASP connection reaches the command (refused there for what it holds, never for its product); a press on the AMIS connection answers the 404 of a switched-off push.
+    const reached = await press(aspPushApp, asp);
+    expect(reached.status).not.toBe(404);
+    expect(reached.body?.code).not.toBe('MISA_ASP_PUSH_NOT_AVAILABLE');
+    await expect(press(aspPushApp, amis)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_PUSH_DISABLED' } });
+    // With only AMIS's push on, the ASP connection answers the same 404; with neither on, both do.
+    await expect(press(amisOnlyPushApp, asp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_PUSH_DISABLED' } });
+    await expect(press(aspApp, asp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_PUSH_DISABLED' } });
+    await expect(press(aspApp, amis)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_PUSH_DISABLED' } });
   });
 
 });

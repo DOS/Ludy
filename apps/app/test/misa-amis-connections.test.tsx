@@ -38,13 +38,15 @@ const connection = (over: Partial<MisaAmisConnection> = {}): MisaAmisConnection 
 interface Seed {
   offered?: boolean;
   aspOffered?: boolean;
+  // MISA_ASP_PUSH is on (#4113): the push to ASP has its own switch, apart from AMIS's.
+  aspPushOffered?: boolean;
   connections?: MisaAmisConnection[];
   entities?: LegalEntity[];
   locale?: 'en' | 'vi';
 }
 function card(role: Role, seed: Seed = {}): string {
   const qc = client.current;
-  qc.setQueryData(['misaAmis', 'status'], { offered: seed.offered ?? true, pushOffered: false, aspOffered: seed.aspOffered ?? false });
+  qc.setQueryData(['misaAmis', 'status'], { offered: seed.offered ?? true, pushOffered: false, aspOffered: seed.aspOffered ?? false, aspPushOffered: seed.aspPushOffered ?? false });
   qc.setQueryData(['misaAmis', 'connections', 'list'], seed.connections ?? []);
   qc.setQueryData(['legalEntities', 'list'], seed.entities ?? [entity('e1', 'Công ty TNHH Mẫu', true)]);
   const locale = seed.locale ?? 'en';
@@ -211,6 +213,16 @@ describe('the product of a connection (#4111, S2 of #4103)', () => {
     const amis = card('owner', { aspOffered: true, connections: [connection({ legalEntityId: 'e1' })] });
     expect(amis).not.toContain('data-testid="misa-asp-later"');
     expect(amis).toMatch(/data-testid="misa-amis-product"[^>]*>MISA AMIS Kế toán</);
+  });
+
+  it('draws the preview and the push list for an ASP connection only where the push to ASP is switched on, and then not the note that sending is not there', () => {
+    const on = card('owner', { aspOffered: true, aspPushOffered: true, connections: [asp({ lastTestState: 'works', lastTestedAt: at })] });
+    expect(on).toContain('data-testid="misa-amis-preview"');
+    expect(on).not.toContain('data-testid="misa-asp-later"');
+    // AMIS's push switch (pushOffered) does not turn ASP's on, and ASP's does not show on an AMIS connection.
+    const off = card('owner', { aspOffered: true, connections: [asp({ lastTestState: 'works', lastTestedAt: at })] });
+    expect(off).not.toContain('data-testid="misa-amis-preview"');
+    expect(off).toContain('data-testid="misa-asp-later"');
   });
 
   it('still shows an ASP connection, with its disconnect button, where the deployment no longer holds the ASP ClientID', () => {
