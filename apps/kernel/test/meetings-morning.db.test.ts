@@ -31,6 +31,7 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
   let workerDb: Db;
   const users: Record<string, string> = {};
   const connections: Record<string, string> = {};
+  const asMfa = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal2' as const, mfaAt: Math.floor(Date.now() / 1000) });
   const asUser = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const });
   const get = (who: string) => runtime.query<MorningState>('meetings.morning.get', {}, { actor: asUser(who), orgId });
   const set = (who: string, input: Record<string, unknown>) => runtime.execute<MorningState>('meetings.morning.set', input, { actor: asUser(who), orgId });
@@ -88,9 +89,9 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry);
-    for (const key of ['owner', 'lan', 'nam', 'quiet', 'muted', 'odd']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'morning', subject: key, email: `${key}@morning.test`, name: key });
+    for (const key of ['owner', 'lan', 'nam', 'quiet', 'muted', 'odd', 'gone', 'busy']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'morning', subject: key, email: `${key}@morning.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Buổi Sáng')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [orgId, users.lan, users.nam, users.quiet, users.muted, users.odd]);
+    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'member'), ($1, $8, 'member')`, [orgId, users.lan, users.nam, users.quiet, users.muted, users.odd, users.gone, users.busy]);
   }, 300_000);
 
   afterAll(async () => {
@@ -192,5 +193,32 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     const english = (await mails()).find((m) => m.to_address === 'quiet@morning.test');
     expect(english?.payload).toMatchObject({ lang: 'en', count: 1 });
     expect(english?.subject).toBe('You have meetings today');
+  });
+
+  it('drops a member\'s setting when they leave the org, so a later return finds it off, and leaves the others alone', async () => {
+    await set('gone', { enabled: true, minute: 480, timeZone: ZONE, language: 'vi' });
+    await set('owner', { enabled: true, minute: 480, timeZone: ZONE, language: 'vi' });
+    const rows = (user: string) => sqlAdmin(`SELECT 1 FROM crove_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users[user]]);
+    expect((await rows('gone')).rowCount).toBe(1);
+    await runtime.execute('kernel.member.remove', { userId: users.gone }, { actor: asMfa('owner'), orgId });
+    expect((await rows('gone')).rowCount).toBe(0);
+    expect((await rows('owner')).rowCount).toBe(1);
+    // They come back (an invite accepted, here the row put back by hand): the old switch is not on.
+    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users.gone]);
+    expect(await get('gone')).toMatchObject({ enabled: false });
+  });
+
+  it('caps the day\'s count at 1000, so a member with more events still gets a notice', async () => {
+    await connect('busy');
+    await sqlAdmin(
+      `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone)
+       SELECT $1, $2, $3, 'busy-' || g, 'Họp ' || g, now(), now() + interval '30 minutes', $4 FROM generate_series(1, 1005) g`,
+      [orgId, connections.busy, users.busy, ZONE],
+    );
+    const now = await localNow(ZONE);
+    await set('busy', { enabled: true, minute: Math.max(0, now.minute - 10), timeZone: ZONE, language: 'vi' });
+    expect((await sqlAdmin<{ events: number }>(`SELECT events FROM crove_meetings.morning_notices_due(10, $1, $2)`, [orgId, users.busy])).rows).toEqual([{ events: 1000 }]);
+    expect(await sweep()).toMatchObject({ found: 1, sent: 1, failures: 0 });
+    expect((await notices('busy'))[0]).toMatchObject({ detail: { count: '1000' } });
   });
 });
