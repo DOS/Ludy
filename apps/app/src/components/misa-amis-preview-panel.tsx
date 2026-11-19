@@ -95,6 +95,10 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
     }, CHECK_POLL_MS);
     return () => clearInterval(timer);
   }, [waitUntil, checkState, rerun, asked]);
+  // The slow notice belongs to a check that is still waiting: once a result is shown (done, failed or none) it is cleared, so a later request never starts with it already up.
+  useEffect(() => {
+    if (checkState !== 'requested') setSlow(false);
+  }, [checkState]);
   const waiting = waitUntil !== null;
   const askCheck = () => {
     setSlow(false);
