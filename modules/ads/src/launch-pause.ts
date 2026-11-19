@@ -189,10 +189,11 @@ export const adsPauseBegin = defineCommand({
       WHERE org_id = ${ctx.orgId}::uuid AND key LIKE ${`ads.launch:${launchId}:%:activate\\_%`} AND state IN ('started', 'ambiguous') AND updated_at > ${new Date(ctx.now.getTime() - ACTIVATION_IN_FLIGHT_SECONDS * 1000)}`.execute(ctx.trx);
     if ((inFlight[0]?.n ?? 0) > 0) return none('activation_in_flight');
     // The same for a change of the launch's objects (W4, #3835): a resume that was begun and may still be in flight could switch an object on after this run paused it.
+    // A change that ended unclear has no call pending (nothing calls it again; a sweep's read only looks and touches the row's clock, #3898), so it never holds the pause back.
     const { rows: manageInFlight } = await sql<{ n: number }>`
       SELECT count(*)::int AS n FROM crove_kernel.external_call e
       JOIN crove_ads.ad_manage_change c ON c.org_id = e.org_id AND e.key = 'ads.manage:' || c.id::text || ':apply'
-      WHERE e.org_id = ${ctx.orgId}::uuid AND c.launch_id = ${launchId}::uuid AND e.state IN ('started', 'ambiguous') AND e.updated_at > ${new Date(ctx.now.getTime() - ACTIVATION_IN_FLIGHT_SECONDS * 1000)}`.execute(ctx.trx);
+      WHERE e.org_id = ${ctx.orgId}::uuid AND c.launch_id = ${launchId}::uuid AND c.state <> 'unclear' AND e.state IN ('started', 'ambiguous') AND e.updated_at > ${new Date(ctx.now.getTime() - ACTIVATION_IN_FLIGHT_SECONDS * 1000)}`.execute(ctx.trx);
     if ((manageInFlight[0]?.n ?? 0) > 0) return none('manage_in_flight');
 
     // Which token pauses it. A run on the live connection needs it active; one whose connection is closed (a switch-off closes it in the same transaction as the stop) is
