@@ -42,7 +42,10 @@ export type SignalEvaluator = (grant: WakeGrant) => Promise<SignalAnswer>;
 
 // A line's source of wake events (Engage's wake rules, #3862; ADR-0051 decision 13): the `data` of each event of ONE registered line type for one grant, built from ids, enum words, dates and amounts of the line's
 // own rows, read as the grant itself (an MCP actor in its sealed read-only context, so the database's own policies decide which items it may read: slice b). The sweep stores an event only if its type is registered, the body
-// fits the registered fields exactly and the grant holds the type's scope (the database refuses the rest); up to 20 events of a source go out in one pass.
+// fits the registered fields exactly and the grant holds the type's scope (the database refuses the rest, and the runtime writes no refusal row for it); up to 20 events of a source go out in one pass.
+// The sources are offered to every due grant that gets signals (a company grant), and the database says which are not for it, so a source reads once more for a grant without the scope (a read in that grant's own
+// sealed read-only context, nothing stored, no refusal row); a line's source should check the grant's scopes first when it can. NO deduplication yet: an event stored for a line type carries no signal keys, so a rule that still holds would wake the receiver again on the next look. A line's source (Engage E3, #3862) must bring its own
+// "seen" rule (a key table like the signals', or a source that returns an event only when the condition first appears) before it ships.
 export interface LineWakeSource {
   type: string;
   events: (grant: WakeGrant) => Promise<Array<Record<string, string>>>;
@@ -190,14 +193,14 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
           const chunk = news.slice(at, at + WAKE_ITEMS_MAX);
           if (await post(grant, 'signal.fired', { items: chunk }, chunk.map((i) => i.key))) done.signals += 1;
         }
-      }
-      // The lines' own events: a source of a type the registry does not list is never asked, and a grant that does not hold the type's scope is refused by the database (MCP_WAKE_SCOPE) and left alone.
-      for (const source of deps.lines ?? []) {
-        if (!Object.hasOwn(deps.lineRegistry ?? LINE_WAKE_EVENTS, source.type)) continue;
-        try {
-          for (const data of (await source.events(grant)).slice(0, WAKE_ITEMS_MAX)) await post(grant, source.type, data);
-        } catch (error) {
-          if (!(error instanceof DomainError) || error.code !== 'MCP_WAKE_SCOPE') throw error;
+        // The lines' own events (inside the signal look, so never for a member-bound grant, which has none, and every five minutes at most): a source of a type the registry does not list is never asked, and a grant that does not hold the type's scope is refused by the database (MCP_WAKE_SCOPE) and left alone.
+        for (const source of deps.lines ?? []) {
+          if (!Object.hasOwn(deps.lineRegistry ?? LINE_WAKE_EVENTS, source.type)) continue;
+          try {
+            for (const data of (await source.events(grant)).slice(0, WAKE_ITEMS_MAX)) await post(grant, source.type, data);
+          } catch (error) {
+            if (!(error instanceof DomainError) || error.code !== 'MCP_WAKE_SCOPE') throw error;
+          }
         }
       }
     } catch (error) {

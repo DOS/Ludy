@@ -187,7 +187,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
   });
 
   it('sends a line\'s event only for a registered type and only to a grant that holds its scope: the source is not asked for an unregistered type, an unlisted field fails the grant\'s turn, and a grant without the scope gets none', async () => {
-    const type = 'engage.conversation_unanswered';
+    const type = 'engage.zz_test_wake_event';
     const fields = { conversation_id: 'id', channel: ['facebook', 'zalo'] };
     await admin((c) => c.query(`INSERT INTO crove_kernel.mcp_wake_event_type (type, scope, fields, adr) VALUES ($1, 'ludy.engage.write', $2::jsonb, 'ADR-0051')`, [type, JSON.stringify(fields)]));
     try {
@@ -198,7 +198,7 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
       const conversation = randomUUID();
       const lines = [
         { type, events: async (g: { grantId: string }) => (asked.push(g.grantId), [{ conversation_id: conversation, channel: 'zalo' }]) },
-        { type: 'engage.not_registered', events: async () => (asked.push('unregistered'), [{ conversation_id: conversation, channel: 'zalo' }]) },
+        { type: 'engage.zz_not_registered', events: async () => (asked.push('unregistered'), [{ conversation_id: conversation, channel: 'zalo' }]) },
       ];
       const sent: Array<{ orgId: string; id: string }> = [];
       const sweep = () => runWakeSweep({ runtime: worker, workerDb, send: async (job) => void sent.push(job), evaluate: async () => ({ items: [], complete: [] }), lines, lineRegistry: registry as never });
@@ -210,6 +210,8 @@ suite('the wake-up sweep and delivery (#3024, step b)', () => {
       expect(mine.find((r) => r.type === type)?.body.data).toEqual({ conversation_id: conversation, channel: 'zalo' });
       // The grant without the scope was asked (the sweep does not know scopes) but the database stored nothing for it, and the sweep went on.
       expect((await deliveries(readOnly.grantId)).filter((r) => r.type === type)).toHaveLength(0);
+      // The database's refusal of that grant is the sweep's normal answer, not an attempt: no refusal row is written against the org for it.
+      expect((await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.enqueue' AND outcome <> 'ok'`, [orgId]))).rows[0].n).toBe(0);
       // A source that adds a field the registry does not list fails the grant's turn: nothing is stored.
       const before = (await deliveries(holder.grantId)).length;
       const bad = [{ type, events: async () => [{ conversation_id: conversation, channel: 'zalo', customer_name: 'Nguyễn Văn A' }] }];

@@ -25,7 +25,8 @@ const ENGAGE = 'ludy.engage.write';
 const ADS = 'ludy.ads.draft';
 
 // A line's registry as a test builds it (the product's is empty): one Engage type with one field of each kind.
-const TYPE = 'engage.conversation_unanswered';
+// A name reserved for this file's own data: never a line's real type (Engage's come with its wake rules), so a line registering its types never meets this test's rows or assumptions.
+const TYPE = 'engage.zz_test_wake_event';
 const REGISTRY: LineWakeRegistry = {
   [TYPE]: { scope: ENGAGE, fields: { conversation_id: 'id', since: 'date', amount: 'amount', channel: ['facebook', 'zalo', 'email'] } },
 };
@@ -42,8 +43,8 @@ describe('the builder of a line wake body (#3858 slice e)', () => {
     expect(wakeEvent(event, REGISTRY).type).toBe(TYPE);
   });
 
-  it('refuses a type that is not registered, with the default registry (empty) and with another one, and a fixed type given a line\'s data', () => {
-    expect(Object.keys(LINE_WAKE_EVENTS)).toEqual([]);
+  it('refuses a type that is not registered, with the default registry and with another one, and a fixed type given a line\'s data', () => {
+    expect(Object.keys(LINE_WAKE_EVENTS)).not.toContain(TYPE);
     const event = { ...head(TYPE), data: DATA };
     expect(() => wakeBody(event)).toThrow();
     expect(() => wakeBody({ ...event, type: 'engage.other' }, REGISTRY)).toThrow();
@@ -193,8 +194,10 @@ suite('what the database holds of a line wake event (#3858 slice e)', () => {
     await root.end();
   });
 
-  it('has an empty catalog in the product, equal to the registry in code, written by no login and readable by the tenant role', async () => {
-    expect((await q(`SELECT type FROM crove_kernel.mcp_wake_event_type ORDER BY type`)).rows.map((r) => r.type)).toEqual(Object.keys(LINE_WAKE_EVENTS).sort());
+  it('has a catalog equal to the registry in code (empty until a line ships a type), written by no login and readable by the tenant role', async () => {
+    // The registry in code and the catalog hold the same types, scopes and fields (both empty until a line ships a type).
+    const rows = (await q<{ type: string; scope: string; fields: unknown }>(`SELECT type, scope, fields FROM crove_kernel.mcp_wake_event_type ORDER BY type`)).rows;
+    expect(rows.map((r) => [r.type, r.scope, r.fields])).toEqual(Object.keys(LINE_WAKE_EVENTS).sort().map((type) => [type, LINE_WAKE_EVENTS[type]?.scope, LINE_WAKE_EVENTS[type]?.fields]));
     await admin(async (c) => {
       const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper`)).rows;
       for (const { rolname } of logins) {
@@ -241,16 +244,30 @@ suite('what the database holds of a line wake event (#3858 slice e)', () => {
         ['a note at the top', { ...good, note: 'gọi lại' }],
         ['another org', { ...good, org: randomUUID() }],
         ['an items array of a signal under a line type', { ...good, data: { items: [] } }],
-        ['a type the catalog does not list', { ...good, type: 'engage.not_registered' }, 'engage.not_registered'],
+        ['a type the catalog does not list', { ...good, type: 'engage.zz_not_registered' }, 'engage.zz_not_registered'],
         ['a type of another line', { ...good, type: 'ads.pace' }, 'ads.pace'],
         ['a fixed type with line data', { ...good, type: 'ping' }, 'ping'],
-        ['a type outside the line shape', { ...good, type: 'note.created' }, 'ping'],
+        ['a type outside the line shape', { ...good, type: 'note.created' }, 'note.created'],
       ];
       for (const [name, body, type] of bad) await expect(insert(body, type ?? TYPE), name).rejects.toThrow();
       expect(await stored(g)).toBe(0);
     } finally {
       await q(`DELETE FROM crove_kernel.mcp_wake_event_type WHERE type = $1`, [TYPE]);
     }
+  });
+
+  it('lets a queued line delivery settle after its type was removed from the catalog (a status update never re-reads the catalog), while a new body of that type is refused', async () => {
+    await q(`INSERT INTO crove_kernel.mcp_wake_event_type (type, scope, fields, adr) VALUES ($1, $2, $3::jsonb, 'ADR-0051')`, [TYPE, ENGAGE, JSON.stringify({ conversation_id: 'id', since: 'date', amount: 'amount', channel: ['facebook', 'zalo', 'email'] })]);
+    const g = await grant(['ludy.read', ENGAGE]);
+    const id = randomUUID();
+    const body = { id, type: TYPE, created_at: '2026-11-19T03:00:00.000Z', org: orgA, grant: g, data: DATA };
+    await q(`INSERT INTO crove_kernel.agent_wake_delivery (org_id, id, grant_id, type, body) VALUES ($1, $2, $3, $4, $5::jsonb)`, [orgA, id, g, TYPE, JSON.stringify(body)]);
+    await q(`DELETE FROM crove_kernel.mcp_wake_event_type WHERE type = $1`, [TYPE]);
+    await q(`UPDATE crove_kernel.agent_wake_delivery SET status = 'failed', attempts = attempts + 1 WHERE id = $1`, [id]);
+    await q(`UPDATE crove_kernel.agent_wake_delivery SET queued_at = now() WHERE id = $1`, [id]);
+    expect((await q<{ status: string }>(`SELECT status FROM crove_kernel.agent_wake_delivery WHERE id = $1`, [id])).rows[0]?.status).toBe('failed');
+    await expect(q(`UPDATE crove_kernel.agent_wake_delivery SET body = $2::jsonb WHERE id = $1`, [id, JSON.stringify({ ...body, data: DATA })])).rejects.toThrow();
+    await q(`DELETE FROM crove_kernel.agent_wake_delivery WHERE id = $1`, [id]);
   });
 
   it('refuses a line body once the type is no longer registered (the catalog is the only list), and keeps a fixed type\'s body as before', async () => {
@@ -279,7 +296,7 @@ suite('what the database holds of a line wake event (#3858 slice e)', () => {
         expect(await stored(g), label).toBe(0);
       }
       // A type the catalog does not list is refused for every grant, the holder included, and so is a fixed type under a body of another shape.
-      expect(await enqueue(holder, 'engage.not_registered', { ...body(holder), type: 'engage.not_registered' })).toBe('MCP_WAKE_SCOPE');
+      expect(await enqueue(holder, 'engage.zz_not_registered', { ...body(holder), type: 'engage.zz_not_registered' })).toBe('MCP_WAKE_SCOPE');
       // A fixed type behaves as before: a ping is stored for a company grant, whatever its scopes, and a signal is refused for a member-bound grant.
       const ping = (g: string) => ({ id: randomUUID(), type: 'ping', created_at: '2026-11-19T03:00:00.000Z', org: orgA, grant: g, data: {} });
       expect(await enqueue(readOnly, 'ping', ping(readOnly))).toBe('stored');

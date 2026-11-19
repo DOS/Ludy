@@ -4,7 +4,8 @@
 --   crove_kernel.mcp_wake_event_type   the catalog: type (`<line>.<words>`, the line the scope's own: `ludy.engage.write` is `engage`), the write scope a grant must hold to be woken by it, and its fields; filled only by the
 --                        migration of the line, empty here, readable by the tenant role, written by no login;
 --   mcp_wake_body_ok (restated whole from 20261224000000, STABLE now that it reads the catalog)   a body of a type the catalog does not list is refused, as is a field it does not list, a missing one or a value that is
---                        not of its kind, in the delivery table's CHECK (so nothing can be stored whatever writes the row);
+--                        not of its kind: for the fixed types in the delivery table's CHECK as before, for a line's type in a BEFORE INSERT OR UPDATE OF body, type trigger (so nothing can be stored whatever writes the row, and a
+--                        status update or a restore never re-reads the catalog);
 --   agent_wake_delivery.type   the three fixed types, or a type in the line shape (the body check says which are registered);
 --   mcp_wake_enqueue (restated whole from 20261225030000, one check more)   an event of a line's type is stored only for a company grant that holds the type's scope with the read scope: a member-bound grant (which holds no
 --                        write scope), a read-only grant and a grant of another line are refused (MCP_WAKE_SCOPE), so no id of a line's data leaves for a receiver that may not read it. Which items a grant may be woken
@@ -73,6 +74,31 @@ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 ALTER TABLE crove_kernel.agent_wake_delivery VALIDATE CONSTRAINT agent_wake_delivery_type_shape;
+
+-- Where the body is checked. The fixed types keep a CHECK (their body check reads no table). A line's type is checked by a trigger on insert and on an update of the body or the type, NOT by a CHECK: a CHECK
+-- that reads the catalog would be re-run on every status update of a queued delivery (so a type removed by a later migration would leave its queued deliveries unable to settle, and the handover would retry them
+-- for ever) and on every row a restore copies before the catalog's (pg_dump restores data in table order). A trigger runs only when the row is written with a body.
+DO $$
+BEGIN
+  ALTER TABLE crove_kernel.agent_wake_delivery DROP CONSTRAINT IF EXISTS agent_wake_delivery_check;
+  ALTER TABLE crove_kernel.agent_wake_delivery DROP CONSTRAINT IF EXISTS agent_wake_delivery_body_fixed;
+  ALTER TABLE crove_kernel.agent_wake_delivery ADD CONSTRAINT agent_wake_delivery_body_fixed
+    CHECK (type NOT IN ('signal.fired', 'schedule.due', 'ping') OR crove_kernel.mcp_wake_body_ok(body, id, org_id, grant_id, type)) NOT VALID;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+ALTER TABLE crove_kernel.agent_wake_delivery VALIDATE CONSTRAINT agent_wake_delivery_body_fixed;
+
+CREATE OR REPLACE FUNCTION crove_kernel.agent_wake_delivery_line_body() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NEW.type NOT IN ('signal.fired', 'schedule.due', 'ping') AND NOT crove_kernel.mcp_wake_body_ok(NEW.body, NEW.id, NEW.org_id, NEW.grant_id, NEW.type) THEN
+    RAISE EXCEPTION 'agent_wake_delivery: the body does not fit the registered type' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION crove_kernel.agent_wake_delivery_line_body() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+DROP TRIGGER IF EXISTS agent_wake_delivery_line_body ON crove_kernel.agent_wake_delivery;
+CREATE TRIGGER agent_wake_delivery_line_body BEFORE INSERT OR UPDATE OF body, type ON crove_kernel.agent_wake_delivery FOR EACH ROW EXECUTE FUNCTION crove_kernel.agent_wake_delivery_line_body();
 
 -- mcp_wake_body_ok, restated whole from 20261224000000 with the branch for a line's type.
 CREATE OR REPLACE FUNCTION crove_kernel.mcp_wake_body_ok(p_body jsonb, p_id uuid, p_org uuid, p_grant uuid, p_type text)
