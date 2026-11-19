@@ -77,9 +77,9 @@ suite('a meeting\'s removal and the Vy runs bound to it (#3951)', () => {
       queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries],
     });
     setSummaryEnabled(true);
-    for (const key of ['owner', 'recorder', 'reader', 'stranger']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'run-cancel', subject: key, email: `${key}@run-cancel.test`, name: null });
+    for (const key of ['owner', 'recorder', 'reader']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'run-cancel', subject: key, email: `${key}@run-cancel.test`, name: null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Huỷ lượt chạy')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.reader, users.stranger]);
+    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`, [orgId, users.recorder, users.reader]);
   }, 300_000);
 
   afterAll(async () => {

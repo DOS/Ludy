@@ -35,6 +35,8 @@ export function routeOf(system: string): Route | null {
   return null;
 }
 
+// The first token found, in the order of SCENARIO_TOKENS (bad, garbage, down): when data holds more than one, the earlier one wins. The digest spec's 30 day window holds both "bad" and "garbage" and relies on
+// "bad" winning; tools/test/fake-model.test.ts pins the order.
 export function scenarioOf(subject: string): Scenario {
   for (const scenario of Object.keys(SCENARIO_TOKENS) as Array<Exclude<Scenario, 'default'>>) if (subject.includes(SCENARIO_TOKENS[scenario])) return scenario;
   return 'default';

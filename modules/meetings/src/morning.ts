@@ -10,7 +10,7 @@
 //                           covers both, and a second dispatch for the same day writes and sends nothing. On a day with no meeting the definer returns nothing: no notice and no mail.
 import { sql } from 'kysely';
 import { createMailMessage, notifyMembers, uploaderEntity } from '@crove/kernel';
-import { MORNING_DEFAULT_MINUTE, MORNING_KIND, MORNING_MAIL_SOURCE, MORNING_MAIL_TEMPLATE, zMorningEmpty, zMorningMail, zMorningNotice, zMorningSet, zMorningState, type MorningState } from '@crove/kernel-contract';
+import { MORNING_COUNT_MAX, MORNING_DEFAULT_MINUTE, MORNING_KIND, MORNING_MAIL_SOURCE, MORNING_MAIL_TEMPLATE, zMorningEmpty, zMorningMail, zMorningNotice, zMorningSet, zMorningState, type MorningState } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { ROLES, userOf } from './transcript.ts';
 
@@ -77,12 +77,14 @@ export const morningNotice = defineCommand({
     const due = found[0];
     // Nothing due any more (no meeting that day, turned off, muted, told already): nothing is written, not even an audit row.
     if (!due) return { notified: false, mailed: false };
+    // The count the notice and the mail carry never passes the mail's own bound, so a day with more events than that is still told (and the mail still parses) instead of rolling back and being retried.
+    const events = Math.min(due.events, MORNING_COUNT_MAX);
     const sent = await notifyMembers(ctx, {
       kind: MORNING_KIND,
       users: [input.userId],
       key: `morning:${input.day}`,
       // Nothing but the count: no title, no event, no subject (the line opens the meetings page).
-      detail: { count: String(due.events) },
+      detail: { count: String(events) },
       legalEntityId: await uploaderEntity(ctx, input.userId),
     });
     // Turned off, left the org, or told already for this day: no in-app line, so no mail either.
@@ -100,13 +102,13 @@ export const morningNotice = defineCommand({
           templateKey: MORNING_MAIL_TEMPLATE,
           to: email,
           subject: SUBJECT[lang],
-          payload: zMorningMail.parse({ lang, org: (org.name.trim() || org.slug).slice(0, 200), count: due.events, path: `/o/${org.slug}/meetings` }),
+          payload: zMorningMail.parse({ lang, org: (org.name.trim() || org.slug).slice(0, 200), count: events, path: `/o/${org.slug}/meetings` }),
           status: 'queued',
         })
       : null;
     const mailed = mail?.status === 'queued';
     // A day and a count and a flag: no address in the audit row.
-    ctx.audit({ day: input.day, count: due.events, mailed });
+    ctx.audit({ day: input.day, count: events, mailed });
     return { notified: true, mailed };
   },
 });
