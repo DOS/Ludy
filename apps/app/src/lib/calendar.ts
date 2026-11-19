@@ -63,16 +63,16 @@ export function datesOf(timeZone: string, startsAt: string, endsAt: string): { f
   return { from: zonedDate(timeZone, Date.parse(startsAt)), to: zonedDate(timeZone, Date.parse(endsAt) - 1) };
 }
 
-/** The day off already listed that the dates picked would repeat (they share at least one day), for the warning in the add dialog; null when none does. */
+/** The day off already listed that the dates picked would repeat (they share a moment, read in the member's zone), for the warning in the add dialog; null when none does. The range returned is the listed one as dates. */
 export function overlappingDayOff(
   off: ReadonlyArray<{ timeZone: string; startsAt: string; endsAt: string }>,
+  timeZone: string,
   from: string,
   to: string,
 ): { from: string; to: string } | null {
-  const last = to < from ? from : to;
+  const picked = dayOffRange(timeZone, from, to);
   for (const e of off) {
-    const range = datesOf(e.timeZone, e.startsAt, e.endsAt);
-    if (range.from <= last && from <= range.to) return range;
+    if (Date.parse(e.startsAt) < Date.parse(picked.endsAt) && Date.parse(picked.startsAt) < Date.parse(e.endsAt)) return datesOf(e.timeZone, e.startsAt, e.endsAt);
   }
   return null;
 }

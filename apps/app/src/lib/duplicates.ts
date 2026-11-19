@@ -3,6 +3,7 @@
 // the new one would repeat (HubSpot, Attio). The dialog keeps its save button off while one stands (the server refuses the same
 // cases); the server still decides, so a repeat that differs in a way these helpers do not see is refused there with its own reason. Each takes the rows the card already read, so no request is made.
 import { normalizeAccountCode } from '@crove/kernel-contract';
+import { keywordRuleText } from '@crove/l10n-vn';
 
 // What a bank prints between the digit groups is dropped; the module keeps the digits (zBankAccountNumberSet).
 export const digitsOf = (input: string): string => input.replace(/\D/g, '');
@@ -21,22 +22,14 @@ export function duplicateAccountCode<T extends { code: string }>(accounts: reado
   return accounts.find((account) => account.code === code) ?? null;
 }
 
-// A keyword matches without regard to accents or case (the card's hint says so), so "Cước Internet" repeats "cuoc internet".
-export function keywordKey(input: string): string {
-  return input
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+// A keyword rule's text as the server stores it (accents, case, punctuation and spacing do not count), so "Cước-Internet" repeats "cuoc internet".
+export const keywordKey = (input: string): string => keywordRuleText(input) ?? '';
 
-export function duplicateKeywordRule<T extends { matchKind: string; matchText: string }>(rules: readonly T[], typed: string): T | null {
+// The keyword rule for every vendor that the typed one repeats: the dialog adds a rule of that scope, and a rule of one vendor's own may stand beside it.
+export function duplicateKeywordRule<T extends { matchKind: string; matchText: string; vendor: unknown }>(rules: readonly T[], typed: string): T | null {
   const key = keywordKey(typed);
   if (key === '') return null;
-  return rules.find((rule) => rule.matchKind === 'keyword' && keywordKey(rule.matchText) === key) ?? null;
+  return rules.find((rule) => rule.matchKind === 'keyword' && rule.vendor == null && rule.matchText === key) ?? null;
 }
 
 // An invited address that already belongs to a member, or that already has an invitation waiting.

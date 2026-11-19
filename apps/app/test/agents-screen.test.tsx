@@ -38,6 +38,7 @@ vi.mock('../src/lib/api.ts', async () => {
 vi.mock('../src/components/form-dialog.tsx', async () => {
   const React = await import('react');
   return {
+    useLive: () => ({ current: true }),
     FormDialog: (p: { title: string; submitLabel: string; children: unknown; outside?: unknown }) =>
       React.createElement('form', { 'aria-label': p.title }, p.children as never, p.outside as never, React.createElement('button', { type: 'submit' }, p.submitLabel)),
   };

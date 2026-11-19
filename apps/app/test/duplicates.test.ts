@@ -46,13 +46,21 @@ describe('duplicateAccountCode', () => {
 
 describe('duplicateKeywordRule', () => {
   const rules = [
-    { matchKind: 'keyword', matchText: 'cước internet', accountCode: '6427' },
-    { matchKind: 'description', matchText: 'Cước internet VNPT', accountCode: '6427' },
+    { matchKind: 'keyword', matchText: 'cuoc internet', accountCode: '6427', vendor: null },
+    { matchKind: 'description', matchText: 'cuoc internet vnpt', accountCode: '6427', vendor: null },
+    { matchKind: 'keyword', matchText: 'van chuyen', accountCode: '6421', vendor: { partyId: 'p1', name: 'Công ty ABC' } },
   ];
   it('matches without regard to accents, case or spacing, as the rule itself does', () => {
     expect(duplicateKeywordRule(rules, 'Cuoc  Internet')).toBe(rules[0]);
     expect(duplicateKeywordRule(rules, '  CƯỚC INTERNET ')).toBe(rules[0]);
     expect(keywordKey('Đường dây')).toBe('duong day');
+  });
+  it('reads punctuation as the server does: a space', () => {
+    expect(duplicateKeywordRule(rules, 'Cước-Internet')).toBe(rules[0]);
+    expect(duplicateKeywordRule(rules, 'cước/internet.')).toBe(rules[0]);
+  });
+  it('flags only a rule for every vendor: a vendor\'s own rule may stand beside the new one', () => {
+    expect(duplicateKeywordRule(rules, 'vận chuyển')).toBeNull();
   });
   it('compares keyword rules only, not what an approval taught for one item', () => {
     expect(duplicateKeywordRule(rules, 'cước internet vnpt')).toBeNull();
@@ -60,6 +68,7 @@ describe('duplicateKeywordRule', () => {
   it('is quiet for a new keyword or an empty field', () => {
     expect(duplicateKeywordRule(rules, 'tiền điện')).toBeNull();
     expect(duplicateKeywordRule(rules, '   ')).toBeNull();
+    expect(duplicateKeywordRule(rules, 'x')).toBeNull();
   });
 });
 
@@ -82,13 +91,17 @@ describe('invitedEmailState', () => {
 describe('overlappingDayOff', () => {
   // 2 and 3 November 2026 in Vietnam.
   const off = [{ timeZone: 'Asia/Ho_Chi_Minh', startsAt: '2026-11-01T17:00:00.000Z', endsAt: '2026-11-03T17:00:00.000Z' }];
+  const vn = 'Asia/Ho_Chi_Minh';
   it('returns the listed range that shares a day with the picked one', () => {
-    expect(overlappingDayOff(off, '2026-11-03', '2026-11-05')).toEqual({ from: '2026-11-02', to: '2026-11-03' });
-    expect(overlappingDayOff(off, '2026-11-02', '2026-11-02')).toEqual({ from: '2026-11-02', to: '2026-11-03' });
+    expect(overlappingDayOff(off, vn, '2026-11-03', '2026-11-05')).toEqual({ from: '2026-11-02', to: '2026-11-03' });
+    expect(overlappingDayOff(off, vn, '2026-11-02', '2026-11-02')).toEqual({ from: '2026-11-02', to: '2026-11-03' });
   });
-  it('is quiet for days next to it, and takes an end before the start as one day', () => {
-    expect(overlappingDayOff(off, '2026-11-04', '2026-11-04')).toBeNull();
-    expect(overlappingDayOff(off, '2026-10-30', '2026-11-01')).toBeNull();
-    expect(overlappingDayOff(off, '2026-11-03', '2026-11-01')).not.toBeNull();
+  it('is quiet for days next to it', () => {
+    expect(overlappingDayOff(off, vn, '2026-11-04', '2026-11-04')).toBeNull();
+    expect(overlappingDayOff(off, vn, '2026-10-30', '2026-11-01')).toBeNull();
+  });
+  it('compares moments in the member zone, so a changed zone still sees the shared hours', () => {
+    // 3 November in Tokyo starts at 15:00 UTC on 2 November, inside the listed range (until 17:00 UTC on 3 November).
+    expect(overlappingDayOff(off, 'Asia/Tokyo', '2026-11-03', '2026-11-03')).toEqual({ from: '2026-11-02', to: '2026-11-03' });
   });
 });

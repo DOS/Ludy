@@ -10,6 +10,18 @@ import { Button } from '@crove/ui/components/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
 import { isSaveShortcut } from './form-panel.tsx';
 
+// False once the component has gone away: the answer of a second-factor check that comes back after the dialog was dropped must not send the request the person gave up.
+export function useLive(): { current: boolean } {
+  const live = useRef(true);
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+  return live;
+}
+
 export function FormDialog({
   title,
   description,
@@ -64,7 +76,7 @@ export function FormDialog({
   const onKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
     if (event.defaultPrevented || !isSaveShortcut({ key: event.key, metaKey: event.metaKey, ctrlKey: event.ctrlKey, isComposing: event.nativeEvent.isComposing })) return;
     event.preventDefault();
-    if (!busy && !asking) event.currentTarget.requestSubmit();
+    if (!busy && !asking && !submitDisabled) event.currentTarget.requestSubmit();
   };
   return (
     <Dialog

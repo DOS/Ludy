@@ -54,7 +54,7 @@ export function AddSubAccountDialog({ accounts, onClose }: { accounts: readonly 
       title={t('addTitle')}
       description={t('addHint')}
       busy={create.isPending}
-      dirty={name.trim() !== '' || parentCode !== ''}
+      dirty={name.trim() !== '' || parentCode !== '' || code.trim() !== ''}
       submitLabel={t('add')}
       submitDisabled={!parentCode || !name.trim() || !code.trim() || repeated !== null}
       onClose={onClose}

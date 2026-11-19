@@ -14,7 +14,7 @@ import { StepUpPrompt } from '../../components/two-factor.tsx';
 import { MemberRolesRow } from '../member-roles.tsx';
 import { MemberPrivateNotes, usePrivateNotes } from '../../components/notes-panel.tsx';
 import { MemberSessions } from '../../components/sessions.tsx';
-import { FormDialog } from '../../components/form-dialog.tsx';
+import { FormDialog, useLive } from '../../components/form-dialog.tsx';
 import { DuplicateHint } from '../../components/form-panel.tsx';
 import { ErrorText, Field, focusFirstInvalid, isEmailAddress, RowsSkeleton, useFieldErrors } from '../../components/ui.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../../lib/api.ts';
@@ -242,7 +242,8 @@ export function InviteMember({
       focusFirstInvalid(event.currentTarget);
       return;
     }
-    if (known) return;
+    // A member cannot be invited again; an address with an invitation waiting can: the new one replaces it (the hint says so).
+    if (known === 'member') return;
     invite.mutate(scoped ? { email, role, legalEntityIds: entityIds } : department ? { email, role, roleKey: department.key } : { email, role });
   }
   const toggleEntity = (id: string, checked: boolean) => {
@@ -250,11 +251,13 @@ export function InviteMember({
     setEntityIds((ids) => (checked ? [...ids, id] : ids.filter((x) => x !== id)));
   };
 
+  const live = useLive();
   const inviteButton = useRef<HTMLButtonElement>(null);
   const reset = () => {
     invite.reset();
     setOpen(false);
     setEmail('');
+    setRole('member');
     setScoped(false);
     setDepartmentKey('');
     setEntityIds([]);
@@ -288,9 +291,9 @@ export function InviteMember({
           title={t('inviteTitle')}
           label={t('inviteTitle')}
           busy={invite.isPending}
-          dirty={email.trim() !== '' && email !== (initialEmail ?? '')}
+          dirty={email !== (initialEmail ?? '') || role !== 'member' || scoped || departmentKey !== '' || entityIds.length > 0}
           submitLabel={t('invite')}
-          submitDisabled={known !== null || stepUp}
+          submitDisabled={known === 'member' || stepUp}
           onClose={reset}
           onSubmit={submit}
           outside={
@@ -306,7 +309,7 @@ export function InviteMember({
                       })
                     : t('stepUpInvite', { email: invite.variables?.email ?? email, role: root(`roles.${invite.variables?.role ?? role}`) })
                 }
-                onVerified={() => invite.variables && invite.mutate(invite.variables)}
+                onVerified={() => live.current && invite.variables && invite.mutate(invite.variables)}
                 onCancel={() => invite.reset()}
               />
             ) : null

@@ -25,8 +25,12 @@ describe('FormDialog', () => {
   });
   it('saves with Cmd or Ctrl plus Enter, and locks the fields while the request is on its way', () => {
     expect(source).toContain('isSaveShortcut(');
-    expect(source).toContain('if (!busy && !asking) event.currentTarget.requestSubmit()');
+    expect(source).toContain('if (!busy && !asking && !submitDisabled) event.currentTarget.requestSubmit()');
     expect(source).toContain('<fieldset disabled={busy}');
+  });
+  it('does not save with the shortcut while the save button is off', () => {
+    expect(source).toContain('!submitDisabled');
+    expect(source).toContain('export function useLive()');
   });
   it('lets a prompt with a form of its own sit under the form, inside the dialog', () => {
     expect(source).toContain('{outside}');

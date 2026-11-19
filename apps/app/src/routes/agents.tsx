@@ -15,7 +15,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AiMeter } from '../components/ai-meter.tsx';
-import { FormDialog } from '../components/form-dialog.tsx';
+import { FormDialog, useLive } from '../components/form-dialog.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, Field, focusFirstInvalid, ListSkeleton, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -530,6 +530,7 @@ export function AddPositionDialog({ positions, templates = [], entities, entitie
   // Until the owner picks, the org's default entity, which the server gives a new position anyway.
   const [picked, setPicked] = useState<string[] | null>(null);
   const leScope = picked ?? defaultScope(entities);
+  const live = useLive();
   const [key] = useState(() => crypto.randomUUID());
   const create = useMutation(orpc.chart.createPosition.mutationOptions({ onSuccess: refresh }));
   const cleared = { onSuccess: onClose };
@@ -555,7 +556,7 @@ export function AddPositionDialog({ positions, templates = [], entities, entitie
     <FormDialog
       title={t('addPosition')}
       busy={create.isPending}
-      dirty={title.trim() !== ''}
+      dirty={title.trim() !== '' || reportsTo !== '' || presetRole !== '' || picked !== null}
       submitLabel={t('addPosition')}
       submitDisabled={locked || blocked || !title.trim()}
       onClose={onClose}
@@ -565,7 +566,7 @@ export function AddPositionDialog({ positions, templates = [], entities, entitie
           <Refusal
             error={create.error}
             variables={create.variables}
-            retry={(v) => create.mutate(v, cleared)}
+            retry={(v) => live.current && create.mutate(v, cleared)}
             reset={() => create.reset()}
             action={t('stepUpAddPosition', { title: create.variables?.title ?? '' })}
             className="text-xs text-destructive"
@@ -856,6 +857,7 @@ export function BudgetDialog({ agents, onClose }: { agents: Agent[]; onClose: ()
   const [warnPercent, setWarnPercent] = useState('80');
   const [hardStop, setHardStop] = useState(true);
   const set = useMutation(orpc.agents.setBudget.mutationOptions({ onSuccess: refresh }));
+  const live = useLive();
   const done = { onSuccess: onClose };
   const targets: Array<{ value: string; label: string }> =
     scope === 'org' ? [{ value: '*', label: t('scope.org') }] : scope === 'module' ? modules.map((m) => ({ value: m, label: moduleName(m) })) : agents.map((a) => ({ value: a.id, label: a.displayName }));
@@ -878,7 +880,7 @@ export function BudgetDialog({ agents, onClose }: { agents: Agent[]; onClose: ()
     <FormDialog
       title={t('setBudget')}
       busy={set.isPending}
-      dirty={limit.trim() !== ''}
+      dirty={limit.trim() !== '' || scope !== 'org' || warnPercent !== '80' || !hardStop}
       submitLabel={t('setBudget')}
       submitDisabled={locked}
       onClose={onClose}
@@ -890,7 +892,7 @@ export function BudgetDialog({ agents, onClose }: { agents: Agent[]; onClose: ()
         }
         set.mutate({ scope, target: chosenTarget, monthlyLimit: limit.trim(), warnPercent: warn, hardStop, idempotencyKey: crypto.randomUUID() }, done);
       }}
-      outside={locked ? <Refusal error={set.error} variables={set.variables} retry={(v) => set.mutate(v, done)} reset={() => set.reset()} action={t('stepUpBudget')} className="text-xs text-destructive" /> : null}
+      outside={locked ? <Refusal error={set.error} variables={set.variables} retry={(v) => live.current && set.mutate(v, done)} reset={() => set.reset()} action={t('stepUpBudget')} className="text-xs text-destructive" /> : null}
     >
       {/* The amount first: it is what the owner decides. The scope starts at the whole org. */}
       <Field id={idOf('limit')} label={t('budgetLimit')} error={fields.of('limit')}>

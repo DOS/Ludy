@@ -71,7 +71,7 @@ export function AddBankNumberDialog({
       description={t('addHint')}
       label={t('form')}
       busy={set.isPending}
-      dirty={number.trim() !== '' || bankAccount !== ''}
+      dirty={number.trim() !== '' || bankAccount !== '' || legalEntityId !== (defaultEntity?.id ?? '')}
       submitLabel={t('add')}
       submitDisabled={repeated !== null}
       onClose={onClose}

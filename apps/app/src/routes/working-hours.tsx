@@ -119,18 +119,25 @@ export function AddDayOffDialog({ tz, off, onClose }: { tz: string; off: Readonl
       },
     }),
   );
-  const overlap = from ? overlappingDayOff(off, from, to || from) : null;
+  // An end before the start is not turned into one day: the person is told and corrects it.
+  const endBeforeStart = from !== '' && to !== '' && to < from;
+  const overlap = from && !endBeforeStart ? overlappingDayOff(off, tz, from, to || from) : null;
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!from) return;
+    if (!from || endBeforeStart) return;
     add.mutate({ ...dayOffRange(tz, from, to || from), timeZone: tz, kind: 'time_off', title: null });
   };
   return (
-    <FormDialog title={t('addDayOff')} busy={add.isPending} dirty={from !== ''} submitLabel={t('addDayOff')} submitDisabled={!from} onClose={onClose} onSubmit={submit}>
+    <FormDialog title={t('addDayOff')} busy={add.isPending} dirty={from !== '' || to !== ''} submitLabel={t('addDayOff')} submitDisabled={!from || endBeforeStart} onClose={onClose} onSubmit={submit}>
       <Field label={t('from')}>{(control) => <DateInput {...control} required value={from} onChange={setFrom} />}</Field>
       <Field label={t('to')} hint={t('toHint')}>
         {(control) => <DateInput {...control} min={from || undefined} value={to} onChange={setTo} />}
       </Field>
+      {endBeforeStart && (
+        <p role="alert" className="text-sm text-destructive" data-testid="day-off-order">
+          {t('endBeforeStart')}
+        </p>
+      )}
       <DuplicateHint testId="day-off-duplicate">
         {overlap ? t('dayOffOverlap', { from: f.date(overlap.from), to: f.date(overlap.to) }) : null}
       </DuplicateHint>

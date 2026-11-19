@@ -218,7 +218,7 @@ export function AddEntityDialog({ entities, onClose }: { entities: readonly Lega
     create.mutate(inputOf(draft));
   };
   return (
-    <FormDialog title={t('addTitle')} busy={create.isPending} dirty={draft.name.trim() !== '' || draft.taxCode.trim() !== ''} submitLabel={t('add')} submitDisabled={!draft.name.trim()} onClose={onClose} onSubmit={submit}>
+    <FormDialog title={t('addTitle')} busy={create.isPending} dirty={draft.name.trim() !== '' || draft.taxCode.trim() !== '' || draft.kind !== 'branch' || draft.parentId !== ''} submitLabel={t('add')} submitDisabled={!draft.name.trim()} onClose={onClose} onSubmit={submit}>
       <Field label={t('name')}>
         {(control) => <Input {...control} required maxLength={200} placeholder={t('namePlaceholder')} value={draft.name} onChange={(e) => set('name', e.target.value)} />}
       </Field>

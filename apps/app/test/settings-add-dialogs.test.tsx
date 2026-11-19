@@ -30,6 +30,7 @@ vi.mock('../src/components/entity-switcher.tsx', () => ({ useChosenEntity: () =>
 vi.mock('../src/components/form-dialog.tsx', async () => {
   const React = await import('react');
   return {
+    useLive: () => ({ current: true }),
     FormDialog: (p: { title: string; submitLabel: string; children: unknown }) =>
       React.createElement('form', { 'aria-label': p.title }, p.children as never, React.createElement('button', { type: 'submit' }, p.submitLabel)),
   };
@@ -131,8 +132,24 @@ describe('duplicate lines are wired to the dialogs and worded in both languages'
     expect(read('routes/account-rules.tsx')).toContain('duplicateKeywordRule(rules, keyword)');
     expect(read('routes/account-rules.tsx')).toContain('repeated !== null');
     expect(read('routes/settings/members-card.tsx')).toContain('invitedEmailState(email, members, pendingInvites.data ?? [])');
-    expect(read('routes/settings/members-card.tsx')).toContain('known !== null');
-    expect(read('routes/working-hours.tsx')).toContain('overlappingDayOff(off, from, to || from)');
+    // An address with an invitation waiting may be invited again (the new one replaces it); only a member is refused.
+    expect(read('routes/settings/members-card.tsx')).toContain("known === 'member'");
+    expect(read('routes/working-hours.tsx')).toContain('overlappingDayOff(off, tz, from, to || from)');
+  });
+  it('a day off whose last day is before its first is refused, not turned into one day', () => {
+    const src = read('routes/working-hours.tsx');
+    expect(src).toContain("const endBeforeStart = from !== '' && to !== '' && to < from;");
+    expect(src).toContain('if (!from || endBeforeStart) return;');
+    for (const locale of ['vi', 'en'] as const) expect(catalog(locale).workingHours.endBeforeStart.length).toBeGreaterThan(10);
+  });
+  it('a discarded invite starts again from a member with nothing chosen, and a late second-factor answer sends nothing', () => {
+    const members = read('routes/settings/members-card.tsx');
+    expect(members).toContain("setRole('member');");
+    expect(members).toContain('live.current && invite.variables');
+    expect(read('routes/agents.tsx')).toContain('live.current && create.mutate(v, cleared)');
+    expect(read('routes/agents.tsx')).toContain('live.current && set.mutate(v, done)');
+    // The invite's draft counts as changed when anything but the address changed too.
+    expect(members).toContain("role !== 'member' || scoped || departmentKey !== '' || entityIds.length > 0");
   });
   it('every warning has words in Vietnamese and English with the same arguments', () => {
     for (const locale of ['vi', 'en'] as const) {
