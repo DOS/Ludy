@@ -136,6 +136,7 @@ export const KERNEL_ERROR_CODES = [
   'CALENDAR_SCOPE_MISSING',
   'CALENDAR_READ_SCOPE_MISSING',
   'OAUTH_ADMIN_CONSENT_REQUIRED',
+  'OAUTH_MEETINGS_ADMIN_CONSENT_REQUIRED',
   'CALENDAR_OWNER_LEFT',
   'CALENDAR_PROVIDER_DISABLED',
   // Event types of the crm module (#1314).
@@ -413,6 +414,8 @@ export const KERNEL_ERROR_CODES = [
   'ACTION_ITEM_ACCEPTED',
   'TOO_MANY_ITEMS',
   'NOTHING_TO_PUBLISH',
+  // Publishing chapters whose transcript lines changed since they were saved (#3881).
+  'CHAPTER_ANCHOR_LOST',
   'NO_CLEAN_ITEMS',
   // The recorder's Vy summarizing a meeting (#2580, M6 part B).
   'DRAFT_NOT_REVIEWED',

@@ -107,10 +107,11 @@ export function ImportForm({ recording, onDone, onCancel }: { recording: Meeting
         </NativeSelect>
       </div>
       <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground" data-testid="meeting-import-terms">
-        <li>{transcriptOnly ? t('copyTranscript', { platform }) : t('copyAudio')}</li>
+        <li>{transcriptOnly ? t('copyTranscript', { platform }) : t(recording.provider === 'microsoft_teams' ? 'teamsVideo' : 'copyAudio')}</li>
         <li>{t('keepOriginal')}</li>
         <li>{t('noParticipants')}</li>
         <li>{transcriptOnly ? t('platformTranscript', { platform }) : t('ownTranscript')}</li>
+        {recording.provider === 'microsoft_teams' && !transcriptOnly && <li data-testid="meeting-import-cost">{t('teamsCost')}</li>}
       </ul>
       <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
         <div className="text-xs font-medium text-foreground">{t('noticeHeading')}</div>
