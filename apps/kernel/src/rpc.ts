@@ -1402,6 +1402,11 @@ export function createRpcHandler(
           inMeetings(context, (orgId, actor) => runMeetingAssignee({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingAssignees, price: aiPrice }, orgId, actor, input)),
         ),
       },
+      // The opt-in morning notice of the day's meetings (#3955, part B): the member's own setting; see modules/meetings/src/morning.ts.
+      morning: {
+        get: os.meetings.morning.get.handler(meetingsQuery('meetings.morning.get')),
+        set: os.meetings.morning.set.handler(meetingsCommand('meetings.morning.set')),
+      },
       // A member's own Google Calendar meetings (B1, #3165): the member's own rows, no model; see modules/meetings/src/agenda.ts.
       agenda: {
         list: os.meetings.agenda.list.handler(meetingsQuery('meetings.agenda.list')),
