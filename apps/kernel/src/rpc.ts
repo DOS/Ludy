@@ -302,6 +302,8 @@ export interface RpcChannels {
   marketplaceProviders?: Readonly<Record<string, MarketplaceProvider>>;
   // Whether this deployment holds the integrator's ClientID for MISA AMIS (#3854): only that, never the value.
   misaAmis?: boolean;
+  // The push of vouchers to MISA AMIS is switched on too (MISA_AMIS_PUSH=on, after the sandbox check, #3902). Off: the confirm route answers 404 and the screen draws no button.
+  misaAmisPush?: boolean;
   // The ad platforms this deployment offers, by provider id (ADR-0040, #2217): the offline sandbox when ADS_SANDBOX is on.
   adsPlatforms?: Readonly<Record<string, AdPlatform>>;
   // The deployment can confirm who sent an email (INBOUND_AUTHSERV_ID, #3636): only then do conversations carry the "sender not confirmed" mark. Left out: it cannot.
@@ -3087,6 +3089,15 @@ export function createRpcHandler(
       misaAmisPreview: os.vouchers.misaAmisPreview.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => misaAmisPreview((name, query) => runtime.query(name, query, { actor, orgId }), input)),
       ),
+      // F4 (security review of #4013): with the push switched off the command is not reached at all, so a confirmation made while it is off can never be sent within its seven days once it is turned on.
+      // The switch is read before anything else (membership included): with it off the answer is the same 404 for everyone.
+      misaAmisPush: os.vouchers.misaAmisPush.handler(({ context, input }) =>
+        // `guard` turns the DomainError into its own status (404), as inside inFinance, but nothing of the org is read before the switch is.
+        guard(async () => {
+          if (!channels?.misaAmis || !channels.misaAmisPush) throw new DomainError('MISA_AMIS_PUSH_DISABLED', 404, 'Việc gửi chứng từ sang MISA AMIS chưa được bật trên hệ thống này');
+          return inFinance(context, (orgId, actor) => runtime.execute('finance.misa_amis.push', input, { actor, orgId }));
+        }),
+      ),
       // The preview is run again here, so what the model is told comes from the books, never from the caller; the notes are a read and change no voucher, blocker or push.
       misaAmisBlockerNotes: os.vouchers.misaAmisBlockerNotes.handler(({ context, input }) =>
         inFinance(context, async (orgId, actor) => {
@@ -3529,7 +3540,7 @@ export function createRpcHandler(
     // An entity's connection to MISA AMIS Kế toán (#3875, S2 of #3854). The access code the customer made in AMIS is sealed here, once; the command gets the envelope, never the code, and only a
     // worker may open it. The connector is on only when this deployment holds the integrator's ClientID: without it no connect is possible and the card says the connector is off.
     misaAmis: {
-      status: os.misaAmis.status.handler(({ context }) => inFinance(context, async () => ({ offered: channels?.misaAmis === true }))),
+      status: os.misaAmis.status.handler(({ context }) => inFinance(context, async () => ({ offered: channels?.misaAmis === true, pushOffered: channels?.misaAmis === true && channels?.misaAmisPush === true }))),
       connections: {
         list: os.misaAmis.connections.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.misa_amis_connection.list', {}, { actor, orgId }))),
         connect: os.misaAmis.connections.connect.handler(({ context, input }) =>
@@ -3568,6 +3579,13 @@ export function createRpcHandler(
             return runtime.execute<{ queued: boolean }>('finance.misa_amis_connection.request_test', { id: input.id }, { actor, orgId });
           }),
         ),
+      },
+      // The vouchers pushed through a connection (#3902, S3b-2): every role reads the rows; an owner or admin settles one MISA never answered for. Neither is gated by the push switch: rows pushed earlier stay readable
+      // and settleable while it is off (nothing is sent by either).
+      pushes: {
+        list: os.misaAmis.pushes.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.misa_amis.push_list', input, { actor, orgId }))),
+        // An `ambiguous` row settled "in AMIS" while the push is off becomes `sent` and waits: the worker that reads its result is not running, so the row is settled again after the 24 hours (an edge: ambiguous rows exist only where the push was on).
+        resolve: os.misaAmis.pushes.resolve.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.misa_amis.push_resolve', input, { actor, orgId }))),
       },
     },
     stock: {
