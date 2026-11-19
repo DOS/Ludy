@@ -15,7 +15,7 @@ import { DomainError, defineQuery } from '@crove/kernel-runtime';
 import { money, sum, toMoney } from '@crove/l10n-vn';
 import { pickInForce } from './domain/household-rules.ts';
 import { plainQuantity } from './domain/stock.ts';
-import { householdBookWindow } from './household-books.ts';
+import { HOUSEHOLD_S1A_ROW_LIMIT, householdBookWindow } from './household-books.ts';
 import { closedMonths, figuresOf, movesUpTo } from './stock-report.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -51,6 +51,8 @@ export const householdS2d = defineQuery({
     }
 
     const out: HouseholdS2dItem[] = [];
+    // The audit row of an export caps the rows it records, so a month with more moves than the other books allow is refused here, before any file is built.
+    if (moves.filter((m) => m.move_date >= monthStart).length > HOUSEHOLD_S1A_ROW_LIMIT) throw new DomainError('EXPORT_TOO_LARGE', 422, 'Quá nhiều dòng trong một kỳ; hãy chọn kỳ ngắn hơn');
     // The month is closed when the entity closed it: every item then comes from what the close stored.
     const monthClosed = closed.lastByEntity.get(w.entity) === input.month;
     for (const item of items) {

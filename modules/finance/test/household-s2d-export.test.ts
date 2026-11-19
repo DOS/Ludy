@@ -72,11 +72,11 @@ describe('the S2d-HKD workbook', () => {
     expect([purchase[DATE], purchase[DESC], purchase[INQ], purchase[OUTQ], purchase[VALIN], purchase[BAL]]).toEqual(['05/09/2026', 'Từ hóa đơn', '10', '0', '1000000', '10']);
     const out = rows.find((r) => r[DESC] === 'Nhập tay')!;
     expect([out[INQ], out[OUTQ], out[VALIN], out[BAL]]).toEqual(['0', '4', '', '6']);
-    const totals = rows.find((r) => r[DESC].startsWith('Cộng tháng'))!;
+    const totals = rows.find((r) => r[DESC]?.startsWith('Cộng tháng'))!;
     expect(totals[DESC]).toBe('Cộng tháng: nhập 10 (1000000), xuất 4 (400000), đơn giá bình quân 100000');
     expect(totals[BAL]).toBe('6');
     expect(rows.find((r) => r[DESC] === 'Giá trị tồn cuối tháng' && r[VALIN] === '600000')).toBeTruthy();
-    expect(rows.find((r) => r[DESC].startsWith('Tồn đầu tháng'))![BAL]).toBe('0');
+    expect(rows.find((r) => r[DESC]?.startsWith('Tồn đầu tháng'))![BAL]).toBe('0');
   });
 
   it('gives the total value of all items', async () => {
