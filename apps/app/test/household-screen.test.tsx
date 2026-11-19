@@ -117,11 +117,11 @@ describe('the household books screen (#2517)', () => {
     const html = page('owner', {
       profile: profile({
         profile: { effectiveFrom: '2026-01-01', taxGroup: 3, pitMethod: 'income', trades: ['goods', 'services'], einvoiceRegistered: true, representativeName: null, vatCutEligible: null },
-        books: [{ book: 'S2d', version: '2026.1', name: 'Sổ chi tiết vật liệu, dụng cụ, sản phẩm, hàng hóa (S2d-HKD)', status: 'commentary' }],
+        books: [{ book: 'S3a', version: '2026.1', name: 'Sổ theo dõi nghĩa vụ thuế khác (S3a-HKD)', status: 'commentary' }],
       }),
     });
     expect(html).not.toContain('data-testid="household-s1a"');
-    expect(html).toContain('S2d-HKD');
+    expect(html).toContain('S3a-HKD');
     expect(html).toContain('(not built yet)');
     expect(html).toContain('Goods, Services');
   });

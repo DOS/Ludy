@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// The removal of a meeting cancels the recorder's Vy runs bound to it (#3951): a title run (#3947) and a commitments run (#3954) in flight at a deletion are cancelled with the code MEETING_REMOVED, one
+// audit row each names the run, the meeting and the feature (ids only), and their private result row is deleted with the meeting. Another meeting of the same recorder is unaffected.
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createDb, createPool } from '@crove/db';
+import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { Runtime } from '@crove/kernel-runtime';
+import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@crove/mod-meetings';
+import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
+
+const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
+const suite = ADMIN ? describe : describe.skip;
+
+suite('a meeting\'s removal and the Vy runs bound to it (#3951)', () => {
+  const dbName = `crove_test_run_cancel_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  let adminUrl = '';
+  let appUrl = '';
+  const pools: pg.Pool[] = [];
+  let orgId = '';
+  let runtime: Runtime;
+  const users: Record<string, string> = {};
+  const asUser = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const });
+  const exec = <O = unknown>(who: string, name: string, input: unknown) => runtime.execute<O>(name, input, { actor: asUser(who), orgId });
+  async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
+    const c = new pg.Client({ connectionString: adminUrl });
+    await c.connect();
+    try {
+      return await fn(c);
+    } finally {
+      await c.end();
+    }
+  }
+  const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
+  // Lines start at 0, 10, 20 and 300 seconds.
+  async function seedMeeting(recorder: string, readers: string[] = ['reader']): Promise<string> {
+    const meetingId = randomUUID();
+    await sqlAdmin(
+      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+       VALUES ($1, $2, 'Họp tuần', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T04:00:00Z', 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
+      [orgId, meetingId, users[recorder]],
+    );
+    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
+    await exec(recorder, 'meetings.transcript.draft_store', {
+      meetingId,
+      segments: [
+        { startSeconds: 0, endSeconds: 10, speakerLabel: 'Hà', text: 'Chào mọi người' },
+        { startSeconds: 10, endSeconds: 20, speakerLabel: 'Hà', text: 'Bàn về báo giá' },
+        { startSeconds: 20, endSeconds: 30, speakerLabel: 'Nam', text: 'Chiết khấu tháng này' },
+        { startSeconds: 300, endSeconds: 310, speakerLabel: 'Nam', text: 'Kế hoạch giao hàng' },
+      ],
+    });
+    return meetingId;
+  }
+  beforeAll(async () => {
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`CREATE DATABASE ${dbName}`);
+    await root.end();
+    const base = new URL(ADMIN as string);
+    base.pathname = `/${dbName}`;
+    adminUrl = base.toString();
+    await migrate({ adminUrl, dir: MIGRATIONS });
+    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    const url = new URL(adminUrl);
+    url.username = 'crove_app';
+    url.password = 'test-app-pw';
+    appUrl = url.toString();
+    const pool = createPool({ connectionString: appUrl, max: 4 });
+    pools.push(pool);
+    runtime = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands, ...meetingsCommands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries],
+    });
+    setSummaryEnabled(true);
+    for (const key of ['owner', 'recorder', 'reader', 'stranger']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'run-cancel', subject: key, email: `${key}@run-cancel.test`, name: null });
+    orgId = (await createOrg(runtime, asUser('owner'), 'Huỷ lượt chạy')).orgId;
+    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.recorder, users.reader, users.stranger]);
+  }, 300_000);
+
+  afterAll(async () => {
+    setSummaryEnabled(false);
+    for (const pool of pools) await pool.end();
+    if (!ADMIN) return;
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await root.end();
+  });
+
+  const runStart = (who: string, feature: string, meetingId: string) => exec<{ runId: string }>(who, 'kernel.member_vy.run.start', { feature, subjectType: 'meeting', subjectId: meetingId });
+  const results = (id: string) => sqlAdmin<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, id]).then((r) => r.rows[0]?.n);
+  const runRow = (runId: string) => sqlAdmin<{ status: string; error: string | null }>(`SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2`, [orgId, runId]).then((r) => r.rows[0]);
+  const audits = (feature: string, meetingId: string) =>
+    sqlAdmin<{ detail: { runId: string; meetingId: string; feature: string; reason: string } }>(
+      `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.vy.run_cancelled' AND detail->>'feature' = $2 AND detail->>'meetingId' = $3`,
+      [orgId, feature, meetingId],
+    ).then((r) => r.rows);
+
+  it('cancels a title run and a commitments run in flight when the meeting is removed, audits each by ids, and deletes their private result rows; the recorder\'s other meeting is unaffected', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const other = await seedMeeting('recorder');
+    // Two features, so the member's one live run per feature does not supersede either.
+    const title = await runStart('recorder', 'meetings.title', meetingId);
+    const commitments = await runStart('recorder', 'meetings.commitments', meetingId);
+    expect(await results(meetingId)).toBe(2);
+    await sqlAdmin(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
+    expect(await results(meetingId)).toBe(0);
+    for (const [feature, runId] of [['meetings.title', title.runId], ['meetings.commitments', commitments.runId]] as const) {
+      expect(await runRow(runId), feature).toMatchObject({ status: 'cancelled', error: 'MEETING_REMOVED' });
+      const rows = await audits(feature, meetingId);
+      expect(rows, feature).toHaveLength(1);
+      // Ids and the reason only: no title, no text.
+      expect(rows[0]?.detail, feature).toEqual({ runId, meetingId, feature, reason: 'MEETING_REMOVED' });
+    }
+    // The other meeting still stands, and runs of its own start and stay live.
+    const second = await runStart('recorder', 'meetings.title', other);
+    const third = await runStart('recorder', 'meetings.commitments', other);
+    expect(await runRow(second.runId)).toMatchObject({ status: 'running' });
+    expect(await runRow(third.runId)).toMatchObject({ status: 'running' });
+    expect(await results(other)).toBe(2);
+  });
+});
