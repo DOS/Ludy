@@ -84,7 +84,7 @@ test("a proposal fills the form marked as the coworker's, the box is locked whil
   await test.step("the line and the buyer are filled and marked as the coworker's, with where the VAT rate came from", async () => {
     await expect(page.getByTestId("invoice-ai-state")).toHaveAttribute(
       "data-state",
-      "used",
+      "filled",
     );
     await expect(form.getByLabel("Tên hàng hóa, dịch vụ").first()).toHaveValue(
       "Bánh A",
@@ -118,7 +118,7 @@ test("a proposal fills the form marked as the coworker's, the box is locked whil
     await page.getByTestId("invoice-ai-ask").click();
     await expect(page.getByTestId("invoice-ai-state")).toHaveAttribute(
       "data-state",
-      "used",
+      "filled",
     );
     expect(sent).toHaveLength(2);
     expect(sent[0]).not.toHaveProperty("formBuyerPartyId");
