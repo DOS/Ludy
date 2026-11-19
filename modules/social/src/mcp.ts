@@ -348,6 +348,7 @@ export interface McpTotalsWindow {
   metrics: Record<string, number>;
   clicks: number | null;
   rateBases: WindowTotals['rateBases'];
+  channelsTruncated: boolean;
   channels: Array<{ connectionId: string; provider: string; posts: number; metrics: Record<string, number>; clicks: number | null; rateBases: WindowTotals['rateBases'] }>;
 }
 export interface McpMetricsTotals extends McpTotalsWindow {
@@ -355,13 +356,22 @@ export interface McpMetricsTotals extends McpTotalsWindow {
   previous: McpTotalsWindow;
 }
 
+// The most channels a window lists: the totals stay the whole organization's, the per-channel list is cut (the most posts first) and `channelsTruncated` says so, so one answer never charges more rows than the
+// budget's single call allows.
+export const MCP_TOTALS_CHANNELS_MAX = 50;
 const windowOf = (w: WindowTotals): McpTotalsWindow => ({
   posts: w.posts,
   metrics: w.metrics,
   clicks: w.clicks,
   rateBases: w.rateBases,
-  channels: w.channels.map((c) => ({ connectionId: c.connectionId, provider: plainLine(c.provider, 40), posts: c.posts, metrics: c.metrics, clicks: c.clicks, rateBases: c.rateBases })),
+  channelsTruncated: w.channels.length > MCP_TOTALS_CHANNELS_MAX,
+  channels: w.channels.slice(0, MCP_TOTALS_CHANNELS_MAX).map((c) => ({ connectionId: c.connectionId, provider: plainLine(c.provider, 40), posts: c.posts, metrics: c.metrics, clicks: c.clicks, rateBases: c.rateBases })),
 });
+
+// The results are a company grant's alone: the tool list does not offer them to a member-bound grant, and the query refuses one too.
+function requireCompanyGrant(ctx: Pick<QueryContext, 'actor'>): void {
+  if (ctx.actor.type !== 'user' || !ctx.actor.mcp || ctx.actor.mcp.kind === 'member') throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP của công ty mới dùng được truy vấn này');
+}
 
 // `ludy_social_metrics_summary`: the latest counts of the posts published in the last `days` days (or of one post), newest first, at most `limit`.
 export const mcpMetricsSummary = defineQuery({
@@ -370,7 +380,7 @@ export const mcpMetricsSummary = defineQuery({
   access: GRANTORS,
   mcp: { scope: 'ludy.read' },
   handler: async (ctx, input): Promise<McpMetricsSummary> => {
-    requireGrant(ctx);
+    requireCompanyGrant(ctx);
     const scope = await channelScope(ctx);
     // One more than asked, so `truncated` is known without a count.
     const found = await latestMetrics(ctx.trx, ctx.orgId, { days: input.days, liveOnly: true, ...(input.postId ? { postId: input.postId } : {}) }, input.limit + 1, scope);
@@ -399,7 +409,7 @@ export const mcpMetricsTotals = defineQuery({
   access: GRANTORS,
   mcp: { scope: 'ludy.read' },
   handler: async (ctx, input): Promise<McpMetricsTotals> => {
-    requireGrant(ctx);
+    requireCompanyGrant(ctx);
     const filter = { external: input.includeExternal, scope: await channelScope(ctx) };
     const both = currentAndPrevious(await spanTotals(ctx.trx, ctx.orgId, { days: input.days, before: 0 }, filter), await spanTotals(ctx.trx, ctx.orgId, { days: input.days, before: input.days }, filter));
     const { previous, ...current } = both;

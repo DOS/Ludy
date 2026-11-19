@@ -297,7 +297,8 @@ export const mcpBookings = defineQuery({
   access: GRANTORS,
   mcp: { scope: 'ludy.read' },
   handler: async (ctx, input): Promise<McpBookings> => {
-    requireGrant(ctx);
+    // A company grant's alone (the tool list does not offer it to a member-bound grant, and the query refuses one too): a guest's contact details are the owner's and admin's.
+    if (ctx.actor.type !== 'user' || !ctx.actor.mcp || ctx.actor.mcp.kind === 'member') throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP của công ty mới dùng được truy vấn này');
     const upcoming = input.period === 'upcoming';
     let q = ctx.trx
       .selectFrom('crove_crm.booking as b')

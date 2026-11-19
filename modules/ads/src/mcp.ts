@@ -52,13 +52,19 @@ export interface McpAdsSpend {
 const day = (value: Date | string | null): string | null => (value === null ? null : typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10));
 const addDays = (iso: string, days: number): string => new Date(Date.parse(`${iso}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
+// A company grant's alone, as the Meetings reads are: the tool list does not offer these to a member-bound grant, and the query refuses one too, so the two layers say the same thing.
 function requireGrant(ctx: Pick<QueryContext, 'actor'>): void {
-  if (ctx.actor.type !== 'user' || !ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP mới dùng được truy vấn này');
+  if (ctx.actor.type !== 'user' || !ctx.actor.mcp || ctx.actor.mcp.kind === 'member') throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP của công ty mới dùng được truy vấn này');
 }
+
+// A name the platform gave, or the one Ludy made when it gave none ("Meta ad account <id>", "Google Ads account <id>"), as one plain line: the fallback names carry the platform's own account number, which
+// never leaves, so they leave as the label alone.
+const FALLBACK_NAME = /^(Meta ad account|Google Ads account|TikTok ad account)\s+\S+/i;
+const nameLine = (value: string): string => plainLine(value.replace(FALLBACK_NAME, '$1'), NAME_MAX);
 
 // Every string of a value as one plain line (names from the platform), numbers and booleans as they are.
 function plainDeep<T>(value: T): T {
-  if (typeof value === 'string') return plainLine(value, NAME_MAX) as T;
+  if (typeof value === 'string') return nameLine(value) as T;
   if (Array.isArray(value)) return value.map((v) => plainDeep(v)) as T;
   if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, plainDeep(v)])) as T;
   return value;
@@ -80,7 +86,7 @@ export const mcpAdsSpend = defineQuery({
       .orderBy('id')
       .limit(MCP_ADS_ACCOUNTS + 1)
       .execute();
-    const accounts = rows.slice(0, MCP_ADS_ACCOUNTS).map((a): McpAdsAccount => ({ id: a.id, name: plainLine(a.name, NAME_MAX), currency: a.currency, timeZone: a.time_zone, resultKind: a.result_kind, syncedThrough: day(a.synced_through) }));
+    const accounts = rows.slice(0, MCP_ADS_ACCOUNTS).map((a): McpAdsAccount => ({ id: a.id, name: nameLine(a.name), currency: a.currency, timeZone: a.time_zone, resultKind: a.result_kind, syncedThrough: day(a.synced_through) }));
     if (!input.adAccountId) return { accounts, accountsTruncated: rows.length > accounts.length, summary: null };
     const to = input.to ?? new Date().toISOString().slice(0, 10);
     const from = input.from ?? addDays(to, -29);

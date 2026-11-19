@@ -1189,6 +1189,7 @@ const TOTALS_WINDOW_PROPS = {
   metrics: COUNTS,
   clicks: { type: ['integer', 'null'] },
   rateBases: { type: 'object' },
+  channelsTruncated: { type: 'boolean' },
   channels: {
     type: 'array',
     items: { type: 'object', properties: { connectionId: { type: 'string' }, provider: { type: 'string' }, posts: { type: 'integer' }, metrics: COUNTS, clicks: { type: ['integer', 'null'] }, rateBases: { type: 'object' } }, required: ['connectionId', 'provider', 'posts', 'metrics', 'clicks', 'rateBases'] },
@@ -1355,13 +1356,13 @@ function engageReadTools(runtime: Runtime, actor: UserActor, orgId: string): Too
             module: 'social',
             title: 'Social totals',
             description:
-              'The totals of the posts published in the last `days` days (default 30, at most 365) and of the window of the same length just before it (`previous`), so a change can be read: how many channel copies went out, the sum of each count, the clicks on their short links (null when none went out with one) and the sums an engagement rate is made of (`rateBases`: use these, not the plain sums, to work out a rate), and the same per channel (the channel connection\'s id and provider). `includeExternal` (default false) also counts the posts the channels published outside Ludy (their latest counts, no clicks). Counts only: no text, no names, no money. Read only.',
+              'The totals of the posts published in the last `days` days (default 30, at most 365) and of the window of the same length just before it (`previous`), so a change can be read: how many channel copies went out, the sum of each count, the clicks on their short links (null when none went out with one) and the sums an engagement rate is made of (`rateBases`: use these, not the plain sums, to work out a rate), and the same per channel (the channel connection\'s id and provider; at most 50 channels a window, the most posts first, `channelsTruncated` says when more were left out, the totals still being the whole organization\'s). `includeExternal` (default false) also counts the posts the channels published outside Ludy (their latest counts, no clicks). Counts only: no text, no names, no money. Read only.',
             inputSchema: schemaOf(zMcpMetricsTotalsInput),
             argsSchema: zMcpMetricsTotalsInput,
             outputSchema: {
               type: 'object',
-              properties: { days: { type: 'integer' }, ...TOTALS_WINDOW_PROPS, previous: { type: 'object', properties: TOTALS_WINDOW_PROPS, required: ['posts', 'metrics', 'clicks', 'rateBases', 'channels'] } },
-              required: ['days', 'posts', 'metrics', 'clicks', 'rateBases', 'channels', 'previous'],
+              properties: { days: { type: 'integer' }, ...TOTALS_WINDOW_PROPS, previous: { type: 'object', properties: TOTALS_WINDOW_PROPS, required: ['posts', 'metrics', 'clicks', 'rateBases', 'channelsTruncated', 'channels'] } },
+              required: ['days', 'posts', 'metrics', 'clicks', 'rateBases', 'channelsTruncated', 'channels', 'previous'],
             },
             annotations: READ_ONLY,
             read: run('social.mcp.metrics_totals'),

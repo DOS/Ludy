@@ -29,8 +29,8 @@ const DAY = 86_400_000;
 
 const SUMMARY_ROW_KEYS = ['capturedAt', 'clicks', 'connectionId', 'excerpt', 'externalUrl', 'metrics', 'postId', 'provider', 'publishedAt', 'variantId'];
 const SUMMARY_KEYS = ['rows', 'truncated'];
-const TOTALS_KEYS = ['channels', 'clicks', 'days', 'metrics', 'posts', 'previous', 'rateBases'];
-const PREVIOUS_KEYS = ['channels', 'clicks', 'metrics', 'posts', 'rateBases'];
+const TOTALS_KEYS = ['channels', 'channelsTruncated', 'clicks', 'days', 'metrics', 'posts', 'previous', 'rateBases'];
+const PREVIOUS_KEYS = ['channels', 'channelsTruncated', 'clicks', 'metrics', 'posts', 'rateBases'];
 const CHANNEL_TOTALS_KEYS = ['clicks', 'connectionId', 'metrics', 'posts', 'provider', 'rateBases'];
 const ACCOUNT_KEYS = ['currency', 'id', 'name', 'resultKind', 'syncedThrough', 'timeZone'];
 const SPEND_KEYS = ['accounts', 'accountsTruncated', 'summary'];
@@ -465,6 +465,17 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
   });
 
   describe('ads.mcp.spend', () => {
+    it('leaves a fallback account name (made when the platform gave none) as its label, never with the platform\'s account number', async () => {
+      const fallback = await adAccount(orgs.a, users.owner as string, { name: 'Meta ad account 1234567890123', currency: 'VND', timeZone: 'Asia/Ho_Chi_Minh' });
+      try {
+        const got = await spend();
+        expect(got.accounts.find((a) => a.id === fallback)?.name).toBe('Meta ad account');
+        expect(JSON.stringify(got)).not.toContain('1234567890123');
+      } finally {
+        await sqlAdmin('DELETE FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2', [orgs.a, fallback]);
+      }
+    });
+
     it('without an account lists the org\'s ad accounts, with no summary', async () => {
       const got = await spend();
       expect(Object.keys(got).sort()).toEqual(SPEND_KEYS);
@@ -626,9 +637,12 @@ suite('the results MCP reads: Social metrics and Ads spend, flags and today (#38
     });
 
     // The tool list does not offer these tools to a member-bound grant at all (tested in engage-mcp-tools.test.ts); a call that names one anyway is held to the same rule as the person.
-    it('lets the member-bound grant of an owner or an admin read, as in person', async () => {
+    it('refuses a member-bound grant even when its member is an owner or an admin: these are a company grant\'s alone', async () => {
       for (const [name, input] of calls) {
-        for (const who of ['owner', 'admin']) await expect(runtime.query(name, input, await as(who, 'member')), `${name} ${who}`).resolves.toBeDefined();
+        for (const who of ['owner', 'admin']) {
+          const error = await refusal(runtime.query(name, input, await as(who, 'member')));
+          expect(error.code, `${name} ${who}`).toBe('FORBIDDEN');
+        }
       }
     });
 

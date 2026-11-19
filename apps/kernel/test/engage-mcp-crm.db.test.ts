@@ -709,9 +709,11 @@ suite('the CRM MCP reads (#3860)', () => {
       }
     });
 
-    it('lets an owner\'s and an admin\'s member-bound grant run the bookings', async () => {
-      expect(bookingKeys(await bookings('owner', 'member'))).toEqual(['up2', 'up1', 'cancelled']);
-      expect(bookingKeys(await bookings('admin', 'member', { period: 'past' }))).toEqual(['past1', 'past2']);
+    it('refuses the bookings to a member-bound grant even when its member is an owner or an admin: a guest\'s details are a company grant\'s alone', async () => {
+      for (const who of ['owner', 'admin'] as const) {
+        const error = await refusal(bookings(who, 'member'));
+        expect(error.code, who).toBe('FORBIDDEN');
+      }
     });
 
     it('refuses a company grant held by a plain member before the query runs', async () => {
