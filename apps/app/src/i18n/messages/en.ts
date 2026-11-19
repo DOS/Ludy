@@ -455,6 +455,7 @@ export const en = {
       at: 'At',
       zone: 'In your time zone: {zone}',
       noMail: 'This server cannot send email yet, so only the notice in the app is shown until the installer sets up mail.',
+      saved: 'Saved',
     },
     todayMail: {
       title: 'Daily brief by email',
@@ -2883,6 +2884,7 @@ export const en = {
       title: 'This week in your meetings',
       description: 'What was decided and what is still open, meeting by meeting.',
       window: 'How far back',
+      windowShown: 'Showing the last {count} days',
       days: 'The last {count} days',
       decision: 'Decided',
       open: 'Open',
@@ -9098,6 +9100,7 @@ export const en = {
       finance_payment_reminder: 'Wording the opening and closing of a payment reminder',
       finance_stock_match: 'Suggesting items for unassigned invoice lines',
       finance_stock_reorder: 'Wording a reorder message to a supplier',
+      finance_stock_columns: 'Proposing which standard field each column of an unknown marketplace order report is',
       finance_einvoice_draft: 'Drafting the lines, VAT rate and buyer of a sales invoice draft',
       finance_einvoice_rate_explain: 'Explaining the VAT rate proposed for an adjusting or replacing invoice',
       finance_stock_surplus_explain: 'Explaining the surplus of a stock count',

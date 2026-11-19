@@ -30,6 +30,8 @@ export function digestFailureKey(code: string | null): (typeof KNOWN_FAILURES)[n
 export function MeetingDigest({ slug }: { slug: string }) {
   const t = useTranslations('meetings.digest');
   const [days, setDays] = useState<DigestAsk['days']>(7);
+  // The picker changes the facts below it while the focus stays on it: once the new window has loaded, a polite line says which one is shown (WCAG 4.1.3). Empty until the member uses the picker.
+  const [picked, setPicked] = useState(false);
   // The card stays on screen while another window loads (the picker the member just used must not vanish).
   const facts = useQuery({ ...orpc.meetings.digest.facts.queryOptions({ input: { days } }), ...READ_ONCE, placeholderData: keepPreviousData });
   const data = facts.data;
@@ -44,7 +46,12 @@ export function MeetingDigest({ slug }: { slug: string }) {
         </CardTitle>
         <CardDescription className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span>{t('description')}</span>
-          <NativeSelect aria-label={t('window')} value={String(days)} onChange={(e) => setDays(Number(e.target.value) as DigestAsk['days'])} data-testid="digest-window">
+          <NativeSelect aria-label={t('window')} value={String(days)} onChange={(e) => {
+              setPicked(true);
+              setDays(Number(e.target.value) as DigestAsk['days']);
+            }}
+            data-testid="digest-window"
+          >
             {DIGEST_DAYS.map((d) => (
               <NativeSelectOption key={d} value={String(d)}>
                 {t('days', { count: String(d) })}
@@ -54,6 +61,9 @@ export function MeetingDigest({ slug }: { slug: string }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <p role="status" className="sr-only" data-testid="digest-window-status">
+          {picked && !facts.isPlaceholderData ? t('windowShown', { count: String(days) }) : ''}
+        </p>
         {data.empty ? (
           <>
             <p className="text-sm text-muted-foreground" data-testid="digest-nothing">

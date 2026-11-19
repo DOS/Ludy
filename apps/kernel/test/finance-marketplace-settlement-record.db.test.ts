@@ -301,7 +301,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     // A settlement of another org is not found either.
     const stranger = await org();
     await expect(ask(stranger, original)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_NOT_FOUND' });
-    // An entity on the TT99 chart has no marketplace map yet.
+    // An entity on the TT99 chart: the map set injected here holds only the confirmed TT133 one, so it is refused as unknown (the shipped TT99 map exists but is commentary, #3711 slice 4).
     const tt99 = await org('tt99');
     const there = await seed(tt99, 'shopee', '2026-10-01', '2026-10-15', TWO);
     await expect(ask(tt99, there)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_REGIME_UNKNOWN', status: 422 });
