@@ -180,7 +180,7 @@ export interface KernelAdapters {
   summaryModel?: ModelPort | null;
   // Vy's eSign field placement and risky clause review (#3351); null runs manual signing without AI.
   signAi?: Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> | null;
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'supplierPayableLineSentence' | 'misaCheckLineSentence' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'supplierPayableLineSentence' | 'misaCheckLineSentence' | 'misaAmisBlockerNotes' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -801,6 +801,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           ...(config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET ? { adsDeletion: { appSecret: config.CHANNEL_META_ADS_APP_SECRET } } : {}),
           ...(config.CHANNEL_META_ADS_WRITE_APP_ID && config.CHANNEL_META_ADS_WRITE_APP_SECRET ? { adsWriteDeletion: { appSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET } } : {}),
           ...(conversationSecrets ? { conversationsDeletion: { appSecret: conversationSecrets.primary, ...(conversationSecrets.instagram ? { instagramAppSecret: conversationSecrets.instagram } : {}) } } : {}),
+          // Zoom's webhook of finished cloud recordings (Meetings C3, #3175): with the Zoom app's secret token.
+          ...(config.ZOOM_WEBHOOK_SECRET_TOKEN ? { zoomWebhook: { secretToken: config.ZOOM_WEBHOOK_SECRET_TOKEN, secretTokenPrevious: config.ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS } } : {}),
           // Zalo OA's webhook for customers' messages (conversation core, #2304): with the Zalo app and its OA secret key configured.
           ...(config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_OA_SECRET_KEY ? { zaloWebhook: { appId: config.CHANNEL_ZALO_APP_ID, oaSecretKey: config.CHANNEL_ZALO_OA_SECRET_KEY, oaSecretKeyPrevious: config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS } } : {}),
           // Meta Page webhook for Page comments (conversation core CV2, #2307): with the Meta app and its webhook verify token configured.

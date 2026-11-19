@@ -4,7 +4,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MisaAmisPreview } from '@crove/kernel-contract';
+import type { MisaAmisBlockerNotes, MisaAmisPreview } from '@crove/kernel-contract';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient, calls: [] as string[] }));
 
@@ -98,5 +98,57 @@ describe('what would be sent to MISA AMIS on the screen (#3901)', () => {
     expect(html).toContain('Thiếu mã hàng AMIS');
     expect(html).toContain('Chưa đối chiếu với AMIS');
     expect(html).toContain('Chưa gửi gì sang MISA.');
+  });
+});
+
+describe("the accounting coworker's notes on the blockers (#3904, S5 of #3854)", () => {
+  const NOTES: MisaAmisBlockerNotes = {
+    ai: 'used',
+    notes: [
+      { code: 'item_code_unknown', text: 'The line has no AMIS item code: type the AMIS item code in the preview.' },
+      { code: 'vat_rate_unmapped', text: 'The VAT rate is not one AMIS takes: fix it in Ludy.' },
+    ],
+  };
+  const withoutNotes = (html: string) => html.replace(/<div class="mb-2 rounded-md border border-border p-2" data-testid="misa-amis-preview-notes">.*?<\/ul><\/div>/s, '');
+
+  it('shows a note beside each kind that is on the list, and none for a kind that is not (vat_rate_unmapped is not on this list)', () => {
+    const html = wrap(<MisaAmisPreviewResult result={result} notes={NOTES} />, 'en');
+    expect(html).toContain('data-testid="misa-amis-preview-notes"');
+    expect(html.match(/data-testid="misa-amis-preview-note"/g)).toHaveLength(1);
+    expect(html).toContain('type the AMIS item code in the preview');
+    expect(html).not.toContain('fix it in Ludy');
+    expect(html).toContain("&#x27;s notes on each kind of problem");
+  });
+
+  it('never changes the list: with the notes taken out the markup is the markup with no notes at all', () => {
+    const plain = wrap(<MisaAmisPreviewResult result={result} />, 'en');
+    const noted = wrap(<MisaAmisPreviewResult result={result} notes={NOTES} />, 'en');
+    expect(withoutNotes(noted)).toBe(plain);
+    expect(wrap(<MisaAmisPreviewResult result={result} notes={{ ai: 'off', notes: [] }} />, 'en')).toBe(plain);
+    expect(wrap(<MisaAmisPreviewResult result={result} notes={{ ai: 'none', notes: [] }} />, 'en')).toBe(plain);
+  });
+
+  it('says why there are no notes when the coworker is busy, out of budget or could not word them, and keeps the list', () => {
+    for (const ai of ['busy', 'budget', 'failed'] as const) {
+      const html = wrap(<MisaAmisPreviewResult result={result} notes={{ ai, notes: [] }} />, 'en');
+      expect(html).toContain('data-testid="misa-amis-preview-notes-ai-state"');
+      expect(html).not.toContain('data-testid="misa-amis-preview-notes"');
+      expect(html.match(/data-testid="misa-amis-preview-blocker"/g)).toHaveLength(2);
+    }
+  });
+
+  it('shows no note for a kind whose rows are all under "and N more" (only the rows on screen count)', () => {
+    const quiet = { ...result.items[0] as MisaAmisPreview['items'][number], blockers: [] };
+    const hidden = { ...(result.items[1] as MisaAmisPreview['items'][number]), sourceId: '0192f0a1-2b3c-7d4e-8f50-6172839a4b99' };
+    const many: MisaAmisPreview = { ...result, items: [...Array.from({ length: 20 }, (_v, i) => ({ ...quiet, sourceId: `0192f0a1-2b3c-7d4e-8f50-6172839a4b${String(i).padStart(2, '0')}` })), hidden] };
+    const html = wrap(<MisaAmisPreviewResult result={many} notes={NOTES} />, 'en');
+    expect(html).not.toContain('data-testid="misa-amis-preview-notes"');
+  });
+
+  it('is in Vietnamese too', () => {
+    const html = wrap(<MisaAmisPreviewResult result={result} notes={{ ai: 'used', notes: [{ code: 'item_code_unknown', text: 'Dòng chưa có mã hàng AMIS: hãy nhập mã hàng AMIS trong phần xem trước.' }] }} />, 'vi');
+    expect(html).toContain('Ghi chú của');
+    expect(html).toContain('hãy nhập mã hàng AMIS trong phần xem trước');
+    expect(wrap(<MisaAmisPreviewResult result={result} notes={{ ai: 'busy', notes: [] }} />, 'vi')).toContain('danh sách bên dưới đứng một mình');
   });
 });

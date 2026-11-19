@@ -7595,6 +7595,12 @@ export const vi = {
     andMore: 'và {count} chứng từ nữa',
     moreBlockers: 'và {count} điểm nữa',
     nothingSent: 'Chưa gửi gì sang MISA.',
+    notes: {
+      title: 'Ghi chú của {finance} về từng điểm đang chặn (danh sách bên dưới mới là căn cứ)',
+      busy: '{finance} đang bận, danh sách bên dưới đứng một mình lúc này.',
+      budget: '{finance} đã dùng hết ngân sách AI tháng này: danh sách bên dưới đứng một mình.',
+      failed: '{finance} chưa diễn đạt được lần này: danh sách bên dưới đứng một mình.',
+    },
     blocker: {
       branch_missing: 'Thiếu chi nhánh AMIS',
       party_code_unknown: 'Đối tượng chưa có trong AMIS',
@@ -9086,6 +9092,7 @@ export const vi = {
       finance_bank_match_explain: 'Giải thích vì sao một giao dịch ngân hàng có thể là khoản trả lương',
       finance_marketplace_line: 'Diễn đạt điều đang chờ trên màn hình sàn thương mại điện tử',
       finance_misa_check_line: 'Diễn đạt kết quả kiểm tra file xuất MISA',
+      finance_misa_amis_blocker_notes: 'Diễn đạt từng điểm chặn khi gửi sang MISA AMIS',
       finance_supplier_payable_line: 'Diễn đạt các hóa đơn mua đang chờ chi',
       meetings_transcribe: 'Ghi lời cuộc họp thành văn bản',
       meetings_summary: 'Tóm tắt cuộc họp, các quyết định và việc cần làm',

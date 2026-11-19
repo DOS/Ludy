@@ -8,7 +8,7 @@ import { settlementProposal, type SettlementProposalInput } from '../src/marketp
 const confirmed = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133!;
   const c = (r: MarketplacePostingMap['revenue']) => ({ ...r, status: 'confirmed' as const });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
 };
 const input = (lines: SettlementProposalInput['lines'], over: Partial<SettlementProposalInput> = {}): SettlementProposalInput => ({
   regime: 'tt133', platform: 'shopee', periodFrom: '2026-10-01', periodTo: '2026-10-15', month: '2026-10', date: '2026-10-15', partyId: null, lines, ...over,
@@ -22,8 +22,8 @@ describe('marketplace posting map and gate', () => {
   it('ships as commentary and refuses until confirmed', () => {
     const map = MARKETPLACE_POSTING_MAPS.tt133!;
     expect(map.status).toBe('commentary');
-    for (const r of [map.receivable, map.revenue, map.cash, map.feePayable, map.feeAwaitingInvoice, map.taxWithheld, map.vatPayable, map.pitPayable, map.pitExpense]) expect(r.status).toBe('commentary');
-    expect([map.vatPayable.code, map.pitPayable.code, map.pitExpense.code]).toEqual(['3331', '3335', '6422']);
+    for (const r of [map.receivable, map.revenue, map.cash, map.feePayable, map.feeAwaitingInvoice, map.taxWithheld, map.vatPayable, map.pitPayable, map.pitOwnerEquity]) expect(r.status).toBe('commentary');
+    expect([map.vatPayable.code, map.pitPayable.code, map.pitOwnerEquity.code]).toEqual(['3331', '3335', '4212']);
     expect([map.receivable.code, map.revenue.code, map.cash.code, map.feePayable.code, map.feeAwaitingInvoice.code, map.taxWithheld.code]).toEqual(['131', '511', '112', '331', '1388', '333']);
     expect(code(() => requireConfirmedMarketplaceMap('tt133'))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
     expect(code(() => settlementProposal(input([{ sales: '100', sellerDiscount: '0', refund: '0' }])))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
@@ -107,15 +107,55 @@ describe('gate strictness', () => {
   });
 });
 
+describe('the gate is per path (#3711 slice 1)', () => {
+  // Every row confirmed but the three of the household tax path: the accountant has not named the owner's equity account yet.
+  const withoutHouseholdTax = () => {
+    const m = confirmed();
+    for (const row of ['vatPayable', 'pitPayable', 'pitOwnerEquity'] as const) m.tt133 = { ...m.tt133!, [row]: { ...m.tt133![row], status: 'commentary' as const } };
+    return m;
+  };
+  const household = (tax: string) => input([{ sales: '10000000', sellerDiscount: '0', refund: '0', taxWithheld: tax }], { tax: { vatPercent: '1', pitPercent: '0.5' } });
+  it('opens the sales, payout and fee accrual paths while the household tax rows are commentary', () => {
+    const maps = withoutHouseholdTax();
+    for (const path of ['sales', 'payout', 'fee_accrual'] as const) expect(requireConfirmedMarketplaceMap('tt133', maps, [path]).status).toBe('confirmed');
+    expect(code(() => requireConfirmedMarketplaceMap('tt133', maps, ['household_tax']))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    // Asking for every row, as before, still refuses.
+    expect(code(() => requireConfirmedMarketplaceMap('tt133', maps))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+  });
+  it('posts a company settlement but refuses a settlement that carries household tax, until the owner\'s equity row is confirmed', () => {
+    const maps = withoutHouseholdTax();
+    expect(settlementProposal(input([{ sales: '100', sellerDiscount: '0', refund: '0' }]), maps).lines.length).toBe(2);
+    // A household seller with nothing withheld posts like a company; with tax withheld it waits.
+    expect(settlementProposal(household('0'), maps).lines.length).toBe(2);
+    expect(code(() => settlementProposal(household('150000'), maps))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    expect(settlementProposal(household('150000'), confirmed()).taxWithheld).toBe('150000');
+  });
+  it('a path asks only for its own rows: one commentary row of another path does not close it', () => {
+    for (const [row, closed] of [['cash', ['payout']], ['feeExpense', ['fee_accrual']], ['revenue', ['sales']]] as const) {
+      const m = confirmed();
+      m.tt133 = { ...m.tt133!, [row]: { ...m.tt133![row], status: 'commentary' as const } };
+      for (const path of ['sales', 'payout', 'fee_accrual', 'household_tax'] as const) {
+        const refused = closed.includes(path as never);
+        expect(code(() => requireConfirmedMarketplaceMap('tt133', m, [path])), `${row} ${path}`).toEqual(refused ? { code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 } : null);
+      }
+    }
+  });
+  it('books the household PIT against owner\'s equity, never an expense account (research A4, D2)', () => {
+    const account = MARKETPLACE_POSTING_MAPS.tt133!.pitOwnerEquity;
+    expect(account.code).toMatch(/^4/);
+    expect(account.status).toBe('commentary');
+  });
+});
+
 describe('the tax a platform withheld from a household seller (slice C2)', () => {
   const taxed = (tax: string, over: Partial<SettlementProposalInput> = {}) =>
     input([{ sales: '10000000', sellerDiscount: '0', refund: '0', taxWithheld: tax }], { tax: { vatPercent: '1', pitPercent: '0.5' }, ...over });
   const maps = confirmed();
-  it('splits the tax by the rate pair, VAT against 511 and PIT against the new expense row, and balances', () => {
+  it('splits the tax by the rate pair, VAT against 511 and PIT against the owner\'s equity row, and balances', () => {
     const p = settlementProposal(taxed('150000'), maps);
     expect(p.taxWithheld).toBe('150000');
     expect(p.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([
-      ['131', '10000000', '0'], ['511', '0', '10000000'], ['511', '100000', '0'], ['3331', '0', '100000'], ['6422', '50000', '0'], ['3335', '0', '50000'],
+      ['131', '10000000', '0'], ['511', '0', '10000000'], ['511', '100000', '0'], ['3331', '0', '100000'], ['4212', '50000', '0'], ['3335', '0', '50000'],
     ]);
     expect(p.total).toBe('10150000');
     expect(p.lines.reduce((a, l) => a.plus(l.debit), money('0')).equals(p.lines.reduce((a, l) => a.plus(l.credit), money('0')))).toBe(true);
@@ -135,7 +175,7 @@ describe('the tax a platform withheld from a household seller (slice C2)', () =>
   it('posts only the tax lines for a month whose net is zero but whose lines carry withheld tax, and still refuses a zero net with no tax', () => {
     const zero = input([{ sales: '40000', sellerDiscount: '0', refund: '0', taxWithheld: '600' }, { sales: '0', sellerDiscount: '0', refund: '40000', taxWithheld: '0' }], { tax: { vatPercent: '1', pitPercent: '0.5' } });
     const p = settlementProposal(zero, maps);
-    expect(p.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['511', '400', '0'], ['3331', '0', '400'], ['6422', '200', '0'], ['3335', '0', '200']]);
+    expect(p.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['511', '400', '0'], ['3331', '0', '400'], ['4212', '200', '0'], ['3335', '0', '200']]);
     expect(p.total).toBe('600');
     expect(code(() => settlementProposal({ ...zero, tax: null }, maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
   });
@@ -152,7 +192,7 @@ describe('the tax a platform withheld from a household seller (slice C2)', () =>
     expect(code(() => settlementProposal(taxed('-5'), maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
   });
   it('is not confirmed while any of the three new rows is commentary', () => {
-    for (const row of ['vatPayable', 'pitPayable', 'pitExpense'] as const) {
+    for (const row of ['vatPayable', 'pitPayable', 'pitOwnerEquity'] as const) {
       const one = confirmed();
       one.tt133 = { ...one.tt133!, [row]: { ...one.tt133![row], status: 'commentary' as const } };
       expect(code(() => requireConfirmedMarketplaceMap('tt133', one))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
