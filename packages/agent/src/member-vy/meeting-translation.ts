@@ -238,16 +238,35 @@ function limitFor(key: string, source: string, to?: TranslationTarget): number {
   return Math.min(cap, source.length * MAX_FACTOR + 100);
 }
 
-// The Latin-script names and acronyms of a source that a CJK translation has to carry as written (the prompt says so): a capitalised word in the middle of a sentence that is not a
-// country, a month or a title (those are translated), and an acronym of two to six capitals that a language does not usually write in its own words (OK, CEO, VAT and the like are).
-// Lower case, NFKC, so the full-width form of a Latin letter counts as the plain one.
-const COMMON_ACRONYMS = new Set<string>(['ok', 'am', 'pm', 'ceo', 'cfo', 'cto', 'coo', 'vat', 'ai']);
+// The Latin-script names and acronyms of a source that a CJK translation has to carry as written (the prompt says so), kept narrow on purpose: a mark that shows on a good translation
+// loses its meaning. Asked for: an acronym of two to six capitals that a language does not write in its own words (OK, CEO, VAT, VND, IT and the like are translated, so they are exempt),
+// and a capitalised word in the middle of a sentence that is plain ASCII, is not a Vietnamese syllable (Kinh, Minh, Lan are; Acme, Corp, Smith are not), is not a country, a month, a
+// title or a city (those are translated) and has no possessive. A Vietnamese word with a diacritic (Hà Nội, Phòng, Cô) is never asked for: it is Vietnamese and comes out in the
+// target's own words. Lower case, NFKC, so the full-width form of a Latin letter counts as the plain one. Names that this misses are the native reader's to find (the runbook).
+const COMMON_ACRONYMS = new Set<string>(['ok', 'am', 'pm', 'ceo', 'cfo', 'cto', 'coo', 'vat', 'ai', 'it', 'hr', 'tnhh', 'jsc', 'tp', 'hcm', 'vnd', 'usd', 'eur']);
+// Titles and cities a CJK text writes in its own words, beside KNOWN_WORDS.
+const TRANSLATED_WORDS = new Set<string>(['dr', 'prof', 'sir', 'madam', 'miss', 'hanoi', 'saigon', 'danang', 'hue', 'haiphong', 'cantho', 'nhatrang', 'dalat']);
+// A syllable of Vietnamese written without diacritics: an optional initial, vowels, an optional final (c, ch, m, n, ng, nh, p, t). "Acme" and "Corp" (clusters Vietnamese has not) are not.
+const VIETNAMESE_SYLLABLE = /^(?:ngh?|[cgkpt]h|gi|qu|nh|tr|ph|[bcdghklmnpqrstvx])?[aeiouy]+(?:ch|ng|nh|[cmnpt])?$/i;
 const kept = (word: string): string => word.normalize('NFKC').toLowerCase();
 function namesToKeep(source: string): string[] {
   const out = new Set<string>();
-  for (const word of midSentenceCapitals(source)) if (!KNOWN_WORDS.has(norm(word))) out.add(kept(word));
-  for (const word of wordsOf(source)) if (/^[A-Z]{2,6}$/.test(word) && !COMMON_ACRONYMS.has(kept(word))) out.add(kept(word));
+  const plain = source.replace(/['\u2019]s\b/gu, '');
+  for (const word of midSentenceCapitals(plain)) {
+    if (/^[A-Za-z]{3,}$/.test(word) && !VIETNAMESE_SYLLABLE.test(word) && !KNOWN_WORDS.has(norm(word)) && !TRANSLATED_WORDS.has(norm(word))) out.add(kept(word));
+  }
+  for (const word of wordsOf(plain)) if (/^[A-Z]{2,6}$/.test(word) && !COMMON_ACRONYMS.has(kept(word))) out.add(kept(word));
   return [...out];
+}
+// Whether a text writes a name as written: found, and not inside a longer Latin word or number (a CJK text has no spaces, so the neighbours are the test).
+function carries(written: string, name: string): boolean {
+  const ascii = /[a-z0-9]/;
+  for (let at = written.indexOf(name); at >= 0; at = written.indexOf(name, at + 1)) {
+    const before = at === 0 ? '' : (written[at - 1] as string);
+    const after = written[at + name.length] ?? '';
+    if (!ascii.test(before) && !ascii.test(after)) return true;
+  }
+  return false;
 }
 
 /**
@@ -278,7 +297,7 @@ export function checkSegment(source: TranslationSegmentInput, answered: string |
     // The capitalised-name check reads Latin script split by spaces, which a CJK text has neither of. The other way is checked instead: every Latin name and acronym the source has
     // must stand in the translation as written (the prompt says so); one that was transliterated or dropped shows the same mark, "a name may differ from the original".
     const written = text.normalize('NFKC').toLowerCase();
-    if (namesToKeep(source.text).some((name) => !written.includes(name))) codes.push('NAME_ADDED');
+    if (namesToKeep(source.text).some((name) => !carries(written, name))) codes.push('NAME_ADDED');
   }
   return { key: source.key, text, state: codes.length > 0 ? 'warn' : 'ok', codes };
 }

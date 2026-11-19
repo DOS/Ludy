@@ -4,7 +4,7 @@ Meetings step E3 ([#3186](https://github.com/DOS/Ludy/issues/3186)). The code sh
 
 ## What is checked and why a person does it
 
-The research found no measure of any language pair, and code can only test shape: the figures are the source's figures, there is no link or address the source does not have, the text is in the language's script, it is not longer than the original allows, and every Latin name or acronym of the source stands in it as written (a name that was transliterated or dropped shows the mark "a name may differ from the original"). Code cannot tell that a sentence reads as a native would write it, that a business register is right, or that the meaning is not turned around. The reader says that.
+The research found no measure of any language pair, and code can only test shape: the figures are the source's figures, there is no link or address the source does not have, the text is in the language's script, it is not longer than the original allows, and every foreign Latin name or acronym of the source stands in it as written (one that was transliterated or dropped shows the mark "a name may differ from the original"; Vietnamese words, places and titles are not asked for, so the reader also looks for names the mark did not catch). Code cannot tell that a sentence reads as a native would write it, that a business register is right, or that the meaning is not turned around. The reader says that.
 
 ## Who and what you need
 
@@ -14,7 +14,7 @@ The research found no measure of any language pair, and code can only test shape
 
 ## Steps (about an hour per language)
 
-1. On the test deployment, make a meeting from each of two scripts (one with figures and an owner and a due date, for example `01-hop-ban-hang-tuan.md` and `02-chot-so-ke-toan-cuoi-thang.md`, plus `04-standup-san-pham.md` for the English tech words): get the script into a meeting as its transcript (read it aloud and upload the recording, or use a platform recording of the sandbox provider that carries the script as its transcript), write the summary and the decisions from the script's own "Decisions and action items" section, publish the result.
+1. On the test deployment, make a meeting from each of two scripts (one with figures and an owner and a due date, for example `01-hop-ban-hang-tuan.md` and `02-chot-so-ke-toan-cuoi-thang.md`, plus `04-standup-san-pham.md` for the English tech words): get the script into a meeting as its transcript (read it aloud and upload the recording, after the consent step of [the scripts' README](meetings-eval-scripts/README.md#1-consent-first), or use a platform recording of the sandbox provider that carries the script as its transcript), write the summary and the decisions from the script's own "Decisions and action items" section, publish the result.
 2. As the recorder, open the meeting, pick the language in "Dịch sang" on the summary card and click. Do the same on the transcript panel for the first lines, enough for about 20 lines in all, picked so that some hold a figure, some a name or an acronym, some an English word, and some are short ("Dạ", "Vâng").
 3. Give the reader the original and the translation side by side (a screenshot or a copy of the two columns), with the marks the screen showed (a mark is code's warning, not a verdict).
 4. The reader rates every line and the summary with the scale below and writes one sentence for any line below "acceptable".

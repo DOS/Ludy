@@ -236,6 +236,26 @@ describe('Chinese, Japanese and Korean as targets (#3186)', () => {
     expect(checkSegment(source, 'Agreed the price with the customer', 'en')).toMatchObject({ codes: [] });
   });
 
+  it('into a CJK target, a Vietnamese place, title, unit or possessive is not asked for as written (the mark is kept for foreign names and acronyms)', () => {
+    const ok = (src: string, answer: string, to: 'zh' | 'ja' | 'ko' = 'zh') => expect(checkSegment(seg(src), answer, to)).toMatchObject({ state: 'ok', codes: [] });
+    // Places, titles, rooms and units a CJK text writes in its own words, and Vietnamese syllables without a diacritic (Kinh, Minh, Lan).
+    ok('Họp ở Hà Nội ngày mai', '明天在河内开会');
+    ok('Chúng tôi gặp Công ty ABC ở Hà Nội', '我们在河内见了ABC公司');
+    ok('Họp với Cô Lan và Bác Minh', '与兰老师和明伯开会');
+    ok('Hôm nay họp ở Nhà máy Số 2', '今天在2号工厂开会');
+    ok('Việc của Phòng Kinh doanh hôm qua', '昨天业务部的工作');
+    ok('Gặp khách ở Hanoi về hợp đồng', '在河内与客户谈合同');
+    ok('Giá 5 triệu VND cho khách ở TP.HCM', '给胡志明市客户的价格是5百万越南盾');
+    // A possessive does not make a one-letter name of the "s".
+    ok('Họp với Minh\'s team hôm nay', '今天和Minh的团队开会');
+    // A foreign name or acronym that was written in the target's own letters still shows the mark: that is what it is for.
+    expect(checkSegment(seg('Họp với khách Smith và Acme Corp'), '与客户史密斯和阿克米公司开会', 'zh')).toMatchObject({ state: 'warn', codes: ['NAME_ADDED'] });
+    // A name inside a longer Latin word is not the name (a CJK text has no spaces: the letters next to it are the test); next to a CJK character or a space it is.
+    expect(checkSegment(seg('Họp với khách Acme hôm nay'), '今天与Acmeville开会', 'ja')).toMatchObject({ state: 'warn', codes: ['NAME_ADDED'] });
+    expect(checkSegment(seg('Họp với khách Acme hôm nay'), '今日はAcme社と会議', 'ja')).toMatchObject({ state: 'ok', codes: [] });
+    expect(checkSegment(seg('Họp với khách Acme hôm nay'), '오늘 Acme 고객과 회의', 'ko')).toMatchObject({ state: 'ok', codes: [] });
+  });
+
   it('bounds the length of a CJK translation by a smaller factor than the pair vi and en, per target', () => {
     const source = seg('x'.repeat(100));
     // 100 characters of source: a CJK text up to 1.5 x 100 + 60 = 210 characters is let through, one of 211 is TOO_LONG; the pair keeps 3 x 100 + 100 = 400.
