@@ -380,7 +380,11 @@ suite('MISA AMIS push (#3902)', () => {
     await expect(resolve('owner', inAmis, 'in_amis')).rejects.toMatchObject({ code: 'MISA_AMIS_PUSH_STATE' });
     await rows("UPDATE crove_finance.misa_amis_push SET updated_at = pg_catalog.now() - interval '4 days' WHERE org_refid = ANY($1::uuid[])", [[inAmis, notInAmis]]);
     for (const who of ['member', 'viewer'] as const) await expect(resolve(who, inAmis, 'in_amis'), who).rejects.toMatchObject({ status: 403 });
+    const sentBefore = (await rows<{ sent_at: Date }>('SELECT sent_at FROM crove_finance.misa_amis_push WHERE org_refid = $1', [inAmis]))[0]?.sent_at;
+    expect(sentBefore).toBeTruthy();
     expect(await resolve('admin', inAmis, 'in_amis')).toEqual({ resolved: true });
+    // The send day is kept (the result check asks MISA from that day), while the row is back in the result window.
+    expect((await rows<{ same: boolean; fresh: boolean }>('SELECT sent_at = $2 AS same, updated_at > pg_catalog.now() - interval \'1 minute\' AS fresh FROM crove_finance.misa_amis_push WHERE org_refid = $1', [inAmis, sentBefore]))[0]).toEqual({ same: true, fresh: true });
     expect(await resolve('owner', notInAmis, 'not_in_amis')).toEqual({ resolved: true });
     expect(await rows<{ state: string; reason: string | null; attempts: number }>('SELECT state, reason, attempts FROM crove_finance.misa_amis_push WHERE org_refid = $1', [inAmis])).toEqual([{ state: 'sent', reason: 'CONFIRMED_IN_AMIS', attempts: 1 }]);
     expect(await rows<{ state: string; reason: string | null; attempts: number }>('SELECT state, reason, attempts FROM crove_finance.misa_amis_push WHERE org_refid = $1', [notInAmis])).toEqual([{ state: 'failed', reason: 'NOT_IN_AMIS', attempts: 1 }]);

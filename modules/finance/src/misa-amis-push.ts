@@ -497,7 +497,8 @@ export const misaAmisPushResolve = defineCommand({
     const [state, reason] = input.outcome === 'in_amis' ? (['sent', 'CONFIRMED_IN_AMIS'] as const) : (['failed', 'NOT_IN_AMIS'] as const);
     const moved = await ctx.trx
       .updateTable('crove_finance.misa_amis_push')
-      .set({ state, reason, ...(state === 'sent' ? { sent_at: ctx.now } : {}), updated_at: ctx.now })
+      // The send day stays (the row's own `sent_at`, else the time it was last changed): the result check asks MISA from that day, not from the day a person looked in AMIS. `updated_at` is renewed, so the row is in the result window.
+      .set({ state, reason, ...(state === 'sent' ? { sent_at: sql<Date>`coalesce(sent_at, updated_at)` } : {}), updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
       .where('org_refid', '=', input.orgRefid)

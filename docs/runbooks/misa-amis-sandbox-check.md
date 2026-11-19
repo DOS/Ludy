@@ -31,7 +31,7 @@ Every item is **unconfirmed** today. For each, the result is written on #3902 (w
 11. **The 20 character voucher number.** MISA's limit on `org_refno` as the document says; the push blocks a longer number, including after the `/N` of a split voucher, and never cuts one.
 12. **A refused `save`.** When MISA answers `Success: false` with an error code to a whole batch, the push takes it as "nothing was created" and marks every row `refused` (with the text Ludy has for that code). Check that a refusal never leaves some vouchers of the batch created.
 13. **A refused row sent again.** A person's new confirmed push sends a `refused` row again under the same `org_refid`; check that MISA takes it (a corrected voucher) and does not answer that the id exists.
-14. **Results.** `get_call_back_detail_error` returns one entry per `org_refid` (if it returns several, the worker keeps the last), and an entry's `success` is final.
+14. **Results.** `get_call_back_detail_error` returns one entry per `org_refid` (if it returns several, the worker keeps the last), and an entry's `success` is final. Also check how its date range is filtered (by the day of the request, which the worker assumes, asking from one day before the first send day to tomorrow) and that a range of several days is accepted: a row a person confirmed "in AMIS" days later is read from its original send day.
 15. **The callback** (S4, [#3903](https://github.com/DOS/Ludy/issues/3903)) is a separate check once that slice exists: `app_id` against the ClientID, the signature, the reply AMIS expects.
 
 ## Turning the push on, and off
