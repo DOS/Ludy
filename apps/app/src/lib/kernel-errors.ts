@@ -463,6 +463,9 @@ export const KERNEL_ERROR_CODES = [
   // Vy checking a meeting's agenda against its transcript (#3959).
   'ADHERENCE_OFF',
   'ADHERENCE_BUSY',
+  // The weekly digest across meetings (#3949).
+  'DIGEST_OFF',
+  'DIGEST_BUSY',
   // Vy naming who an action item belongs to (#3921).
   'ASSIGNEE_OFF',
   'ASSIGNEE_BUSY',

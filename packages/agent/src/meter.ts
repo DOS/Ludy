@@ -99,6 +99,8 @@ export const AI_FEATURES = {
   'meetings.ask': 'meetings',
   // The member's Vy writing the two or three sentences of the brief before a meeting (#3543): one call over at most 23 short facts the member's own reads found, the member waiting for it, through their own meter.
   'meetings.brief': 'meetings',
+  // The member's Vy writing the few sentences of the weekly digest across meetings (#3949): one call over at most 60 short facts the member's own reads found, the member waiting for it, through their own meter.
+  'meetings.digest': 'meetings',
   // The member's Vy naming who an action item belongs to from the name said in the meeting (#3921): one call over a name and at most 100 names, the member waiting for it, through their own meter.
   'meetings.assignee': 'meetings',
   // The recorder's Vy checking whether a meeting covered its agenda (#3959): one call over a short agenda and the transcript the recorder reads, the recorder waiting for it, through their own meter.
