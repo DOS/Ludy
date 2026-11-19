@@ -116,14 +116,14 @@ CREATE TABLE IF NOT EXISTS crove_finance.misa_amis_match (
   connection_id uuid NOT NULL,
   kind text NOT NULL CHECK (kind IN ('party', 'item')),
   -- A party is keyed by its tax code (digits only: 10, or 13 with the branch part), an item by the code the voucher is written with.
-  ref text NOT NULL CHECK (char_length(ref) BETWEEN 1 AND 64 AND (kind <> 'party' OR ref ~ '^[0-9]{10}([0-9]{3})?$')),
+  match_key text NOT NULL CHECK (char_length(match_key) BETWEEN 1 AND 64 AND (kind <> 'party' OR match_key ~ '^[0-9]{10}([0-9]{3})?$')),
   state text NOT NULL CHECK (state IN ('matched', 'unknown', 'ambiguous')),
   -- The one active catalogue entry's code and id, only for `matched`: what the voucher is written with. No name, address or tax code of the entry is kept.
   catalogue_code text CHECK (catalogue_code IS NULL OR char_length(catalogue_code) BETWEEN 1 AND 100),
   catalogue_id uuid,
   checked_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   PRIMARY KEY (org_id, id),
-  CONSTRAINT misa_amis_match_ref_uq UNIQUE (org_id, connection_id, kind, ref),
+  CONSTRAINT misa_amis_match_key_uq UNIQUE (org_id, connection_id, kind, match_key),
   CONSTRAINT misa_amis_match_found_ck CHECK ((state = 'matched') = (catalogue_code IS NOT NULL) AND (catalogue_id IS NULL OR state = 'matched')),
   CONSTRAINT misa_amis_match_entity_fk FOREIGN KEY (org_id, legal_entity_id) REFERENCES crove_kernel.legal_entity (org_id, id),
   CONSTRAINT misa_amis_match_connection_fk FOREIGN KEY (org_id, connection_id) REFERENCES crove_finance.misa_amis_connection (org_id, id) ON DELETE CASCADE

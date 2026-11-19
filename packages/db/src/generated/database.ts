@@ -1449,7 +1449,7 @@ export interface FinanceMisaAmisMatchTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
   connection_id: ColumnType<string, string, NotGranted>;
   kind: ColumnType<string, string, NotGranted>;
-  ref: ColumnType<string, string, NotGranted>;
+  match_key: ColumnType<string, string, NotGranted>;
   state: ColumnType<string, string, NotGranted>;
   catalogue_code: ColumnType<string | null, string | null, NotGranted>;
   catalogue_id: ColumnType<string | null, string | null, NotGranted>;

@@ -162,7 +162,7 @@ export const misaAmisMatchRecordCheck = defineCommand({
     if (input.results.length > 0) {
       await ctx.trx
         .insertInto('crove_finance.misa_amis_match')
-        .values(input.results.map((r) => ({ org_id: ctx.orgId, connection_id: input.connectionId, legal_entity_id: check.legal_entity_id, kind: r.kind, ref: r.ref, state: r.state, catalogue_code: r.code, catalogue_id: r.entryId, checked_at: ctx.now })))
+        .values(input.results.map((r) => ({ org_id: ctx.orgId, connection_id: input.connectionId, legal_entity_id: check.legal_entity_id, kind: r.kind, match_key: r.ref, state: r.state, catalogue_code: r.code, catalogue_id: r.entryId, checked_at: ctx.now })))
         .execute();
     }
     await ctx.trx
@@ -200,7 +200,7 @@ export const misaAmisMatchResultsQuery = defineQuery({
     if (check.state !== 'done') return { connectionId: check.connection_id, status, partyCodes: null, itemCodes: null };
     const rows = await ctx.trx
       .selectFrom('crove_finance.misa_amis_match')
-      .select(['kind', 'ref', 'state', 'catalogue_code'])
+      .select(['kind', 'match_key', 'state', 'catalogue_code'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', check.connection_id)
       .where('state', '=', 'matched')
@@ -209,8 +209,8 @@ export const misaAmisMatchResultsQuery = defineQuery({
     const itemCodes = new Set<string>();
     for (const row of rows) {
       if (row.catalogue_code === null) continue;
-      if (row.kind === 'party') partyCodes.set(row.ref, row.catalogue_code);
-      else itemCodes.add(row.ref);
+      if (row.kind === 'party') partyCodes.set(row.match_key, row.catalogue_code);
+      else itemCodes.add(row.match_key);
     }
     return { connectionId: check.connection_id, status, partyCodes, itemCodes };
   },

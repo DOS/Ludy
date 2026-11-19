@@ -1698,7 +1698,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_kernel.channel_connection', values: channel },
           { table: 'crove_finance.misa_amis_connection', values: { org_id: o.id, id: connection, legal_entity_id: entity, channel_connection_id: channel.id } },
         ],
-        row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, connection_id: connection, kind: 'party', ref: '0101234564', state: 'unknown' },
+        row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, connection_id: connection, kind: 'party', match_key: '0101234564', state: 'unknown' },
       };
     },
   },

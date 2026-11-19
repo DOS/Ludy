@@ -273,7 +273,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     }
     // The stored rows hold a reference, a state, the matched entry's code and id: no column for a name, an address or a tax code of the catalogue.
     const columns = (await rows<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'crove_finance' AND table_name = 'misa_amis_match' ORDER BY ordinal_position")).map((r) => r.column_name);
-    expect(columns).toEqual(['org_id', 'id', 'legal_entity_id', 'connection_id', 'kind', 'ref', 'state', 'catalogue_code', 'catalogue_id', 'checked_at']);
+    expect(columns).toEqual(['org_id', 'id', 'legal_entity_id', 'connection_id', 'kind', 'match_key', 'state', 'catalogue_code', 'catalogue_id', 'checked_at']);
     // The worker's target now says there is nothing waiting, and a second record of the same check changes nothing.
     expect(await worker.query('finance.misa_amis_match.check_target', { id: connectionId }, { actor: SYSTEM, orgId })).toEqual({ action: 'none', reason: 'not_requested' });
     expect(await record({ state: 'done', failure: null, results: [] })).toEqual({ recorded: false, results: 0 });
