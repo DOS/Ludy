@@ -10,6 +10,7 @@ import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts
 import { chaptersCommands, chaptersQueries } from './chapters.ts';
 import { chaptersRunCommands, chaptersRunQueries } from './chapters-run.ts';
 import { titleCommands, titleQueries } from './title.ts';
+import { commitmentsCommands, commitmentsQueries } from './commitments.ts';
 import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
 import { minutesTemplateCommands, minutesTemplateQueries } from './minutes-templates.ts';
@@ -1013,6 +1014,7 @@ export const meetingsCommands = [
   ...chaptersCommands,
   ...chaptersRunCommands,
   ...titleCommands,
+  ...commitmentsCommands,
   ...summaryCommands,
   ...speakerCommands,
   ...seriesCommands,
@@ -1057,6 +1059,7 @@ export const meetingsQueries = [
   ...chaptersQueries,
   ...chaptersRunQueries,
   ...titleQueries,
+  ...commitmentsQueries,
   ...summaryQueries,
   ...seriesQueries,
   ...minutesTemplateQueries,

@@ -3432,6 +3432,31 @@ export const vi = {
     },
     // Mục lục của cuộc họp (#3844): tiêu đề và dòng của bản ghi lời nói mà mỗi mục bắt đầu.
     // Vy của chính người ghi gợi ý tối đa ba tên cho cuộc họp khi bấm (#3947); chọn một tên thì đổi tên.
+    // Vy của chính người ghi liệt kê mỗi người nói đã cam kết hay quyết định gì, khi bấm (#3954).
+    commitments: {
+      title: 'Ai cam kết làm gì',
+      desc: 'Vy đọc bản ghi lời nói và liệt kê, với mỗi người nói, việc họ nói sẽ làm và điều họ nói đã quyết định. Mỗi dòng mở bản ghi lời nói đúng chỗ họ nói. Không có gì được lưu, chia sẻ hay thành việc cần làm từ đây. Vy có thể sai.',
+      button: 'Liệt kê cam kết',
+      restart: 'Hỏi lại',
+      running: 'Vy đang đọc bản ghi lời nói…',
+      commitment: 'Sẽ làm',
+      decision: 'Đã quyết',
+      open: 'Mở bản ghi lời nói ở {time}',
+      dropped: 'Đã bỏ {count} dòng của Vy vì không qua được các bước kiểm tra.',
+      none: 'Lần này chưa có gợi ý. Hãy thử lại, hoặc đọc bản ghi lời nói.',
+      private: 'Chỉ bạn thấy phần này và nó không được lưu. Hãy đối chiếu với bản ghi lời nói trước khi dùng.',
+      failed: 'Vy chưa liệt kê được các cam kết.',
+      codes: {
+        default: 'Hãy thử lại sau ít phút, hoặc đọc bản ghi lời nói.',
+        AI_BUDGET_EXHAUSTED: 'Ngân sách AI của kỳ này đã dùng hết.',
+        AI_STOPPED: 'AI đang tạm tắt.',
+        COMMITMENTS_TIMEOUT: 'Mất quá nhiều thời gian.',
+        COMMITMENTS_FAILED: 'Dịch vụ AI không trả lời.',
+        COMMITMENTS_TOO_LONG: 'Bản ghi lời nói quá dài để Vy đọc một lần.',
+        COMMITMENTS_NO_TRANSCRIPT: 'Chưa có bản ghi lời nói.',
+        COMMITMENTS_BUSY: 'Đang có một lần chạy. Hãy đợi một lát.',
+      },
+    },
     titleSuggest: {
       button: 'Gợi ý tên',
       note: 'Vy đọc bản ghi lời nói và gợi ý tối đa ba tên. Chưa có gì đổi cho đến khi bạn chọn một tên.',
@@ -9018,6 +9043,7 @@ export const vi = {
       meetings_brief: 'Viết vài câu chuẩn bị trước cuộc họp từ những gì đã chốt, việc còn dở và cơ hội của khách',
       meetings_chapters: 'Lập mục lục cuộc họp từ bản ghi, mỗi mục kèm giây của dòng bắt đầu',
       meetings_title: 'Gợi ý tối đa ba tên cho cuộc họp từ bản ghi, khi người ghi bấm',
+      meetings_commitments: 'Liệt kê mỗi người nói đã cam kết hay quyết định gì trong cuộc họp, từ bản ghi, khi người ghi bấm',
       meetings_followup_words: 'Soạn lời mở đầu và kết thư gửi sau cuộc họp',
       projects_weekly_status: 'Tóm tắt tình hình tuần của một dự án từ số liệu và tên việc',
       projects_tasks_from_note: 'Đề xuất việc dự án từ ghi chú',
@@ -13098,6 +13124,7 @@ export const vi = {
       ADHERENCE_OFF: 'Hệ thống này chưa bật việc nhờ Vy kiểm tra cuộc họp đã bàn đủ chưa.',
       ADHERENCE_BUSY: 'Vy đang bận kiểm tra các cuộc họp. Hãy thử lại sau vài phút.',
       TITLE_BUSY: 'Vy đang bận gợi ý tên. Hãy thử lại sau vài phút.',
+      COMMITMENTS_BUSY: 'Vy đang bận liệt kê cam kết. Hãy thử lại sau vài phút.',
       MEETING_TITLE_EMPTY: 'Cuộc họp cần có tên.',
       MEETING_TITLE_TOO_LONG: 'Tên cuộc họp dài tối đa 200 ký tự.',
       DIGEST_OFF: 'Hệ thống này chưa bật việc nhờ Vy tóm tắt tuần.',
@@ -15339,6 +15366,10 @@ export const vi = {
       title: {
         start: 'Nhờ Vy gợi ý tên cho một cuộc họp',
         status: 'Xem Vy có gợi ý được tên cuộc họp không',
+      },
+      commitments: {
+        start: 'Nhờ Vy liệt kê mỗi người nói đã cam kết gì trong một cuộc họp',
+        status: 'Xem Vy có liệt kê được cam kết của từng người nói không',
       },
       chapters: {
         copy_result: 'Chép mục lục Vy đã lập cho cuộc họp vào bản nháp',
