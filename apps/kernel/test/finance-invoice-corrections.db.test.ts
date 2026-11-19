@@ -313,4 +313,35 @@ suite('replacement and adjustment invoices (#916)', () => {
       orgId = purchaseOrg;
     }
   });
+
+  // Under Circular 99 the revenue an adjustment takes back is a deduction: Dr 521 (the previewed journal and the posted one agree), the output VAT stays on 3331, and 511 keeps what the sale credited (#3712 slice 4).
+  it('debits an adjustment of a sale to 521 under Circular 99, in the preview and in the entry, and keeps 511 as the sale credited it', async () => {
+    const purchaseOrg = orgId;
+    ({ orgId } = await createOrg(runtime, asUser(owner), `Org ${randomUUID().slice(0, 6)}`));
+    try {
+      await runtime.execute('kernel.org.set_tax_code', { taxCode: '0101234564' }, { actor: asMfa(owner), orgId, idempotencyKey: randomUUID() });
+      await admin((c) =>
+        c.query(
+          "INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default",
+          [orgId],
+        ),
+      );
+      await approve(await read(numbered(BASIC, '9101', '2026-09-15')));
+      expect(await balance('511')).toBe(-1800000);
+      expect(await balance('521')).toBe(0);
+      const adjustment = await read(numbered(ADJUSTMENT, '9103', '2026-10-05', '9101'));
+      const shown = await runtime.query<{ payload: { journal: Array<{ accountCode: string; debit: string; credit: string }> } }>('kernel.inbox.get', { id: adjustment }, { actor: asUser(owner), orgId });
+      expect(shown.payload.journal.find((j) => j.accountCode === '521')).toMatchObject({ debit: '200000', credit: '0' });
+      expect(shown.payload.journal.some((j) => j.accountCode === '511')).toBe(false);
+      const adjusted = await approve(adjustment);
+      expect(adjusted.correctsDocumentId).toBeDefined();
+      // The sale still credits 511 for 1,800,000; the 200,000 it was reduced by is on 521, and the output VAT of 180,000 less 20,000 is on 3331, so the receivable is 1,760,000.
+      expect(await balance('511')).toBe(-1800000);
+      expect(await balance('521')).toBe(200000);
+      expect(await balance('3331')).toBe(-160000);
+      expect(await balance('131')).toBe(1760000);
+    } finally {
+      orgId = purchaseOrg;
+    }
+  });
 });

@@ -29,6 +29,7 @@ import {
 import { assertUsableAccounts, isInactiveDefaultRefusal } from './accounts.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
+import { booksOn } from './payroll-posting.ts';
 import { latestRevision } from './source-entry.ts';
 import { learnFromApproval } from './categorization.ts';
 import { postReversal } from './reversal.ts';
@@ -44,8 +45,22 @@ function directionOf(payload: PurchaseProposal): DocumentDirection {
 }
 
 // The journal of an invoice by its direction.
-export function invoiceJournal(direction: DocumentDirection, lines: ProposedLine[], vatTotal: string, memo: string): JournalLineDraft[] {
-  return direction === 'sale' ? buildSalesJournal(lines, vatTotal, memo) : buildPurchaseJournal(lines, vatTotal, memo);
+export function invoiceJournal(direction: DocumentDirection, lines: ProposedLine[], vatTotal: string, memo: string, regime?: string): JournalLineDraft[] {
+  return direction === 'sale' ? buildSalesJournal(lines, vatTotal, memo, regime) : buildPurchaseJournal(lines, vatTotal, memo);
+}
+
+// The books regime a sale is posted under (#3712 slice 4): the entity's books row in force on the day of the entry. Only a sale needs it (a Circular 99 sale debits its revenue deductions to 521);
+// a purchase has none.
+async function saleRegime(ctx: CommandContext, direction: DocumentDirection, legalEntityId: string | null | undefined, date: string): Promise<string | undefined> {
+  if (direction !== 'sale') return undefined;
+  return (await booksOn(ctx, await resolveLegalEntity(ctx, legalEntityId), date)).regime;
+}
+
+// The legal entity a proposal was stamped with (#1538: the entity of the reading it came from), none for a call that is not an approval.
+async function proposalEntity(ctx: CommandContext): Promise<string | undefined> {
+  if (!ctx.proposalId) return undefined;
+  const row = await ctx.trx.selectFrom('crove_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
+  return row?.legal_entity_id ?? undefined;
 }
 
 // The party of the invoice in Crove's books: the supplier of a purchase, the customer of a sale. Matched by tax code,
@@ -350,7 +365,8 @@ export const revisePurchase = defineCommand({
     // proposal carries one only when extraction found a line no rule matched.
     const classification = payload.checks.some((c) => c.id === 'accounts') ? classificationCheck(lines) : null;
     const checks = classification ? payload.checks.map((c) => (c.id === 'accounts' ? classification : c)) : payload.checks;
-    const revised = { ...payload, lines, checks, journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload)) };
+    const regime = await saleRegime(ctx, directionOf(payload), payload.legalEntityId ?? (await proposalEntity(ctx)), payload.invoice.issueDate);
+    const revised = { ...payload, lines, checks, journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload), regime) };
     return { changed: true as const, payload: revised };
   },
 });
@@ -453,7 +469,8 @@ export const recordPurchase = defineCommand({
     // A foreign-currency invoice says what it was in its entry's description, which the journal and the MISA export
     // show (#918).
     const memo = foreign ? `${journalMemo(payload)} (${foreignNote(foreign)})` : journalMemo(payload);
-    const journal = invoiceJournal(direction, lines, invoice.vatTotal, memo);
+    const regime = await saleRegime(ctx, direction, payload.legalEntityId ?? (await proposalEntity(ctx)), lateDate ?? invoice.issueDate);
+    const journal = invoiceJournal(direction, lines, invoice.vatTotal, memo, regime);
     if (!journalIsBalanced(journal)) throw new DomainError('UNBALANCED', 422, 'Bút toán không cân');
     // The payable (purchase) or receivable (sale) booked must equal the invoice total exactly.
     const counterAccount = sale ? RECEIVABLE_ACCOUNT : PAYABLE_ACCOUNT;
@@ -467,10 +484,7 @@ export const recordPurchase = defineCommand({
     // The legal entity whose books it goes to (#1280): the revision's, else the proposal's own (#1538: the entity of
     // the reading it came from, where its members see it), else the one resolved for the approver. The approver must
     // see it.
-    const stamped = ctx.proposalId
-      ? (await ctx.trx.selectFrom('crove_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst())
-          ?.legal_entity_id
-      : undefined;
+    const stamped = await proposalEntity(ctx);
     const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId ?? stamped);
     await assertDirection(ctx, payload, legalEntityId);
     const partyId = await upsertParty(ctx, sale ? payload.buyer : payload.seller, direction);
