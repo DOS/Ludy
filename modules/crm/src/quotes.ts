@@ -936,4 +936,4 @@ export const quoteCommands = [quoteSave, quoteDeleteDraft, quoteRevise, quoteSen
 export const quoteQueries = [quoteGet, quoteList, dealQuotes, quoteDefaults, quoteSettingGet];
 
 // The quote reads' own rows for the MCP projection (crm.mcp.quotes, crm.mcp.quote), under names that do not clash with the deal reads'.
-export { base as quoteBase, summary as quoteSummaryView, loadLines as loadQuoteLines };
+export { base as quoteBase, summary as quoteSummaryView };

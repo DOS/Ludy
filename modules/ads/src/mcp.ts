@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Ads results an MCP grant may read (epic #3857, E1, issue #3860; ADR-0051 decision 2): `ludy_ads_spend` (ads.mcp.spend), `ludy_ads_today` (ads.mcp.today) and `ludy_ads_flags` (ads.mcp.flags).
-// R0 reads of what the Ads screen shows an owner or admin, for a company grant's consenting owner or admin only (the flags and the spend are money the org spends, which the screen itself keeps from
-// members and viewers); a member-bound grant is not offered them. They run the same loaders as the screen, so the answer is what the owner sees there.
+// R0 reads of the figures the Ads screen shows, for a company grant's consenting owner or admin only: the flags show spend, which the screen keeps from members and viewers; the spend summary (`ads.spend.summary`)
+// is open to every role on screen, but the MCP read is stricter on purpose (the org's spend and campaign names go to an outside app, so only a company grant gets them), and a member-bound grant is neither offered
+// the tools nor allowed the queries. They run the same loaders as the screen, so the answer is what the owner sees there.
 //
 // Privacy review. What leaves: for `ads.mcp.spend`, the org's ad accounts (id, name, currency, time zone, the result the owner chose and how far the figures are synced) and, for one chosen account,
 // the spend, impressions, clicks, results and cost per result for a stretch of days, by month, by campaign (the platform's campaign id and the latest name it gave it, the most spending first) and by day;

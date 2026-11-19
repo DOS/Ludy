@@ -239,6 +239,17 @@ suite('what an MCP grant reads of Hộp thư through the conversation reads, and
     expect(detail.conversation.id).toBe(conv.a1c);
   });
 
+  it('caps the pages: more than 30 threads or more than 50 messages in one request is refused, and a message number past the database\'s range too', async () => {
+    for (const who of ['company', 'member'] as const) {
+      expect((await refusal(list('owner', who, { limit: 31 }))).status, `threads ${who}`).toBeLessThan(500);
+      expect((await refusal(get('owner', who, { conversationId: conv.a1c, limit: 51 }))).status, `messages ${who}`).toBeLessThan(500);
+    }
+    // The cap is the request's; the largest page is still answered, whole, and nothing more than the page leaves.
+    expect((await list('owner', 'company', { limit: 30 })).conversations.length).toBeLessThanOrEqual(30);
+    expect((await get('owner', 'company', { conversationId: conv.a1c, limit: 50 })).messages.length).toBeLessThanOrEqual(50);
+    await refusal(get('owner', 'company', { conversationId: conv.a1c, beforeSeq: 2_147_483_648 }));
+  });
+
   it('answers not found for a thread of another org, or one that does not exist, the same', async () => {
     const other = await refusal(get('owner', 'company', { conversationId: conv.b1c }));
     const none = await refusal(get('owner', 'company', { conversationId: randomUUID() }));
