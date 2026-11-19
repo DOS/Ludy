@@ -42,7 +42,7 @@ afterEach(() => {
 });
 
 describe('legacyCroveInvariantBridge (#3965 step 1 of 2)', () => {
-  it('rejects missing package names, duplicate full names, cross-scope slug collisions, and mixed scopes', () => {
+  it('rejects missing package names, duplicate names/slugs, unexpected scopes, mixed scopes, and symlinks outside repo', () => {
     const missing = makeTempDir('ludy-bridge-missing-');
     writeManifest(missing, 'packages/bad', {});
     expect(() => legacyCroveInvariantBridge(missing)).toThrow(/has no package name/);
@@ -57,10 +57,22 @@ describe('legacyCroveInvariantBridge (#3965 step 1 of 2)', () => {
     writeManifest(dupSlug, 'apps/shadow', { name: '@ludy/kernel-runtime' });
     expect(() => legacyCroveInvariantBridge(dupSlug)).toThrow(/duplicate workspace package slug/);
 
+    const badScope = makeTempDir('ludy-bridge-bad-scope-');
+    writeManifest(badScope, 'packages/db', { name: '@ludy/db' });
+    writeManifest(badScope, 'apps/web', { name: 'web' });
+    expect(() => legacyCroveInvariantBridge(badScope)).toThrow(/unexpected workspace package scope \(web\)/);
+
     const mixed = makeTempDir('ludy-bridge-mixed-');
     writeManifest(mixed, 'packages/kernel', { name: '@crove/kernel' });
     writeManifest(mixed, 'packages/db', { name: '@ludy/db' });
     expect(() => legacyCroveInvariantBridge(mixed)).toThrow(/mixed @crove\/\* and @ludy\/\*/);
+
+    const escaping = makeTempDir('ludy-bridge-escape-');
+    const externalTarget = makeTempDir('ludy-bridge-external-');
+    writeFileSync(join(externalTarget, 'package.json'), JSON.stringify({ name: '@ludy/kernel-runtime' }));
+    mkdirSync(join(escaping, 'apps'), { recursive: true });
+    symlinkSync(externalTarget, join(escaping, 'apps/escaped'));
+    expect(() => legacyCroveInvariantBridge(escaping)).toThrow(/resolves outside repo root/);
   });
 
   it('stays inactive when all packages use @crove/* and leaves non-invariant importers untouched', async () => {

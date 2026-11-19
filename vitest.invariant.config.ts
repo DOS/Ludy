@@ -25,6 +25,7 @@ export function legacyCroveInvariantBridge(rootDir: string) {
     }
   }
 
+  const repoReal = realpathSync(rootDir);
   const seenNames = new Set<string>();
   const seenSlugs = new Set<string>();
   const names: string[] = [];
@@ -34,6 +35,10 @@ export function legacyCroveInvariantBridge(rootDir: string) {
     const pkg = JSON.parse(readFileSync(manifestPath, 'utf8')) as { name?: string };
     if (typeof pkg.name !== 'string' || pkg.name.length === 0) {
       throw new Error(`vitest.invariant.config.ts: ${manifestPath} has no package name`);
+    }
+    const pkgReal = realpathSync(pkgDir);
+    if (!pkgReal.startsWith(`${repoReal}${sep}`) && pkgReal !== repoReal) {
+      throw new Error(`vitest.invariant.config.ts: workspace package ${pkg.name} resolves outside repo root (${pkgReal})`);
     }
     if (seenNames.has(pkg.name)) {
       throw new Error(`vitest.invariant.config.ts: duplicate workspace package name ${pkg.name} (${manifestPath})`);
@@ -46,16 +51,20 @@ export function legacyCroveInvariantBridge(rootDir: string) {
     seenSlugs.add(slug);
     names.push(pkg.name);
     if (pkg.name.startsWith('@ludy/')) {
-      ludyPkgDirs.set(pkg.name.slice('@ludy/'.length), realpathSync(pkgDir));
+      ludyPkgDirs.set(pkg.name.slice('@ludy/'.length), pkgReal);
     }
   }
 
+  const invalid = names.filter((name) => !name.startsWith('@crove/') && !name.startsWith('@ludy/'));
+  if (invalid.length > 0) {
+    throw new Error(`vitest.invariant.config.ts: unexpected workspace package scope (${invalid.join(', ')}); expected @crove/* or @ludy/*`);
+  }
   const hasCrove = names.some((name) => name.startsWith('@crove/'));
   const hasLudy = names.some((name) => name.startsWith('@ludy/'));
   if (hasCrove && hasLudy) {
     throw new Error('vitest.invariant.config.ts: mixed @crove/* and @ludy/* workspace packages; rename all packages atomically');
   }
-  const bridgeActive = !hasCrove && hasLudy;
+  const bridgeActive = names.length > 0 && names.every((name) => name.startsWith('@ludy/'));
 
   return {
     name: 'legacy-crove-invariant-bridge',

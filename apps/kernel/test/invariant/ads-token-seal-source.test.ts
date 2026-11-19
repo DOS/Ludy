@@ -25,6 +25,9 @@ function sources(dir: string, out: string[] = []): string[] {
 const ALL = ['apps', 'packages', 'modules', 'tools'].filter((d) => existsSync(join(ROOT, d))).flatMap((d) => sources(join(ROOT, d)));
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
 const adPlatformPkg = (JSON.parse(read('packages/ad-platform/package.json')) as { name: string }).name;
+if (adPlatformPkg !== '@crove/ad-platform' && adPlatformPkg !== '@ludy/ad-platform') {
+  throw new Error(`Unexpected ad-platform package name: ${adPlatformPkg}`);
+}
 const adPlatformRe = adPlatformPkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
