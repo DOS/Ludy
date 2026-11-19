@@ -2,6 +2,8 @@
 
 Why this exists: the push of vouchers to MISA AMIS Kế toán ([#3902](https://github.com/DOS/Ludy/issues/3902), S3b of [#3854](https://github.com/DOS/Ludy/issues/3854)) was built and tested only against a fake MISA server written from MISA's documentation. Nothing in it has run against a real MISA sandbox. Until this check has confirmed or corrected what the push assumes, **no deployment turns the push on** and no org's vouchers go to MISA.
 
+This file is for AMIS Kế toán. MISA ASP has [its own check](misa-asp-sandbox-check.md): the two share an adapter, not a document.
+
 Who runs it: only the coordinator, with the integrator's ClientID and a test access code handed over by the secret procedure ([production, secret and credential steps](../contributing.md#production-secret-and-credential-steps)). No worker or team lead runs it, and nothing in this file asks the owner to run a command: the owner's part is the handover of the ClientID and a sandbox company in AMIS, and the coordinator does the rest.
 
 ## The three gates, all closed by default
