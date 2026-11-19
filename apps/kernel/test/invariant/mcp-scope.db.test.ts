@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What an MCP grant can reach once it is past the HTTP edge (ADR-0051 decision 2, ADR-0032, issue #2975), through the runtime every command and query runs on:
-// - only the commands WRITES and ENGAGE_WRITES name carry `mcp` (the Social draft command of #3227, owner decision 2026-11-14, and the Engage R1 twins of #3861), each pinned to its scope and to the narrow shape the sealed write context runs
-//   (R1, internal, owners and admins, no permission, extension, agent or member-mode declaration), and a grant runs no other command, whatever the command declares;
+// - only the commands WRITES and ENGAGE_WRITES name run for a grant (the Social draft command of #3227, owner decision 2026-11-14, and the Engage R1 twins of #3861), each pinned to its scope and to the narrow shape
+//   the sealed write context runs (R1, internal, owners and admins, no permission, extension, agent or member-mode declaration), and a grant runs no other command, whatever the command declares; the only other
+//   commands that carry `mcp` are the 14 proposal-only Engage twins of E4 (#3863), each declared `{ scope, mode: 'proposal' }`: a call to one never runs it, it leaves a pending proposal a person approves
+//   (pinned below, and in mcp-proposals.db.test.ts);
 // - a grant reaches a query only if that query declares the scope (`mcp`), the set of queries that do is pinned here (a new one is a change to this protected
 //   file), and none of them is sensitive, open to member mode or an extension token, or holds data private to one member (member-bound grants are a later step);
 // - the grant's standing is read in the transaction of every call, with no session check configured: a revoked or expired grant, a consenting user who is no
@@ -179,7 +181,8 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
     const proposing = commands.filter((c) => (c as { mcp?: { mode?: string } }).mcp?.mode === 'proposal');
     expect(proposing.filter((c) => !Object.hasOwn(PROPOSALS, c.name)).map((c) => c.name)).toEqual([]);
     for (const c of proposing) {
-      expect((c as { mcp: { scope: string } }).mcp.scope, c.name).toBe(PROPOSALS[c.name]);
+      // Exactly the scope and the mode, nothing more (a command that runs for a grant carries the scope alone).
+      expect((c as { mcp: unknown }).mcp, c.name).toStrictEqual({ scope: PROPOSALS[c.name], mode: 'proposal' });
       expect([c.risk, c.access], c.name).toEqual(['R2', 'proposal']);
       expect(c.permission, c.name).toBeUndefined();
       expect(c.extension, c.name).toBeUndefined();
