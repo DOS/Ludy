@@ -8,8 +8,13 @@ import { zId } from './schemas.ts';
 // crove_kernel.agent_grant's CHECK the same one; a test pins the two lists.
 // `ludy.member.read` is the private scope of a member grant (design note on #2975, slice 3): it ships dark. The database accepts it on a member grant, but the runtime's own
 // list (MCP_SCOPES) does not have it yet, so no query can declare it, and no screen asks for it; it joins that list with the first query that declares it (step 3d).
-// `ludy.social.draft` (#3227) is the one write scope: a company grant's alone, for the one command that creates a draft Social post for a person to review.
-export const MCP_SCOPE_IDS = ['ludy.read', 'ludy.member.read', 'ludy.social.draft'] as const;
+// The write scopes are a company grant's alone and each comes with `ludy.read` (ADR-0051 decision 11, #3858): `ludy.social.draft` (#3227: the one command that creates a draft Social post for a person to
+// review), and per line `ludy.engage.write` (Hộp thư and CRM) and `ludy.ads.draft` (ads drafts). A write scope lets a call reach a command that declares it; an R2 or R3 command that declares it only
+// ever becomes a proposal a person approves (decision 10, a later slice).
+export const MCP_SCOPE_IDS = ['ludy.read', 'ludy.member.read', 'ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft'] as const;
+// The write scopes among them, in the order the consent page lists them.
+export const MCP_WRITE_SCOPE_IDS = ['ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft'] as const;
+export type McpWriteScopeId = (typeof MCP_WRITE_SCOPE_IDS)[number];
 export type McpScopeId = (typeof MCP_SCOPE_IDS)[number];
 export const zMcpScope = z.enum(MCP_SCOPE_IDS);
 

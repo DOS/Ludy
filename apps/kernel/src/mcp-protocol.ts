@@ -7,6 +7,7 @@
 // No server-initiated message, no GET stream, no session id: a request is answered in its own response. A tool is a descriptor over one existing
 // query of the kernel; this file knows nothing of the database.
 import { z } from 'zod';
+import type { McpWriteScopeId } from '@crove/kernel-contract';
 
 export const MODERN_VERSION = '2026-07-28';
 // Newest first. A client that asks for another version of `initialize` is answered with the newest legacy one, as the specification has it.
@@ -48,6 +49,9 @@ export interface ToolDescriptor {
   // The app the tool reads or writes (ADR-0053, slice e); none for a kernel tool, which is never off. A tool of an app the org switched off is left out of the list and
   // answers MODULE_OFF as an error result.
   module?: string;
+  // The write scope a tool needs (ADR-0051 decision 11, #3858): the tool is listed, and callable, only for a company grant that holds it. A tool that is not read only and names no write scope is never listed
+  // (the filter fails closed), so a new write tool cannot appear to a grant by leaving the field out.
+  writeScope?: McpWriteScopeId;
   // The kernel query (or, for the one write tool, the command) it runs and what it answers; the endpoint runs it as the grant, never as the person's own click.
   read: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
   // How many rows of business data an answer carries, charged against the grant's daily row budget. Zero for a tool that reads none.
