@@ -9,6 +9,8 @@ export interface SearchToken {
   word: string;
   /** Where the word starts in the original text, in UTF-16 units. */
   start: number;
+  /** Where the word ends (just past its last character), in UTF-16 units. */
+  end: number;
 }
 
 // One character folded: its marks dropped, lower case, đ as d; every character that is then not a-z or 0-9 is a separator (a space). A lone combining mark folds to nothing, so a letter written as a base
@@ -29,14 +31,14 @@ function foldChar(ch: string): string {
   return out;
 }
 
-/** The words of a text, folded, each with the position of its first character in the original. */
+/** The words of a text, folded, each with the position of its first character in the original and the position just past its last. */
 export function tokenize(text: string): SearchToken[] {
   const tokens: SearchToken[] = [];
   let word = '';
   let start = 0;
   let at = 0;
   const flush = () => {
-    if (word !== '') tokens.push({ word, start });
+    if (word !== '') tokens.push({ word, start, end: at });
     word = '';
   };
   for (const ch of text) {
@@ -70,16 +72,20 @@ export function foldQuery(q: string): string[] | null {
  * Whether one line holds every word as the start of one of its words, and where the earliest of those words starts in the line (for the snippet). Every word must be found in this one line: words spread
  * over two lines (or a line and the title) are not a hit.
  */
-export function matchLine(line: string, words: readonly string[]): { start: number } | null {
+export function matchLine(line: string, words: readonly string[]): { start: number; end: number } | null {
   if (words.length === 0) return null;
   const tokens = tokenize(line);
   let first = Number.MAX_SAFE_INTEGER;
+  let firstEnd = 0;
   for (const w of words) {
     const hit = tokens.find((t) => t.word.startsWith(w));
     if (!hit) return null;
-    if (hit.start < first) first = hit.start;
+    if (hit.start < first) {
+      first = hit.start;
+      firstEnd = hit.end;
+    }
   }
-  return { start: first };
+  return { start: first, end: firstEnd };
 }
 
 const WINDOW = MCP_SNIPPET_MAX - 10;
@@ -87,13 +93,25 @@ const LEAD = 60;
 const isLow = (code: number) => code >= 0xdc00 && code <= 0xdfff;
 const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff;
 
-/** One plain line cut to at most MCP_SNIPPET_MAX characters around `start`, with an ellipsis where it is cut. The line is already plain (see plainLine); a surrogate pair is never split. */
-export function snippetAround(line: string, start: number): string {
+/**
+ * One plain line cut to at most MCP_SNIPPET_MAX characters around the match that starts at `start` and ends at `matchEnd`, with an ellipsis where it is cut. The line is already plain (see plainLine); a surrogate pair
+ * is never split. A cut falls on a space where the window has one outside the match, so a snippet does not start or end in the middle of a word; a word longer than the room there is cut where it must be.
+ */
+export function snippetAround(line: string, start: number, matchEnd: number = start): string {
   if (line.length <= MCP_SNIPPET_MAX) return line;
   let from = Math.max(0, Math.min(start - LEAD, line.length - WINDOW));
   if (from > 0 && isLow(line.charCodeAt(from))) from += 1;
   let end = Math.min(line.length, from + WINDOW);
   if (end < line.length && isHigh(line.charCodeAt(end - 1))) end -= 1;
+  // The start moves forward to the next space and the end back to the last one, never into the match.
+  if (from > 0 && line[from - 1] !== ' ' && line[from] !== ' ') {
+    const next = line.indexOf(' ', from);
+    if (next !== -1 && next < start) from = next + 1;
+  }
+  if (end < line.length && line[end - 1] !== ' ' && line[end] !== ' ') {
+    const prev = line.lastIndexOf(' ', end - 1);
+    if (prev >= matchEnd && prev > from) end = prev;
+  }
   const body = line.slice(from, end).trim();
   return `${from > 0 ? '…' : ''}${body}${end < line.length ? '…' : ''}`;
 }

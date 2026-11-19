@@ -55,15 +55,15 @@ describe('foldQuery', () => {
 describe('matchLine', () => {
   it('needs every word to start a word of the line, in any order', () => {
     const line = 'Quyết định giảm chiết khấu cho khách hàng A';
-    expect(matchLine(line, ['chiet', 'khau'])).toEqual({ start: line.indexOf('chiết') });
-    expect(matchLine(line, ['khach', 'quyet'])).toEqual({ start: 0 });
+    expect(matchLine(line, ['chiet', 'khau'])).toMatchObject({ start: line.indexOf('chiết') });
+    expect(matchLine(line, ['khach', 'quyet'])).toMatchObject({ start: 0 });
     expect(matchLine(line, ['chie', 'kh'])?.start).toBe(line.indexOf('chiết'));
   });
 
   it('is a word PREFIX, not a substring: the middle of a word does not match', () => {
-    expect(matchLine('chiết khấu', ['khau'])).toEqual({ start: 6 });
+    expect(matchLine('chiết khấu', ['khau'])).toMatchObject({ start: 6 });
     expect(matchLine('chiết khấu', ['hau'])).toBeNull();
-    expect(matchLine('khuyến mãi', ['mai', 'khuyen'])).toEqual({ start: 0 });
+    expect(matchLine('khuyến mãi', ['mai', 'khuyen'])).toMatchObject({ start: 0 });
   });
 
   it('is null when one word is missing, and for no words', () => {
@@ -107,6 +107,44 @@ describe('snippetAround', () => {
         expect(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(out), `${pad} ${start}`).toBe(false);
       }
     }
+  });
+});
+
+describe('snippetAround at word edges (#4087)', () => {
+  const words = Array.from({ length: 120 }, (_, i) => `từ${i}x`);
+  // A long line of whole words with one match in the middle: whatever the offsets, the snippet holds only whole words, and the match.
+  it('starts and ends on whole words, and keeps the match whole', () => {
+    for (const pad of [0, 1, 2, 3, 5, 8]) {
+      const line = `${'a'.repeat(pad)} ${words.join(' ')} ${'chiết khấu'} ${words.join(' ')}`.trim();
+      const at = line.indexOf('chiết');
+      const out = snippetAround(line, at, at + 'chiết'.length);
+      expect(out.length, `pad ${pad}`).toBeLessThanOrEqual(MCP_SNIPPET_MAX);
+      expect(out, `pad ${pad}`).toContain('chiết');
+      for (const w of out.replaceAll('…', '').split(' ').filter((x) => x !== '')) expect(/^(từ\d+x|chiết|khấu|a+)$/.test(w), `pad ${pad}: "${w}"`).toBe(true);
+    }
+  });
+
+  it('keeps a match that sits right at the edge of the window whole', () => {
+    const line = `${'ab '.repeat(80)}chiết khấu ${'cd '.repeat(80)}`.trim();
+    const at = line.indexOf('chiết');
+    for (let shift = -3; shift <= 3; shift += 1) {
+      const out = snippetAround(line, at + shift, at + shift + 5);
+      expect(out.length).toBeLessThanOrEqual(MCP_SNIPPET_MAX);
+    }
+    expect(snippetAround(line, at, at + 5)).toContain('chiết');
+  });
+
+  it('still cuts one word longer than the window where it must, and stays within the limit', () => {
+    const line = `${'x'.repeat(500)} chiết khấu ${'y'.repeat(500)}`;
+    const at = line.indexOf('chiết');
+    const out = snippetAround(line, at, at + 5);
+    expect(out.length).toBeLessThanOrEqual(MCP_SNIPPET_MAX);
+    expect(out).toContain('chiết khấu');
+  });
+
+  it('gives the end of the earliest matched word with the start', () => {
+    expect(matchLine('Chốt ngân sách quý', ['ngan'])).toEqual({ start: 5, end: 9 });
+    expect(matchLine('Chốt ngân sách quý', ['sach', 'ngan'])).toEqual({ start: 5, end: 9 });
   });
 });
 
