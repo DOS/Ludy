@@ -1085,4 +1085,71 @@ suite('finding a person in the org (#923)', () => {
       { role: 'crove_worker', allowed: false },
     ]);
   });
+
+  // On a shared database the migration login that owns the definer is a MEMBER of crove_tenant (non-superuser, ADMIN OPTION, docs/runbooks/shared-database.md), so the push guard treats it as a tenant (the finding
+  // B1 of the security review of #4015). The suite runs as a superuser, which the guard exempts, so this test gives the definer such an owner for one transaction (rolled back) and runs the erasure through it.
+  it("clears MISA AMIS's refusal text when the definer's owner is a non-superuser member of crove_tenant, as on a shared database (#4015)", async () => {
+    const email = 'Shared.Db@Example.vn';
+    const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId]))).rows[0]?.id);
+    const channel = randomUUID();
+    const connection = randomUUID();
+    await admin(async (c) => {
+      await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [org.orgId, channel, entity, org.owner]);
+      await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [org.orgId, connection, entity, channel]);
+    });
+    const row = async (state: string, reason: string | null, no: string) => {
+      const id = randomUUID();
+      await admin((c) =>
+        c.query(
+          `INSERT INTO crove_finance.misa_amis_push (org_id, legal_entity_id, connection_id, source_type, source_id, voucher_type, org_refid, org_refno, payload_digest, state, reason)
+           VALUES ($1, $2, $3, 'cash_voucher', $4, 4, $5, $6, $7, $8, $9)`,
+          [org.orgId, entity, connection, randomUUID(), id, no, 'a'.repeat(64), state, reason],
+        ),
+      );
+      return id;
+    };
+    const quoted = await row('refused', `Đối tượng ${email} chưa có trong danh mục`, 'SD1');
+    const unrelated = await row('refused', 'Thiếu mã hàng trong dòng 3', 'SD2');
+    const queuedQuoting = await row('queued', `Texte ${email}`, 'SD3');
+    const migrationLogin = `pdpl_migration_login_${Math.floor(Math.random() * 1e9)}`;
+    const c = new pg.Client({ connectionString: adminUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      // The shared-database role set-up: a login that is no superuser, created the crove_* roles and so holds ADMIN OPTION on them, and owns what it creates.
+      await c.query(`CREATE ROLE ${migrationLogin} NOLOGIN`);
+      await c.query(`GRANT crove_tenant TO ${migrationLogin} WITH ADMIN OPTION`);
+      await c.query(`GRANT CREATE ON SCHEMA crove_finance TO ${migrationLogin}`);
+      await c.query(`ALTER FUNCTION crove_finance.personal_data_clear_misa_amis_push_reason(text, text) OWNER TO ${migrationLogin}`);
+      // ... and, as on that database, it owns the table too (what the migration login creates it owns).
+      await c.query(`ALTER TABLE crove_finance.misa_amis_push OWNER TO ${migrationLogin}`);
+      const owner = (
+        await c.query<{ owner: string; member: boolean; superuser: boolean }>(
+          `SELECT pg_catalog.pg_get_userbyid(p.proowner) AS owner, pg_catalog.pg_has_role(p.proowner, 'crove_tenant', 'MEMBER') AS member, r.rolsuper AS superuser
+             FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_roles r ON r.oid = p.proowner
+            WHERE p.oid = 'crove_finance.personal_data_clear_misa_amis_push_reason(text, text)'::regprocedure`,
+        )
+      ).rows[0];
+      expect(owner).toEqual({ owner: migrationLogin, member: true, superuser: false });
+      await c.query('SET LOCAL ROLE crove_app');
+      await enterUser(c, org.owner, org.orgId);
+      const cleared = await c.query<{ rows: number }>(`SELECT crove_finance.personal_data_clear_misa_amis_push_reason('email', $1) AS rows`, [email.toLowerCase()]);
+      expect(cleared.rows[0]?.rows).toBe(1);
+      await c.query('RESET ROLE');
+      const states = (
+        await c.query<{ org_refid: string; state: string; reason: string | null; attempts: number }>(
+          'SELECT org_refid, state, reason, attempts FROM crove_finance.misa_amis_push WHERE org_refid = ANY($1) ORDER BY org_refno',
+          [[quoted, unrelated, queuedQuoting]],
+        )
+      ).rows;
+      expect(states).toEqual([
+        { org_refid: quoted, state: 'refused', reason: null, attempts: 1 },
+        { org_refid: unrelated, state: 'refused', reason: 'Thiếu mã hàng trong dòng 3', attempts: 1 },
+        { org_refid: queuedQuoting, state: 'queued', reason: `Texte ${email}`, attempts: 1 },
+      ]);
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      await c.end();
+    }
+  });
 });
