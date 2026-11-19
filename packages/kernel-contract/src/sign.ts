@@ -252,7 +252,7 @@ export const SIGN_NORM_SCALE = 1_000_000;
 
 export const SIGN_ENVELOPE_STATUSES = ['draft', 'sent', 'in_progress', 'completed', 'declined', 'voided', 'expired'] as const;
 export const SIGN_ROUTING_MODES = ['parallel', 'sequential'] as const;
-export const SIGN_SOURCE_KINDS = ['standalone', 'crm_quote', 'crm_order', 'hr_contract'] as const;
+export const SIGN_SOURCE_KINDS = ['standalone', 'crm_quote', 'crm_order', 'hr_contract', 'project_acceptance'] as const;
 export const SIGN_INSPECT_STATUSES = ['pending', 'passed', 'failed'] as const;
 export const SIGN_SEAL_STATUSES = ['pending', 'sealed', 'failed'] as const;
 export const SIGN_SIGNER_ROLES = ['signer', 'approver', 'cc'] as const;
@@ -1012,3 +1012,27 @@ export const zSignTemplateDirectLinkResult = z.strictObject({
   token: z.string().nullable(),
   lastRotatedAt: z.string().nullable(),
 });
+
+// eSign Slice 3b (#3812): Vy deliverable summary draft for Ludy Du an project acceptance minutes.
+export const SIGN_ACCEPTANCE_DRAFT_STATUSES = ['used', 'off', 'budget', 'busy', 'no_tasks', 'failed'] as const;
+export const zSignAcceptanceDraftStatus = z.enum(SIGN_ACCEPTANCE_DRAFT_STATUSES);
+export type SignAcceptanceDraftStatus = z.infer<typeof zSignAcceptanceDraftStatus>;
+
+export const zSignAcceptanceDraftBullet = z.strictObject({
+  text: z.string(),
+  taskIds: z.array(zId).min(1),
+  proposedByAi: z.literal(true),
+});
+export type SignAcceptanceDraftBullet = z.infer<typeof zSignAcceptanceDraftBullet>;
+
+export const zSignAcceptanceDraftInput = z.strictObject({
+  projectId: zId,
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type SignAcceptanceDraftInput = z.infer<typeof zSignAcceptanceDraftInput>;
+
+export const zSignAcceptanceDraftResult = z.strictObject({
+  status: zSignAcceptanceDraftStatus,
+  bullets: z.array(zSignAcceptanceDraftBullet),
+});
+export type SignAcceptanceDraftResult = z.infer<typeof zSignAcceptanceDraftResult>;

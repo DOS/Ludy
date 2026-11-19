@@ -428,7 +428,7 @@ export const signApi = {
     title?: string;
     subject?: string | null;
     message?: string | null;
-    sourceKind?: 'standalone' | 'crm_quote' | 'crm_order' | 'hr_contract';
+    sourceKind?: 'standalone' | 'crm_quote' | 'crm_order' | 'hr_contract' | 'project_acceptance';
     sourceId?: string | null;
     expiresAt?: string | null;
     autoSend?: boolean;

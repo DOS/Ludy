@@ -37,6 +37,14 @@ export {
   cleanUserAgent as sanitizeSignUserAgent,
   normalizePageDimensions as normalizeSignPageDimensions,
 } from './public-commands.ts';
+export {
+  signAcceptanceAiStatus,
+  signAcceptanceQueries,
+  signAcceptanceSource,
+  type SignAcceptanceAiStatus,
+  type SignAcceptanceSource,
+  type SignAcceptanceSourceTask,
+} from './acceptance.ts';
 export { signQueries, type SignInspectJobData, type SignSealJobData } from './queries.ts';
 export {
   signTemplateCommands,
