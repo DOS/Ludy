@@ -96,6 +96,7 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
+  'crove_finance.misa_amis_push',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -249,6 +250,7 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
   ['crove_finance.einvoice_series', ['update', 'delete']],
   ['crove_finance.marketplace_connection', ['update', 'delete']],
   ['crove_finance.misa_amis_connection', ['update', 'delete']],
+  ['crove_finance.misa_amis_push', ['update']],
   ['crove_finance.stock_alias', ['delete']],
   ['crove_finance.stock_count', ['update']],
   ['crove_finance.stock_count_line', ['update']],
@@ -1623,6 +1625,39 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_kernel.channel_connection', values: connection },
         ],
         row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, channel_connection_id: connection.id },
+      };
+    },
+  },
+  // #3902 (S3b of #3854): one voucher part pushed to MISA AMIS Kế toán as a request a person approved: the connection and its entity, the source, the AMIS voucher type, the part and the
+  // `org_refid` AMIS is told (unique per org, so a replay or a double press never makes a second request). Tenant roles read, insert (owners and admins, or the system context) and update
+  // only the state columns (a column grant, through a state guard); nothing deletes a row, so nobody erases the record and pushes the same voucher again unseen. Each row takes a
+  // connection, an entity, a source and a reference of its own. The update probes assign the reason to itself.
+  'crove_finance.misa_amis_push': {
+    update: { set: 'reason = reason' },
+    make: (o) => {
+      const entity = randomUUID();
+      const channel = { ...channelConnectionRow(o), provider: 'accounting_misa_amis' };
+      const connection = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: `RLS matrix AMIS push entity ${tag()}`, kind: 'branch', created_by: o.owner } },
+          { table: 'crove_kernel.channel_connection', values: channel },
+          { table: 'crove_finance.misa_amis_connection', values: { org_id: o.id, id: connection, legal_entity_id: entity, channel_connection_id: channel.id } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          legal_entity_id: entity,
+          connection_id: connection,
+          source_type: 'cash_voucher',
+          source_id: randomUUID(),
+          voucher_type: 1,
+          part: 1,
+          org_refid: randomUUID(),
+          org_refno: `RLS${tag().toUpperCase()}`.slice(0, 20),
+          payload_digest: 'a'.repeat(64),
+          state: 'queued',
+        },
       };
     },
   },
