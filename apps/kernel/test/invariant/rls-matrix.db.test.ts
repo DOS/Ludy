@@ -3072,10 +3072,10 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     }),
   },
   // #4043 (meetings glossary): a term the org spells one way (a product, an acronym, jargon). Only an owner or admin reads and writes it (restrictive policies; the factory's owner is one), and a
-  // recorder's run reads it through a definer. Its factory lands before the table (step 1 of 4), so PENDING_TABLES holds it until the migration of step 2.
+  // recorder's run reads it through a definer. Its factory lands before the table (step 1 of 4), so PENDING_TABLES holds it until the migration of step 2. The term is letters only (a term may hold at most 4 digits) and unique per org.
   'crove_meetings.glossary_term': {
     make: (o) => ({
-      row: { org_id: o.id, id: randomUUID(), term: `Glossary${tag()}`, created_by: o.owner },
+      row: { org_id: o.id, id: randomUUID(), term: `Glossary ${Array.from(randomBytes(6), (b) => String.fromCharCode(97 + (b % 26))).join('')}`, created_by: o.owner },
     }),
   },
   // #3955 (part B): a member's own opt-in to the morning notice of the day's meetings (a time of day, their zone and language), one row per member, read, written and deleted by that member alone, so the
