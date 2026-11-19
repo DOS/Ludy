@@ -125,7 +125,7 @@ export {
   type AmisWanted,
 } from './misa-amis-build.ts';
 export { MISA_AMIS_MATCH_CHECK_REQUESTED, NO_MATCH_RESULTS, type MisaAmisMatchResults, type MisaAmisMatchTarget } from './misa-amis-match.ts';
-export { catalogueItems, catalogueParties, matchItems, matchParties, normalizeTaxCode } from './misa-amis-matching.ts';
+export { catalogueItems, catalogueParties, checkIsFresh, matchItems, matchParties, MISA_AMIS_CHECK_MAX_AGE_MS, normalizeTaxCode, relied, staleMatches, type StoredMatches } from './misa-amis-matching.ts';
 export * from './marketplace-provider.ts';
 export { NOT_A_REPORT, readMarketplaceFile, recordMarketplaceReadFailure, type MarketplaceFileDeps } from './marketplace-orders.ts';
 export { createMarketplaceSettlementCommands } from './marketplace-settlement-record.ts';

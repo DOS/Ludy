@@ -10,7 +10,7 @@ import type { MisaAmisPreview, MisaAmisPushRow } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
-import { canSettle, confirmedAnything, openRows, previewSendable, pushOffer, PUSH_AMBIGUOUS_WAIT_MS, PUSH_RESULT_WINDOW_MS } from '../src/lib/misa-amis-push.ts';
+import { canSettle, checkIsYoung, confirmedAnything, openRows, previewSendable, pushOffer, PUSH_AMBIGUOUS_WAIT_MS, PUSH_CHECK_MAX_AGE_MS, PUSH_RESULT_WINDOW_MS } from '../src/lib/misa-amis-push.ts';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -96,6 +96,27 @@ describe('the offer to send a previewed batch (#3902)', () => {
     expect(html).not.toContain('misa-amis-push-start');
   });
 
+  it('tells the person to check against the catalogue first unless the last check is from the last 15 minutes (the server decides, #4124)', () => {
+    const young = new Date(Date.now() - 5 * 60_000).toISOString();
+    const old = new Date(Date.now() - 20 * 60_000).toISOString();
+    const withCheck = (checkedAt: string | null) => result({ matchCheck: { state: checkedAt === null ? 'none' : 'done', failure: null, requestedAt: checkedAt, checkedAt } });
+    const note = (r: MisaAmisPreview) => wrap(<MisaAmisPushConfirm result={r} ask={ask} connectionId={ID} offer="ready" />).includes('data-testid="misa-amis-push-check-first"');
+    expect(note(withCheck(null))).toBe(true);
+    expect(note(withCheck(old))).toBe(true);
+    expect(note(withCheck(young))).toBe(false);
+    // The button stays: a person may always try, and the server answers MISA_AMIS_CHECK_REQUIRED.
+    expect(wrap(<MisaAmisPushConfirm result={withCheck(null)} ask={ask} connectionId={ID} offer="ready" />)).toContain('misa-amis-push-start');
+  });
+
+  it('rules: how young a check must be', () => {
+    const now = Date.parse('2026-11-19T12:00:00.000Z');
+    expect(PUSH_CHECK_MAX_AGE_MS).toBe(15 * 60_000);
+    expect(checkIsYoung(new Date(now - PUSH_CHECK_MAX_AGE_MS).toISOString(), now)).toBe(true);
+    expect(checkIsYoung(new Date(now - PUSH_CHECK_MAX_AGE_MS - 1).toISOString(), now)).toBe(false);
+    expect(checkIsYoung(new Date(now + 1000).toISOString(), now)).toBe(false);
+    expect(checkIsYoung(null, now)).toBe(false);
+  });
+
   it('has the same keys in Vietnamese and English', () => {
     const keys = (o: object, p = ''): string[] => Object.entries(o).flatMap(([k, v]) => (typeof v === 'object' && v !== null ? keys(v, `${p}${k}.`) : [`${p}${k}`]));
     expect(keys(viMessages.misaAmisPush).sort()).toEqual(keys(en.misaAmisPush).sort());
@@ -131,6 +152,14 @@ describe('what was sent to MISA AMIS (#3902)', () => {
     expect(html).toContain('part 2');
     expect(html).toContain('attempt 2');
     expect(html).toContain('1 waiting');
+  });
+
+  it('says in a sentence why a batch was not sent when this system refused it itself, and shows any other reason as it is', () => {
+    const html = list([row({ id: 'm', state: 'failed', reason: 'MATCH_STALE' }), row({ id: 'n', orgRefno: 'CRPC202600013', state: 'failed', reason: 'STALE' }), row({ id: 'o', orgRefno: 'CRPC202600014', state: 'failed', reason: 'BRANCH_UNKNOWN' })], false);
+    expect(html).toContain('The MISA catalogue changed since the check; nothing was sent.');
+    expect(html).toContain('The voucher changed since you confirmed; nothing was sent.');
+    expect(html).not.toContain('>MATCH_STALE<');
+    expect(html).toContain('BRANCH_UNKNOWN');
   });
 
   it("shows MISA's own reason for a refusal as text, never as markup", () => {

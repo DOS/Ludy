@@ -10,7 +10,7 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { canSettle, confirmedAnything, openRows, previewSendable, type PushOffer } from '../lib/misa-amis-push.ts';
+import { canSettle, checkIsYoung, confirmedAnything, openRows, previewSendable, type PushOffer } from '../lib/misa-amis-push.ts';
 import { ErrorText } from './ui.tsx';
 
 // How often the list is read again while a request is open.
@@ -66,6 +66,11 @@ export function MisaAmisPushConfirm({ result, ask, connectionId, offer }: { resu
               {t('confirm', { count: result.vouchers })}
             </Button>
             <p className="mt-1 text-xs text-subtle-foreground">{t('confirmNote')}</p>
+            {!checkIsYoung(result.matchCheck.checkedAt, Date.now()) && (
+              <p className="mt-1 text-xs text-muted-foreground" data-testid="misa-amis-push-check-first">
+                {t('checkFirst')}
+              </p>
+            )}
           </>
         ))}
       {send.error && (
@@ -105,7 +110,7 @@ function PushRow({ row, connectionId, canManage, now }: { row: MisaAmisPushRow; 
       {row.reason && (row.state === 'refused' || row.state === 'failed') && (
         <p className="mt-1 break-words text-xs text-muted-foreground" data-testid="misa-amis-push-reason">
           {row.state === 'refused' ? `${t('refusedNote')} ` : ''}
-          {row.reason}
+          {row.reason === 'MATCH_STALE' ? t('reasons.MATCH_STALE') : row.reason === 'STALE' ? t('reasons.STALE') : row.reason}
         </p>
       )}
       {settle && (
