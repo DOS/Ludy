@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // "Kết nối nền tảng họp" in Settings (meetings integrations C1, #3173): the member's own meeting platform connections, when each was last listed, a refresh, a disconnect that asks first,
-// and the connect button of each provider this deployment offers: the offline sandbox where the deployment's test channels are on, and Zoom (C3, #3175) and Microsoft Teams (C4, #3176) where the
-// deployment has its own app; Google Meet comes in a later step and is not offered. Ludy only lists recordings through a connection; the import is a click on the Meetings tab. The core works with AI off: no model is called here.
+// and the connect button of each provider this deployment offers: the offline sandbox where the deployment's test channels are on, and Google Meet, Zoom (C3, #3175) and Microsoft Teams (C4, #3176) where the
+// deployment has its own app. Ludy only lists recordings through a connection; the import is a click on the Meetings tab. The core works with AI off: no model is called here.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';

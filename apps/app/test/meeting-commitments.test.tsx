@@ -7,6 +7,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
 import type { CommitmentsAnswer } from '@crove/kernel-contract';
+import { en } from '../src/i18n/messages/en.ts';
+import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
@@ -79,6 +81,20 @@ describe('the answer', () => {
     expect(html).toContain('&lt;b&gt;Nam&lt;/b&gt;');
     expect(html).toContain('Đã bỏ 2 dòng');
     expect(html).toContain('không được lưu');
+  });
+  it('names each time button by what it does and keeps the visible time in the name, at a size a finger can hit (WCAG 2.5.3, 2.5.8; #4055)', () => {
+    const html = result(answer({ speakers: SPEAKERS }), 'en');
+    const buttons = [...html.matchAll(/<button[^>]*data-testid="commitments-jump"[^>]*>([^<]*)<\/button>/g)];
+    expect(buttons).toHaveLength(3);
+    for (const [tag, time] of buttons) {
+      expect(tag).toContain(`aria-label="Open the transcript at ${time}"`);
+      expect(tag).toContain('min-h-6');
+      expect(tag).toContain('max-md:min-h-11');
+    }
+  });
+  it('has the words that announce how many lines came for how many people, in both languages', () => {
+    expect(en.meetings.commitments.found).toContain('plural');
+    expect(viMessages.meetings.commitments.found).toBe('{lines, plural, other {# dòng}} của {speakers, plural, other {# người}}');
   });
   it('has nothing on it that saves, shares or makes a task: the only buttons open the transcript', () => {
     const html = result(answer({ speakers: SPEAKERS }), 'en');

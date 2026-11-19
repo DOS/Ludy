@@ -561,11 +561,11 @@ export function reachOf(root: N, sources: Sources): Set<Reach> {
         const target = importTarget(decl);
         const whole = decl.type === 'ImportNamespaceSpecifier';
         if (NETWORK_MODULES.test(target.module)) out.add('raw_network');
-        else if (target.module === '@crove/kernel-runtime' && (whole || GUARDS.has(target.name))) out.add('tenant_url');
-        else if (target.module === '@crove/channel') {
+        else if ((target.module === '@crove/kernel-runtime' || target.module === '@ludy/kernel-runtime') && (whole || GUARDS.has(target.name))) out.add('tenant_url');
+        else if (target.module === '@crove/channel' || target.module === '@ludy/channel') {
           const reach = whole ? 'provider:channel' : channelReach(target.name);
           if (reach) out.add(reach);
-        } else if (target.module === '@crove/agent' && (whole || AI_EXPORT.test(target.name))) out.add('provider:ai');
+        } else if ((target.module === '@crove/agent' || target.module === '@ludy/agent') && (whole || AI_EXPORT.test(target.name))) out.add('provider:ai');
         else if (target.path?.startsWith(`${KERNEL_SRC}/`)) {
           const there = exported(sources.get(target.path), target.name);
           if (!there) throw new Error(`${target.path} exports no ${target.name} (imported at ${at(id)})`);

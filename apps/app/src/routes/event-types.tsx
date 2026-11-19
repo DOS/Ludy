@@ -13,6 +13,7 @@ import { Checkbox } from '@crove/ui/components/checkbox';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
+import { FormPanel } from '../components/form-panel.tsx';
 import { ErrorText, FieldError, fieldControl, fieldErrorId, focusFirstInvalid, RowsSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { CopyBookingLinkButton, OpenBookingPageLink, bookingUrlOf } from '../components/booking-link.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -40,7 +41,7 @@ const nameOf = (members: readonly EventTypeMember[], userId: string) => {
   return m ? (m.displayName ?? m.email) : null;
 };
 
-function EventTypeForm({
+export function EventTypeForm({
   slug,
   type,
   members,
@@ -62,11 +63,14 @@ function EventTypeForm({
   failed?: unknown;
   submitLabel: string;
   onSubmit: (input: Exclude<ReturnType<typeof inputOf>, { invalid: unknown }>['input']) => void;
-  onCancel?: () => void;
+  onCancel: () => void;
 }) {
   const t = useTranslations('eventTypes');
   const tc = useTranslations('common');
   const [draft, setDraft] = useState<EventTypeDraft>(() => draftOf(type, me));
+  // Typed input that is not saved yet: the panel asks before it throws it away.
+  const [initial] = useState(() => JSON.stringify(draftOf(type, me)));
+  const dirty = JSON.stringify(draft) !== initial;
   // The first form shows what a new type needs (name, length, format, place); buffers, notice, host and the rest sit under "Tùy chọn khác" (#3643). Editing opens them.
   const [more, setMore] = useState(type !== null);
   const moreId = useId();
@@ -137,7 +141,25 @@ function EventTypeForm({
   );
   const coHostsError = fields.of('coHostUserIds');
   return (
-    <form className="mt-2 space-y-2" onSubmit={submit} aria-label={type ? t('editOf', { title: type.title }) : t('addTitle')}>
+    <FormPanel
+      title={type ? t('editOf', { title: type.title }) : t('addTitle')}
+      {...(type ? {} : { description: t('addHint') })}
+      busy={pending}
+      dirty={dirty}
+      wide
+      onClose={onCancel}
+      onSubmit={submit}
+      footer={(requestClose) => (
+        <>
+          <Button type="button" variant="ghost" disabled={pending} onClick={requestClose}>
+            {tc('cancel')}
+          </Button>
+          <Button loading={pending} type="submit" disabled={pending || !draft.title.trim() || !draft.slug.trim()}>
+            {submitLabel}
+          </Button>
+        </>
+      )}
+    >
       <label className="flex flex-col gap-1 text-xs text-muted-foreground">
         {t('fields.title')}
         <Input required maxLength={120} placeholder={t('titlePlaceholder')} value={draft.title} onChange={(e) => setDraft((d) => withTitle(d, e.target.value))} />
@@ -252,17 +274,8 @@ function EventTypeForm({
           </label>
         </div>
       )}
-      <div className="flex gap-2">
-        <Button loading={pending} type="submit" size="sm" disabled={pending || !draft.title.trim() || !draft.slug.trim()}>
-          {submitLabel}
-        </Button>
-        {onCancel && (
-          <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-            {tc('cancel')}
-          </Button>
-        )}
-      </div>
-    </form>
+      {failed ? <ErrorText>{errorMessage(failed)}</ErrorText> : null}
+    </FormPanel>
   );
 }
 
@@ -284,7 +297,7 @@ function EventTypeRow({ slug, type, members, me, manager, editor }: { slug: stri
   const coHosts = type.coHostUserIds.map((id) => nameOf(members, id)).filter((n): n is string => n !== null);
   return (
     <li className="py-2 text-sm">
-      {editing ? (
+      {editing && (
         <EventTypeForm
           slug={slug}
           type={type}
@@ -300,60 +313,75 @@ function EventTypeRow({ slug, type, members, me, manager, editor }: { slug: stri
             update.reset();
           }}
         />
-      ) : (
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="flex flex-wrap items-center gap-2 text-foreground">
-              <span className="truncate">{type.title}</span>
-              {!type.active && <Badge variant="secondary">{t('archived')}</Badge>}
-            </p>
-            <p className="text-xs text-subtle-foreground">
-              <span className="font-mono">/{type.slug}</span> · {t('minutes', { count: String(type.durationMin) })} · {t(`locations.${type.locationKind}`)}
-              {host ? ` · ${t('hostedBy', { name: host })}` : null}
-              {type.assignment !== 'single' ? ` · ${t(`assignments.${type.assignment}`)}${coHosts.length > 0 ? `: ${coHosts.join(', ')}` : ''}` : null}
-            </p>
-            {/* The link to send to a client (#3643): any member may copy or open it; an archived type has no page to send. */}
-            {type.active && (
-              <div className="mt-1.5 flex flex-wrap gap-1">
-                <CopyBookingLinkButton url={bookingUrlOf(slug, type)} title={type.title} />
-                <OpenBookingPageLink url={bookingUrlOf(slug, type)} title={type.title} label="view" />
-              </div>
-            )}
-          </div>
-          {canManage && (
-            <div className="flex shrink-0 gap-1">
-              <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label={t('editOf', { title: type.title })}>
-                {t('edit')}
-              </Button>
-              <Button type="button" variant="ghost" size="sm" disabled={setActive.isPending} onClick={() => setActive.mutate({ eventTypeId: type.id, active: !type.active })}>
-                {type.active ? t('archive') : t('restore')}
-              </Button>
+      )}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-center gap-2 text-foreground">
+            <span className="truncate">{type.title}</span>
+            {!type.active && <Badge variant="secondary">{t('archived')}</Badge>}
+          </p>
+          <p className="text-xs text-subtle-foreground">
+            <span className="font-mono">/{type.slug}</span> · {t('minutes', { count: String(type.durationMin) })} · {t(`locations.${type.locationKind}`)}
+            {host ? ` · ${t('hostedBy', { name: host })}` : null}
+            {type.assignment !== 'single' ? ` · ${t(`assignments.${type.assignment}`)}${coHosts.length > 0 ? `: ${coHosts.join(', ')}` : ''}` : null}
+          </p>
+          {/* The link to send to a client (#3643): any member may copy or open it; an archived type has no page to send. */}
+          {type.active && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              <CopyBookingLinkButton url={bookingUrlOf(slug, type)} title={type.title} />
+              <OpenBookingPageLink url={bookingUrlOf(slug, type)} title={type.title} label="view" />
             </div>
           )}
         </div>
-      )}
-      {(update.error ?? setActive.error) && <ErrorText>{errorMessage(update.error ?? setActive.error)}</ErrorText>}
+        {canManage && (
+          <div className="flex shrink-0 gap-1">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label={t('editOf', { title: type.title })}>
+              {t('edit')}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" disabled={setActive.isPending} onClick={() => setActive.mutate({ eventTypeId: type.id, active: !type.active })}>
+              {type.active ? t('archive') : t('restore')}
+            </Button>
+          </div>
+        )}
+      </div>
+      {(editing ? setActive.error : (update.error ?? setActive.error)) && <ErrorText>{errorMessage(editing ? setActive.error : (update.error ?? setActive.error))}</ErrorText>}
     </li>
   );
 }
 
 function AddEventType({ slug, members, me, manager }: { slug: string; members: readonly EventTypeMember[]; me: string; manager: boolean }) {
   const t = useTranslations('eventTypes');
-  // A new form after each add, so the fields start empty again.
-  const [round, setRound] = useState(0);
+  const [open, setOpen] = useState(false);
   const create = useMutation(
     orpc.crm.eventTypes.create.mutationOptions({
       onSuccess: async () => {
-        setRound((r) => r + 1);
+        setOpen(false);
         await refresh();
       },
     }),
   );
   return (
     <div className="mt-4">
-      <p className="text-xs font-medium text-muted-foreground">{t('addTitle')}</p>
-      <EventTypeForm key={round} slug={slug} type={null} members={members} me={me} manager={manager} pending={create.isPending} failed={create.error} submitLabel={t('add')} onSubmit={(input) => create.mutate(input)} />
-      {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
+      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+        {t('addTitle')}
+      </Button>
+      {open && (
+        <EventTypeForm
+          slug={slug}
+          type={null}
+          members={members}
+          me={me}
+          manager={manager}
+          pending={create.isPending}
+          failed={create.error}
+          submitLabel={t('add')}
+          onSubmit={(input) => create.mutate(input)}
+          onCancel={() => {
+            setOpen(false);
+            create.reset();
+          }}
+        />
+      )}
     </div>
   );
 }

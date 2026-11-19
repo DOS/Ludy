@@ -27,6 +27,8 @@ import { boostPlan, type BoostRefusal } from './boost-plan.ts';
 import { accountOf, pendingProposal, rows, saveCampaignDraft, type DraftRow } from './campaign-draft.ts';
 import { todayIn } from './domain.ts';
 import { launchesOfDrafts } from './launch-ledger.ts';
+import { SCHEDULE_KINDS, heldValues } from './manage-rules.ts';
+import { changesOfMany } from './manage-state.ts';
 import { currentSetting } from './write.ts';
 
 const DRAFTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -50,8 +52,10 @@ function refused(reason: BoostRefusal): DomainError {
 const isGoing = (b: { row: DraftRow; state: AdsBoostState }): boolean => b.state === 'waiting_approval' || (b.row.status === 'approved' && !OVER.includes(b.state));
 
 // Where a boost stands, from its draft and its launch: waiting in the Inbox, a draft, or the state of the launch an approved plan left.
-// A launch whose last day has passed in the account's own time is over whatever its row says (a flight that runs out is not a stop): 'ended'.
-function stateOf(row: DraftRow, waiting: boolean, launch: { state: AdsLaunchState; endOn: string } | null, today: string): AdsBoostState {
+// A launch whose last day has passed in the account's own time is over whatever its row says (a flight that runs out is not a stop): 'ended'. Its last day is the one it HOLDS
+// (heldValues: the last day the platform confirmed, or a longer one still waiting for it), not the one it was launched with, so a boost whose schedule was extended is still going
+// (#3898) and a post whose boost runs on cannot be boosted a second time.
+export function boostStateOf(row: DraftRow, waiting: boolean, launch: { state: AdsLaunchState; endOn: string } | null, today: string): AdsBoostState {
   if (row.status === 'approved') {
     if (launch !== null && launch.endOn < today && !OVER.includes(launch.state)) return 'ended';
     return launch?.state ?? 'queued';
@@ -66,6 +70,12 @@ async function boostsOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, postIds: reado
     ctx,
     list.filter((r) => r.status === 'approved').map((r) => r.id),
   );
+  // The changes of the launches (one read for all): an extension of the schedule moves the day the launch holds.
+  const changes = await changesOfMany(
+    ctx,
+    [...launches.values()].map((l) => l.id),
+    SCHEDULE_KINDS,
+  );
   const out: Array<{ row: DraftRow; state: AdsBoostState; proposalId: string | null; launch: ReturnType<typeof launches.get> }> = [];
   const zones = new Map<string, string>();
   const now = new Date();
@@ -77,7 +87,8 @@ async function boostsOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, postIds: reado
       zone = (await accountOf(ctx, row.ad_account_id)).timeZone ?? 'UTC';
       zones.set(row.ad_account_id, zone);
     }
-    out.push({ row, state: stateOf(row, proposalId !== null, launch ? { state: launch.state, endOn: launch.endOn } : null, todayIn(zone, now)), proposalId, launch });
+    const heldEndOn = launch ? heldValues({ dailyBudget: launch.dailyBudget, endOn: launch.endOn }, changes.get(launch.id) ?? []).endOn : null;
+    out.push({ row, state: boostStateOf(row, proposalId !== null, launch && heldEndOn ? { state: launch.state, endOn: heldEndOn } : null, todayIn(zone, now)), proposalId, launch });
   }
   return out;
 }

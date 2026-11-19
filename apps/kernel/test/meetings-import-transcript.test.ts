@@ -132,6 +132,14 @@ describe('a transcript that was cut (#3922)', () => {
     expect(Object.keys(whole)).toEqual(['segments']);
   });
 
+  it('is whole when the lines past a draft\'s cap are all empty or invalid, since none was lost', () => {
+    const lines = Array.from({ length: TRANSCRIPT_SEGMENTS_MAX }, (_, i) => entry({ startSeconds: i, endSeconds: i + 1, text: `dòng ${i}` }));
+    const extra = [entry({ text: '   ' }), entry({ text: '\u0000' }), entry({ startSeconds: Number.NaN, text: 'không có giờ' })];
+    const out = read(stageTranscript(transcript([...lines, ...extra])));
+    expect(out.truncated).toBeUndefined();
+    expect(out.segments).toHaveLength(TRANSCRIPT_SEGMENTS_MAX);
+  });
+
   it('stages `truncated: true` when the platform sent more lines than a draft takes, though the adapter said nothing', () => {
     const many = Array.from({ length: TRANSCRIPT_SEGMENTS_MAX + 1 }, (_, i) => entry({ startSeconds: i, endSeconds: i + 1, text: `dòng ${i}` }));
     const out = read(stageTranscript(transcript(many)));

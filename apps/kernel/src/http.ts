@@ -166,6 +166,7 @@ import { streamedBody } from './owner-run-export.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
+import { MAX_MISA_AMIS_CALLBACK_BYTES, acceptMisaAmisCallback } from './misa-amis-callback.ts';
 import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, WHATSAPP_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
 import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
 import { ZOOM_MAX_NOTICE_BYTES, ZOOM_SIGNATURE_HEADER, ZOOM_TIMESTAMP_HEADER, ZOOM_WEBHOOK_PATH, ZoomReplayCache, acceptZoomWebhook, type ZoomWebhookConfig } from './zoom-webhook.ts';
@@ -307,6 +308,9 @@ export interface HttpDeps {
   bankFeedWebhooks?: Readonly<Record<string, BankFeedProvider>>;
   // Notices per minute per client address; one is checked and queued per call.
   bankFeedWebhookLimit?: RateLimiter;
+  // MISA AMIS's callback with the result of a save (#3903): the route exists only where the deployment holds the ClientID (the HMAC key of the signature); without it the path is not served.
+  misaAmisCallback?: { clientId: string };
+  misaAmisCallbackLimit?: RateLimiter;
   // Zalo OA's webhook for the conversation core (#2304): the app id and the OA secret key that sign its notices. Unset: the route does
   // not exist.
   zaloWebhook?: ZaloWebhookConfig;
@@ -974,27 +978,70 @@ export function createHttpApp(deps: HttpDeps) {
   const bankFeedWebhooks = deps.bankFeedWebhooks;
   if (bankFeedWebhooks && Object.keys(bankFeedWebhooks).length > 0 && runtime.installed('finance')) {
     const noticeLimit = deps.bankFeedWebhookLimit ?? new RateLimiter({ perMinute: BANK_FEED_WEBHOOKS_PER_MINUTE });
-    app.post('/api/bank-feed/:provider/webhook', bodyLimit({ maxSize: MAX_BANK_FEED_WEBHOOK_BYTES }), async (c) => {
-      const name = c.req.param('provider');
-      if (!Object.hasOwn(bankFeedWebhooks, name)) return c.json({ code: 'NOT_FOUND' }, 404);
-      const decision = noticeLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
-      if (!decision.allowed) {
-        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
-        c.header('retry-after', String(decision.retryAfterSeconds));
-        return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
-      }
-      try {
-        const headers: Record<string, string | undefined> = {};
-        c.req.raw.headers.forEach((value, header) => {
-          headers[header.toLowerCase()] = value;
-        });
-        const outcome = await acceptBankFeedWebhook(runtime, bankFeedWebhooks[name] as BankFeedProvider, { headers, body: await c.req.text() });
-        if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
-        return c.json({ queued: outcome.queued }, outcome.status);
-      } catch (error) {
-        return problem(c, error);
-      }
-    });
+    // The per-address limit is its own middleware ahead of the cap: bodyLimit reads a body sent without a Content-Length (a chunked one) up to the cap before it calls the next handler,
+    // so a limiter inside the handler would refuse an address only after its body was read (#4047).
+    app.post(
+      '/api/bank-feed/:provider/webhook',
+      async (c, next) => {
+        if (!Object.hasOwn(bankFeedWebhooks, c.req.param('provider'))) return c.json({ code: 'NOT_FOUND' }, 404);
+        const decision = noticeLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+        if (!decision.allowed) {
+          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+          c.header('retry-after', String(decision.retryAfterSeconds));
+          return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+        }
+        await next();
+      },
+      bodyLimit({ maxSize: MAX_BANK_FEED_WEBHOOK_BYTES }),
+      async (c) => {
+        const name = c.req.param('provider');
+        try {
+          const headers: Record<string, string | undefined> = {};
+          c.req.raw.headers.forEach((value, header) => {
+            headers[header.toLowerCase()] = value;
+          });
+          const outcome = await acceptBankFeedWebhook(runtime, bankFeedWebhooks[name] as BankFeedProvider, { headers, body: await c.req.text() });
+          if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
+          return c.json({ queued: outcome.queued }, outcome.status);
+        } catch (error) {
+          return problem(c, error);
+        }
+      },
+    );
+  }
+
+  // MISA AMIS's callback with the result of a save (#3903, S4 of #3854): public, checked by the HMAC of its signed `data` before anything else is read, capped in size and rate limited per client
+  // address before the body is read. The signature proves MISA sent it, not for which organisation (one key per deployment): the organisation is found from our own stored push row, never from the
+  // envelope (misa-amis-callback.ts). A verified message is always answered 200, so the answer says nothing about an org_refid; a refusal is a fixed code, and nothing of the body, the signature,
+  // MISA's text or the ClientID is logged or kept. Without the ClientID the route is not registered: a POST to the path falls through to the session check of /api/* (401) and reaches nothing.
+  const misaAmisCallback = deps.misaAmisCallback;
+  if (misaAmisCallback && runtime.installed('finance')) {
+    const callbackLimit = deps.misaAmisCallbackLimit ?? new RateLimiter({ perMinute: BANK_FEED_WEBHOOKS_PER_MINUTE });
+    // The limit is its own middleware, ahead of the body cap: a chunked body (no Content-Length) is read up to the cap before the cap's own check passes, and that read must not be free for a flooder.
+    app.post(
+      '/api/webhooks/misa-amis',
+      async (c, next) => {
+        const decision = callbackLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+        if (!decision.allowed) {
+          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+          c.header('retry-after', String(decision.retryAfterSeconds));
+          return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+        }
+        await next();
+      },
+      bodyLimit({ maxSize: MAX_MISA_AMIS_CALLBACK_BYTES }),
+      async (c) => {
+        try {
+          const outcome = await acceptMisaAmisCallback(runtime, misaAmisCallback.clientId, await c.req.text());
+          if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
+          return c.json({ ok: true }, 200);
+        } catch {
+          // Not problem(): it logs the error's message, and a database error can quote the row it refused, which holds MISA's own text. This route logs a short code only (the runtime logs its own internal errors, which the enqueue keeps free of MISA's text: it filters before it inserts); MISA retries a 503.
+          console.error('[misa-amis-callback] not recorded: CALLBACK_UNAVAILABLE');
+          return c.json({ code: 'CALLBACK_UNAVAILABLE' }, 503);
+        }
+      },
+    );
   }
 
   // Zalo OA's webhook of customers' messages (conversation core, #2304): the signature is checked before the body is read or kept, the
@@ -3054,7 +3101,8 @@ export function createHttpApp(deps: HttpDeps) {
   // media route's. A request that names the wrong route is refused BEFORE the claim moves the row, so the row stays staged with its bytes for the right request (the app routes by the same rule). A row that is
   // not in the member's own list is left to the claim, which answers "not found".
   const refuseWrongImportRoute = async (user: AuthUser, orgId: string, recordingId: string, route: 'media' | 'transcript'): Promise<void> => {
-    const rows = await runtime.query<Array<{ id: string; hasAudio: boolean; hasVideo: boolean }>>('kernel.meeting_platform.recordings', {}, { actor: actorOf(user), orgId });
+    // The row by its id, whatever its age (the list holds only the newest 50, so a scan of it would miss an older row and let the wrong route claim it).
+    const rows = await runtime.query<Array<{ id: string; hasAudio: boolean; hasVideo: boolean }>>('kernel.meeting_platform.recordings', { recordingId }, { actor: actorOf(user), orgId });
     const row = rows.find((r) => r.id === recordingId);
     if (!row) return;
     const transcriptOnly = !row.hasAudio && !row.hasVideo;

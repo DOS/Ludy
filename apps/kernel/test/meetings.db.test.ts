@@ -2054,6 +2054,40 @@ suite('meetings module database integration tests (#2576)', () => {
     expect((await claimImport('recorder', audio.meetingId, { importId: audioId, kind: 'audio' })).status).toBe(200);
   });
 
+  it('34g. C2 follow-up (#4000): the wrong-route refusal finds the row by its id, so a row older than the 50 newest is refused too and stays staged', async () => {
+    const postTranscript = async (meetingId: string, importId: string) => {
+      const response = await app.request(`/api/meetings/${meetingId}/transcript-import`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${await token('recorder')}`, 'content-type': 'application/json', 'x-crove-org': slug },
+        body: JSON.stringify({ importId }),
+      });
+      return response.status;
+    };
+    // Two old recordings, one of each kind, begun and staged; then 51 newer ones of the member's, which push both out of the list of the 50 newest.
+    const oldest = new Date(Date.now() - 400 * 86_400_000).toISOString();
+    const audioId = await suggest('recorder', { startedAt: oldest });
+    const audio = await startImport('recorder', { recordingId: audioId, language: 'vi', visibility: 'attendees' });
+    const audioKey = await stage(audioId);
+    const textId = await suggest('recorder', { startedAt: oldest, hasAudio: false, hasTranscript: true });
+    const text = await startImport('recorder', { recordingId: textId, language: 'vi', visibility: 'attendees' });
+    const textKey = await stage(textId, Buffer.from(JSON.stringify({ segments: [{ startSeconds: 0, endSeconds: 2, speakerLabel: 'Lan', text: 'Xin chào.' }] })));
+    for (let i = 0; i < 51; i += 1) await suggest('recorder', { title: `Họp mới ${i}`, startedAt: new Date(Date.now() - i * 60_000).toISOString() });
+    const listed = await runtime.query<Array<{ id: string }>>('kernel.meeting_platform.recordings', {}, { actor: asUser('recorder'), orgId });
+    expect(listed).toHaveLength(50);
+    expect(listed.map((r) => r.id)).not.toContain(audioId);
+    expect(listed.map((r) => r.id)).not.toContain(textId);
+    // By its id the query finds an old row, and only that one; an id that is not the member's own finds nothing.
+    expect((await runtime.query<Array<{ id: string }>>('kernel.meeting_platform.recordings', { recordingId: audioId }, { actor: asUser('recorder'), orgId })).map((r) => r.id)).toEqual([audioId]);
+    expect(await runtime.query<unknown[]>('kernel.meeting_platform.recordings', { recordingId: audioId }, { actor: asUser('otherMember'), orgId })).toEqual([]);
+    // Each route still refuses the other kind before the claim moves the row, though neither row is among the 50 newest.
+    expect(await postTranscript(audio.meetingId, audioId)).toBe(400);
+    expect((await recordingRow(audioId)).status).toBe('staged');
+    expect(store.staged.has(audioKey)).toBe(true);
+    expect((await claimImport('recorder', text.meetingId, { importId: textId, kind: 'audio' })).status).toBe(400);
+    expect((await recordingRow(textId)).status).toBe('staged');
+    expect(store.staged.has(textKey)).toBe(true);
+  });
+
   it('35. #3337: a video uploaded with extract=audio keeps only the extracted Opus, whatever the shape of the upload', async () => {
     const mp4 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x18]), Buffer.from('ftypmp42'), Buffer.from('video frames '.repeat(300))]);
     const opus = Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.from('extracted opus '.repeat(20))]);

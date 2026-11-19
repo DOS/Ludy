@@ -14,6 +14,7 @@ export const financeManifest = defineModule({
       bank_feed_account: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'cursor', 'last_synced_at', 'created_by', 'created_at'], { bank_account: 'payment', external_account_id: 'payment' }),
       bank_feed_listed_account: columns(['org_id', 'id', 'channel_connection_id', 'listed_at'], { external_account_id: 'payment', display_name: 'pii' }),
       bank_feed_notice_pending: columns(['seq', 'provider', 'received_at'], { external_account_id: 'payment' }),
+      // MISA AMIS's callback results waiting for the worker (#3903): ids, codes and flags, and MISA's own capped text for a refusal (untrusted, never logged), deleted once the relay is done.
       bank_line: columns(['org_id', 'id', 'import_id', 'position', 'value_date', 'amount', 'running_balance', 'bank_ref', 'dedupe_key', 'ambiguous', 'created_by', 'created_at', 'legal_entity_id'], { bank_account: 'payment', counterparty_account: 'payment', description: 'pii' }),
       bank_party_rule: columns(['org_id', 'id', 'legal_entity_id', 'kind', 'party_id', 'confirmed_by', 'confirmed_at', 'source_voucher_id', 'created_at'], { key_hash: 'pii' }),
       cash_voucher: columns(['org_id', 'id', 'voucher_type', 'number', 'voucher_date', 'cash_account', 'party_id', 'amount', 'proposal_id', 'created_by', 'created_at', 'bank_line_id', 'legal_entity_id', 'number_period', 'number_allocation_id', 'payroll_run_id', 'payroll_payment_kind', 'supplier_payment_id'], { person_name: 'pii', description: 'pii' }),
@@ -47,6 +48,7 @@ export const financeManifest = defineModule({
       legal_entity_books: columns(['org_id', 'id', 'legal_entity_id', 'regime', 'chart_version', 'effective_from', 'created_by', 'created_at']),
       marketplace_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'platform', 'last_test_state', 'last_tested_at', 'poll_cursor', 'last_polled_at', 'last_poll_state', 'orders_waiting', 'created_by', 'created_at']),
       marketplace_party: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'party_id', 'created_by', 'created_at']),
+      misa_amis_callback_pending: columns(['seq', 'org_refid', 'voucher_type', 'org_company_code', 'success', 'error_code', 'received_at', 'claimed_at'], { error_message: 'sensitive' }),
       misa_amis_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'org_company_code', 'last_test_state', 'last_tested_at', 'created_by', 'created_at']),
       misa_amis_push: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'source_type', 'source_id', 'voucher_type', 'part', 'org_refid', 'org_refno', 'payload_digest', 'params', 'state', 'reason', 'attempts', 'requested_by', 'requested_at', 'sent_at', 'answered_at', 'updated_at']),
       misa_goods_code: columns(['org_id', 'id', 'account_code', 'item_code', 'warehouse_code', 'updated_by', 'updated_at']),

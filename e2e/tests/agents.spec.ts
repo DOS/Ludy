@@ -38,12 +38,15 @@ test('the budget form locks while it waits for a second factor, then saves the b
   await page.getByRole('navigation').getByRole('link', { name: 'Ngân sách AI' }).click();
   await expect(page.getByRole('heading', { name: 'Ngân sách AI hằng tháng' })).toBeVisible();
 
-  const limit = page.getByLabel('Hạn mức mỗi tháng');
-  await limit.fill('500000');
+  // The budget form is a dialog behind a button (#3608).
   await page.getByRole('button', { name: 'Đặt ngân sách' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Đặt ngân sách' });
+  const limit = dialog.getByLabel('Hạn mức mỗi tháng');
+  await limit.fill('500000');
+  await dialog.getByRole('button', { name: 'Đặt ngân sách' }).click();
   await expect(page.getByText('Đang chờ: đặt ngân sách AI.')).toBeVisible();
   await expect(limit).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Đặt ngân sách' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Đặt ngân sách' })).toBeDisabled();
 
   await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
   const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
@@ -53,5 +56,7 @@ test('the budget form locks while it waits for a second factor, then saves the b
 
   await expect(page.getByTestId('budget-row')).toHaveCount(1);
   await expect(page.getByText(/^Đang chờ:/)).toHaveCount(0);
-  await expect(limit).toBeEnabled();
+  // The dialog closes once the budget is saved, and focus returns to the button that opened it.
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Đặt ngân sách' })).toBeFocused();
 });

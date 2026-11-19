@@ -171,11 +171,47 @@ describe('the TT99 map (#3711 slice 4)', () => {
     const p = settlementProposal(input([{ sales: '200000', sellerDiscount: '0', refund: '0' }], { regime: 'tt99' }), confirmedTt99());
     expect(p.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['131', '200000', '0'], ['511', '0', '200000']]);
   });
-  it('refuses a TT99 settlement that carries a refund, rather than netting it into 511 (the 521 split is not built)', () => {
+  const rows = (p: ReturnType<typeof settlementProposal>) => p.lines.map((l) => [l.account, l.debit, l.credit]);
+  const balanced = (p: ReturnType<typeof settlementProposal>) => p.lines.reduce((a, l) => a.plus(l.debit), money('0')).equals(p.lines.reduce((a, l) => a.plus(l.credit), money('0')));
+  it('books a refund of a TT99 settlement as its own debit on 521, and TT133 still nets it into 511 (#4017)', () => {
     const refunded = input([{ sales: '200000', sellerDiscount: '0', refund: '30000' }], { regime: 'tt99' });
-    expect(code(() => settlementProposal(refunded, confirmedTt99()))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
-    // TT133 still nets it: a refund reduces 511 there.
-    expect(settlementProposal({ ...refunded, regime: 'tt133' }, confirmed()).lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['131', '170000', '0'], ['511', '0', '170000']]);
+    const p = settlementProposal(refunded, confirmedTt99());
+    expect(rows(p)).toEqual([['131', '170000', '0'], ['521', '30000', '0'], ['511', '0', '200000']]);
+    expect(p.refund).toBe('30000');
+    expect(p.total).toBe('200000');
+    expect(balanced(p)).toBe(true);
+    expect(rows(settlementProposal({ ...refunded, regime: 'tt133' }, confirmed()))).toEqual([['131', '170000', '0'], ['511', '0', '170000']]);
+  });
+  it('credits 511 with the sales less the seller discounts and debits 131 with what the platform owes after the discounts and the refund', () => {
+    const p = settlementProposal(input([{ sales: '200000', sellerDiscount: '20000', refund: '30000' }], { regime: 'tt99' }), confirmedTt99());
+    expect(rows(p)).toEqual([['131', '150000', '0'], ['521', '30000', '0'], ['511', '0', '180000']]);
+    expect(balanced(p)).toBe(true);
+  });
+  it('runs 131 the other way for a month whose refunds exceed its sales, with the refund still on 521', () => {
+    const p = settlementProposal(input([{ sales: '40000', sellerDiscount: '0', refund: '0' }, { sales: '0', sellerDiscount: '0', refund: '70000' }], { regime: 'tt99' }), confirmedTt99());
+    expect(rows(p)).toEqual([['521', '70000', '0'], ['131', '0', '30000'], ['511', '0', '40000']]);
+    expect(balanced(p)).toBe(true);
+  });
+  it('posts only the 521 / 511 pair when the refund equals the sales (no 131 line), and refuses a month with nothing at all', () => {
+    const p = settlementProposal(input([{ sales: '50000', sellerDiscount: '0', refund: '50000' }], { regime: 'tt99' }), confirmedTt99());
+    expect(rows(p)).toEqual([['521', '50000', '0'], ['511', '0', '50000']]);
+    expect(code(() => settlementProposal(input([{ sales: '0', sellerDiscount: '0', refund: '0' }], { regime: 'tt99' }), confirmedTt99()))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
+  });
+  it('runs 131 and 511 the other way when the seller discounts exceed the sales, and keeps a refund on 521 beside them', () => {
+    const discounts = settlementProposal(input([{ sales: '10000', sellerDiscount: '25000', refund: '0' }], { regime: 'tt99' }), confirmedTt99());
+    expect(rows(discounts)).toEqual([['511', '15000', '0'], ['131', '0', '15000']]);
+    const both = settlementProposal(input([{ sales: '10000', sellerDiscount: '25000', refund: '5000' }], { regime: 'tt99' }), confirmedTt99());
+    expect(rows(both)).toEqual([['521', '5000', '0'], ['511', '15000', '0'], ['131', '0', '20000']]);
+    expect(balanced(discounts) && balanced(both)).toBe(true);
+  });
+  it('adds the household tax lines after the refund lines of a TT99 settlement', () => {
+    const p = settlementProposal(input([{ sales: '10000000', sellerDiscount: '0', refund: '1000000', taxWithheld: '135000' }], { regime: 'tt99', tax: { vatPercent: '1', pitPercent: '0.5' } }), confirmedTt99());
+    expect(rows(p)).toEqual([['131', '9000000', '0'], ['521', '1000000', '0'], ['511', '0', '10000000'], ['511', '90000', '0'], ['3331', '0', '90000'], ['4212', '45000', '0'], ['3335', '0', '45000']]);
+    expect(balanced(p)).toBe(true);
+  });
+  it('leaves the party on the 131 line and posts the same 131 amount the payout clears (sales - discounts - refunds)', () => {
+    const p = settlementProposal({ ...input([{ sales: '200000', sellerDiscount: '20000', refund: '30000' }], { regime: 'tt99' }), partyId: 'party-1' }, confirmedTt99());
+    expect(p.lines.filter((l) => l.partyId === 'party-1').map((l) => [l.account, l.debit])).toEqual([['131', '150000']]);
   });
 });
 
@@ -210,6 +246,22 @@ describe('the tax a platform withheld from a household seller (slice C2)', () =>
     expect(p.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['511', '400', '0'], ['3331', '0', '400'], ['4212', '200', '0'], ['3335', '0', '200']]);
     expect(p.total).toBe('600');
     expect(code(() => settlementProposal({ ...zero, tax: null }, maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
+  });
+  it('marks the split as an estimate in the memo of the tax lines and carries the difference to what the rate pair would withhold (research D1)', () => {
+    const exact = settlementProposal(taxed('150000'), maps);
+    expect(exact.taxEstimate).toEqual({ withheld: '150000', expected: '150000', difference: '0' });
+    for (const l of exact.lines.filter((x) => ['3331', '3335', '4212'].includes(x.account) || (x.account === '511' && x.debit !== '0' && x.debit !== exact.sales))) expect(l.memo).toContain('ước tính');
+    expect(exact.lines.filter((l) => l.account === '131').every((l) => !l.memo.includes('ước tính'))).toBe(true);
+    // The platform withheld less than the pair would: a negative difference. More: a positive one.
+    expect(settlementProposal(taxed('140000'), maps).taxEstimate).toEqual({ withheld: '140000', expected: '150000', difference: '-10000' });
+    expect(settlementProposal(taxed('165000'), maps).taxEstimate).toEqual({ withheld: '165000', expected: '150000', difference: '15000' });
+  });
+  it('takes the rate pair of the revenue net of the seller discounts and the refunds, and has no estimate without withheld tax or for a non-household', () => {
+    const lines = [{ sales: '10000000', sellerDiscount: '1000000', refund: '1000000', taxWithheld: '120000' }];
+    const p = settlementProposal(input(lines, { tax: { vatPercent: '1', pitPercent: '0.5' } }), maps);
+    expect(p.taxEstimate).toEqual({ withheld: '120000', expected: '120000', difference: '0' });
+    expect(settlementProposal(taxed('0'), maps).taxEstimate).toBeNull();
+    expect(settlementProposal(taxed('150000', { tax: null }), maps).taxEstimate).toBeNull();
   });
   it('refuses a rate pair that cannot split the tax', () => {
     expect(code(() => settlementProposal(taxed('150000', { tax: { vatPercent: '0', pitPercent: '0' } }), maps))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });

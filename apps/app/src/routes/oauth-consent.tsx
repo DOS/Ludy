@@ -124,6 +124,7 @@ export function OauthConsentPage({ uid }: { uid: string }) {
                 <li key={option.scope}>{t(option.detail)}</li>
               ))}
               {kind === 'company' && <li data-testid="oauth-consent-meetings">{t('scope.meetings')}</li>}
+              <li data-testid="oauth-consent-engage-reads">{kind === 'company' ? t('scope.engageReads') : t('scope.engageReadsMember', { org: org?.name ?? '' })}</li>
               <li>{t(writesOn.length > 0 ? 'limitsWrite' : 'limits')}</li>
               <li>{t('actsAs')}</li>
               <li>{t('revokeHint', { days: details.data.expiresInDays })}</li>

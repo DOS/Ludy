@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Ludy AI > AI use and budgets screen as each role sees it (#3225): the budget form is the owner's, the figures are for owners and admins, and anyone else
 // is told. Rendered on the server with the queries answered from a seeded cache, as agents-screen.test.tsx does.
+import { readFileSync } from 'node:fs';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
@@ -65,9 +66,9 @@ describe('AiUsagePage', () => {
     expect(html).toContain(`>${en.aiUsagePage.title}<`);
     expect(html).toContain(`>${en.agents.budgetsTitle}<`);
     expect(html).toContain(`>${en.agents.setBudget}<`);
-    const budget = html.slice(html.lastIndexOf('<form', html.indexOf(`>${en.agents.setBudget}<`)));
-    expect(budget).toMatch(/^<form[^>]*novalidate/i);
-    expect(budget).not.toContain('-error"');
+    // The budget form is a dialog behind this button (#3608): none is open under the table, and the dialog words its own errors.
+    expect(html).not.toContain('<form');
+    expect(readFileSync(new URL('../src/routes/agents.tsx', import.meta.url), 'utf8')).toContain('<FormDialog');
   });
 
   it('gives admins the budgets to read, without the form that sets one', () => {

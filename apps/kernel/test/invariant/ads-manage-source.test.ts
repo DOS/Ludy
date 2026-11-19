@@ -11,6 +11,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { suggestionFor } from '@crove/mod-ads';
+import { activeAdPlatformNamedImports, pkgImportMatches, resolveAdPlatformPackages } from './fixtures/ad-platform-imports.ts';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const SKIP = new Set(['node_modules', 'dist', 'test', 'tests', '.git', '.turbo', 'coverage']);
@@ -27,6 +28,7 @@ function sources(dir: string, out: string[] = []): string[] {
 
 const ALL = ['apps', 'packages', 'modules', 'tools'].filter((d) => existsSync(join(ROOT, d))).flatMap((d) => sources(join(ROOT, d)));
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
+const { activePkg: adPlatformPkg, inactivePkg: otherAdPlatformPkg } = resolveAdPlatformPackages(ROOT);
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
 const code = (path: string) => read(path).split('\n').filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*')).join('\n');
@@ -88,7 +90,20 @@ describe('what may change a running ad at the platform (#3835, W4)', () => {
     const job = code('apps/kernel/src/ads-manage.ts');
     expect(job).not.toMatch(/LaunchWriter|AdPauser|AdRevoker|AdActivator|AdStateReader|\.setStatus\(|\.activate\(|createCampaign|createAdSet|createCreative|createAd\(|revokeToken|findByTag|\.verify\(/);
     // The platform package's names the job imports are the error and the two types of the view.
-    expect(job).toMatch(/import \{ AdPlatformError, type AdManager, type ManagedRead \} from '@crove\/ad-platform';/);
+    const rawManage = read('apps/kernel/src/ads-manage.ts');
+    expect(pkgImportMatches(rawManage, otherAdPlatformPkg)).toEqual([]);
+    const manageImports = activeAdPlatformNamedImports(rawManage, adPlatformPkg, otherAdPlatformPkg);
+    expect(manageImports.names.sort()).toEqual(['AdManager', 'AdPlatformError', 'ManagedRead']);
+    expect(manageImports.valueNames).toEqual(['AdPlatformError']);
+    const commentOrStringOnly = `// migrating ${adPlatformPkg} -> ${otherAdPlatformPkg}\n/* from '${otherAdPlatformPkg}' */\nconst note = "Use imports from '${otherAdPlatformPkg}' after the rename";\nimport { AdPlatformError, type AdManager, type ManagedRead } from '${adPlatformPkg}';`;
+    const checkedCommentOrString = activeAdPlatformNamedImports(commentOrStringOnly, adPlatformPkg, otherAdPlatformPkg);
+    expect(checkedCommentOrString.names.sort()).toEqual(['AdManager', 'AdPlatformError', 'ManagedRead']);
+    expect(checkedCommentOrString.valueNames).toEqual(['AdPlatformError']);
+    const mixed = `import { AdPlatformError } from '${adPlatformPkg}';\nimport { AdWriter } from '${otherAdPlatformPkg}';`;
+    expect(() => activeAdPlatformNamedImports(mixed, adPlatformPkg, otherAdPlatformPkg)).toThrow(/Unexpected mixed ad-platform import/);
+    expect(() => activeAdPlatformNamedImports(`import { AdPlatformError } from '${adPlatformPkg}/writers';`, adPlatformPkg, otherAdPlatformPkg)).toThrow(
+      /Unexpected ad-platform subpath import/,
+    );
   });
 
   it('bounds the time between begin and the platform call, inside the wait of the wind-down: a begin that waited too long is never called', () => {
@@ -167,6 +182,54 @@ describe('what may change a running ad at the platform (#3835, W4)', () => {
     const record = commands.slice(commands.indexOf("name: 'ads.manage.record'"), commands.indexOf('export const adsManageState'));
     expect(record).not.toMatch(/ad_launch|ad_spend_cap|ad_org_setting|insertInto/);
     expect([...new Set([...record.matchAll(/updateTable\('([a-z_.]+)'\)/g)].map((m) => m[1]))].sort()).toEqual(['crove_ads.ad_manage_change', 'crove_kernel.external_call']);
+  });
+});
+
+describe('what settles a change whose answer could not be told (#3898)', () => {
+  it('reads the object and calls nothing: begin hands out a read, the job makes it through the one read site, and record writes the change and its ledger row only', () => {
+    const commands = code('modules/ads/src/manage.ts');
+    const begin = between(commands, "name: 'ads.manage.begin'", "name: 'ads.manage.record'");
+    // The settle branch comes before every check that gates a call and before the ledger row of a call, and neither makes nor changes a row.
+    const branch = between(begin, 'if (input.settle === true) {', "return workOf('settle'");
+    expect(begin.indexOf('if (input.settle === true) {')).toBeLessThan(begin.indexOf('stopConditions('));
+    expect(begin.indexOf('if (input.settle === true) {')).toBeLessThan(begin.indexOf("insertInto('crove_kernel.external_call')"));
+    expect(branch).not.toMatch(/insertInto|updateTable|deleteFrom|settle\('|\.emit\(/);
+    // Only a change that is still unclear, that nothing newer of its family overtook, whose call is old enough, is read for.
+    expect(begin).toContain("input.settle === true ? 'unclear' : 'queued'");
+    expect(branch).toContain('settleCandidate(changes, change.id)');
+    expect(branch).toContain('SETTLE_MIN_AGE_SECONDS');
+    // The record decides again under the locks, and moves the change to applied or failed only: the ledger row to succeeded or failed, or leaves it unclear.
+    const record = commands.slice(commands.indexOf("name: 'ads.manage.record'"), commands.indexOf('export const adsManageState'));
+    const settle = between(record, "if (input.phase === 'settle') {", "if (result.kind === 'accepted' || result.kind === 'found') {");
+    expect(settle).toContain('settleCandidate(await changesOf(ctx, change.launch_id), change.id)');
+    expect(settle).toContain('SETTLE_MIN_AGE_SECONDS');
+    expect([...settle.matchAll(/setChange\('(\w+)'/g)].map((m) => m[1]).sort()).toEqual(['applied', 'failed']);
+    expect(settle).not.toMatch(/launchSelect|launchAccountOf|insertInto|manageCapsProblems|stopConditions/);
+    // The job: the read is the one `manager.read` call site, and no call of the view is made for a settle.
+    const job = code('apps/kernel/src/ads-manage.ts');
+    expect(job.match(/manager\.read\(/g)).toHaveLength(1);
+    const reading = between(job, "if (work.action === 'reconcile' || work.action === 'settle') {", "if (work.action === 'call' && stale()) return 'stale_begin';");
+    expect(reading).toContain("if (work.action === 'settle') return ended(await record('settle', result)");
+    expect(reading).not.toContain('make(');
+    expect(job).toContain("...(job.settle === true ? { settle: true } : {})");
+    // A begin that waited too long records nothing when the credential cannot be opened either (the connection may have closed just after another worker's call).
+    const failure = between(job, '} catch (error) {\n    const code = error instanceof DomainError', 'const target = { level: work.level, id: work.objectId };');
+    expect(failure.indexOf("if (work.action === 'call' && stale()) return 'stale_begin';")).toBeGreaterThan(-1);
+    expect(failure.indexOf("if (work.action === 'call' && stale()) return 'stale_begin';")).toBeLessThan(failure.indexOf('await record('));
+  });
+
+  it('is queued by the worker\'s sweep from the migration\'s pick function, ids only, on the manage queue, and the one move out of unclear is the system\'s', () => {
+    const worker = code('apps/kernel/src/worker.ts');
+    const block = between(worker, 'const adManagers = deps.channels?.adManagers;', 'await dropCron(QUEUES.adsManage);');
+    expect(block).toContain('crove_ads.manage_unclear_pick(');
+    expect(block).toMatch(/boss\.send\(QUEUES\.adsManage, \{ orgId: pick\.org_id, changeId: pick\.change_id, settle: true \} satisfies AdsManageJob/);
+    const file = readdirSync(join(ROOT, 'supabase/migrations')).find((f) => f.endsWith('_crove_ads_manage_unclear_settle.sql')) as string;
+    const sql = read(`supabase/migrations/${file}`);
+    expect(sql).toContain("IF v_actor IS DISTINCT FROM 'system' OR NEW.state NOT IN ('applied', 'failed') OR EXISTS (");
+    expect(sql).toContain("IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN");
+    expect(sql).toContain('GRANT EXECUTE ON FUNCTION crove_ads.manage_unclear_pick(text[], integer) TO crove_worker;');
+    // Nothing else of the job's reach changed: the queue's egress is the ad platform's alone.
+    expect(code('apps/kernel/src/jobs-schema.ts')).toMatch(/\[QUEUES\.adsManage\]: \['provider:ad_platform'\]/);
   });
 });
 
