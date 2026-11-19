@@ -9,9 +9,10 @@
 --   mcp_proposal_command (catalog)   the commands an MCP proposal may name, each with the one write scope it needs; filled only by a migration (the migration of the line that declares the command, with
 --                        its approval policy), empty here, and read by the guard below, so the database itself keeps a grant's scope to its own line's commands (a grant holding ludy.social.draft cannot insert a proposal of
 --                        any other command, whatever the caller's TypeScript does). The sealed context carries the scope it was entered for;
---   mcp_proposal_cap (before insert, a definer)   checks the grant stands now (not revoked, the org not stopped), stamps the client name and host from the grant's own record, and applies a DB-backed cap of pending proposals per grant (20) and per org (100) over all grants, serialised per grant, so a looping client cannot flood the Inbox whatever
+--   mcp_proposal_cap (before insert, a definer)   checks the grant stands now (not revoked, the org not stopped), stamps the client name and host and the title from the grant's own record and the catalog's kind, and
+--                        applies a DB-backed cap of pending proposals per grant (20) and per org (100) over all grants, both counted under one advisory lock per org, so a looping client cannot flood the Inbox whatever
 --                        the API process's memory holds; the insert is refused with MCP_PROPOSAL_CAP and a person's decision (approve, reject) or the expiry frees room.
--- The authors of such a proposal are the grant (an agent entry, never an approver) and the grantor (a user entry): where the approval policy asks for four-eyes (P10) with two or more eligible approvers, someone other than the grantor approves; a sole approver uses the one-person path, flagged as self-approved, as for any proposal.
+-- The approver snapshot (eligible_approvers) is stamped by the guard from crove_kernel.approval_eligible_now. The authors of such a proposal are the grant (an agent entry, never an approver) and the grantor (a user entry): where the approval policy asks for four-eyes (P10) with two or more eligible approvers, someone other than the grantor approves; a sole approver uses the one-person path, flagged as self-approved, as for any proposal.
 -- Idempotent (add column if not exists, create or replace, drop and create); applied files untouched.
 SET LOCAL lock_timeout = '2s';
 
@@ -23,9 +24,11 @@ BEGIN
   ALTER TABLE crove_kernel.proposal DROP CONSTRAINT IF EXISTS proposal_mcp_grant_shape;
   ALTER TABLE crove_kernel.proposal ADD CONSTRAINT proposal_mcp_grant_shape
     CHECK ((requested_by_grant IS NULL) = (mcp_client_name IS NULL) AND (requested_by_grant IS NULL) = (mcp_client_host IS NULL)
-           AND (requested_by_grant IS NULL OR (requested_by_agent IS NULL AND tainted AND pg_catalog.char_length(mcp_client_name) BETWEEN 1 AND 120 AND pg_catalog.char_length(mcp_client_host) BETWEEN 1 AND 253)));
+           AND (requested_by_grant IS NULL OR (requested_by_agent IS NULL AND tainted AND pg_catalog.char_length(mcp_client_name) BETWEEN 1 AND 120 AND pg_catalog.char_length(mcp_client_host) BETWEEN 1 AND 253))) NOT VALID;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
+-- The columns are new, so every existing row holds the rule (all three null): validated at once.
+ALTER TABLE crove_kernel.proposal VALIDATE CONSTRAINT proposal_mcp_grant_shape;
 CREATE INDEX IF NOT EXISTS proposal_mcp_grant_pending_idx ON crove_kernel.proposal (org_id, requested_by_grant) WHERE requested_by_grant IS NOT NULL AND status = 'pending';
 
 -- The provenance of an MCP proposal never changes.
@@ -40,12 +43,15 @@ END $$;
 CREATE TABLE IF NOT EXISTS crove_kernel.mcp_proposal_command (
   command text PRIMARY KEY CHECK (command ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$'),
   scope text NOT NULL CHECK (scope IN ('ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft')),
+  -- The kind of the command's proposals (its proposalKind, the Inbox card's kind): the guard takes the proposal's kind from here, never from the caller.
+  kind text NOT NULL CHECK (kind ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$'),
   adr text NOT NULL CHECK (adr ~ '^ADR-[0-9]{4}( .*)?$')
 );
 REVOKE ALL ON crove_kernel.mcp_proposal_command FROM PUBLIC;
 GRANT SELECT ON crove_kernel.mcp_proposal_command TO crove_tenant;
 SELECT crove_kernel.agent_write_guard_install('crove_kernel.mcp_proposal_command');
 
+REVOKE ALL ON FUNCTION crove_kernel.proposal_keep_mcp_provenance() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 DROP TRIGGER IF EXISTS proposal_keep_mcp_provenance ON crove_kernel.proposal;
 CREATE TRIGGER proposal_keep_mcp_provenance BEFORE UPDATE ON crove_kernel.proposal FOR EACH ROW EXECUTE FUNCTION crove_kernel.proposal_keep_mcp_provenance();
 
@@ -73,6 +79,8 @@ BEGIN
   END IF;
   NEW.mcp_client_name := pg_catalog.left(v_name, 120);
   NEW.mcp_client_host := pg_catalog.left(v_host, 253);
+  -- The title is the database's too: built from the grant's own client name (control and direction characters taken out) and the kind the catalog fixed, never from what the caller passed.
+  NEW.title := pg_catalog.left('Ứng dụng AI “' || pg_catalog.btrim(pg_catalog.regexp_replace(NEW.mcp_client_name, '[[:cntrl:]\u200b-\u200f\u202a-\u202e\u2066-\u2069]+', ' ', 'g')) || '” đề xuất: ' || NEW.kind, 300);
   -- Inserts of one org queue here (the per-grant cap and the org's both count under it), so two calls, of one grant or of two, never both see room for one more.
   PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('mcp_proposal:' || NEW.org_id::text, 3858));
   SELECT pg_catalog.count(*) FILTER (WHERE p.requested_by_grant = NEW.requested_by_grant), pg_catalog.count(*) INTO v_grant, v_org
@@ -236,6 +244,8 @@ BEGIN
     -- entered for (crove_kernel.mcp_proposal_command). Never an update and never a delete, and no other table.
     IF v_ctx ->> 'kind' = 'mcp_company_proposal' AND v_ctx ->> 'grantor' IS NOT NULL AND TG_OP = 'INSERT'
        AND TG_TABLE_SCHEMA = 'crove_kernel' AND TG_TABLE_NAME = 'proposal' THEN
+      -- The approver snapshot is the database's own reading of who may approve the command now, never the caller's: a forged list (a stranger, the grantor alone) is replaced here, before it is checked.
+      NEW.eligible_approvers := crove_kernel.approval_eligible_now(NEW.org_id, NEW.command);
       IF NEW.requested_by_grant = v_agent AND NEW.status = 'pending' AND NEW.revision = 1 AND NEW.tainted IS TRUE
          AND NEW.requested_by_agent IS NULL AND NEW.requested_by_run IS NULL AND NEW.source_task_id IS NULL AND NEW.request_event_id IS NULL
          AND NEW.decided_by IS NULL AND NEW.decided_at IS NULL AND NEW.decided_by_agent IS NULL AND NEW.decision_note IS NULL
@@ -249,7 +259,7 @@ BEGIN
          AND NEW.authors -> 0 ->> 'type' = 'agent' AND NEW.authors -> 0 ->> 'id' = v_agent::text AND NEW.authors -> 0 ->> 'run' = v_agent::text
          AND NEW.authors -> 1 ->> 'type' = 'user' AND NEW.authors -> 1 ->> 'id' = v_ctx ->> 'grantor'
          AND pg_catalog.cardinality((crove_kernel.approval_command_policy(NEW.command)).roles) > 0
-         AND EXISTS (SELECT 1 FROM crove_kernel.mcp_proposal_command mc WHERE mc.command = NEW.command AND mc.scope = v_ctx ->> 'scope') THEN
+         AND EXISTS (SELECT 1 FROM crove_kernel.mcp_proposal_command mc WHERE mc.command = NEW.command AND mc.scope = v_ctx ->> 'scope' AND mc.kind = NEW.kind) THEN
         RETURN NEW;
       END IF;
     END IF;

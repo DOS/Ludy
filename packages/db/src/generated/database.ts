@@ -2606,6 +2606,7 @@ export interface KernelMcpMemberTableTable {
 export interface KernelMcpProposalCommandTable {
   command: ColumnType<string, NotGranted, NotGranted>;
   scope: ColumnType<string, NotGranted, NotGranted>;
+  kind: ColumnType<string, NotGranted, NotGranted>;
   adr: ColumnType<string, NotGranted, NotGranted>;
 }
 

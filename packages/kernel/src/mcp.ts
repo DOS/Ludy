@@ -17,7 +17,7 @@ import { z } from 'zod';
 import { MCP_SCOPE_IDS, plainLine, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMemberGrantsView, type McpGrantView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, MCP_PROPOSE_COMMAND, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
-import { eligibleApprovers, hasApprovalPolicy } from './approval.ts';
+import { hasApprovalPolicy } from './approval.ts';
 import { PROPOSAL_PREPARERS } from './proposal-resubmit.ts';
 import { mcpSignals } from './mcp-signals.ts';
 import { mcpWakeCommands, mcpWakeQueries } from './mcp-wake.ts';
@@ -321,7 +321,6 @@ export const mcpPropose = defineCommand({
     const kind = info.proposalKind;
     // The Inbox renders a proposal by its kind and a title built here from the client's self-declared name (marked as such), never from text the call supplied.
     const title = `Ứng dụng AI “${plainLine(mcp.clientName, 120)}” đề xuất: ${kind}`.slice(0, 300);
-    const approvers = await eligibleApprovers(ctx.trx, ctx.orgId, input.command);
     let proposalId: string;
     try {
       const row = await ctx.trx
@@ -332,7 +331,8 @@ export const mcpPropose = defineCommand({
           command: input.command,
           title,
           payload: JSON.stringify(input.payload),
-          eligible_approvers: approvers,
+          // The approver snapshot and the title are the database's (the guard stamps eligible_approvers from approval_eligible_now, the trigger the title from the catalog's kind): placeholders here.
+          eligible_approvers: [],
           // The grant (an agent entry, never an approver) and the person who connected it (a user entry): the grantor stands for what their AI app asks, so with two or more eligible approvers someone else approves
           // when the policy asks for four-eyes (P10), as for a proposal a person asked for or one an org-chart agent's human chain stands behind.
           authors: JSON.stringify([{ type: 'agent', id: mcp.grantId, run: mcp.grantId }, { type: 'user', id: actor.userId }]),

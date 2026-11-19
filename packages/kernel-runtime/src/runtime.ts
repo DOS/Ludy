@@ -234,6 +234,12 @@ export function memberVyRuntime(runtime: Runtime, orgId: string, actor: Pick<Age
   });
 }
 
+// A copy of a command definition that names no record: the refusal audit of an MCP call to a proposal command takes its record id from nothing the client sent.
+function withoutTarget(def: CommandDef<unknown, unknown>): CommandDef<unknown, unknown> {
+  const { target: _target, ...rest } = def;
+  return rest;
+}
+
 const RISK_RANK: Record<Risk, number> = { R0: 0, R1: 1, R2: 2, R3: 3 };
 
 // 'members' = owner/admin/member; 'system' = system actor only;
@@ -3245,7 +3251,8 @@ export class Runtime {
       // tick for every item of an off org: it writes no row and spends none of the refusal budget when the system is the actor. A person's
       // or an AI agent's call keeps its failed row.
       if (entered && !orgIsNew && AUDITED_REFUSAL_STATUSES.has(domain.status) && !(domain.code === 'MODULE_OFF' && actor.type === 'system')) {
-        await this.writeRefusalAudit((mcpTarget ?? def).name, mcpTarget ?? def, mcpTarget ? { payload: (input as { payload: unknown }).payload } : input, canonical, actor, orgId, domain);
+        // The refusal of an MCP call to a proposal command is audited under the target's name with NO target: the target's id would come from the client's payload.
+        await this.writeRefusalAudit((mcpTarget ?? def).name, mcpTarget ? withoutTarget(mcpTarget) : def, mcpTarget ? { payload: (input as { payload: unknown }).payload } : input, canonical, actor, orgId, domain);
       } else if ((!entered || orgIsNew) && isPreMembershipRefusal(domain)) {
         // Refused before the caller was a member of the org (or the org-less command's new org rolled back with
         // it): there is no org to audit in, so it is noted in security_event (plan §4.4 step 3, issue #1006).

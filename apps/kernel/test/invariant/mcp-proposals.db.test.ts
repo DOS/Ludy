@@ -188,7 +188,7 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
     orgB = (await createOrg(runtime, browser('foreign'), 'Org B')).orgId;
     await q(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgA, users.member]);
     // The catalog a migration fills for the commands of a line: here the test commands (the catalog is empty in the product until a line declares one).
-    await q(`INSERT INTO crove_kernel.mcp_proposal_command (command, scope, adr) VALUES ('ads.cap.set', $1, 'ADR-0051'), ('ads.budget.raise', $2, 'ADR-0051'), ('kernel.test.no_policy', $1, 'ADR-0051'), ('finance.journal.reverse', $1, 'ADR-0051'), ('finance.purchase.record', $1, 'ADR-0051')`, [ENGAGE, ADS]);
+    await q(`INSERT INTO crove_kernel.mcp_proposal_command (command, scope, kind, adr) VALUES ('ads.cap.set', $1, 'ads.kind_ads_cap_set', 'ADR-0051'), ('ads.budget.raise', $2, 'ads.kind_ads_budget_raise', 'ADR-0051'), ('kernel.test.no_policy', $1, 'kernel.kind_kernel_test_no_policy', 'ADR-0051'), ('finance.journal.reverse', $1, 'finance.kind_finance_journal_reverse', 'ADR-0051'), ('finance.purchase.record', $1, 'finance.kind_finance_purchase_record', 'ADR-0051')`, [ENGAGE, ADS]);
   }, 300_000);
 
   afterAll(async () => {
@@ -288,6 +288,22 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
     expect(ran).toEqual([]);
   });
 
+  it('validates the payload against the command\'s own schema before anything is stored, and keeps a client-supplied record id out of the refusal audit', async () => {
+    const grant = await insertGrant(orgA, 'owner', ['ludy.read', ENGAGE]);
+    const actor = grantActor('owner', grant, ['ludy.read', ENGAGE]);
+    const before = (await proposals()).length;
+    for (const payload of [{ text: 5 }, { text: 'x', extra: true }, {}]) {
+      expect((await refusal(propose(actor, 'ads.cap.set', payload))).status, JSON.stringify(payload)).toBe(422);
+    }
+    expect(await proposals()).toHaveLength(before);
+    // A refused call (scope not held) names the command in the org log and no record: the test command derives a record id from the payload, which the audit never takes.
+    const other = await insertGrant(orgA, 'owner', ['ludy.read', ADS]);
+    await refusal(propose(grantActor('owner', other, ['ludy.read', ADS]), 'ads.cap.set', { text: 'client chose this' }));
+    const rows = (await q(`SELECT target_type, target_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.cap.set' AND detail ->> 'mcpGrant' = $2`, [orgA, other])).rows;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) expect([row.target_type, row.target_id]).toEqual([null, null]);
+  });
+
   it('refuses a person the proposer, the approval of an MCP actor, and any edit or rejection by one: nothing but a person decides', async () => {
     const grant = await insertGrant(orgA, 'owner', ['ludy.read', ENGAGE]);
     const actor = grantActor('owner', grant, ['ludy.read', ENGAGE]);
@@ -363,7 +379,7 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
     const grant = await insertGrant(orgA, 'owner', ['ludy.read', ENGAGE]);
     const insert = (over: Record<string, unknown> = {}, command = 'ads.cap.set') => {
       const row: Record<string, unknown> = {
-        org_id: orgA, kind: 'ads.kind_x', command, title: 't', payload: '{}', eligible_approvers: [users.owner], authors: JSON.stringify([{ type: 'agent', id: grant, run: grant }, { type: 'user', id: users.owner }]), tainted: true,
+        org_id: orgA, kind: 'ads.kind_ads_cap_set', command, title: 't', payload: '{}', eligible_approvers: [users.owner], authors: JSON.stringify([{ type: 'agent', id: grant, run: grant }, { type: 'user', id: users.owner }]), tainted: true,
         requested_by_grant: grant, mcp_client_name: 'Dy', mcp_client_host: 'h', ...over,
       };
       const cols = Object.keys(row);
@@ -371,6 +387,15 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
     };
     await inContext(proposalCtx(orgA, grant), async (c) => {
       expect(await attempt(c, ...insert()), 'the exact shape').toBe('ok');
+      // The approver snapshot, the title and the client are the database's: forged ones are replaced, a kind other than the catalog's is refused.
+      await c.query('SAVEPOINT forged');
+      const forged = insert({ eligible_approvers: [users.member], title: 'Đã được duyệt bởi người quản lý', mcp_client_name: 'Giả', mcp_client_host: 'evil.test' });
+      const stored = await c.query<{ eligible_approvers: string[]; title: string; mcp_client_name: string; mcp_client_host: string }>(`${forged[0].replace(' ON CONFLICT DO NOTHING', '')} RETURNING eligible_approvers, title, mcp_client_name, mcp_client_host`, [...forged[1]]);
+      expect(stored.rows[0]?.eligible_approvers, 'a forged approver snapshot is replaced by the database\'s own reading').toEqual([users.owner]);
+      expect(stored.rows[0]?.title).toBe('Ứng dụng AI “Dy” đề xuất: ads.kind_ads_cap_set');
+      expect([stored.rows[0]?.mcp_client_name, stored.rows[0]?.mcp_client_host]).toEqual(['Dy', 'client.example.com']);
+      await c.query('ROLLBACK TO forged');
+      expect(await attempt(c, ...insert({ kind: 'ads.kind_other' })), 'a kind the catalog did not fix').toMatch(/AGENT_FORBIDDEN/);
       const deviations: Array<[string, Record<string, unknown>, string?]> = [
         ['status approved', { status: 'approved' }],
         ['status executed', { status: 'executed' }],
@@ -382,7 +407,6 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
         ['three authors', { authors: JSON.stringify([{ type: 'agent', id: grant, run: grant }, { type: 'user', id: users.owner }, { type: 'user', id: users.member }]) }],
         ['a request input', { request_input: '{}' }],
         ['a far-future creation time', { created_at: new Date(Date.now() + 86_400_000 * 400).toISOString() }],
-        ['no eligible approver', { eligible_approvers: [] }],
         ['another grant\'s author', { authors: JSON.stringify([{ type: 'agent', id: randomUUID(), run: randomUUID() }]) }],
         ['another grant', { requested_by_grant: randomUUID() }],
         ['no grant', { requested_by_grant: null, mcp_client_name: null, mcp_client_host: null }],
@@ -421,7 +445,7 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
 
   it('inserts nothing for a grant that no longer stands: revoked, or its org stopped by a kill switch, even with a context sealed before', async () => {
     const grant = await insertGrant(orgA, 'owner', ['ludy.read', ENGAGE]);
-    const row = [orgA, 'ads.kind_x', 'ads.cap.set', 't', '{}', [users.owner], JSON.stringify([{ type: 'agent', id: grant, run: grant }, { type: 'user', id: users.owner }]), grant];
+    const row = [orgA, 'ads.kind_ads_cap_set', 'ads.cap.set', 't', '{}', [users.owner], JSON.stringify([{ type: 'agent', id: grant, run: grant }, { type: 'user', id: users.owner }]), grant];
     const text = `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors, tainted, requested_by_grant, mcp_client_name, mcp_client_host) VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, 'x', 'x')`;
     await inContext(proposalCtx(orgA, grant), async (c) => expect(await attempt(c, text, row)).toBe('ok'));
     await q(`UPDATE crove_kernel.agent_grant SET revoked_at = now() WHERE id = $1`, [grant]);
