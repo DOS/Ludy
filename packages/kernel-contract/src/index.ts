@@ -151,6 +151,7 @@ export * from './projects.ts';
 export * from './ads.ts';
 export * from './ads-boost.ts';
 export * from './ads-campaign.ts';
+export * from './ads-manage.ts';
 export * from './manifest.ts';
 export * from './apps.ts';
 export * from './screens.ts';

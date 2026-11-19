@@ -732,6 +732,13 @@ export function createRpcHandler(
         return { command: 'ads.launches.unblock', input: {} };
       case 'campaign_launch':
         return { command: 'ads.campaign.launch', input: { draftId: change.draftId } };
+      // What can start or raise spend on a running ad (#3835, W4): each asks through its own preparer, and the approval runs the command.
+      case 'object_resume':
+        return { command: 'ads.object.resume', input: { launchId: change.launchId, slot: change.slot } };
+      case 'budget_raise':
+        return { command: 'ads.budget.raise', input: { launchId: change.launchId, dailyBudget: change.dailyBudget } };
+      case 'schedule_extend':
+        return { command: 'ads.schedule.extend', input: { launchId: change.launchId, endOn: change.endOn } };
     }
   };
   const inAds = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
@@ -3922,6 +3929,40 @@ export function createRpcHandler(
           return runtime.execute('ads.launch.stop', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+      // Managing a running ad (W4, #3835): owners and admins. A pause, an archive, a lower budget and a shorter schedule only reduce spend: each is written here and queued, and the
+      // platform is called by the manage job afterwards (never in this request). A resume, a raise and an extension are proposals (requestChange).
+      pauseObject: os.ads.pauseObject.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.object.pause', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      archiveObject: os.ads.archiveObject.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.object.archive', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      lowerBudget: os.ads.lowerBudget.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.budget.lower', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      shortenSchedule: os.ads.shortenSchedule.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.schedule.shorten', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      cancelChange: os.ads.cancelChange.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.manage.cancel', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      manageState: os.ads.manageState.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.manage.state', input, { actor, orgId }))),
+      manageSuggestions: os.ads.manageSuggestions.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.manage.suggestions', input, { actor, orgId }))),
       // Running a launch that needs attention again (W2-4b): owners and admins; the request is stamped here and the launch job takes it (never a platform call in this request).
       retryLaunch: os.ads.retryLaunch.handler(({ context, input }) =>
         inAds(context, (orgId, actor) => {

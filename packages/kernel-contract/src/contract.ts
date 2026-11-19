@@ -581,6 +581,7 @@ import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoi
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsCommitted, zAdsCommittedInput, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
 import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStatesInput, zAdsBoostStateView } from './ads-boost.ts';
+import { zAdsBudgetLowerCall, zAdsManageCancelCall, zAdsManageChanged, zAdsManageStateView, zAdsManageSuggestion, zAdsObjectCall, zAdsScheduleShortenCall } from './ads-manage.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
@@ -2908,6 +2909,16 @@ export const contract = {
     // Runs a launch that needs attention again (W2-4b): owners and admins. The request is stamped and the launch job takes it, with the next attempt: it first looks at what the
     // earlier attempts left unsettled at the platform, then creates what is missing, then switches the objects on if the approved launch is still in force.
     retryLaunch: oc.input(zAdsLaunchRetryCall).output(z.object({ launchId: zId, requested: z.boolean() })),
+    // Managing a running ad (W4, #3835): owners and admins. A pause, an archive, a lower budget and a shorter schedule only reduce spend, so they are their own commands; each is
+    // queued and the platform is called afterwards, from the queue (never in this request). A resume, a raise and an extension are proposals (requestChange). Members read the state.
+    pauseObject: oc.input(zAdsObjectCall).output(zAdsManageChanged),
+    archiveObject: oc.input(zAdsObjectCall).output(zAdsManageChanged),
+    lowerBudget: oc.input(zAdsBudgetLowerCall).output(zAdsManageChanged),
+    shortenSchedule: oc.input(zAdsScheduleShortenCall).output(zAdsManageChanged),
+    cancelChange: oc.input(zAdsManageCancelCall).output(z.object({ changeId: zId, cancelled: z.literal(true) })),
+    manageState: oc.input(z.strictObject({ launchId: zId })).output(zAdsManageStateView),
+    // What the AI coworker suggests for a campaign that spends with poor results: a pause or a lower budget for a person to apply, never a raise (owners and admins).
+    manageSuggestions: oc.input(z.strictObject({ adAccountId: zId.optional() })).output(z.array(zAdsManageSuggestion)),
     // Asking the AI coworker for a draft (W1b, #2295): a request the worker answers with a draft or a visible reason why there is none; the model call
     // is rationed by the member's draft budget (RATE_LIMITED over it) and the org's AI budget (the job records AI_BUDGET), and the core works with AI off.
     campaignRequests: oc.input(z.strictObject({ adAccountId: zId.optional() })).output(z.array(zAdsCampaignRequestView)),

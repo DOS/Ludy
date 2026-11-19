@@ -25,6 +25,7 @@ import {
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { canonicalJson, completePlan, flightDays, maxSpendOf, planHash, validatePlan, type PlanContext } from './campaign-plan.ts';
 import { todayIn } from './domain.ts';
+import { manageStatesOf } from './manage-state.ts';
 import { cancelQueuedLaunches, launchesOfDrafts, lockedLaunch, queueLaunch, refuseOverCaps } from './launch-ledger.ts';
 import { currentSetting, lockedSetting, onlyApproved, refuseOpenRequest } from './write.ts';
 
@@ -507,6 +508,7 @@ export const adsCampaignDrafts = defineQuery({
     const cache: ViewCache = new Map();
     const now = new Date();
     const launches = await launchesOfDrafts(ctx, list.filter((r) => r.status === 'approved').map((r) => r.id));
+    await withManage(ctx, launches.values());
     const views: AdsCampaignDraftView[] = [];
     for (const row of list) views.push(await viewOf(ctx, row, now, cache, launches.get(row.id) ?? null));
     return views;
@@ -521,9 +523,23 @@ export const adsCampaignDraft = defineQuery({
     const [row] = await rows(ctx, { id: input.draftId.toLowerCase() }).execute();
     if (!row) throw draftMissing();
     const launches = row.status === 'approved' ? await launchesOfDrafts(ctx, [row.id]) : new Map<string, AdsLaunchView>();
+    await withManage(ctx, launches.values());
     return viewOf(ctx, row, new Date(), new Map(), launches.get(row.id) ?? null);
   },
 });
+
+// The management state of the launches that are live (W4, #3835), added to their view: members read it, the screen shows the controls to owners and admins.
+async function withManage(ctx: QueryContext, launches: Iterable<AdsLaunchView>): Promise<void> {
+  const live = [...launches].filter((l) => l.state === 'live');
+  const states = await manageStatesOf(
+    ctx,
+    live.map((l) => ({ id: l.id, ad_account_id: l.adAccountId, state: l.state, currency: l.currency, daily_budget: l.dailyBudget, end_text: l.endOn })),
+  );
+  for (const launch of live) {
+    const state = states.get(launch.id);
+    if (state) launch.manage = state;
+  }
+}
 
 export const campaignCommands = [adsCampaignDraftSave, adsCampaignDraftDiscard, adsCampaignPrepareLaunch, adsCampaignLaunch, adsLaunchCancel];
 export const campaignQueries = [adsCampaignDrafts, adsCampaignDraft];
