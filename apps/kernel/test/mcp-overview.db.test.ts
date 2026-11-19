@@ -16,7 +16,7 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
-const KEYS = ['cash', 'empty', 'from', 'payables', 'previousFrom', 'previousTo', 'profit', 'range', 'receivables', 'to', 'unmapped'];
+const KEYS = ['cash', 'empty', 'from', 'payables', 'previousFrom', 'previousTo', 'profit', 'range', 'receivables', 'to', 'unmapped', 'vatPayable'];
 
 suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
   const dbName = `crove_test_mcp_overview_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -121,6 +121,24 @@ suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
     expect(JSON.stringify(seen)).not.toContain('secret text');
     expect(seen).not.toHaveProperty('months');
     expect(seen).not.toHaveProperty('expenses');
+  });
+
+  it('reads the VAT payable as the credit balance of account 3331 at the period\'s end, against the earlier period\'s', async () => {
+    const o = await org();
+    // 3331 credited by two sales' VAT this month and one last month; a settlement (Dr 3331 / Cr 1331) of 100000 this month lowers it.
+    await o.post('2026-10-20', '131', '3331', '300000');
+    await o.post('2026-11-05', '131', '3331', '500000');
+    await o.post('2026-11-06', '131', '3331', '200000');
+    await o.post('2026-11-07', '3331', '1331', '100000');
+    const today = (await rows<{ d: string }>("SELECT to_char((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS d"))[0]?.d as string;
+    // The same period as the answer's, so the expected figure is read from the books themselves (trial of account 3331 by SQL), not from the code under test.
+    const seen = await o.read(o.owner, { range: 'this_year' });
+    const sums = async (to: string) => (await rows<{ n: string | null }>("SELECT sum(l.credit - l.debit)::text AS n FROM crove_finance.journal_line l JOIN crove_finance.journal_entry j ON j.org_id = l.org_id AND j.id = l.entry_id WHERE l.org_id = $1 AND l.account_code LIKE '3331%' AND j.entry_date <= $2", [o.orgId, to]))[0]?.n ?? '0';
+    const vat = seen.vatPayable as { amount: string; previous: string; change: string };
+    expect(Number(vat.amount)).toBe(Number(await sums(seen.to as string)));
+    expect(Number(vat.previous)).toBe(Number(await sums(seen.previousTo as string)));
+    // The dates of the seed are in 2026: when the run's own year is another one the totals above still tie to the books, and the fixed amounts only apply in 2026.
+    if (today.startsWith('2026-')) expect(Number(vat.amount)).toBe(900000);
   });
 
   it('refuses an org with more than one legal entity, for the branch-scoped admin and for the owner alike, and never answers the part it sees', async () => {

@@ -6,10 +6,14 @@
 // one entity is refused the same way: one entity's cash must never read as the org's. Read only; money stays a decimal string in VND.
 import type { MemberRole } from '@crove/db';
 import { zOverviewRange, type FinanceOverview, type OverviewFigure } from '@crove/kernel-contract';
+import { sql } from 'kysely';
 import { z } from 'zod';
-import { defineQuery } from '@crove/kernel-runtime';
+import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { money } from '@crove/l10n-vn';
+import { overviewFigure } from './domain/overview.ts';
 import { wholeOrgEntity } from './mcp-whole-org.ts';
 import { financeOverview } from './overview.ts';
+import { balances } from './statements.ts';
 
 const GRANTORS: readonly MemberRole[] = ['owner', 'admin'];
 
@@ -28,8 +32,22 @@ export interface McpOverview {
   profit: OverviewFigure;
   receivables: OverviewFigure;
   payables: OverviewFigure;
+  // The VAT payable (#3912): the credit balance of account 3331 at the period's last day against the earlier period's, the ledger's own figure (a debit balance reads negative).
+  vatPayable: OverviewFigure;
   // The profit may be incomplete when this is above 0 (balances no statement line reads).
   unmapped: number;
+}
+
+// The net credit balance of account 3331 (output VAT) up to `to` and up to `previousTo`, read in ONE statement so both see the same entries. The overview screen
+// has no VAT card and the VAT screen counts invoices, not the ledger, so this is the ledger's own balance (the closing entries are kept: a settlement moves it).
+async function vatPayable(ctx: QueryContext, entity: string, to: string, previousTo: string): Promise<OverviewFigure> {
+  const at = (date: string, part: string) =>
+    balances(ctx, entity, null, date, false)
+      .where('l.account_code', 'like', '3331%')
+      .select(sql.lit(part).as('part'));
+  const rows = await at(to, 'now').unionAll(at(previousTo, 'before')).execute();
+  const net = (part: string) => rows.filter((r) => r.part === part).reduce((sum, r) => sum.plus(money(r.credit ?? '0')).minus(money(r.debit ?? '0')), money(0));
+  return overviewFigure(net('now').toFixed(), net('before').toFixed());
 }
 
 export const mcpOverview = defineQuery({
@@ -38,9 +56,10 @@ export const mcpOverview = defineQuery({
   access: GRANTORS,
   mcp: { scope: 'ludy.read' },
   handler: async (ctx, input): Promise<McpOverview> => {
-    await wholeOrgEntity(ctx);
-    const o = await financeOverview(ctx, { range: input.range });
+    const entity = await wholeOrgEntity(ctx);
+    const o = await financeOverview(ctx, { range: input.range, legalEntityId: entity });
+    const vat = await vatPayable(ctx, entity, o.to, o.previousTo);
     // Projected: the monthly series and the expense mix stay on the screen.
-    return { range: o.range, from: o.from, to: o.to, previousFrom: o.previousFrom, previousTo: o.previousTo, empty: o.empty, cash: o.cash, profit: o.profit, receivables: o.receivables, payables: o.payables, unmapped: o.unmapped };
+    return { range: o.range, from: o.from, to: o.to, previousFrom: o.previousFrom, previousTo: o.previousTo, empty: o.empty, cash: o.cash, profit: o.profit, receivables: o.receivables, payables: o.payables, vatPayable: vat, unmapped: o.unmapped };
   },
 });
