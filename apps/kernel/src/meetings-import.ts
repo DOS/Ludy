@@ -13,14 +13,22 @@
 //   the audio cap is unchanged, and the sealed video is deleted when the call ends. It is not piped into crove-media straight from the platform, on purpose: crove-media takes its one slot before it reads the
 //   body and bounds the whole call by its process timeout (#2989), so a slow platform download would hold the slot and be cut off at 5 minutes. Without an extractor (no MEDIA_URL) a video-only recording
 //   still fails `no_audio`.
+// - A recording with only the platform's own transcript (C2, #3174: no audio file, no video file) is not downloaded at all: the adapter reads the transcript through its own API hosts, the job bounds every line
+//   again (the text is tainted) and stages the lines as JSON under the same staging key, with the same lifecycle (claim, sweep, deletion) as staged audio. The member's own request claims it and writes it as
+//   the recorder's draft (POST /api/meetings/:id/transcript-import); no audio is kept and no model is called.
 // - A transient failure (the platform or the network) throws so the queue retries; the last try, and every permanent failure, is recorded on the row as a short code, never the platform's message.
 import {
   MEETING_PLATFORM_IMPORT_MAX_BYTES,
+  MEETING_PLATFORM_TRANSCRIPT_MAX_BYTES,
   MEETING_PLATFORM_VIDEO_MAX_BYTES,
+  TRANSCRIPT_SEGMENTS_MAX,
+  TRANSCRIPT_SPEAKER_MAX,
+  TRANSCRIPT_TEXT_MAX,
   type MeetingPlatformErrorCode,
   type MeetingPlatformProvider,
+  type TranscriptSegmentInput,
 } from '@crove/kernel-contract';
-import type { MeetingPlatformAdapter, MeetingPlatformDownload } from '@crove/channel';
+import type { MeetingPlatformAdapter, MeetingPlatformDownload, MeetingPlatformTranscript } from '@crove/channel';
 import { MeetingPlatformError } from '@crove/channel';
 import { DomainError, EgressError, guardedStream, type BlobStore, type CredentialBroker, type EgressStream, type EgressStreamOptions, type Runtime } from '@crove/kernel-runtime';
 import { freshCredential } from './meeting-platform-credential.ts';
@@ -237,6 +245,26 @@ async function audioOfVideo(deps: MeetingsImportDeps, job: MeetingsImportJob, do
   }
 }
 
+// The lines of a platform's transcript as the staged JSON `{ segments }`, bounded again here: the platform's text is tainted, so every line is cut to the draft's limits, an empty one is dropped, the times are
+// clamped to the longest call the draft takes and a line with no speaker gets a neutral label. Nothing of the platform but the lines is staged (no participant list, no title). `no_transcript` when no line is left.
+export const UNKNOWN_SPEAKER = 'Người nói';
+export function stageTranscript(transcript: MeetingPlatformTranscript): Uint8Array {
+  const segments: TranscriptSegmentInput[] = [];
+  const clamp = (seconds: number) => Math.min(86_400, Math.max(0, seconds));
+  for (const entry of transcript.entries.slice(0, TRANSCRIPT_SEGMENTS_MAX)) {
+    // A NUL byte is no text and Postgres refuses it in a text column, which would fail the whole import: it is dropped here.
+    const text = entry.text.replaceAll('\u0000', '').trim().slice(0, TRANSCRIPT_TEXT_MAX).trim();
+    if (text === '' || !Number.isFinite(entry.startSeconds) || !Number.isFinite(entry.endSeconds)) continue;
+    const startSeconds = clamp(entry.startSeconds);
+    const speakerLabel = (entry.speaker ?? '').replaceAll('\u0000', '').trim().slice(0, TRANSCRIPT_SPEAKER_MAX).trim() || UNKNOWN_SPEAKER;
+    segments.push({ startSeconds, endSeconds: Math.max(startSeconds, clamp(entry.endSeconds)), speakerLabel, text });
+  }
+  if (segments.length === 0) throw new MeetingPlatformError('no_transcript');
+  const bytes = new TextEncoder().encode(JSON.stringify({ segments }));
+  if (bytes.byteLength > MEETING_PLATFORM_TRANSCRIPT_MAX_BYTES) throw new MeetingPlatformError('too_large');
+  return bytes;
+}
+
 // One attempt for one recording. Throws, so the queue retries, only for a transient failure with tries remain; anything else is recorded on the row. Every outcome names the staging key this job was handed and
 // changes the row only while it still holds exactly that key (the sweep hands an importing row over every minute until it is staged, and a failed row begun again gets a new key), so a duplicate or stale job
 // does nothing and never deletes bytes another job staged.
@@ -255,17 +283,26 @@ export async function runMeetingsImport(deps: MeetingsImportDeps, job: MeetingsI
   try {
     const adapter = deps.adapters[job.provider];
     if (!adapter) return await fail('platform_unavailable');
+    // A recording with neither an audio nor a video file is the transcript's (C2, #3174; the command lets only such a row begin when its provider has a transcript path, and the adapter must have one too).
+    const transcriptOnly = !job.hasAudio && !job.hasVideo && adapter.transcript !== undefined;
     // A size the platform declared over the cap of the file it will be fetched as (the audio cap when there is nothing to fetch), then no audio file to take and no way to extract one: refused before any network call.
     const format = job.hasAudio ? 'audio' : job.hasVideo && deps.extractor?.configured ? 'video' : null;
-    if (job.sizeBytes !== null && job.sizeBytes > (format === 'video' ? MEETING_PLATFORM_VIDEO_MAX_BYTES : MEETING_PLATFORM_IMPORT_MAX_BYTES)) return await fail('too_large');
-    if (format === null) return await fail('no_audio');
+    if (!transcriptOnly) {
+      if (job.sizeBytes !== null && job.sizeBytes > (format === 'video' ? MEETING_PLATFORM_VIDEO_MAX_BYTES : MEETING_PLATFORM_IMPORT_MAX_BYTES)) return await fail('too_large');
+      if (format === null) return await fail('no_audio');
+    }
     // The token in hand, renewed first when it is about to expire (a provider that rotates its refresh token: kernel.meeting_platform.credential_refresh, one transaction under the connection's lock).
     const credential = await freshCredential(deps, job.orgId, job.connectionId, adapter);
-    const download = await adapter.prepareDownload(credential, job.externalId, format, attempt.signal);
-    const bytes = download.format === 'video' ? await audioOfVideo(deps, job, download, attempt.signal) : await fetchBytes(deps, download, attempt.signal);
+    let bytes: Uint8Array;
+    if (transcriptOnly && adapter.transcript) {
+      bytes = stageTranscript(await adapter.transcript(credential, job.externalId, attempt.signal));
+    } else {
+      const download = await adapter.prepareDownload(credential, job.externalId, format as 'audio' | 'video', attempt.signal);
+      bytes = download.format === 'video' ? await audioOfVideo(deps, job, download, attempt.signal) : await fetchBytes(deps, download, attempt.signal);
+      // The audio cap is the same whether the audio came as a file or out of a video.
+      if (bytes.byteLength > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
+    }
     if (bytes.byteLength === 0) throw new MeetingPlatformError('download_failed');
-    // The audio cap is the same whether the audio came as a file or out of a video.
-    if (bytes.byteLength > MEETING_PLATFORM_IMPORT_MAX_BYTES) throw new MeetingPlatformError('too_large');
     await deps.store.put(job.stagingKey, bytes, 'application/octet-stream');
     wrote = true;
     const staged = await deps.runtime.execute<{ applied: number }>('kernel.meeting_platform.import_staged', { recordingId: job.id, stagingKey: job.stagingKey }, ctx);

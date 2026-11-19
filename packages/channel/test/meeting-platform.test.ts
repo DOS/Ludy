@@ -104,6 +104,22 @@ describe('SandboxMeetingPlatform', () => {
     expect((error as MeetingPlatformError).code).toBe('platform_refused');
   });
 
+  it('hands over the transcript of a recording that has one (labelled like Google Meet\'s), copies it, and says no_transcript or recording_gone otherwise (C2, #3174)', async () => {
+    const sandbox = new SandboxMeetingPlatform({ seed: false });
+    const entries = [{ startSeconds: 1, endSeconds: 3, speaker: 'Lan', text: 'Xin chào.' }];
+    sandbox.add(rec('with-text', 1, { hasAudio: false, audio: undefined, hasTranscript: true, transcript: entries }));
+    sandbox.add(rec('without', 2));
+    const got = await sandbox.transcript(CREDENTIAL, 'with-text');
+    expect(got).toEqual({ source: 'google_meet', language: null, truncated: false, entries });
+    // A copy: a caller that changes it does not change the fixture.
+    got.entries[0]!.text = 'đã sửa';
+    expect((await sandbox.transcript(CREDENTIAL, 'with-text')).entries[0]?.text).toBe('Xin chào.');
+    await expect(sandbox.transcript(CREDENTIAL, 'without')).rejects.toMatchObject({ code: 'no_transcript' });
+    await expect(sandbox.transcript(CREDENTIAL, 'nope')).rejects.toMatchObject({ code: 'recording_gone' });
+    // The list says what the recording offers.
+    expect((await sandbox.list(CREDENTIAL, new Date(0))).find((r) => r.id === 'with-text')).toMatchObject({ hasAudio: false, hasVideo: false, hasTranscript: true });
+  });
+
   it('answers recording_gone for an unknown id', async () => {
     const sandbox = new SandboxMeetingPlatform();
     const error = await sandbox.prepareDownload(CREDENTIAL, 'nope', 'audio').catch((e: unknown) => e);
