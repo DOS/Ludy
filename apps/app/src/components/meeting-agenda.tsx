@@ -37,8 +37,8 @@ const refreshAgenda = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.meetings.today.key() });
 };
 
-// One event: its time, its title, the service of its join address and how many people are invited.
-function EventLine({ event }: { event: AgendaEvent }) {
+// One event: its time, its title, the service of its join address and how many people are invited. `titleId` names the title for a link of the same row that has to say which event it acts on.
+function EventLine({ event, titleId }: { event: AgendaEvent; titleId?: string }) {
   const t = useTranslations('meetings.agenda');
   const f = useFormat();
   const service = joinService(event.joinUrl);
@@ -49,7 +49,7 @@ function EventLine({ event }: { event: AgendaEvent }) {
         {'–'}
         {f.time(event.endsAt)}
       </span>
-      <span className="min-w-0 break-words font-medium">{event.title === '' ? t('untitled') : event.title}</span>
+      <span id={titleId} className="min-w-0 break-words font-medium">{event.title === '' ? t('untitled') : event.title}</span>
       {service && <Badge variant="outline">{t(`service.${service}`)}</Badge>}
       {event.invitees > 0 && <span className="text-xs text-muted-foreground">{t('invitees', { count: String(event.invitees) })}</span>}
     </>
@@ -98,15 +98,15 @@ export function TodayAgenda({ slug }: { slug: string }) {
         <ul className="divide-y rounded-lg border border-border bg-card">
           {items.map(({ event, brief }) => (
             <li key={event.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 p-3 text-sm" data-testid="meeting-agenda-event">
-              <EventLine event={event} />
+              <EventLine event={event} titleId={`agenda-event-${event.id}`} />
               <span className="ml-auto">
                 {event.meetingId ? (
-                  <Link to="/o/$slug/meetings/$id" params={{ slug, id: event.meetingId }} className="text-xs font-medium underline">
+                  <Link to="/o/$slug/meetings/$id" params={{ slug, id: event.meetingId }} aria-describedby={`agenda-event-${event.id}`} className="text-xs font-medium underline">
                     {t('recorded')}
                   </Link>
                 ) : (
                   // Fills the title and opens the normal record screen: its consent step runs before anything is recorded, and the event is linked to the meeting once it is made.
-                  <Link to="/o/$slug/meetings/record" params={{ slug }} search={{ title: event.title.slice(0, 200), agendaId: event.id }} className="text-xs font-medium underline" data-testid="meeting-agenda-record">
+                  <Link to="/o/$slug/meetings/record" params={{ slug }} search={{ title: event.title.slice(0, 200), agendaId: event.id }} aria-describedby={`agenda-event-${event.id}`} className="text-xs font-medium underline" data-testid="meeting-agenda-record">
                     {t('record')}
                   </Link>
                 )}
