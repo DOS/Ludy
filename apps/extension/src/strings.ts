@@ -102,6 +102,8 @@ const VI = {
   recordingTitle: 'Ludy đang ghi',
   lostTitle: 'Ghi âm đã dừng',
   lostLine: 'Ghi âm đã dừng lúc {time}.',
+  // Who holds a call that is already being captured (ADR-0055 slice 1, #4123): the kind of client, never a person.
+  captureKinds: { extension: 'Tiện ích Ludy', app: 'Ứng dụng Ludy' },
   lostUploaded: 'Phần đã ghi đã được tải lên.',
   lostKept: 'Phần đã ghi còn trên máy này, bạn có thể tải lên lại bên dưới.',
   lostDismiss: 'Đã hiểu',
@@ -130,6 +132,7 @@ const VI = {
     device: 'Không mở được âm thanh của tab. Hãy mở tab họp, bấm biểu tượng Ludy trên tab đó rồi thử lại.',
     store: 'Không lưu được bản ghi trên máy này.',
     setup: 'Không bắt đầu được. Hãy thử lại.',
+    captureRunning: '{kind} đang ghi cuộc họp này từ {time}. Hãy dùng bản ghi đó, hoặc dừng nó trước khi ghi lại.',
   },
 } as const;
 
@@ -240,6 +243,7 @@ export const ENGLISH: Strings = {
   recordingTitle: 'Ludy is recording',
   lostTitle: 'Recording stopped',
   lostLine: 'Recording stopped at {time}.',
+  captureKinds: { extension: 'The Ludy extension', app: 'The Ludy app' },
   lostUploaded: 'What was recorded has been uploaded.',
   lostKept: 'What was recorded is still on this device, you can upload it again below.',
   lostDismiss: 'Got it',
@@ -268,6 +272,7 @@ export const ENGLISH: Strings = {
     device: 'Could not open the tab audio. Open the meeting tab, click the Ludy icon on that tab and try again.',
     store: 'Could not save the recording on this device.',
     setup: 'Could not start. Please try again.',
+    captureRunning: '{kind} has been recording this meeting since {time}. Use that recording, or stop it before recording again.',
   },
 };
 

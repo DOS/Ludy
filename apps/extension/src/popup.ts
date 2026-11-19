@@ -618,12 +618,20 @@ async function startRecording(): Promise<void> {
     if (tab?.id === undefined) throw new Error('no tab');
     // Only after the member's click here, and only for the tab they are on.
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-    const reply = (await chrome.runtime.sendMessage({ type: 'start', ...draft, streamId })) as StartReply;
+    // The tab's address, when the browser gave it, so the server can tell a second capture of the same call; nothing of it is kept.
+    const joinUrl = typeof tab.url === 'string' && tab.url.startsWith('https://') ? tab.url : undefined;
+    const reply = (await chrome.runtime.sendMessage({ type: 'start', ...draft, streamId, ...(joinUrl ? { joinUrl } : {}) })) as StartReply;
     if (reply.ok) {
       draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false, liveNotes: false };
       agendaNote = '';
     } else {
       notice = T.blockers[reply.reason];
+      // Another capture of this call exists: which kind of client and since when, in words (ADR-0055 slice 1, #4123).
+      if (reply.reason === 'captureRunning' && reply.held) {
+        const since = new Date(reply.held.since);
+        const time = Number.isNaN(since.getTime()) ? '' : since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        notice = T.blockers.captureRunning.replace('{kind}', T.captureKinds[reply.held.kind]).replace('{time}', time);
+      }
       if (reply.reason === 'consentPolicy') {
         strictOrg = true;
         if (draft.consentMethod === 'told_at_start') draft.consentMethod = '';
