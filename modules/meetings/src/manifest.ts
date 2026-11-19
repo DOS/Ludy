@@ -93,6 +93,8 @@ export const meetingsManifest = defineModule({
           'minutes_template_name',
           'minutes_template_sections',
           'minutes_template_hash',
+          // True while the draft is a platform's transcript that was cut (#3922): a flag, never text.
+          'platform_transcript_cut',
           'created_at',
           'updated_at',
         ],
