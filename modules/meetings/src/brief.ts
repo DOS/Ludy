@@ -63,33 +63,41 @@ export const briefFacts = defineQuery({
   sensitive: true,
   handler: async (ctx, input): Promise<BriefFacts> => {
     userOf(ctx.actor);
-    const target = await targetOf(ctx.trx, ctx.orgId, input);
-    const previous = target.seriesId === null ? undefined : await previousMeetingOf(ctx.trx, ctx.orgId, target.seriesId, target.at, target.meetingId);
-    let decisions: string[] = [];
-    let items: BriefFacts['items'] = [];
-    if (previous) {
-      // Published decisions only, read under the caller's own row security (a published result is read by the readers of its meeting).
-      const result = await ctx.trx
-        .selectFrom('crove_meetings.meeting_result')
-        .select('decisions')
-        .where('org_id', '=', ctx.orgId)
-        .where('meeting_id', '=', previous.id)
-        .where('stage', '=', 'published')
-        .executeTakeFirst();
-      decisions = (Array.isArray(result?.decisions) ? (result.decisions as unknown[]) : []).filter((d): d is string => typeof d === 'string' && d.trim() !== '').slice(0, BRIEF_DECISIONS_MAX);
-      items = (await openItemsOf(ctx.trx, ctx.orgId, previous.id)).slice(0, BRIEF_ITEMS_MAX);
-    }
-    const { customer, deals } = await customerOf(ctx, target.meetingId, previous?.id ?? null);
-    return zBriefFacts.parse({
-      previous: previous ? { meetingId: previous.id, title: previous.title, startedAt: previous.at.toISOString() } : null,
-      decisions,
-      items,
-      customer,
-      deals,
-      empty: decisions.length === 0 && items.length === 0 && deals.length === 0,
-    });
+    return briefFactsOf(ctx, input);
   },
 });
+
+/**
+ * The facts of one brief, read in the caller's own transaction (row security on every one): shared by `meetings.brief.facts` and the Today view (#3955), so a day's briefs are exactly the briefs the member would open
+ * one by one. Throws MEETING_NOT_FOUND for a meeting the caller does not read and AGENDA_NOT_FOUND for a calendar event that is not in their agenda.
+ */
+export async function briefFactsOf(ctx: { trx: Trx; orgId: string; query: QueryContext['query'] }, input: { meetingId: string | null; agendaId: string | null }): Promise<BriefFacts> {
+  const target = await targetOf(ctx.trx, ctx.orgId, input);
+  const previous = target.seriesId === null ? undefined : await previousMeetingOf(ctx.trx, ctx.orgId, target.seriesId, target.at, target.meetingId);
+  let decisions: string[] = [];
+  let items: BriefFacts['items'] = [];
+  if (previous) {
+    // Published decisions only, read under the caller's own row security (a published result is read by the readers of its meeting).
+    const result = await ctx.trx
+      .selectFrom('crove_meetings.meeting_result')
+      .select('decisions')
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', previous.id)
+      .where('stage', '=', 'published')
+      .executeTakeFirst();
+    decisions = (Array.isArray(result?.decisions) ? (result.decisions as unknown[]) : []).filter((d): d is string => typeof d === 'string' && d.trim() !== '').slice(0, BRIEF_DECISIONS_MAX);
+    items = (await openItemsOf(ctx.trx, ctx.orgId, previous.id)).slice(0, BRIEF_ITEMS_MAX);
+  }
+  const { customer, deals } = await customerOf(ctx, target.meetingId, previous?.id ?? null);
+  return zBriefFacts.parse({
+    previous: previous ? { meetingId: previous.id, title: previous.title, startedAt: previous.at.toISOString() } : null,
+    decisions,
+    items,
+    customer,
+    deals,
+    empty: decisions.length === 0 && items.length === 0 && deals.length === 0,
+  });
+}
 
 // The customer linked to the meeting, else to the previous meeting of the series (a party link, else the party of a linked deal), and that customer's open deals with their stage. A party is read under the
 // caller's own policy; the deals and the stage names come from the CRM module's queries, which answer `not_installed` where the deployment has no CRM (then the customer is shown with no deals).

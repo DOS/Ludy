@@ -18,7 +18,8 @@ jobs:
   static:
     name: Lint, typecheck, unit tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 25 minutes (#3995): successful runs take 8 to 14 minutes, and the 15-minute limit cancelled unrelated PRs mid-typecheck.
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
@@ -350,13 +351,14 @@ jobs:
       - name: Load the unpacked extension in Chromium
         run: pnpm --filter @crove/extension test:e2e -- --trace off
 
-  # The required check: it passes only when the static job, knip, the marketing site, the extension and every database part passed, so
-  # a failed, cancelled or skipped part fails it.
+  # The required check: it passes only when the static job, knip, the marketing site, the extension, every database part, the shared-database
+  # invariants, the Supabase image (T17), the kernel, extract and media images (T12), the split stack (T7) and the backup drill passed, so a
+  # failed, cancelled or skipped part fails it (#3974: before, a red T12 or T17 job blocked neither a merge nor a release).
   check:
     name: Lint, typecheck, test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [static, knip, web, db, media-image, extension]
+    needs: [static, knip, web, db, shared-mode-invariants, supabase-stack, kernel-image, extract-image, media-image, split-stack, backup-drill, extension]
     if: always()
     steps:
       - name: Every part passed
@@ -367,9 +369,18 @@ jobs:
           DB: ${{ needs.db.result }}
           MEDIA: ${{ needs.media-image.result }}
           EXTENSION: ${{ needs.extension.result }}
+          SHARED: ${{ needs.shared-mode-invariants.result }}
+          SUPABASE: ${{ needs.supabase-stack.result }}
+          KERNEL: ${{ needs.kernel-image.result }}
+          EXTRACT: ${{ needs.extract-image.result }}
+          SPLIT: ${{ needs.split-stack.result }}
+          BACKUP: ${{ needs.backup-drill.result }}
         run: |
           echo "static: $STATIC, knip: $KNIP, marketing site: $WEB, database tests: $DB, media: $MEDIA, extension: $EXTENSION"
-          test "$STATIC" = success && test "$KNIP" = success && test "$WEB" = success && test "$DB" = success && test "$MEDIA" = success && test "$EXTENSION" = success
+          echo "shared-mode invariants: $SHARED, Supabase image: $SUPABASE, kernel image: $KERNEL, extract image: $EXTRACT, split stack: $SPLIT, backup drill: $BACKUP"
+          for result in "$STATIC" "$KNIP" "$WEB" "$DB" "$MEDIA" "$EXTENSION" "$SHARED" "$SUPABASE" "$KERNEL" "$EXTRACT" "$SPLIT" "$BACKUP"; do
+            test "$result" = success
+          done
 
   # The migrations and the definer hardening guard (External-tenant gate T17) on the Supabase Postgres image that
   # hosted Supabase runs (issue #179): its extensions, its roles and the supautils hooks, with migrations run as

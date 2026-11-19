@@ -143,3 +143,38 @@ describe('MeetingTranslation', () => {
     expect(html).toContain(en.meetings.results.translation.blocked.off);
   });
 });
+
+describe('the language picker (E3, #3186)', () => {
+  it('shows no picker where the server offers only the other language of the pair, so a deployment with none switched on sees no new control', () => {
+    const html = render({ status: { targets: ['en'] } });
+    expect(html).not.toContain('data-testid="translation-target"');
+    expect(html).toContain(en.meetings.results.translation.toEnglish);
+  });
+
+  it('offers each language the server lists, each written in its own language, and words the button for the one shown, in both languages', () => {
+    for (const locale of ['en', 'vi'] as const) {
+      const messages = locale === 'en' ? en : viMessages;
+      const html = render({ status: { to: 'zh', targets: ['en', 'zh', 'ko'] }, locale });
+      expect(html, locale).toContain('data-testid="translation-target"');
+      expect(html, locale).toContain(messages.meetings.translationTargets.label);
+      for (const name of ['English', '中文 (简体)', '한국어']) expect(html, `${locale} ${name}`).toContain(name);
+      expect(html, locale).not.toContain('日本語');
+      // The option of a language carries its own language tag, so a browser picks its font.
+      expect(html, locale).toContain('lang="zh-Hans"');
+      expect(html, locale).toContain(messages.meetings.translationTargets.to.replace('{language}', '中文 (简体)'));
+    }
+  });
+
+  it('shows the member\'s translation into the language shown, tagged with its own language, and not the one into another language', () => {
+    const into = (to: 'en' | 'zh', text: string): Translations['translations'][number] => ({ stage: 'published', from: 'vi', to, stale: false, createdAt: '2026-11-14 10:00:00+00', segments: [{ key: 'summary', text, state: 'ok', codes: [] }] });
+    const mine: Translations = { meetingId: 'm1', translations: [into('en', 'English text of the summary'), into('zh', '摘要的中文翻译')] };
+    const zh = render({ status: { to: 'zh', targets: ['en', 'zh'] }, mine });
+    expect(zh).toContain('摘要的中文翻译');
+    expect(zh).not.toContain('English text of the summary');
+    expect(zh).toContain('lang="zh-Hans"');
+    const english = render({ status: { to: 'en', targets: ['en', 'zh'] }, mine });
+    expect(english).toContain('English text of the summary');
+    expect(english).not.toContain('摘要的中文翻译');
+  });
+});
+

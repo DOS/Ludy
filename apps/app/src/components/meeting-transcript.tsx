@@ -7,7 +7,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { TRANSCRIPT_SEGMENTS_MAX, type TranscriptSegment } from '@crove/kernel-contract';
+import { TRANSCRIPT_SEGMENTS_MAX, type TranscriptSegment, type TranslationTarget } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
@@ -216,7 +216,9 @@ export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond }: { 
   const tp = useTranslations('meetings.platform');
   const query = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   // The member's own translated parts beside the lines (E2, #3185); none until they asked.
-  const translated = useTranscriptParts(meetingId);
+  // The language the member picked to translate into (E3, #3186), shared by the panel and the lines under it; none until they pick.
+  const [target, setTarget] = useState<TranslationTarget | undefined>(undefined);
+  const translated = useTranscriptParts(meetingId, target);
   if (query.isPending) return null;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
   const transcript = query.data;
@@ -236,7 +238,7 @@ export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond }: { 
   return (
     <div className="space-y-3">
       {transcript.isRecorder && <VyTranscribe meetingId={meetingId} hasDraft={draft} />}
-      <TranscriptTranslationPanel meetingId={meetingId} />
+      <TranscriptTranslationPanel meetingId={meetingId} target={target} onTarget={setTarget} />
       <Card>
       <CardHeader>
         <CardTitle role="heading" aria-level={2} className="text-base font-medium">{draft ? t('draftTitle') : t('title')}</CardTitle>
