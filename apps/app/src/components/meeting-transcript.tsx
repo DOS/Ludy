@@ -17,6 +17,7 @@ import { Empty, ErrorText } from './ui.tsx';
 import { TranscriptTranslationPanel, TranslatedLine, useTranscriptParts } from './meeting-transcript-translation.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { platformTranscript } from '../lib/meeting-platform.ts';
+import { focusedSegment, type TranscriptFocus } from '../lib/transcript-focus.ts';
 
 // Reading a transcript is a sensitive read that leaves an audit row: no refetch on focus or remount.
 const READ_ONCE = { staleTime: 5 * 60_000, refetchOnWindowFocus: false } as const;
@@ -210,9 +211,9 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
   );
 }
 
-// `focusSecond`: a chapter was clicked (#3844): the first line that starts at that whole second is marked and scrolled to; `token` changes on each click.
+// `focusSecond`: a chapter or a cited line was clicked (#3844): the line that starts at that whole second (the named speaker's, when the click names one) is marked and scrolled to; `token` changes on each click.
 // `platformCut`: the meeting's own flag that the platform's transcript was cut on import (#3922); without it the panel can only guess from the line count.
-export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond, platformCut = false }: { meetingId: string; focusSegmentId?: string; focusSecond?: { second: number; token: number } | undefined; platformCut?: boolean }) {
+export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond, platformCut = false }: { meetingId: string; focusSegmentId?: string; focusSecond?: TranscriptFocus | undefined; platformCut?: boolean }) {
   const t = useTranslations('meetings.transcript');
   const tp = useTranslations('meetings.platform');
   const query = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
@@ -235,7 +236,7 @@ export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond, plat
   const draft = transcript.stage === 'draft';
   // Lines a meeting platform wrote (C2, #3174): said in words, with the platform's name, that they are not Ludy's (#3922: and that they may be cut at the limit of a draft).
   const platform = platformTranscript(transcript.segments);
-  const focusedId = focusSecond ? transcript.segments.find((s) => Math.floor(s.startSeconds) === focusSecond.second)?.id : focusSegmentId;
+  const focusedId = focusSecond ? focusedSegment(transcript.segments, focusSecond)?.id : focusSegmentId;
   return (
     <div className="space-y-3">
       {transcript.isRecorder && <VyTranscribe meetingId={meetingId} hasDraft={draft} />}
