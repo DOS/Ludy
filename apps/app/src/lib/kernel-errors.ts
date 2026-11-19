@@ -28,6 +28,8 @@ export const KERNEL_ERROR_CODES = [
   'EXTENSION_TOKEN_INVALID',
   'EXTENSION_TOKEN_NOT_FOUND',
   'MCP_GRANT_NOT_FOUND',
+  // An AI app connected over MCP has too many proposals waiting for approval (ADR-0051 decision 10).
+  'MCP_PROPOSAL_CAP',
   'MCP_GRANT_TOO_MANY',
   'MCP_WAKE_GRANT_NOT_FOUND',
   'MCP_WAKE_NOT_FOUND',

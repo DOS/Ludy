@@ -161,6 +161,7 @@ export interface CroveKernelSchema {
   'crove_kernel.mail_message': KernelMailMessageTable;
   'crove_kernel.mail_suppression': KernelMailSuppressionTable;
   'crove_kernel.mcp_member_table': KernelMcpMemberTableTable;
+  'crove_kernel.mcp_proposal_command': KernelMcpProposalCommandTable;
   'crove_kernel.meeting_platform_connection': KernelMeetingPlatformConnectionTable;
   'crove_kernel.meeting_platform_recording': KernelMeetingPlatformRecordingTable;
   'crove_kernel.member_availability': KernelMemberAvailabilityTable;
@@ -2626,6 +2627,14 @@ export interface KernelMcpMemberTableTable {
   adr: ColumnType<string, NotGranted, NotGranted>;
 }
 
+/** crove_kernel.mcp_proposal_command */
+export interface KernelMcpProposalCommandTable {
+  command: ColumnType<string, NotGranted, NotGranted>;
+  scope: ColumnType<string, NotGranted, NotGranted>;
+  kind: ColumnType<string, NotGranted, NotGranted>;
+  adr: ColumnType<string, NotGranted, NotGranted>;
+}
+
 /** crove_kernel.meeting_platform_connection */
 export interface KernelMeetingPlatformConnectionTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -2942,6 +2951,9 @@ export interface KernelProposalTable {
   resubmitted_from: string | null;
   legal_entity_id: string;
   co_authors: string[] | null;
+  requested_by_grant: string | null;
+  mcp_client_name: string | null;
+  mcp_client_host: string | null;
 }
 
 /** crove_kernel.record_le */

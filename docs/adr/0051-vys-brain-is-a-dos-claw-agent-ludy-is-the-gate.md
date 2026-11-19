@@ -83,6 +83,13 @@ The owner decided on 2026-11-19, in the owner's words: "Dy và Uy là agent đ�
 - Checks that apply to a proposal made by an agent apply here too: the input is tainted data (ADR-0018), rate and cap limits count the grant's proposals, an org with the agent kill switch engaged or the grant revoked gets no proposal, and a proposal never lets a deterministic rule (the P03 to P07 outcomes) be skipped.
 - `max_risk` of the sealed context stays below what the command needs: a grant never runs R2 or R3 itself. The sealed write context (`R1`) exists only for `'run'` commands.
 
+**As built (slice d, #3858, PR #3998), where it differs from the text above:**
+- the call runs the kernel command `kernel.mcp.propose` in a sealed proposal context, not `kernel.proposal.request`: that command takes a person's input through a preparer (the deterministic step that builds what the approver signs), which a client's raw payload would skip, so a command that has a preparer is refused for MCP until a line builds that path;
+- the authors are the grant (an agent entry, never an approver) and the grantor (a user entry), so four-eyes (P10) counts the person who connected the app, as for a proposal a person asked for;
+- the hash of the input is kept in the audit row only (not in the proposal), and ids only: never the payload;
+- a pending proposal is not superseded by a new one: a change is a new proposal, and a person rejects the old one; the per-grant cap (20) and per-org cap (100), in the database, bound the pile;
+- a catalog (`crove_kernel.mcp_proposal_command`, filled by the migration of the line that declares a command) gives the database its own list of which scope may propose which command and with which kind; the approver snapshot and the title are stamped by the database.
+
 ### 11. Per-line write scopes, shown on consent, filtering the tool list
 
 - The write scopes are **per line**, beside `ludy.social.draft`: `ludy.engage.write` (Hộp thư and CRM: assign, note, resolve, link a contact, create a contact or deal, save a draft quote), `ludy.ads.draft` (save an ads draft), and later ones the same way. A scope is a short name for a list of commands that declare it; it widens nothing else. Each new scope is a migration (the `agent_grant` check lists the scopes) and an entry in `MCP_WRITE_SCOPES`, reviewed one at a time as before, and the endpoint's tests pin which commands carry it.
