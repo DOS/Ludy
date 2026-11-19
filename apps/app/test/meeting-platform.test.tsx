@@ -184,6 +184,30 @@ describe('MeetingPlatforms (Settings)', () => {
     expect(connected).toContain('meeting-platform-connect-zoom');
   });
 
+  it('offers "Connect Google Meet" with its plain-words note only where the deployment has the Google client, for a member who can connect, in both languages; "comes in a later version" goes once it is offered', () => {
+    reset();
+    client.current.setQueryData(KEYS.connections, []);
+    client.current.setQueryData(KEYS.providers, ['zoom']);
+    const without = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
+    expect(without).not.toContain('meeting-platform-connect-google');
+    expect(without).toContain(en.meetings.platform.settings.moreLater);
+    client.current.setQueryData(KEYS.providers, ['google_meet', 'zoom']);
+    const html = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
+    expect(html).toContain('data-testid="meeting-platform-connect-google"');
+    expect(html).toContain(en.meetings.platform.settings.connectGoogle);
+    expect(html).toContain(esc(en.meetings.platform.settings.googleNote));
+    expect(html).not.toContain(en.meetings.platform.settings.moreLater);
+    // The note says what is read (the transcript Google makes, no recording, no Drive) and whose words they are, with no setting name.
+    expect(en.meetings.platform.settings.googleNote).toContain("Google's transcription, not Ludy's");
+    expect(en.meetings.platform.settings.googleNote).toContain('does not touch Drive');
+    expect(en.meetings.platform.settings.googleNote).not.toMatch(/MEETINGS_GOOGLE|[A-Z]{3,}_[A-Z_]+/);
+    const vn = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />, 'vi'));
+    expect(vn).toContain(viMessages.meetings.platform.settings.connectGoogle);
+    expect(vn).toContain(esc(viMessages.meetings.platform.settings.googleNote));
+    // A viewer connects nothing.
+    expect(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect={false} />))).not.toContain('meeting-platform-connect-google');
+  });
+
   it('offers "Connect Microsoft Teams" only where the deployment has the Teams app: the note says the administrator acts, the cost line says nothing is charged by Microsoft, and the guide link is the runbook, in both languages', () => {
     reset();
     client.current.setQueryData(KEYS.connections, []);

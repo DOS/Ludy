@@ -8,6 +8,8 @@
 //
 // The provider and error-code unions below repeat those of `@crove/kernel-contract` (meeting-platform.ts); this package does not depend on the contract, and the kernel's tests hold the two equal.
 
+import { GoogleCalendarAdapter } from './calendar-google.ts';
+import { GoogleMeetAdapter, type GoogleMeetAppConfig } from './meeting-google.ts';
 import { TeamsMeetingPlatform, type TeamsAppConfig } from './meeting-platform-teams.ts';
 import { ZoomMeetingPlatform, type ZoomAppConfig } from './meeting-platform-zoom.ts';
 
@@ -259,17 +261,21 @@ export interface MeetingPlatformAdaptersConfig {
   zoom?: ZoomAppConfig | undefined;
   // The Teams adapter (C4, #3176) is there only when the deployment has a Microsoft Entra app for it (TEAMS_OAUTH_CLIENT_ID and TEAMS_OAUTH_CLIENT_SECRET); without one the provider has no adapter at all.
   teams?: TeamsAppConfig | undefined;
+  // The Google Meet adapter (C2, #3174) is there only when the deployment has a Google OAuth client for it (MEETINGS_GOOGLE_CLIENT_ID and MEETINGS_GOOGLE_CLIENT_SECRET, a client of its own beside the calendar's);
+  // without one the provider has no adapter at all. Token renewal goes through the calendar adapter's refresh, made with this client.
+  google?: GoogleMeetAppConfig | undefined;
   // The offline sandbox is on unless this is `false`.
   sandbox?: boolean | undefined;
   // A shared sandbox store (tests and the dev stack add fixtures to it); a fresh seeded one when omitted.
   sandboxPlatform?: SandboxMeetingPlatform | undefined;
 }
 
-// The adapters a deployment has, by provider; a provider without one has no key. C2 and C4 add theirs here; Zoom's (C3) is there when its app is configured.
+// The adapters a deployment has, by provider; a provider without one has no key: Zoom (C3), Teams (C4) and Google Meet (C2) are there when their app is configured.
 export function meetingPlatformAdapters(config: MeetingPlatformAdaptersConfig = {}): Partial<Record<MeetingPlatformProvider, MeetingPlatformAdapter>> {
   const adapters: Partial<Record<MeetingPlatformProvider, MeetingPlatformAdapter>> = {};
   if (config.sandbox !== false) adapters.sandbox = config.sandboxPlatform ?? new SandboxMeetingPlatform();
   if (config.zoom) adapters.zoom = new ZoomMeetingPlatform(config.zoom);
   if (config.teams) adapters.microsoft_teams = new TeamsMeetingPlatform(config.teams);
+  if (config.google) adapters.google_meet = new GoogleMeetAdapter({ app: config.google, refresher: new GoogleCalendarAdapter(config.google) });
   return adapters;
 }

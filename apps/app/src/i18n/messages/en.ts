@@ -2721,6 +2721,8 @@ export const en = {
         disconnectNo: 'Keep it',
         connectSandbox: 'Connect the test platform',
         connectedToast: 'Test platform connected.',
+        connectGoogle: 'Connect Google Meet',
+        googleNote: "Google Meet: Ludy reads only the transcript Google Meet itself makes of the meetings you organized (you need a Google Workspace account with meeting transcripts turned on); Ludy reads no audio or video recording and does not touch Drive. The text is Google's transcription, not Ludy's, so read it over before you share it. You approve the permission on Google's own screen and can withdraw it at any time in your Google Account.",
         connectZoom: 'Connect Zoom',
         zoomNote: "Zoom: Ludy lists the cloud recordings of your own Zoom account (you need a Zoom plan that keeps cloud recordings), and prefers the audio-only file. A recording with only video can be imported only once your system administrator has turned on video processing; ask them to. You approve Zoom's permissions on Zoom's own screen, and you can remove the app in Zoom at any time.",
         connectTeams: 'Connect Microsoft Teams',
