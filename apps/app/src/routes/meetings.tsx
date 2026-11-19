@@ -25,10 +25,10 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { MeetingSearch } from '../components/meeting-search.tsx';
 import { MeetingAsk } from '../components/meeting-ask.tsx';
+import { MeetingDigest } from '../components/meeting-digest.tsx';
 import { TodayAgenda } from '../components/meeting-agenda.tsx';
 import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { PlatformRecordings } from '../components/meeting-recordings.tsx';
-import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { ConsentPolicyCard, useConsentPolicy } from '../components/consent-policy.tsx';
 import { MeetingHookCard } from '../components/meeting-hook.tsx';
 import { MinutesChannelsCard } from '../components/meeting-chat.tsx';
@@ -266,13 +266,14 @@ export function MeetingsPage() {
           </div>
         }
       />
-      <NotesSubnav slug={slug} active="meetings" />
 
       <TodayAgenda slug={slug} />
 
       {/* Recordings a meeting platform finished (C1, #3173): the member's own, imported with a click; the copied audio is claimed on the next visit to any Meetings page. */}
       <ImportAutoClaim />
       <PlatformRecordings slug={slug} />
+
+      <MeetingDigest slug={slug} />
 
       <MeetingAsk slug={slug} />
 

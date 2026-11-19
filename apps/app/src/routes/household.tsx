@@ -489,6 +489,172 @@ function S2cBook({ entityId }: { entityId: string }) {
   );
 }
 
+// S2e-HKD (#2517 slice 2e), the cash and bank book of a household that pays PIT on income. Read from the ledger: one section per account of 111 and 112 with the opening balance, each line (cash in, cash out, the
+// other account, the running balance) and the closing balance; the total equals the ledger. A negative balance is shown and flagged. While the layout row is unconfirmed (#2520) the figures and the Excel file carry
+// "Số liệu tạm, kế toán chưa xác nhận tỷ lệ"; the label goes when the row is confirmed, with no code change. Ludy files nothing.
+function S2eBook({ entityId }: { entityId: string }) {
+  const t = useTranslations('household');
+  const f = useFormat();
+  const today = vietnamToday();
+  const [kind, setKind] = useState<Kind>('month');
+  const [month, setMonth] = useState(today.slice(0, 7));
+  const [year, setYear] = useState(today.slice(0, 4));
+  const [quarter, setQuarter] = useState(String(Math.floor((Number(today.slice(5, 7)) - 1) / 3) + 1));
+  const period = periodOf(kind, month, quarter, year);
+  const valid = /^20\d{2}(-(0[1-9]|1[0-2]|Q[1-4]))?$/.test(period);
+  const book = useQuery({ ...orpc.household.s2e.queryOptions({ input: { legalEntityId: entityId, period } }), enabled: valid, retry: false });
+  const download = useMutation({
+    mutationFn: async () => {
+      const response = await apiFetch(`/api/export/household-s2e.xlsx?legalEntityId=${encodeURIComponent(entityId)}&period=${encodeURIComponent(period)}`);
+      const url = URL.createObjectURL(await response.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = t('s2eFile', { period, org: getCurrentOrg() ?? 'org' });
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+  });
+  const data = book.data;
+  const provisional = data?.commentary ? (
+    <span className="block text-xs text-muted-foreground" data-testid="household-s2e-provisional">
+      {t('cnkdProvisional')}
+    </span>
+  ) : null;
+  return (
+    <Card className="mb-6 block p-4" data-testid="household-s2e">
+      <h2 className="text-sm font-semibold text-foreground">{t('s2eTitle')}</h2>
+      <p className="mb-3 text-sm text-muted-foreground">{t('s2eHint')}</p>
+      <div className="mb-3 flex flex-wrap items-end gap-3">
+        <div className="space-y-1">
+          <Label htmlFor="s2e-kind">{t('periodKind')}</Label>
+          <NativeSelect id="s2e-kind" value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
+            <NativeSelectOption value="month">{t('kinds.month')}</NativeSelectOption>
+            <NativeSelectOption value="quarter">{t('kinds.quarter')}</NativeSelectOption>
+            <NativeSelectOption value="year">{t('kinds.year')}</NativeSelectOption>
+          </NativeSelect>
+        </div>
+        {kind === 'month' && (
+          <div className="space-y-1">
+            <Label htmlFor="s2e-month">{t('kinds.month')}</Label>
+            <DateInput id="s2e-month" kind="month" className="w-44" value={month} onChange={setMonth} />
+          </div>
+        )}
+        {kind !== 'month' && (
+          <div className="space-y-1">
+            <Label htmlFor="s2e-year">{t('kinds.year')}</Label>
+            <Input id="s2e-year" className="w-24" inputMode="numeric" maxLength={4} value={year} onChange={(e) => setYear(e.target.value)} />
+          </div>
+        )}
+        {kind === 'quarter' && (
+          <div className="space-y-1">
+            <Label htmlFor="s2e-quarter">{t('kinds.quarter')}</Label>
+            <NativeSelect id="s2e-quarter" value={quarter} onChange={(e) => setQuarter(e.target.value)}>
+              {['1', '2', '3', '4'].map((q) => (
+                <NativeSelectOption key={q} value={q}>{`Q${q}`}</NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+        )}
+        <Button variant="outline" loading={download.isPending} disabled={!data} onClick={() => download.mutate()} data-testid="household-s2e-download">
+          {t('download')}
+        </Button>
+      </div>
+      {book.isLoading && valid && <CardSkeleton />}
+      {book.error && <ErrorText>{errorMessage(book.error)}</ErrorText>}
+      {download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
+      {data && (
+        <>
+          <Alert className="mb-3" data-testid="household-s2e-notice">
+            <AlertDescription>{t('s2eNotice')}</AlertDescription>
+          </Alert>
+          {data.commentary && (
+            <Alert className="mb-3" data-testid="household-s2e-draft">
+              <AlertDescription>
+                {t('s2eDraft')}
+                <ul className="mt-1 list-disc pl-5">
+                  {data.unconfirmed.map((u) => (
+                    <li key={`${u.kind}-${u.key}`}>{t('cnkdUnconfirmedForm', { key: u.key, date: f.date(u.effectiveFrom) })}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+          {data.accounts.map((a) => (
+            <div key={a.accountCode} className="mb-4" data-testid={`household-s2e-account-${a.accountCode}`}>
+              <h3 className="mb-1 text-sm font-semibold text-foreground">
+                {t('s2eAccount', { code: a.accountCode })}
+                {a.accountName ? ` - ${a.accountName}` : ''}
+              </h3>
+              <DataTable numeric={[4, 5, 6]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('s2eColumns.counter'), t('s2eColumns.in'), t('s2eColumns.out'), t('s2eColumns.balance')]}>
+                <TableRow>
+                  <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={6}>
+                    {t('s2eOpening')}
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-right tabular-nums" data-testid={`household-s2e-opening-${a.accountCode}`}>
+                    {f.money(a.opening)}
+                  </TableCell>
+                </TableRow>
+                {a.rows.map((r) => (
+                  <TableRow key={`${r.entryId}-${r.lineNo}`}>
+                    <TableCell className="px-4 py-3 text-muted-foreground">{f.date(r.date)}</TableCell>
+                    <TableCell className="px-4 py-3 font-mono text-xs">{r.reference ?? ''}</TableCell>
+                    <TableCell className="px-4 py-3 text-foreground">
+                      {r.description}
+                      {r.reversal && (
+                        <Badge variant="secondary" className="ml-2">
+                          {t('reversal')}
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="px-4 py-3 font-mono text-xs">{r.counterAccounts.join(', ')}</TableCell>
+                    <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(r.cashIn)}</TableCell>
+                    <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(r.cashOut)}</TableCell>
+                    <TableCell className="px-4 py-3 text-right tabular-nums">{f.money(r.balance)}</TableCell>
+                  </TableRow>
+                ))}
+                <TableRow>
+                  <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={4}>
+                    {t('s2eTotals')}
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-right font-medium tabular-nums">{f.money(a.totalIn)}</TableCell>
+                  <TableCell className="px-4 py-3 text-right font-medium tabular-nums">{f.money(a.totalOut)}</TableCell>
+                  <TableCell className="px-4 py-3" />
+                </TableRow>
+                <TableRow>
+                  <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={6}>
+                    {t('s2eClosing')}
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-right font-medium tabular-nums" data-testid={`household-s2e-closing-${a.accountCode}`}>
+                    {f.money(a.closing)}
+                    {provisional}
+                  </TableCell>
+                </TableRow>
+              </DataTable>
+              {a.negative && (
+                <Alert className="mt-2" data-testid={`household-s2e-negative-${a.accountCode}`}>
+                  <AlertDescription>{t('s2eNegative')}</AlertDescription>
+                </Alert>
+              )}
+            </div>
+          ))}
+          {data.accounts.length === 0 && <p className="mt-2 text-sm text-muted-foreground">{t('s2eNoAccounts')}</p>}
+          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm" data-testid="household-s2e-totals">
+            <dt className="text-subtle-foreground">{t('s2eAllAccounts')}: {t('s2eOpening')}</dt>
+            <dd className="text-right tabular-nums" data-testid="household-s2e-total-opening">
+              {f.money(data.totals.opening)}
+            </dd>
+            <dt className="font-medium text-foreground">{t('s2eAllAccounts')}: {t('s2eClosing')}</dt>
+            <dd className="text-right font-medium tabular-nums" data-testid="household-s2e-total-closing">
+              {f.money(data.totals.closing)}
+              {provisional}
+            </dd>
+          </dl>
+        </>
+      )}
+    </Card>
+  );
+}
+
 // The keys of the expense groups' names, typed from the contract's list.
 const EXPENSE_GROUP_KEYS = Object.fromEntries(HOUSEHOLD_EXPENSE_GROUPS.map((g) => [g, true])) as Record<(typeof HOUSEHOLD_EXPENSE_GROUPS)[number], true>;
 
@@ -995,7 +1161,7 @@ function ProfileCard({ entityId, canEdit }: { entityId: string; canEdit: boolean
             {view.data.books.map((b) => (
               <li key={b.book}>
                 {b.name}
-                {b.book !== 'S1a' && b.book !== 'S2a' && b.book !== 'S2b' && b.book !== 'S2c' && <span className="text-subtle-foreground"> {t('comingSoon')}</span>}
+                {b.book !== 'S1a' && b.book !== 'S2a' && b.book !== 'S2b' && b.book !== 'S2c' && b.book !== 'S2e' && <span className="text-subtle-foreground"> {t('comingSoon')}</span>}
               </li>
             ))}
           </ul>
@@ -1024,6 +1190,7 @@ export function HouseholdPage() {
   const hasS2a = view.data?.books.some((b) => b.book === 'S2a') ?? false;
   const hasS2b = view.data?.books.some((b) => b.book === 'S2b') ?? false;
   const hasS2c = view.data?.books.some((b) => b.book === 'S2c') ?? false;
+  const hasS2e = view.data?.books.some((b) => b.book === 'S2e') ?? false;
   // The quarterly worksheet is for the percentage method alone today (the income method and group 1 have no quarterly worksheet here).
   const cnkdTrades = view.data?.profile?.pitMethod === 'percentage' ? view.data.profile.trades : null;
   return (
@@ -1054,6 +1221,7 @@ export function HouseholdPage() {
           {hasS2a && <S2aBook key={entity.id} entityId={entity.id} />}
           {hasS2b && <S2aBook key={`${entity.id}-s2b`} entityId={entity.id} variant="S2b" />}
           {hasS2c && <S2cBook key={entity.id} entityId={entity.id} />}
+          {hasS2e && <S2eBook key={`${entity.id}-s2e`} entityId={entity.id} />}
           {cnkdTrades && <CnkdReturn key={entity.id} entityId={entity.id} trades={cnkdTrades} />}
         </>
       )}

@@ -453,7 +453,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   const latePosting = (invoiceLocked || invoiceBeforeOpening) && postLate ? chosenPostingDate : null;
   const latePostingValid = latePosting === null || (closedThrough !== null && postingDateAllowed(latePosting, closedThrough, vietnamToday()));
   const journal = useMemo(
-    () => (payload ? (payload.direction === 'sale' ? previewSalesJournal : previewPurchaseJournal)(lines, payload.invoice.vatTotal) : []),
+    () => (payload ? (payload.direction === 'sale' ? previewSalesJournal(lines, payload.invoice.vatTotal, payload.regime) : previewPurchaseJournal(lines, payload.invoice.vatTotal)) : []),
     [payload, lines],
   );
   const accountName = (code: string) => accounts.data?.find((a) => a.code === code)?.name ?? '';

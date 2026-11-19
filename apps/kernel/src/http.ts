@@ -48,6 +48,7 @@ import {
   type HouseholdS2a,
   type HouseholdS2b,
   type HouseholdS2c,
+  type HouseholdS2e,
   type StockCard,
   type StockReportRow,
   type UploadPurpose,
@@ -100,6 +101,7 @@ import {
   buildS2aWorkbook,
   buildS2bWorkbook,
   buildS2cWorkbook,
+  buildS2eWorkbook,
   buildMisaWorkbook,
   buildSupplierPaymentBankFileWorkbook,
   buildVat01Xml,
@@ -4037,6 +4039,31 @@ export function createHttpApp(deps: HttpDeps) {
           headers: {
             'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s2c-hkd', period, ORG_SLUG], 'xlsx'),
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // S2e-HKD, the cash and bank book of a household business on the income method (#2517 slice 2e), ?legalEntityId=<household>&period=2026-09 (a month, a quarter 2026-Q3 or a year). The query checks the period, the
+    // roles and that the entity's profile requires S2e (422 and 403 otherwise). The book is given while its layout row is `commentary` (the file and the screen carry the provisional label). The audit row is recorded before the file is sent.
+    app.get('/api/export/household-s2e.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const period = c.req.query('period') ?? '';
+        const legalEntityId = c.req.query('legalEntityId') ?? '';
+        const book = await runtime.query<HouseholdS2e>('finance.household.s2e', { legalEntityId, period }, { actor, orgId });
+        const bytes = await buildS2eWorkbook(book, config.BRAND_NAME);
+        await runtime.execute('finance.household.export', { legalEntityId, book: 'S2e', period, rows: book.accounts.reduce((n, a) => n + a.rows.length, 0) }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s2e-hkd', period, ORG_SLUG], 'xlsx'),
             'cache-control': 'private, no-store',
           },
         });

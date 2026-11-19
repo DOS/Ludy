@@ -33,7 +33,7 @@ const { MisaAmisConnectionsCard } = await import('../src/routes/misa-amis-connec
 type Role = 'owner' | 'admin' | 'member' | 'viewer';
 const at = '2026-11-03T00:00:00.000Z';
 const entity = (id: string, name: string, isDefault: boolean): LegalEntity => ({ id, name, kind: 'company', taxCode: '0100109100', parentId: null, isDefault, createdAt: at, updatedAt: at });
-const connection = (over: Partial<MisaAmisConnection> = {}): MisaAmisConnection => ({ id: 'k1', connectionId: 'c1', legalEntityId: 'e1', displayName: 'MISA AMIS Kế toán', status: 'active', connectedAt: at, ...over });
+const connection = (over: Partial<MisaAmisConnection> = {}): MisaAmisConnection => ({ id: 'k1', connectionId: 'c1', legalEntityId: 'e1', displayName: 'MISA AMIS Kế toán', status: 'active', connectedAt: at, lastTestState: null, lastTestedAt: null, ...over });
 
 interface Seed {
   offered?: boolean;
@@ -85,6 +85,39 @@ describe('MisaAmisConnectionsCard', () => {
     expect(html).not.toContain('accessCode":"');
     // The only entity has its connection: no form to connect another.
     expect(html).not.toContain(`aria-label="${en.misaAmisConnections.connectTitle}"`);
+  });
+
+  it('shows an owner or admin the test button of a live connection, and "not tested yet" before any test', () => {
+    for (const role of ['owner', 'admin'] as const) {
+      const html = card(role, { connections: [connection()] });
+      expect(html).toContain(`>${en.misaAmisConnections.test}<`);
+      expect(html).toContain(en.misaAmisConnections.neverTested);
+    }
+  });
+
+  it('shows the last test as a sentence of its own state and the time, never a code or AMIS\'s text', () => {
+    const states = ['works', 'wrong_credentials', 'unreachable'] as const;
+    for (const state of states) {
+      const html = card('owner', { connections: [connection({ lastTestState: state, lastTestedAt: at })] });
+      expect(html).toContain(en.misaAmisConnections.testState[state]);
+      expect(html).toContain('Last tested');
+      expect(html).not.toContain(en.misaAmisConnections.neverTested);
+    }
+    expect(card('owner', { locale: 'vi', connections: [connection({ lastTestState: 'works', lastTestedAt: at })] })).toContain('Kết nối dùng được');
+  });
+
+  it('puts the last result in a status region, so a screen reader announces a result that lands later', () => {
+    const html = card('member', { connections: [connection({ lastTestState: 'works', lastTestedAt: at })] });
+    expect(/<div role="status">[\s\S]*data-testid="misa-amis-test-state"[\s\S]*?<\/div>/.test(html)).toBe(true);
+  });
+
+  it('offers no test button for a connection that is not live, and none to a member or a viewer, who still read the last test', () => {
+    expect(card('owner', { connections: [connection({ status: 'expired' })] })).not.toContain(`>${en.misaAmisConnections.test}<`);
+    for (const role of ['member', 'viewer'] as const) {
+      const html = card(role, { connections: [connection({ lastTestState: 'works', lastTestedAt: at })] });
+      expect(html).not.toContain(`>${en.misaAmisConnections.test}<`);
+      expect(html).toContain(en.misaAmisConnections.testState.works);
+    }
   });
 
   it.each<Role>(['member', 'viewer'])('as %s: sees the connection and no button and no form', (role) => {
