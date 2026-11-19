@@ -168,7 +168,7 @@ export function NotificationsPage() {
                 <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', 'bg-primary')} aria-hidden />
                 <span className="min-w-0 flex-1 space-y-0.5">
                   <span className={cn('block text-sm', 'font-medium text-foreground')}>
-                    {t(`group.${row.kind.replace('kernel.', '') as 'approval_waiting'}`, { count: groupSubjectCount(row.items), more: capped && row === rows[rows.length - 1] ? 'yes' : 'no' })}
+                    {t(`group.${row.kind.replace('kernel.', '') as 'approval_waiting'}`, { count: groupSubjectCount(row.items), plus: capped && row === rows[rows.length - 1] ? '+' : '' })}
                     <span className="sr-only"> ({t('unread')})</span>
                   </span>
                   <span className="block text-xs text-subtle-foreground">{f.dateTime(row.items[0]!.createdAt)}</span>
