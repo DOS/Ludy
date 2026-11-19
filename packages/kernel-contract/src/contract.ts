@@ -508,6 +508,7 @@ import {
 } from './meeting-minutes-templates.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
+import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
@@ -1234,6 +1235,8 @@ export const contract = {
     recordingStopped: oc.input(zMeetingRecordingStopped).output(zMeetingRecordingStoppedDone),
     // The calling member's meeting the extension is recording right now, for the app's recording chip (A1, #3159).
     recordingNow: oc.input(zMeetingRecordingNowInput).output(zMeetingRecordingNow),
+    // The recorder's own new title for a meeting (#3947): a pick from Vy's suggestions or a title they typed; audited, ids only.
+    rename: oc.input(zMeetingRename).output(zMeetingRenamed),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),
     ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
     // The owner's compliance list (#2703): every meeting of the org as metadata only, no title or text, a page at a time; audited per call.
@@ -1316,6 +1319,12 @@ export const contract = {
       facts: oc.input(zBriefTarget).output(zBriefFacts),
       status: oc.input(zBriefEmpty).output(zBriefStatus),
       write: oc.input(zBriefTarget).output(zBriefAnswer),
+    },
+    // The recorder's Vy suggesting a title from the transcript (#3947): `status` is the button (the same answer as the chapters'), `suggest` the click that has the recorder's own Vy write up to three candidates.
+    // The candidates go back to the browser and are stored nowhere; the recorder's pick is `meetings.rename`.
+    title: {
+      status: oc.input(zSummaryRef).output(zSummaryStatus),
+      suggest: oc.input(zSummaryRef).output(zTitleAnswer),
     },
     // This week's decisions and what is still open, across the meetings the member reads (#3949): `facts` are read by code as the member (published decisions and open action items of the meetings that started in the
     // last 7, 14 or 30 days) and work with AI off; `status` is the button (may Vy be used now, the cost of one recap), `recap` the click that has the member's own Vy write two or three sentences from those facts. Nothing

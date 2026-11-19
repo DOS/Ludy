@@ -3389,6 +3389,29 @@ export const vi = {
       copyReplaces: 'Chép vào bản nháp sẽ thay phần Vy đã viết trước đó. Phần bạn tự gõ được giữ nguyên.',
     },
     // Mục lục của cuộc họp (#3844): tiêu đề và dòng của bản ghi lời nói mà mỗi mục bắt đầu.
+    // Vy của chính người ghi gợi ý tối đa ba tên cho cuộc họp khi bấm (#3947); chọn một tên thì đổi tên.
+    titleSuggest: {
+      button: 'Gợi ý tên',
+      note: 'Vy đọc bản ghi lời nói và gợi ý tối đa ba tên. Chưa có gì đổi cho đến khi bạn chọn một tên.',
+      running: 'Vy đang đọc bản ghi lời nói…',
+      pickTitle: 'Các tên Vy gợi ý',
+      use: 'Dùng tên này',
+      dismiss: 'Không chọn tên nào',
+      dropped: 'Đã bỏ {count} gợi ý của Vy vì không qua được các bước kiểm tra.',
+      none: 'Lần này chưa có gợi ý. Bạn có thể thử lại hoặc giữ tên hiện tại.',
+      renamed: 'Cuộc họp đã có tên mới.',
+      failed: 'Vy chưa gợi ý được tên.',
+      codes: {
+        default: 'Hãy thử lại sau ít phút, hoặc tự nhập tên.',
+        AI_BUDGET_EXHAUSTED: 'Ngân sách AI của kỳ này đã dùng hết.',
+        AI_STOPPED: 'AI đang tạm tắt.',
+        TITLE_TIMEOUT: 'Mất quá nhiều thời gian.',
+        TITLE_FAILED: 'Dịch vụ AI không trả lời.',
+        TITLE_TOO_LONG: 'Bản ghi lời nói quá dài để Vy đọc một lần.',
+        TITLE_NO_TRANSCRIPT: 'Chưa có bản ghi lời nói.',
+        TITLE_BUSY: 'Đang có một lần gợi ý chạy. Hãy đợi một lát.',
+      },
+    },
     chapters: {
       title: 'Mục lục',
       readerNote: 'Các phần của cuộc họp, mỗi phần có giờ trong bản ghi lời nói. Bấm vào một phần để đến dòng đó.',
@@ -8951,6 +8974,7 @@ export const vi = {
       meetings_assignee: 'Đọc tên được nhắc cho một việc cần làm và chọn người nhiều khả năng nhất',
       meetings_brief: 'Viết vài câu chuẩn bị trước cuộc họp từ những gì đã chốt, việc còn dở và cơ hội của khách',
       meetings_chapters: 'Lập mục lục cuộc họp từ bản ghi, mỗi mục kèm giây của dòng bắt đầu',
+      meetings_title: 'Gợi ý tối đa ba tên cho cuộc họp từ bản ghi, khi người ghi bấm',
       meetings_followup_words: 'Soạn lời mở đầu và kết thư gửi sau cuộc họp',
       projects_weekly_status: 'Tóm tắt tình hình tuần của một dự án từ số liệu và tên việc',
       projects_tasks_from_note: 'Đề xuất việc dự án từ ghi chú',
@@ -13028,6 +13052,9 @@ export const vi = {
       ASK_BUSY: 'Vy đang bận trả lời các câu hỏi. Hãy thử lại sau vài phút.',
       BRIEF_OFF: 'Hệ thống này chưa bật việc Vy viết phần chuẩn bị cho cuộc họp.',
       BRIEF_BUSY: 'Vy đang bận viết các phần chuẩn bị. Hãy thử lại sau vài phút.',
+      TITLE_BUSY: 'Vy đang bận gợi ý tên. Hãy thử lại sau vài phút.',
+      MEETING_TITLE_EMPTY: 'Cuộc họp cần có tên.',
+      MEETING_TITLE_TOO_LONG: 'Tên cuộc họp dài tối đa 200 ký tự.',
       DIGEST_OFF: 'Hệ thống này chưa bật việc nhờ Vy tóm tắt tuần.',
       DIGEST_BUSY: 'Vy đang bận viết các bản tóm tắt. Hãy thử lại sau vài phút.',
       ASSIGNEE_OFF: 'Hệ thống này chưa bật việc nhờ Vy xem một việc cần làm của ai.',
@@ -15239,6 +15266,7 @@ export const vi = {
         list: 'Xem danh sách cuộc họp',
         recording_now: 'Xem cuộc họp tiện ích đang ghi',
         recording_stopped: 'Báo dừng ghi âm khi không có bản ghi nào được lưu',
+        rename: 'Đổi tên cuộc họp',
         media_meta: 'Đọc siêu dữ liệu phương tiện cuộc họp',
         owner_delete: 'Xóa cuộc họp theo yêu cầu tuân thủ',
         owner_list: 'Xem danh sách cuộc họp để xóa tuân thủ (không có nội dung)',
@@ -15258,6 +15286,10 @@ export const vi = {
       result: {
         get: 'Xem tóm tắt và việc cần làm của cuộc họp',
         publish: 'Chia sẻ tóm tắt và việc cần làm với người dự họp',
+      },
+      title: {
+        start: 'Nhờ Vy gợi ý tên cho một cuộc họp',
+        status: 'Xem Vy có gợi ý được tên cuộc họp không',
       },
       chapters: {
         copy_result: 'Chép mục lục Vy đã lập cho cuộc họp vào bản nháp',
