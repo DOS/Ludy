@@ -6,9 +6,9 @@
 //   A row that is queued, sending, sent, accepted or ambiguous is never touched; an accepted voucher whose source was revised since is counted, never sent again (what a second `save` under one
 //   `org_refid` does is unconfirmed until the sandbox check).
 // - finance.misa_amis.push_target (system; query): the connection the worker may push for, or why not.
-// - finance.misa_amis.push_begin (system; R2 external): decides the worker's next step for one connection and commits the call to the external_call ledger BEFORE it is made: ask MISA about rows whose
-//   answer was lost (`ambiguous`, or `sending` for too long), send the next batch of queued rows (at most AMIS_SAVE_BATCH_MAX, one voucher type and one set of choices), or poll the results of the rows MISA
-//   took. A call found `started` is never sent again: its rows are asked about first.
+// - finance.misa_amis.push_begin (system; R2 external): decides the worker's next step for one connection and commits the call to the external_call ledger BEFORE it is made: check MISA for the results of
+//   the rows it took or whose answer was lost (`sent`, `ambiguous`, or `sending` for too long, which becomes `ambiguous`), once per run, then send the next batch of queued rows (at most AMIS_SAVE_BATCH_MAX, one
+//   voucher type and one set of choices). A batch whose call was begun before is never sent again.
 // - finance.misa_amis.push_record (system; R1): writes what came back into the rows and the call. Only moves the graph allows (the table's guard says the same).
 // - finance.misa_amis.push_list (every member; query): the rows of a connection with their state and MISA's reason (untrusted text: the screen shows it escaped).
 // No voucher body is stored, and no row, audit fact, ledger row or error carries a credential, a party name or an amount: ids, codes, dates, counts and states. MISA's own text is only the `reason` of a refused row.
@@ -29,6 +29,8 @@ export const MISA_AMIS_PUSH_REQUESTED = 'finance.misa_amis.push_requested';
 
 // A `sending` row older than this has an unknown fate (the worker died between the commit and the answer): it is asked about, never sent again.
 export const PUSH_IN_FLIGHT_SECONDS = 120;
+// The most rows one check asks about (MISA's own page of results is as large).
+const CHECK_ROWS_MAX = 1000;
 // How long MISA is asked for the result of a row it took (or whose answer was lost) before the row is left as it is for a person to read.
 export const PUSH_RESULT_WINDOW_HOURS = 24;
 // MISA's text for a refusal, capped like the column.
@@ -201,7 +203,8 @@ export const misaAmisPush = defineCommand({
         }
       }
     }
-    if (result.queued + result.requeued > 0) await ctx.emit(MISA_AMIS_PUSH_REQUESTED, { connection_id: connection.id });
+    // Always: a press that queued nothing new still nudges the job (rows left `queued` after a refused connection are sent once the connection works again; a run with nothing to do ends at once).
+    await ctx.emit(MISA_AMIS_PUSH_REQUESTED, { connection_id: connection.id });
     ctx.audit({ connectionId: connection.id, kind: ask.kind, queued: result.queued, requeued: result.requeued, already: result.already, revised: result.revised });
     return result;
   },
@@ -210,7 +213,7 @@ export const misaAmisPush = defineCommand({
 // ---------------------------------------------------------------------------------------------------------------
 // What the worker needs
 
-export type MisaAmisPushTarget = { action: 'none'; reason: 'not_found' | 'not_active' } | { action: 'push'; id: string; channelConnectionId: string; orgCompanyCode: string };
+export type MisaAmisPushTarget = { action: 'none'; reason: 'not_found' | 'not_active' } | { action: 'push'; id: string; channelConnectionId: string; orgCompanyCode: string; legalEntityId: string };
 
 export const misaAmisPushTarget = defineQuery({
   name: 'finance.misa_amis.push_target',
@@ -220,13 +223,13 @@ export const misaAmisPushTarget = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.org_company_code', 'ch.status'])
+      .select(['c.id', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.connectionId)
       .executeTakeFirst();
     if (!row) return { action: 'none', reason: 'not_found' };
     if (row.status !== 'active') return { action: 'none', reason: 'not_active' };
-    return { action: 'push', id: row.id, channelConnectionId: row.channel_connection_id, orgCompanyCode: row.org_company_code };
+    return { action: 'push', id: row.id, channelConnectionId: row.channel_connection_id, orgCompanyCode: row.org_company_code, legalEntityId: row.legal_entity_id };
   },
 });
 
@@ -239,18 +242,19 @@ export interface PushRowRef {
 
 export type MisaAmisPushBegin =
   // `waiting`: rows MISA took (or may have) still await their result inside the window, so the job comes back later.
-  | { action: 'none'; reason: 'not_found' | 'not_active' | 'nothing' | 'in_flight'; waiting: boolean }
+  | { action: 'none'; reason: 'not_found' | 'not_active' | 'nothing'; waiting: boolean }
   // The AMIS branch is read from AMIS's dictionary by the worker; the batch is not begun without it.
   | { action: 'need_branch' }
   | { action: 'send'; callKey: string; voucherType: number; params: PushParams; rows: PushRowRef[]; sourceType: MisaAmisPushSource }
-  // `from` is the first day MISA is asked about (YYYY-MM-DD).
-  | { action: 'ask' | 'poll'; rows: Array<{ orgRefid: string; state: MisaAmisPushState }>; from: string };
+  // Rows MISA took (`sent`) or whose answer was lost (`ambiguous`): MISA is asked for their results. `from` is the first day it is asked about (YYYY-MM-DD).
+  | { action: 'check'; rows: Array<{ orgRefid: string; state: MisaAmisPushState }>; from: string };
 
 const dayOf = (date: Date): string => date.toISOString().slice(0, 10);
 
 export const misaAmisPushBegin = defineCommand({
   name: 'finance.misa_amis.push_begin',
-  input: z.strictObject({ connectionId: zId, branchKnown: z.boolean() }),
+  // `checked`: this run of the job has already asked MISA for results, so the next step is to send. `branchKnown`: the worker has read the AMIS branch.
+  input: z.strictObject({ connectionId: zId, branchKnown: z.boolean(), checked: z.boolean() }),
   // Commits the call to AMIS the worker makes next: an effect outside Ludy. A system actor does R2, never R3: the approval was the person's confirmed push.
   risk: 'R2',
   sideEffect: 'external',
@@ -279,21 +283,23 @@ export const misaAmisPushBegin = defineCommand({
       .where('updated_at', '<', new Date(ctx.now.getTime() - PUSH_IN_FLIGHT_SECONDS * 1000))
       .execute();
 
-    // 1. Rows whose answer was lost: ask MISA before anything else is sent.
-    const ambiguous = await ctx.trx
-      .selectFrom(table)
-      .select(['org_refid', 'state', 'sent_at', 'updated_at'])
-      .where('org_id', '=', ctx.orgId)
-      .where('connection_id', '=', input.connectionId)
-      .where('state', '=', 'ambiguous')
-      .where('updated_at', '>', windowStart)
-      .orderBy('requested_at')
-      .orderBy('id')
-      .limit(AMIS_SAVE_BATCH_MAX)
-      .execute();
-    if (ambiguous.length > 0) {
-      const earliest = ambiguous.reduce((min, r) => (new Date(r.sent_at ?? r.updated_at) < min ? new Date(r.sent_at ?? r.updated_at) : min), ctx.now);
-      return { action: 'ask', rows: ambiguous.map((r) => ({ orgRefid: r.org_refid, state: 'ambiguous' as const })), from: dayOf(earliest) };
+    // 1. Rows MISA took, or whose answer was lost (a batch begun and never answered is `ambiguous` above): MISA is asked for their results once per run, before anything else is sent.
+    if (!input.checked) {
+      const checkable = await ctx.trx
+        .selectFrom(table)
+        .select(['org_refid', 'state', 'sent_at', 'updated_at'])
+        .where('org_id', '=', ctx.orgId)
+        .where('connection_id', '=', input.connectionId)
+        .where('state', 'in', ['ambiguous', 'sent'])
+        .where('updated_at', '>', windowStart)
+        .orderBy('requested_at')
+        .orderBy('id')
+        .limit(CHECK_ROWS_MAX)
+        .execute();
+      if (checkable.length > 0) {
+        const earliest = checkable.reduce((min, r) => (new Date(r.sent_at ?? r.updated_at) < min ? new Date(r.sent_at ?? r.updated_at) : min), ctx.now);
+        return { action: 'check', rows: checkable.map((r) => ({ orgRefid: r.org_refid, state: r.state })), from: dayOf(earliest) };
+      }
     }
 
     // 2. The next batch of queued rows: one voucher type and one set of choices, oldest first, at most the batch size.
@@ -355,31 +361,17 @@ export const misaAmisPushBegin = defineCommand({
       };
     }
 
-    // 3. Rows MISA took: ask for their results.
-    const sent = await ctx.trx
-      .selectFrom(table)
-      .select(['org_refid', 'sent_at', 'updated_at'])
-      .where('org_id', '=', ctx.orgId)
-      .where('connection_id', '=', input.connectionId)
-      .where('state', '=', 'sent')
-      .where('updated_at', '>', windowStart)
-      .orderBy('requested_at')
-      .orderBy('id')
-      .limit(AMIS_SAVE_BATCH_MAX)
-      .execute();
-    if (sent.length > 0) {
-      const earliest = sent.reduce((min, r) => (new Date(r.sent_at ?? r.updated_at) < min ? new Date(r.sent_at ?? r.updated_at) : min), ctx.now);
-      return { action: 'poll', rows: sent.map((r) => ({ orgRefid: r.org_refid, state: 'sent' as const })), from: dayOf(earliest) };
-    }
-    const sending = await ctx.trx
+    // 3. Nothing to send: the job comes back later while rows wait for MISA's answer inside the window.
+    const waiting = await ctx.trx
       .selectFrom(table)
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
-      .where('state', '=', 'sending')
+      .where('state', 'in', ['sending', 'sent', 'ambiguous'])
+      .where('updated_at', '>', windowStart)
       .limit(1)
       .executeTakeFirst();
-    return { action: 'none', reason: sending ? 'in_flight' : 'nothing', waiting: Boolean(sending) };
+    return { action: 'none', reason: 'nothing', waiting: Boolean(waiting) };
   },
 });
 

@@ -398,6 +398,8 @@ const schema = z.object({
   // The integrator's ClientID that MISA issued for the MISA AMIS Kế toán API (#3854): a SECRET of the deployment (it is also the key that signs the callbacks of AMIS), never logged, never in an
   // error or an audit row. Unset, the connector is off: the card says so and no route that uses it is reachable. Crove Cloud sets DOS's own; a self-hoster sets the one MISA issued to their app.
   MISA_AMIS_CLIENT_ID: optional.pipe(z.string().regex(/^[0-9A-Za-z._-]{8,128}$/, 'MISA_AMIS_CLIENT_ID is not in the shape of a ClientID').optional()),
+  // The push of vouchers to MISA AMIS (S3b, #3902) is OFF unless this is `on`, and it needs MISA_AMIS_CLIENT_ID. It stays off until the sandbox check (docs/runbooks/misa-amis-sandbox-check.md) has confirmed what the push assumes; only the coordinator runs that check and sets this.
+  MISA_AMIS_PUSH: optional.pipe(z.enum(['on', 'off']).optional()),
   // The offline sandbox bank feed (ADR-0039, #2044): off unless asked for, so a deployment shows no bank feed until it
   // has one.
   BANK_FEED_SANDBOX: z.enum(['true', 'false']).default('false'),

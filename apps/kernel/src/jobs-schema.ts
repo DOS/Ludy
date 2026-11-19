@@ -96,6 +96,7 @@ export const QUEUES = {
   marketplacePoll: 'finance-marketplace-poll',
   // Created by the MISA AMIS test queue migration (20270119130000): one MISA AMIS connection's test, a token and the company's information (#3885, S2b of #3854).
   misaAmisTest: 'finance-misa-amis-test',
+  misaAmisPush: 'finance-misa-amis-push',
   // Created by the ads core migration (20261115120000): an ad account's sync (ADR-0040, #2217).
   adsSync: 'ads-sync',
   // Created by the conversations migration (20261118120000): a reply or a hide of the conversation core, ids only in its data (#2303).
@@ -231,6 +232,7 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The MISA AMIS client (channels.misaAmis, @crove/misa-amis): its transport is bound to developer.misa.vn by the egress guard (guardedRequest, https and that host only). The test job reads a token and the
   // company's information; a later slice's push job declares itself here too.
   [QUEUES.misaAmisTest]: ['provider:misa_amis'],
+  [QUEUES.misaAmisPush]: ['provider:misa_amis'],
   // The ad platform adapters (channels.adPlatforms, @crove/ad-platform): the offline sandbox reaches nothing, the real ones
   // (Meta from A2, #2218) the host of their platform, each through its own host-bound fetch.
   [QUEUES.adsSync]: ['provider:ad_platform'],

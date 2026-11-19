@@ -32,7 +32,7 @@ The connection (S2, [#3875](https://github.com/DOS/Ludy/issues/3875)) and its te
 - **The transport** (`apps/kernel/src/misa-amis-transport.ts`) goes through `guardedRequest`: https and `developer.misa.vn` only, public addresses, the connection pinned to the checked address, a 30 s deadline, a 16 MB cap on the answer, no redirect followed.
   The client is built once per process, only where `MISA_AMIS_CLIENT_ID` is set, and handed to the worker as `channels.misaAmis` (egress `provider:misa_amis`, classified in the egress invariant first, #3943).
 - **No external call ledger here:** the test reads only, so there is no effect whose outcome could be unknown. The push (S3b) commits its `external_call` before it sends.
-- **Not in S2b:** reading the dictionary (the branch and party codes of the preview), the push and the callback.
+- **Not in S2b:** reading the dictionary (the branch and party codes of the preview), the push and the callback. The push (S3b) reads the AMIS branch itself; the preview still stands on a placeholder branch and `checkedAgainstAmis: false`.
 
 ## What it does
 
@@ -51,6 +51,19 @@ The connection (S2, [#3875](https://github.com/DOS/Ludy/issues/3875)) and its te
   push row by `org_refid` and treats the envelope's `org_company_code` as a hint to compare.
 - Errors carry a fixed sentence and, at most, MISA's own error code when it is a plain word. Never a body, a header or a
   secret.
+
+## The push (S3b, #3902)
+
+A person confirms a previewed batch and the worker sends it as "đề nghị sinh chứng từ". It is **off** until the sandbox check ([runbook](../runbooks/misa-amis-sandbox-check.md)) has confirmed what it assumes: the deployment value `MISA_AMIS_PUSH` must be `on`, the connection's last test must be `works`, and an owner or admin must confirm.
+
+- **The confirmation** (`finance.misa_amis.push`, R2 external, owners and admins, never an agent) carries the digest of the preview (SHA-256 over every voucher part's own digest, the AMIS branch left out). The command rebuilds the batch from the live data with the preview's own path (`modules/finance/src/misa-amis-build.ts`): a different digest is `MISA_AMIS_PUSH_STALE`, any blocker is `MISA_AMIS_PUSH_BLOCKED` and nothing is queued, a period of more than 500 vouchers is `MISA_AMIS_PUSH_TOO_MANY`.
+- **The table** `crove_finance.misa_amis_push`: one row per voucher part (`org_refid` unique per org, `org_refno` at most 20 characters, the digest, the state, MISA's reason, attempts). No voucher body is stored (it holds party names); the row keeps only what rebuilds it (the kind, the period and the choices). The states and their moves are enforced by a trigger: `queued`, `sending`, `sent`, `accepted`, `refused`, `ambiguous`, `failed`. A person moves only `refused` or `failed` back to `queued`, with one more attempt, through a new confirmed push; nothing deletes a row.
+- **Idempotency:** the insert is `ON CONFLICT (org_id, org_refid) DO NOTHING`, so a replay, a double press and two presses at once queue each part once. A queued, sending, sent, accepted or `ambiguous` row is never sent again; an accepted voucher whose source was revised since is counted as `revised` and not sent (what a second `save` does under one `org_refid` is unconfirmed).
+- **The worker** (`apps/kernel/src/misa-amis-push-job.ts`, queue `finance-misa-amis-push`, egress `provider:misa_amis`): opens the access code (only here), reads the AMIS branch (`get_dictionary` data_type 6), asks MISA for the results of the rows it took, then sends queued batches of at most 50 of one voucher type. Before each send `finance.misa_amis.push_begin` commits the call to the `external_call` ledger and marks the batch `sending`; the worker rebuilds each voucher from its source with the real branch and sends it only if its digest is the one the person approved (else `failed` with `STALE`). "MISA took the request" is `sent`, not `accepted`; the result comes by polling `get_call_back_detail_error` (the callback route is S4, #3903).
+- **How a send ends:** success is `sent`; a refused connection puts the rows back in the queue with the code `CREDENTIALS` and sends nothing more; a request MISA understood and refused is `refused` with the text of its error code; a request the client refused before sending is `failed`; any lost answer (timeout, lost answer, 5xx, unreachable) is `ambiguous`, and an `ambiguous` row leaves only with MISA's own answer (`accepted` or `refused`), never by being sent again. A `sending` row with no answer for two minutes becomes `ambiguous`.
+- **Polling:** while rows wait for MISA's answer the job queues itself again every two minutes, for a day from the row's last change. A lost chain is picked up by any later press of the push button (it always nudges the job).
+- **Voucher numbers (F3 of the S3a review):** the final `org_refno` of every part, after the `/N` of a split voucher, is checked against 20 characters; a longer one makes the voucher blocked (`voucher_number_too_long`), never cut.
+- **Nothing sensitive is kept:** no access code, token, ClientID, party name or amount in a row, an audit fact, an event, a ledger row or a log line. MISA's own text is kept only as the capped `reason` of a refused voucher (escaped on display).
 
 ## Unconfirmed in MISA's documentation
 

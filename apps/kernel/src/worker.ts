@@ -75,6 +75,7 @@ import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJo
 import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
 import { runMarketplacePoll, type MarketplacePollJob } from './marketplace-poll-job.ts';
 import { runMisaAmisTest, type MisaAmisTestJob } from './misa-amis-test-job.ts';
+import { runMisaAmisPush, type MisaAmisPushJob } from './misa-amis-push-job.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
 import { runAdsActivate, type AdsActivateJob } from './ads-activate.ts';
 import { runAdsManage, type AdsManageJob } from './ads-manage.ts';
@@ -452,6 +453,12 @@ const MARKETPLACE_POLL_CRON = '*/15 * * * *';
 const MARKETPLACE_POLL_RETRY_LIMIT = 3;
 // A MISA AMIS connection's test (#3885): queued by the relay when an owner or admin asks, nothing else queues it. The job records its own outcomes, so a retry is for a database failure only.
 const MISA_AMIS_TEST_RETRY_LIMIT = 2;
+// A push run that fails is tried again with backoff; rows begun and never answered are asked about, never sent twice (the ledger and the table's states say so).
+const MISA_AMIS_PUSH_RETRY_LIMIT = 2;
+// While rows wait for MISA's answer the job comes back every two minutes for the day MISA is asked about; for an unreachable AMIS with queued rows it tries ten more times.
+const MISA_AMIS_PUSH_RECHECK_SECONDS = 120;
+const MISA_AMIS_PUSH_WAIT_ROUNDS = 720;
+const MISA_AMIS_PUSH_UNREACHABLE_ROUNDS = 10;
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
 // The hourly sweep of every ad account (ADR-0040, #2217), at ten past; a sync retries a few times, then dead-letters. The
 // sweep also prunes the old sync runs (an indexed delete of what is past 90 days, nothing most hours).
@@ -537,6 +544,8 @@ export interface WorkerDeps {
     // The MISA AMIS Kế toán client (#3854, S2b): built only where the deployment holds the integrator's ClientID, over a transport bound to developer.misa.vn by the egress guard. The test job alone
     // uses it, with the access code it opens.
     misaAmis?: AmisClient;
+    // The push to MISA AMIS (S3b, #3902) is on only when the deployment says so (MISA_AMIS_PUSH=on); until the sandbox check has confirmed what the push assumes, no org's vouchers go to MISA.
+    misaAmisPush?: boolean;
     // The ad platform adapters this deployment offers (ADR-0040, #2217), by provider id: read-only, the worker alone uses
     // them, with the credentials it opens.
     adPlatforms?: Readonly<Record<string, AdPlatform>>;
@@ -1608,6 +1617,25 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (!job) return;
       const done = await runMisaAmisTest({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient }, job.data);
       console.log(`[misa-amis] ${job.data.connectionId.slice(0, 8)}: ${done.state}`);
+    });
+  }
+
+  // MISA AMIS Kế toán (#3854, S3b, #3902): the push of the vouchers a person confirmed, queued by the relay below. One run sends the queued batches and asks MISA for the results of the rows it took; while
+  // rows wait for MISA's answer it queues itself again a little later (a separate key, so it may be queued while this run is active; the table's states keep two runs from sending a row twice).
+  if (finance && misaAmisClient && marketplaceBroker && deps.channels?.misaAmisPush) {
+    await boss.work<MisaAmisPushJob>(QUEUES.misaAmisPush, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const done = await runMisaAmisPush({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient }, job.data);
+      const round = job.data.round ?? 0;
+      if ((done.state === 'done' || done.state === 'unreachable') && done.waiting && round < (done.state === 'done' ? MISA_AMIS_PUSH_WAIT_ROUNDS : MISA_AMIS_PUSH_UNREACHABLE_ROUNDS)) {
+        await boss.send(QUEUES.misaAmisPush, { orgId: job.data.orgId, connectionId: job.data.connectionId, round: round + 1 } satisfies MisaAmisPushJob, {
+          singletonKey: jobKey(job.data.orgId, QUEUES.misaAmisPush, `${job.data.connectionId}:later`),
+          startAfter: MISA_AMIS_PUSH_RECHECK_SECONDS,
+          retryLimit: MISA_AMIS_PUSH_RETRY_LIMIT,
+          retryDelay: 30,
+          retryBackoff: true,
+        });
+      }
     });
   }
 
@@ -2800,6 +2828,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 await boss.send(QUEUES.misaAmisTest, { orgId: row.org_id, connectionId } satisfies MisaAmisTestJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.misaAmisTest, connectionId),
                   retryLimit: MISA_AMIS_TEST_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // An owner or admin confirmed a push of vouchers to MISA AMIS (#3902): its job sends them and asks for the results. Ids only in the job. Only where the deployment turned the push on.
+              if (finance && deps.channels?.misaAmis && deps.channels.misaAmisPush && deps.channels.broker && row.type === 'finance.misa_amis.push_requested') {
+                const connectionId = String(row.payload.connection_id);
+                await boss.send(QUEUES.misaAmisPush, { orgId: row.org_id, connectionId } satisfies MisaAmisPushJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.misaAmisPush, connectionId),
+                  retryLimit: MISA_AMIS_PUSH_RETRY_LIMIT,
                   retryDelay: 30,
                   retryBackoff: true,
                 });
