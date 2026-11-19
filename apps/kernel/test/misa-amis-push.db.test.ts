@@ -396,6 +396,29 @@ suite('MISA AMIS push (#3902)', () => {
     expect((await pushRows()).find((r) => r.org_refid === notInAmis)).toMatchObject({ state: 'failed', attempts: 1 });
   });
 
+  it('a sent row MISA never answered for in 24 hours is settled by an owner or admin: "in AMIS" is accepted, "not in AMIS" is failed; before that, and for anyone else, nothing moves', async () => {
+    const sentRows = (await rows<{ org_refid: string }>("SELECT org_refid FROM crove_finance.misa_amis_push WHERE connection_id = $1 AND state = 'sent' ORDER BY org_refid", [connectionId])).map((r) => r.org_refid);
+    expect(sentRows.length).toBeGreaterThanOrEqual(2);
+    const [found, missing] = sentRows as [string, string];
+    const resolve = (who: keyof typeof users, orgRefid: string, outcome: 'in_amis' | 'not_in_amis') => api.execute('finance.misa_amis.push_resolve', { connectionId, orgRefid, outcome }, asUser(who));
+    const stateOf2 = async (id: string) => (await rows<{ state: string; reason: string | null; attempts: number; answered: boolean; sent: boolean }>('SELECT state, reason, attempts, answered_at IS NOT NULL AS answered, sent_at IS NOT NULL AS sent FROM crove_finance.misa_amis_push WHERE org_refid = $1', [id]))[0];
+    // Inside the 24 hours the worker still asks: not yet.
+    await rows("UPDATE crove_finance.misa_amis_push SET updated_at = pg_catalog.now() - interval '23 hours' WHERE org_refid = ANY($1::uuid[])", [[found, missing]]);
+    await expect(resolve('owner', found, 'in_amis')).rejects.toMatchObject({ code: 'MISA_AMIS_PUSH_STATE' });
+    await rows("UPDATE crove_finance.misa_amis_push SET updated_at = pg_catalog.now() - interval '25 hours' WHERE org_refid = ANY($1::uuid[])", [[found, missing]]);
+    for (const who of ['member', 'viewer'] as const) await expect(resolve(who, found, 'in_amis'), who).rejects.toMatchObject({ status: 403 });
+    expect(await resolve('admin', found, 'in_amis')).toEqual({ resolved: true });
+    expect(await stateOf2(found)).toEqual({ state: 'accepted', reason: 'CONFIRMED_IN_AMIS', attempts: 1, answered: true, sent: true });
+    expect(await resolve('owner', missing, 'not_in_amis')).toEqual({ resolved: true });
+    expect(await stateOf2(missing)).toEqual({ state: 'failed', reason: 'NOT_IN_AMIS', attempts: 1, answered: false, sent: true });
+    // Settled rows are final here; a failed one waits for a new confirmed push, never for the worker.
+    await expect(resolve('owner', found, 'not_in_amis')).rejects.toMatchObject({ code: 'MISA_AMIS_PUSH_STATE' });
+    await expect(resolve('owner', missing, 'in_amis')).rejects.toMatchObject({ code: 'MISA_AMIS_PUSH_STATE' });
+    // The list says which rows a person may settle: the last change is on every row.
+    const list = await api.query<MisaAmisPushRow[]>('finance.misa_amis.push_list', { connectionId }, asUser('viewer'));
+    expect(list.every((r) => typeof r.changedAt === 'string' && !Number.isNaN(Date.parse(r.changedAt)))).toBe(true);
+  });
+
   it('a person sends a refused row again only through a new confirmed push: one more attempt, the new digest, the reason cleared', async () => {
     vouchers = base;
     const refused = (await pushRows()).find((r) => r.state === 'refused');
@@ -458,6 +481,15 @@ suite('MISA AMIS push (#3902)', () => {
     // What the grant never gave: the identity of the request and the connection.
     await expect(tenant('owner', orgId, (c) => c.query("UPDATE crove_finance.misa_amis_push SET org_refid = $2 WHERE org_refid = $1", [queued, randomUUID()]))).rejects.toThrow(/permission denied/);
     await expect(tenant('owner', orgId, (c) => c.query("DELETE FROM crove_finance.misa_amis_push WHERE org_refid = $1", [queued]))).rejects.toThrow(/permission denied/);
+    // A `sent` row: a person writing it by hand moves it only after 24 hours, only to `accepted` (CONFIRMED_IN_AMIS, answered) or `failed` (NOT_IN_AMIS), never back to the queue or with another reason.
+    const waiting = (await pushRows()).find((r) => r.state === 'sent')?.org_refid;
+    if (!waiting) throw new Error('expected a sent row');
+    await rows("UPDATE crove_finance.misa_amis_push SET updated_at = pg_catalog.now() WHERE org_refid = $1", [waiting]);
+    await expect(tenant('owner', orgId, (c) => c.query("UPDATE crove_finance.misa_amis_push SET state = 'accepted', reason = 'CONFIRMED_IN_AMIS', answered_at = pg_catalog.now() WHERE org_refid = $1", [waiting]))).rejects.toThrow(/MISA_AMIS_PUSH_STATE/);
+    await rows("UPDATE crove_finance.misa_amis_push SET updated_at = pg_catalog.now() - interval '25 hours' WHERE org_refid = $1", [waiting]);
+    await expect(tenant('owner', orgId, (c) => c.query("UPDATE crove_finance.misa_amis_push SET state = 'accepted', reason = 'typed', answered_at = pg_catalog.now() WHERE org_refid = $1", [waiting]))).rejects.toThrow(/MISA_AMIS_PUSH_STATE/);
+    await expect(tenant('owner', orgId, (c) => c.query("UPDATE crove_finance.misa_amis_push SET state = 'queued', attempts = attempts + 1, reason = NULL WHERE org_refid = $1", [waiting]))).rejects.toThrow(/MISA_AMIS_PUSH_STATE/);
+    expect(await tenant('owner', orgId, async (c) => (await c.query("UPDATE crove_finance.misa_amis_push SET state = 'failed', reason = 'NOT_IN_AMIS' WHERE org_refid = $1", [waiting])).rowCount)).toBe(1);
     // Another org sees none of it and changes none of it.
     expect(await tenant('outsider', otherOrgId, async (c) => (await c.query('SELECT 1 FROM crove_finance.misa_amis_push')).rowCount)).toBe(0);
     expect(await tenant('outsider', otherOrgId, async (c) => (await c.query("UPDATE crove_finance.misa_amis_push SET reason = 'x' WHERE org_refid = $1", [queued])).rowCount)).toBe(0);
