@@ -286,4 +286,26 @@ suite('anomaly flags on a purchase proposal (#2380)', () => {
     expect(approved).toMatchObject({ documentId: expect.any(String) });
     expect((await proposals('8720'))[0]?.status).toBe('executed');
   });
+
+  it('compares an account read from a photo with the history but never adds it to the history (#2426)', async () => {
+    const PHOTO = '0555 666 777 888';
+    // A photo of an invoice naming an account the vendor never used: warned against the history (the PDF and XML ones), then booked by a person.
+    const { fileId } = await ingest(users.owner, new TextEncoder().encode(`photo ${randomUUID()}`), 'hd-8740.png', 'image/png');
+    const photoReader = {
+      fromText: async () => null,
+      fromImage: async () => {
+        const invoice = { ...structuredClone(PARSED), source: 'ai' as const, number: '8740' };
+        withBank(PHOTO)(invoice);
+        return invoice;
+      },
+    };
+    const { proposalId } = await extractAndPropose({ runtime: worker, store, extractor: photoReader as never, extract, today: () => '2026-10-13' }, orgId, fileId);
+    expect((await anomalies(proposalId as string)).map((c) => c.id)).toContain('anomaly_bank');
+    const read = await detailOf(users.owner, proposalId as string);
+    await rt.execute('kernel.proposal.edit', { id: proposalId, revision: read.revision, lineAccounts: [{ lineNo: 3, debitAccount: '6421' }] }, { actor: asUser(users.owner), orgId });
+    await approveOne(proposalId as string);
+    // Its account is now on a booked document, yet the next invoice naming it is still a change: only an XML or a PDF read, whose account was checked against the text, makes history.
+    const next = await propose('8741', withBank(PHOTO));
+    expect((await anomalies(next)).map((c) => c.id)).toContain('anomaly_bank');
+  });
 });

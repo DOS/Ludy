@@ -489,6 +489,8 @@ export const channelsList = defineQuery({
       .where('provider', 'not like', 'einvoice\\_%')
       // Nor a marketplace seller account's (provider marketplace_..., ADR-0045 point 7): its external account id names the legal entity, which only the finance module's list shows.
       .where('provider', 'not like', 'marketplace\\_%')
+      // Nor an accounting software connection's (provider accounting_..., #3875): the finance module lists it; the entity it is for is in its external account id.
+      .where('provider', 'not like', 'accounting\\_%')
       // Nor the Inbox's email connection (#2439): it is made by the first customer mail and is not a place to publish. The screen that limits which
       // channels a member may read (includeEmail) lists it, since reading email is one of those channels.
       .where('provider', input.includeEmail ? 'is not' : '<>', input.includeEmail ? null : 'email')

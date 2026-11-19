@@ -69,7 +69,7 @@ export const QUEUES = {
   notesTrash: 'notes-trash',
   // Created by the notes reminders migration (20261103210000).
   notesRemind: 'notes-reminders',
-  // Created by the notes attachments migration (20270118140000): extracts text from PDF/DOCX/UTF-8 note attachments in crove-extract (#3561).
+  // Created by the notes attachments migration (20270119140000): extracts text from PDF/DOCX/UTF-8 note attachments in crove-extract (#3561).
   notesAttachmentExtract: 'notes-attachment-extract',
   // Created by the member Vy sweeps migration (20261212100000): the daily expiry of results and purge of a former member's Vy data (#2822).
   memberVySweep: 'kernel-member-vy-sweep',

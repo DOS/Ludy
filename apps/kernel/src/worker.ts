@@ -50,7 +50,9 @@ import { MCP_WAKE_SWEEP_CRON, MCP_WAKE_SWEEP_EXPIRE_SECONDS, runWakeSweep } from
 import { runMeetingHookDelivery, type MeetingHookJob } from './meeting-hook.ts';
 import { MEETINGS_SERIES_NUDGE_CRON, runMeetingsSeriesNudgeSweep } from './meetings-series-nudge.ts';
 import { MEETING_HOOK_SWEEP_CRON, MEETING_HOOK_SWEEP_EXPIRE_SECONDS, runMeetingHookSweep } from './meeting-hook-sweep.ts';
+import type { MediaAudioExtractor } from './meetings-extract.ts';
 import { MEETINGS_IMPORT_CONCURRENCY, MEETINGS_IMPORT_EXPIRE_SECONDS, MEETINGS_IMPORT_RETRY_LIMIT, runMeetingsImport, type MeetingsImportJob } from './meetings-import.ts';
+import { meetingPlatformRefreshCommand } from './meeting-platform-credential.ts';
 import { MEETINGS_IMPORT_SWEEP_CRON, MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS, runMeetingsImportSweep } from './meetings-import-sweep.ts';
 import { CHAT_JOB_EXPIRE_SECONDS, CHAT_RETRY_DELAY_SECONDS, CHAT_RETRY_LIMIT, runMeetingChat, type ChatJob } from './meeting-chat-job.ts';
 import { MEETING_CHAT_SWEEP_CRON, MEETING_CHAT_SWEEP_EXPIRE_SECONDS, runMeetingChatSweep } from './meeting-chat-sweep.ts';
@@ -473,6 +475,8 @@ export interface WorkerDeps {
   runtime: Runtime;
   store: BlobStore;
   extractor: InvoiceReader | null;
+  // The audio extraction of crove-media for a video-only meeting platform recording (C2a, #3306); null runs without it (such a recording fails `no_audio`).
+  meetingsImportExtractor?: MediaAudioExtractor | null;
   // Vy's reply drafts (CV8, #2310): the model that reads a conversation's text and writes a draft; null runs without AI (a draft asked for is settled as none).
   conversationWriter?: Pick<ConversationWriter, 'draft'> | null;
   // The AI coworker's campaign drafts (ads W1b, #2295): the model that reads a member's brief and writes the creative part of a campaign; null runs without
@@ -1477,7 +1481,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // key (a token can only be opened with it) and at least one platform adapter.
   const meetingPlatforms = deps.channels?.meetingPlatforms;
   if (deps.runtime.installed('meetings') && meetingPlatforms && Object.keys(meetingPlatforms).length > 0 && wakeBroker && wakeBroker.id !== 'none') {
-    const importDeps = { runtime: deps.runtime, broker: wakeBroker, store: deps.store, adapters: meetingPlatforms, media: null };
+    // The renewal of a token that is about to expire (issue #3878): a command that closes over this worker's broker and adapters, so only this runtime registers it.
+    deps.runtime.register({ commands: [meetingPlatformRefreshCommand({ broker: wakeBroker, adapters: meetingPlatforms })] });
+    const importDeps = { runtime: deps.runtime, broker: wakeBroker, store: deps.store, adapters: meetingPlatforms, extractor: deps.meetingsImportExtractor ?? null };
     await boss.work<MeetingsImportJob>(QUEUES.meetingsImport, { batchSize: 1, localConcurrency: MEETINGS_IMPORT_CONCURRENCY, includeMetadata: true }, async ([job]) => {
       if (!job) return;
       // Every call of an import is a kernel command, which no gate refuses: an org whose Meetings is off (ADR-0053) downloads nothing.

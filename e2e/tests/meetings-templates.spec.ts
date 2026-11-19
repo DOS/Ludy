@@ -37,7 +37,7 @@ test('an owner writes a template and uses it on a meeting; a member cannot write
   const templates = () => sql<{ name: string }>(`SELECT x.name FROM crove_meetings.minutes_template x JOIN crove_kernel.tenant t ON t.org_id = x.org_id WHERE t.slug = :'slug' ORDER BY x.name`, { slug });
 
   await test.step('the owner writes a template with two sections in Settings', async () => {
-    await page.goto(`/o/${slug}/settings`);
+    await page.goto(`/o/${slug}/settings/apps`);
     const card = page.getByTestId('minutes-templates-card');
     await expect(card).toBeVisible();
     await card.getByRole('button', { name: 'Thêm mẫu' }).click();
@@ -89,7 +89,7 @@ test('an owner writes a template and uses it on a meeting; a member cannot write
   await test.step('a member does not see the settings card', async () => {
     // The card needs the member's role from the org call: look only once that has answered.
     const orgRead = member.waitForResponse((r) => /\/org\/get/.test(r.url()));
-    await member.goto(`/o/${slug}/settings`);
+    await member.goto(`/o/${slug}/settings/apps`);
     expect((await orgRead).ok()).toBe(true);
     await expect(member.getByRole('heading', { name: 'Cài đặt', level: 1 })).toBeVisible();
     await member.waitForLoadState('networkidle');

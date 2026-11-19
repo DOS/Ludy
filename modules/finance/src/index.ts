@@ -2,6 +2,7 @@ import { mcpFinanceQueries } from './mcp.ts';
 import { financeOverdueReceivablesSignals } from './signals-overdue-receivables.ts';
 import { financeSalesSignals } from './signals-sales.ts';
 export { MCP_LINES_PER_INVOICE, zMcpInvoicesInput } from './mcp.ts';
+export { zMcpOverviewInput } from './mcp-overview.ts';
 import { fixedAssetCommands, fixedAssetQueries } from './fixed-assets.ts';
 import { createAccount, setVendorDefaultAccount, updateAccount } from './accounts.ts';
 import { categorizationCommands, categorizationQueries } from './categorization.ts';
@@ -40,6 +41,8 @@ import { paymentReminderCommands, paymentReminderQueries } from './payment-remin
 import { financeOverviewQuery } from './overview.ts';
 import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoice-connections.ts';
 import { marketplaceConnectionCommands, marketplaceConnectionQueries } from './marketplace-connections.ts';
+import { misaAmisConnectionCommands, misaAmisConnectionQueries } from './misa-amis-connections.ts';
+export { MISA_AMIS_CHANNEL_PROVIDER } from './misa-amis-connections.ts';
 import { einvoiceCommands, einvoiceQueries } from './einvoice-drafts.ts';
 import { marketplaceBalanceQueries } from './marketplace-balance.ts';
 import { marketplaceFactsQueries } from './marketplace-facts.ts';
@@ -79,6 +82,7 @@ import { householdS2cQueries } from './household-s2c.ts';
 import { stockReportQueries } from './stock-report.ts';
 import { stockLowQueries } from './stock-low.ts';
 export type { ReorderSource, SuggestSource } from './stock-low.ts';
+export type { MarketplaceSuggestSource } from './marketplace-orders.ts';
 export type { EInvoiceSuggestSource, EInvoiceSuggestParty, RateCount } from './einvoice-suggest.ts';
 
 export { AI_BUDGET_MESSAGE, AI_BUDGET_RECHECK_MS, aiCost, extractAndPropose, recordExtractionFailure, type ExtractDeps } from './extract.ts';
@@ -172,6 +176,7 @@ export {
   type PurchaseVoucher,
   type SalesVoucher,
 } from './misa.ts';
+export { MISA_INVOICE_NUMBER_LIMIT, checkMisaRows, type MisaCheckInput, type MisaRowId } from './misa-check.ts';
 export { CHIEF_ACCOUNTANT_TEMPLATE, chiefAccountantReview, financeAgentPrograms, reviewText } from './agent.ts';
 export * from './domain/money.ts';
 export * from './domain/ledger.ts';
@@ -206,7 +211,7 @@ export { SEARCH_LIMIT, searchAmount, type SearchResult } from './search.ts';
 export { ARCHIVE_FORMAT, type ArchiveSource, type ArchiveSourceFile, type RecordedArchive } from './year-archive.ts';
 export { type FinancialStatements, type StatementLine, type UnmappedRow } from './statements.ts';
 
-export const financeCommands = [recordPurchase, revisePurchase, prepareReversal, reverseEntry, journalExport, vatExport, ledgerExport, statementsExport, openingBalancePost, periodLock, periodUnlock, bankImport, bankIngest, bankStatementConfirm, bankStatementReject, createAccount, updateAccount, setVendorDefaultAccount, prepareVoucher, recordVoucher, prepareJournalVoucher, recordJournalVoucher, prepareYearClosing, recordYearClosing, portalListImport, portalListRemove, portalListRecord, missingInvoicesRequest, missingInvoicesReminderSet, missingInvoicesRemind, vatPaymentMark, vatReturnMark, ...portalSyncCommands, ...financeNotificationCommands, ...yearArchiveCommands, ...fixedAssetCommands, ...misaGoodsCodeCommands, ...categorizationCommands, ...bankFeedCommands, ...bankAccountNumberCommands, ...bankPartyRuleCommands, ...paymentReminderCommands, ...collectionSettingCommands, ...einvoiceCommands, ...einvoiceConnectionCommands, ...marketplaceConnectionCommands, ...einvoiceIssueCommands, ...einvoiceCorrectionCommands, ...einvoiceNoticeCommands, ...supplierBankAccountCommands, ...supplierPaymentCommands, ...supplierPaymentBankFileCommands, ...supplierPaymentSettleCommands, ...einvoiceJobCommands, ...stockCommands, ...stockLineCommands, ...orderHandoffCommands, ...stockCloseCommands, ...payrollPostingCommands, ...payrollPaymentCommands, ...stockCountCommands, ...stockExportCommands, ...marketplaceCommands, ...marketplaceIncomeCommands, ...marketplaceRetentionCommands, ...marketplaceSettlementCommands, ...marketplacePayoutCommands, ...marketplaceFeeClearingCommands, ...householdCommands, ...householdBookCommands];
+export const financeCommands = [recordPurchase, revisePurchase, prepareReversal, reverseEntry, journalExport, vatExport, ledgerExport, statementsExport, openingBalancePost, periodLock, periodUnlock, bankImport, bankIngest, bankStatementConfirm, bankStatementReject, createAccount, updateAccount, setVendorDefaultAccount, prepareVoucher, recordVoucher, prepareJournalVoucher, recordJournalVoucher, prepareYearClosing, recordYearClosing, portalListImport, portalListRemove, portalListRecord, missingInvoicesRequest, missingInvoicesReminderSet, missingInvoicesRemind, vatPaymentMark, vatReturnMark, ...portalSyncCommands, ...financeNotificationCommands, ...yearArchiveCommands, ...fixedAssetCommands, ...misaGoodsCodeCommands, ...categorizationCommands, ...bankFeedCommands, ...bankAccountNumberCommands, ...bankPartyRuleCommands, ...paymentReminderCommands, ...collectionSettingCommands, ...einvoiceCommands, ...einvoiceConnectionCommands, ...marketplaceConnectionCommands, ...misaAmisConnectionCommands, ...einvoiceIssueCommands, ...einvoiceCorrectionCommands, ...einvoiceNoticeCommands, ...supplierBankAccountCommands, ...supplierPaymentCommands, ...supplierPaymentBankFileCommands, ...supplierPaymentSettleCommands, ...einvoiceJobCommands, ...stockCommands, ...stockLineCommands, ...orderHandoffCommands, ...stockCloseCommands, ...payrollPostingCommands, ...payrollPaymentCommands, ...stockCountCommands, ...stockExportCommands, ...marketplaceCommands, ...marketplaceIncomeCommands, ...marketplaceRetentionCommands, ...marketplaceSettlementCommands, ...marketplacePayoutCommands, ...marketplaceFeeClearingCommands, ...householdCommands, ...householdBookCommands];
 export const financeQueries = [
   ...mcpFinanceQueries,
   financeOverdueReceivablesSignals,
@@ -276,6 +281,7 @@ export const financeQueries = [
   ...orderHandoffQueries,
   ...einvoiceConnectionQueries,
   ...marketplaceConnectionQueries,
+  ...misaAmisConnectionQueries,
   ...einvoiceIssueQueries,
   ...stockQueries,
   ...stockLineQueries,

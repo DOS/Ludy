@@ -103,10 +103,11 @@ export function ImportForm({ recording, onDone, onCancel }: { recording: Meeting
         </NativeSelect>
       </div>
       <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground" data-testid="meeting-import-terms">
-        <li>{t('copyAudio')}</li>
+        <li>{t(recording.provider === 'microsoft_teams' ? 'teamsVideo' : 'copyAudio')}</li>
         <li>{t('keepOriginal')}</li>
         <li>{t('noParticipants')}</li>
         <li>{t('ownTranscript')}</li>
+        {recording.provider === 'microsoft_teams' && <li data-testid="meeting-import-cost">{t('teamsCost')}</li>}
       </ul>
       <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
         <div className="text-xs font-medium text-foreground">{t('noticeHeading')}</div>
@@ -194,6 +195,11 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
           <p className="text-xs text-muted-foreground">
             {[f.dateTime(row.startedAt), lengthText, row.sizeBytes === null ? null : formatBytes(row.sizeBytes, f.number)].filter((x) => x !== null).join(' · ')}
           </p>
+          {!row.hasAudio && row.hasVideo && row.videoImportMaxBytes !== null && (
+            <p className="text-xs text-subtle-foreground" data-testid="meeting-recording-video-note">
+              {t('videoKeepsAudio')}
+            </p>
+          )}
           <p className="text-xs text-subtle-foreground">{t('offers', { items: offers(row, { audio: t('offerAudio'), video: t('offerVideo'), transcript: t('offerTranscript'), nothing: t('offerNothing') }) })}</p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -237,7 +243,7 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
           {row.status === 'failed' && (
             <>
               {row.errorCode === 'connection_expired' && (
-                <Link to="/o/$slug/settings" params={{ slug }} className="text-xs font-medium underline">
+                <Link to="/o/$slug/settings/security" params={{ slug }} hash="meeting-platforms" className="text-xs font-medium underline">
                   {tp('settings.title')}
                 </Link>
               )}

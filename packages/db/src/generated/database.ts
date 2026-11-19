@@ -83,6 +83,7 @@ export interface CroveFinanceSchema {
   'crove_finance.legal_entity_books': FinanceLegalEntityBooksTable;
   'crove_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
   'crove_finance.marketplace_party': FinanceMarketplacePartyTable;
+  'crove_finance.misa_amis_connection': FinanceMisaAmisConnectionTable;
   'crove_finance.misa_goods_code': FinanceMisaGoodsCodeTable;
   'crove_finance.org_account': FinanceOrgAccountTable;
   'crove_finance.period_balance_delta': FinancePeriodBalanceDeltaTable;
@@ -205,6 +206,7 @@ export interface CroveMeetingsSchema {
   'crove_meetings.live_chunk': MeetingsLiveChunkTable;
   'crove_meetings.live_line': MeetingsLiveLineTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
+  'crove_meetings.meeting_chapter': MeetingsMeetingChapterTable;
   'crove_meetings.meeting_link': MeetingsMeetingLinkTable;
   'crove_meetings.meeting_note': MeetingsMeetingNoteTable;
   'crove_meetings.meeting_reader': MeetingsMeetingReaderTable;
@@ -1390,6 +1392,19 @@ export interface FinanceMarketplacePartyTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
   platform: ColumnType<string, string, NotGranted>;
   party_id: ColumnType<string, string, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.misa_amis_connection */
+export interface FinanceMisaAmisConnectionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  channel_connection_id: ColumnType<string, string, NotGranted>;
+  org_company_code: ColumnType<string, string | undefined, NotGranted>;
+  last_test_state: string | null;
+  last_tested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
@@ -3174,6 +3189,21 @@ export interface MeetingsLiveLineTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
+/** crove_meetings.meeting_chapter */
+export interface MeetingsMeetingChapterTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  stage: Generated<string>;
+  position: number;
+  title: string;
+  start_seconds: number;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_meetings.meeting_link */
 export interface MeetingsMeetingLinkTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -3291,6 +3321,7 @@ export interface MeetingsTranscriptSegmentTable {
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
   search: ColumnType<string | null, never, NotGranted>;
+  source: ColumnType<string, string | undefined, NotGranted>;
 }
 
 /** crove_meetings.translation */

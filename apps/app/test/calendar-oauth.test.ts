@@ -18,6 +18,10 @@ describe('oauthProviderOf', () => {
 describe('needsAdminConsent', () => {
   it('recognises the answers of a tenant whose administrator has not allowed the app', () => {
     expect(needsAdminConsent('microsoft_calendar', params('error=consent_required'))).toBe(true);
+    // The Teams recording import (C4) goes through the same tenant administrator consent; any other platform does not.
+    expect(needsAdminConsent('microsoft_teams', params('error=access_denied&error_description=AADSTS90094%3A+Administrator+consent+is+required'))).toBe(true);
+    expect(needsAdminConsent('microsoft_teams', params('error=access_denied&error_description=AADSTS65004%3A+The+user+declined'))).toBe(false);
+    expect(needsAdminConsent('zoom', params('error=consent_required'))).toBe(false);
     expect(needsAdminConsent('microsoft_calendar', params('error=access_denied&error_description=AADSTS65001%3A+The+user+or+administrator+has+not+consented'))).toBe(true);
     expect(needsAdminConsent('microsoft_calendar', params('error=invalid_request&error_description=AADSTS90094%3A+The+grant+requires+admin+permission.'))).toBe(true);
     expect(needsAdminConsent('microsoft_calendar', params('error=access_denied&error_description=AADSTS90095%3A+Admin+approval+is+required.'))).toBe(true);

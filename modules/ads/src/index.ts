@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { accountCommands, accountQueries } from './accounts.ts';
 import { flagSettingCommands, flagSettingQueries } from './flag-settings.ts';
+import { boostCommands, boostQueries } from './boost.ts';
 import { campaignCommands, campaignQueries } from './campaign-draft.ts';
 import { campaignRequestCommands, campaignRequestQueries } from './campaign-request.ts';
 import { launchActivateCommands } from './launch-activate.ts';
@@ -18,6 +19,8 @@ import { tokenRevokeCommands } from './token-revoke-commands.ts';
 import { writeConnectionCommands, writeConnectionQueries } from './write-connection.ts';
 
 export * from './accounts.ts';
+export * from './boost-plan.ts';
+export * from './boost.ts';
 export * from './busy.ts';
 export * from './campaign-draft.ts';
 export * from './campaign-plan.ts';
@@ -40,6 +43,6 @@ export * from './today.ts';
 export * from './weekly-note.ts';
 export * from './write.ts';
 
-export const adsCommands = [...accountCommands, ...syncCommands, ...writeConnectionCommands, ...tokenRevokeCommands, ...writeCommands, ...flagSettingCommands, ...campaignCommands, ...campaignRequestCommands, ...launchRunCommands, ...launchPauseCommands, ...launchActivateCommands, ...objectStateCommands];
-export const adsQueries = [...accountQueries, ...syncQueries, ...summaryQueries, ...flagQueries, ...flagSettingQueries, ...todayQueries, ...weeklyNoteQueries, ...campaignQueries, ...campaignRequestQueries, ...writeConnectionQueries, ...writeQueries, ...committedQueries, ...launchPauseQueries, ...objectStateQueries];
+export const adsCommands = [...accountCommands, ...syncCommands, ...writeConnectionCommands, ...tokenRevokeCommands, ...writeCommands, ...flagSettingCommands, ...campaignCommands, ...boostCommands, ...campaignRequestCommands, ...launchRunCommands, ...launchPauseCommands, ...launchActivateCommands, ...objectStateCommands];
+export const adsQueries = [...accountQueries, ...syncQueries, ...summaryQueries, ...flagQueries, ...flagSettingQueries, ...todayQueries, ...weeklyNoteQueries, ...campaignQueries, ...boostQueries, ...campaignRequestQueries, ...writeConnectionQueries, ...writeQueries, ...committedQueries, ...launchPauseQueries, ...objectStateQueries];
 export { adsManifest } from './manifest.ts';

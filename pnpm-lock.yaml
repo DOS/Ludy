@@ -1049,6 +1049,8 @@ importers:
 
   packages/meeting-recorder: {}
 
+  packages/misa-amis: {}
+
   packages/ui:
     dependencies:
       '@base-ui/react':

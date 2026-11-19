@@ -24,13 +24,24 @@ const KERNEL_SCREENS = {
     { path: 'ai-usage' },
     { path: 'ai-connections' },
     { path: 'settings' },
+    // The other tabs of Settings (#3589), each with its own address; the first tab is `settings` itself. Ctrl K finds each by its tab name. The accounting tab opens where finance runs, the
+    // connections tab (the bank feed, the e-invoice provider, the bank account numbers) where finance runs, and the sales and quotes tabs (the deal board, the quotes) where crm runs.
+    { path: 'settings/members', find: 'settingsMembers' },
+    { path: 'settings/apps', find: 'settingsApps' },
+    { path: 'settings/bookings', find: 'settingsBookings' },
+    { path: 'settings/sales', find: 'settingsSales', modules: ['crm'] },
+    { path: 'settings/quotes', find: 'settingsQuotes', modules: ['crm'] },
+    { path: 'settings/accounting', find: 'settingsAccounting', modules: ['finance'] },
+    { path: 'settings/connections', find: 'settingsConnections', modules: ['finance'] },
+    { path: 'settings/security', find: 'settingsSecurity' },
+    { path: 'settings/data', find: 'settingsData' },
     // The audit log (#672): owners and admins only, which the page checks and the server enforces.
     { path: 'audit' },
     { path: 'personal-data' },
   ],
   // Signing in and the screens before an org: the landing redirect, the home of several orgs, sign-in, the second
   // factor, a password reset, an invite to accept and a new org.
-  outside: [{ path: '/' }, { path: '/clients' }, { path: '/login' }, { path: '/mfa' }, { path: '/reset-password' }, { path: '/-/invite' }, { path: '/-/extension/connect' }, { path: '/oauth/interaction/$uid' }, { path: '/onboarding' }, { path: '/calendar/oauth/$provider/callback' }],
+  outside: [{ path: '/' }, { path: '/clients' }, { path: '/login' }, { path: '/mfa' }, { path: '/reset-password' }, { path: '/-/invite' }, { path: '/-/extension/connect' }, { path: '/oauth/interaction/$uid' }, { path: '/onboarding' }, { path: '/calendar/oauth/$provider/callback' }, { path: '/meetings/oauth/$provider/callback' }],
   nav: [
     { app: null, rail: 'top', path: 'overview', label: 'overview' },
     { app: null, rail: 'bell', path: 'notifications', label: 'alerts' },

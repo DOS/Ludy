@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { createOrg, kernelCommands, kernelQueries, setMeetingPlatformVideoImport, upsertIdentity } from '@crove/kernel';
 import type { MeetingPlatformConnectionView, MeetingPlatformRecordingView } from '@crove/kernel-contract';
 import { DomainError, Runtime, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -228,6 +228,20 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(text).toContain(c.connectionId);
   });
 
+  it('C2a: every listed recording carries how big a video this deployment can take the audio out of, null when it cannot (#3306)', async () => {
+    const o = await org();
+    const c = await connect(o, o.lan);
+    await replace(o, c.connectionId, [listed('v1', { hasAudio: false, hasVideo: true })]);
+    // The default is off: no crove-media, no video import.
+    expect(await mine(o, o.lan)).toMatchObject([{ hasAudio: false, hasVideo: true, videoImportMaxBytes: null }]);
+    setMeetingPlatformVideoImport(1024 ** 3);
+    try {
+      expect(await mine(o, o.lan)).toMatchObject([{ videoImportMaxBytes: 1024 ** 3 }]);
+    } finally {
+      setMeetingPlatformVideoImport(null);
+    }
+  });
+
   it('a connection that is expired comes back active, to be listed again, when the member connects again', async () => {
     const o = await org();
     const c = await connect(o, o.lan);
@@ -235,6 +249,40 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(await o.query<MeetingPlatformConnectionView[]>(o.lan, 'kernel.meeting_platform.connections')).toMatchObject([{ status: 'expired', statusReason: 'grant revoked' }]);
     await connect(o, o.lan, c.account, 'sandbox', 'sealed-bytes-2');
     expect(await o.query<MeetingPlatformConnectionView[]>(o.lan, 'kernel.meeting_platform.connections')).toMatchObject([{ status: 'active', statusReason: null, lastSyncedAt: null }]);
+  });
+
+  it('starts and finishes a Zoom connect attempt once, for the same member only, wipes the verifier, keeps hash and verifier out of the audit, and refuses a viewer', async () => {
+    const o = await org();
+    const hash = `sha256:${randomBytes(32).toString('hex')}`;
+    const verifier = randomBytes(48).toString('base64url');
+    const begun = await o.exec<{ attemptId: string; expiresAt: string }>(o.lan, 'kernel.meeting_platform.oauth_begin', { provider: 'zoom', stateHash: hash, codeVerifier: verifier });
+    expect(new Date(begun.expiresAt).getTime()).toBeGreaterThan(Date.now());
+    // The attempt is stored under the recording provider's own name, never the calendar's.
+    const stored = await sqlAdmin<{ provider: string }>('SELECT provider FROM crove_kernel.oauth_state WHERE state_hash = $1', [hash]);
+    expect(stored.rows.map((r) => r.provider)).toEqual(['zoom_recordings']);
+    // Another member cannot finish it, and an unknown state says the same thing.
+    await expect(o.exec(o.nam, 'kernel.meeting_platform.oauth_consume', { provider: 'zoom', stateHash: hash })).rejects.toMatchObject({ code: 'OAUTH_STATE_INVALID' });
+    await expect(o.exec(o.lan, 'kernel.meeting_platform.oauth_consume', { provider: 'zoom', stateHash: `sha256:${randomBytes(32).toString('hex')}` })).rejects.toMatchObject({ code: 'OAUTH_STATE_INVALID' });
+    expect(await o.exec(o.lan, 'kernel.meeting_platform.oauth_consume', { provider: 'zoom', stateHash: hash })).toEqual({ codeVerifier: verifier });
+    await expect(o.exec(o.lan, 'kernel.meeting_platform.oauth_consume', { provider: 'zoom', stateHash: hash })).rejects.toMatchObject({ code: 'OAUTH_STATE_USED' });
+    // The verifier is wiped with the consume.
+    const row = await sqlAdmin<{ code_verifier: string | null }>('SELECT code_verifier FROM crove_kernel.oauth_state WHERE state_hash = $1', [hash]);
+    expect(row.rows[0]?.code_verifier).toBeNull();
+    // An attempt that ran out is refused as expired.
+    const late = `sha256:${randomBytes(32).toString('hex')}`;
+    await o.exec(o.lan, 'kernel.meeting_platform.oauth_begin', { provider: 'zoom', stateHash: late, codeVerifier: verifier });
+    await sqlAdmin("UPDATE crove_kernel.oauth_state SET expires_at = now() - interval '1 minute' WHERE state_hash = $1", [late]);
+    await expect(o.exec(o.lan, 'kernel.meeting_platform.oauth_consume', { provider: 'zoom', stateHash: late })).rejects.toMatchObject({ code: 'OAUTH_STATE_EXPIRED' });
+    // A viewer starts none; a platform that has no connect dialog (the sandbox) is not a provider of the command.
+    await expect(o.exec(o.viewer, 'kernel.meeting_platform.oauth_begin', { provider: 'zoom', stateHash: `sha256:${randomBytes(32).toString('hex')}`, codeVerifier: null })).rejects.toMatchObject({ status: 403 });
+    await expect(o.exec(o.lan, 'kernel.meeting_platform.oauth_begin', { provider: 'sandbox', stateHash: `sha256:${randomBytes(32).toString('hex')}`, codeVerifier: null })).rejects.toMatchObject({ code: expect.stringMatching(/VALIDATION|INVALID/) });
+    // The audit rows name the attempt and the provider, never the hash or the verifier.
+    const audit = await sqlAdmin<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.meeting_platform.oauth_%' AND outcome = 'ok'", [o.orgId]);
+    expect(audit.rows.length).toBeGreaterThanOrEqual(3);
+    const text = JSON.stringify(audit.rows);
+    expect(text).not.toContain(hash);
+    expect(text).not.toContain(verifier);
+    expect(text).toContain(begun.attemptId);
   });
 
   it('refresh clears the last sync of the member own active connections, one or all, and no other', async () => {

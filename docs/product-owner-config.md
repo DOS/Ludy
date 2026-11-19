@@ -50,6 +50,15 @@ and it carries JOY's authority, so a change to it is a change to agent instructi
   own independent security review without waiting on Claude Opus, while a PO
   on `Orchestrator (Carbon)` holds a protected-path PR's security-review gate
   for a `Gemini 4 Carbon` or `Claude Opus` review (or owner acceptance).
+- Owner decision 2026-11-18 (eSign PO chat, popup A2): "Sao mày chạy chỉ 1
+  subagent? 3-5 subagent/subession cơ mà?" and popup A2 choice "Cập nhật quy
+  tắc chung lên tối đa 5 phiên con song song trong tệp cấu hình dự án". Raise
+  `sub_sessions_normal` and `sub_sessions_max` to 5 concurrent sub-sessions
+  per Product Owner across all lines, superseding the 2026-11-15 and
+  2026-11-16 cap of 3 and Engage's 2026-11-08 cap of 4, while keeping the
+  2026-11-17 local-resources rules intact (one heavy command at a time per
+  session, scoped `--filter` typechecks and touched-file test runs only, and
+  the shared `ludy-pg17-shared` Postgres container).
 
 ## Board
 
@@ -89,9 +98,9 @@ turn on `sprint_review` with `line_scopes`.
   Social, Ads, Hộp thư/Help Desk and the CRM folded in on 2026-11-03
   (DESIGN.md). On 2026-11-01 JOY said "Mở lại, làm FB + Zalo" (#236), which set
   the order of work, the Facebook Page and Zalo OA channels first.
-- Owner decision 2026-11-08: "Ok, cho Engage chạy 4 phiên con." The Engage
-  line may run up to 4 sub-sessions at once, an exception to the
-  repository-wide cap of 3 above for this line.
+- Owner decision 2026-11-08: "Ok, cho Engage chạy 4 phiên con." Allowed the
+  Engage line up to 4 sub-sessions when the cap was 3 (superseded by owner
+  decision 2026-11-18 raising every PO line to 5; see Sessions below).
 - Platform owns what every line builds on, not the features: a line's own
   feature stays with that line even when it adds a migration or a kernel
   command. Platform owns the shared core itself, the architecture (ADRs),
@@ -319,14 +328,19 @@ naming the head it reviewed.
 
 ## Sessions
 
-- sub_sessions_normal: 3 (JOY instruction 2026-11-16 in Projects & Notes PO
-  chat: "Tạo tối đa được 3 phiên conn mà, sao mày tạo có 1 vậy"; each PO
-  keeps up to 3 concurrent sub-sessions running when independent tasks are
-  ready, matching `sub_sessions_max: 3`, while Engage keeps its 2026-11-08
-  4-sub-session exception; updates the 2026-10-31 default of 1)
-- sub_sessions_max: 3 (JOY clarification 2026-11-15: "Tao thấ mới có 2 phiên
-  con thôi mà. Tối đa 3 phiên con + 1 PO", up to 3 active sub-sessions + 1 PO
-  session; Engage keeps its 2026-11-08 4-sub-session exception)
+- sub_sessions_normal: 5 (owner decision 2026-11-18 in eSign PO chat: "Sao
+  mày chạy chỉ 1 subagent? 3-5 subagent/subession cơ mà?", popup A2: "Cập
+  nhật quy tắc chung lên tối đa 5 phiên con song song trong tệp cấu hình dự
+  án"; each PO keeps up to 5 concurrent sub-sessions running when independent
+  tasks are ready, matching `sub_sessions_max: 5` and superseding the
+  2026-11-15/2026-11-16 cap of 3, Engage's 2026-11-08 cap of 4, and the
+  2026-10-31 default of 1, while keeping AGENTS.md's 2026-11-17
+  local-resources rules: one heavy command at a time per session, scoped
+  `--filter` typechecks and touched-file tests only)
+- sub_sessions_max: 5 (owner decision 2026-11-18 in eSign PO chat, popup A2:
+  up to 5 active sub-sessions + 1 PO session per line, superseding the
+  2026-11-15 cap of 3 and Engage's 2026-11-08 cap of 4; local-resources
+  discipline from 2026-11-17 still applies to every session)
 
 A PO keeps its context small at natural breaks. With a warm cache, it uses
 `/compact` with a focus. After a long idle, such as overnight, it starts a
