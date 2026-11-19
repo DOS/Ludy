@@ -85,7 +85,8 @@ suite('the Today view of the meetings page (#3955)', () => {
     await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.rec, users.lan, users.other]);
     // The seed (09:00 Vietnam time today) and every read below must see one Vietnam day: in the last 90 seconds before Vietnam midnight a run waits for the day to turn (#4086, as #3486 asks of the agenda test).
     const { rows: left } = await sqlAdmin<{ seconds: number }>(`SELECT extract(epoch FROM (date_trunc('day', now() at time zone 'Asia/Ho_Chi_Minh') + interval '1 day') - (now() at time zone 'Asia/Ho_Chi_Minh'))::float8 AS seconds`);
-    if ((left[0]?.seconds ?? Infinity) < 90) await new Promise((resolve) => setTimeout(resolve, (left[0]?.seconds ?? 0) * 1000 + 1000));
+    const seconds = (left[0] as { seconds: number }).seconds;
+    if (seconds < 90) await new Promise((resolve) => setTimeout(resolve, seconds * 1000 + 1000));
     // One series: last week's meeting (decisions and an open item) and this morning's, which lan reads.
     const series = randomUUID();
     ids.series = series;

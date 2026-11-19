@@ -147,6 +147,8 @@ export function stageNamesOnce(ctx: { query: QueryContext['query'] }): StageName
 async function openDealsOf(ctx: { query: QueryContext['query'] }, partyId: string, stageNames: StageNames): Promise<BriefDeal[]> {
   const listed = await ctx.query<{ items: Array<{ id: string; title: string; amount: string; stageId: string; expectedClose: string | null }> }>('crm.deal.list', { partyId, status: 'open', limit: BRIEF_DEALS_MAX });
   if (listed.status !== 'ok') return [];
+  // No deal, no stage name to look up.
+  if (listed.value.items.length === 0) return [];
   const names = await stageNames();
   return listed.value.items.slice(0, BRIEF_DEALS_MAX).map((d) => ({
     id: d.id,
