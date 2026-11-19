@@ -53,7 +53,7 @@ export const financeManifest = defineModule({
       // The check of a connection's vouchers against the firm's MISA catalogue (#4112): the last request, and what was found per party (its tax code) or item (its code). No catalogue name, address or tax code is kept.
       misa_amis_match: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'kind', 'state', 'catalogue_code', 'catalogue_id', 'checked_at'], { ref: 'national_id_if_individual' }),
       misa_amis_match_check: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'params', 'state', 'failure', 'requested_by', 'requested_at', 'finished_at']),
-      misa_amis_push: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'source_type', 'source_id', 'voucher_type', 'part', 'org_refid', 'org_refno', 'payload_digest', 'params', 'state', 'reason', 'attempts', 'requested_by', 'requested_at', 'sent_at', 'answered_at', 'updated_at']),
+      misa_amis_push: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'source_type', 'source_id', 'voucher_type', 'part', 'org_refid', 'org_refno', 'payload_digest', 'params', 'state', 'attempts', 'requested_by', 'requested_at', 'sent_at', 'answered_at', 'updated_at'], { reason: 'pii' }),
       misa_goods_code: columns(['org_id', 'id', 'account_code', 'item_code', 'warehouse_code', 'updated_by', 'updated_at']),
       org_account: columns(['org_id', 'id', 'code', 'name', 'parent_code', 'root_code', 'active', 'created_by', 'created_at', 'updated_by', 'updated_at']),
       period_balance_delta: columns(['org_id', 'id', 'entry_id', 'account_code', 'period_month', 'debit', 'credit', 'line_count', 'legal_entity_id']),
