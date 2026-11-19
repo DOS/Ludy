@@ -107,7 +107,9 @@ export const departmentEdit = defineCommand({
     }
     ctx.audit({
       departmentId: input.departmentId,
-      changed: Object.keys(input).filter((k) => k !== 'departmentId'),
+      changed: Object.keys(input).filter(
+        (k) => k !== 'departmentId' && input[k as keyof typeof input] !== undefined,
+      ),
     });
     return { departmentId: input.departmentId };
   },
