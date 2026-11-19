@@ -451,6 +451,8 @@ export const KERNEL_ERROR_CODES = [
   'TRANSLATE_OFF',
   // The same for the transcript (E2, #3185).
   'TRANSLATE_RUNNING',
+  // A translation language the deployment has not switched on (E3, #3186).
+  'TRANSLATION_LANGUAGE_OFF',
   'TRANSLATION_DONE',
   'TRANSLATION_TOO_LARGE',
   // The member's Vy answering across meetings (Meetings A3, #3161).

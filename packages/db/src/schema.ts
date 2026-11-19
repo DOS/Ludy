@@ -1166,6 +1166,9 @@ export const MEETING_VISIBILITIES = ['attendees', 'org'] as const;
 export type MeetingVisibility = (typeof MEETING_VISIBILITIES)[number];
 export const MEETING_LANGUAGES = ['vi', 'en'] as const;
 export type MeetingLanguage = (typeof MEETING_LANGUAGES)[number];
+// The languages a translation can be made into (E3, #3186): the two a meeting is held in, and Chinese, Japanese and Korean as targets only (kernel-contract's TRANSLATION_TARGETS names the same five).
+export const TRANSLATION_TARGET_LANGUAGES = ['vi', 'en', 'zh', 'ja', 'ko'] as const;
+export type TranslationTargetLanguage = (typeof TRANSLATION_TARGET_LANGUAGES)[number];
 export const MEETING_STATUSES = ['ready', 'processing', 'completed', 'error'] as const;
 export type MeetingStatus = (typeof MEETING_STATUSES)[number];
 export const MEETING_CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat', 'platform_notice'] as const;
@@ -1245,7 +1248,7 @@ export type MeetingsTranslationTable = Refine<
   G.MeetingsTranslationTable,
   {
     kind: TranslationKind;
-    target_language: MeetingLanguage;
+    target_language: TranslationTargetLanguage;
     source_stage: MeetingResultStage;
   }
 >;
