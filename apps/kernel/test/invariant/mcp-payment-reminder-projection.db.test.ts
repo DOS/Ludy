@@ -19,7 +19,7 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const TOP_KEYS = ['currency', 'invoiceCount', 'invoices', 'lang', 'level', 'name', 'partyId', 'total', 'words'];
-const INVOICE_KEYS = ['amountDue', 'date', 'dueDate', 'daysOverdue', 'number', 'series'];
+const INVOICE_KEYS = ['amountDue', 'date', 'daysOverdue', 'dueDate', 'number', 'series'];
 const WORD_KEYS = ['closing', 'greeting', 'lead', 'subject'];
 const DAY_MS = 86_400_000;
 const daysAgo = (n: number) => new Date(Date.now() - n * DAY_MS).toISOString().slice(0, 10);
