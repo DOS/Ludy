@@ -68,10 +68,13 @@ function ConnectionItem({ connection, entities, canManage }: { connection: MisaA
         {entity && <span className="text-xs text-muted-foreground">{entity.name}</span>}
         <span className="text-xs text-muted-foreground">{t('connectedSince', { when: f.dateTime(connection.connectedAt) })}</span>
       </div>
-      <p className="mt-1 text-sm text-muted-foreground" data-testid="misa-amis-test-state">
-        {connection.lastTestState ? `${t(TEST_STATE_KEYS[connection.lastTestState])}${connection.lastTestedAt ? ` · ${t('testedAt', { when: f.dateTime(connection.lastTestedAt) })}` : ''}` : t('neverTested')}
-      </p>
-      {slow && <p className="mt-1 text-xs text-muted-foreground">{t('testSlow')}</p>}
+      {/* A status region that exists before its text changes, so a screen reader announces the result (and the slow note) without moving focus. */}
+      <div role="status">
+        <p className="mt-1 text-sm text-muted-foreground" data-testid="misa-amis-test-state">
+          {connection.lastTestState ? `${t(TEST_STATE_KEYS[connection.lastTestState])}${connection.lastTestedAt ? ` · ${t('testedAt', { when: f.dateTime(connection.lastTestedAt) })}` : ''}` : t('neverTested')}
+        </p>
+        {slow && <p className="mt-1 text-xs text-muted-foreground">{t('testSlow')}</p>}
+      </div>
       {canManage && (
         <div className="mt-2 flex flex-wrap gap-2">
           {connection.status === 'active' && !confirming && (

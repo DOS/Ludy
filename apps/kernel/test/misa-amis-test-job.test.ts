@@ -179,6 +179,19 @@ describe('the MISA AMIS connection test job', () => {
     }
   });
 
+  it('does not record "works" when AMIS accepts the code but answers with company data that is not an object', async () => {
+    for (const data of ['not json at all', '[1,2]', 'null', 7]) {
+      const h = harness();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const amis = fakeAmis((_request, path) => (path === '/amiskt/v1/get_company_info' ? ok(data) : undefined));
+      const out = await runMisaAmisTest({ runtime: h.runtime, broker: h.broker, client: createAmisClient({ clientId: CLIENT_ID, transport: amis.transport }) }, { orgId: ORG, connectionId: CONNECTION });
+      expect(out, String(data)).toEqual({ state: 'unreachable' });
+      expect(recorded(h), String(data)).toEqual([{ id: CONNECTION, state: 'unreachable' }]);
+      expect(warn.mock.calls, String(data)).toEqual([['[misa-amis] 22222222: unreachable (invalid_response)']]);
+      warn.mockRestore();
+    }
+  });
+
   it('logs the connection\'s short id, the state and the kind, and nothing else', async () => {
     const h = harness();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

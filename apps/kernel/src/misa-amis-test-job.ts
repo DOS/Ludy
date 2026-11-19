@@ -63,9 +63,10 @@ export async function runMisaAmisTest(deps: MisaAmisTestDeps, job: MisaAmisTestJ
     throw error;
   }
 
+  let info: Awaited<ReturnType<AmisClient['companyInfo']>>;
   try {
     // A fresh token each time: the client keeps one for half an hour, and a test that reused it would not send the access code, so a code revoked in AMIS could still read "works".
-    await deps.client.companyInfo({ accessCode, orgCompanyCode: target.orgCompanyCode }, null, { freshToken: true });
+    info = await deps.client.companyInfo({ accessCode, orgCompanyCode: target.orgCompanyCode }, null, { freshToken: true });
   } catch (error) {
     // Only the adapter's own kind is kept: its message and whatever else a failure carries are neither stored nor logged, and pg-boss never keeps them in the job's output.
     const kind = error instanceof AmisError ? error.kind : 'unreachable';
@@ -74,6 +75,11 @@ export async function runMisaAmisTest(deps: MisaAmisTestDeps, job: MisaAmisTestJ
     const state: MisaAmisTestState = kind === 'credentials' && code !== 'InvalidAPPID' ? 'wrong_credentials' : 'unreachable';
     console.warn(`[misa-amis] ${job.connectionId.slice(0, 8)}: ${state} (${kind}${code ? `, ${code}` : ''})`);
     return record(state);
+  }
+  // AMIS accepted the code but its answer is not the company object its document describes (that shape is unconfirmed until the sandbox check): not told as "works", and the log says why.
+  if (info === null) {
+    console.warn(`[misa-amis] ${job.connectionId.slice(0, 8)}: unreachable (invalid_response)`);
+    return record('unreachable');
   }
   return record('works');
 }

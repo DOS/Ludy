@@ -106,6 +106,11 @@ describe('MisaAmisConnectionsCard', () => {
     expect(card('owner', { locale: 'vi', connections: [connection({ lastTestState: 'works', lastTestedAt: at })] })).toContain('Kết nối dùng được');
   });
 
+  it('puts the last result in a status region, so a screen reader announces a result that lands later', () => {
+    const html = card('member', { connections: [connection({ lastTestState: 'works', lastTestedAt: at })] });
+    expect(/<div role="status">[\s\S]*data-testid="misa-amis-test-state"[\s\S]*?<\/div>/.test(html)).toBe(true);
+  });
+
   it('offers no test button for a connection that is not live, and none to a member or a viewer, who still read the last test', () => {
     expect(card('owner', { connections: [connection({ status: 'expired' })] })).not.toContain(`>${en.misaAmisConnections.test}<`);
     for (const role of ['member', 'viewer'] as const) {
