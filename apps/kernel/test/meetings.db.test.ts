@@ -1992,6 +1992,28 @@ suite('meetings module database integration tests (#2576)', () => {
     // Taken once: a second request finds nothing to claim.
     expect(await postTranscript('recorder', first.meetingId, { importId: first.recordingId })).toBeGreaterThanOrEqual(400);
 
+    // A whole transcript leaves the meeting's flag false (#3922).
+    const cutFlag = async (meetingId: string) => ((await rpc('meetings/get', 'recorder', { meetingId })).body as { platformTranscriptCut: boolean }).platformTranscriptCut;
+    expect(await cutFlag(first.meetingId)).toBe(false);
+    // A transcript the worker had to cut (the staged file says `truncated: true`): taken as before, and the meeting keeps the fact for its page; only a literal true counts.
+    const cutOne = await begin();
+    await stage(cutOne.recordingId, Buffer.from(JSON.stringify({ segments: lines, truncated: true })));
+    expect(await postTranscript('recorder', cutOne.meetingId, { importId: cutOne.recordingId })).toBe(200);
+    expect(await cutFlag(cutOne.meetingId)).toBe(true);
+    // The audit row holds ids, the platform and a count and a boolean, never a line.
+    const cutAudit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'meetings.import.take_transcript' AND detail->>'meetingId' = $1`, [cutOne.meetingId])).rows[0]?.detail);
+    expect(cutAudit).toMatchObject({ meetingId: cutOne.meetingId, stored: 2, source: 'google_meet', cut: true });
+    expect(JSON.stringify(cutAudit)).not.toContain('120 triệu');
+    // The note does not outlive the partial draft: the recorder's own transcription replaces it and clears the flag.
+    await runtime.execute('meetings.transcript.draft_store', { meetingId: cutOne.meetingId, segments: [{ startSeconds: 0, endSeconds: 2, speakerLabel: 'Lan', text: 'Bản mới.' }] }, { actor: asUser('recorder'), orgId });
+    expect(await cutFlag(cutOne.meetingId)).toBe(false);
+    for (const notTrue of ['true', 1, null]) {
+      const loose = await begin();
+      await stage(loose.recordingId, Buffer.from(JSON.stringify({ segments: lines, truncated: notTrue })));
+      expect(await postTranscript('recorder', loose.meetingId, { importId: loose.recordingId })).toBe(200);
+      expect(await cutFlag(loose.meetingId), JSON.stringify(notTrue)).toBe(false);
+    }
+
     // Bytes that are not the lines (not JSON, an empty text, no lines): refused as the platform's file, the row fails with a short code, no line is written and the bytes are deleted.
     for (const bad of [Buffer.from('not json'), staged([{ startSeconds: 0, endSeconds: 1, speakerLabel: 'x', text: '' }]), staged([])]) {
       const next = await begin();
