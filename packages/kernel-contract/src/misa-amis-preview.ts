@@ -70,6 +70,8 @@ export const zMisaAmisPreview = z.strictObject({
   purchasePurpose: z.enum(['1', '2', '3', '4', '5']),
   // true when the period holds more than MISA_AMIS_PREVIEW_LIMIT vouchers: the counts and items are of the first ones.
   more: z.boolean(),
+  // SHA-256 (hex) of what the list shows, parts and all (the AMIS branch left out): the push carries it, and a different digest at push time means the data changed since the person looked.
+  digest: z.string().regex(/^[0-9a-f]{64}$/),
   items: z.array(zMisaAmisPreviewItem).max(MISA_AMIS_PREVIEW_LIMIT),
 });
 export type MisaAmisPreview = z.infer<typeof zMisaAmisPreview>;

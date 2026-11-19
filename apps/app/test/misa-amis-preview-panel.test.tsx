@@ -37,6 +37,7 @@ const result: MisaAmisPreview = {
   checkedAgainstAmis: false,
   purchasePurpose: '1',
   more: false,
+  digest: 'c'.repeat(64),
   items: [
     { sourceId: ID, voucherNo: 'CRPC202600012', amisType: 4, reftype: 1020, reasonTypeId: 24, parts: 1, lines: 2, total: '1685000.5', blockers: [], blockersMore: 0 },
     { sourceId: '0192f0a1-2b3c-7d4e-8f50-6172839a4b5e', voucherNo: 'CRPC202600013', amisType: 4, reftype: 1020, reasonTypeId: 23, parts: 3, lines: 1200, total: '0', blockers: [{ code: 'item_code_unknown', lineNo: 4 }, { code: 'no_lines', lineNo: null }], blockersMore: 7 },
