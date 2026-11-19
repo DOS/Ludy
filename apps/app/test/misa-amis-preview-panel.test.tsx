@@ -38,8 +38,8 @@ const result: MisaAmisPreview = {
   purchasePurpose: '1',
   more: false,
   items: [
-    { sourceId: ID, voucherNo: 'CRPC202600012', amisType: 4, reftype: 1020, reasonTypeId: 24, parts: 1, lines: 2, total: '1685000.5', blockers: [] },
-    { sourceId: '0192f0a1-2b3c-7d4e-8f50-6172839a4b5e', voucherNo: 'CRPC202600013', amisType: 4, reftype: 1020, reasonTypeId: 23, parts: 3, lines: 1200, total: '0', blockers: [{ code: 'item_code_unknown', lineNo: 4 }, { code: 'no_lines', lineNo: null }] },
+    { sourceId: ID, voucherNo: 'CRPC202600012', amisType: 4, reftype: 1020, reasonTypeId: 24, parts: 1, lines: 2, total: '1685000.5', blockers: [], blockersMore: 0 },
+    { sourceId: '0192f0a1-2b3c-7d4e-8f50-6172839a4b5e', voucherNo: 'CRPC202600013', amisType: 4, reftype: 1020, reasonTypeId: 23, parts: 3, lines: 1200, total: '0', blockers: [{ code: 'item_code_unknown', lineNo: 4 }, { code: 'no_lines', lineNo: null }], blockersMore: 7 },
   ],
 };
 
@@ -76,9 +76,11 @@ describe('what would be sent to MISA AMIS on the screen (#3901)', () => {
     expect(html).toContain('AMIS item code missing');
     expect(html).toContain('No lines');
     expect(html).toContain('#4');
+    expect(html).toContain('and 7 more');
     expect(html).toContain('Not matched with AMIS yet');
     expect(html).toContain('Nothing has been sent to MISA.');
-    expect(html).toContain('confirmed with MISA before anything is pushed');
+    expect(html).toContain('are Ludy’s own and are not confirmed with MISA yet');
+    expect(html).not.toContain('are confirmed with MISA');
     // A blocked voucher shows no total.
     expect(html.match(/data-testid="misa-amis-preview-blocker"/g)).toHaveLength(2);
   });

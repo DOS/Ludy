@@ -67,9 +67,9 @@ sandbox yet.
 | Ludy | voucher_type | reftype | reason_type_id |
 |---|---|---|---|
 | Phiếu thu | 5 | 1010 | none |
-| Phiếu chi | 4 | 1020 | 24 pay a supplier (a line on 331), else 23 |
-| Giấy báo Có | 1 | 1500 | 29 collect a customer (a line on 131), else 34 |
-| Giấy báo Nợ | 3 | 1510 (ủy nhiệm chi; Ludy has no cheque kind) | 44 pay a supplier (331), else 43 |
+| Phiếu chi | 4 | 1020 | 24 pay a supplier (a line on 331), else 23 (**unconfirmed**: derived from the accounts) |
+| Giấy báo Có | 1 | 1500 | 29 collect a customer (a line on 131), else 34 (**unconfirmed**: derived from the accounts) |
+| Giấy báo Nợ | 3 | 1510 (ủy nhiệm chi; Ludy has no cheque kind; **unconfirmed**) | 44 pay a supplier (331), else 43 (**unconfirmed**: derived from the accounts) |
 | Purchase, lines off a stock account | 17 | 330 (Ludy books a purchase on 331: unpaid) | |
 | Purchase, lines on a stock account (152, 153, 156) | 18 | 302 | |
 | Sales | 13 | 3530 (domestic, not yet collected: Ludy debits 131) | |
@@ -92,7 +92,11 @@ sandbox yet.
   total and blockers. The branch and the party codes are not read until the dictionary is (the connection test of #3885), so it
   says `checkedAgainstAmis: false` and leaves those two blockers out.
 
-Unconfirmed, to check in the sandbox: that a purchase with `reftype` 330 and no `is_paid` is read as unpaid; that AMIS accepts a
+Unconfirmed, to check in the sandbox. First, the three choices Ludy made itself, each marked unconfirmed in the code and shown in the
+preview: the purchase purpose defaults to 1 (`purchase_purpose_id` and code, written on purchases and on cash and bank payments), a bank
+payment is written as `reftype` 1510 (ủy nhiệm chi), and the `reason_type_id` of a cash or bank voucher is derived from its accounts
+(331 a supplier, 131 a customer). Nothing is pushed without a person approving the push, and the push (S3b, #3902) is not enabled for
+any org before the sandbox check has confirmed or corrected them. Then: that a purchase with `reftype` 330 and no `is_paid` is read as unpaid; that AMIS accepts a
 party by name and tax code when no `account_object_code` is given; whether `purchase_purpose_id` is a string or the object the
 payments' table shows (the mapper sends the id and the code); what AMIS does with a second push of a revised voucher under the
 same `org_refid`.

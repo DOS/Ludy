@@ -141,6 +141,11 @@ function ItemRow({ item }: { item: MisaAmisPreviewItem }) {
               {b.lineNo !== null && <span className="text-xs text-muted-foreground">#{b.lineNo}</span>}
             </li>
           ))}
+          {item.blockersMore > 0 && (
+            <li className="text-xs text-subtle-foreground" data-testid="misa-amis-preview-blockers-more">
+              {t('moreBlockers', { count: String(item.blockersMore) })}
+            </li>
+          )}
         </ul>
       ) : (
         <p className="mt-1 text-xs text-subtle-foreground" data-testid="misa-amis-preview-choices">

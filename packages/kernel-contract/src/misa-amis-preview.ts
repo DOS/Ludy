@@ -32,6 +32,9 @@ export type MisaAmisPreviewAsk = z.infer<typeof zMisaAmisPreviewAsk>;
 
 export const zMisaAmisPreviewBlocker = z.strictObject({ code: z.enum(MISA_AMIS_BLOCKERS), lineNo: z.number().int().min(0).nullable() });
 
+// The most blockers one voucher lists; a voucher with more says how many were left out (a voucher of thousands of lines could otherwise make the whole answer too large).
+export const MISA_AMIS_PREVIEW_BLOCKERS = 100;
+
 export const zMisaAmisPreviewItem = z.strictObject({
   // The voucher's id in Ludy: the `org_refid` of the push.
   sourceId: zId,
@@ -46,7 +49,9 @@ export const zMisaAmisPreviewItem = z.strictObject({
   lines: z.number().int().min(0),
   // The total payable, VAT included; "0" for a voucher that is blocked.
   total: zMoney,
-  blockers: z.array(zMisaAmisPreviewBlocker).max(1000),
+  blockers: z.array(zMisaAmisPreviewBlocker).max(MISA_AMIS_PREVIEW_BLOCKERS),
+  // How many more blockers the voucher has than are listed.
+  blockersMore: z.number().int().min(0),
 });
 export type MisaAmisPreviewItem = z.infer<typeof zMisaAmisPreviewItem>;
 

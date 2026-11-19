@@ -2,7 +2,7 @@
 // The preview of a MISA AMIS push on the API side (#3901): for each of the seven kinds it asks for the same vouchers the MISA SME export of that kind asks for, writes them as the push would, and lists them with their
 // blockers. A fake query stands in for the runtime, so this needs no database.
 import { describe, expect, it } from 'vitest';
-import { MISA_AMIS_KINDS, MISA_AMIS_PREVIEW_LIMIT } from '@crove/kernel-contract';
+import { MISA_AMIS_KINDS, MISA_AMIS_PREVIEW_BLOCKERS, MISA_AMIS_PREVIEW_LIMIT, zMisaAmisPreview } from '@crove/kernel-contract';
 import type { CashVoucher, PurchaseVoucher, SalesVoucher } from '@crove/mod-finance';
 import { misaAmisPreview, type MisaAmisPreviewQuery } from '../src/misa-amis-preview.ts';
 
@@ -134,6 +134,18 @@ describe('misaAmisPreview', () => {
     const result = await misaAmisPreview(fake({ ...all, 'finance.vouchers.cash': [long, cash()] }).query, { kind: 'cash_payment', ...range });
     expect(result).toMatchObject({ vouchers: 2, ready: 1, blocked: 1 });
     expect(result.items[0]).toMatchObject({ voucherNo: 'PC1234567890123', blockers: [{ code: 'voucher_number_too_long', lineNo: null }] });
+  });
+
+  it('caps the blockers of one voucher, counts the rest, and the answer still passes the contract', async () => {
+    // 1200 lines with no AMIS item chosen: 1200 blockers, one per line.
+    const lines = Array.from({ length: 1200 }, (_, i) => ({ lineNo: i + 1, description: 'x', unit: null, quantity: null, unitPrice: null, amount: '1000', vatRate: '10%', debitAccount: '6422' }));
+    const big = { ...purchase(), lines, vatAmount: '120000' };
+    const result = await misaAmisPreview(fake({ ...all, 'finance.vouchers.purchases': [big] }).query, { kind: 'purchase_services', ...range });
+    expect(result.items[0]?.blockers).toHaveLength(MISA_AMIS_PREVIEW_BLOCKERS);
+    expect(result.items[0]?.blockersMore).toBe(1200 - MISA_AMIS_PREVIEW_BLOCKERS);
+    expect(result).toMatchObject({ vouchers: 1, ready: 0, blocked: 1 });
+    // The contract's own check of the output, as the route does it.
+    expect(() => zMisaAmisPreview.parse(result)).not.toThrow();
   });
 
   it('keeps the first vouchers and says there are more when the period holds more than the list', async () => {

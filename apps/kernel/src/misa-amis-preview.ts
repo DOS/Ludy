@@ -18,6 +18,7 @@ import {
   type SalesVoucher,
 } from '@crove/mod-finance';
 import {
+  MISA_AMIS_PREVIEW_BLOCKERS,
   MISA_AMIS_PREVIEW_LIMIT,
   accountParents,
   type MisaAmisPreview,
@@ -39,6 +40,14 @@ interface Entry {
 function item(entry: Entry): MisaAmisPreviewItem {
   const { vouchers, blockers } = entry.mapping;
   const { lines, total } = amisTotals(vouchers);
+  // The same code on the same line once, and at most MISA_AMIS_PREVIEW_BLOCKERS of them: a voucher of thousands of lines must not make the whole answer too large.
+  const seen = new Set<string>();
+  const unique = blockers.filter((b) => {
+    const key = `${b.code}:${b.lineNo ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   return {
     sourceId: entry.sourceId,
     voucherNo: entry.mapping.voucherNo,
@@ -47,8 +56,9 @@ function item(entry: Entry): MisaAmisPreviewItem {
     reasonTypeId: entry.mapping.reasonTypeId,
     parts: Math.max(vouchers.length, 1),
     lines,
-    total: blockers.length === 0 ? total : '0',
-    blockers: blockers.map((b) => ({ code: b.code, lineNo: b.lineNo })),
+    total: unique.length === 0 ? total : '0',
+    blockers: unique.slice(0, MISA_AMIS_PREVIEW_BLOCKERS).map((b) => ({ code: b.code, lineNo: b.lineNo })),
+    blockersMore: Math.max(unique.length - MISA_AMIS_PREVIEW_BLOCKERS, 0),
   };
 }
 
