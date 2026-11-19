@@ -969,6 +969,7 @@ export type ConversationComposingTable = Refine<G.KernelConversationComposingTab
 export type MemberPermissionOverrideTable = Refine<G.KernelMemberPermissionOverrideTable, { permission: (typeof MEMBER_PERMISSION_OVERRIDE_PERMISSIONS)[number] }>;
 export type MemberVyTableTable = Refine<G.KernelMemberVyTableTable, { mode: (typeof MEMBER_VY_TABLE_MODES)[number] }>;
 export type McpMemberTableTable = Refine<G.KernelMcpMemberTableTable, { mode: (typeof MCP_MEMBER_TABLE_MODES)[number] }>;
+export type McpWakeEventTypeTable = Refine<G.KernelMcpWakeEventTypeTable, { scope: (typeof MCP_PROPOSAL_COMMAND_SCOPES)[number] }>;
 export type McpProposalCommandTable = Refine<G.KernelMcpProposalCommandTable, { scope: (typeof MCP_PROPOSAL_COMMAND_SCOPES)[number] }>;
 export type PermissionDefaultTable = Refine<G.KernelPermissionDefaultTable, { base_role: MemberRole }>;
 export type MemberVyResultTable = Refine<G.KernelMemberVyResultTable, { status: Generated<MemberVyResultStatus> }>;
@@ -1454,6 +1455,7 @@ type Refined = Tables<{
   'crove_kernel.member_vy_table': MemberVyTableTable;
   'crove_kernel.mcp_member_table': McpMemberTableTable;
   'crove_kernel.mcp_proposal_command': McpProposalCommandTable;
+  'crove_kernel.mcp_wake_event_type': McpWakeEventTypeTable;
   'crove_kernel.permission_default': PermissionDefaultTable;
   'crove_kernel.mail_message': MailMessageTable;
   'crove_kernel.mail_suppression': MailSuppressionTable;

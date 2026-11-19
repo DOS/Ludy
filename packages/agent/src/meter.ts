@@ -83,6 +83,9 @@ export const AI_FEATURES = {
   // The finance coworker's notes on the AMIS preview (#3904, S5 of #3854): code built the preview and listed its blockers, the model only words what each KIND of blocker on the list means in AMIS and how to fix it in Ludy,
   // told the set of kinds and nothing else (no count, voucher, item or party); a note with a number, a link, a claim that something was done or a promise is dropped. A read: the list decides, a person sends.
   'finance.misa_amis_blocker_notes': 'finance',
+  // The finance coworker's notes under the Sàn table (#3711 slice 7): code read, per platform, the fees waiting on its 331, how old the oldest is and whether that is past one settlement cycle; the model only
+  // words what that means, told those figures per numbered row and no platform name; a note with a number that is not its row's, a name, a link, a claim that something was done or a promise is dropped. A read.
+  'finance.marketplace_fee_note': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
   // The sales coworker's proposal for the lines of a quote (#2698): from the deal, what the customer wrote and the earlier quotes to them; a price no source holds stays empty, and a person applies each line.
