@@ -413,6 +413,8 @@ export const KERNEL_ERROR_CODES = [
   'ACTION_ITEM_ACCEPTED',
   'TOO_MANY_ITEMS',
   'NOTHING_TO_PUBLISH',
+  // Publishing chapters whose transcript lines changed since they were saved (#3881).
+  'CHAPTER_ANCHOR_LOST',
   'NO_CLEAN_ITEMS',
   // The recorder's Vy summarizing a meeting (#2580, M6 part B).
   'DRAFT_NOT_REVIEWED',

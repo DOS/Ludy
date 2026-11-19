@@ -333,7 +333,7 @@ export const resultPublish = defineCommand({
       // Each chapter must still start at a line of the transcript: a re-transcription since the save may have replaced the lines (#3881). Refused as a whole, and nothing of this publish is kept (the same
       // transaction), so the recorder saves the chapters again and publishes once.
       if ((await missingAnchors(ctx, input.meetingId, draftChapters.map((c) => c.start_seconds))).length > 0) {
-        throw new DomainError('CHAPTER_NOT_ANCHORED', 409, 'A chapter no longer starts at a line of the transcript (the transcript changed): save the chapters again, then share');
+        throw new DomainError('CHAPTER_ANCHOR_LOST', 409, 'A chapter no longer starts at a line of the transcript (the transcript changed): save the chapters again, then share');
       }
       await ctx.trx.deleteFrom('crove_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
       const flipped = await ctx.trx

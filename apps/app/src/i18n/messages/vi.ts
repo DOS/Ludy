@@ -12642,6 +12642,7 @@ export const vi = {
       ACTION_ITEM_ACCEPTED: 'Việc cần làm này đã được tạo thành việc nhóm rồi.',
       TOO_MANY_ITEMS: 'Một cuộc họp có tối đa 100 việc cần làm.',
       NOTHING_TO_PUBLISH: 'Chưa có gì để chia sẻ: hãy viết tóm tắt hoặc thêm một việc cần làm trước.',
+      CHAPTER_ANCHOR_LOST: 'Bản ghi lời nói đã thay đổi sau khi bạn lưu mục lục, nên có mục không còn bắt đầu ở một dòng của bản ghi. Hãy lưu lại mục lục rồi chia sẻ.',
       NO_CLEAN_ITEMS: 'Không có việc nào rõ ràng: hãy tự chọn người, ngày và vị trí cho từng việc.',
       DRAFT_NOT_REVIEWED: 'Còn mục do Vy gợi ý chưa được bạn xem lại. Hãy đọc và xác nhận trước khi chia sẻ.',
       DRAFT_SUMMARY_EXISTS: 'Bạn đã có bản tóm tắt nháp. Hãy chia sẻ hoặc lưu đè lên nó, rồi mới chép bản của Vy.',
