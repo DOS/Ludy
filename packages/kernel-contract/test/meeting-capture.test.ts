@@ -64,6 +64,8 @@ describe('the capture shapes', () => {
 
   it('takes a meeting for the heartbeat, and refuses with a kind and a time only', () => {
     expect(() => zCaptureHeartbeat.parse({})).toThrow();
+    expect(zCaptureHeartbeat.parse({ meetingId: '0195f2b0-0000-7000-8000-000000000001', end: true })).toEqual({ meetingId: '0195f2b0-0000-7000-8000-000000000001', end: true });
+    expect(() => zCaptureHeartbeat.parse({ meetingId: '0195f2b0-0000-7000-8000-000000000001', end: 'yes' })).toThrow();
     expect(zCaptureRunning.parse({ kind: 'extension', since: '2027-01-20T07:02:00.000Z' })).toEqual({ kind: 'extension', since: '2027-01-20T07:02:00.000Z' });
     expect(() => zCaptureRunning.parse({ kind: 'extension', since: 'x', userId: 'u' })).toThrow();
     expect(() => zCaptureRunning.parse({ kind: 'bot', since: 'x' })).toThrow();

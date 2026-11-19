@@ -36,6 +36,7 @@ import { hookCommands, hookQueries } from './hook.ts';
 import { liveNotesCommands } from './live-notes.ts';
 import { liveRunCommands, liveRunQueries } from './live-run.ts';
 import { liveCommands } from './live.ts';
+import { captureCommands, endCapture, openCapture } from './capture.ts';
 import { liveAssembleCommands, liveAssembleQueries } from './live-assemble.ts';
 import { lockMeetingMedia, recordSealedMedia } from './media-record.ts';
 import { createMeetingRow } from './meeting-core.ts';
@@ -228,6 +229,8 @@ export const meetingCreate = defineCommand({
       readerUserIds: input.readerUserIds,
       extensionTokenId,
     });
+    // A live recording is a capture (ADR-0055 slice 1, #4123), and an extension token always is: asked here, in the meeting's own transaction, so a refused start (CAPTURE_ALREADY_RUNNING) leaves no meeting.
+    const captureKind = input.capture !== undefined || extensionTokenId !== null ? await openCapture(ctx, meetingId, input.capture) : null;
 
     ctx.audit({
       meetingId,
@@ -237,6 +240,7 @@ export const meetingCreate = defineCommand({
       consentNoticeVersion: input.consentNoticeVersion ?? CONSENT_NOTICE_VERSION,
       liveNotes: input.liveNotes,
       summaryTemplate: input.summaryTemplate,
+      ...(captureKind !== null ? { capture: captureKind } : {}),
     });
 
     return { meetingId };
@@ -332,6 +336,8 @@ export const meetingRecordingStopped = defineCommand({
     }
     // The media lock first, so a recording being stored at this moment either commits before the checks below or waits for this transaction.
     await lockMeetingMedia(ctx, input.meetingId);
+    // The recorder says the recording is over, whether or not anything was recorded: the call is free again (ADR-0055 slice 1, #4123).
+    await endCapture(ctx, input.meetingId, 'stopped');
     const { rows: held } = await sql<{ recorded: boolean; ended: boolean }>`
       SELECT EXISTS (SELECT 1 FROM crove_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid)
           OR EXISTS (SELECT 1 FROM crove_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid) AS recorded,
@@ -1038,6 +1044,7 @@ export const meetingsCommands = [
   ...linkCommands,
   ...followupCommands,
   ...liveCommands,
+  ...captureCommands,
   ...liveAssembleCommands,
   ...liveRunCommands,
   ...liveNotesCommands,

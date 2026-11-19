@@ -28,7 +28,8 @@ export type CaptureStart = z.infer<typeof zCaptureStart>;
 
 // The heartbeat of a running capture, and the answer: `open` is true while the capture is the one that holds its call. A client whose capture is not open keeps recording (the rule only stops a second
 // start; it never destroys a recording) and may tell the person.
-export const zCaptureHeartbeat = z.strictObject({ meetingId: zId });
+// `end` is the client's last word when the person stops recording: it ends the capture at once, so a new recording begun within the next 90 seconds is not refused by the one that just ended.
+export const zCaptureHeartbeat = z.strictObject({ meetingId: zId, end: z.boolean().optional() });
 export type CaptureHeartbeat = z.infer<typeof zCaptureHeartbeat>;
 export const zCaptureHeartbeatDone = z.strictObject({ open: z.boolean() });
 export type CaptureHeartbeatDone = z.infer<typeof zCaptureHeartbeatDone>;
