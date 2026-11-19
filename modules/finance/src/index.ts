@@ -3,6 +3,7 @@ import { financeOverdueReceivablesSignals } from './signals-overdue-receivables.
 import { financeSalesSignals } from './signals-sales.ts';
 export { MCP_LINES_PER_INVOICE, zMcpInvoicesInput } from './mcp.ts';
 export { zMcpOverviewInput } from './mcp-overview.ts';
+export { zMcpOpenBalancesInput } from './mcp-open-balances.ts';
 import { fixedAssetCommands, fixedAssetQueries } from './fixed-assets.ts';
 import { createAccount, setVendorDefaultAccount, updateAccount } from './accounts.ts';
 import { categorizationCommands, categorizationQueries } from './categorization.ts';
@@ -71,6 +72,7 @@ import { payrollPaymentCommands } from './payroll-payment.ts';
 import { payrollSettlement } from './payroll-settlement.ts';
 import { payrollPostingCommands } from './payroll-posting.ts';
 import { stockCloseCommands } from './stock-close.ts';
+import { stockCloseQueries } from './stock-close-check.ts';
 import { stockCountCommands, stockCountQueries } from './stock-count.ts';
 import { stockExportCommands } from './stock-export.ts';
 import { householdCommands, householdQueries } from './household.ts';
@@ -297,6 +299,7 @@ export const financeQueries = [
   ...stockReportQueries,
   ...stockLowQueries,
   ...stockCountQueries,
+  ...stockCloseQueries,
   ...marketplaceQueries,
   ...marketplaceIncomeQueries,
   ...marketplaceBalanceQueries,

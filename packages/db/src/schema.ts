@@ -1063,6 +1063,20 @@ export type AdsAdLaunchTable = Refine<
   }
 >;
 
+// The changes of a running ad (#3835, W4): what was asked (pause, resume, archive, a lower or raised daily budget, a shorter or longer schedule) and where it stands
+// (queued until the platform confirms it). The database's guard holds who inserts and who moves it.
+export const AD_MANAGE_KINDS = ['pause', 'resume', 'archive', 'budget_lower', 'budget_raise', 'schedule_shorten', 'schedule_extend'] as const;
+export const AD_MANAGE_STATES = ['queued', 'applied', 'failed', 'cancelled', 'unclear'] as const;
+export const AD_MANAGE_LEVELS = ['campaign', 'ad_set', 'ad'] as const;
+export type AdsAdManageChangeTable = Refine<
+  G.AdsAdManageChangeTable,
+  {
+    kind: (typeof AD_MANAGE_KINDS)[number];
+    level: (typeof AD_MANAGE_LEVELS)[number];
+    state: Generated<(typeof AD_MANAGE_STATES)[number]>;
+  }
+>;
+
 // What a launch created at the platform (#2296, W2-3): the level of each object and what Ludy set it to (paused or archived; nothing here un-pauses). The
 // database's guard holds who writes it.
 export const AD_OBJECT_LEVELS = ['campaign', 'ad_set', 'creative', 'ad'] as const;
@@ -1345,6 +1359,7 @@ type Refined = Tables<{
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
   'crove_ads.ad_campaign_request': AdsAdCampaignRequestTable;
   'crove_ads.ad_launch': AdsAdLaunchTable;
+  'crove_ads.ad_manage_change': AdsAdManageChangeTable;
   'crove_ads.ad_object': AdsAdObjectTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;

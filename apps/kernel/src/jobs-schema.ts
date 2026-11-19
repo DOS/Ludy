@@ -114,6 +114,9 @@ export const QUEUES = {
   // Created by the launch activation migration (crove_ads_launch_activation): one approved launch whose objects are created and paused, ids only (the org and the launch), run by
   // the relay's event ads.activate.queued and by the sweep's re-queue; it switches the launch's own objects on, one call at a time, the campaign last (#2296, W2-4b).
   adsActivate: 'ads-activate',
+  // Created by the manage migration (crove_ads_manage): one change of a live launch's objects (a pause, a resume, an archive, a budget or a schedule), ids only (the org and the change),
+  // run by the relay's event ads.manage.queued and by the sweep's re-queue; it makes the one platform call the change stands for (#3835, W4).
+  adsManage: 'ads-manage',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
   calendarWriteback: 'kernel-calendar-writeback',
   // Created by the eSign core migration (20270104060000): PDF inspection, sealing, overdue expiration, and OTP/token cleanup (#3323).
@@ -243,6 +246,9 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The activation of the objects of an approved launch (switch one object on, read its status), through the narrowed `channels.adActivators`: nothing that creates, pauses,
   // archives, verifies or revokes is reachable.
   [QUEUES.adsActivate]: ['provider:ad_platform'],
+  // The change of a live launch's objects (a status, the ad set's budget and end time, a read of the object), through the narrowed `channels.adManagers`: nothing that creates, finds by a
+  // tag, verifies or revokes is reachable (#3835, W4).
+  [QUEUES.adsManage]: ['provider:ad_platform'],
   // The calendar adapters (channels.calendars): the provider's events are written through them.
   [QUEUES.calendarWriteback]: ['provider:channel'],
   // eSign jobs talk only to the internal crove-extract service or the database, never to an external origin (#3323).

@@ -43,6 +43,7 @@ const item = (over: Partial<ActionItemView>): ActionItemView => ({
   taskId: null,
   positions: [],
   clean: false,
+  suggestion: null,
   ...over,
 });
 const result = (stage: 'draft' | 'published', summary: string, decisions = ['Giữ giá cũ']) => ({ id: `r-${stage}`, feature: 'manual' as const, stage, summary, decisions, tainted: false });

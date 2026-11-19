@@ -5,7 +5,7 @@
 // marks the plan, and the card, the button, the toast and the subtitles name the amount, the paused state and the automatic start, in both languages.
 import { describe, expect, it } from 'vitest';
 import type { AdsChange } from '@crove/kernel-contract';
-import { adsChangeLine, adsChangeText } from '../src/lib/ads-change.ts';
+import { adsChangeLine, adsChangeText, isAdsManageChange } from '../src/lib/ads-change.ts';
 import { catalog, translatorFor } from '../src/i18n/runtime.ts';
 
 const money = (amount: string, currency: string) => `${amount} ${currency}`;
@@ -111,5 +111,85 @@ describe('the approval of a campaign plan on a server that cannot launch (#3675)
       expect(adsChangeText(launch, translatorFor('en'), money, date, answer).detail).toContain('switches it on by itself');
     }
     expect(adsChangeText(launch, translatorFor('en'), money, date).detail).toContain('switches it on by itself');
+  });
+});
+
+// The requests that can start or raise spend on a running ad (W4, #3835): a resume, a budget raise and a longer schedule. Each card names the largest amount the launch can spend
+// before and with the change, the daily budget and the dates, from the structured change, in both languages.
+describe('the approval card of a change to a running ad (W4, #3835)', () => {
+  const base = { launchId: 'l1', adAccountId: 'a1', adAccountName: 'Shop', campaignName: 'Cà phê Mộc', currency: 'VND', amount: '1500000', previousAmount: '1000000' };
+  const resume: AdsChange = { ...base, change: 'object_resume', slot: 'ad_set', objectName: 'Nhóm một', dailyBudget: '100000', endOn: '2027-01-15' };
+  const raise: AdsChange = { ...base, change: 'budget_raise', fromBudget: '100000', toBudget: '150000', endOn: '2027-01-10' };
+  const extend: AdsChange = { ...base, change: 'schedule_extend', dailyBudget: '100000', fromEndOn: '2027-01-10', toEndOn: '2027-01-15' };
+
+  it('says what a budget raise allows, in English and in Vietnamese, with both amounts, the daily budget and the date', () => {
+    const en = adsChangeText(raise, translatorFor('en'), money, date);
+    expect(en.title).toBe('Raise the daily budget of the campaign “Cà phê Mộc” on Shop from 100000 VND to 150000 VND.');
+    expect(en.detail).toContain('Approving allows the launch to spend at most 1500000 VND (now 1000000 VND): 150000 VND a day until ngày 2027-01-10.');
+    expect(en.detail).toContain('holds 1500000 VND against your spend caps');
+    expect(en.detail).toContain('lower it again at any time without approval');
+    const vi = adsChangeText(raise, translatorFor('vi'), money, date);
+    expect(vi.title).toBe('Tăng ngân sách mỗi ngày của chiến dịch “Cà phê Mộc” trên Shop từ 100000 VND lên 150000 VND.');
+    expect(vi.detail).toContain('Duyệt là cho phép lần chạy chi tối đa 1500000 VND (hiện là 1000000 VND): mỗi ngày 150000 VND đến ngày ngày 2027-01-10.');
+    expect(vi.detail).toContain('giữ 1500000 VND trong hạn mức chi tiêu');
+  });
+
+  it('says what a longer schedule allows, with the old and the new end date', () => {
+    const en = adsChangeText(extend, translatorFor('en'), money, date);
+    expect(en.title).toBe('Extend the schedule of the campaign “Cà phê Mộc” on Shop from ngày 2027-01-10 to ngày 2027-01-15.');
+    expect(en.detail).toContain('at most 1500000 VND (now 1000000 VND): 100000 VND a day until ngày 2027-01-15.');
+    const vi = adsChangeText(extend, translatorFor('vi'), money, date);
+    expect(vi.title).toBe('Kéo dài lịch chạy của chiến dịch “Cà phê Mộc” trên Shop từ ngày 2027-01-10 đến ngày 2027-01-15.');
+    expect(vi.detail).toContain('chi tối đa 1500000 VND (hiện là 1000000 VND): mỗi ngày 100000 VND đến ngày ngày 2027-01-15.');
+  });
+
+  it('says what a resume allows: the object, the largest amount before and with it, or that the amount stays when it does not move', () => {
+    const en = adsChangeText(resume, translatorFor('en'), money, date);
+    expect(en.title).toBe('Switch Nhóm một back on in the campaign “Cà phê Mộc” on Shop.');
+    expect(en.detail).toContain('Approving asks the ad platform to resume Nhóm một. The most the launch can spend goes from 1000000 VND to 1500000 VND (100000 VND a day until ngày 2027-01-15)');
+    const same = adsChangeText({ ...resume, previousAmount: '1500000.00' }, translatorFor('en'), money, date);
+    expect(same.detail).toContain('The most the launch can spend stays 1500000 VND (100000 VND a day until ngày 2027-01-15)');
+    expect(same.detail).not.toContain('goes from');
+    const vi = adsChangeText(resume, translatorFor('vi'), money, date);
+    expect(vi.title).toBe('Bật lại Nhóm một trong chiến dịch “Cà phê Mộc” trên Shop.');
+    expect(vi.detail).toContain('đổi từ 1000000 VND thành 1500000 VND');
+  });
+
+  it('words the waiting list line with the sentence and its amounts, like a cap or a launch', () => {
+    for (const change of [resume, raise, extend]) {
+      const line = adsChangeLine(change, translatorFor('en'), money, date);
+      expect(line).toContain(adsChangeText(change, translatorFor('en'), money, date).title);
+      expect(line).toContain('1500000 VND');
+    }
+  });
+
+  it('shows a hostile campaign, account or object name with its control characters made visible, never applied', () => {
+    const hostile: AdsChange = { ...resume, campaignName: 'Mộc‮gnirts', adAccountName: 'Shop​', objectName: 'Nhóm⁦một' };
+    const { title } = adsChangeText(hostile, translatorFor('en'), money, date);
+    expect(title).toContain('⟨U+202E⟩');
+    expect(title).toContain('⟨U+200B⟩');
+    expect(title).toContain('⟨U+2066⟩');
+    expect(title).not.toMatch(/[‮​⁦]/);
+  });
+
+  it('is told apart from the other requests, and is never a launch', () => {
+    expect(isAdsManageChange(resume) && isAdsManageChange(raise) && isAdsManageChange(extend)).toBe(true);
+    expect(isAdsManageChange(launch)).toBe(false);
+    expect(isAdsManageChange({ change: 'write_enable' })).toBe(false);
+  });
+
+  it('words the button, the subtitle and the toast of the Inbox, and promises nothing before approval', () => {
+    const fmt = (template: string, values: Record<string, string>) => template.replace(/\{(\w+)\}/g, (_m, k: string) => values[k] ?? `{${k}}`);
+    const vi = (catalog('vi') as unknown as { inboxDetail: Record<string, string> }).inboxDetail;
+    const en = (catalog('en') as unknown as { inboxDetail: Record<string, string> }).inboxDetail;
+    expect(fmt(vi.approveAdsManage as string, { amount: '1500000 VND' })).toBe('Duyệt và cho phép chi tối đa 1500000 VND');
+    expect(fmt(en.approveAdsManage as string, { amount: '1500000 VND' })).toBe('Approve and allow up to 1500000 VND');
+    expect(fmt(en.adsManageWas as string, { amount: '1000000 VND' })).toBe('Before this change: 1000000 VND');
+    for (const text of [en.adsManageSubtitle, en.approvedAdsManageToast, vi.adsManageSubtitle, vi.approvedAdsManageToast]) {
+      expect(text).toBeTruthy();
+      expect(text).not.toMatch(/chỉ đánh dấu|only marks|nothing is sent/i);
+    }
+    expect(en.adsManageSubtitle).toContain('after the approval');
+    expect(vi.adsManageSubtitle).toContain('sau khi duyệt');
   });
 });
