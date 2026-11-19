@@ -4,7 +4,7 @@
 // app screens does not stop a recording. The recorder screen (routes/meeting-record.tsx) and the header bar
 // (components/recording-chip.tsx) are only views of it. A full page unload still ends the devices, so a recording asks first
 // (beforeunload). The recording stops by itself at the longest meeting the server takes (MAX_MEETING_SECONDS). No AI here.
-import { MAX_MEETING_SECONDS, type LiveConsentMethod, type MeetingLanguage, type BuiltInSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
+import { CAPTURE_HEARTBEAT_SECONDS, MAX_MEETING_SECONDS, type LiveConsentMethod, type MeetingLanguage, type BuiltInSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
 import {
   assembleRecording,
   beginRecording,
@@ -70,6 +70,35 @@ interface Live {
   liveCapture: LiveCapture | null;
   // Where the finished upload goes: the device store it is read from and the org it opens in.
   ctx: { store: ChunkStore; slug: string };
+  // The capture of this call tells the server it is alive every CAPTURE_HEARTBEAT_SECONDS (ADR-0055 slice 1, #4123); null once it is over.
+  heartbeat: ReturnType<typeof setInterval> | null;
+}
+
+// The server is told the capture is alive, or over when the person stopped. Best effort: a beat that does not get through is only missed, and an answer of "not open" (another capture took the call over after a long
+// silence) never stops this recording.
+function beat(meetingId: string, end = false): void {
+  void orpc.meetings.captureHeartbeat.call({ meetingId, ...(end ? { end: true } : {}) }).catch(() => undefined);
+}
+
+// The capture ends now, not 90 seconds from now, so a new recording of the call is not refused by this one. Once.
+function endCapture(l: Live): void {
+  if (l.heartbeat === null) return;
+  clearInterval(l.heartbeat);
+  l.heartbeat = null;
+  beat(l.writer.meta().meetingId, true);
+}
+
+// Another capture of this call exists (CAPTURE_ALREADY_RUNNING): which kind of client holds it and since when, in words; null for any other error.
+function captureRunningMessage(error: unknown): string | null {
+  const e = error as { code?: unknown; data?: unknown } | null;
+  if (e?.code !== 'CAPTURE_ALREADY_RUNNING') return null;
+  const { kind, since } = (e.data ?? {}) as { kind?: unknown; since?: unknown };
+  const at = typeof since === 'string' ? new Date(since) : null;
+  if ((kind !== 'extension' && kind !== 'app') || at === null || Number.isNaN(at.getTime())) return null;
+  return translate('record.captureRunning', {
+    kind: translate(kind === 'extension' ? 'record.captureKindExtension' : 'record.captureKindApp'),
+    time: at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+  });
 }
 
 type WakeLockApi = { request(type: 'screen'): Promise<{ release(): Promise<void> }> };
@@ -196,6 +225,10 @@ function onTick(): void {
 
 function releaseDevices(l: Live | null, stopRecorder: boolean): void {
   if (!l) return;
+  if (l.heartbeat !== null) {
+    clearInterval(l.heartbeat);
+    l.heartbeat = null;
+  }
   if (stopRecorder) l.liveCapture?.abandon();
   if (stopRecorder && l.recorder.state !== 'inactive') {
     try {
@@ -241,6 +274,8 @@ export async function startRecording(input: StartInput): Promise<void> {
           consentMethod: input.consentMethod,
           consentNoticeVersion: RECORDING_NOTICE.version,
           liveNotes: input.liveNotes,
+          // A live recording is a capture: the server refuses a second one of the same call, reading it from the member's own calendar event when there is one (ADR-0055 slice 1, #4123).
+          capture: input.prefill.agendaId ? { agendaId: input.prefill.agendaId } : {},
         })
       ).meetingId;
       const meetingId = createdMeetingId;
@@ -294,14 +329,19 @@ export async function startRecording(input: StartInput): Promise<void> {
     patch({
       phase: 'idle',
       slug: null,
-      error: result.reason === 'store' ? translate('record.unsupported') : result.reason === 'device' ? translate(withVideo ? 'record.deviceDeniedVideo' : 'record.deviceDenied') : errorMessage(result.error),
+      error:
+        result.reason === 'store'
+          ? translate('record.unsupported')
+          : result.reason === 'device'
+            ? translate(withVideo ? 'record.deviceDeniedVideo' : 'record.deviceDenied')
+            : (captureRunningMessage(result.error) ?? errorMessage(result.error)),
     });
     return;
   }
   const { stream, recorder, writer } = result;
   // A device that goes away mid-recording (microphone unplugged, permission taken back) ends its tracks: say why it stopped.
   for (const track of stream.getTracks()) track.addEventListener('ended', () => void writer.markStopped('mic_lost'));
-  const l: Live = { stream, recorder, writer, pending: new Set(), wakeLock: result.wakeLock, failed: false, liveCapture: null, ctx: { store, slug } };
+  const l: Live = { stream, recorder, writer, pending: new Set(), wakeLock: result.wakeLock, failed: false, liveCapture: null, ctx: { store, slug }, heartbeat: null };
   live = l;
   recorder.ondataavailable = (event) => {
     const write = writer.addChunk(event.data, clock.elapsedMs(Date.now())).catch(() => {
@@ -322,6 +362,7 @@ export async function startRecording(input: StartInput): Promise<void> {
     tick = 0;
     // A chunk every 5 seconds is written to the device while recording.
     recorder.start(5000);
+    l.heartbeat = setInterval(() => beat(writer.meta().meetingId), CAPTURE_HEARTBEAT_SECONDS * 1000);
     // A second, audio-only recorder sends pieces of about 15 seconds; none is made without the tick, and a failure
     // here never stops the recording.
     l.liveCapture = startLiveCapture({
@@ -365,6 +406,7 @@ export function stop(): void {
   patch({ phase: 'uploading' });
   // The recorder's own click: no stop reason goes with the upload (A1, #3159).
   void l.writer.markStopped('user');
+  endCapture(l);
   // The live recorder stops first; its last piece is taken in onStopped before the devices are released.
   void l.liveCapture?.halt();
   // A recorder the browser or the device already ended (its stop event is still being handled) is not stopped twice.
@@ -373,6 +415,8 @@ export function stop(): void {
 
 // The browser fires the last chunk before `stop`: wait for every write, then upload what the device holds.
 async function onStopped(l: Live): Promise<void> {
+  // However the recording ended, the capture of the call is over (a no-op after the person's own stop).
+  endCapture(l);
   await Promise.all(l.pending);
   await l.liveCapture?.halt();
   // The recorder stopped and nobody clicked, or the device filled: the browser or the device ended it.
