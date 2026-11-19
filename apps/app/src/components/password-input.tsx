@@ -5,19 +5,19 @@
 import { useState, type ComponentProps } from 'react';
 import { useTranslations } from 'use-intl';
 import { Input } from '@crove/ui/components/input';
+import { cn } from '@crove/ui/lib/utils';
 
-export function PasswordInput({ id, ...props }: Omit<ComponentProps<typeof Input>, 'type'> & { id?: string | undefined }) {
+export function PasswordInput({ id, className, ...props }: Omit<ComponentProps<typeof Input>, 'type'> & { id?: string | undefined }) {
   const t = useTranslations('common');
   const [shown, setShown] = useState(false);
   return (
     <div className="relative">
-      <Input {...props} id={id} type={shown ? 'text' : 'password'} className="pr-16" />
+      <Input {...props} id={id} type={shown ? 'text' : 'password'} className={cn('pr-16', className)} />
       <button
         type="button"
-        aria-pressed={shown}
         aria-controls={id}
         onClick={() => setShown((value) => !value)}
-        className="absolute right-0 top-1/2 flex min-h-8 min-w-11 -translate-y-1/2 items-center justify-center rounded-lg px-2.5 text-xs text-link hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 max-md:min-h-11"
+        className="absolute right-0 top-1/2 md:right-1 flex min-h-8 min-w-11 -translate-y-1/2 items-center justify-center rounded-lg px-2.5 text-xs text-link hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 max-md:min-h-11"
       >
         {shown ? t('passwordHide') : t('passwordShow')}
       </button>

@@ -44,13 +44,13 @@ describe('the password field of the sign-up screen (AU-3)', () => {
   ] as const)('states the rule from the start and has a toggle, in %s', (locale, hint, toggle) => {
     const html = render(<AuthPage initialMode="signup" />, locale);
     expect(html).toContain(hint);
-    // The input describes itself by the hint, and starts hidden.
+    // The input describes itself by the hint, and starts hidden (the toggle's text says what a press does).
     const input = /<input[^>]*type="password"[^>]*>/.exec(html)?.[0] ?? '';
     expect(input).toContain('autoComplete="new-password"');
     const id = /id="([^"]+)"/.exec(input)?.[1];
     expect(id).toBeTruthy();
     expect(input).toContain(`aria-describedby="${id}-hint"`);
-    const button = /<button[^>]*aria-pressed="false"[^>]*>([^<]*)<\/button>/.exec(html);
+    const button = /<button[^>]*aria-controls[^>]*>([^<]*)<\/button>/.exec(html);
     expect(button?.[1]).toBe(toggle);
     expect(button?.[0]).toContain(`aria-controls="${id}"`);
     expect(button?.[0]).toContain('type="button"');
