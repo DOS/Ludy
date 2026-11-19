@@ -186,7 +186,10 @@ suite('what an MCP grant reads of Hộp thư through the conversation reads, and
     expect(listed.conversations.map((c) => c.id)).toEqual(['a1c', 'a1d', 'a1e', 'a2c', 'a2d'].map((k) => conv[k]));
     expect(listed.more).toBe(false);
     expect(listed.next).toBeNull();
-    expect(JSON.stringify(listed)).not.toContain('b1c');
+    // Neither org B's thread id nor any of its seeded text (which names its key after a space) leaves. A bare 'b1c' would also match
+    // inside a random UUID of org A's own rows, so the check names the id and the text instead.
+    expect(JSON.stringify(listed)).not.toContain(conv.b1c as string);
+    expect(JSON.stringify(listed)).not.toContain(' b1c');
     expect(keysOf(listed)).not.toContain('b1c');
     // An admin's company grant reads the same.
     expect((await list('admin', 'company')).conversations).toHaveLength(5);
