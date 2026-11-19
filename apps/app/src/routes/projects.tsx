@@ -18,6 +18,7 @@ import { NavIcon } from '@crove/ui/components/nav-icon';
 import { ProjectIcon } from '@crove/ui/components/project-icon';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { ProjectBoardView, type BoardColumnStatus } from '../components/project-board.tsx';
+import { ProjectAcceptanceSignHandoff } from '../components/project-acceptance-sign-handoff.tsx';
 import { ProjectTasksFromSourceDialog } from '../components/project-tasks-from-source-dialog.tsx';
 import { ProjectTemplateDialog } from '../components/project-template-dialog.tsx';
 import { ProjectWeeklyStatus } from '../components/project-weekly-status.tsx';
@@ -378,7 +379,11 @@ export function ProjectDetailPage() {
   const currentUserId = me.data?.userId ?? null;
   const otherMemberCount = countOtherProjectMembers(members, currentUserId);
   const openCount = tasks.filter((item) => item.status !== 'done' && item.status !== 'cancelled').length;
-  const doneCount = tasks.filter((item) => item.status === 'done').length;
+  const completedTasks = tasks
+    .filter((item) => item.status === 'done')
+    .map((item) => ({ id: item.id, title: item.title }));
+  const doneCount = completedTasks.length;
+  const boardFiltered = Boolean(positionId) || applied.all.length > 0;
   const pct = projectCompletionPct(openCount, doneCount);
   const showSeatHint = hasUnseatedTeamMembers(board);
 
@@ -399,6 +404,12 @@ export function ProjectDetailPage() {
           subtitle={project.description ?? undefined}
           actions={
             <div className="flex flex-wrap items-center gap-2">
+              <ProjectAcceptanceSignHandoff
+                project={{ id: project.id, name: project.name, status: project.status }}
+                completedTasks={completedTasks}
+                boardFiltered={boardFiltered}
+                canEdit={project.canWrite}
+              />
               {project.canWrite && project.status !== 'archived' && (
                 <Button
                   variant="outline"
