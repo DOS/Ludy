@@ -2471,30 +2471,36 @@ export function indexReexportViolations(indexText: string, symbols: readonly str
   return [...out];
 }
 
-const isAgentBarrel = (spec: string, fromRelPath?: string): boolean => {
+const agentBarrelPackage = (spec: string, fromRelPath?: string): '@crove/agent' | '@ludy/agent' | null => {
   const normalizedSpec = normalizeModuleSpecifier(spec).replace(/\.[cm]?js$|\.[cm]ts$/, '.ts');
   if (
     normalizedSpec === '@crove/agent' ||
     normalizedSpec === '@crove/agent/index.ts' ||
     normalizedSpec === '@crove/agent/src/index.ts' ||
     normalizedSpec === '@crove/agent/src/index' ||
-    normalizedSpec === '@ludy/agent' ||
-    normalizedSpec === '@ludy/agent/index.ts' ||
-    normalizedSpec === '@ludy/agent/src/index.ts' ||
-    normalizedSpec === '@ludy/agent/src/index' ||
     normalizedSpec === 'packages/agent/src/index.ts' ||
     normalizedSpec === 'packages/agent/src/index'
   ) {
-    return true;
+    return '@crove/agent';
   }
-  if (/(?:^|\/)packages\/agent\/src\/index(?:\.ts)?$/.test(normalizedSpec)) return true;
+  if (
+    normalizedSpec === '@ludy/agent' ||
+    normalizedSpec === '@ludy/agent/index.ts' ||
+    normalizedSpec === '@ludy/agent/src/index.ts' ||
+    normalizedSpec === '@ludy/agent/src/index'
+  ) {
+    return '@ludy/agent';
+  }
+  if (/(?:^|\/)packages\/agent\/src\/index(?:\.ts)?$/.test(normalizedSpec)) return '@crove/agent';
   if (normalizedSpec.startsWith('.') && fromRelPath) {
     const baseDir = posix.dirname(fromRelPath.replace(/\\/g, '/'));
     const resolved = posix.normalize(posix.join(baseDir, normalizedSpec));
-    if (resolved === 'packages/agent/src/index.ts' || resolved === 'packages/agent/src/index') return true;
+    if (resolved === 'packages/agent/src/index.ts' || resolved === 'packages/agent/src/index') return '@crove/agent';
   }
-  return false;
+  return null;
 };
+
+const isAgentBarrel = (spec: string, fromRelPath?: string): boolean => agentBarrelPackage(spec, fromRelPath) !== null;
 
 const isAllowedWorkspaceComputedImport = (
   fromRelPath: string | undefined,
@@ -2568,16 +2574,19 @@ function collectWorkspacePass(
     out.add('imports note-ai-model');
   }
   for (const decl of scan.importDecls) {
-    if (!isAgentBarrel(decl.specifier, fromRelPath)) continue;
-    if (decl.isNamespace) out.add('namespace import from @crove/agent');
-    if (decl.isDefault) out.add('default import from @crove/agent');
+    const pkg = agentBarrelPackage(decl.specifier, fromRelPath);
+    if (!pkg) continue;
+    if (decl.isNamespace) out.add(`namespace import from ${pkg}`);
+    if (decl.isDefault) out.add(`default import from ${pkg}`);
   }
   for (const decl of scan.exportDecls) {
-    if (isAgentBarrel(decl.specifier, fromRelPath) && decl.isStar) out.add('export * from @crove/agent');
+    const pkg = agentBarrelPackage(decl.specifier, fromRelPath);
+    if (pkg && decl.isStar) out.add(`export * from ${pkg}`);
   }
   for (const call of scan.dynamicCalls) {
     if (call.specifier !== null) {
-      if (isAgentBarrel(call.specifier, fromRelPath)) out.add(`dynamic ${call.fn} from @crove/agent`);
+      const pkg = agentBarrelPackage(call.specifier, fromRelPath);
+      if (pkg) out.add(`dynamic ${call.fn} from ${pkg}`);
     } else if (!isAllowedWorkspaceComputedImport(fromRelPath, call)) {
       out.add('uses computed dynamic import or require');
     }
@@ -2949,7 +2958,7 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       'namespace import from @crove/agent',
     ]);
     expect(workspaceAdapterLeakViolations(`import * as agent from '@ludy/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
-      'namespace import from @crove/agent',
+      'namespace import from @ludy/agent',
     ]);
     expect(workspaceAdapterLeakViolations(`import agent from '@crove/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
       'default import from @crove/agent',
@@ -2958,13 +2967,13 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       'export * from @crove/agent',
     ]);
     expect(workspaceAdapterLeakViolations(`export * from '@ludy/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
-      'export * from @crove/agent',
+      'export * from @ludy/agent',
     ]);
     expect(workspaceAdapterLeakViolations(`const a = await import('@crove/agent');`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
       'dynamic import from @crove/agent',
     ]);
     expect(workspaceAdapterLeakViolations(`const a = await import('@ludy/agent');`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
-      'dynamic import from @crove/agent',
+      'dynamic import from @ludy/agent',
     ]);
     expect(workspaceAdapterLeakViolations(`const a = await import('@crove/' + 'agent');`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
       'dynamic import from @crove/agent',

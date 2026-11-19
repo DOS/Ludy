@@ -2,8 +2,8 @@
 // .github/workflows/protected.yml takes this file, every test/invariant/ directory and the pgTAP gate files
 // (supabase/tests/database/_*.test.sql, #1643) from the base branch and runs them against the PR's code, so the
 // PR's own vitest.config.ts cannot exclude or weaken them.
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
@@ -28,6 +28,7 @@ function legacyCroveInvariantBridge(rootDir: string) {
   const seenNames = new Set<string>();
   const seenSlugs = new Set<string>();
   const names: string[] = [];
+  const ludyPkgDirs = new Map<string, string>();
   for (const pkgDir of pkgDirs) {
     const manifestPath = join(pkgDir, 'package.json');
     const pkg = JSON.parse(readFileSync(manifestPath, 'utf8')) as { name?: string };
@@ -44,16 +45,24 @@ function legacyCroveInvariantBridge(rootDir: string) {
     }
     seenSlugs.add(slug);
     names.push(pkg.name);
+    if (pkg.name.startsWith('@ludy/')) {
+      ludyPkgDirs.set(pkg.name.slice('@ludy/'.length), realpathSync(pkgDir));
+    }
   }
 
   const bridgeActive = !names.some((name) => name.startsWith('@crove/'));
-  const ludySlugs = new Set(names.filter((name) => name.startsWith('@ludy/')).map((name) => name.slice('@ludy/'.length)));
 
   return {
     name: 'legacy-crove-invariant-bridge',
     enforce: 'pre' as const,
-    resolveId(
-      this: { resolve: (source: string, importer?: string, options?: { skipSelf?: boolean }) => Promise<unknown> },
+    async resolveId(
+      this: {
+        resolve: (
+          source: string,
+          importer?: string,
+          options?: { skipSelf?: boolean },
+        ) => Promise<{ id: string } | null>;
+      },
       source: string,
       importer?: string,
     ) {
@@ -63,8 +72,19 @@ function legacyCroveInvariantBridge(rootDir: string) {
       if (!INVARIANT_IMPORTER_RE.test(relImporter)) return null;
       const rest = source.slice('@crove/'.length);
       const slug = rest.split('/', 1)[0] ?? '';
-      if (!ludySlugs.has(slug)) return null;
-      return this.resolve(`@ludy/${rest}`, importer, { skipSelf: true });
+      const expectedDir = ludyPkgDirs.get(slug);
+      if (!expectedDir) return null;
+      const target = `@ludy/${rest}`;
+      const resolved = await this.resolve(target, importer, { skipSelf: true });
+      if (!resolved) {
+        throw new Error(`legacy-crove-invariant-bridge: failed to resolve ${target} from ${relImporter}`);
+      }
+      const resolvedFile = resolved.id.split(/[?#]/, 1)[0] ?? resolved.id;
+      const resolvedReal = existsSync(resolvedFile) ? realpathSync(resolvedFile) : resolvedFile;
+      if (!resolvedReal.startsWith(`${expectedDir}${sep}`) && resolvedReal !== expectedDir) {
+        throw new Error(`legacy-crove-invariant-bridge: ${target} resolved outside ${expectedDir} (${resolvedReal})`);
+      }
+      return resolved;
     },
   };
 }
