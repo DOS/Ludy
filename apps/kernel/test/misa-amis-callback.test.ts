@@ -86,13 +86,23 @@ const bodyOf = async (response: Response) => (await response.json()) as Record<s
 
 describe('the MISA AMIS callback route with a ClientID per product (#4103)', () => {
   const ASP = 'asp-client-id-0123456789abcdef';
-  const both = () => fixture({ misaAmisCallback: { clientIds: [CLIENT, ASP] } });
+  const both = () =>
+    fixture({
+      misaAmisCallback: {
+        keys: [
+          { product: 'amis', clientId: CLIENT },
+          { product: 'asp', clientId: ASP },
+        ],
+      },
+    });
 
-  it('takes a message signed by either held ClientID, with the app_id of the one that signed it', async () => {
+  it('takes a message signed by either held ClientID, with the app_id of the one that signed it, and hands it to the enqueue of that product', async () => {
     const f = both();
     expect((await f.post(message([item()], {}, CLIENT))).status).toBe(200);
     expect((await f.post(message([item()], {}, ASP))).status).toBe(200);
     expect(f.sqlSeen).toHaveLength(2);
+    expect(f.sqlSeen[0]?.sql).toContain('misa_amis_callback_enqueue');
+    expect(f.sqlSeen[1]?.sql).toContain('misa_asp_callback_enqueue');
   });
 
   it('refuses a message whose app_id is not the key that signed it, and one nobody holds, with the same fixed 401 and nothing logged about a key', async () => {

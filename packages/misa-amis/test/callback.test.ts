@@ -115,45 +115,49 @@ describe('parseCallbackResults', () => {
 
 describe('readCallbackAny: the deployment holds one ClientID per product (#4103)', () => {
   const OTHER = '7c1b6f3e-1d2a-4f0e-9a58-3e5b8d2f41aa';
+  const AMIS = { product: 'amis', clientId: CLIENT } as const;
+  const ASP = { product: 'asp', clientId: OTHER } as const;
   const signedBy = (clientId: string, over: Record<string, unknown> = {}) => {
     const data = JSON.stringify([entry({ success: true, error_code: null, error_message: '' })]);
     return JSON.stringify({ success: true, app_id: clientId, error_code: '', error_message: '', signature: signCallbackData(data, clientId), data_type: 1, org_company_code: 'ludy-abc', data, ...over });
   };
 
-  it('accepts a message that verifies under any held key, whatever its place in the list, and reads it as readCallback would', () => {
-    for (const keys of [[CLIENT, OTHER], [OTHER, CLIENT]]) {
-      for (const sender of [CLIENT, OTHER]) {
-        const body = signedBy(sender);
-        expect(readCallbackAny(body, keys)).toEqual(readCallback(body, sender));
-        expect(readCallbackAny(body, keys).ok).toBe(true);
+  it('accepts a message that verifies under any held key, whatever its place in the list, reads it as readCallback would, and says which product signed', () => {
+    for (const keys of [[AMIS, ASP], [ASP, AMIS]]) {
+      for (const sender of [AMIS, ASP]) {
+        const body = signedBy(sender.clientId);
+        const read = readCallbackAny(body, keys);
+        expect(read).toEqual({ ...readCallback(body, sender.clientId), product: sender.product });
       }
     }
-    expect(readCallbackAny(signedBy(CLIENT), [CLIENT])).toEqual(readCallback(signedBy(CLIENT), CLIENT));
+    expect(readCallbackAny(signedBy(CLIENT), [AMIS])).toMatchObject({ ok: true, product: 'amis' });
   });
 
   it('refuses a message no held key signed, and one signed by a key but carrying another app_id, the same way: `signature`', () => {
-    expect(readCallbackAny(signedBy('a-key-nobody-holds'), [CLIENT, OTHER])).toEqual({ ok: false, reason: 'signature' });
-    // Signed with OTHER, but the envelope says it is CLIENT's: the same refusal, not a hint of which key was close.
-    expect(readCallbackAny(signedBy(OTHER, { app_id: CLIENT }), [CLIENT, OTHER])).toEqual({ ok: false, reason: 'signature' });
+    expect(readCallbackAny(signedBy('a-key-nobody-holds'), [AMIS, ASP])).toEqual({ ok: false, reason: 'signature' });
+    // Signed with ASP's key, but the envelope says it is AMIS's: the same refusal, not a hint of which key was close.
+    expect(readCallbackAny(signedBy(OTHER, { app_id: CLIENT }), [AMIS, ASP])).toEqual({ ok: false, reason: 'signature' });
     expect(readCallbackAny(signedBy(CLIENT), [])).toEqual({ ok: false, reason: 'signature' });
+    // A deployment that holds one product's key does not take the other's messages.
+    expect(readCallbackAny(signedBy(OTHER), [AMIS])).toEqual({ ok: false, reason: 'signature' });
   });
 
   it('keeps the failures no key decides: a body that is not an envelope, and a good signature on a `data` that is not a list of results', () => {
-    expect(readCallbackAny('not json', [CLIENT, OTHER])).toEqual({ ok: false, reason: 'malformed' });
+    expect(readCallbackAny('not json', [AMIS, ASP])).toEqual({ ok: false, reason: 'malformed' });
     const data = 'not a list';
     const body = JSON.stringify({ app_id: OTHER, data_type: 1, org_company_code: 'x', data, signature: signCallbackData(data, OTHER) });
-    expect(readCallbackAny(body, [CLIENT, OTHER])).toEqual({ ok: false, reason: 'data' });
+    expect(readCallbackAny(body, [AMIS, ASP])).toEqual({ ok: false, reason: 'data' });
   });
 
   it('tries every key even after one has matched: nothing short-circuits on a match', () => {
-    // A key list whose entries are read through a getter that counts: every entry is read for a message the first key signed.
-    let reads = 0;
-    const keys = new Proxy([CLIENT, OTHER, 'a-third-key'], {
+    // A key list whose map counts the entries it visits: every entry is visited for a message the first key signed.
+    let visited = 0;
+    const keys = new Proxy([AMIS, ASP, { product: 'amis', clientId: 'a-third-key' } as const], {
       get(target, property, receiver) {
         if (property === 'map') {
-          return (fn: (value: string, index: number) => unknown) =>
+          return (fn: (value: (typeof target)[number], index: number) => unknown) =>
             target.map((value, index) => {
-              reads += 1;
+              visited += 1;
               return fn(value, index);
             });
         }
@@ -161,6 +165,6 @@ describe('readCallbackAny: the deployment holds one ClientID per product (#4103)
       },
     });
     expect(readCallbackAny(signedBy(CLIENT), keys).ok).toBe(true);
-    expect(reads).toBe(3);
+    expect(visited).toBe(3);
   });
 });
