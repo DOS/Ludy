@@ -279,7 +279,8 @@ function MemberSessionsPanel({ userId, name, onClose }: { userId: string; name: 
   const sorted = sortSessions(sessions.data ?? [], null);
   const active = sorted.filter((s) => s.status === 'active');
   const revoked = sorted.filter((s) => s.status === 'revoked');
-  const labelOf = (s: SessionRow) => t('session', { id: shortSessionId(s.sessionId) });
+  // In an admin's view of another member's sessions "another device" would be wrong: the label is neutral.
+  const labelOf = (s: SessionRow) => t('sessionNamed', { id: shortSessionId(s.sessionId) });
   const ask = (next: MemberTarget) => {
     revoke.reset();
     setTarget(next);

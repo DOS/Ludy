@@ -65,6 +65,31 @@ describe('Settings Apps', () => {
     expect(html).not.toContain('>Social<');
   });
 
+  it('shows one status signal per row: no badge on a row in use, a badge on a row that is off or not in the plan (ST-2)', () => {
+    for (const locale of ['en', 'vi'] as const) {
+      const messages = locale === 'en' ? en : viMessages;
+      const inUse = render(true, [app('finance'), app('hr')], locale);
+      expect(inUse).not.toContain('In use');
+      expect(inUse).not.toContain('Đang dùng');
+      expect(inUse.match(/aria-checked="true"/g)).toHaveLength(2);
+      expect(inUse).not.toContain(messages.orgApps.status.off);
+      expect(inUse).not.toContain(messages.orgApps.status.notInPlan);
+      const mixed = render(true, [app('finance'), app('hr', { enabled: false }), app('sign', { entitled: false })], locale);
+      expect(mixed.split(messages.orgApps.status.off)).toHaveLength(2);
+      expect(mixed.split(messages.orgApps.status.notInPlan)).toHaveLength(2);
+    }
+  });
+
+  it('names the groups and rows with the shell\'s own words, never "Social" as an app (ST-2)', () => {
+    const html = render(true, [app('notes'), app('social'), app('crm'), app('ads')], 'vi');
+    const escapeHtml = (s: string) => s.replaceAll('&', '&amp;');
+    expect(html).toContain(escapeHtml(viMessages.nav.apps.teamwork));
+    expect(html).toContain(escapeHtml(viMessages.nav.apps.engage));
+    expect(html).toContain(escapeHtml('Ghi chú & Việc của tôi'));
+    expect(html).toContain(escapeHtml('Hộp thư & Bài đăng'));
+    expect(html).not.toMatch(/>(Social|Ghi chú &amp; Việc cá nhân)</);
+  });
+
   it('says why an app is off: switched off by the owner, or not in the plan (and then it has no working switch)', () => {
     const html = render(true, [app('finance'), app('social', { enabled: false }), app('hr', { entitled: false })]);
     expect(html).toContain(en.orgApps.status.off);
