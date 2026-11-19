@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What a sealed MCP grant context reads of Hộp thư and the CRM, and that it writes nothing (#3858 slice b; ADR-0051 decisions 10 to 12, owner decision 2026-11-18/19). The database decides, not the query:
-// - a company grant (kind `mcp_company`, whole-org scope) reads every conversation of its own org and their messages, notes and contact identities, of every kind, and no row of another org; a company context
+// - a company grant (kind `mcp_company`, whole-org scope; a little stricter than a person, whose conversation access ignores the entity scope) reads every conversation of its own org and their messages, notes and contact identities, of every kind, and no row of another org; a company context
 //   without the whole-org scope reads none;
 // - a member-bound grant (kind `mcp_member`) reads exactly what its member reads as a person (owner and admin everything; a member comment threads, private messages and email only with
 //   `kernel.conversation.direct.read`, and only the channels they are limited to; a viewer comment threads), never another member's share, and nothing at all when the sealed member is not a member of the org
@@ -150,6 +150,15 @@ suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that
     await seedConversation('a2d', orgA, channel.a2 as string, 'direct', users.owner as string);
     await seedConversation('b1c', orgB, channel.b1 as string, 'comment_thread', users.foreign as string);
     await seedConversation('b1d', orgB, channel.b1 as string, 'direct', users.foreign as string);
+    // The mail row of a conversation reply follows its thread's message (policy mail_message_conversation_reply): one per thread of org A and B.
+    for (const key of ['a1c', 'a1d', 'b1d']) {
+      const org = key.startsWith('a') ? orgA : orgB;
+      conv[`mail:${key}`] = randomUUID();
+      await sqlAdmin(
+        `INSERT INTO crove_kernel.mail_message (org_id, id, stream, source, source_id, template_key, to_hash, message_id_header) VALUES ($1, $2, 'transactional', 'kernel.conversation.reply', $3, 'kernel.conversation_reply', $4, $5)`,
+        [org, conv[`mail:${key}`], conv[`message:${key}`], 'a'.repeat(64), `<${randomUUID()}@mcp-grant-read.test>`],
+      );
+    }
     // The CRM: a party, a stage, a deal and a quote in each org.
     for (const [key, org, owner] of [['a', orgA, users.owner], ['b', orgB, users.foreign]] as const) {
       const party = randomUUID();
@@ -188,7 +197,7 @@ suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that
     }
   });
 
-  it('reads nothing for a company context without the whole-org scope, as a person limited to an entity reads none of the org-wide rows', async () => {
+  it('reads nothing for a company context without the whole-org scope (stricter than a person, whose conversation access ignores the entity scope)', async () => {
     for (const table of CONVERSATION_TABLES) expect(await ids(company(orgA, ['11111111-1111-4111-8111-111111111111']), table), table).toEqual([]);
   });
 
@@ -259,6 +268,20 @@ suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that
     expect(await ids(company(randomUUID()), 'crove_kernel.conversation')).toEqual([]);
   });
 
+  it('lets the mail row of a conversation reply follow its thread for a grant, as it does for a person: a grant reads the reply row of a thread it may read and no other', async () => {
+    const mine = (ctx: Sealed) => asSealed(ctx, async (c) => (await c.query<{ id: string }>(`SELECT id FROM crove_kernel.mail_message WHERE source = 'kernel.conversation.reply'`)).rows.map((r) => r.id).sort());
+    expect(await mine(company(orgA))).toEqual([conv['mail:a1c'], conv['mail:a1d']].sort());
+    expect(await mine(member(orgA, 'plain'))).toEqual([conv['mail:a1c']]);
+    expect(await mine(member(orgA, 'plain'))).toEqual(await mine(person(orgA, 'plain')));
+    expect(await mine(company(orgB))).toEqual([conv['mail:b1d']]);
+  });
+
+  it('keeps parity with the person for an entity-limited seal', async () => {
+    // A member seal limited to an entity reads the same as the person of that role (conversation access ignores the entity scope).
+    const limitedSeal: Sealed = { ...member(orgA, 'plain'), le_scope: ['11111111-1111-4111-8111-111111111111'] };
+    expect(await ids(limitedSeal, 'crove_kernel.conversation')).toEqual(await ids({ ...person(orgA, 'plain'), le_scope: ['11111111-1111-4111-8111-111111111111'] }, 'crove_kernel.conversation'));
+  });
+
   it('writes nothing: no insert, update or delete on a conversation table or a CRM table, for either kind, even in a read-write transaction', async () => {
     const attempts: Array<[string, string, unknown[]]> = [
       [`UPDATE crove_kernel.conversation SET status = 'pending' WHERE org_id = $1`, 'update conversation', [orgA]],
@@ -268,6 +291,7 @@ suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that
       [`DELETE FROM crove_kernel.conversation_note WHERE org_id = $1`, 'delete note', [orgA]],
       [`UPDATE crove_kernel.conversation_identity SET display_name = 'x' WHERE org_id = $1`, 'update identity', [orgA]],
       [`UPDATE crove_kernel.party SET name = 'x' WHERE org_id = $1`, 'update party', [orgA]],
+      [`UPDATE crove_kernel.mail_message SET status = 'failed' WHERE org_id = $1 AND source = 'kernel.conversation.reply'`, 'update reply mail', [orgA]],
       [`DELETE FROM crove_crm.deal WHERE org_id = $1`, 'delete deal', [orgA]],
       [`UPDATE crove_crm.deal SET title = 'x' WHERE org_id = $1`, 'update deal', [orgA]],
     ];
@@ -288,6 +312,12 @@ suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that
         () => [orgA, conv.a1c, channel.a1],
       ],
       [`INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'x')`, 'insert party', () => [orgA]],
+      [`INSERT INTO crove_kernel.conversation_identity (org_id, provider, external_user_id) VALUES ($1, 'facebook', 'x')`, 'insert identity', () => [orgA]],
+      [
+        `INSERT INTO crove_kernel.mail_message (org_id, stream, source, source_id, template_key, to_hash, message_id_header) VALUES ($1, 'transactional', 'kernel.conversation.reply', $2, 'kernel.conversation_reply', $3, '<x@y.test>')`,
+        'insert reply mail',
+        () => [orgA, conv['message:a1c'], 'a'.repeat(64)],
+      ],
     ];
     for (const ctx of [company(orgA), member(orgA, 'admin'), member(orgA, 'owner'), member(orgA, 'desk')]) {
       await asSealed(ctx, async (c) => {
@@ -395,6 +425,17 @@ suite('what a sealed MCP grant context reads of Hộp thư and the CRM, and that
       expect(def).toMatch(/SECURITY DEFINER/);
       expect(def).toMatch(/ctx_mcp_member_id/);
     });
+    // The functions that read the sealed member helper: this one, the helper itself and the two older ones that already name it (the agent write guard, which refuses a member grant every write, and the input hash). A new reader would open a table to a member grant unseen, so the set is exact.
+    const readers = await sqlAdmin<{ n: string }>(
+      `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace s ON s.oid = p.pronamespace
+       WHERE s.nspname NOT LIKE 'pg\\_%' AND s.nspname <> 'information_schema' AND p.prokind IN ('f', 'p') AND pg_get_functiondef(p.oid) ~* 'ctx_mcp_member_id' ORDER BY 1`,
+    );
+    expect(readers.rows.map((r) => r.n)).toEqual([
+      'crove_kernel.agent_write_guard()',
+      'crove_kernel.command_input_hash(text,text,text)',
+      'crove_kernel.conversation_access_mcp_member(text,uuid)',
+      'crove_kernel.ctx_mcp_member_id()',
+    ]);
     // A person, a company grant and no context get false, whatever kind and channel they ask for.
     for (const ctx of [person(orgA, 'admin'), person(orgA, 'owner'), company(orgA)]) {
       const answer = await asSealed(ctx, async (c) => (await c.query<{ ok: boolean }>(`SELECT crove_kernel.conversation_access_mcp_member('comment_thread', $1) AS ok`, [channel.a1])).rows[0]?.ok);

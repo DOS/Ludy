@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- What a sealed MCP grant context may read of Hộp thư (#3858, slice b; ADR-0051 decisions 10 to 12, owner decision 2026-11-18/19). READ ONLY. Two more ways in, for the sealed contexts of an MCP grant and for
 -- nothing else, on the two policies that decide who reads a conversation and its messages:
---   a company grant (kind `mcp_company`, an owner's or admin's; the whole-org scope '*' as for a person)
+--   a company grant (kind `mcp_company`, an owner's or admin's; the whole-org scope '*', a little stricter than a person, whose conversation_access ignores the entity scope)
 --                        reads every conversation of its org and their messages, of every kind (comment thread, private message, email): the rights of the owner or admin who made the grant;
 --   a member-bound grant (kind `mcp_member`, ADR-0049 member mode)
 --                        reads exactly what its member may read, worked out in the database from the sealed member: the base role (owner and admin everything; a member the comment threads of the
@@ -9,6 +9,10 @@
 --                        channels), by crove_kernel.conversation_access_mcp_member(kind, connection), which asks ctx_mcp_member_id() and so answers false to every other context.
 -- The function is a definer because member_has_permission refuses a tenant login that asks about anyone but itself (PERMISSION_QUERY_FORBIDDEN), and a sealed member context has no user to ask for; it reads only through the
 -- org of the context and the sealed member (ctx_org_id, ctx_mcp_member_id) and returns a boolean, never a row, so it cannot be steered to another org or member.
+-- The sealed company context is also the one the wake worker enters for a signal sweep (enter_mcp_wake_company_context seals the same kind), so that entry gains this read as well; it is read only there too.
+-- A member grant now reads private messages and email of its member without a row in mcp_member_table: that catalog is for tables private to one member (notes), and these are org tables read by member rights; the
+-- owner decision of 2026-11-18/19 (a grant reads conversations and CRM within its role and member binding) is what lifts the 2026-11-13 hold for them. Both per-row calls are wrapped in a sub-select so the
+-- sealed context is verified once per statement, not once per row.
 -- Nothing else changes for anyone: the person branch (crove_kernel.conversation_access) is untouched. The notes of a thread and the identity of a contact are read through the thread's own row (their
 -- policies ask for a readable thread), so they follow for free and their write checks still refuse an agent; attachments, drafts, composing markers and read marks ask conversation_access directly and stay
 -- closed to a grant, as does every other table of the module. CRM rows (party, deal, quote, booking) carry only the org policy, so a sealed context already reads its own org's rows and no other, and
@@ -43,11 +47,14 @@ CREATE POLICY conversation_scope_read ON crove_kernel.conversation AS RESTRICTIV
   USING (
     crove_kernel.conversation_access(kind, channel_connection_id, false)
     OR (
-      crove_kernel.ctx_actor_type() = 'agent'
+      (SELECT crove_kernel.ctx_actor_type()) = 'agent'
       AND (SELECT crove_kernel.ctx_verified() ->> 'kind') = 'mcp_company'
       AND '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
     )
-    OR crove_kernel.conversation_access_mcp_member(kind, channel_connection_id)
+    OR (
+      (SELECT crove_kernel.ctx_mcp_member_id()) IS NOT NULL
+      AND crove_kernel.conversation_access_mcp_member(kind, channel_connection_id)
+    )
   );
 DROP POLICY IF EXISTS conversation_scope_insert ON crove_kernel.conversation;
 CREATE POLICY conversation_scope_insert ON crove_kernel.conversation AS RESTRICTIVE FOR INSERT TO crove_tenant
@@ -67,11 +74,14 @@ CREATE POLICY conversation_message_scope_read ON crove_kernel.conversation_messa
   USING (
     crove_kernel.conversation_access(kind, channel_connection_id, false)
     OR (
-      crove_kernel.ctx_actor_type() = 'agent'
+      (SELECT crove_kernel.ctx_actor_type()) = 'agent'
       AND (SELECT crove_kernel.ctx_verified() ->> 'kind') = 'mcp_company'
       AND '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
     )
-    OR crove_kernel.conversation_access_mcp_member(kind, channel_connection_id)
+    OR (
+      (SELECT crove_kernel.ctx_mcp_member_id()) IS NOT NULL
+      AND crove_kernel.conversation_access_mcp_member(kind, channel_connection_id)
+    )
   );
 DROP POLICY IF EXISTS conversation_message_scope_insert ON crove_kernel.conversation_message;
 CREATE POLICY conversation_message_scope_insert ON crove_kernel.conversation_message AS RESTRICTIVE FOR INSERT TO crove_tenant
