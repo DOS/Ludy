@@ -508,6 +508,7 @@ import {
 } from './meeting-minutes-templates.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
+import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
 import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import {
   zMeetingHookCleared,
@@ -1313,6 +1314,12 @@ export const contract = {
       facts: oc.input(zBriefTarget).output(zBriefFacts),
       status: oc.input(zBriefEmpty).output(zBriefStatus),
       write: oc.input(zBriefTarget).output(zBriefAnswer),
+    },
+    // Who an action item belongs to, by Vy, when code found nobody (#3921, step 2): `status` is the button (may Vy be used now), `suggest` the click that has the member's own Vy pick one of the people they may give
+    // the work to from the name said in the meeting, or nobody. The model sees names only; the answer is a number the route maps to a person; nothing is stored, and a person still picks the seat and makes the task.
+    assignee: {
+      status: oc.input(zBriefEmpty).output(zAssigneeStatus),
+      suggest: oc.input(zAssigneeAsk).output(zAssigneeAnswer),
     },
     // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): no model; code matches by time and a person confirms. `list` is today's meetings, `suggest` the event
     // a recording overlaps, `setReadEvents` the member's switch (the cache is deleted when it goes off), `link` the click that attaches a recorded meeting to its event.
