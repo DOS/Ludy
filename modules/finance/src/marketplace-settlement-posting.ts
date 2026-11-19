@@ -9,7 +9,7 @@
 import { DomainError } from '@crove/kernel-runtime';
 import { money, sum, toMoney } from '@crove/l10n-vn';
 import { journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
-import { requireConfirmedMarketplaceMap, type MarketplacePostingMap } from './marketplace-posting-map.ts';
+import { requireConfirmedMarketplaceMap, type MarketplacePath, type MarketplacePostingMap } from './marketplace-posting-map.ts';
 
 export interface SettlementPostingLine {
   sales: string;
@@ -65,7 +65,7 @@ export interface SettlementProposal {
 }
 
 // The lines of the entry, from the map's accounts. Nothing is checked about the status here: settlementProposal is the gated entry point.
-function settlementProposalLines(input: SettlementProposalInput, map: Pick<MarketplacePostingMap, 'receivable' | 'revenue' | 'salesReturn' | 'vatPayable' | 'pitPayable' | 'pitExpense'>): ProposedJournalLine[] {
+function settlementProposalLines(input: SettlementProposalInput, map: Pick<MarketplacePostingMap, 'receivable' | 'revenue' | 'salesReturn' | 'vatPayable' | 'pitPayable' | 'pitOwnerEquity'>): ProposedJournalLine[] {
   const bad = (reason: string, extra: Record<string, unknown> = {}) => new DomainError('MARKETPLACE_SETTLEMENT_NOT_POSTABLE', 422, reason, extra);
   // Each line's amounts are decimal strings of at most four places and not negative: a negative discount or sale must not inflate the revenue.
   for (const l of input.lines) {
@@ -90,7 +90,7 @@ function settlementProposalLines(input: SettlementProposalInput, map: Pick<Marke
   if (tax) {
     const taxMemo = `${memo}, thuế sàn đã khấu trừ`;
     if (!money(tax.vat).isZero()) lines.push({ account: map.revenue.code, debit: tax.vat, credit: '0', partyId: null, memo: taxMemo }, { account: map.vatPayable.code, debit: '0', credit: tax.vat, partyId: null, memo: taxMemo });
-    if (!money(tax.pit).isZero()) lines.push({ account: map.pitExpense.code, debit: tax.pit, credit: '0', partyId: null, memo: taxMemo }, { account: map.pitPayable.code, debit: '0', credit: tax.pit, partyId: null, memo: taxMemo });
+    if (!money(tax.pit).isZero()) lines.push({ account: map.pitOwnerEquity.code, debit: tax.pit, credit: '0', partyId: null, memo: taxMemo }, { account: map.pitPayable.code, debit: '0', credit: tax.pit, partyId: null, memo: taxMemo });
   }
   return lines;
 }
@@ -109,10 +109,17 @@ export function withheldSplit(input: Pick<SettlementProposalInput, 'lines' | 'ta
   return { total: toMoney(total), vat: toMoney(vat), pit: toMoney(total.minus(vat)) };
 }
 
+// The paths a settlement posts through (#3711 slice 1): the sales, and the household tax lines only when this settlement carries withheld tax for a household seller. Read from the amounts alone, so a
+// malformed one is still refused by its own check below and not by the gate.
+export function settlementPaths(input: Pick<SettlementProposalInput, 'lines' | 'tax'>): MarketplacePath[] {
+  const withheld = input.lines.some((l) => typeof l.taxWithheld === 'string' && /[1-9]/.test(l.taxWithheld));
+  return input.tax && withheld ? ['sales', 'household_tax'] : ['sales'];
+}
+
 // The gated proposal: the map of the regime must be confirmed, the net not zero, and the entry must pass the journal voucher's own shape checks. The party of the 131 line may still be null
 // (the later slice fills it), so that one problem is not raised for it here; the party link is checked when the entry is recorded.
 export function settlementProposal(input: SettlementProposalInput, maps?: Readonly<Record<string, MarketplacePostingMap>>): SettlementProposal {
-  const map = requireConfirmedMarketplaceMap(input.regime, maps);
+  const map = requireConfirmedMarketplaceMap(input.regime, maps, settlementPaths(input));
   const lines = settlementProposalLines(input, map);
   const problems = journalVoucherProblems(lines.map((l) => ({ ...l, partyId: l.partyId ?? (l.account === map.receivable.code ? 'pending' : null) })));
   if (problems.length > 0) throw new DomainError('MARKETPLACE_SETTLEMENT_NOT_POSTABLE', 422, 'Bút toán của kỳ đối soát không hợp lệ', { problems });
