@@ -32,13 +32,14 @@ export function legacyCroveInvariantBridge(rootDir: string) {
   const ludyPkgDirs = new Map<string, string>();
   for (const pkgDir of pkgDirs) {
     const manifestPath = join(pkgDir, 'package.json');
-    const pkg = JSON.parse(readFileSync(manifestPath, 'utf8')) as { name?: string };
+    const pkgReal = realpathSync(pkgDir);
+    const manifestReal = realpathSync(manifestPath);
+    if ((!pkgReal.startsWith(`${repoReal}${sep}`) && pkgReal !== repoReal) || !manifestReal.startsWith(`${pkgReal}${sep}`)) {
+      throw new Error(`vitest.invariant.config.ts: workspace manifest ${manifestPath} resolves outside repo root (${manifestReal})`);
+    }
+    const pkg = JSON.parse(readFileSync(manifestReal, 'utf8')) as { name?: string };
     if (typeof pkg.name !== 'string' || pkg.name.length === 0) {
       throw new Error(`vitest.invariant.config.ts: ${manifestPath} has no package name`);
-    }
-    const pkgReal = realpathSync(pkgDir);
-    if (!pkgReal.startsWith(`${repoReal}${sep}`) && pkgReal !== repoReal) {
-      throw new Error(`vitest.invariant.config.ts: workspace package ${pkg.name} resolves outside repo root (${pkgReal})`);
     }
     if (seenNames.has(pkg.name)) {
       throw new Error(`vitest.invariant.config.ts: duplicate workspace package name ${pkg.name} (${manifestPath})`);

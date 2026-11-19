@@ -31,6 +31,7 @@ const adPlatformPkg = (JSON.parse(read('packages/ad-platform/package.json')) as 
 if (adPlatformPkg !== '@crove/ad-platform' && adPlatformPkg !== '@ludy/ad-platform') {
   throw new Error(`Unexpected ad-platform package name: ${adPlatformPkg}`);
 }
+const otherAdPlatformPkg = adPlatformPkg === '@crove/ad-platform' ? '@ludy/ad-platform' : '@crove/ad-platform';
 const adPlatformRe = adPlatformPkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
@@ -93,6 +94,7 @@ describe('what may change a running ad at the platform (#3835, W4)', () => {
     const job = code('apps/kernel/src/ads-manage.ts');
     expect(job).not.toMatch(/LaunchWriter|AdPauser|AdRevoker|AdActivator|AdStateReader|\.setStatus\(|\.activate\(|createCampaign|createAdSet|createCreative|createAd\(|revokeToken|findByTag|\.verify\(/);
     // The platform package's names the job imports are the error and the two types of the view.
+    expect(job).not.toContain(otherAdPlatformPkg);
     expect(job).toMatch(new RegExp(`import \\{ AdPlatformError, type AdManager, type ManagedRead \\} from '${adPlatformRe}';`));
   });
 

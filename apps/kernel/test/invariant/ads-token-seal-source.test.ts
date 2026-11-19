@@ -28,6 +28,7 @@ const adPlatformPkg = (JSON.parse(read('packages/ad-platform/package.json')) as 
 if (adPlatformPkg !== '@crove/ad-platform' && adPlatformPkg !== '@ludy/ad-platform') {
   throw new Error(`Unexpected ad-platform package name: ${adPlatformPkg}`);
 }
+const otherAdPlatformPkg = adPlatformPkg === '@crove/ad-platform' ? '@ludy/ad-platform' : '@crove/ad-platform';
 const adPlatformRe = adPlatformPkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
@@ -52,7 +53,9 @@ describe('what may open or name the sealed copy of a closed ads connection token
     expect(file).not.toContain('kernel.channel.credential');
     expect(file).not.toMatch(/runtime\.(execute|query)[^;]*envelope/);
     // The platform adapters it is built on are the revoke view and the typed error, never a writer.
-    const imports = [...read('apps/kernel/src/ads-revoke.ts').matchAll(new RegExp(`import \\{([^}]*)\\} from '${adPlatformRe}'`, 'g'))].flatMap((m) => (m[1] ?? '').split(',').map((s) => s.replace(/\btype\b/, '').trim()));
+    const rawRevoke = read('apps/kernel/src/ads-revoke.ts');
+    expect(rawRevoke).not.toContain(otherAdPlatformPkg);
+    const imports = [...rawRevoke.matchAll(new RegExp(`import \\{([^}]*)\\} from '${adPlatformRe}'`, 'g'))].flatMap((m) => (m[1] ?? '').split(',').map((s) => s.replace(/\btype\b/, '').trim()));
     expect(imports.sort()).toEqual(['AdPlatformError', 'AdRevoker']);
   });
 

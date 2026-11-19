@@ -73,6 +73,11 @@ describe('legacyCroveInvariantBridge (#3965 step 1 of 2)', () => {
     mkdirSync(join(escaping, 'apps'), { recursive: true });
     symlinkSync(externalTarget, join(escaping, 'apps/escaped'));
     expect(() => legacyCroveInvariantBridge(escaping)).toThrow(/resolves outside repo root/);
+
+    const escapingManifest = makeTempDir('ludy-bridge-escape-manifest-');
+    mkdirSync(join(escapingManifest, 'apps/local'), { recursive: true });
+    symlinkSync(join(externalTarget, 'package.json'), join(escapingManifest, 'apps/local/package.json'));
+    expect(() => legacyCroveInvariantBridge(escapingManifest)).toThrow(/resolves outside repo root/);
   });
 
   it('stays inactive when all packages use @crove/* and leaves non-invariant importers untouched', async () => {

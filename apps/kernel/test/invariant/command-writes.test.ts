@@ -353,6 +353,8 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
     expect(kernel.slice(start, end)).toMatch(/new Runtime\(/);
     const runtimePkg = (JSON.parse(readFileSync(join(ROOT, 'packages/kernel-runtime/package.json'), 'utf8')) as { name: string }).name;
     expect(['@crove/kernel-runtime', '@ludy/kernel-runtime']).toContain(runtimePkg);
+    const otherRuntimePkg = runtimePkg === '@crove/kernel-runtime' ? '@ludy/kernel-runtime' : '@crove/kernel-runtime';
+    expect(kernel).not.toContain(otherRuntimePkg);
     const escapedPkg = runtimePkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const runtimeImport = [...kernel.matchAll(new RegExp(`\\bimport\\b[^;]*?\\bfrom\\s*'${escapedPkg}';`, 'g'))];
     expect(runtimeImport).toHaveLength(1);
