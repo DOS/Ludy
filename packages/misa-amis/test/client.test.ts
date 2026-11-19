@@ -228,6 +228,12 @@ describe('delete, catalogues and company', () => {
     expect(fake.calls.at(-1)?.path).toBe('/amiskt/v1/save_dictionary');
   });
 
+  it('refuses a catalogue page with an entry that is not an object, so a page is never shortened without anyone knowing (a caller that pages by length would stop early)', async () => {
+    const rows = [{ account_object_code: 'NCC0' }, null, { account_object_code: 'NCC2' }] as unknown as Record<string, unknown>[];
+    const { client } = setup({ dictionary: { [AMIS_DICTIONARIES.accountObject]: rows } });
+    expect(await fails(client.dictionary(conn, { dataType: AMIS_DICTIONARIES.accountObject, skip: 0, take: 10 }))).toMatchObject({ kind: 'invalid_response' });
+  });
+
   it('tests a connection with the company information', async () => {
     const { client } = setup();
     expect(await client.companyInfo(conn, '0e0a14cf-9e4b-4af9-875b-c490f34a581b')).toEqual({ company_name: 'Công ty thử', branch_id: '0e0a14cf-9e4b-4af9-875b-c490f34a581b' });

@@ -580,4 +580,48 @@ suite('MISA AMIS connections (#3875)', () => {
     await expect(api.execute('finance.misa_amis.push', { connectionId: String(asp?.id), kind: 'purchase_services', digest: 'a'.repeat(64), legalEntityId: String(asp?.legal_entity_id) }, { actor: asUser(owner), orgId })).rejects.toMatchObject({ code: 'MISA_ASP_PUSH_NOT_AVAILABLE' });
   });
 
+  // The insert guard fails closed and cannot be skipped (#4132, two LOW items of the security review of #4131).
+  it('files a connection only when the channel connection of its product is found, so a channel row the writer cannot see is refused, and the guard fires in replica mode too', async () => {
+    const entity = await newEntity('Chi nhánh guard kín');
+    const channel = randomUUID();
+    await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_asp', $3, 'ASP thử', $4)", [orgId, channel, entity, owner.userId]);
+    // As the owner of the org (the sealed context, the tenant role), with a restrictive policy that hides the ASP channel rows from the tenant role: the foreign key still sees the row, the guard does not.
+    const fileAsOwner = (product: string, hide: boolean) =>
+      admin(async (c) => {
+        await c.query('BEGIN');
+        try {
+          if (hide) await c.query("CREATE POLICY hide_asp_test ON crove_kernel.channel_connection AS RESTRICTIVE FOR SELECT TO crove_tenant USING (provider <> 'accounting_misa_asp')");
+          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner.userId, orgId)]);
+          await c.query('SET LOCAL ROLE crove_tenant');
+          await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id, product) VALUES ($1, $2, $3, $4)', [orgId, entity, channel, product]);
+          return 'filed';
+        } catch (error) {
+          return String((error as Error).message);
+        } finally {
+          await c.query('ROLLBACK');
+        }
+      });
+    // The control: with the row visible, the right product files and the wrong one is refused.
+    expect(await fileAsOwner('asp', false)).toBe('filed');
+    expect(await fileAsOwner('amis', false)).toMatch(/MISA_AMIS_CONNECTION_PROVIDER/);
+    // Hidden from the writer: neither product can be filed (before, the wrong one passed and the right one too, unchecked).
+    expect(await fileAsOwner('amis', true)).toMatch(/MISA_AMIS_CONNECTION_PROVIDER/);
+    expect(await fileAsOwner('asp', true)).toMatch(/MISA_AMIS_CONNECTION_PROVIDER/);
+    // ENABLE ALWAYS: the trigger is enabled in every replication role, and a superuser's insert in replica mode is still held to the provider.
+    const [trigger] = await rows<{ tgenabled: string }>("SELECT tgenabled FROM pg_catalog.pg_trigger WHERE tgname = 'misa_amis_connection_guard' AND NOT tgisinternal");
+    expect(trigger?.tgenabled).toBe('A');
+    const replica = await admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query('SET LOCAL session_replication_role = replica');
+        await c.query("INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id, product) VALUES ($1, $2, $3, 'amis')", [orgId, entity, channel]);
+        return 'filed';
+      } catch (error) {
+        return String((error as Error).message);
+      } finally {
+        await c.query('ROLLBACK');
+      }
+    });
+    expect(replica).toMatch(/MISA_AMIS_CONNECTION_PROVIDER/);
+  });
 });
