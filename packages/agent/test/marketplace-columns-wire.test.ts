@@ -50,4 +50,14 @@ describe('what leaves for the model for the column proposal (the bytes of the HT
     expect(messages[0]?.content).toBe(marketplaceColumnsInstructions('vi'));
     expect(messages[1]?.content).toBe(`${marketplaceColumnsFactsText(FACTS)}\n\nSay which standard field each column is, or "none".`);
   });
+
+  it('makes no call and books nothing for a sheet with fewer than three columns to show', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    booked.length = 0;
+    const result = await withAiScope({ orgId: 'org', meter }, () => reader().marketplaceColumns({ language: 'vi', columns: FACTS.columns.slice(0, 2) }));
+    expect(result).toEqual({ kind: 'none', code: 'EMPTY' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(booked).toEqual([]);
+  });
 });

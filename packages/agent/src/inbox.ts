@@ -31,7 +31,7 @@ import {
   type ReviewCandidateProfileOptions,
 } from './recruiting-coworker.ts';
 import { ORDER_FIELDS } from '@crove/l10n-vn';
-import { checkMarketplaceColumns, marketplaceColumnsInstructions, marketplaceColumnsPrompt, type MarketplaceColumnFacts, type MarketplaceColumnsResult } from './marketplace-columns.ts';
+import { checkMarketplaceColumns, marketplaceColumnsHaveNews, marketplaceColumnsInstructions, marketplaceColumnsPrompt, type MarketplaceColumnFacts, type MarketplaceColumnsResult } from './marketplace-columns.ts';
 import { checkMarketplaceFeeNotes, marketplaceFeeNotesInstructions, marketplaceFeeNotesPrompt, type MarketplaceFeeNoteFacts, type MarketplaceFeeNotesResult } from './marketplace-fee-note.ts';
 import { checkMisaAmisBlockerNotes, MISA_AMIS_BLOCKER_KINDS, misaAmisBlockerNotesInstructions, misaAmisBlockerNotesPrompt, type MisaAmisBlockerNotesFacts, type MisaAmisBlockerNotesResult } from './misa-amis-blocker-notes.ts';
 import { checkMisaCheckLineSentence, misaCheckLineInstructions, misaCheckLinePrompt, type MisaCheckLineFacts, type MisaCheckLineResult } from './misa-check-line.ts';
@@ -698,6 +698,8 @@ export class InboxReader {
    * proposal. A column or field answered twice, a column not given and a field not on the list are dropped; the result is a proposal the caller reads the real file with before a person confirms it
    * (marketplace-columns.ts). onUsage gets the tokens the call used, for the org's AI cost limit. */
   async marketplaceColumns(facts: MarketplaceColumnFacts, onUsage?: (usage: AiUsage) => void): Promise<MarketplaceColumnsResult> {
+    // Fewer than three columns to show is no report: no model call, no budget spent.
+    if (!marketplaceColumnsHaveNews(facts)) return { kind: 'none', code: 'EMPTY' };
     const { output, usage } = await this.generateMarketplaceColumns({ system: marketplaceColumnsInstructions(facts.language), prompt: marketplaceColumnsPrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkMarketplaceColumns(facts, output);

@@ -35,13 +35,16 @@ describe('what a model may see', () => {
     expect(maskSample('Nguyễn Văn Mua, Hà Nội')).toBe('aaaaaa aaa a');
     expect(maskSample('line one\nline two')).toBe('aaaa aaa');
     expect(maskSample('')).toBe('');
+    // Digits of any script and any mark off the short list are shapes too.
+    expect(maskSample('０９１２٣٤٥٦٧٨')).toBe('9999999999');
+    expect(maskSample('a¥€')).toBe('aaa');
   });
 
   it('knows a buyer header in Vietnamese, English and camelCase, and not a word that only contains one', () => {
-    for (const h of ['Người Mua', 'Tên người nhận', 'Số điện thoại', 'Địa chỉ nhận hàng', 'Buyer Name', 'buyerName', 'Recipient Phone', 'Email', 'Khách đặt', 'Ward', 'Postal Code']) {
+    for (const h of ['Người Mua', 'Tên người nhận', 'Số điện thoại', 'Địa chỉ nhận hàng', 'Buyer Name', 'buyerName', 'Recipient Phone', 'Email', 'Khách đặt', 'Ward', 'Postal Code', 'Tên KH', 'Người đặt', 'Họ và tên', 'Số ĐT', 'Liên hệ', 'Tỉnh/Thành phố', 'Phường/Xã', 'Mã số thuế', 'Ghi chú', 'Lời nhắn', 'E-mail', 'Tel', 'Ship to', 'Nickname', 'shippingCity', 'taxCode', 'BUYERNAME', 'Zipcode', 'Message to seller']) {
       expect(isBuyerHeader(h), h).toBe(true);
     }
-    for (const h of ['Mã đơn hàng', 'Reward points', 'Order Status', 'Tổng tiền', 'Seller SKU', 'Wardrobe']) {
+    for (const h of ['Mã đơn hàng', 'Reward points', 'Order Status', 'Tổng tiền', 'Seller SKU', 'Wardrobe', 'Tình trạng', 'Trạng thái đơn']) {
       expect(isBuyerHeader(h), h).toBe(false);
     }
   });
@@ -63,14 +66,14 @@ describe('what a model may see', () => {
 
   it('shows only shapes for a column whose header is not flagged, so a phone or an email planted there never reaches the model', () => {
     const planted = grid([
-      ['Mã đơn', 'Ghi chú', 'Liên hệ', 'Số lượng'],
+      ['Mã đơn', 'Cột phụ 1', 'Cột phụ 2', 'Số lượng'],
       ['A1', 'gọi 0900000001', 'mua@example.com', '2'],
-      ['A2', 'Nguyễn Văn Mua', '0900000002', '1'],
+      ['A2', 'Nguyễn Văn Mua', '0900000003', '1'],
     ]);
     const sheet = columnSheet(planted);
     expect(sheet?.columns.map((c) => c.buyer)).toEqual([false, false, false, false]);
     const wire = JSON.stringify(sheet);
-    for (const secret of ['0900000001', '0900000002', 'mua@example.com', 'example', 'Nguyễn', 'Mua', 'gọi']) expect(wire).not.toContain(secret);
+    for (const secret of ['0900000001', '0900000003', 'mua@example.com', 'example', 'Nguyễn', 'Mua', 'gọi']) expect(wire).not.toContain(secret);
     expect(sheet?.columns[1]?.samples).toEqual(['aaa 99999999', 'aaaaaa aaa a']);
     expect(sheet?.columns[2]?.samples).toEqual(['aaa@aaaaaaa.', '9999999999']);
   });
@@ -79,6 +82,63 @@ describe('what a model may see', () => {
     expect(columnSheet(grid([['a', 'b'], ['c', 'd']]))).toBeNull();
     expect(columnSheet(grid([HEAD]))).toBeNull();
     expect(columnSheet(grid([Array.from({ length: 61 }, (_, i) => `c${i}`), Array.from({ length: 61 }, () => 'x')]))).toBeNull();
+  });
+});
+
+describe('finding the header row', () => {
+  it('never takes a row of values for the header: a file with no header row gives no sheet and shows no buyer value', () => {
+    const headerless = grid([
+      ['SO1', 'Nguyễn Văn A', '0912000001', '12 Lê Lợi, Q1', '2', '100000'],
+      ['SO2', 'Trần B', '0912000002', '13 Lê Lợi, Q1', '1', '50000'],
+    ]);
+    expect(columnSheet(headerless)).toBeNull();
+    expect(JSON.stringify(columnSheet(headerless))).not.toContain('Nguyễn');
+  });
+
+  it('passes over a three-cell title or period row above the real header', () => {
+    const rows = grid([['Shop Hoa', 'Kỳ 10/2026', 'Xuất 01/11'], ['Báo cáo', 'bán', 'hàng'], HEAD, row('A1', '2', '100.000')]);
+    const sheet = columnSheet(rows);
+    expect(sheet?.headerRow).toBe(3);
+    expect(JSON.stringify(sheet)).not.toContain('Shop Hoa');
+    expect(JSON.stringify(sheet)).not.toContain('10/2026');
+  });
+});
+
+describe('a mapping that reads without stopping and still misreads', () => {
+  const HEAD2 = ['Mã', 'Cột phụ', 'Hàng', 'SL', 'Tiền', 'Đặt', 'Giao'];
+  const r = (order: string, note: string, qty: string, total: string, placed = '2026-10-01', shipped = '2026-10-03'): string[] => [order, note, 'Bút', qty, total, placed, shipped];
+  const SHEET2 = grid([HEAD2, r('A1', '', '2', '100.000'), r('A2', 'gói kỹ', '1', '50.000'), r('A3', '', '3', '90.000')]);
+  const OK2: ColumnAssignment[] = [
+    { index: 0, field: 'orderNo' },
+    { index: 2, field: 'itemName' },
+    { index: 3, field: 'quantity' },
+    { index: 4, field: 'amount' },
+    { index: 5, field: 'orderedAt' },
+    { index: 6, field: 'shippedAt' },
+  ];
+
+  it('accepts the right mapping of this sheet', () => {
+    expect(checkColumnMapping(SHEET2, 'shopee', OK2, 1000).ok).toBe(true);
+  });
+
+  it('refuses a sparse column taken for the order number (the notes column), which would drop the real rows', () => {
+    const wrong = OK2.map((a) => (a.field === 'orderNo' ? { index: 1, field: 'orderNo' as const } : a));
+    expect(checkColumnMapping(SHEET2, 'shopee', wrong, 1000)).toEqual({ ok: false, reason: 'rows_without_order' });
+  });
+
+  it('refuses a return status mapped with no order status, which would read every completed order as a return', () => {
+    const wrong: ColumnAssignment[] = [...OK2, { index: 1, field: 'returnStatus' }];
+    expect(checkColumnMapping(SHEET2, 'shopee', wrong, 1000)).toEqual({ ok: false, reason: 'return_without_status' });
+  });
+
+  it('refuses the quantity and the amount swapped', () => {
+    const wrong = OK2.map((a) => (a.field === 'quantity' ? { index: 4, field: 'quantity' as const } : a.field === 'amount' ? { index: 3, field: 'amount' as const } : a));
+    expect(checkColumnMapping(SHEET2, 'shopee', wrong, 1000)).toEqual({ ok: false, reason: 'quantity_exceeds_amount' });
+  });
+
+  it('refuses two date columns swapped (the order placed after it was shipped on most rows)', () => {
+    const wrong = OK2.map((a) => (a.field === 'orderedAt' ? { index: 6, field: 'orderedAt' as const } : a.field === 'shippedAt' ? { index: 5, field: 'shippedAt' as const } : a));
+    expect(checkColumnMapping(SHEET2, 'shopee', wrong, 1000)).toEqual({ ok: false, reason: 'dates_swapped' });
   });
 });
 
