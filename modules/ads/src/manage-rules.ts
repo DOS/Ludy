@@ -187,3 +187,18 @@ export function unclearOpen(changes: readonly ChangeRow[], kinds: readonly AdsMa
   const applied = mine.filter((c) => c.state === 'applied').reduce((max, c) => Math.max(max, c.seq), 0);
   return mine.some((c) => c.state === 'unclear' && c.seq > applied);
 }
+
+// How old the last touch of an unclear change's call must be before the sweep settles it by a read: a call whose answer was lost may still be landing, and a read that comes too
+// soon would take "not yet" for "never". The database's pick function uses the same ten minutes.
+export const SETTLE_MIN_AGE_SECONDS = 600;
+
+// Whether a read of the object can settle this unclear change: it is unclear, and no newer change of its family is queued, applied or unclear (a newer one is what the platform shows
+// now, so the read says nothing of this one; a failed or cancelled one never ran). The family is the budget, the schedule, or the status of one slot. The same rule as the database's
+// guard, which refuses the settlement of any other.
+export function settleCandidate(changes: readonly (ChangeRow & { id: string })[], changeId: string): boolean {
+  const change = changes.find((c) => c.id === changeId);
+  if (!change || change.state !== 'unclear') return false;
+  const familyOf = (c: ChangeRow): string => (BUDGET_KINDS.includes(c.kind) ? 'budget' : SCHEDULE_KINDS.includes(c.kind) ? 'schedule' : `status:${c.slot}`);
+  const mine = familyOf(change);
+  return !changes.some((c) => c.seq > change.seq && familyOf(c) === mine && (c.state === 'queued' || c.state === 'applied' || c.state === 'unclear'));
+}

@@ -11,6 +11,9 @@
 // 2. The call: the job opens the sealed token with the credential broker (here and nowhere else) and changes the one object begin named; or, for a `reconcile`, reads the
 //    object and takes "it is as asked" as the answer.
 // 3. `ads.manage.record` settles the row and the change (`applied`; `failed`; or the row `ambiguous` when the answer cannot be told).
+// A change that stays unclear (three unclear calls or an hour) is settled later by the sweep's read (#3898, `settle: true`): begin hands out the object to read when nothing newer of its
+// family has overtaken the change and its last call is old enough, the job reads it through the same view and the same token, and record settles it as applied (the object shows the
+// change) or failed (it is as it was), or leaves it unclear when the read cannot be made. No call is made and no ledger row is begun: it never changes what the platform runs.
 // The secret lives in one function's scope and is never logged, never put in an error, never sent to a command.
 import { AdPlatformError, type AdManager, type ManagedRead } from '@crove/ad-platform';
 import { sameAmount, sameInstant, type ManageBegin, type ManageRecorded, type ManageResult } from '@crove/mod-ads';
@@ -28,6 +31,8 @@ export const BEGIN_TO_CALL_MS = 60_000;
 export interface AdsManageJob {
   orgId: string;
   changeId: string;
+  // A change that ended unclear, to settle by reading its object (#3898): the job reads and settles it, and calls nothing.
+  settle?: boolean;
 }
 
 export interface AdsManageDeps {
@@ -89,7 +94,7 @@ function failure(error: unknown): ManageResult {
   return { kind: 'unknown', error: 'unknown', code: codeOf(error) };
 }
 
-type Work = Extract<ManageBegin, { action: 'call' | 'reconcile' }>;
+type Work = Extract<ManageBegin, { action: 'call' | 'reconcile' | 'settle' }>;
 
 // Whether a read of the object shows the change is made: the status is the one asked for, the budget is the one asked for (as decimals), or the end time is the same instant.
 function landed(work: Work, read: ManagedRead): boolean {
@@ -97,6 +102,17 @@ function landed(work: Work, read: ManagedRead): boolean {
   if (work.toBudget !== null) return read.dailyBudget !== null && sameAmount(read.dailyBudget, work.toBudget);
   if (work.toEndTime !== null) return read.endTime !== null && sameInstant(read.endTime, work.toEndTime);
   return false;
+}
+
+// What a read of the object says of an unclear change (#3898): `found` when it shows the change, `missing` ONLY when it positively shows what the object had before (the old budget,
+// the old end time, or a known status other than the one asked for), anything else `unknown`. A read that shows a third value (the owner set one in the platform's own tools, a budget
+// the platform no longer reports, a time zone that moved) says nothing of this change, and failing it would release what it holds: the change stays unclear and counted.
+function settled(work: Work, read: ManagedRead): 'found' | 'missing' | 'unknown' {
+  if (landed(work, read)) return 'found';
+  if (work.toStatus !== null) return read.status !== 'other' ? 'missing' : 'unknown';
+  if (work.toBudget !== null) return read.dailyBudget !== null && work.fromBudget !== null && sameAmount(read.dailyBudget, work.fromBudget) ? 'missing' : 'unknown';
+  if (work.toEndTime !== null) return read.endTime !== null && work.fromEndTime !== null && sameInstant(read.endTime, work.fromEndTime) ? 'missing' : 'unknown';
+  return 'unknown';
 }
 
 // The one call of the change, by what the change is.
@@ -113,7 +129,7 @@ async function runChange(deps: AdsManageDeps, job: AdsManageJob, manager: AdMana
   const now = deps.now ?? (() => performance.now());
   const stale = () => now() - beganAt > BEGIN_TO_CALL_MS;
   const options = { actor: SYSTEM, orgId: job.orgId };
-  const record = (phase: 'call' | 'reconcile', result: ManageResult) =>
+  const record = (phase: 'call' | 'reconcile' | 'settle', result: ManageResult) =>
     recordAfterCall('ads.manage.record', () => deps.runtime.execute<ManageRecorded>('ads.manage.record', { changeId: work.changeId, callKey: work.callKey, phase, result }, options));
   const ended = (recorded: ManageRecorded, why: string) => (recorded.recorded ? (recorded.state === 'applied' ? 'applied' : why) : (recorded.reason ?? 'stale'));
 
@@ -125,21 +141,29 @@ async function runChange(deps: AdsManageDeps, job: AdsManageJob, manager: AdMana
     secret = deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, { orgId: job.orgId, provider: sealed.provider, externalAccountId: sealed.externalAccountId });
   } catch (error) {
     const code = error instanceof DomainError ? error.code.replace(/[^A-Za-z0-9_.]/g, '_').slice(0, 64) : 'CREDENTIAL_UNREADABLE';
+    // A begin that waited too long (a stalled worker) records nothing here either: the connection may have closed just after another worker took the row and made the call, and a
+    // `blocked` from this one would then fail a change whose call landed. The row stays as begin left it, so a later begin reads the object before anything is sent.
+    if (work.action === 'call' && stale()) return 'stale_begin';
     // A read that could not ask leaves the row unclear (the change may have landed); a call that was not made ends the change.
-    const result: ManageResult = work.action === 'reconcile' ? { kind: 'unknowable', code } : { kind: 'blocked', code };
+    const result: ManageResult = work.action === 'call' ? { kind: 'blocked', code } : { kind: 'unknowable', code };
     return ended(await record(work.action, result), code);
   }
 
   const target = { level: work.level, id: work.objectId };
-  if (work.action === 'reconcile') {
+  if (work.action === 'reconcile' || work.action === 'settle') {
     let result: ManageResult;
     try {
       const read = await timed(() => manager.read(secret, target, work.account));
-      // Landed: recorded, never asked again. Not landed: the call may be made again (begin re-checked everything and the record checks the stop conditions once more).
-      result = landed(work, read) ? { kind: 'found' } : { kind: 'missing' };
+      // Landed: recorded, never asked again. Not landed: the call may be made again (begin re-checked everything and the record checks the stop conditions once more). A settle's
+      // read that shows neither the new nor the old value is no answer.
+      const answer = work.action === 'settle' ? settled(work, read) : landed(work, read) ? 'found' : 'missing';
+      result = answer === 'found' ? { kind: 'found' } : answer === 'missing' ? { kind: 'missing' } : { kind: 'unknowable', code: 'READ_UNEXPECTED' };
     } catch (error) {
       result = { kind: 'unknowable', code: codeOf(error) };
     }
+    // The sweep's read of an unclear change (#3898): found settles it as applied, missing as failed, a read that could not be made leaves it unclear. Never a call, and the clock of
+    // begin does not matter: a read changes nothing.
+    if (work.action === 'settle') return ended(await record('settle', result), result.kind === 'missing' ? 'not_applied' : result.kind);
     const recorded = await record('reconcile', result);
     if (!(result.kind === 'missing' && recorded.recorded && recorded.next === 'call')) return ended(recorded, result.kind);
     // The read took too long since begin: no call now (the change stays queued, and a later begin reads it again before anything is sent).
@@ -166,7 +190,7 @@ export async function runAdsManage(deps: AdsManageDeps, job: AdsManageJob): Prom
   const options = { actor: SYSTEM, orgId: job.orgId };
   const providers = Object.keys(deps.managers);
   const beganAt = (deps.now ?? (() => performance.now()))();
-  const work = await deps.runtime.execute<ManageBegin>('ads.manage.begin', { changeId: job.changeId, providers }, options);
+  const work = await deps.runtime.execute<ManageBegin>('ads.manage.begin', { changeId: job.changeId, providers, ...(job.settle === true ? { settle: true } : {}) }, options);
   if (work.action === 'none') return { steps: 0, ended: work.reason };
   const manager = Object.hasOwn(deps.managers, work.provider) ? deps.managers[work.provider] : undefined;
   if (!manager) return { steps: 0, ended: 'no_manager' };
