@@ -8,6 +8,7 @@
 import type { Locale } from '../i18n/locale.ts';
 import type { Translate } from '../i18n/runtime.ts';
 import { KERNEL_LOCALE, kernelErrorMessage } from './kernel-errors.ts';
+import { isNetworkFailure } from './network-error.ts';
 
 export class ApiError extends Error {
   readonly code: string;
@@ -58,6 +59,7 @@ function serverMessageOf(error: unknown): string | null {
 
 // Any error in words for the user, in `locale`:
 // - an error of the SPA's own: its message;
+// - a request that got no answer (the browser's "Failed to fetch" and its like): the catalog's network message;
 // - a kernel error with a code the SPA knows (kernel-errors.ts): the kernel's message when the locale is the kernel's
 //   language (Vietnamese; it is the most specific, for example which role a FORBIDDEN was about), otherwise the
 //   SPA's message for the code and its details;
@@ -65,6 +67,7 @@ function serverMessageOf(error: unknown): string | null {
 //   message.
 export function describeError(error: unknown, t: Translate, locale: Locale): string {
   if (error instanceof ClientError) return error.describe(t);
+  if (isNetworkFailure(error)) return t('common.networkError');
   const e = (error ?? {}) as { code?: unknown; data?: unknown };
   const server = serverMessageOf(error);
   const code = typeof e.code === 'string' ? e.code : null;
