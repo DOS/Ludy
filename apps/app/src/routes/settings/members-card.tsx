@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useId, useState, type FormEvent } from 'react';
+import { useId, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -250,6 +250,7 @@ export function InviteMember({
     setEntityIds((ids) => (checked ? [...ids, id] : ids.filter((x) => x !== id)));
   };
 
+  const inviteButton = useRef<HTMLButtonElement>(null);
   const reset = () => {
     invite.reset();
     setOpen(false);
@@ -259,18 +260,21 @@ export function InviteMember({
     setEntityIds([]);
     setNoEntity(false);
     fields.reset();
+    // The dialog that closes was not the one that opened (the form gave way to the link): focus goes back to the button by hand.
+    window.setTimeout(() => inviteButton.current?.focus(), 0);
   };
   const stepUp = isStepUpRequired(invite.error);
   return (
     <>
       <div className="mt-4">
-        <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+        <Button ref={inviteButton} type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
           {t('inviteTitle')}
         </Button>
       </div>
       {/* The accept link is shown once, so the result stays on screen until it is closed. */}
       {open && invite.data && (
-        <Dialog open onOpenChange={(next) => !next && reset()}>
+        // Escape or the close button ends it; a click on the dimmed page does not, so the link shown once is not lost by a stray click.
+        <Dialog open disablePointerDismissal onOpenChange={(next) => !next && reset()}>
           <DialogContent closeLabel={root('common.close')}>
             <DialogHeader>
               <DialogTitle>{t('inviteTitle')}</DialogTitle>
@@ -308,90 +312,90 @@ export function InviteMember({
             ) : null
           }
         >
-        <Field id={emailId} label={t('inviteEmail')} hint={t('inviteHint')} error={fields.of('email')}>
-          {(control) => (
-            <Input
-              {...control}
-              type="email"
-              required
-              maxLength={320}
-              placeholder={t('emailPlaceholder')}
-              value={email}
-              onChange={(e) => {
-                setEmail(e.target.value);
-                fields.edit('email');
-              }}
-              onBlur={(e) => fields.blur('email', e.target.value)}
-            />
-          )}
-        </Field>
-        <DuplicateHint testId="invite-duplicate">{known ? t(known === 'member' ? 'inviteAlreadyMember' : 'inviteAlreadyInvited', { email: email.trim() }) : null}</DuplicateHint>
-        <Field label={t('role')}>
-          {(control) => (
-            <NativeSelect {...control} value={role} onChange={(e) => setRole(e.target.value as InviteRole)}>
-              {isOwner && !scoped && <NativeSelectOption value="admin">{root('roles.admin')}</NativeSelectOption>}
-              <NativeSelectOption value="member">{root('roles.member')}</NativeSelectOption>
-              <NativeSelectOption value="viewer">{root('roles.viewer')}</NativeSelectOption>
-            </NativeSelect>
-          )}
-        </Field>
-        {catalog.length > 0 &&
-          (isOwner ? (
-            <div className="space-y-1">
-              <NativeSelect value={department?.key ?? ''} onChange={(e) => setDepartmentKey(e.target.value)} disabled={scoped} aria-label={t('inviteDepartment')}>
-                <NativeSelectOption value="">{t('inviteDepartmentNone')}</NativeSelectOption>
-                {choices.map((r) => (
-                  <NativeSelectOption key={r.key} value={r.key}>
-                    {root(`memberRoles.roles.${r.key}`)}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-              {department && <p className="text-xs text-subtle-foreground">{root(`memberRoles.hints.${department.key}`)}</p>}
-              {scoped && <p className="text-xs text-subtle-foreground">{t('inviteDepartmentScoped')}</p>}
-            </div>
-          ) : (
-            <p className="text-xs text-subtle-foreground">{t('inviteDepartmentOwnerOnly')}</p>
-          ))}
-        {canScope && (
-          <div className="space-y-2">
-            <label className="flex items-center gap-2 text-sm text-foreground">
-              <Checkbox
-                checked={scoped}
-                disabled={Boolean(department)}
-                onCheckedChange={(checked) => {
-                  setScoped(checked);
-                  setNoEntity(false);
-                  // A scoped invite is never for an admin.
-                  if (checked && role === 'admin') setRole('member');
+          <Field id={emailId} label={t('inviteEmail')} hint={t('inviteHint')} error={fields.of('email')}>
+            {(control) => (
+              <Input
+                {...control}
+                type="email"
+                required
+                maxLength={320}
+                placeholder={t('emailPlaceholder')}
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  fields.edit('email');
                 }}
+                onBlur={(e) => fields.blur('email', e.target.value)}
               />
-              <span>{t('inviteScoped')}</span>
-            </label>
-            {scoped && (
-              <fieldset
-                className="space-y-1.5 rounded-lg border p-3"
-                aria-invalid={noEntity || undefined}
-                aria-describedby={noEntity ? `${scopeId}-hint ${scopeId}-error` : `${scopeId}-hint`}>
-                <legend className="px-1 text-xs text-subtle-foreground">{t('inviteEntities')}</legend>
-                <p id={`${scopeId}-hint`} className="text-xs text-subtle-foreground">
-                  {t('inviteScopedHint')}
-                </p>
-                {entities.map((e) => (
-                  <label key={e.id} className="flex items-center gap-2 text-sm text-foreground">
-                    <Checkbox checked={entityIds.includes(e.id)} onCheckedChange={(checked) => toggleEntity(e.id, checked)} />
-                    <span>{e.name}</span>
-                  </label>
-                ))}
-                {noEntity && (
-                  <p id={`${scopeId}-error`} role="alert" className="text-xs text-destructive">
-                    {t('inviteNoEntity')}
-                  </p>
-                )}
-              </fieldset>
             )}
-          </div>
-        )}
-          {invite.error && !stepUp && <ErrorText>{errorMessage(invite.error)}</ErrorText>}
+          </Field>
+          <DuplicateHint testId="invite-duplicate">{known ? t(known === 'member' ? 'inviteAlreadyMember' : 'inviteAlreadyInvited', { email: email.trim() }) : null}</DuplicateHint>
+          <Field label={t('role')}>
+            {(control) => (
+              <NativeSelect {...control} value={role} onChange={(e) => setRole(e.target.value as InviteRole)}>
+                {isOwner && !scoped && <NativeSelectOption value="admin">{root('roles.admin')}</NativeSelectOption>}
+                <NativeSelectOption value="member">{root('roles.member')}</NativeSelectOption>
+                <NativeSelectOption value="viewer">{root('roles.viewer')}</NativeSelectOption>
+              </NativeSelect>
+            )}
+          </Field>
+          {catalog.length > 0 &&
+            (isOwner ? (
+              <div className="space-y-1">
+                <NativeSelect value={department?.key ?? ''} onChange={(e) => setDepartmentKey(e.target.value)} disabled={scoped} aria-label={t('inviteDepartment')}>
+                  <NativeSelectOption value="">{t('inviteDepartmentNone')}</NativeSelectOption>
+                  {choices.map((r) => (
+                    <NativeSelectOption key={r.key} value={r.key}>
+                      {root(`memberRoles.roles.${r.key}`)}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+                {department && <p className="text-xs text-subtle-foreground">{root(`memberRoles.hints.${department.key}`)}</p>}
+                {scoped && <p className="text-xs text-subtle-foreground">{t('inviteDepartmentScoped')}</p>}
+              </div>
+            ) : (
+              <p className="text-xs text-subtle-foreground">{t('inviteDepartmentOwnerOnly')}</p>
+            ))}
+          {canScope && (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-foreground">
+                <Checkbox
+                  checked={scoped}
+                  disabled={Boolean(department)}
+                  onCheckedChange={(checked) => {
+                    setScoped(checked);
+                    setNoEntity(false);
+                    // A scoped invite is never for an admin.
+                    if (checked && role === 'admin') setRole('member');
+                  }}
+                />
+                <span>{t('inviteScoped')}</span>
+              </label>
+              {scoped && (
+                <fieldset
+                  className="space-y-1.5 rounded-lg border p-3"
+                  aria-invalid={noEntity || undefined}
+                  aria-describedby={noEntity ? `${scopeId}-hint ${scopeId}-error` : `${scopeId}-hint`}>
+                  <legend className="px-1 text-xs text-subtle-foreground">{t('inviteEntities')}</legend>
+                  <p id={`${scopeId}-hint`} className="text-xs text-subtle-foreground">
+                    {t('inviteScopedHint')}
+                  </p>
+                  {entities.map((e) => (
+                    <label key={e.id} className="flex items-center gap-2 text-sm text-foreground">
+                      <Checkbox checked={entityIds.includes(e.id)} onCheckedChange={(checked) => toggleEntity(e.id, checked)} />
+                      <span>{e.name}</span>
+                    </label>
+                  ))}
+                  {noEntity && (
+                    <p id={`${scopeId}-error`} role="alert" className="text-xs text-destructive">
+                      {t('inviteNoEntity')}
+                    </p>
+                  )}
+                </fieldset>
+              )}
+            </div>
+          )}
+            {invite.error && !stepUp && <ErrorText>{errorMessage(invite.error)}</ErrorText>}
         </FormDialog>
       )}
     </>

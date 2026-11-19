@@ -530,15 +530,9 @@ export function AddPositionDialog({ positions, templates = [], entities, entitie
   // Until the owner picks, the org's default entity, which the server gives a new position anyway.
   const [picked, setPicked] = useState<string[] | null>(null);
   const leScope = picked ?? defaultScope(entities);
-  const [key, setKey] = useState(() => crypto.randomUUID());
+  const [key] = useState(() => crypto.randomUUID());
   const create = useMutation(orpc.chart.createPosition.mutationOptions({ onSuccess: refresh }));
-  const close = onClose;
-  const cleared = {
-    onSuccess: () => {
-      onClose();
-      setKey(crypto.randomUUID());
-    },
-  };
+  const cleared = { onSuccess: onClose };
   const blocked = !entitiesReady || (entities.length > 1 && !scopeReady(leScope));
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -558,91 +552,91 @@ export function AddPositionDialog({ positions, templates = [], entities, entitie
   };
   const locked = isStepUpRequired(create.error);
   return (
-        <FormDialog
-          title={t('addPosition')}
-          busy={create.isPending}
-          dirty={title.trim() !== ''}
-          submitLabel={t('addPosition')}
-          submitDisabled={locked || blocked || !title.trim()}
-          onClose={close}
-          onSubmit={submit}
-          outside={
-            locked ? (
-              <Refusal
-                error={create.error}
-                variables={create.variables}
-                retry={(v) => create.mutate(v, cleared)}
-                reset={() => create.reset()}
-                action={t('stepUpAddPosition', { title: create.variables?.title ?? '' })}
-                className="text-xs text-destructive"
-              />
-            ) : null
-          }
-        >
-          {/* The name first: it is what the owner knows. The role code is made from it and the app, never typed. */}
-          <Field label={t('positionTitle')}>
-            {(control) => <Input {...control} required maxLength={200} value={title} disabled={locked} onChange={(e) => setTitle(e.target.value)} />}
-          </Field>
-          <Field label={t('positionModule')}>
+    <FormDialog
+      title={t('addPosition')}
+      busy={create.isPending}
+      dirty={title.trim() !== ''}
+      submitLabel={t('addPosition')}
+      submitDisabled={locked || blocked || !title.trim()}
+      onClose={onClose}
+      onSubmit={submit}
+      outside={
+        locked ? (
+          <Refusal
+            error={create.error}
+            variables={create.variables}
+            retry={(v) => create.mutate(v, cleared)}
+            reset={() => create.reset()}
+            action={t('stepUpAddPosition', { title: create.variables?.title ?? '' })}
+            className="text-xs text-destructive"
+          />
+        ) : null
+      }
+    >
+      {/* The name first: it is what the owner knows. The role code is made from it and the app, never typed. */}
+      <Field label={t('positionTitle')}>
+        {(control) => <Input {...control} required maxLength={200} value={title} disabled={locked} onChange={(e) => setTitle(e.target.value)} />}
+      </Field>
+      <Field label={t('positionModule')}>
+        {(control) => (
+          <NativeSelect
+            {...control}
+            value={chosenModule}
+            disabled={locked}
+            onChange={(e) => {
+              setModule(e.target.value);
+              setPresetRole('');
+            }}
+          >
+            {modules.map((m) => (
+              <NativeSelectOption key={m} value={m}>
+                {moduleName(m)}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        )}
+      </Field>
+      <Button type="button" variant="ghost" size="sm" className="justify-self-start" aria-expanded={more} aria-controls={moreId} onClick={() => setMore((m) => !m)}>
+        {t('moreOptions')}
+      </Button>
+      {more && (
+        <div id={moreId} className="grid gap-3">
+          <Field label={t('reportsTo')}>
             {(control) => (
-              <NativeSelect
-                {...control}
-                value={chosenModule}
-                disabled={locked}
-                onChange={(e) => {
-                  setModule(e.target.value);
-                  setPresetRole('');
-                }}
-              >
-                {modules.map((m) => (
-                  <NativeSelectOption key={m} value={m}>
-                    {moduleName(m)}
+              <NativeSelect {...control} value={reportsTo} disabled={locked} onChange={(e) => setReportsTo(e.target.value)}>
+                <NativeSelectOption value="">{t('reportsToOwners')}</NativeSelectOption>
+                {positions.map((p) => (
+                  <NativeSelectOption key={p.id} value={p.id}>
+                    {positionTitle(p.title)}
                   </NativeSelectOption>
                 ))}
               </NativeSelect>
             )}
           </Field>
-          <Button type="button" variant="ghost" size="sm" className="justify-self-start" aria-expanded={more} aria-controls={moreId} onClick={() => setMore((m) => !m)}>
-            {t('moreOptions')}
-          </Button>
-          {more && (
-            <div id={moreId} className="grid gap-3">
-              <Field label={t('reportsTo')}>
-                {(control) => (
-                  <NativeSelect {...control} value={reportsTo} disabled={locked} onChange={(e) => setReportsTo(e.target.value)}>
-                    <NativeSelectOption value="">{t('reportsToOwners')}</NativeSelectOption>
-                    {positions.map((p) => (
-                      <NativeSelectOption key={p.id} value={p.id}>
-                        {positionTitle(p.title)}
-                      </NativeSelectOption>
-                    ))}
-                  </NativeSelect>
-                )}
-              </Field>
-              {moduleTemplates.length > 0 && (
-                <Field label={t('positionRolePreset')}>
-                  {(control) => (
-                    <NativeSelect
-                      {...control}
-                      value={selectedPresetIndex}
-                      disabled={locked}
-                      onChange={(e) => setPresetRole(e.target.value === '' ? '' : (moduleTemplates[Number(e.target.value)]?.roleKey ?? ''))}
-                    >
-                      <NativeSelectOption value="">{t('positionRoleAuto')}</NativeSelectOption>
-                      {moduleTemplates.map((tpl, idx) => (
-                        <NativeSelectOption key={tpl.key} value={String(idx)}>
-                          {templateTitle(tpl.key, tpl.title)}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                  )}
-                </Field>
+          {moduleTemplates.length > 0 && (
+            <Field label={t('positionRolePreset')}>
+              {(control) => (
+                <NativeSelect
+                  {...control}
+                  value={selectedPresetIndex}
+                  disabled={locked}
+                  onChange={(e) => setPresetRole(e.target.value === '' ? '' : (moduleTemplates[Number(e.target.value)]?.roleKey ?? ''))}
+                >
+                  <NativeSelectOption value="">{t('positionRoleAuto')}</NativeSelectOption>
+                  {moduleTemplates.map((tpl, idx) => (
+                    <NativeSelectOption key={tpl.key} value={String(idx)}>
+                      {templateTitle(tpl.key, tpl.title)}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
               )}
-              {entities.length > 1 && <LeScopePicker label={t('leScope')} entities={entities} value={leScope} onChange={setPicked} disabled={locked} />}
-            </div>
+            </Field>
           )}
-          {create.error && !locked && <ErrorText>{errorMessage(create.error)}</ErrorText>}
-        </FormDialog>
+          {entities.length > 1 && <LeScopePicker label={t('leScope')} entities={entities} value={leScope} onChange={setPicked} disabled={locked} />}
+        </div>
+      )}
+      {create.error && !locked && <ErrorText>{errorMessage(create.error)}</ErrorText>}
+    </FormDialog>
   );
 }
 
@@ -862,8 +856,7 @@ export function BudgetDialog({ agents, onClose }: { agents: Agent[]; onClose: ()
   const [warnPercent, setWarnPercent] = useState('80');
   const [hardStop, setHardStop] = useState(true);
   const set = useMutation(orpc.agents.setBudget.mutationOptions({ onSuccess: refresh }));
-  const close = onClose;
-  const done = { onSuccess: close };
+  const done = { onSuccess: onClose };
   const targets: Array<{ value: string; label: string }> =
     scope === 'org' ? [{ value: '*', label: t('scope.org') }] : scope === 'module' ? modules.map((m) => ({ value: m, label: moduleName(m) })) : agents.map((a) => ({ value: a.id, label: a.displayName }));
   const amountOk = isBudgetAmount(limit);
@@ -882,100 +875,100 @@ export function BudgetDialog({ agents, onClose }: { agents: Agent[]; onClose: ()
   };
   const locked = isStepUpRequired(set.error);
   return (
-        <FormDialog
-          title={t('setBudget')}
-          busy={set.isPending}
-          dirty={limit.trim() !== ''}
-          submitLabel={t('setBudget')}
-          submitDisabled={locked}
-          onClose={close}
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!fields.checkAll(['target', 'limit', 'warnPercent'])) {
-              focusFirstInvalid(event.currentTarget);
-              return;
-            }
-            set.mutate({ scope, target: chosenTarget, monthlyLimit: limit.trim(), warnPercent: warn, hardStop, idempotencyKey: crypto.randomUUID() }, done);
-          }}
-          outside={locked ? <Refusal error={set.error} variables={set.variables} retry={(v) => set.mutate(v, done)} reset={() => set.reset()} action={t('stepUpBudget')} className="text-xs text-destructive" /> : null}
-        >
-          {/* The amount first: it is what the owner decides. The scope starts at the whole org. */}
-          <Field id={idOf('limit')} label={t('budgetLimit')} error={fields.of('limit')}>
-            {(c) => (
-              <Input
-                {...c}
-                inputMode="decimal"
-                required
-                value={limit}
-                disabled={locked}
-                onChange={(e) => {
-                  setLimit(e.target.value);
-                  fields.edit('limit');
-                }}
-                onBlur={(e) => fields.blur('limit', e.target.value)}
-              />
-            )}
-          </Field>
-          <Field label={t('budgetScope')}>
-            {(c) => (
-              <NativeSelect {...c} value={scope} disabled={locked} onChange={(e) => pickScope(e.target.value as (typeof SCOPES)[number])}>
-                {SCOPES.map((sc) => (
-                  <NativeSelectOption key={sc} value={sc}>
-                    {t(`scope.${sc}`)}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            )}
-          </Field>
-          {scope !== 'org' && (
-            <Field id={idOf('target')} label={t('budgetTarget')} error={fields.of('target')}>
-              {(c) => (
-                <NativeSelect
-                  {...c}
-                  value={chosenTarget}
-                  disabled={locked}
-                  onChange={(e) => {
-                    setTarget(e.target.value);
-                    fields.edit('target');
-                  }}
-                >
-                  {chosenTarget === '' && (
-                    <NativeSelectOption value="" disabled>
-                      {''}
-                    </NativeSelectOption>
-                  )}
-                  {targets.map((o) => (
-                    <NativeSelectOption key={o.value} value={o.value}>
-                      {o.label}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
+    <FormDialog
+      title={t('setBudget')}
+      busy={set.isPending}
+      dirty={limit.trim() !== ''}
+      submitLabel={t('setBudget')}
+      submitDisabled={locked}
+      onClose={onClose}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!fields.checkAll(['target', 'limit', 'warnPercent'])) {
+          focusFirstInvalid(event.currentTarget);
+          return;
+        }
+        set.mutate({ scope, target: chosenTarget, monthlyLimit: limit.trim(), warnPercent: warn, hardStop, idempotencyKey: crypto.randomUUID() }, done);
+      }}
+      outside={locked ? <Refusal error={set.error} variables={set.variables} retry={(v) => set.mutate(v, done)} reset={() => set.reset()} action={t('stepUpBudget')} className="text-xs text-destructive" /> : null}
+    >
+      {/* The amount first: it is what the owner decides. The scope starts at the whole org. */}
+      <Field id={idOf('limit')} label={t('budgetLimit')} error={fields.of('limit')}>
+        {(c) => (
+          <Input
+            {...c}
+            inputMode="decimal"
+            required
+            value={limit}
+            disabled={locked}
+            onChange={(e) => {
+              setLimit(e.target.value);
+              fields.edit('limit');
+            }}
+            onBlur={(e) => fields.blur('limit', e.target.value)}
+          />
+        )}
+      </Field>
+      <Field label={t('budgetScope')}>
+        {(c) => (
+          <NativeSelect {...c} value={scope} disabled={locked} onChange={(e) => pickScope(e.target.value as (typeof SCOPES)[number])}>
+            {SCOPES.map((sc) => (
+              <NativeSelectOption key={sc} value={sc}>
+                {t(`scope.${sc}`)}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        )}
+      </Field>
+      {scope !== 'org' && (
+        <Field id={idOf('target')} label={t('budgetTarget')} error={fields.of('target')}>
+          {(c) => (
+            <NativeSelect
+              {...c}
+              value={chosenTarget}
+              disabled={locked}
+              onChange={(e) => {
+                setTarget(e.target.value);
+                fields.edit('target');
+              }}
+            >
+              {chosenTarget === '' && (
+                <NativeSelectOption value="" disabled>
+                  {''}
+                </NativeSelectOption>
               )}
-            </Field>
+              {targets.map((o) => (
+                <NativeSelectOption key={o.value} value={o.value}>
+                  {o.label}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
           )}
-          <Field id={idOf('warnPercent')} label={t('warnPercent')} error={fields.of('warnPercent')}>
-            {(c) => (
-              <Input
-                {...c}
-                type="number"
-                min={1}
-                max={100}
-                value={warnPercent}
-                disabled={locked}
-                onChange={(e) => {
-                  setWarnPercent(e.target.value);
-                  fields.edit('warnPercent');
-                }}
-                onBlur={(e) => fields.blur('warnPercent', e.target.value)}
-              />
-            )}
-          </Field>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Checkbox checked={hardStop} disabled={locked} onCheckedChange={(checked) => setHardStop(checked)} />
-            {t('hardStop')}
-          </label>
-          {set.error && !locked && <ErrorText>{errorMessage(set.error)}</ErrorText>}
-        </FormDialog>
+        </Field>
+      )}
+      <Field id={idOf('warnPercent')} label={t('warnPercent')} error={fields.of('warnPercent')}>
+        {(c) => (
+          <Input
+            {...c}
+            type="number"
+            min={1}
+            max={100}
+            value={warnPercent}
+            disabled={locked}
+            onChange={(e) => {
+              setWarnPercent(e.target.value);
+              fields.edit('warnPercent');
+            }}
+            onBlur={(e) => fields.blur('warnPercent', e.target.value)}
+          />
+        )}
+      </Field>
+      <label className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Checkbox checked={hardStop} disabled={locked} onCheckedChange={(checked) => setHardStop(checked)} />
+        {t('hardStop')}
+      </label>
+      {set.error && !locked && <ErrorText>{errorMessage(set.error)}</ErrorText>}
+    </FormDialog>
   );
 }
 
