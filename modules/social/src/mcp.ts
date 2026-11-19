@@ -20,6 +20,7 @@ import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runti
 import { channelScope, connectionInScope, postInScope, type ChannelScope } from './channel-access.ts';
 import { withSignature } from './domain/signature.ts';
 import { postFilterQuery } from './post-filter.ts';
+import { currentAndPrevious, latestMetrics, spanTotals, type WindowTotals } from './metrics.ts';
 
 const GRANTORS: readonly MemberRole[] = ['owner', 'admin'];
 export const MCP_POSTS_DEFAULT = 25;
@@ -300,4 +301,110 @@ export const mcpReviewQueue = defineQuery({
   },
 });
 
-export const mcpSocialQueries = [mcpPosts, mcpReviewQueue];
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// The results of Social (epic #3857, E1, issue #3860): `ludy_social_metrics_summary` (social.mcp.metrics_summary) and `ludy_social_metrics_totals` (social.mcp.metrics_totals).
+// Privacy review: both are R0 reads of the numbers the Metrics tab shows an owner or admin, for a company grant's consenting owner or admin only (a member-bound grant is not offered them: the channel
+// limits of a member (#1081) are read from the person, and a sealed member context has none, so nothing here could narrow the answer to a member's channels).
+// What leaves, per published channel copy: its id, its post's id, the provider, the channel connection's id, an excerpt of the text it went out with (one plain line of at most MCP_EXCERPT_MAX
+// characters; text a person, an AI or a visitor wrote, so data and never an instruction), when it went out, its public link, the latest real counts the platform answered (normalized counts, a count
+// the platform does not report is absent), when they were captured and the clicks on its short link. The totals carry only counts per window and per channel (the channel connection's id and provider).
+// Never returned: the full text, comments, labels, assignees, the author, channel names, tokens or settings, media, a post that is not published, a post archived after it went out (the summary leaves it out; the totals count it, as the Metrics tab does, because they are counts of what went out), a cancelled copy, or any money (the counts are
+// not money). Row-level security and the `org_id` filters keep other orgs out; the channel scope is asked as for the screens (an owner or admin's is every channel).
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+export const MCP_METRICS_DEFAULT = 25;
+export const MCP_METRICS_MAX = 50;
+export const MCP_EXCERPT_MAX = 160;
+const zMetricsLimit = z.number().int().min(1).max(MCP_METRICS_MAX).default(MCP_METRICS_DEFAULT).describe(`How many published posts to return (1 to ${MCP_METRICS_MAX}, default ${MCP_METRICS_DEFAULT}).`);
+const zDays = z.number().int().min(1).max(365).default(30).describe('How many days back (1 to 365, default 30).');
+
+export const zMcpMetricsSummaryInput = z.strictObject({
+  days: zDays,
+  postId: zId.optional().describe('Only this post (an id from ludy_social_posts_list); its published channels are listed whenever they went out, whatever days says.'),
+  limit: zMetricsLimit,
+});
+export const zMcpMetricsTotalsInput = z.strictObject({
+  days: zDays,
+  includeExternal: z.boolean().default(false).describe('Also count the posts the channels published outside Ludy (their latest counts, no clicks). Default false: Ludy\'s own posts only.'),
+});
+
+export interface McpMetricsRow {
+  variantId: string;
+  postId: string;
+  provider: string;
+  connectionId: string;
+  excerpt: string;
+  publishedAt: string | null;
+  externalUrl: string | null;
+  metrics: Record<string, number>;
+  capturedAt: string | null;
+  clicks: number | null;
+}
+export interface McpMetricsSummary {
+  rows: McpMetricsRow[];
+  truncated: boolean;
+}
+export interface McpTotalsWindow {
+  posts: number;
+  metrics: Record<string, number>;
+  clicks: number | null;
+  rateBases: WindowTotals['rateBases'];
+  channels: Array<{ connectionId: string; provider: string; posts: number; metrics: Record<string, number>; clicks: number | null; rateBases: WindowTotals['rateBases'] }>;
+}
+export interface McpMetricsTotals extends McpTotalsWindow {
+  days: number;
+  previous: McpTotalsWindow;
+}
+
+const windowOf = (w: WindowTotals): McpTotalsWindow => ({
+  posts: w.posts,
+  metrics: w.metrics,
+  clicks: w.clicks,
+  rateBases: w.rateBases,
+  channels: w.channels.map((c) => ({ connectionId: c.connectionId, provider: plainLine(c.provider, 40), posts: c.posts, metrics: c.metrics, clicks: c.clicks, rateBases: c.rateBases })),
+});
+
+// `ludy_social_metrics_summary`: the latest counts of the posts published in the last `days` days (or of one post), newest first, at most `limit`.
+export const mcpMetricsSummary = defineQuery({
+  name: 'social.mcp.metrics_summary',
+  input: zMcpMetricsSummaryInput,
+  access: GRANTORS,
+  mcp: { scope: 'ludy.read' },
+  handler: async (ctx, input): Promise<McpMetricsSummary> => {
+    requireGrant(ctx);
+    const scope = await channelScope(ctx);
+    // One more than asked, so `truncated` is known without a count.
+    const found = await latestMetrics(ctx.trx, ctx.orgId, { days: input.days, liveOnly: true, ...(input.postId ? { postId: input.postId } : {}) }, input.limit + 1, scope);
+    const rows = found.slice(0, input.limit).map(
+      (r): McpMetricsRow => ({
+        variantId: r.variantId,
+        postId: r.postId,
+        provider: plainLine(r.provider, 40),
+        connectionId: r.connectionId,
+        excerpt: plainLine(r.text, MCP_EXCERPT_MAX),
+        publishedAt: r.publishedAt,
+        externalUrl: optionalLine(r.externalUrl, 2048),
+        metrics: r.metrics,
+        capturedAt: r.capturedAt,
+        clicks: r.clicks,
+      }),
+    );
+    return { rows, truncated: found.length > rows.length };
+  },
+});
+
+// `ludy_social_metrics_totals`: the totals of the window of `days` days and of the window of the same length just before it, with each channel's share of both.
+export const mcpMetricsTotals = defineQuery({
+  name: 'social.mcp.metrics_totals',
+  input: zMcpMetricsTotalsInput,
+  access: GRANTORS,
+  mcp: { scope: 'ludy.read' },
+  handler: async (ctx, input): Promise<McpMetricsTotals> => {
+    requireGrant(ctx);
+    const filter = { external: input.includeExternal, scope: await channelScope(ctx) };
+    const both = currentAndPrevious(await spanTotals(ctx.trx, ctx.orgId, { days: input.days, before: 0 }, filter), await spanTotals(ctx.trx, ctx.orgId, { days: input.days, before: input.days }, filter));
+    const { previous, ...current } = both;
+    return { days: input.days, ...windowOf(current), previous: windowOf(previous) };
+  },
+});
+
+export const mcpSocialQueries = [mcpPosts, mcpReviewQueue, mcpMetricsSummary, mcpMetricsTotals];

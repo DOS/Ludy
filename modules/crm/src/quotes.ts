@@ -934,3 +934,6 @@ export async function dealHasQuotes(ctx: Pick<CommandContext, 'trx' | 'orgId'>, 
 
 export const quoteCommands = [quoteSave, quoteDeleteDraft, quoteRevise, quoteSend, quoteMailData, quoteLinkCreate, quoteLinkRevoke, quoteSettingSet, quoteLogoSet, quoteLogoRemove];
 export const quoteQueries = [quoteGet, quoteList, dealQuotes, quoteDefaults, quoteSettingGet];
+
+// The quote reads' own rows for the MCP projection (crm.mcp.quotes, crm.mcp.quote), under names that do not clash with the deal reads'.
+export { base as quoteBase, summary as quoteSummaryView, loadLines as loadQuoteLines };
