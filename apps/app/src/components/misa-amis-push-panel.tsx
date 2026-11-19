@@ -21,7 +21,7 @@ const refresh = async () => {
 };
 
 /** Under a preview: the offer to send what the person just looked at. `ask` is the preview's own ask, which the server runs again and compares by digest. */
-export function MisaAmisPushConfirm({ result, ask, connectionId, offer, checkRequired = true }: { result: MisaAmisPreview; ask: Omit<MisaAmisPushConfirm, 'connectionId' | 'digest'>; connectionId: string; offer: PushOffer; checkRequired?: boolean }) {
+export function MisaAmisPushConfirm({ result, ask, connectionId, offer, checkAvailable = true }: { result: MisaAmisPreview; ask: Omit<MisaAmisPushConfirm, 'connectionId' | 'digest'>; connectionId: string; offer: PushOffer; checkAvailable?: boolean }) {
   const t = useTranslations('misaAmisPush');
   const [confirming, setConfirming] = useState(false);
   const send = useMutation<MisaAmisPushConfirmed>({
@@ -66,9 +66,9 @@ export function MisaAmisPushConfirm({ result, ask, connectionId, offer, checkReq
               {t('confirm', { count: result.vouchers })}
             </Button>
             <p className="mt-1 text-xs text-subtle-foreground">{t('confirmNote')}</p>
-            {checkRequired && !checkIsYoung(result.matchCheck.checkedAt, Date.now()) && (
+            {!checkIsYoung(result.matchCheck.checkedAt, Date.now()) && (
               <p className="mt-1 text-xs text-muted-foreground" data-testid="misa-amis-push-check-first">
-                {t('checkFirst')}
+                {t(checkAvailable ? 'checkFirst' : 'checkLater')}
               </p>
             )}
           </>

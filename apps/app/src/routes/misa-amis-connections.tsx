@@ -111,7 +111,7 @@ function ConnectionItem({ connection, entities, canManage, pushOffered }: { conn
       {/* The preview and the push list belong to an AMIS connection always, and to an ASP connection only where this deployment switched the push to ASP on (MISA_ASP_PUSH, #4113): `pushOffered` here is the
           switch of the connection's own product. Without it an ASP connection is connected and tested here and nothing more. */}
       {connection.status === 'active' && (connection.product === 'amis' || pushOffered) && (
-        <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} {...(canManage && connection.product === 'amis' ? { checkConnectionId: connection.id } : {})} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }), checkRequired: connection.product === 'amis' }} />
+        <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} {...(canManage && connection.product === 'amis' ? { checkConnectionId: connection.id } : {})} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }), checkAvailable: connection.product === 'amis' }} />
       )}
       {/* What was pushed stays readable and settleable whatever the switch says (the routes are not gated by it): an ASP row still `sent` when the push is switched off has no result polling to end it, only the callback or this. */}
       {connection.status === 'active' && <MisaAmisPushList connectionId={connection.id} canManage={canManage} />}

@@ -150,8 +150,8 @@ export const misaAmisPush = defineCommand({
     const matches = await queryOf(ctx)<MisaAmisMatchResults>('finance.misa_amis_match.results', { legalEntityId: connection.legal_entity_id, ask: buildAsk });
     // A confirmation needs a check of this batch no older than 15 minutes (S3b, #4124): a match is a view of the catalogue at the time of the check, so a person confirms what was looked at a moment ago, and the
     // worker reads the entries it relies on again before it sends (apps/kernel misa-amis-push-job.ts). No check, one of another batch, one that never finished or an old one: nothing is queued.
-    // MISA ASP has no catalogue check (the check is refused for it, #4152 adds it): its vouchers carry no matched codes, so there is nothing to keep fresh and no check to require (#4113).
-    if (connection.product === 'amis' && !checkIsFresh(matches.status.checkedAt, ctx.now)) throw new DomainError('MISA_AMIS_CHECK_REQUIRED', 409, 'Hãy kiểm tra chứng từ với danh mục MISA (trong 15 phút gần đây) rồi mới gửi');
+    // ASP is held to the same rule (a voucher never goes out unchecked, and ASP needs catalogue ids even more): until its check exists (#4152) an ASP push is refused here, which is the intended state while the switch is off.
+    if (!checkIsFresh(matches.status.checkedAt, ctx.now)) throw new DomainError('MISA_AMIS_CHECK_REQUIRED', 409, 'Hãy kiểm tra chứng từ với danh mục MISA (trong 15 phút gần đây) rồi mới gửi');
     const { entries, loaded } = await loadAmisEntries(queryOf(ctx), buildAsk, amisContextOf(buildAsk, AMIS_PLACEHOLDER_BRANCH, matches), MISA_AMIS_PREVIEW_LIMIT + 1);
     if (loaded > MISA_AMIS_PREVIEW_LIMIT) throw new DomainError('MISA_AMIS_PUSH_TOO_MANY', 422, 'Kỳ này có quá nhiều chứng từ, hãy chọn khoảng ngắn hơn');
     if (entries.some((e) => e.mapping.blockers.length > 0)) throw new DomainError('MISA_AMIS_PUSH_BLOCKED', 409, 'Có chứng từ chưa đủ điều kiện gửi, hãy xem lại bản xem trước');

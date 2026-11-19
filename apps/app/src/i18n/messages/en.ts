@@ -7734,6 +7734,7 @@ export const en = {
     settleYes: 'Confirm',
     outcome: { in_amis: 'is in MISA', not_in_amis: 'is not in MISA' },
     checkFirst: 'Before sending, check against the MISA catalogue; the check must be from the last 15 minutes.',
+    checkLater: 'Sending to MISA ASP needs a check against the MISA ASP catalogue first. That check is not available yet, so this batch cannot be sent for now.',
     refusedNote: 'MISA\'s reason:',
     reasons: {
       MATCH_STALE: 'The MISA catalogue changed since the check; nothing was sent. Check against the catalogue again, then send again.',

@@ -7730,6 +7730,7 @@ export const vi = {
     settleYes: 'Xác nhận',
     outcome: { in_amis: 'có trong MISA', not_in_amis: 'không có trong MISA' },
     checkFirst: 'Trước khi gửi, hãy bấm kiểm tra với danh mục MISA; lần kiểm tra phải mới trong 15 phút gần đây.',
+    checkLater: 'Gửi sang MISA ASP cần kiểm tra với danh mục MISA ASP trước. Phần kiểm tra này chưa có, nên lô này tạm thời chưa gửi được.',
     refusedNote: 'Lý do của MISA:',
     reasons: {
       MATCH_STALE: 'Danh mục MISA đã đổi so với lần kiểm tra; chưa gửi gì. Hãy kiểm tra lại với danh mục rồi gửi lại.',
