@@ -8,7 +8,7 @@ import { createTranslator } from 'use-intl/core';
 import { COWORKERS, DEFAULT_BRAND, brandCatalog, brandFileName, brandName, setBrandName, withBrand } from '../src/i18n/brand.ts';
 import { LOCALES } from '../src/i18n/locale.ts';
 import { SOURCE_CATALOGS, catalog, translator } from '../src/i18n/runtime.ts';
-import { firmGuide } from '../src/lib/firm-guide.ts';
+import { crmGuide } from '../src/lib/crm-guide.ts';
 import { quickGuide } from '../src/lib/quick-guide.ts';
 
 // Messages that may name Crove itself whatever the brand: legal and source notices (the AGPL notice and the link to
@@ -85,7 +85,7 @@ describe('brand name (#1040)', () => {
       expect(text, locale).not.toMatch(/\bCrove\b|\{brand\}/);
       expect(text, locale).toContain('Tên Mới');
     }
-    const guides = [...quickGuide(), ...firmGuide()].flatMap((step) => [step.title, ...step.items]).join('\n');
+    const guides = LOCALES.flatMap((locale) => [...quickGuide('Tên Mới', locale), ...crmGuide('Tên Mới', locale)]).flatMap((step) => [step.title, ...step.items]).join('\n');
     expect(guides).toContain('Tên Mới');
     expect(guides).not.toMatch(/\bCrove\b|\{brand\}/);
   });
@@ -111,7 +111,7 @@ describe('brand name (#1040)', () => {
       const offenders = messages(catalog(locale)).filter(([key, text]) => /\bcrove\b/i.test(text) && !ALLOWED_MESSAGES.has(key));
       expect(offenders, locale).toEqual([]);
     }
-    const guides = [...quickGuide(), ...firmGuide()].flatMap((step) => [step.title, ...step.items]).join('\n');
+    const guides = LOCALES.flatMap((locale) => [...quickGuide(undefined, locale), ...crmGuide(undefined, locale)]).flatMap((step) => [step.title, ...step.items]).join('\n');
     expect(guides).not.toMatch(/\bcrove\b/i);
     for (const file of STATIC_FILES) {
       const shown = readFileSync(join(app, file), 'utf8')

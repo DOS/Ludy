@@ -21,17 +21,23 @@ import { useFormat } from '../i18n/provider.tsx';
 import {
   EVERY_ENTITY,
   LE_SCOPE_MAX,
+  activeCoworkers,
   agentPermissions,
   budgetUsage,
   chartTree,
   defaultScope,
+  deriveRoleKey,
   holderCandidates,
   isBudgetAmount,
   isEveryEntity,
+  resolvePositionTitle,
+  resolveTemplateTitle,
   scopeNames,
   toggleScopeEntity,
+  type ActiveCoworkerKey,
   type AgentPermissions,
   type ChartNode,
+  type KnownTemplateMsgKey,
   type LeScope,
 } from '../lib/agents.ts';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
@@ -41,6 +47,7 @@ type Chart = Awaited<ReturnType<typeof orpc.chart.get.call>>;
 type Position = Chart['positions'][number];
 type Agent = Chart['agents'][number];
 type KillSwitch = Chart['killSwitches'][number];
+type Template = Awaited<ReturnType<typeof orpc.chart.templates.call>>[number];
 type Member = { userId: string; email: string; displayName: string | null };
 type Entity = { id: string; name: string; isDefault: boolean };
 
@@ -50,6 +57,16 @@ const AGENT_STATUSES = ['active', 'paused', 'retired'] as const;
 function useModuleName() {
   const t = useTranslations('modules');
   return (id: string) => (isKnownModule(id) ? t(id) : id);
+}
+
+// Template and position titles in the reader's language, without redundant " (AI)" suffixes.
+function useTemplateLabels() {
+  const t = useTranslations('agents');
+  const translate = (key: KnownTemplateMsgKey) => t(`templateTitles.${key}`);
+  return {
+    templateTitle: (templateKey: string, fallbackTitle?: string) => resolveTemplateTitle(templateKey, fallbackTitle, translate),
+    positionTitle: (title: string) => resolvePositionTitle(title, translate),
+  };
 }
 
 const SCOPES = ['org', 'module', 'agent'] as const;
@@ -102,11 +119,12 @@ export function StopAi() {
   const stop = useMutation(orpc.agents.stop.mutationOptions({ onSuccess: refresh }));
   if (!open) {
     return (
-      <div className="flex flex-col items-end gap-1">
+      <div className="flex flex-col items-start gap-1 sm:items-end">
         <Button variant="destructive" onClick={() => setOpen(true)}>
           {t('stop')}
         </Button>
-        {stop.data && <p className="text-xs text-muted-foreground">{t('stopped', { count: String(stop.data.stoppedRuns) })}</p>}
+        <p className="max-w-xs text-xs text-muted-foreground sm:text-right">{t('stopHint')}</p>
+        {stop.data && <p className="text-xs text-muted-foreground sm:text-right">{t('stopped', { count: String(stop.data.stoppedRuns) })}</p>}
       </div>
     );
   }
@@ -249,6 +267,8 @@ const scopeReady = (scope: LeScope) => isEveryEntity(scope) || scope.length > 0;
 function PositionScope({ position, entities, manage }: { position: Position; entities: Entity[]; manage: boolean }) {
   const t = useTranslations('agents');
   const tc = useTranslations('common');
+  const { positionTitle } = useTemplateLabels();
+  const displayTitle = positionTitle(position.title);
   const [editing, setEditing] = useState<string[] | null>(null);
   const update = useMutation(
     orpc.chart.updatePosition.mutationOptions({
@@ -270,7 +290,7 @@ function PositionScope({ position, entities, manage }: { position: Position; ent
           size="sm"
           variant="outline"
           className="mt-1"
-          aria-label={t('leScopeEditOf', { title: position.title })}
+          aria-label={t('leScopeEditOf', { title: displayTitle })}
           onClick={() => {
             update.reset();
             setEditing([...position.leScope]);
@@ -311,7 +331,7 @@ function PositionScope({ position, entities, manage }: { position: Position; ent
         variables={update.variables}
         retry={(v) => update.mutate(v)}
         reset={() => update.reset()}
-        action={t('stepUpLeScope', { title: position.title })}
+        action={t('stepUpLeScope', { title: displayTitle })}
         className="mt-1 text-xs text-destructive"
       />
     </div>
@@ -328,6 +348,8 @@ function holderValue(holder: Position['holder']): string {
 function AssignHolder({ position, members, agents }: { position: Position; members: Member[]; agents: Agent[] }) {
   const t = useTranslations('agents');
   const tc = useTranslations('common');
+  const { positionTitle } = useTemplateLabels();
+  const displayTitle = positionTitle(position.title);
   const [pending, setPending] = useState<string | null>(null);
   const assign = useMutation(
     orpc.chart.assign.mutationOptions({
@@ -381,7 +403,7 @@ function AssignHolder({ position, members, agents }: { position: Position; membe
       </label>
       {pending !== null && !locked && (
         <div className="mt-2 space-y-2 rounded-lg border border-warning/30 bg-warning/10 p-2 text-xs" role="alertdialog" aria-label={t('assignConfirmTitle')}>
-          <p className="text-foreground">{pending === '' ? t('assignConfirmVacate', { title: position.title }) : t('assignConfirm', { title: position.title, holder: labelOf(pending) })}</p>
+          <p className="text-foreground">{pending === '' ? t('assignConfirmVacate', { title: displayTitle }) : t('assignConfirm', { title: displayTitle, holder: labelOf(pending) })}</p>
           <div className="flex gap-2">
             <Button loading={assign.isPending} size="sm" onClick={() => send(pending)}>
               {t('assignConfirmButton')}
@@ -397,7 +419,7 @@ function AssignHolder({ position, members, agents }: { position: Position; membe
         variables={assign.variables}
         retry={(v) => assign.mutate(v)}
         reset={() => assign.reset()}
-        action={t('stepUpAssign', { title: position.title })}
+        action={t('stepUpAssign', { title: displayTitle })}
         className="mt-1 text-xs text-destructive"
       />
     </div>
@@ -417,13 +439,14 @@ type PositionContext = {
 export function PositionNode({ node, ctx }: { node: ChartNode<Position>; ctx: PositionContext }) {
   const t = useTranslations('agents');
   const moduleName = useModuleName();
+  const { positionTitle } = useTemplateLabels();
   const p = node.position;
   const holder = p.holder;
   return (
     <li>
       <Card className="gap-1 p-3" data-testid="position">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-medium text-foreground">{p.title}</span>
+          <span className="font-medium text-foreground">{positionTitle(p.title)}</span>
           {holder?.ai && (
             // ADR-0029 section 9: an agent-held position is always labelled as AI.
             <Badge variant="secondary" aria-label={t('aiBadge')}>
@@ -433,7 +456,7 @@ export function PositionNode({ node, ctx }: { node: ChartNode<Position>; ctx: Po
           {p.status === 'paused' && <Badge variant="warning">{t('positionPaused')}</Badge>}
           {p.status === 'archived' && <Badge variant="outline">{t('positionArchived')}</Badge>}
         </div>
-        <p className="text-xs text-subtle-foreground">{t('positionMeta', { module: moduleName(p.module), roleKey: p.roleKey })}</p>
+        <p className="text-xs text-subtle-foreground">{t('positionModuleShown', { module: moduleName(p.module) })}</p>
         {ctx.entities.length > 1 && <PositionScope position={p} entities={ctx.entities} manage={ctx.perms.manage} />}
         <p className="text-sm text-muted-foreground">
           {holder === null
@@ -457,16 +480,38 @@ export function PositionNode({ node, ctx }: { node: ChartNode<Position>; ctx: Po
 
 // entitiesReady: the org's legal entities are known (an owner's create waits for them, so it never sends no scope
 // in an org of several only because the list has not loaded or failed).
-function AddPosition({ positions, entities, entitiesReady }: { positions: Position[]; entities: Entity[]; entitiesReady: boolean }) {
+function AddPosition({
+  positions,
+  templates = [],
+  entities,
+  entitiesReady,
+}: {
+  positions: Position[];
+  templates?: readonly Template[];
+  entities: Entity[];
+  entitiesReady: boolean;
+}) {
   const t = useTranslations('agents');
   const moduleName = useModuleName();
+  const { templateTitle, positionTitle } = useTemplateLabels();
   useModulesVersion(); // the apps of the org can change while this screen is open
   const modules = installedModules();
+  const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [module, setModule] = useState(modules[0] ?? 'kernel');
   // An app the org just switched off is no longer a choice: the form falls back to the first one that is on.
   const chosenModule = modules.includes(module) ? module : (modules[0] ?? 'kernel');
-  const [roleKey, setRoleKey] = useState('');
+  const moduleTemplates: Template[] = [];
+  const seenRoles = new Set<string>();
+  for (const tpl of templates) {
+    if (tpl.module === chosenModule && !seenRoles.has(tpl.roleKey)) {
+      seenRoles.add(tpl.roleKey);
+      moduleTemplates.push(tpl);
+    }
+  }
+  const [presetRole, setPresetRole] = useState('');
+  const selectedPreset = moduleTemplates.some((tpl) => tpl.roleKey === presetRole) ? presetRole : '';
+  const selectedPresetIndex = selectedPreset ? String(moduleTemplates.findIndex((tpl) => tpl.roleKey === selectedPreset)) : '';
   const [reportsTo, setReportsTo] = useState('');
   // Until the owner picks, the org's default entity, which the server gives a new position anyway.
   const [picked, setPicked] = useState<string[] | null>(null);
@@ -476,30 +521,48 @@ function AddPosition({ positions, entities, entitiesReady }: { positions: Positi
   const cleared = {
     onSuccess: () => {
       setTitle('');
-      setRoleKey('');
+      setPresetRole('');
       setPicked(null);
+      setOpen(false);
       setKey(crypto.randomUUID());
     },
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!entitiesReady || (entities.length > 1 && !scopeReady(leScope))) return;
+    const trimmed = title.trim();
+    const roleKey =
+      selectedPreset ||
+      deriveRoleKey(
+        trimmed,
+        chosenModule,
+        positions.map((p) => p.roleKey),
+      );
     create.mutate(
-      { title: title.trim(), module: chosenModule, roleKey: roleKey.trim(), reportsTo: reportsTo || null, ...(entities.length > 1 ? { leScope } : {}), idempotencyKey: key },
+      { title: trimmed, module: chosenModule, roleKey, reportsTo: reportsTo || null, ...(entities.length > 1 ? { leScope } : {}), idempotencyKey: key },
       cleared,
     );
   };
   const locked = isStepUpRequired(create.error);
   return (
-    <>
-      <form onSubmit={submit} className="mt-4 grid gap-3 rounded-lg border bg-muted/40 p-3 sm:grid-cols-2 lg:grid-cols-5">
+    <details open={open || locked} onToggle={(e) => setOpen(e.currentTarget.open)} className="mt-4 rounded-lg border bg-muted/40 p-3">
+      <summary className="cursor-pointer text-sm font-medium text-foreground select-none">{t('addPosition')}</summary>
+      <form onSubmit={submit} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="block text-xs lg:col-span-2">
           <span className="text-subtle-foreground">{t('positionTitle')}</span>
           <Input required maxLength={200} value={title} disabled={locked} onChange={(e) => setTitle(e.target.value)} className="mt-1" />
         </label>
         <label className="block text-xs">
           <span className="text-subtle-foreground">{t('positionModule')}</span>
-          <NativeSelect className="mt-1 w-full" value={chosenModule} disabled={locked} onChange={(e) => setModule(e.target.value)}>
+          <NativeSelect
+            className="mt-1 w-full"
+            value={chosenModule}
+            disabled={locked}
+            onChange={(e) => {
+              setModule(e.target.value);
+              setPresetRole('');
+            }}
+          >
             {modules.map((m) => (
               <NativeSelectOption key={m} value={m}>
                 {moduleName(m)}
@@ -508,26 +571,40 @@ function AddPosition({ positions, entities, entitiesReady }: { positions: Positi
           </NativeSelect>
         </label>
         <label className="block text-xs">
-          <span className="text-subtle-foreground">{t('positionRoleKey')}</span>
-          <Input required pattern="[a-z][a-z0-9_.]*" maxLength={100} value={roleKey} disabled={locked} onChange={(e) => setRoleKey(e.target.value)} className="mt-1" />
-        </label>
-        <label className="block text-xs">
           <span className="text-subtle-foreground">{t('reportsTo')}</span>
           <NativeSelect className="mt-1 w-full" value={reportsTo} disabled={locked} onChange={(e) => setReportsTo(e.target.value)}>
             <NativeSelectOption value="">{t('reportsToOwners')}</NativeSelectOption>
             {positions.map((p) => (
               <NativeSelectOption key={p.id} value={p.id}>
-                {p.title}
+                {positionTitle(p.title)}
               </NativeSelectOption>
             ))}
           </NativeSelect>
         </label>
+        {moduleTemplates.length > 0 && (
+          <label className="block text-xs sm:col-span-2 lg:col-span-2">
+            <span className="text-subtle-foreground">{t('positionRolePreset')}</span>
+            <NativeSelect
+              className="mt-1 w-full"
+              value={selectedPresetIndex}
+              disabled={locked}
+              onChange={(e) => setPresetRole(e.target.value === '' ? '' : (moduleTemplates[Number(e.target.value)]?.roleKey ?? ''))}
+            >
+              <NativeSelectOption value="">{t('positionRoleAuto')}</NativeSelectOption>
+              {moduleTemplates.map((tpl, idx) => (
+                <NativeSelectOption key={tpl.key} value={String(idx)}>
+                  {templateTitle(tpl.key, tpl.title)}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </label>
+        )}
         {entities.length > 1 && (
-          <div className="sm:col-span-2 lg:col-span-5">
+          <div className="sm:col-span-2 lg:col-span-4">
             <LeScopePicker label={t('leScope')} entities={entities} value={leScope} onChange={setPicked} disabled={locked} />
           </div>
         )}
-        <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-5">
+        <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-4">
           <Button loading={create.isPending} type="submit" disabled={create.isPending || locked || !entitiesReady || (entities.length > 1 && !scopeReady(leScope))}>
             {t('addPosition')}
           </Button>
@@ -544,14 +621,15 @@ function AddPosition({ positions, entities, entitiesReady }: { positions: Positi
           className="text-xs text-destructive"
         />
       )}
-    </>
+    </details>
   );
 }
 
 // Owner controls for one agent: status, max risk and daily run cap, saved together.
-export function AgentRow({ agent, perms }: { agent: Agent; perms: AgentPermissions }) {
+export function AgentRow({ agent, templateTitle, perms }: { agent: Agent; templateTitle?: string | undefined; perms: AgentPermissions }) {
   const t = useTranslations('agents');
   const tc = useTranslations('common');
+  const { templateTitle: resolveTpl } = useTemplateLabels();
   const [status, setStatus] = useState(agent.status);
   const [maxRisk, setMaxRisk] = useState(agent.maxRisk);
   const [cap, setCap] = useState(String(agent.dailyRunCap));
@@ -579,7 +657,7 @@ export function AgentRow({ agent, perms }: { agent: Agent; perms: AgentPermissio
         <span className="font-medium text-foreground">{agent.displayName}</span>{' '}
         <Badge variant="secondary">{t('aiBadge')}</Badge>
       </TableCell>
-      <TableCell className="px-4 text-xs text-muted-foreground">{agent.templateKey}</TableCell>
+      <TableCell className="px-4 text-xs text-muted-foreground">{resolveTpl(agent.templateKey, templateTitle)}</TableCell>
       <TableCell className="px-4">
         {editable ? (
           <NativeSelect size="sm" aria-label={t('colStatus')} value={status} disabled={locked} onChange={(e) => {
@@ -653,6 +731,7 @@ export function AgentRow({ agent, perms }: { agent: Agent; perms: AgentPermissio
 function Templates({ perms, entities, entitiesReady }: { perms: AgentPermissions; entities: Entity[]; entitiesReady: boolean }) {
   const t = useTranslations('agents');
   const moduleName = useModuleName();
+  const { templateTitle } = useTemplateLabels();
   const templates = useQuery(orpc.chart.templates.queryOptions());
   const install = useMutation(orpc.chart.installTemplate.mutationOptions({ onSuccess: refresh }));
   // The entities of the next agent installed; until the owner picks, the org's default entity, as the server would.
@@ -680,7 +759,7 @@ function Templates({ perms, entities, entitiesReady }: { perms: AgentPermissions
             <li key={tpl.key}>
               <Card className="gap-2 p-3" data-testid="template">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-foreground">{tpl.title}</span>
+                  <span className="font-medium text-foreground">{templateTitle(tpl.key, tpl.title)}</span>
                   <Badge variant="secondary">{t('aiBadge')}</Badge>
                 </div>
                 <p className="text-xs text-subtle-foreground">{t('templateMeta', { module: moduleName(tpl.module), risk: tpl.maxRisk, cap: String(tpl.dailyRunCap) })}</p>
@@ -718,7 +797,14 @@ function Templates({ perms, entities, entitiesReady }: { perms: AgentPermissions
           variables={install.variables}
           retry={(v) => install.mutate(v)}
           reset={() => install.reset()}
-          action={t('stepUpInstall', { title: templates.data?.find((tpl) => tpl.key === install.variables?.templateKey)?.title ?? install.variables?.templateKey ?? '' })}
+          action={t('stepUpInstall', {
+            title: install.variables?.templateKey
+              ? templateTitle(
+                  install.variables.templateKey,
+                  templates.data?.find((tpl) => tpl.key === install.variables?.templateKey)?.title,
+                )
+              : '',
+          })}
           className="text-sm text-destructive"
         />
       )}
@@ -762,7 +848,7 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
   return (
     <>
       <form
-        className="mt-4 grid gap-3 rounded-lg border bg-muted/40 p-3 sm:grid-cols-2 lg:grid-cols-5"
+        className="mt-4 grid gap-3 rounded-lg border bg-muted/40 p-3 sm:grid-cols-2 lg:grid-cols-4"
         noValidate
         onSubmit={(event) => {
           event.preventDefault();
@@ -851,14 +937,14 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
             {fields.of('warnPercent')}
           </FieldError>
         </div>
-        <label className="flex items-center gap-2 self-end pb-2 text-xs text-muted-foreground">
-          <Checkbox checked={hardStop} disabled={locked} onCheckedChange={(checked) => setHardStop(checked)} />
-          {t('hardStop')}
-        </label>
-        <div className="flex flex-wrap items-center gap-2 sm:col-span-2 lg:col-span-5">
+        <div className="flex flex-wrap items-center gap-4 sm:col-span-2 lg:col-span-4">
           <Button loading={set.isPending} type="submit" disabled={set.isPending || locked}>
             {t('setBudget')}
           </Button>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Checkbox checked={hardStop} disabled={locked} onCheckedChange={(checked) => setHardStop(checked)} />
+            {t('hardStop')}
+          </label>
           {set.error && !locked && <span className="text-xs text-destructive">{errorMessage(set.error)}</span>}
         </div>
       </form>
@@ -868,7 +954,7 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
 }
 
 // The features the app has a name for (aiMeter.features); the keys are the server's with the dot as an underscore.
-const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'crm_quote_suggest', 'crm_followup_draft', 'crm_meeting_brief', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_einvoice_draft', 'finance_einvoice_rate_explain', 'finance_einvoice_reason_suggest', 'finance_payroll_prepare', 'finance_payroll_flag', 'finance_payroll_explain', 'finance_labor_check', 'hr_recruiting_brief', 'today_brief', 'today_weekly', 'ads_campaign_draft', 'finance_overview_explain', 'finance_vat_late_explain', 'finance_bank_match_explain', 'finance_marketplace_line', 'finance_supplier_payable_line', 'finance_misa_check_line', 'finance_stock_surplus_explain', 'meetings_transcribe', 'meetings_summary', 'meetings_translate', 'meetings_ask', 'meetings_assignee', 'meetings_brief', 'meetings_chapters', 'meetings_followup_words', 'projects_weekly_status', 'projects_tasks_from_note', 'projects_tasks_from_source', 'notes_summary', 'notes_todo_suggest', 'sign_field_propose', 'sign_clause_summary', 'kernel_unattributed'] as const;
+const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'crm_quote_suggest', 'crm_followup_draft', 'crm_meeting_brief', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_einvoice_draft', 'finance_einvoice_rate_explain', 'finance_einvoice_reason_suggest', 'finance_payroll_prepare', 'finance_payroll_flag', 'finance_payroll_explain', 'finance_labor_check', 'hr_recruiting_brief', 'today_brief', 'today_weekly', 'ads_campaign_draft', 'finance_overview_explain', 'finance_vat_late_explain', 'finance_bank_match_explain', 'finance_marketplace_line', 'finance_supplier_payable_line', 'finance_misa_check_line', 'finance_stock_surplus_explain', 'meetings_transcribe', 'meetings_summary', 'meetings_translate', 'meetings_ask', 'meetings_assignee', 'meetings_brief', 'meetings_digest', 'meetings_chapters', 'meetings_followup_words', 'projects_weekly_status', 'projects_tasks_from_note', 'projects_tasks_from_source', 'notes_summary', 'notes_todo_suggest', 'sign_field_propose', 'sign_clause_summary', 'kernel_unattributed'] as const;
 
 // This month's AI use by feature and by agent (#2382): the meter's ledger, numbers only. Owners and admins.
 export function AiUse({ agents }: { agents: Agent[] }) {
@@ -891,8 +977,13 @@ export function AiUse({ agents }: { agents: Agent[] }) {
         <ErrorText>{errorMessage(report.error)}</ErrorText>
       ) : (
         <>
-          {!report.data.aiOn && <p className="mb-3 text-xs text-muted-foreground">{t('aiUseOff')}</p>}
-          <AiMeter className="mb-3" />
+          {!report.data.aiOn ? (
+            <p className="mb-3 text-xs text-muted-foreground" data-testid="ai-use-off">
+              {t('aiUseOff')}
+            </p>
+          ) : (
+            <AiMeter className="mb-3" />
+          )}
           <p className="mb-3 text-xs text-muted-foreground" data-testid="ai-use-total">
             {t('aiUseTotal', { spent: f.aiAmount(report.data.spent), calls: report.data.calls, date: f.date(report.data.resetAt) })}
           </p>
@@ -975,6 +1066,89 @@ export function Budgets({ agents, perms }: { agents: Agent[]; perms: AgentPermis
   );
 }
 
+type CoworkerRoleKey = 'gm' | 'finance' | 'financeAndHr' | 'sales' | 'marketing';
+
+function coworkerRoleKey(key: ActiveCoworkerKey, modules: readonly string[]): CoworkerRoleKey {
+  if (key === 'finance') return modules.includes('hr') ? 'financeAndHr' : 'finance';
+  return key;
+}
+
+type CoworkerDescKey = 'gm' | 'financeOnly' | 'financeAndHr' | 'sales' | 'marketingSocial' | 'marketingAds' | 'marketingBoth';
+
+function coworkerDescKey(key: ActiveCoworkerKey, modules: readonly string[]): CoworkerDescKey {
+  if (key === 'gm') return 'gm';
+  if (key === 'finance') return modules.includes('hr') ? 'financeAndHr' : 'financeOnly';
+  if (key === 'sales') return 'sales';
+  const hasSocial = modules.includes('social');
+  const hasAds = modules.includes('ads');
+  if (hasSocial && hasAds) return 'marketingBoth';
+  return hasSocial ? 'marketingSocial' : 'marketingAds';
+}
+
+function CoworkerTeam({
+  agents,
+  templateModules,
+  killSwitches,
+  budgetsEnabled,
+}: {
+  agents: Agent[];
+  templateModules: ReadonlyMap<string, string>;
+  killSwitches: KillSwitch[];
+  budgetsEnabled: boolean;
+}) {
+  const t = useTranslations('agents');
+  const f = useFormat();
+  useModulesVersion();
+  const modules = installedModules();
+  const budgets = useQuery({ ...orpc.agents.budgets.queryOptions(), enabled: budgetsEnabled });
+  const coworkers = activeCoworkers({
+    modules,
+    agents,
+    templateModules,
+    killSwitches,
+    budgets: budgetsEnabled ? budgets.data : undefined,
+  });
+
+  return (
+    <section className="mb-8" data-testid="coworkers-section">
+      <h2 className="text-sm font-semibold text-foreground">{t('teamTitle')}</h2>
+      <p className="mt-1 mb-3 text-xs text-muted-foreground">{t('teamHint')}</p>
+      <ul className="grid gap-3 md:grid-cols-2">
+        {coworkers.map((c) => {
+          const usage = c.budget ? budgetUsage(c.budget.spent, c.budget.monthlyLimit, c.budget.warnPercent) : null;
+          return (
+            <li key={c.key}>
+              <Card className="h-full gap-1.5 p-3" data-testid="coworker-card">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-foreground">{c.name}</span>
+                    <Badge variant="secondary">{t('aiBadge')}</Badge>
+                    {c.stopState === 'stopped' && <Badge variant="destructive">{t('coworkerStoppedBadge')}</Badge>}
+                    {c.stopState === 'partial' && <Badge variant="warning">{t('coworkerPartialStopBadge')}</Badge>}
+                  </div>
+                  <span className="text-xs text-subtle-foreground">{t(`coworkerRole.${coworkerRoleKey(c.key, c.coveredModules)}`)}</span>
+                </div>
+                <p className="text-xs text-muted-foreground">{t(`coworkerDesc.${coworkerDescKey(c.key, c.coveredModules)}`)}</p>
+                {budgetsEnabled && budgets.data !== undefined && (
+                  <p className={`text-xs ${usage?.state === 'spent' ? 'text-destructive' : usage?.state === 'warn' ? 'text-warning' : 'text-subtle-foreground'}`}>
+                    {c.budget && usage
+                      ? t(c.budget.scope === 'org' ? 'coworkerBudgetOrg' : 'coworkerBudgetDedicated', {
+                          spent: f.aiAmount(c.budget.spent),
+                          limit: f.aiAmount(c.budget.monthlyLimit),
+                          percent: String(usage.percent),
+                        })
+                      : t('coworkerBudgetNone')}
+                  </p>
+                )}
+              </Card>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 export function AgentsPage() {
   const t = useTranslations('agents');
   const org = useQuery(orpc.org.get.queryOptions());
@@ -985,6 +1159,8 @@ export function AgentsPage() {
   // AGENT_ROLE_MISMATCH otherwise). Shared with the templates list, which asks for the same query.
   const templates = useQuery(orpc.chart.templates.queryOptions());
   const templateRoles = useMemo(() => new Map((templates.data ?? []).map((tpl) => [tpl.key, tpl.roleKey])), [templates.data]);
+  const templateModules = useMemo(() => new Map((templates.data ?? []).map((tpl) => [tpl.key, tpl.module])), [templates.data]);
+  const templateTitles = useMemo(() => new Map((templates.data ?? []).map((tpl) => [tpl.key, tpl.title])), [templates.data]);
   // The org's legal entities, which only owners and admins read (#1763): with one entity the screen shows no scope.
   const legalEntities = useQuery({ ...orpc.legalEntities.list.queryOptions(), enabled: perms.manage });
   // Owners only, whatever another screen left in the cache (Settings reads the same list for admins).
@@ -1011,6 +1187,12 @@ export function AgentsPage() {
               </Button>
             </div>
           )}
+          <CoworkerTeam
+            agents={chart.data.agents}
+            templateModules={templateModules}
+            killSwitches={chart.data.killSwitches}
+            budgetsEnabled={perms.budgets}
+          />
           <section>
             <h2 className="mb-3 text-sm font-semibold text-foreground">{t('chart')}</h2>
             <Card className="mb-3 gap-1 p-3">
@@ -1026,7 +1208,9 @@ export function AgentsPage() {
                 ))}
               </ul>
             )}
-            {perms.manage && <AddPosition positions={chart.data.positions} entities={entities} entitiesReady={entitiesReady} />}
+            {perms.manage && (
+              <AddPosition positions={chart.data.positions} templates={templates.data ?? []} entities={entities} entitiesReady={entitiesReady} />
+            )}
           </section>
           <section className="mt-8">
             <h2 className="mb-3 text-sm font-semibold text-foreground">{t('agentsTitle')}</h2>
@@ -1036,7 +1220,12 @@ export function AgentsPage() {
               <DataTable head={[t('colAgent'), t('colTemplate'), t('colStatus'), t('colMaxRisk'), t('colDailyCap'), '']}>
                 {chart.data.agents.map((a) => (
                   // Keyed on the saved values, so the row's inputs start again from the server's answer.
-                  <AgentRow key={`${a.id}:${a.status}:${a.maxRisk}:${a.dailyRunCap}`} agent={a} perms={perms} />
+                  <AgentRow
+                    key={`${a.id}:${a.status}:${a.maxRisk}:${a.dailyRunCap}`}
+                    agent={a}
+                    templateTitle={templateTitles.get(a.templateKey)}
+                    perms={perms}
+                  />
                 ))}
               </DataTable>
             )}

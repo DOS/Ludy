@@ -218,6 +218,8 @@ test('the agents screen with its legal-entity pickers passes the 360px and axe w
   await add.getByRole('button', { name: 'Thêm', exact: true }).click();
   await expect(page.getByRole('main').getByText('Chi nhánh Đà Nẵng').first()).toBeVisible();
   await page.goto(`/o/${slug}/agents`);
+  // Add position moved behind a collapsed <details> disclosure in #3594; open it to verify the picker inside.
+  await page.getByRole('main').locator('summary', { hasText: 'Thêm vị trí' }).click();
   await expect(page.getByRole('main').getByRole('group', { name: 'Pháp nhân', exact: true })).toBeVisible();
   // Both pickers start on the default entity: the new branch is not chosen in either.
   const branch = page.getByRole('main').getByRole('checkbox', { name: 'Chi nhánh Đà Nẵng' });
