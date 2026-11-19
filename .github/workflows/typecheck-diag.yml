@@ -15,12 +15,13 @@ jobs:
       fail-fast: false
       matrix:
         v:
-          - { name: c4-a, conc: 4 }
-          - { name: c4-b, conc: 4 }
-          - { name: c4-c, conc: 4 }
-          - { name: c2-a, conc: 2 }
-          - { name: c2-b, conc: 2 }
-          - { name: c1-a, conc: 1 }
+          - { name: seq-a, cmd: 'pnpm -r --workspace-concurrency=1 typecheck' }
+          - { name: seq-b, cmd: 'pnpm -r --workspace-concurrency=1 typecheck' }
+          - { name: seq-c, cmd: 'pnpm -r --workspace-concurrency=1 typecheck' }
+          - { name: kernel-default, cmd: 'pnpm --filter @crove/kernel-server typecheck' }
+          - { name: kernel-8g, cmd: 'NODE_OPTIONS=--max-old-space-size=8192 pnpm --filter @crove/kernel-server typecheck' }
+          - { name: kernel-6g, cmd: 'NODE_OPTIONS=--max-old-space-size=6144 pnpm --filter @crove/kernel-server typecheck' }
+          - { name: app-default, cmd: 'pnpm --filter @crove/app typecheck' }
     services:
       postgres:
         image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
@@ -61,7 +62,7 @@ jobs:
           tail -f /tmp/mon.log | sed 's/^/MON /' &
           start=$(date +%s)
           set +e
-          pnpm -r --workspace-concurrency=${{ matrix.v.conc }} typecheck
+          ${{ matrix.v.cmd }}
           rc=$?
           echo "typecheck rc=$rc after $(( $(date +%s) - start ))s"
           echo "peak used: $(sed 's/.*used=\([0-9]*\)M.*/\1/' /tmp/mon.log | sort -n | tail -1)M"
