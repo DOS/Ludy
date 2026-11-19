@@ -69,6 +69,8 @@ suite('MISA AMIS connections (#3875)', () => {
   // The deployment that holds the integrator's ClientID, and one that does not.
   let app: ReturnType<typeof createHttpApp>;
   let offApp: ReturnType<typeof createHttpApp>;
+  // The deployment that also turned the push on (MISA_AMIS_PUSH=on), as against `app`, which holds the ClientID but not the switch.
+  let pushApp: ReturnType<typeof createHttpApp>;
   const owner: Account = { subject: randomUUID(), email: 'owner@misa-amis-conn.test', session: randomUUID(), userId: '' };
   const adminUser: Account = { subject: randomUUID(), email: 'admin@misa-amis-conn.test', session: randomUUID(), userId: '' };
   const member: Account = { subject: randomUUID(), email: 'member@misa-amis-conn.test', session: randomUUID(), userId: '' };
@@ -147,6 +149,7 @@ suite('MISA AMIS connections (#3875)', () => {
     const deps = { config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false };
     app = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAmis: true } });
     offApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false } });
+    pushApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAmis: true, misaAmisPush: true } });
 
     for (const who of [owner, adminUser, member, viewer, outsider]) {
       const me = await rpc('me/get', await tokenFor(who), undefined, null);
@@ -173,8 +176,9 @@ suite('MISA AMIS connections (#3875)', () => {
   });
 
   it('is offered only where the deployment holds the integrator\'s ClientID, and refuses a connect anywhere else before anything is sealed', async () => {
-    expect((await call('status', member)).body).toEqual({ offered: true });
-    expect((await call('status', member, undefined, offApp)).body).toEqual({ offered: false });
+    expect((await call('status', member)).body).toEqual({ offered: true, pushOffered: false });
+    expect((await call('status', member, undefined, offApp)).body).toEqual({ offered: false, pushOffered: false });
+    expect((await call('status', member, undefined, pushApp)).body).toEqual({ offered: true, pushOffered: true });
     await expect(call('connections/connect', owner, connectInput(), offApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
     expect(await rows('SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([]);
     expect(await rows('SELECT 1 FROM crove_finance.misa_amis_connection WHERE org_id = $1', [orgId])).toEqual([]);
@@ -317,6 +321,26 @@ suite('MISA AMIS connections (#3875)', () => {
     for (const table of ['crove_kernel.audit_event', 'crove_kernel.outbox_event']) {
       for (const secret of [PLANTED, stored?.org_company_code, CLIENT_ID]) expect(await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text LIKE '%' || $2 || '%'`, [orgId, secret]), `${table} ${secret}`).toEqual([]);
     }
+  });
+
+  it('gates the confirm route behind the push switch (404 before anything is read), and lets every member read the pushed rows while an owner or admin alone settles one', async () => {
+    const [listed] = (await call('connections/list', owner)).body as Array<{ id: string }>;
+    const id = String(listed?.id);
+    const confirm = { kind: 'cash_payment', connectionId: id, digest: 'a'.repeat(64) };
+    const vouchers = async (who: Account, on: ReturnType<typeof createHttpApp>) => rpc('vouchers/misaAmisPush', await tokenFor(who), confirm, slug, on);
+    // Switch off (the ClientID alone is not enough) or no connector at all: the route is a 404 for everyone, an owner included.
+    for (const on of [app, offApp]) await expect(vouchers(owner, on)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_PUSH_DISABLED' } });
+    // Switch on: a member or viewer is refused by role, an owner reaches the command (the connection was not tested here, so it says so and queues nothing).
+    for (const who of [member, viewer]) expect((await vouchers(who, pushApp)).status).toBe(403);
+    await expect(vouchers(owner, pushApp)).resolves.toMatchObject({ status: 409, body: { code: 'MISA_AMIS_NOT_TESTED' } });
+    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_push WHERE org_id = $1', [orgId])).toEqual([]);
+    // Rows already pushed stay readable by every member whatever the switch says (nothing is sent by a read), and another org's user cannot read them.
+    for (const on of [app, offApp, pushApp]) for (const who of [owner, adminUser, member, viewer]) await expect(call('pushes/list', who, { connectionId: id }, on)).resolves.toMatchObject({ status: 200, body: [] });
+    expect((await call('pushes/list', outsider, { connectionId: id }, app, slug)).status).toBe(403);
+    // Settling a row is an owner's or admin's: a member is refused by role; an owner asking for a row that is not there is told the row cannot be settled.
+    const settle = { connectionId: id, orgRefid: randomUUID(), outcome: 'in_amis' };
+    for (const who of [member, viewer]) expect((await call('pushes/resolve', who, settle)).status).toBe(403);
+    await expect(call('pushes/resolve', owner, settle)).resolves.toMatchObject({ status: 409, body: { code: 'MISA_AMIS_PUSH_STATE' } });
   });
 
   it('runs the test as the worker against AMIS: opens the sealed code, records only a state and a time that every member then reads, and keeps AMIS\'s text, the code and the ClientID out of every row', async () => {

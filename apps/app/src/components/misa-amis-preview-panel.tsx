@@ -12,6 +12,8 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage } from '../lib/api.ts';
+import { MisaAmisPushConfirm } from './misa-amis-push-panel.tsx';
+import type { PushOffer } from '../lib/misa-amis-push.ts';
 import { ErrorText } from './ui.tsx';
 
 const PURPOSES = ['1', '2', '3', '4', '5'] as const;
@@ -24,7 +26,8 @@ function kindsOnList(result: MisaAmisPreview): Set<string> {
   return new Set(result.items.slice(0, SHOWN).flatMap((item) => item.blockers.map((b) => b.code)));
 }
 
-export function MisaAmisPreviewPanel({ legalEntityId }: { legalEntityId: string }) {
+// `push` is given where the connection card can offer to send what the preview shows (an owner or admin, the push on, the connection tested): the preview itself stays a read.
+export function MisaAmisPreviewPanel({ legalEntityId, push }: { legalEntityId: string; push?: { connectionId: string; offer: PushOffer } }) {
   const t = useTranslations('misaAmisPreview');
   const lang = useLocale() === 'en' ? 'en' : 'vi';
   const [kind, setKind] = useState<MisaAmisKind>(MISA_AMIS_KINDS[0]);
@@ -132,6 +135,7 @@ export function MisaAmisPreviewPanel({ legalEntityId }: { legalEntityId: string 
         </div>
       )}
       {result && <MisaAmisPreviewResult result={result} notes={notes.data ?? null} />}
+      {result && push && <MisaAmisPushConfirm key={result.digest} result={result} ask={ask} connectionId={push.connectionId} offer={push.offer} />}
     </details>
   );
 }
