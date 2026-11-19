@@ -448,6 +448,14 @@ export const en = {
     },
   },
   notifications: {
+    morningNotice: {
+      title: "Today's meetings, in the morning",
+      hint: 'Once a day, at the time you choose, a notice in the app and by email with how many meetings you have today and a link to see them. It holds a count and a link only: no title, no name. Nothing is sent on a day with no meeting.',
+      label: "Tell me about the day's meetings every morning",
+      at: 'At',
+      zone: 'In your time zone: {zone}',
+      noMail: 'This server cannot send email yet, so only the notice in the app is shown until the installer sets up mail.',
+    },
     todayMail: {
       title: 'Daily brief by email',
       hint: 'Every morning, a short mail with how many items need you today and a link to the overview. It holds counts and links only, no amounts or content.',
@@ -480,6 +488,7 @@ export const en = {
       projects_weekly_status: 'Project weekly status sent by email',
       meetings_series_open_items: 'Open items from the previous meeting of a series',
       meetings_summary_ready: 'The minutes draft of a meeting I recorded is ready (also sent by email; turning it off here turns off both)',
+      meetings_morning: 'The meetings I have today, if I asked for the morning notice (also sent by email; turning it off here turns off both)',
       kernel_channel_expired: 'An ad account connection expired or was refused',
       kernel_ai_budget: 'The AI budget is nearly or fully used',
       kernel_conversation_new: 'A new conversation needs an answer',
@@ -502,6 +511,7 @@ export const en = {
       projects_weekly_status: 'New weekly status for project {title}',
       series_open_items: 'Meeting soon: you still have {count, plural, one {# open item} other {# open items}} from the previous meeting. Open it to see them.',
       summary_ready: 'The minutes draft of a meeting you recorded is ready. Open the meeting to review and edit it.',
+      morning: 'You have {count, plural, one {# meeting} other {# meetings}} today. Open the meetings page to see them.',
       ai_budget_warn: 'The AI budget is {percent}% used. When it runs out only the AI stops; the books keep working.',
       ai_budget_stop: "This month's AI budget is used up. Work that needs the AI waits; raise the budget or wait for next month. The books keep working as usual.",
       channel_expired: 'An ad account was paused because its connection expired or was refused. Connect it again to read on, with no day lost.',
@@ -3167,6 +3177,8 @@ export const en = {
       draftNote: 'Only you see this draft. Check it and correct a line where the speech was misheard; nothing is shared with the other attendees from here.',
       publishedNote: 'The transcript the recorder shared with the meeting.',
       platformSource: 'The {platform} transcript: written by the platform, not by Ludy.',
+      // The platform said it cut the transcript, or sent more lines than a draft holds (#3922); the next line is the guess for a transcript imported before that was kept.
+      platformCutKnown: 'The {platform} transcript was longer than Ludy can import, so only the first part is here.',
       platformCut: 'The {platform} transcript has exactly {max, number} lines, the most Ludy imports. If the meeting ran longer, the rest is not here.',
       emptyRecorder: 'No transcript yet. The recording and its playback work without one.',
       vy: {
@@ -15404,6 +15416,11 @@ export const en = {
       today: {
         facts: "See today's meetings in your calendar with what was decided last time, what is still open and the customer's open deals for each",
       },
+      morning: {
+        get: "See your own setting for the morning notice of the day's meetings",
+        notice: "Send a member their morning notice of the day's meetings (the system's sweep)",
+        set: "Turn the morning notice of the day's meetings on or off, and choose its time",
+      },
       brief: {
         facts: "See what was decided, what is still open and the customer's open deals before a meeting",
         start: 'Ask Vy to write a few sentences to prepare for a meeting',
@@ -15415,6 +15432,7 @@ export const en = {
         open_actions: 'Let an AI app list the open action items from the published minutes of meetings shared with the whole company',
         series_open_items: 'Let an AI app list the open action items across the recurring series of a published meeting shared with the whole company',
         decisions: 'Let an AI app list the decisions from the published minutes of recent meetings shared with the whole company',
+        search: 'Let an AI app search the published minutes of meetings shared with the whole company',
       },
       hook: {
         clear: 'Remove your address for minutes',

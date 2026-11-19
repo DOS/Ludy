@@ -14,4 +14,4 @@ export { setSummaryEnabled } from './summary-run.ts';
 export { setMeetingVideoImport } from './import.ts';
 export { translateCommands } from './translate.ts';
 export { lineHash, setTranslationTargets, translationHash } from './translate-run.ts';
-export type { McpDecision, McpDecisions, McpMeetingRow, McpMeetings, McpMinutes, McpOpenAction, McpOpenActions, McpSeriesOpenItems } from './mcp.ts';
+export type { McpDecision, McpDecisions, McpMeetingRow, McpMeetings, McpMinutes, McpOpenAction, McpOpenActions, McpSearch, McpSearchHit, McpSeriesOpenItems } from './mcp.ts';

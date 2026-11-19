@@ -513,6 +513,7 @@ import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.t
 import { zCommitmentsAnswer } from './meeting-commitments.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zMeetingsTodayFacts } from './meeting-today.ts';
+import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
 import { zAdherenceAgenda, zAdherenceAnswer, zAdherenceAsk, zAdherenceRef, zAdherenceStatus } from './meeting-adherence.ts';
 import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
@@ -1346,6 +1347,12 @@ export const contract = {
     // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read by code as the member in one call and working with AI off. Vy's sentences stay the brief's own click.
     today: {
       facts: oc.input(zBriefEmpty).output(zMeetingsTodayFacts),
+    },
+    // The opt-in morning notice of the day's meetings (#3955, part B): the member's own setting (off until they turn it on, a time of day in their own zone); the worker sends one in-app notice and one mail a day with
+    // the count of the day's meetings and a link, never a title.
+    morning: {
+      get: oc.input(zMorningEmpty).output(zMorningState),
+      set: oc.input(zMorningSet).output(zMorningState),
     },
     // Who an action item belongs to, by Vy, when code found nobody (#3921, step 2): `status` is the button (may Vy be used now), `suggest` the click that has the member's own Vy pick one of the people they may give
     // the work to from the name said in the meeting, or nobody. The model sees names only; the answer is a number the route maps to a person; nothing is stored, and a person still picks the seat and makes the task.

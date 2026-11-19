@@ -120,6 +120,8 @@ describe('meetings commands and queries construction', () => {
       'meetings.ask.start',
       'meetings.brief.start',
       'meetings.digest.start',
+      'meetings.morning.set',
+      'meetings.morning.notice',
       'meetings.assignee.start',
       'meetings.adherence.start',
       'meetings.agenda.set_read_events',
@@ -202,6 +204,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.digest.facts',
       'meetings.digest.status',
       'meetings.today.facts',
+      'meetings.morning.get',
       'meetings.assignee.facts',
       'meetings.assignee.status',
       'meetings.adherence.agenda',
@@ -230,6 +233,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.mcp.open_actions',
       'meetings.mcp.series_open_items',
       'meetings.mcp.decisions',
+      'meetings.mcp.search',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

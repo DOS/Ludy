@@ -446,6 +446,14 @@ export const vi = {
     },
   },
   notifications: {
+    morningNotice: {
+      title: 'Các cuộc họp hôm nay, vào buổi sáng',
+      hint: 'Mỗi ngày một lần, vào giờ bạn chọn, một thông báo trong ứng dụng và qua email cho biết hôm nay bạn có bao nhiêu cuộc họp, kèm đường dẫn để xem. Chỉ có số lượng và đường dẫn: không có tiêu đề hay tên. Ngày không có cuộc họp thì không gửi gì.',
+      label: 'Báo cho tôi các cuộc họp trong ngày vào mỗi buổi sáng',
+      at: 'Lúc',
+      zone: 'Theo múi giờ của bạn: {zone}',
+      noMail: 'Máy chủ này chưa gửi được email, nên chỉ có thông báo trong ứng dụng cho đến khi người cài đặt thiết lập thư.',
+    },
     todayMail: {
       title: 'Tóm tắt hằng ngày qua email',
       hint: 'Mỗi sáng, một thư ngắn cho biết hôm nay có bao nhiêu việc cần bạn kèm liên kết về Tổng quan. Thư chỉ có số lượng và liên kết, không có số tiền hay nội dung.',
@@ -478,6 +486,7 @@ export const vi = {
       projects_weekly_status: 'Báo cáo tuần dự án được gửi qua email',
       meetings_series_open_items: 'Việc còn dở từ buổi họp trước của chuỗi cuộc họp',
       meetings_summary_ready: 'Bản nháp biên bản của cuộc họp tôi ghi đã sẵn sàng (gửi cả qua email; tắt ở đây là tắt cả hai)',
+      meetings_morning: 'Các cuộc họp hôm nay của tôi, nếu tôi đã bật thông báo buổi sáng (gửi cả qua email; tắt ở đây là tắt cả hai)',
       kernel_channel_expired: 'Kết nối tài khoản quảng cáo hết hạn hoặc bị từ chối',
       kernel_ai_budget: 'Ngân sách AI sắp hết hoặc đã hết',
       kernel_conversation_new: 'Có hội thoại mới cần trả lời',
@@ -500,6 +509,7 @@ export const vi = {
       projects_weekly_status: 'Có báo cáo tuần mới của dự án {title}',
       series_open_items: 'Sắp họp tiếp: bạn còn {count, plural, other {# việc}} dở từ buổi họp trước. Mở buổi họp trước để xem.',
       summary_ready: 'Bản nháp biên bản của cuộc họp bạn ghi đã sẵn sàng. Mở cuộc họp để xem và chỉnh.',
+      morning: 'Hôm nay bạn có {count, plural, other {# cuộc họp}}. Mở trang Cuộc họp để xem.',
       ai_budget_warn: 'Ngân sách AI đã dùng {percent}%. Hết ngân sách thì chỉ phần AI dừng, sổ sách vẫn chạy.',
       ai_budget_stop: 'Ngân sách AI tháng này đã hết. Việc cần AI sẽ chờ; hãy nâng ngân sách hoặc đợi sang tháng mới. Sổ sách vẫn chạy bình thường.',
       channel_expired: 'Một tài khoản quảng cáo bị tạm dừng cập nhật vì kết nối hết hạn hoặc bị từ chối. Hãy kết nối lại để lấy tiếp số liệu, không mất ngày nào.',
@@ -3165,6 +3175,7 @@ export const vi = {
       draftNote: 'Chỉ bạn thấy bản nháp này. Hãy đọc lại và sửa dòng nào nghe sai; từ đây chưa chia sẻ gì cho người dự họp.',
       publishedNote: 'Bản ghi lời mà người ghi đã chia sẻ cho cuộc họp.',
       platformSource: 'Bản chép lời của {platform}: do nền tảng viết, không phải của Ludy.',
+      platformCutKnown: 'Bản chép lời của {platform} dài hơn mức Ludy nhập được, nên ở đây chỉ có phần đầu.',
       platformCut: 'Bản chép lời của {platform} có đúng {max, number} dòng, mức nhiều nhất Ludy nhập được. Nếu cuộc họp dài hơn, phần sau không có ở đây.',
       emptyRecorder: 'Chưa có bản ghi lời. Ghi âm và nghe lại vẫn dùng được khi không có.',
       vy: {
@@ -3762,6 +3773,7 @@ export const vi = {
       noMedia: 'Cuộc họp này chưa có bản ghi âm hoặc video.',
       notFound: 'Không tìm thấy cuộc họp.',
       stoppedAt: 'Ghi âm đã dừng lúc {time}',
+      // Bản chép lời của nền tảng dài hơn mức Ludy nhập được (#3922).
       consentMethodLabel: 'Hình thức',
       consentNoticeVersion: 'Phiên bản thông báo',
       consentConfirmedAt: 'Xác nhận lúc',
@@ -15404,6 +15416,11 @@ export const vi = {
       today: {
         facts: 'Xem các cuộc họp hôm nay trong lịch của bạn, kèm những gì đã chốt lần trước, việc còn dở và cơ hội đang mở của khách cho từng cuộc',
       },
+      morning: {
+        get: 'Xem cài đặt thông báo buổi sáng về các cuộc họp trong ngày của bạn',
+        notice: 'Gửi cho một thành viên thông báo buổi sáng về các cuộc họp trong ngày (lượt quét của hệ thống)',
+        set: 'Bật hoặc tắt thông báo buổi sáng về các cuộc họp trong ngày, và chọn giờ',
+      },
       brief: {
         facts: 'Xem những gì đã chốt, việc còn dở và cơ hội đang mở của khách trước một cuộc họp',
         start: 'Nhờ Vy viết vài câu chuẩn bị trước một cuộc họp',
@@ -15415,6 +15432,7 @@ export const vi = {
         open_actions: 'Cho ứng dụng AI xem các việc còn mở từ biên bản đã công bố của những cuộc họp chia sẻ cho cả công ty',
         series_open_items: 'Cho ứng dụng AI xem các việc còn mở trong chuỗi các cuộc họp lặp lại của một cuộc họp đã công bố và chia sẻ cho cả công ty',
         decisions: 'Cho ứng dụng AI xem các quyết định trong biên bản đã công bố của những cuộc họp gần đây được chia sẻ cho cả công ty',
+        search: 'Cho ứng dụng AI tìm trong biên bản đã công bố của những cuộc họp được chia sẻ cho cả công ty',
       },
       hook: {
         clear: 'Gỡ địa chỉ nhận biên bản của bạn',
