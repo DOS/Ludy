@@ -7,12 +7,13 @@ import { MAX_MEETING_SECONDS } from '@crove/kernel-contract';
 import type { ChunkStore, RecordingMeta } from '@crove/meeting-recorder';
 
 const api = vi.hoisted(() => ({
-  create: vi.fn(async () => ({ meetingId: 'm1' })),
+  create: vi.fn(async (..._args: unknown[]) => ({ meetingId: 'm1' })),
+  heartbeat: vi.fn(async (..._args: unknown[]) => ({ open: true })),
   upload: vi.fn(async (..._args: unknown[]) => undefined),
   invalidate: vi.fn(async () => undefined),
 }));
 vi.mock('../src/lib/api.ts', () => ({
-  orpc: { meetings: { key: () => ['meetings'], create: { call: api.create }, links: { add: { call: vi.fn() } }, agenda: { link: { call: vi.fn() } } } },
+  orpc: { meetings: { key: () => ['meetings'], create: { call: api.create }, captureHeartbeat: { call: api.heartbeat }, links: { add: { call: vi.fn() } }, agenda: { link: { call: vi.fn() } } } },
   queryClient: { invalidateQueries: api.invalidate },
   errorMessage: (e: unknown) => String(e),
   uploadMeetingMedia: api.upload,
@@ -85,6 +86,8 @@ beforeEach(() => {
   track.stopped = false;
   toasts.length = 0;
   api.upload.mockClear();
+  api.heartbeat.mockClear();
+  api.create.mockClear();
 });
 afterEach(() => {
   resetRecorderForTests();
@@ -272,5 +275,67 @@ describe('the app-level recorder', () => {
     expect(recordingLeftItsOrg(undefined, running)).toBe(false);
     expect(recordingLeftItsOrg('other', { slug: 'acme', phase: 'uploading' })).toBe(false);
     expect(recordingLeftItsOrg('other', { slug: null, phase: 'idle' })).toBe(false);
+  });
+});
+
+// One meeting, one live capture (ADR-0055 slice 1, #4123): the recorder says it is a capture, keeps the server told it is alive, ends the capture when it stops, and words a refusal.
+describe('the capture of a call', () => {
+  it('starts the meeting as a capture, naming the calendar event it was started from', async () => {
+    await startRecording(input(memoryStore()));
+    expect(api.create.mock.calls[0]?.[0]).toMatchObject({ capture: {} });
+    resetRecorderForTests();
+    await startRecording({ ...input(memoryStore()), prefill: { agendaId: '0195f2b0-0000-7000-8000-000000000009' } });
+    expect(api.create.mock.calls[1]?.[0]).toMatchObject({ capture: { agendaId: '0195f2b0-0000-7000-8000-000000000009' } });
+  });
+
+  it('beats every 30 seconds while it records, whatever the server answers, and ends the capture at once on the member\'s stop', async () => {
+    await startRecording(input(memoryStore()));
+    expect(api.heartbeat).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(30_000);
+    expect(api.heartbeat).toHaveBeenCalledTimes(1);
+    expect(api.heartbeat).toHaveBeenLastCalledWith({ meetingId: 'm1' });
+    // A beat that fails, and one answered "not open", leave the recording running.
+    api.heartbeat.mockImplementationOnce(async () => Promise.reject(new Error('offline')));
+    vi.advanceTimersByTime(30_000);
+    api.heartbeat.mockImplementationOnce(async () => ({ open: false }));
+    vi.advanceTimersByTime(30_000);
+    await flush();
+    expect(api.heartbeat).toHaveBeenCalledTimes(3);
+    expect(getRecorderSnapshot().phase).toBe('recording');
+    expect(FakeRecorder.last?.state).toBe('recording');
+    stop();
+    expect(api.heartbeat).toHaveBeenLastCalledWith({ meetingId: 'm1', end: true });
+    const beats = api.heartbeat.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(0);
+    await flush();
+    // The end is sent once, and nothing beats after it.
+    vi.advanceTimersByTime(120_000);
+    expect(api.heartbeat).toHaveBeenCalledTimes(beats);
+  });
+
+  it('ends the capture too when the recording stops by itself', async () => {
+    await startRecording(input(memoryStore()));
+    FakeRecorder.last!.stop();
+    await vi.advanceTimersByTimeAsync(0);
+    await flush();
+    expect(api.heartbeat).toHaveBeenLastCalledWith({ meetingId: 'm1', end: true });
+    expect(api.heartbeat.mock.calls.filter((c) => (c[0] as { end?: boolean }).end).length).toBe(1);
+  });
+
+  it('says in words which kind of client holds a call that is already recorded and since when, and starts nothing', async () => {
+    const refusal = Object.assign(new Error('This meeting is already being recorded'), { code: 'CAPTURE_ALREADY_RUNNING', status: 409, data: { kind: 'extension', since: '2027-01-20T07:02:00.000Z' } });
+    api.create.mockImplementationOnce(async () => Promise.reject(refusal));
+    FakeRecorder.last = null;
+    await startRecording(input(memoryStore()));
+    const snapshot = getRecorderSnapshot();
+    expect(snapshot.phase).toBe('idle');
+    expect(snapshot.error).toContain('record.captureRunning');
+    expect(snapshot.error).not.toContain('This meeting is already being recorded');
+    expect(FakeRecorder.last).toBeNull();
+    expect(api.heartbeat).not.toHaveBeenCalled();
+    // Any other refusal keeps its own message.
+    api.create.mockImplementationOnce(async () => Promise.reject(Object.assign(new Error('boom'), { code: 'INTERNAL' })));
+    await startRecording(input(memoryStore()));
+    expect(getRecorderSnapshot().error).toBe('Error: boom');
   });
 });

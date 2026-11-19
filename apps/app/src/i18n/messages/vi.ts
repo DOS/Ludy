@@ -3152,6 +3152,10 @@ export const vi = {
       nothingSaved: 'Chưa có đoạn nào được lưu nên không có gì để tải lên.',
       uploaded: 'Đã tải bản ghi lên và mã hóa.',
       stoppedEarly: 'Ghi âm đã dừng lúc {time}. {reason} Phần đã ghi đang được tải lên.',
+      // Another capture of the same call (ADR-0055 slice 1, #4123): which kind of client holds it and since when, never a person.
+      captureRunning: '{kind} đang ghi cuộc họp này từ {time}. Hãy dùng bản ghi đó, hoặc dừng nó trước khi ghi lại.',
+      captureKindExtension: 'Tiện ích Ludy',
+      captureKindApp: 'Ứng dụng Ludy',
       uploadedPartial: 'Đã tải phần ghi được lên. Phần cuối cuộc họp bị thiếu vì máy hết chỗ lưu.',
       uploadFailed: 'Chưa tải được bản ghi lên; bản ghi vẫn nằm trên máy này và bạn có thể tải lại bên dưới.',
       recoverTitle: 'Bản ghi chưa tải lên',
@@ -13292,6 +13296,7 @@ export const vi = {
       TRANSLATION_RESULT_NOT_FOUND: 'Chưa có kết quả dịch cho cuộc họp này.',
       TRANSLATION_RESULT_NOT_READY: 'Vy chưa dịch xong.',
       MEDIA_RETENTION_PASSED: 'Thời hạn lưu của cuộc họp này đã hết nên không nhận thêm âm thanh hay video.',
+      CAPTURE_ALREADY_RUNNING: 'Cuộc họp này đang được ghi ở một nơi khác. Hãy dùng bản ghi đó, hoặc dừng nó trước khi ghi lại.',
       CONSENT_METHOD_NOT_ALLOWED: 'Tổ chức này chỉ nhận thông báo bằng văn bản: hãy chọn dán thông báo vào khung chat, ghi trong lời mời hoặc thông báo bằng văn bản.',
       LIVE_ASSEMBLE_TIMEOUT: 'Ghép các đoạn mất quá lâu nên đã dừng, chưa có gì bị đổi. Hãy thử lại.',
       LIVE_NO_PIECES: 'Cuộc họp này không có đoạn trực tiếp nào để ghép.',
