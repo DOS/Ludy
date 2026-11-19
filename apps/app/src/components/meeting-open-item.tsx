@@ -9,7 +9,7 @@ import { memberLabel } from './meeting-results.tsx';
 import { useMe } from './conversation-inbox.tsx';
 
 export const FactNumber = ({ n }: { n: number }) => (
-  <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted px-1 text-xs text-muted-foreground" aria-label={String(n)}>
+  <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted px-1 text-xs text-muted-foreground">
     {n}
   </span>
 );

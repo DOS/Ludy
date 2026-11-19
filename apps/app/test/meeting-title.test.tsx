@@ -6,6 +6,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
 import type { TitleAnswer } from '@crove/kernel-contract';
+import { en } from '../src/i18n/messages/en.ts';
+import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
@@ -69,6 +71,18 @@ describe('the answer', () => {
     expect(html).not.toContain('<b>');
     expect(html).toContain('&lt;b&gt;Họp&lt;/b&gt; giao hàng');
     expect(html).toContain('Đã bỏ 1 gợi ý');
+  });
+  it('names the title each "Use" button takes: the candidate is the button\'s description, so three buttons with one name say which is which (WCAG 2.4.6; #4055)', () => {
+    const html = result(answer({ titles: ['Chốt báo giá tháng 12', 'Họp giao hàng'] }));
+    const buttons = [...html.matchAll(/<button[^>]*aria-describedby="([^"]+)"[^>]*data-testid="title-pick"/g)].map((m) => m[1]);
+    expect(buttons).toEqual(['title-candidate-0', 'title-candidate-1']);
+    expect(html).toMatch(/<span id="title-candidate-0"[^>]*>Chốt báo giá tháng 12<\/span>/);
+    expect(html).toMatch(/<span id="title-candidate-1"[^>]*>Họp giao hàng<\/span>/);
+  });
+  it('has the words that announce how many titles came, in both languages, and the "none" line is no longer a status of its own (the live region around the card says it once)', () => {
+    expect(en.meetings.titleSuggest.found).toContain('plural');
+    expect(viMessages.meetings.titleSuggest.found).toBe('Có {count, plural, other {# gợi ý tên}}');
+    expect(result(answer({ state: 'none' }))).not.toContain('role="status"');
   });
   it('locks the picks while one is being applied', () => {
     const html = result(answer({ titles: ['A title', 'Another title'] }), 'en', 'A title');

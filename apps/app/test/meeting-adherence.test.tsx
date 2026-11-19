@@ -64,6 +64,13 @@ describe('the card', () => {
     expect(html).not.toContain('data-testid="adherence-blocked"');
   });
 
+  it('links the hint to the box and keeps the "more than eight lines" status in the page, empty until it applies (WCAG 3.3.2, 4.1.3; #4055)', () => {
+    const html = show(agenda(), status());
+    expect(html).toMatch(/<textarea[^>]*aria-describedby="adherence-typed-hint"/);
+    expect(html).toMatch(/<p id="adherence-typed-hint"[^>]*>/);
+    expect(html).toMatch(/<p[^>]*role="status"[^>]*data-testid="adherence-typed-overflow-status"[^>]*><\/p>/);
+  });
+
   it('shows nothing to a reader, nothing while there is no transcript, and keeps the list (and no button) with AI off', () => {
     expect(show(agenda(), status(), false)).toBe('');
     expect(show(agenda({ transcriptLines: 0, transcriptFits: false }), status())).toBe('');
