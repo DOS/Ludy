@@ -12,7 +12,7 @@ import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { useFormat } from '../i18n/provider.tsx';
 import { ErrorText } from './ui.tsx';
-import { TranslationTargetPicker, translateBlocked, translateLabel } from './meeting-translation.tsx';
+import { TranslationTargetPicker, translateBlocked } from './meeting-translation.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { hasChoice, langTag, pickedTarget } from '../lib/translation-targets.ts';
 
@@ -104,7 +104,8 @@ export function TranscriptTranslationPanel({ meetingId, target, onTarget }: { me
   // The language shown: the member's pick at once (the status of a new pick takes a moment and the panel keeps the previous one meanwhile), else what the server answered.
   const shown = target ?? data.to;
   const switching = status.isPlaceholderData;
-  const label = translateLabel(t, tt, shown);
+  const otherNames = { zh: tt('names.zh'), ja: tt('names.ja'), ko: tt('names.ko') };
+  const label = shown === 'en' ? t('toEnglish') : shown === 'vi' ? t('toVietnamese') : tt('to', { language: otherNames[shown] });
   const begun = data.translated > 0 || data.stale > 0;
   const finished = begun && data.remaining === 0;
   const cost = data.estimate?.cost ?? null;

@@ -38,6 +38,8 @@ export function translateBlocked(status: Pick<TranslationStatus, 'enabled' | 're
 // name is written in its own language, whatever the screen's.
 export function TranslationTargetPicker({ id, targets, value, onChange, disabled }: { id: string; targets: readonly TranslationTarget[]; value: TranslationTarget; onChange: (to: TranslationTarget) => void; disabled?: boolean }) {
   const t = useTranslations('meetings.translationTargets');
+  // Literal keys, one by one: a template key over the whole union makes the type checker build a big key union for every use of the translator.
+  const names: Record<TranslationTarget, string> = { en: t('names.en'), vi: t('names.vi'), zh: t('names.zh'), ja: t('names.ja'), ko: t('names.ko') };
   return (
     <div className="flex items-center gap-2" data-testid="translation-target">
       <Label htmlFor={id} className="text-xs text-muted-foreground">
@@ -46,17 +48,12 @@ export function TranslationTargetPicker({ id, targets, value, onChange, disabled
       <NativeSelect id={id} value={value} disabled={disabled === true} onChange={(e) => onChange(e.target.value as TranslationTarget)} className="w-auto">
         {targets.map((to) => (
           <NativeSelectOption key={to} value={to} lang={langTag(to)}>
-            {t(`names.${to}`)}
+            {names[to]}
           </NativeSelectOption>
         ))}
       </NativeSelect>
     </div>
   );
-}
-
-// The button's words for a target: the long-standing ones for the pair, and "Dịch sang {language}" for the rest.
-export function translateLabel(t: ReturnType<typeof useTranslations>, tt: ReturnType<typeof useTranslations>, to: TranslationTarget): string {
-  return to === 'en' ? t('toEnglish') : to === 'vi' ? t('toVietnamese') : tt('to', { language: tt(`names.${to}`) });
 }
 
 const refresh = () => {
@@ -141,7 +138,9 @@ export function MeetingTranslation({ meetingId, stage, original }: { meetingId: 
   const translation = mine.data?.translations.find((x) => x.stage === stage && x.to === shown);
   const answer = ask.data;
   const failure = answer?.state === 'failed' ? ((KNOWN_FAILURES as readonly string[]).includes(answer.errorCode ?? '') ? (answer.errorCode as (typeof KNOWN_FAILURES)[number]) : 'default') : null;
-  const label = translateLabel(t, tt, shown);
+  // The button's words for the language shown: the long-standing ones for the pair, and "Dịch sang {language}" for the rest (literal keys, so the translator keeps its narrow type).
+  const otherNames = { zh: tt('names.zh'), ja: tt('names.ja'), ko: tt('names.ko') };
+  const label = shown === 'en' ? t('toEnglish') : shown === 'vi' ? t('toVietnamese') : tt('to', { language: otherNames[shown] });
   const cost = status.data.estimate?.cost ?? null;
   return (
     <div className="space-y-2 rounded-lg border p-3" data-testid="meeting-translation" data-stage={stage}>
