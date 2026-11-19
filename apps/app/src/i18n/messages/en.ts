@@ -14186,6 +14186,7 @@ export const en = {
       extension_org: 'The extension can only work in the organization it was authorized for.',
       extension_only: 'This route is for the browser extension only.',
       extension_id: 'This browser extension is not allowed to connect to this server.',
+      mcp_scope: 'This AI app\'s connection does not allow this.',
     },
   },
   // The label of every registered command and query, by its name (#1654), for the audit log and its export.
