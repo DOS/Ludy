@@ -1657,6 +1657,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           org_refno: `RLS${tag().toUpperCase()}`.slice(0, 20),
           payload_digest: 'a'.repeat(64),
           state: 'queued',
+          requested_by: o.owner,
         },
       };
     },
