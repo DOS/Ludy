@@ -27,6 +27,8 @@ function sources(dir: string, out: string[] = []): string[] {
 
 const ALL = ['apps', 'packages', 'modules', 'tools'].filter((d) => existsSync(join(ROOT, d))).flatMap((d) => sources(join(ROOT, d)));
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
+const adPlatformPkg = (JSON.parse(read('packages/ad-platform/package.json')) as { name: string }).name;
+const adPlatformRe = adPlatformPkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
 const code = (path: string) => read(path).split('\n').filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*')).join('\n');
@@ -88,7 +90,7 @@ describe('what may change a running ad at the platform (#3835, W4)', () => {
     const job = code('apps/kernel/src/ads-manage.ts');
     expect(job).not.toMatch(/LaunchWriter|AdPauser|AdRevoker|AdActivator|AdStateReader|\.setStatus\(|\.activate\(|createCampaign|createAdSet|createCreative|createAd\(|revokeToken|findByTag|\.verify\(/);
     // The platform package's names the job imports are the error and the two types of the view.
-    expect(job).toMatch(/import \{ AdPlatformError, type AdManager, type ManagedRead \} from '@(?:crove|ludy)\/ad-platform';/);
+    expect(job).toMatch(new RegExp(`import \\{ AdPlatformError, type AdManager, type ManagedRead \\} from '${adPlatformRe}';`));
   });
 
   it('bounds the time between begin and the platform call, inside the wait of the wind-down: a begin that waited too long is never called', () => {

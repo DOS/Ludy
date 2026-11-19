@@ -24,6 +24,16 @@ function writeManifest(rootDir: string, relDir: string, pkg: Record<string, unkn
   return dir;
 }
 
+function linkVitestRuntime(tempRoot: string): void {
+  mkdirSync(join(tempRoot, 'node_modules'), { recursive: true });
+  for (const entry of readdirSync(join(REPO_ROOT, 'node_modules'))) {
+    // Share installed dependencies via .pnpm and direct packages while keeping .vite/.vitest-cache local to tempRoot.
+    if (entry === '@crove' || entry === '@ludy') continue;
+    if (entry.startsWith('.') && entry !== '.pnpm') continue;
+    symlinkSync(resolve(REPO_ROOT, 'node_modules', entry), join(tempRoot, 'node_modules', entry));
+  }
+}
+
 afterEach(() => {
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
@@ -32,7 +42,7 @@ afterEach(() => {
 });
 
 describe('legacyCroveInvariantBridge (#3965 step 1 of 2)', () => {
-  it('rejects missing package names, duplicate full names, and cross-scope slug collisions', () => {
+  it('rejects missing package names, duplicate full names, cross-scope slug collisions, and mixed scopes', () => {
     const missing = makeTempDir('ludy-bridge-missing-');
     writeManifest(missing, 'packages/bad', {});
     expect(() => legacyCroveInvariantBridge(missing)).toThrow(/has no package name/);
@@ -46,16 +56,21 @@ describe('legacyCroveInvariantBridge (#3965 step 1 of 2)', () => {
     writeManifest(dupSlug, 'packages/kernel-runtime', { name: '@crove/kernel-runtime' });
     writeManifest(dupSlug, 'apps/shadow', { name: '@ludy/kernel-runtime' });
     expect(() => legacyCroveInvariantBridge(dupSlug)).toThrow(/duplicate workspace package slug/);
-  });
 
-  it('stays inactive while any @crove/* manifest exists and leaves non-invariant importers untouched', async () => {
     const mixed = makeTempDir('ludy-bridge-mixed-');
     writeManifest(mixed, 'packages/kernel', { name: '@crove/kernel' });
     writeManifest(mixed, 'packages/db', { name: '@ludy/db' });
-    const mixedBridge = legacyCroveInvariantBridge(mixed);
+    expect(() => legacyCroveInvariantBridge(mixed)).toThrow(/mixed @crove\/\* and @ludy\/\*/);
+  });
+
+  it('stays inactive when all packages use @crove/* and leaves non-invariant importers untouched', async () => {
+    const legacy = makeTempDir('ludy-bridge-legacy-');
+    writeManifest(legacy, 'packages/kernel', { name: '@crove/kernel' });
+    writeManifest(legacy, 'packages/db', { name: '@crove/db' });
+    const legacyBridge = legacyCroveInvariantBridge(legacy);
     const noopCtx = { resolve: async () => ({ id: '/never' }) };
     await expect(
-      mixedBridge.resolveId.call(noopCtx, '@crove/db', join(mixed, 'apps/kernel/test/invariant/x.test.ts')),
+      legacyBridge.resolveId.call(noopCtx, '@crove/db', join(legacy, 'apps/kernel/test/invariant/x.test.ts')),
     ).resolves.toBeNull();
 
     const activeRoot = makeTempDir('ludy-bridge-scope-');
@@ -81,9 +96,21 @@ describe('legacyCroveInvariantBridge (#3965 step 1 of 2)', () => {
     ).resolves.toEqual({ id: `${targetFile}?t=1` });
   });
 
-  it('fails closed when a mapped @ludy/* package is missing, unresolvable, or outside the package dir even if @crove/* resolves', async () => {
-    const root = makeTempDir('ludy-bridge-fail-');
-    const dbDir = writeManifest(root, 'packages/db', { name: '@ludy/db' });
+  it('fails closed on missing or outside packages and resolves renamed packages with subpaths in real Vitest runs', async () => {
+    const root = makeTempDir('ludy-bridge-e2e-');
+    const dbDir = writeManifest(root, 'packages/db', {
+      name: '@ludy/db',
+      type: 'module',
+      exports: {
+        '.': { import: './src/index.ts', default: './src/fallback.ts' },
+        './migrate': './src/migrate.ts',
+      },
+    });
+    mkdirSync(join(dbDir, 'src'), { recursive: true });
+    writeFileSync(join(dbDir, 'src/index.ts'), "export const DB_TOKEN = 'db-esm';\n");
+    writeFileSync(join(dbDir, 'src/fallback.ts'), "export const DB_TOKEN = 'db-fallback';\n");
+    writeFileSync(join(dbDir, 'src/migrate.ts'), "export const MIGRATE_TOKEN = 'migrate-ok';\n");
+
     const elsewhere = join(root, 'outside.ts');
     writeFileSync(elsewhere, 'export {};\n');
 
@@ -100,28 +127,53 @@ describe('legacyCroveInvariantBridge (#3965 step 1 of 2)', () => {
       /resolved outside/,
     );
 
-    // Real Vitest run where node_modules/@crove/stale resolves on disk while @ludy/stale does not exist in workspace.
+    // Real Vitest workspace with renamed @ludy/db (including ./migrate subpath) plus a stale @crove/stale package.
     writeFileSync(join(root, 'package.json'), JSON.stringify({ type: 'module' }));
     writeFileSync(join(root, 'vitest.invariant.config.ts'), readFileSync(join(REPO_ROOT, 'vitest.invariant.config.ts')));
+    linkVitestRuntime(root);
+
+    mkdirSync(join(root, 'node_modules/@ludy'), { recursive: true });
+    symlinkSync(dbDir, join(root, 'node_modules/@ludy/db'));
+
     mkdirSync(join(root, 'node_modules/@crove/stale/src'), { recursive: true });
-    for (const entry of readdirSync(join(REPO_ROOT, 'node_modules'))) {
-      if (entry !== '@crove') symlinkSync(resolve(REPO_ROOT, 'node_modules', entry), join(root, 'node_modules', entry));
-    }
     writeFileSync(join(root, 'node_modules/@crove/stale/package.json'), JSON.stringify({ name: '@crove/stale', type: 'module', exports: { '.': './src/index.ts' } }));
     writeFileSync(join(root, 'node_modules/@crove/stale/src/index.ts'), 'export const OK = true;\n');
 
     mkdirSync(join(root, 'apps/kernel/test/invariant'), { recursive: true });
     writeFileSync(
+      join(root, 'apps/kernel/test/invariant/rename-success.test.ts'),
+      [
+        "import { expect, it } from 'vitest';",
+        "import { DB_TOKEN } from '@crove/db';",
+        "import { DB_TOKEN as LUDY_TOKEN } from '@ludy/db';",
+        "import { MIGRATE_TOKEN } from '@crove/db/migrate';",
+        "import { MIGRATE_TOKEN as LUDY_MIGRATE } from '@ludy/db/migrate';",
+        "it('resolves @crove/* root and subpath imports to the renamed @ludy/* exports', () => {",
+        "  expect(DB_TOKEN).toBe('db-esm');",
+        '  expect(DB_TOKEN).toBe(LUDY_TOKEN);',
+        "  expect(MIGRATE_TOKEN).toBe('migrate-ok');",
+        '  expect(MIGRATE_TOKEN).toBe(LUDY_MIGRATE);',
+        '});',
+      ].join('\n'),
+    );
+    writeFileSync(
       join(root, 'apps/kernel/test/invariant/stale-fallback.test.ts'),
       "import { expect, it } from 'vitest';\nimport { OK } from '@crove/stale';\nit('never loads stale @crove/*', () => { expect(OK).toBe(true); });\n",
     );
 
-    const run = spawnSync(
+    const okRun = spawnSync(
+      process.execPath,
+      [VITEST_BIN, 'run', '--config', 'vitest.invariant.config.ts', 'apps/kernel/test/invariant/rename-success.test.ts'],
+      { cwd: root, encoding: 'utf8' },
+    );
+    expect(okRun.status, `${okRun.stdout}\n${okRun.stderr}`).toBe(0);
+
+    const staleRun = spawnSync(
       process.execPath,
       [VITEST_BIN, 'run', '--config', 'vitest.invariant.config.ts', 'apps/kernel/test/invariant/stale-fallback.test.ts'],
       { cwd: root, encoding: 'utf8' },
     );
-    expect(run.status).not.toBe(0);
-    expect(`${run.stdout}\n${run.stderr}`).toMatch(/missing workspace package @ludy\/stale/);
+    expect(staleRun.status).not.toBe(0);
+    expect(`${staleRun.stdout}\n${staleRun.stderr}`).toMatch(/missing workspace package @ludy\/stale/);
   }, 30_000);
 });

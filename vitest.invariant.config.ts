@@ -50,7 +50,12 @@ export function legacyCroveInvariantBridge(rootDir: string) {
     }
   }
 
-  const bridgeActive = !names.some((name) => name.startsWith('@crove/'));
+  const hasCrove = names.some((name) => name.startsWith('@crove/'));
+  const hasLudy = names.some((name) => name.startsWith('@ludy/'));
+  if (hasCrove && hasLudy) {
+    throw new Error('vitest.invariant.config.ts: mixed @crove/* and @ludy/* workspace packages; rename all packages atomically');
+  }
+  const bridgeActive = !hasCrove && hasLudy;
 
   return {
     name: 'legacy-crove-invariant-bridge',

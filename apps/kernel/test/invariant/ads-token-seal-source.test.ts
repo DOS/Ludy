@@ -24,6 +24,8 @@ function sources(dir: string, out: string[] = []): string[] {
 
 const ALL = ['apps', 'packages', 'modules', 'tools'].filter((d) => existsSync(join(ROOT, d))).flatMap((d) => sources(join(ROOT, d)));
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
+const adPlatformPkg = (JSON.parse(read('packages/ad-platform/package.json')) as { name: string }).name;
+const adPlatformRe = adPlatformPkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
 const code = (path: string) => read(path).split('\n').filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*')).join('\n');
@@ -47,7 +49,7 @@ describe('what may open or name the sealed copy of a closed ads connection token
     expect(file).not.toContain('kernel.channel.credential');
     expect(file).not.toMatch(/runtime\.(execute|query)[^;]*envelope/);
     // The platform adapters it is built on are the revoke view and the typed error, never a writer.
-    const imports = [...read('apps/kernel/src/ads-revoke.ts').matchAll(/import \{([^}]*)\} from '@(?:crove|ludy)\/ad-platform'/g)].flatMap((m) => (m[1] ?? '').split(',').map((s) => s.replace(/\btype\b/, '').trim()));
+    const imports = [...read('apps/kernel/src/ads-revoke.ts').matchAll(new RegExp(`import \\{([^}]*)\\} from '${adPlatformRe}'`, 'g'))].flatMap((m) => (m[1] ?? '').split(',').map((s) => s.replace(/\btype\b/, '').trim()));
     expect(imports.sort()).toEqual(['AdPlatformError', 'AdRevoker']);
   });
 

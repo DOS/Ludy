@@ -26,6 +26,8 @@ function sources(dir: string, out: string[] = []): string[] {
 
 const ALL = ['apps', 'packages', 'modules', 'tools'].filter((d) => existsSync(join(ROOT, d))).flatMap((d) => sources(join(ROOT, d)));
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
+const adPlatformPkg = (JSON.parse(read('packages/ad-platform/package.json')) as { name: string }).name;
+const adPlatformRe = adPlatformPkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
 const code = (path: string) => read(path).split('\n').filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*')).join('\n');
@@ -56,7 +58,7 @@ describe('what the pause job may reach of the platform\'s writer (#2296, W2-4a)'
     expect(step).not.toMatch(/console\./);
     expect(step).not.toMatch(/runtime\.|\.execute\(|\.query\(/);
     expect(step).not.toMatch(/error\.message|String\(error\)/);
-    expect([...step.matchAll(/@(?:crove|ludy)\/ad-platform'/g)]).toHaveLength(1);
+    expect([...step.matchAll(new RegExp(`${adPlatformRe}'`, 'g'))]).toHaveLength(1);
   });
 
   it('gives the pause job the narrowed pausers and the broker alone, opens the token once from the connection and never touches a platform call but the pause', () => {
@@ -66,7 +68,7 @@ describe('what the pause job may reach of the platform\'s writer (#2296, W2-4a)'
     expect(job).not.toMatch(/\.(verify|accounts|read\w*|create\w*|setStatus|findByTag|resolveTargeting|revokeToken)\(/);
     expect(job).not.toMatch(/\b(ACTIVE|PAUSED|ARCHIVED)\b/);
     expect(job).not.toMatch(/\b(activate|unpause|resume)\w*\s*\(/i);
-    const imports = [...read('apps/kernel/src/ads-pause.ts').matchAll(/import (?:type )?\{([^}]*)\} from '@(?:crove|ludy)\/ad-platform'/g)].flatMap((m) => (m[1] ?? '').split(',').map((s) => s.replace(/\btype\b/, '').trim()));
+    const imports = [...read('apps/kernel/src/ads-pause.ts').matchAll(new RegExp(`import (?:type )?\\{([^}]*)\\} from '${adPlatformRe}'`, 'g'))].flatMap((m) => (m[1] ?? '').split(',').map((s) => s.replace(/\btype\b/, '').trim()));
     expect(imports.sort()).toEqual(['AdPauser']);
     // Nothing it logs or records carries the secret.
     for (const line of read('apps/kernel/src/ads-pause.ts').split('\n').filter((l) => /console\.(log|warn|error|info|debug)/.test(l))) expect(line, line).not.toMatch(/secret|envelope|token|sealed/i);
