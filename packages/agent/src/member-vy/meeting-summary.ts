@@ -9,6 +9,7 @@
 // proposal too: code keeps it only when the label is one the transcript has, the name is exactly one of the attendees (and is then written as the attendee's own
 // spelling), and the line it cites is spoken by that label. The recorder accepts a suggestion with a click of their own; nothing is renamed by this run.
 import { privateText, revealPrivateText, type PrivateText } from '../private-text.ts';
+import { GLOSSARY_LINE, glossaryData, glossaryTerms, spellGlossary } from './glossary.ts';
 import type { BoundPorts } from './ports.ts';
 import { runFeature } from './run-feature.ts';
 
@@ -54,6 +55,9 @@ export interface MeetingSummaryInput {
   // The display names of the people in the meeting (the recorder and the attendees), as the caller read them for the recorder. Not trusted: speakerNames cleans them. Absent or
   // empty: the run is what it was, with no speaker suggestion.
   attendees?: readonly string[];
+  // The organization's glossary (#4043), as the caller read it for the recorder: terms people typed, cleaned by glossaryTerms. They travel as data beside the transcript, and the answer is
+  // spelled their way by code afterwards. Absent or empty: the run is what it was.
+  glossary?: readonly string[];
 }
 export interface SummaryItem {
   title: string;
@@ -373,7 +377,7 @@ export function sectionData(template: SummaryTemplate): string {
   return `SECTIONS:\n${template.sections.map((d) => `- key ${JSON.stringify(d.key)}: {"title": ${orgText(d.title, 60)}, "hint": ${orgText(d.hint, 200)}}`).join('\n')}\n\n`;
 }
 
-const INSTRUCTION = (language: 'vi' | 'en', template: SummaryTemplate, attendees: readonly string[] = []): string =>
+const INSTRUCTION = (language: 'vi' | 'en', template: SummaryTemplate, attendees: readonly string[] = [], glossary: readonly string[] = []): string =>
   [
     'You summarize one meeting from its transcript for the person who recorded it.',
     `Write in ${language === 'vi' ? 'Vietnamese' : 'English'}.`,
@@ -390,6 +394,7 @@ const INSTRUCTION = (language: 'vi' | 'en', template: SummaryTemplate, attendees
     '"decisions" are things the meeting decided. "items" are things someone said they would do:',
     '"title" is what to do, "who" and "when" are exactly as said in the transcript (empty when not said), and "seconds" is the second of the transcript line the item comes from.',
     'Use only numbers, names and dates that appear in the transcript. Never write a link, an email address or a phone number. Add nothing the transcript does not say.',
+    ...(glossary.length === 0 ? [] : [GLOSSARY_LINE]),
     ...(attendees.length === 0
       ? []
       : [
@@ -406,6 +411,22 @@ export interface MeetingSummaryResult {
   usage: { inputTokens: number; outputTokens: number };
 }
 
+/**
+ * The organization's spelling (#4043): the text of the summary, the sections, the decisions and the titles of the items, with a term written the glossary's way wherever the model had only its
+ * case or spacing different (spellGlossary). Code, not the model, decides; nothing else of the body changes, and with no terms the body is returned as it came.
+ */
+export function spellSummary(body: MeetingSummaryBody, glossary: readonly string[]): MeetingSummaryBody {
+  if (glossary.length === 0) return body;
+  const spell = (text: string) => spellGlossary(text, glossary);
+  return {
+    ...body,
+    sections: body.sections.map((s) => ({ ...s, text: spell(s.text) })),
+    summary: spell(body.summary),
+    decisions: body.decisions.map(spell),
+    items: body.items.map((item) => ({ ...item, title: spell(item.title) })),
+  };
+}
+
 /** One run of the recorder's Vy over a transcript: the model is asked once, the checks above decide what is kept. */
 export async function summarizeMeeting(input: MeetingSummaryInput, ports: BoundPorts): Promise<MeetingSummaryResult> {
   const text = transcriptLines(input.segments);
@@ -415,16 +436,17 @@ export async function summarizeMeeting(input: MeetingSummaryInput, ports: BoundP
   if (new TextEncoder().encode(text).length > SUMMARY_LIMITS.transcriptBytes) throw new SummaryError('SUMMARY_TOO_LONG');
   // The attendees go in as data ahead of the transcript, only when there are some to suggest from: without them the call is exactly what it was.
   const attendees = speakerNames(input.attendees);
+  const glossary = glossaryTerms(input.glossary);
   const roster = attendees.length === 0 ? '' : `ATTENDEES:\n${attendees.map((name) => `- ${name}`).join('\n')}\n\nTRANSCRIPT:\n`;
-  // The organization's section labels (none for a built-in template) go in the data block as well, ahead of the attendees and the transcript.
-  const labels = sectionData(template);
-  // With the labels and no attendees the transcript still gets its header, so the model always sees where the organization's labels end and the transcript begins.
+  // The organization's section labels (none for a built-in template) go in the data block as well, ahead of the glossary, the attendees and the transcript.
+  const labels = sectionData(template) + glossaryData(glossary);
+  // With the labels or the glossary and no attendees the transcript still gets its header, so the model always sees where the organization's text ends and the transcript begins.
   const header = roster === '' && labels !== '' ? 'TRANSCRIPT:\n' : '';
   const out = await runFeature(
-    { instruction: INSTRUCTION(input.language, template, attendees), subject: privateText(labels + roster + header + text), maxSubjectChars: SUMMARY_LIMITS.transcriptBytes + labels.length + roster.length + header.length },
+    { instruction: INSTRUCTION(input.language, template, attendees, glossary), subject: privateText(labels + roster + header + text), maxSubjectChars: SUMMARY_LIMITS.transcriptBytes + labels.length + roster.length + header.length },
     ports,
   );
-  const parsed = checkSummary(revealPrivateText(out.text), input.segments, template, attendees);
+  const parsed = spellSummary(checkSummary(revealPrivateText(out.text), input.segments, template, attendees), glossary);
   return { body: privateText(JSON.stringify(parsed)), parsed, usage: out.usage };
 }
 
