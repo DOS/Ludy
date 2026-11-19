@@ -1092,12 +1092,16 @@ suite('finding a person in the org (#923)', () => {
   it("clears MISA AMIS's refusal text when the definer's owner is a non-superuser member of crove_tenant, as on a shared database (#4015)", async () => {
     const email = 'Shared.Db@Example.vn';
     const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId]))).rows[0]?.id);
-    const channel = randomUUID();
-    const connection = randomUUID();
-    await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [org.orgId, channel, entity, org.owner]);
-      await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [org.orgId, connection, entity, channel]);
-    });
+    // The org has one live MISA connection per entity (channel_connection_live_uq): reuse the one an earlier test made, or make it.
+    const existing = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [org.orgId, entity]))).rows[0]?.id;
+    const connection = existing ?? randomUUID();
+    if (!existing) {
+      const channel = randomUUID();
+      await admin(async (c) => {
+        await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [org.orgId, channel, entity, org.owner]);
+        await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [org.orgId, connection, entity, channel]);
+      });
+    }
     const row = async (state: string, reason: string | null, no: string) => {
       const id = randomUUID();
       await admin((c) =>
