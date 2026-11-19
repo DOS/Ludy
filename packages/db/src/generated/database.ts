@@ -3338,9 +3338,9 @@ export interface MeetingsMorningNoticeTable {
   org_id: string;
   id: Generated<string>;
   user_id: string;
-  send_minute: ColumnType<number, number | undefined, number>;
+  send_minute: Generated<number>;
   time_zone: string;
-  language: ColumnType<string, string | undefined, string>;
+  language: Generated<string>;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
