@@ -154,8 +154,10 @@ describe('brand name (#1040)', () => {
       }
     }
     // Whoever holds a role, the message says so through the roster: the names are not written in the catalogs.
-    expect(catalog('vi').auth.tagline).toBe(`Chứng từ chờ duyệt: chuyển tiếp hóa đơn, đồng nghiệp AI ${COWORKERS.finance} đề xuất hạch toán, bạn duyệt.`);
-    expect(catalog('en').auth.tagline).toBe(`Document inbox: forward invoices; ${COWORKERS.finance}, your AI coworker, proposes the entries; you approve.`);
+    // The sign-in line speaks for the suite and names no coworker (#3593); the accounting line moved to the first Accounting screen.
+    expect(catalog('en').auth.tagline).not.toContain(COWORKERS.finance);
+    expect(catalog('vi').financeOverview.empty.hint).toContain(`đồng nghiệp AI ${COWORKERS.finance} đề xuất hạch toán, bạn duyệt`);
+    expect(catalog('en').financeOverview.empty.hint).toContain(`${COWORKERS.finance}, your AI coworker, proposes the entries`);
     expect(catalog('en').bookings.suggest.ai.noWindows).toMatch(new RegExp(`^${COWORKERS.sales} `));
     expect(catalog('en').conversations.draft.ask).toBe(`Ask ${COWORKERS.sales} to draft a reply`);
     expect(withBrand('{finance} của {brand}')).toBe(`${COWORKERS.finance} của Tên Mới`);
