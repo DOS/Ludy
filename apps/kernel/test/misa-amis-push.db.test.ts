@@ -426,9 +426,9 @@ suite('MISA AMIS push (#3902)', () => {
     const source = (await rows<{ source_id: string }>('SELECT source_id FROM crove_finance.misa_amis_push WHERE org_refid = $1', [refused.org_refid]))[0]?.source_id as string;
     // The voucher was corrected in Ludy meanwhile: another amount, so another digest.
     vouchers = vouchers.map((v) => (v.sourceId === source ? { ...v, lines: [{ lineNo: 1, account: '331', amount: '1650002', memo: null }] } : v));
-    // The row a person found "not in AMIS" (failed) goes back too, with the same digest: both are one more attempt.
+    // The rows a person found "not in AMIS" (failed: one after three days, one after 24 hours) go back too, with the same digest: each is one more attempt.
     const result = await push('owner');
-    expect(result.requeued).toBe(2);
+    expect(result.requeued).toBe(3);
     const row = (await pushRows()).find((r) => r.org_refid === refused.org_refid);
     expect(row).toMatchObject({ state: 'queued', attempts: 2, reason: null, sent_at: null, answered_at: null });
     expect(row?.payload_digest).not.toBe(refused.payload_digest);
@@ -493,10 +493,16 @@ suite('MISA AMIS push (#3902)', () => {
     // A person's move is stamped with the database clock: a statement that backdates `updated_at` along with an allowed move (an old `ambiguous` row back to `sent`) gets the real time, so the row is not settled at once.
     // (The row is put back to `ambiguous` and four days old by the owner of the database, as the worker's history would leave it.)
     await rows("UPDATE crove_finance.misa_amis_push SET state = 'ambiguous', reason = NULL, answered_at = NULL, updated_at = pg_catalog.now() - interval '4 days' WHERE org_refid = $1", [waiting]);
-    await tenant('owner', orgId, (c) => c.query("UPDATE crove_finance.misa_amis_push SET state = 'sent', reason = 'CONFIRMED_IN_AMIS', updated_at = pg_catalog.now() - interval '2 days' WHERE org_refid = $1", [waiting]));
-    const [after] = await rows<{ fresh: boolean }>("SELECT updated_at > pg_catalog.now() - interval '1 minute' AS fresh FROM crove_finance.misa_amis_push WHERE org_refid = $1", [waiting]);
-    expect(after?.fresh).toBe(true);
-    await expect(tenant('owner', orgId, (c) => c.query("UPDATE crove_finance.misa_amis_push SET state = 'accepted', reason = 'CONFIRMED_IN_AMIS', answered_at = pg_catalog.now() WHERE org_refid = $1", [waiting]))).rejects.toThrow(/MISA_AMIS_PUSH_STATE/);
+    // (The helper rolls every transaction back, so the move and the check on it share one transaction.)
+    let stamped: boolean | undefined;
+    await expect(
+      tenant('owner', orgId, async (c) => {
+        const moved = await c.query<{ fresh: boolean }>("UPDATE crove_finance.misa_amis_push SET state = 'sent', reason = 'CONFIRMED_IN_AMIS', updated_at = pg_catalog.now() - interval '2 days' WHERE org_refid = $1 RETURNING updated_at >= pg_catalog.now() AS fresh", [waiting]);
+        stamped = moved.rows[0]?.fresh;
+        await c.query("UPDATE crove_finance.misa_amis_push SET state = 'accepted', reason = 'CONFIRMED_IN_AMIS', answered_at = pg_catalog.now() WHERE org_refid = $1", [waiting]);
+      }),
+    ).rejects.toThrow(/MISA_AMIS_PUSH_STATE/);
+    expect(stamped).toBe(true);
     // Back to where the rest of the test expects it.
     await rows("UPDATE crove_finance.misa_amis_push SET state = 'failed', reason = 'NOT_IN_AMIS' WHERE org_refid = $1", [waiting]);
     // Another org sees none of it and changes none of it.
