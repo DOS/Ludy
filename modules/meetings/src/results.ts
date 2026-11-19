@@ -403,7 +403,7 @@ export const actionItemAccept = defineCommand({
 
 // The people of the org a said name may be matched with when no attendee answers to it (#3921): the members, by the display name the org knows them by (member_profiles answers for members only; a
 // member with no display name has no name to match, and an email address is never one). Above 500 members none are offered: a cut list could make a name that two people share look like it is one person's.
-async function memberNames(ctx: QueryContext | CommandContext): Promise<Person[]> {
+export async function memberNames(ctx: QueryContext | CommandContext): Promise<Person[]> {
   const ids = (await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).limit(501).execute()).map((r) => r.user_id);
   if (ids.length === 0 || ids.length > 500) return [];
   const { rows } = await sql<{ user_id: string; display_name: string | null }>`SELECT user_id, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
@@ -414,7 +414,7 @@ async function memberNames(ctx: QueryContext | CommandContext): Promise<Person[]
 }
 
 // The seats an attendee holds now: active positions whose holder they are.
-async function seatsOf(trx: Trx, orgId: string, userIds: readonly string[]): Promise<Map<string, Array<{ id: string; title: string }>>> {
+export async function seatsOf(trx: Trx, orgId: string, userIds: readonly string[]): Promise<Map<string, Array<{ id: string; title: string }>>> {
   const seats = new Map<string, Array<{ id: string; title: string }>>();
   if (userIds.length === 0) return seats;
   const rows = await trx.selectFrom('crove_kernel.position').select(['id', 'title', 'holder_user_id']).where('org_id', '=', orgId).where('status', '=', 'active').where('holder_user_id', 'in', [...userIds]).execute();

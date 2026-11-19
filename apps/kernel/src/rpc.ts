@@ -72,7 +72,7 @@ import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
-import { briefStatusOf, runMeetingBrief, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
+import { assigneeStatusOf, runMeetingAssignee, briefStatusOf, runMeetingBrief, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MISA_AMIS_CHANNEL_PROVIDER, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -427,6 +427,8 @@ export function createRpcHandler(
   // A question across meetings (A3, #3161) is one model call over at most 40 lines and any member may ask: its own budget, apart from the summaries' and the translations'.
   const asks = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   const meetingBriefs = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // Naming who an action item belongs to (#3921) is one short call per click: its own budget, so it never makes a brief or a question wait.
+  const meetingAssignees = new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
   // Proposing project tasks from a note (#2598): one call per click, own budget so it does not contend with meetings.
   const noteTaskProposals = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   // Notes N8 (#1677): independent budgets for summarizing notes and suggesting personal to-dos.
@@ -1372,6 +1374,14 @@ export function createRpcHandler(
         status: os.meetings.brief.status.handler(({ context }) => inMeetings(context, (orgId, actor) => briefStatusOf({ runtime, price: aiPrice, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor))),
         write: os.meetings.brief.write.handler(({ context, input }) =>
           inMeetings(context, (orgId, actor) => runMeetingBrief({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingBriefs, price: aiPrice }, orgId, actor, input)),
+        ),
+      },
+      // Who an action item belongs to, by Vy, when code found nobody (#3921, step 2): the click has the member's own Vy pick one of the people the member may give the work to from the said name, or nobody; the model
+      // sees names only and nothing is stored. See member-vy-ports.ts.
+      assignee: {
+        status: os.meetings.assignee.status.handler(({ context }) => inMeetings(context, (orgId, actor) => assigneeStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor))),
+        suggest: os.meetings.assignee.suggest.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingAssignee({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingAssignees, price: aiPrice }, orgId, actor, input)),
         ),
       },
       // A member's own Google Calendar meetings (B1, #3165): the member's own rows, no model; see modules/meetings/src/agenda.ts.
