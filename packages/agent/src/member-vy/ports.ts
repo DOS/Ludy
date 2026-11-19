@@ -45,6 +45,7 @@ export type ModelFeature =
   | 'meetings.brief'
   | 'meetings.digest'
   | 'meetings.assignee'
+  | 'meetings.adherence'
   | 'meetings.chapters'
   | 'meetings.title'
   | 'meetings.commitments'

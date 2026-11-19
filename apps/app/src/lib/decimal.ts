@@ -110,17 +110,30 @@ export function previewPurchaseJournal(lines: PreviewLine[], vatTotal: string): 
 }
 
 // Mirrors @crove/l10n-vn buildSalesJournal (issue #313): Cr each line's revenue account, Cr 3331 for the VAT, and the
-// receivable (131) first, balancing the rounded lines. `debitAccount` of a sale line is its revenue account.
-export function previewSalesJournal(lines: PreviewLine[], vatTotal: string): PreviewJournalLine[] {
+// receivable (131) first, balancing the rounded lines. `debitAccount` of a sale line is its revenue account. Under the regime 'tt99' the net reduction of a sales-revenue account (511 or a
+// sub-account) is one debit to 521 instead (#3712 slice 4), as the server's entry does.
+export function previewSalesJournal(lines: PreviewLine[], vatTotal: string, regime?: string): PreviewJournalLine[] {
   const ledger = (exact: bigint) => fromUnits(divRound(exact, TO_LEDGER));
   const byAccount = new Map<string, bigint>();
   for (const l of lines) byAccount.set(l.debitAccount, (byAccount.get(l.debitAccount) ?? 0n) + toExact(l.amount));
+  let deducted = 0n;
+  if (regime === 'tt99') {
+    const lowered: string[] = [];
+    for (const [account, exact] of byAccount) {
+      if (account.startsWith('511') && exact < 0n) {
+        deducted += -exact;
+        lowered.push(account);
+      }
+    }
+    for (const account of lowered) byAccount.delete(account);
+  }
   const credits: PreviewJournalLine[] = [];
   const credit = (accountCode: string, exact: bigint) => {
     if (exact === 0n) return;
     credits.push(exact < 0n ? { accountCode, debit: ledger(-exact), credit: '0' } : { accountCode, debit: '0', credit: ledger(exact) });
   };
   for (const [account, exact] of [...byAccount.entries()].sort(([a], [b]) => a.localeCompare(b))) credit(account, exact);
+  credit('521', -deducted);
   credit('3331', toExact(vatTotal));
   const net = credits.reduce((acc, l) => acc + toUnits(l.credit) - toUnits(l.debit), 0n);
   if (net === 0n) return credits;

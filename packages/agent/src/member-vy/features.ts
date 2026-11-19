@@ -38,6 +38,9 @@ export const MEMBER_VY_FEATURE_TABLE = {
   // The member's Vy naming who an action item belongs to from the name said in the meeting, when code found nobody (#3921): one model call over a name and at most 100 names, the member waiting for it. Its own key,
   // so it never cuts off a transcription, a summary, a translation, a question, a brief or live notes (#3029); the run's result row holds counts only.
   'meetings.assignee': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy checking whether a meeting covered its agenda from the agenda lines and the transcript they read (#3959): one model call over a short list and a transcript, the recorder waiting for it. Its own key,
+  // so it never cuts off a transcription, a summary, a translation, a question, a brief or live notes (#3029); the run's result row holds counts only.
+  'meetings.adherence': { module: 'meetings', expiryMinutes: 30 },
   'projects.tasks_from_note': { module: 'projects', expiryMinutes: 30 },
   'projects.tasks_from_source': { module: 'projects', expiryMinutes: 30 },
 } as const;
