@@ -666,6 +666,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
     pending ? (
       <>
         {item.requestedByAgent && <Badge variant="proposal">{t('agentProposed', { name: item.requestedByAgent.name })}</Badge>}
+        {item.requestedByMcp && <Badge variant="proposal">{t('mcpProposed', { client: item.requestedByMcp.client, host: item.requestedByMcp.host })}</Badge>}
         {reextractButton}
         {item.canReject && (
           // The reason is asked in a dialog (#1512) that stays open until the rejection is done, so a refusal is
@@ -766,6 +767,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
     ) : (
       <>
         {item.requestedByAgent && <Badge variant="proposal">{t('agentProposed', { name: item.requestedByAgent.name })}</Badge>}
+        {item.requestedByMcp && <Badge variant="proposal">{t('mcpProposed', { client: item.requestedByMcp.client, host: item.requestedByMcp.host })}</Badge>}
         {reextractButton}
         {item.canResubmit && (
           <ConfirmDialog

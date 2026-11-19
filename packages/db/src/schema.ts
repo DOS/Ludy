@@ -284,6 +284,8 @@ export type AgentKind = (typeof AGENT_KINDS)[number];
 export const MEMBER_PERMISSION_OVERRIDE_PERMISSIONS = ['vy.use'] as const;
 export const MEMBER_VY_TABLE_MODES = ['read', 'write'] as const;
 export const MCP_MEMBER_TABLE_MODES = ['read'] as const;
+// The write scopes an MCP proposal may be listed under (crove_kernel.mcp_proposal_command, #3858 slice d): the same three as the grant's CHECK.
+export const MCP_PROPOSAL_COMMAND_SCOPES = ['ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft'] as const;
 export const MEMBER_VY_RESULT_STATUSES = ['running', 'ready', 'failed'] as const;
 export type MemberVyResultStatus = (typeof MEMBER_VY_RESULT_STATUSES)[number];
 export const AGENT_RUNTIMES = ['builtin', 'external'] as const;
@@ -967,6 +969,7 @@ export type ConversationComposingTable = Refine<G.KernelConversationComposingTab
 export type MemberPermissionOverrideTable = Refine<G.KernelMemberPermissionOverrideTable, { permission: (typeof MEMBER_PERMISSION_OVERRIDE_PERMISSIONS)[number] }>;
 export type MemberVyTableTable = Refine<G.KernelMemberVyTableTable, { mode: (typeof MEMBER_VY_TABLE_MODES)[number] }>;
 export type McpMemberTableTable = Refine<G.KernelMcpMemberTableTable, { mode: (typeof MCP_MEMBER_TABLE_MODES)[number] }>;
+export type McpProposalCommandTable = Refine<G.KernelMcpProposalCommandTable, { scope: (typeof MCP_PROPOSAL_COMMAND_SCOPES)[number] }>;
 export type PermissionDefaultTable = Refine<G.KernelPermissionDefaultTable, { base_role: MemberRole }>;
 export type MemberVyResultTable = Refine<G.KernelMemberVyResultTable, { status: Generated<MemberVyResultStatus> }>;
 export type MemberAvailabilityTable = Refine<G.KernelMemberAvailabilityTable, { status: Generated<(typeof MEMBER_AVAILABILITY_STATUSES)[number]> }>;
@@ -1450,6 +1453,7 @@ type Refined = Tables<{
   'crove_kernel.member_vy_result': MemberVyResultTable;
   'crove_kernel.member_vy_table': MemberVyTableTable;
   'crove_kernel.mcp_member_table': McpMemberTableTable;
+  'crove_kernel.mcp_proposal_command': McpProposalCommandTable;
   'crove_kernel.permission_default': PermissionDefaultTable;
   'crove_kernel.mail_message': MailMessageTable;
   'crove_kernel.mail_suppression': MailSuppressionTable;

@@ -7596,6 +7596,12 @@ export const vi = {
     andMore: 'và {count} chứng từ nữa',
     moreBlockers: 'và {count} điểm nữa',
     nothingSent: 'Chưa gửi gì sang MISA.',
+    notes: {
+      title: 'Ghi chú của {finance} về từng điểm đang chặn (danh sách bên dưới mới là căn cứ)',
+      busy: '{finance} đang bận, danh sách bên dưới đứng một mình lúc này.',
+      budget: '{finance} đã dùng hết ngân sách AI tháng này: danh sách bên dưới đứng một mình.',
+      failed: '{finance} chưa diễn đạt được lần này: danh sách bên dưới đứng một mình.',
+    },
     blocker: {
       branch_missing: 'Thiếu chi nhánh AMIS',
       party_code_unknown: 'Đối tượng chưa có trong AMIS',
@@ -8044,6 +8050,7 @@ export const vi = {
     warnChecks: '{count, number} lưu ý',
     matched: 'Khớp',
     agentProposed: 'AI agent đề xuất: {name}',
+    mcpProposed: 'Do ứng dụng AI “⁨{client}⁩” (⁨{host}⁩) đề xuất, tên do chính ứng dụng tự khai',
     expiredReason: 'Hết hạn sau {days, number} ngày chờ duyệt',
     reversalKind: 'Đảo bút toán',
     // A posted invoice whose entry was reversed (#2054), as the file's chip says it.
@@ -8279,6 +8286,7 @@ export const vi = {
     rereadVoided: 'Chứng từ đã ghi sổ trước đây đã bị hủy do đảo bút toán; nếu đọc được, một đề xuất mới sẽ được tạo để ghi sổ lại hóa đơn.',
     voidedBadge: 'Chứng từ đã hủy do đảo bút toán',
     agentProposed: 'AI agent đề xuất: {name}',
+    mcpProposed: 'Do ứng dụng AI “⁨{client}⁩” (⁨{host}⁩) đề xuất, tên do chính ứng dụng tự khai',
     expiredNotice: 'Đề xuất đã hết hạn lúc {at}: chờ duyệt {days, number} ngày mà chưa ai duyệt, quá hạn tổ chức đặt trong Cài đặt → Nhắc duyệt đề xuất. Đề xuất đã hết hạn không duyệt được nữa.',
     expiredResubmitHint: 'Nếu vẫn cần, bạn có thể gửi lại để tạo một đề xuất mới từ cùng nguồn.',
     expiredAuthorHint: 'Nếu vẫn cần, người soạn đề xuất có thể gửi lại.',
@@ -9087,6 +9095,7 @@ export const vi = {
       finance_bank_match_explain: 'Giải thích vì sao một giao dịch ngân hàng có thể là khoản trả lương',
       finance_marketplace_line: 'Diễn đạt điều đang chờ trên màn hình sàn thương mại điện tử',
       finance_misa_check_line: 'Diễn đạt kết quả kiểm tra file xuất MISA',
+      finance_misa_amis_blocker_notes: 'Diễn đạt từng điểm chặn khi gửi sang MISA AMIS',
       finance_supplier_payable_line: 'Diễn đạt các hóa đơn mua đang chờ chi',
       meetings_transcribe: 'Ghi lời cuộc họp thành văn bản',
       meetings_summary: 'Tóm tắt cuộc họp, các quyết định và việc cần làm',
@@ -12846,6 +12855,7 @@ export const vi = {
       NOT_EDITABLE: 'Đề xuất này không chỉnh sửa được',
       NOT_ELIGIBLE: 'Bạn không có quyền duyệt đề xuất này',
       FOUR_EYES_REQUIRED: 'Cần một người khác duyệt (bạn đã tải lên hoặc chỉnh sửa đề xuất này)',
+      MCP_PROPOSAL_CAP: 'Ứng dụng AI này đã có quá nhiều đề xuất đang chờ duyệt. Hãy duyệt hoặc từ chối bớt rồi thử lại.',
       CONTENT_CHANGED: 'Bạn đã đổi tài khoản nhưng chưa lưu; hãy lưu chỉnh sửa trước khi duyệt',
       EXTRACTION_PENDING: 'Tệp đang được đọc; hãy chờ kết quả rồi thử lại',
       READ_FROM_ORIGINAL: 'Đề xuất này đã được cập nhật từ hóa đơn gốc XML nên đọc lại tệp PDF sẽ không đổi gì; hãy đọc lại tệp XML',
@@ -15207,6 +15217,7 @@ export const vi = {
           set: 'Bật hoặc tắt việc cho thành viên tự kết nối ứng dụng AI',
         },
         parties: 'Cho ứng dụng AI xem danh sách khách hàng, nhà cung cấp và liên hệ',
+        propose: 'Ghi lại điều một ứng dụng AI yêu cầu thành đề xuất chờ một người duyệt',
         signals: 'Cho ứng dụng AI xem các việc cần chú ý giữa các ứng dụng (deal thắng chưa có hóa đơn, công nợ quá hạn còn deal mở)',
         wake: {
           clear: 'Gỡ địa chỉ nhận báo thức của một ứng dụng AI',

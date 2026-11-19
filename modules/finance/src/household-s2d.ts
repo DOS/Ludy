@@ -5,7 +5,7 @@
 //   line brought in, the document reference, the balance in quantity) and the totals (in, out, closing, unit cost). Nothing is recomputed: the moves, the weighted average and the stored close come from the
 //   same functions as finance.stock.report, so the book and the report cannot disagree. What leaves is valued on the totals line only (a month average cannot be split per move without rounding drift).
 // - The month is not closed until a person closes it (stock-close.ts): `monthClosed` is false and the screen and the Excel file say the cost is provisional. While the S2d layout row is `commentary` the book also
-//   carries "Số liệu tạm, kế toán chưa xác nhận tỷ lệ"; both go by themselves.
+//   carries "Số liệu tạm, kế toán chưa xác nhận bố cục sổ" (no rate stands behind it); both go by themselves.
 // - A quarter or a year is not offered: chaining the months or one whole-period average is the accountant's question (#2520, B5).
 // - Nothing in it is AI: quantities and values are stock facts.
 // Amounts and quantities are decimal strings through decimal.js, never JS numbers.
