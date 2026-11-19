@@ -206,7 +206,8 @@ suite('MISA AMIS catalogue match (#4112)', () => {
   });
 
   it('answers a press for another batch by filing it anew, shows a check only for the batch it was asked about, and ignores a record of an older request', async () => {
-    const asked = { kind: 'sales' as const, salesItemCode: 'BH_CHUNG' };
+    // The waiting check is the sales batch of the test above (its whole ask: the period and the codes are part of the batch).
+    const asked = { ...ASK, kind: 'sales' as const, salesItemCode: 'BH_CHUNG' };
     // The check waiting is for the sales batch (the test above): the same ask returns it, another batch files anew.
     expect(await call('matches/check', owner, { id: connectionId, ask: asked })).toMatchObject({ status: 200, body: { queued: false, running: true } });
     const before = await events();
@@ -225,7 +226,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     await expect(call('matches/check', owner, { id: connectionId, ask: ASK }, offApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
     await expect(call('matches/check', owner, { id: randomUUID(), ask: ASK })).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_CONNECTION_NOT_FOUND' } });
     const other = randomUUID();
-    await rows("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind) VALUES ($1, $2, 'Chi nhánh khác', 'branch')", [orgId, other]);
+    await rows("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Chi nhánh khác', 'branch', $3)", [orgId, other, owner.userId]);
     await expect(call('matches/check', owner, { id: connectionId, ask: { ...ASK, legalEntityId: other } })).resolves.toMatchObject({ status: 422, body: { code: 'MISA_AMIS_MATCH_ENTITY' } });
     // Another org cannot see this connection at all.
     await expect(call('matches/check', outsider, { id: connectionId, ask: ASK }, app, otherSlug)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_CONNECTION_NOT_FOUND' } });
@@ -233,9 +234,9 @@ suite('MISA AMIS catalogue match (#4112)', () => {
 
   it('hands the worker the waiting check with its batch, and the worker alone: a user is refused the target and the record', async () => {
     const target = await worker.query('finance.misa_amis_match.check_target', { id: connectionId }, { actor: SYSTEM, orgId });
-    expect(target).toMatchObject({ action: 'check', id: connectionId, legalEntityId: entityId, ask: { kind: 'sales', salesItemCode: 'BH_CHUNG', legalEntityId: entityId } });
+    expect(target).toMatchObject({ action: 'check', id: connectionId, legalEntityId: entityId, ask: { kind: 'purchase_services', serviceItemCode: 'DV_CHUNG', legalEntityId: entityId } });
     await expect(api.query('finance.misa_amis_match.check_target', { id: connectionId }, { actor: asUser(owner), orgId })).rejects.toMatchObject({ status: 403 });
-    await expect(api.execute('finance.misa_amis_match.record_check', { connectionId, state: 'done', failure: null, results: [] }, { actor: asUser(owner), orgId })).rejects.toMatchObject({ status: 403 });
+    await expect(api.execute('finance.misa_amis_match.record_check', { connectionId, requestedAt: new Date().toISOString(), state: 'done', failure: null, results: [] }, { actor: asUser(owner), orgId })).rejects.toMatchObject({ status: 403 });
     expect((await checkRow())?.state).toBe('requested');
   });
 

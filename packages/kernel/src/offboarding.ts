@@ -123,6 +123,9 @@ export const EXPORT_TABLES = {
   'finance.misa_amis_connection': { from: 'crove_finance.misa_amis_connection', omit: ['org_company_code'] },
   // What was pushed to AMIS and where it stands: ids, codes, dates and states (MISA's own text for a refusal is the reason column). No voucher body is stored.
   'finance.misa_amis_push': { from: 'crove_finance.misa_amis_push', omit: [] },
+  // The last check of a connection's vouchers against the firm's MISA catalogue (#4112): the batch asked about, its state and times, and per party (its tax code) or item (its code) whether one entry matched, with that entry's code and id. No catalogue name or address is stored.
+  'finance.misa_amis_match': { from: 'crove_finance.misa_amis_match', omit: [] },
+  'finance.misa_amis_match_check': { from: 'crove_finance.misa_amis_match_check', omit: [] },
   'finance.marketplace_party': { from: 'crove_finance.marketplace_party', omit: [] },
   'finance.stock_item': { from: 'crove_finance.stock_item', omit: [] },
   'finance.stock_alias': { from: 'crove_finance.stock_alias', omit: [] },
