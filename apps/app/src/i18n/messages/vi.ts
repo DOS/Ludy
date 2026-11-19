@@ -1727,6 +1727,7 @@ export const vi = {
     paidOut: 'Đã đối trừ qua kỳ thanh toán',
     awaitingPayout: 'Còn chờ sàn trả',
     feesAwaitingInvoice: 'Phí chờ hóa đơn (331)',
+    feesOverdue: 'Quá chu kỳ thanh toán: phí chờ hóa đơn đã {days} ngày. Hỏi sàn hóa đơn phí hoặc thanh toán khoản này.',
     empty: 'Chưa có sàn nào được ghi sổ',
     emptyHint: 'Khi kỳ đối soát đầu tiên của một sàn được ghi sổ, tiền của sàn đó hiện ở đây.',
     note: 'Số liệu đọc từ sổ cái theo đối tượng của từng sàn; bút toán bị đảo được trừ lại, chưa ghi thì là 0.',

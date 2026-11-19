@@ -1729,6 +1729,7 @@ export const en = {
     paidOut: 'Cleared by payouts',
     awaitingPayout: 'Still owed by the platform',
     feesAwaitingInvoice: 'Fees awaiting an invoice (331)',
+    feesOverdue: 'Past one settlement cycle: fees have waited {days} days for an invoice. Ask the platform for the fee invoice or pay the balance.',
     empty: 'No platform has been posted yet',
     emptyHint: 'When the first settlement of a platform is posted, its money shows here.',
     note: 'Read from the ledger by each platform\'s party; a reversed entry is taken back, and nothing posted yet is 0.',
