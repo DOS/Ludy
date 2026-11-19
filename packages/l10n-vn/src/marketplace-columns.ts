@@ -54,7 +54,7 @@ export function isBuyerHeader(text: string): boolean {
 const SAMPLE_CHARS = 12;
 export function maskSample(text: string): string {
   const line = (text.split(/\r?\n/, 1)[0] ?? '').trim();
-  return [...line.slice(0, SAMPLE_CHARS)].map((ch) => (/\d/.test(ch) ? '9' : /\p{L}/u.test(ch) ? 'a' : ch)).join('');
+  return Array.from(line).slice(0, SAMPLE_CHARS).map((ch) => (/\d/.test(ch) ? '9' : /\p{L}/u.test(ch) ? 'a' : ch)).join('');
 }
 
 const MAX_HEADER_TEXT = 80;

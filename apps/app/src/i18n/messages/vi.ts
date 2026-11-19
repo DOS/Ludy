@@ -9086,6 +9086,7 @@ export const vi = {
       finance_payment_reminder: 'Soạn lời mở đầu và kết thư nhắc thu nợ',
       finance_stock_match: 'Gợi ý mặt hàng cho các dòng hóa đơn chưa gán',
       finance_stock_reorder: 'Soạn tin đặt thêm hàng gửi nhà cung cấp',
+      finance_stock_columns: 'Soạn gợi ý cột cho file báo cáo đơn hàng của sàn có tiêu đề lạ',
       finance_einvoice_draft: 'Soạn dòng hàng, thuế suất và người mua cho bản nháp hóa đơn bán ra',
       finance_einvoice_rate_explain: 'Giải thích thuế suất đề xuất cho hóa đơn điều chỉnh hoặc thay thế',
       finance_stock_surplus_explain: 'Giải thích hàng thừa của lần kiểm kê',
