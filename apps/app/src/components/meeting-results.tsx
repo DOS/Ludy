@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type MeetingSummaryTemplate, type MeetingVisibility, type MinutesTemplateCopy } from '@crove/kernel-contract';
+import { MEETING_SUMMARY_TEMPLATES, templateSections, textToSections, type ActionItemView, type AssigneeAnswer, type MeetingSummaryTemplate, type MeetingVisibility, type MinutesTemplateCopy } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
@@ -223,11 +223,38 @@ function NewItem({ meetingId, readers }: { meetingId: string; readers: readonly 
 }
 
 // One item: a reader (or the recorder) confirms the title, the date and the seat, then makes the task.
+// The click that has the member's own Vy read the said name when code found nobody (#3921, step 2). Absent when AI is off here (no model, the deployment's switch, no right to work with Vy, a pause or a spent
+// budget): the plain "pick the seat" flow is the whole feature then, with no button and no message about what is not there. The answer is text on the page; nothing is stored.
+function AskVy({ itemId, answer, onAnswer }: { itemId: string; answer: AssigneeAnswer | null; onAnswer: (answer: AssigneeAnswer) => void }) {
+  const t = useTranslations('meetings.results');
+  const status = useQuery({ ...orpc.meetings.assignee.status.queryOptions({ input: {} }), ...READ_ONCE });
+  const ask = useMutation({ mutationFn: (): Promise<AssigneeAnswer> => orpc.meetings.assignee.suggest.call({ itemId }), onSuccess: onAnswer });
+  if (status.data?.enabled !== true) return null;
+  const code = answer?.errorCode ?? null;
+  return (
+    <div className="flex flex-wrap items-center gap-2" data-testid="assignee-ask">
+      {answer?.state !== 'suggested' && (
+        <Button size="sm" variant="ghost" loading={ask.isPending} disabled={ask.isPending} onClick={() => ask.mutate()} data-testid="assignee-ask-button">
+          {t('askVy')}
+        </Button>
+      )}
+      <span aria-live="polite" className="text-xs text-muted-foreground">
+        {ask.isPending && t('askVyRunning')}
+        {answer?.state === 'none' && t('askVyNone')}
+        {answer?.state === 'failed' && `${t('askVyFailed')} ${t(`askVyCodes.${code === 'AI_BUDGET_EXHAUSTED' || code === 'AI_STOPPED' || code === 'ASSIGNEE_BUSY' ? code : 'default'}`)}`}
+      </span>
+      {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
+    </div>
+  );
+}
+
 function Item({ item, isRecorder }: { item: ActionItemView; isRecorder: boolean }) {
   const t = useTranslations('meetings.results');
   const chart = useQuery(orpc.chart.get.queryOptions());
   // Who the item points at: the attendee it names, else the person the said name probably means (a suggestion only, found by code).
-  const suggested = item.whoUserId === null ? item.suggestion : null;
+  // Vy's answer to a click (step 2) stands in for it when code found nobody; it is only text on the page, never stored.
+  const [vy, setVy] = useState<AssigneeAnswer | null>(null);
+  const suggested = item.whoUserId === null ? (item.suggestion ?? (vy?.suggestion ? { ...vy.suggestion, source: 'vy' as const } : null)) : null;
   const offered = suggested ? suggested.positions : item.positions;
   // Their own seats first, then the others (a person may give the work to any seat).
   const own = new Set(offered.map((p) => p.id));
@@ -277,8 +304,20 @@ function Item({ item, isRecorder }: { item: ActionItemView; isRecorder: boolean 
           </div>
           {suggested && (
             <p className="text-xs text-muted-foreground" data-testid="assignee-suggestion">
-              <Badge variant="outline">{t('suggestedBadge')}</Badge> {t(suggested.source === 'attendee' ? 'suggestedAttendee' : 'suggestedMember', { name: suggested.name })} {t(offered.length === 0 ? 'suggestedNoSeat' : offered.length === 1 ? 'suggestedOneSeat' : 'suggestedSeveralSeats')}
+              <Badge variant="outline">{t('suggestedBadge')}</Badge> {t(suggested.source === 'vy' ? 'suggestedVy' : suggested.source === 'attendee' ? 'suggestedAttendee' : 'suggestedMember', { name: suggested.name })} {t(offered.length === 0 ? 'suggestedNoSeat' : offered.length === 1 ? 'suggestedOneSeat' : 'suggestedSeveralSeats')}
             </p>
+          )}
+          {item.whoUserId === null && item.suggestion === null && item.who.trim() !== '' && (
+            <AskVy
+              itemId={item.id}
+              answer={vy}
+              onAnswer={(answer) => {
+                setVy(answer);
+                // Preselected only when the person holds exactly one seat, and never over a seat a person already picked.
+                const held = answer.suggestion?.positions ?? [];
+                if (held.length === 1 && seat === '') setSeat((held[0] as { id: string }).id);
+              }}
+            />
           )}
           {!suggested && item.positions.length > 1 && <p className="text-xs text-muted-foreground">{t('severalSeats')}</p>}
           {(accept.error || remove.error) && <ErrorText>{errorMessage(accept.error ?? remove.error)}</ErrorText>}

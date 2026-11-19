@@ -137,6 +137,26 @@ describe('MeetingResults', () => {
     expect(open(quan, { whoUserId: 'u1' })).not.toContain('data-testid="assignee-suggestion"');
   });
 
+  it('offers "ask Vy who this is" only for an item code could not place, and only while Vy may be asked (AI off: the plain pick-a-seat flow, no button)', () => {
+    const open = (status: { enabled: boolean } | null, over: Partial<ActionItemView> = {}) => {
+      if (status) client.current.setQueryData(['meetings', 'assignee', 'status'], { ...status, reason: status.enabled ? null : 'off', estimate: null });
+      else client.current.removeQueries({ queryKey: ['meetings', 'assignee', 'status'] });
+      return render({ meetingId: 'm1', isRecorder: false, draft: null, published: view('published', 'x'), items: [item('v', { who: 'Tí bên kho', ...over })] });
+    };
+    const found = { userId: 'u9', name: 'Nguyễn Minh Quân', source: 'member' as const, positions: [] };
+    expect(open({ enabled: true })).toContain('data-testid="assignee-ask-button"');
+    expect(open({ enabled: true })).toContain(en.meetings.results.askVy);
+    // AI off, a pause, or no answer yet: no button and no message about it.
+    expect(open({ enabled: false })).not.toContain('assignee-ask');
+    expect(open(null)).not.toContain('assignee-ask');
+    // Code found a person, the item names an attendee, or there is no said name: nothing to ask.
+    expect(open({ enabled: true }, { suggestion: found })).not.toContain('assignee-ask');
+    expect(open({ enabled: true }, { whoUserId: 'u1' })).not.toContain('assignee-ask');
+    expect(open({ enabled: true }, { who: '  ' })).not.toContain('assignee-ask');
+    // Still the plain flow: the seat is picked by a person.
+    expect(open({ enabled: true })).toContain(en.meetings.results.makeTask);
+  });
+
   it('shows no task form for an item that already has its task, and nothing at all to a reader with nothing shared', () => {
     const html = render({ meetingId: 'm1', isRecorder: false, draft: null, published: view('published', 'x'), items: [item('e', { status: 'accepted', taskId: 't1' })] });
     expect(html).toContain(en.meetings.results.accepted);

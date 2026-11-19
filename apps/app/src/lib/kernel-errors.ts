@@ -463,6 +463,9 @@ export const KERNEL_ERROR_CODES = [
   // The weekly digest across meetings (#3949).
   'DIGEST_OFF',
   'DIGEST_BUSY',
+  // Vy naming who an action item belongs to (#3921).
+  'ASSIGNEE_OFF',
+  'ASSIGNEE_BUSY',
   'TRANSLATION_NOT_FOUND',
   'TRANSLATION_NOTHING',
   'TRANSLATION_RESULT_INVALID',

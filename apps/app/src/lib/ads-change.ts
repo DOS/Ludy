@@ -5,6 +5,7 @@
 // written with. The amounts are decimal strings and go through the money formatter, never a number.
 import type { AdsChange } from '@crove/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
+import { toUnits } from './decimal.ts';
 
 // The change in one sentence, and the sentence that says what follows from it (for a cap, from which amount to which).
 export interface AdsChangeText {
@@ -63,13 +64,36 @@ export function adsChangeText(change: AdsChange, t: Translate, money: (amount: s
         title: t('ads.change.campaignLaunch', { name: visibleBidi(change.plan.name), account: visibleBidi(change.adAccountName) }),
         detail: ai === '' ? spend : `${spend} ${ai}`,
       };
+    // What can start or raise spend on a running ad (W4, #3835): each names the largest amount the launch can spend before and with the change (the one number the approver
+    // signs), the daily budget and the dates, from the structured change, never from a title.
+    case 'object_resume': {
+      const names = { name: visibleBidi(change.objectName), campaign: visibleBidi(change.campaignName), account: visibleBidi(change.adAccountName) };
+      const amounts = { previous: money(change.previousAmount, change.currency), amount: money(change.amount, change.currency), daily: money(change.dailyBudget, change.currency), until: date(change.endOn) };
+      // A resume may not add to the largest amount (the launch already holds it): then it is said as staying, not as a move from one figure to the same one.
+      const same = toUnits(change.previousAmount) === toUnits(change.amount);
+      return { title: t('ads.change.objectResume', names), detail: t(same ? 'ads.change.objectResumeSameDetail' : 'ads.change.objectResumeDetail', { name: names.name, ...amounts }) };
+    }
+    case 'budget_raise':
+      return {
+        title: t('ads.change.budgetRaise', { campaign: visibleBidi(change.campaignName), account: visibleBidi(change.adAccountName), from: money(change.fromBudget, change.currency), to: money(change.toBudget, change.currency) }),
+        detail: t('ads.change.budgetRaiseDetail', { previous: money(change.previousAmount, change.currency), amount: money(change.amount, change.currency), to: money(change.toBudget, change.currency), until: date(change.endOn) }),
+      };
+    case 'schedule_extend':
+      return {
+        title: t('ads.change.scheduleExtend', { campaign: visibleBidi(change.campaignName), account: visibleBidi(change.adAccountName), from: date(change.fromEndOn), to: date(change.toEndOn) }),
+        detail: t('ads.change.scheduleExtendDetail', { previous: money(change.previousAmount, change.currency), amount: money(change.amount, change.currency), daily: money(change.dailyBudget, change.currency), until: date(change.toEndOn) }),
+      };
   }
 }
+
+// The requests that can start or raise spend on a running ad (W4, #3835): their card is approved like a launch (one at a time, with the second factor), never in a batch.
+export const isAdsManageChange = (change: AdsChange): change is Extract<AdsChange, { change: 'object_resume' | 'budget_raise' | 'schedule_extend' }> =>
+  change.change === 'object_resume' || change.change === 'budget_raise' || change.change === 'schedule_extend';
 
 // One line of the Ads screen's list of waiting requests: the sentence, and for a cap the amounts too.
 export function adsChangeLine(change: AdsChange, t: Translate, money: (amount: string, currency: string) => string, date?: (day: string) => string, canLaunch: boolean | null = null): string {
   const { title, detail } = adsChangeText(change, t, money, date, canLaunch);
-  return change.change === 'cap_set' || change.change === 'campaign_launch' ? `${title} ${detail}` : title;
+  return change.change === 'cap_set' || change.change === 'campaign_launch' || isAdsManageChange(change) ? `${title} ${detail}` : title;
 }
 
 // The characters that change how text is ordered or make part of it invisible: they are shown as a visible code, never applied, so that a hostile ad text
