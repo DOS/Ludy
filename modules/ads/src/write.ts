@@ -25,10 +25,16 @@ import {
   ADS_CAP_SET_COMMAND,
   ADS_CAP_SET_KIND,
   ADS_LAUNCHES_UNBLOCK_COMMAND,
+  ADS_BUDGET_RAISE_KIND,
   ADS_LAUNCHES_UNBLOCK_KIND,
+  ADS_OBJECT_RESUME_KIND,
+  ADS_SCHEDULE_EXTEND_KIND,
   ADS_WRITE_ENABLE_COMMAND,
   ADS_WRITE_ENABLE_KIND,
   zAdsAccountEnablePayload,
+  zAdsBudgetRaisePayload,
+  zAdsObjectResumePayload,
+  zAdsScheduleExtendPayload,
   zAdsCapLower,
   zAdsCapRequest,
   zAdsCampaignLaunchPayload,
@@ -501,12 +507,30 @@ function changeOf(kind: string, raw: unknown): AdsChange | null {
       const p = zAdsCampaignLaunchPayload.safeParse(raw);
       return p.success ? { change: 'campaign_launch', draftId: p.data.draftId, adAccountId: p.data.adAccountId, adAccountName: p.data.adAccountName, amount: p.data.amount, currency: p.data.currency, days: p.data.days, plan: p.data.plan, origin: p.data.origin, aiFields: p.data.aiFields } : null;
     }
+    case ADS_OBJECT_RESUME_KIND: {
+      const p = zAdsObjectResumePayload.safeParse(raw);
+      return p.success
+        ? { change: 'object_resume', launchId: p.data.launchId, adAccountId: p.data.adAccountId, adAccountName: p.data.adAccountName, campaignName: p.data.campaignName, slot: p.data.slot, objectName: p.data.objectName, currency: p.data.currency, dailyBudget: p.data.dailyBudget, endOn: p.data.endOn, amount: p.data.amount, previousAmount: p.data.previousAmount }
+        : null;
+    }
+    case ADS_BUDGET_RAISE_KIND: {
+      const p = zAdsBudgetRaisePayload.safeParse(raw);
+      return p.success
+        ? { change: 'budget_raise', launchId: p.data.launchId, adAccountId: p.data.adAccountId, adAccountName: p.data.adAccountName, campaignName: p.data.campaignName, currency: p.data.currency, fromBudget: p.data.fromBudget, toBudget: p.data.toBudget, endOn: p.data.endOn, amount: p.data.amount, previousAmount: p.data.previousAmount }
+        : null;
+    }
+    case ADS_SCHEDULE_EXTEND_KIND: {
+      const p = zAdsScheduleExtendPayload.safeParse(raw);
+      return p.success
+        ? { change: 'schedule_extend', launchId: p.data.launchId, adAccountId: p.data.adAccountId, adAccountName: p.data.adAccountName, campaignName: p.data.campaignName, currency: p.data.currency, dailyBudget: p.data.dailyBudget, fromEndOn: p.data.fromEndOn, toEndOn: p.data.toEndOn, amount: p.data.amount, previousAmount: p.data.previousAmount }
+        : null;
+    }
     default:
       return null;
   }
 }
 
-const ADS_KINDS = [ADS_WRITE_ENABLE_KIND, ADS_ACCOUNT_ENABLE_KIND, ADS_CAP_SET_KIND, ADS_LAUNCHES_UNBLOCK_KIND, ADS_CAMPAIGN_LAUNCH_KIND];
+const ADS_KINDS = [ADS_WRITE_ENABLE_KIND, ADS_ACCOUNT_ENABLE_KIND, ADS_CAP_SET_KIND, ADS_LAUNCHES_UNBLOCK_KIND, ADS_CAMPAIGN_LAUNCH_KIND, ADS_OBJECT_RESUME_KIND, ADS_BUDGET_RAISE_KIND, ADS_SCHEDULE_EXTEND_KIND];
 
 // What one Inbox item of an ads kind changes (the approval card shows it). Another org's id and a kind that is not an ads one
 // read as nothing.

@@ -44,6 +44,10 @@ export const PROPOSAL_PREPARERS = {
   'ads.launches.unblock': 'ads.launches.prepare_unblock',
   // A drafted campaign submitted for approval (ADR-0043, #2295, W1): the owner or an admin asks, an owner or an admin approves.
   'ads.campaign.launch': 'ads.campaign.prepare_launch',
+  // What can start or raise spend on a running ad (ADR-0043, #3835, W4): an owner or an admin asks, an owner or an admin approves.
+  'ads.object.resume': 'ads.object.prepare_resume',
+  'ads.budget.raise': 'ads.budget.prepare_raise',
+  'ads.schedule.extend': 'ads.schedule.prepare_extend',
   // A sales e-invoice draft asked to be issued (ADR-0044 point 3, #2502): a member asks, an owner or an admin approves.
   'finance.einvoice.issue': 'finance.einvoice.prepare_issue',
   // A payment to a supplier approved in Ludy (#3113 S2), built from the invoice and the supplier's active account by finance's own command: an owner or an admin asks, an owner or an admin approves.

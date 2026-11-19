@@ -77,6 +77,7 @@ import { runMarketplacePoll, type MarketplacePollJob } from './marketplace-poll-
 import { runMisaAmisTest, type MisaAmisTestJob } from './misa-amis-test-job.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
 import { runAdsActivate, type AdsActivateJob } from './ads-activate.ts';
+import { runAdsManage, type AdsManageJob } from './ads-manage.ts';
 import { runAdsStateSync } from './ads-state.ts';
 import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
 import { runAdsRevoke } from './ads-revoke.ts';
@@ -91,7 +92,7 @@ import { runAdsDeletions } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import type { EInvoiceProvider } from '@crove/einvoice';
 import type { AmisClient } from '@crove/misa-amis';
-import type { AdActivator, AdPauser, AdPlatform, AdRevoker, AdStateReader, LaunchWriter } from '@crove/ad-platform';
+import type { AdActivator, AdManager, AdPauser, AdPlatform, AdRevoker, AdStateReader, LaunchWriter } from '@crove/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
 // The worker looks for due variants this often; a post goes out within this long of its time.
@@ -463,6 +464,7 @@ const ADS_LAUNCH_SWEEP_CRON = '*/10 * * * *';
 const ADS_PAUSE_SWEEP_CRON = '*/5 * * * *';
 // The activation's sweep: a launch whose flight has begun and whose event or job was lost, or that waited for its first day, is queued again (#2296, W2-4b).
 const ADS_ACTIVATE_SWEEP_CRON = '*/10 * * * *';
+const ADS_MANAGE_SWEEP_CRON = '*/10 * * * *';
 const ADS_SYNC_RETRY_LIMIT = 3;
 // A booking's event handed to a calendar write-back job: it fails only when the org's connections cannot be listed (a
 // database error), which pg-boss retries a few times, then dead-letters. A failing provider call is left to the 15 minute sweep.
@@ -551,6 +553,9 @@ export interface WorkerDeps {
     // The calls of an ad platform that switch on what an approved launch made (#2296, W2-4b), by the provider id of the write connection: a frozen view with `activate` and
     // `readStatus`, never the writer. The activation job alone uses it, with the credential it opens.
     adActivators?: Readonly<Record<string, AdActivator>>;
+    // The calls of an ad platform that change a live launch's objects (#3835, W4), by the provider id of the write connection: a frozen view with a status change, the ad set's
+    // budget and end time and a read, never the writer. The manage job alone uses it, with the credential it opens.
+    adManagers?: Readonly<Record<string, AdManager>>;
     // The read of what an ad platform says of the objects of a launch (#3301), by the provider id of the write connection: a frozen view with `readStates` and no other call,
     // never the writer. The account's sync job alone uses it, with the credential it opens.
     adStateReaders?: Readonly<Record<string, AdStateReader>>;
@@ -802,7 +807,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     loudQueues: new Set<string>([QUEUES.adsPause, QUEUES.adsRevoke, QUEUES.notesMemberPurge, QUEUES.notesTrash, QUEUES.crmImportExpire, QUEUES.agentProposal]),
     // The queues whose job makes a call at a platform or a provider and then records it (recordAfterCall): the first attempt may fail loudly on a refused record, and
     // its retries then end loudly too, so the job reaches the dead letter queue and a person learns of it. Their work() asks for the job's metadata (retryCount).
-    loudOnRetryQueues: new Set<string>([QUEUES.adsLaunch, QUEUES.adsActivate, QUEUES.einvoiceIssue]),
+    loudOnRetryQueues: new Set<string>([QUEUES.adsLaunch, QUEUES.adsActivate, QUEUES.adsManage, QUEUES.einvoiceIssue]),
   });
   boss.on('error', (error) => console.error('[pg-boss]', error));
   await boss.start();
@@ -1728,6 +1733,27 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.adsActivate, ADS_ACTIVATE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
   } else {
     await dropCron(QUEUES.adsActivate);
+  }
+
+  // The management of a live launch at the ad platform (#3835, W4): ids only in the job (the org and the change), queued by the relay below when a person's change is written
+  // (ads.manage.queued), and again by a sweep every ten minutes for a change whose event or job was lost (crove_ads.manage_requeue writes the same event for the providers this
+  // worker has a manager for; the job's begin decides what is due, and re-checks the stop conditions and the caps before the call). The job makes the one platform call the
+  // change stands for with the credential of the write connection, and nothing else.
+  const adManagers = deps.channels?.adManagers;
+  if (ads && adManagers && adsBroker && Object.keys(adManagers).length > 0) {
+    await boss.work<AdsManageJob | { sweep: true }>(QUEUES.adsManage, { batchSize: 1, includeMetadata: true }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        const { rows } = await sql<{ n: number }>`SELECT crove_ads.manage_requeue(${Object.keys(adManagers)}::text[], 200) AS n`.execute(deps.workerDb);
+        if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-manage] ${rows[0]?.n} waiting change(s) queued again`);
+        return;
+      }
+      const done = await runAdsManage({ runtime: deps.runtime, broker: adsBroker, managers: adManagers }, job.data);
+      console.log(`[ads-manage] ${job.data.changeId}: ${done.steps} call(s), ${done.ended}`);
+    });
+    await boss.schedule(QUEUES.adsManage, ADS_MANAGE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
+  } else {
+    await dropCron(QUEUES.adsManage);
   }
 
   // Conversations (#2303): a reply or a hide of the conversation core, queued by the relay below. The channel adapters are the
@@ -2816,6 +2842,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 const launchId = String(row.payload.launchId);
                 await boss.send(QUEUES.adsActivate, { orgId: row.org_id, launchId } satisfies AdsActivateJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.adsActivate, launchId),
+                  retryLimit: 2,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // A change of a live launch's objects (#3835, W4): the job makes the one call it stands for and records the answer; ids only in the job. A deployment with no manager
+              // leaves the change queued, untouched.
+              if (ads && deps.channels?.adManagers && Object.keys(deps.channels.adManagers).length > 0 && row.type === 'ads.manage.queued') {
+                const changeId = String(row.payload.changeId);
+                await boss.send(QUEUES.adsManage, { orgId: row.org_id, changeId } satisfies AdsManageJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.adsManage, changeId),
                   retryLimit: 2,
                   retryDelay: 30,
                   retryBackoff: true,

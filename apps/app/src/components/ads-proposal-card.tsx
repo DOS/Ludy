@@ -7,7 +7,7 @@ import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { Card } from '@crove/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
-import { adsChangeText } from '../lib/ads-change.ts';
+import { adsChangeText, isAdsManageChange } from '../lib/ads-change.ts';
 import { orpc } from '../lib/api.ts';
 import { AdsPlanPreview, useAdsPlanView } from './ads-plan-preview.tsx';
 import { CardSkeleton } from './ui.tsx';
@@ -19,6 +19,8 @@ export function AdsProposalCard({ id, title, slug }: { id: string; title: string
   const view = useQuery(orpc.ads.proposal.queryOptions({ input: { id } }));
   const change = view.data?.change ?? null;
   const plan = useAdsPlanView(change);
+  // A resume, a budget raise or a longer schedule of a running ad (W4, #3835): what the approver signs is the largest amount the launch can spend with the change.
+  const manage = change && isAdsManageChange(change) ? change : null;
   // The server says when this deployment has no launch writer: the card then never promises a launch (#3675).
   const noLauncher = change?.change === 'campaign_launch' && view.data?.canLaunch === false;
   const text = change ? adsChangeText(change, root, (amount, currency) => f.money(amount, currency), (day) => f.date(day), view.data?.canLaunch ?? null) : null;
@@ -35,6 +37,13 @@ export function AdsProposalCard({ id, title, slug }: { id: string; title: string
               <p className="text-sm text-muted-foreground">{root('ads.change.plan.maxSpend')}</p>
               <p className="text-2xl font-bold text-foreground">{plan.amount}</p>
               <p className="text-sm text-muted-foreground">{plan.spend}</p>
+            </div>
+          )}
+          {manage && (
+            <div data-testid="ads-manage-amount">
+              <p className="text-sm text-muted-foreground">{root('ads.change.plan.maxSpend')}</p>
+              <p className="text-2xl font-bold text-foreground">{f.money(manage.amount, manage.currency)}</p>
+              <p className="text-sm text-muted-foreground">{t('adsManageWas', { amount: f.money(manage.previousAmount, manage.currency) })}</p>
             </div>
           )}
           <div className="space-y-1">
