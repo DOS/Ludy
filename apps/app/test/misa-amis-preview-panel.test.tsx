@@ -15,7 +15,8 @@ vi.mock('../src/lib/api.ts', async () => {
   return { client, errorMessage: (e: unknown) => String(e), orpc: {}, queryClient: cache.current };
 });
 
-const { MisaAmisPreviewPanel, MisaAmisPreviewResult } = await import('../src/components/misa-amis-preview-panel.tsx');
+const { MisaAmisPreviewPanel, MisaAmisPreviewResult, MisaAmisCheckButton } = await import('../src/components/misa-amis-preview-panel.tsx');
+const { checkTick, CHECK_WAIT_MS } = await import('../src/lib/misa-amis-match-check.ts');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
@@ -35,6 +36,7 @@ const result: MisaAmisPreview = {
   ready: 1,
   blocked: 1,
   checkedAgainstAmis: false,
+  matchCheck: { state: 'none', failure: null, requestedAt: null, checkedAt: null },
   purchasePurpose: '1',
   more: false,
   digest: 'c'.repeat(64),
@@ -150,5 +152,60 @@ describe("the accounting coworker's notes on the blockers (#3904, S5 of #3854)",
     expect(html).toContain('Ghi chú của');
     expect(html).toContain('hãy nhập mã hàng AMIS trong phần xem trước');
     expect(wrap(<MisaAmisPreviewResult result={result} notes={{ ai: 'busy', notes: [] }} />, 'vi')).toContain('danh sách bên dưới đứng một mình');
+  });
+});
+
+describe('the check against the AMIS catalogue (#4112, S3a)', () => {
+  const withCheck = (matchCheck: MisaAmisPreview['matchCheck'], checkedAgainstAmis = false): MisaAmisPreview => ({ ...result, checkedAgainstAmis, matchCheck });
+  const noop = () => undefined;
+
+  it('keeps the "not matched yet" note when no check was made', () => {
+    expect(wrap(<MisaAmisPreviewResult result={result} />, 'en')).toContain('misa-amis-preview-unchecked');
+  });
+
+  it('says a check is running in a polite live region', () => {
+    const html = wrap(<MisaAmisPreviewResult result={withCheck({ state: 'requested', failure: null, requestedAt: '2026-11-19T03:00:00.000Z', checkedAt: null })} />, 'vi');
+    expect(html).toContain('Đang kiểm tra với danh mục AMIS...');
+    expect(html).toContain('aria-live="polite"');
+    expect(html).not.toContain('misa-amis-preview-unchecked');
+  });
+
+  it('says when a check was done', () => {
+    const html = wrap(<MisaAmisPreviewResult result={withCheck({ state: 'done', failure: null, requestedAt: '2026-11-19T03:00:00.000Z', checkedAt: '2026-11-19T03:00:05.000Z' }, true)} />, 'en');
+    expect(html).toContain('Checked against the AMIS catalogue at');
+    expect(html).not.toContain('misa-amis-preview-unchecked');
+  });
+
+  it('says plainly why a check failed, one sentence per code', () => {
+    const lines = new Set<string>();
+    for (const failure of ['credentials', 'unreachable', 'invalid_response', 'catalogue_too_large'] as const) {
+      const html = wrap(<MisaAmisPreviewResult result={withCheck({ state: 'failed', failure, requestedAt: null, checkedAt: null })} />, 'en');
+      expect(html).toContain('The check could not be made');
+      lines.add(html.match(/The check could not be made[^<]*/)?.[0] ?? '');
+    }
+    expect(lines.size).toBe(4);
+    expect(wrap(<MisaAmisPreviewResult result={withCheck({ state: 'failed', failure: 'invalid_response', requestedAt: null, checkedAt: null })} />, 'vi')).toContain('báo cho quản trị viên');
+  });
+
+  it('shows the button on the panel only where a connection to check is given, and only once the preview is on screen', () => {
+    // No preview has run in a static render, so the panel shows no button either way; the button is the component below.
+    expect(wrap(<MisaAmisPreviewPanel legalEntityId={ID} checkConnectionId="k1" />, 'en')).not.toContain('misa-amis-check-run');
+    const html = wrap(<MisaAmisCheckButton state="none" pending={false} waiting={false} slow={false} error={null} onAsk={noop} />, 'en');
+    expect(html).toContain('Check against the catalogue');
+    expect(html).not.toContain('disabled=""');
+  });
+
+  it('disables the button while a check waits and offers "check again" once it is done', () => {
+    expect(wrap(<MisaAmisCheckButton state="requested" pending={false} waiting slow={false} error={null} onAsk={noop} />, 'en')).toContain('disabled=""');
+    expect(wrap(<MisaAmisCheckButton state="done" pending={false} waiting={false} slow={false} error={null} onAsk={noop} />, 'vi')).toContain('Kiểm tra lại');
+    expect(wrap(<MisaAmisCheckButton state="requested" pending={false} waiting={false} slow error={null} onAsk={noop} />, 'en')).toContain('no result yet');
+  });
+
+  it('polls only while the check is requested and stops when it lands or half a minute passes', () => {
+    const until = 1_000 + CHECK_WAIT_MS;
+    expect(checkTick('requested', until, 2_000)).toBe('poll');
+    expect(checkTick('done', until, 2_000)).toBe('stop');
+    expect(checkTick('failed', until, 2_000)).toBe('stop');
+    expect(checkTick('requested', until, until + 1)).toBe('slow');
   });
 });

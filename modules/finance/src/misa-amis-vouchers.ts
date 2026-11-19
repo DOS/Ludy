@@ -19,6 +19,7 @@ import { PAYABLE_ACCOUNT, money, sum } from '@crove/l10n-vn';
 import { AMIS_MAX_VOUCHER_LINES, AMIS_VOUCHER_TYPES, AmisNumber, amisNumber, type AmisVoucher } from '@crove/misa-amis';
 import { isInflow, type AccountParents, type MisaGoodsCode } from '@crove/kernel-contract';
 import { DomainError } from '@crove/kernel-runtime';
+import { normalizeTaxCode } from './misa-amis-matching.ts';
 import { canonical } from './domain/money.ts';
 import {
   cashVoucherNo,
@@ -59,8 +60,10 @@ export interface AmisContext {
   salesItemCode: string | null;
   /** A line with no unit of its own; AMIS requires one (a service is counted by occasion). */
   defaultUnitName: string;
-  /** Party tax code -> the party's code in AMIS; null when the dictionary has not been read, which is not the same as "no match". */
+  /** Party tax code (digits only, see normalizeTaxCode) -> the party's code in AMIS; null when no check against the catalogue is done, which is not the same as "no match". */
   partyCodes: ReadonlyMap<string, string> | null;
+  /** The item codes the catalogue has (active, exactly one entry); null when no check is done. A line whose item code is not in it is blocked (`item_code_unknown`). */
+  itemCodes: ReadonlySet<string> | null;
 }
 
 export type AmisBlockerCode =
@@ -165,8 +168,13 @@ function vatFields(vat: MisaVatRate): Record<string, unknown> | null {
  */
 function partyCode(party: VoucherParty, ctx: AmisContext): string | null | undefined {
   if (ctx.partyCodes === null || party.taxCode === null) return null;
-  return ctx.partyCodes.get(party.taxCode);
+  // The catalogue is matched on the tax code's digits: a tax code that is not 10 or 13 digits cannot be matched, so it is as unknown as one the catalogue does not have.
+  const key = normalizeTaxCode(party.taxCode);
+  return key === null ? undefined : ctx.partyCodes.get(key);
 }
+
+/** Whether the catalogue has this item code (true while no check is done: nothing is known against it). */
+const itemKnown = (code: string | null, ctx: AmisContext): boolean => code !== null && (ctx.itemCodes === null || ctx.itemCodes.has(code));
 
 function partyFields(prefix: 'account_object' | 'tax_account_object', party: VoucherParty, code: string | null | undefined): Record<string, unknown> {
   const fields: Record<string, unknown> = {
@@ -286,7 +294,7 @@ function purchaseBlockers<R extends PurchaseRow>(voucher: PurchaseVoucher, rows:
   if (partyCode(voucher.vendor, ctx) === undefined) at('party_code_unknown', null);
   for (const row of rows) {
     if (vatFields(row.vat) === null) at('vat_rate_unmapped', row.line.lineNo);
-    if (itemCode(row) === null) at('item_code_unknown', row.line.lineNo);
+    if (!itemKnown(itemCode(row), ctx)) at('item_code_unknown', row.line.lineNo);
   }
   return blockers;
 }
@@ -450,7 +458,7 @@ export function salesAmisVouchers(voucher: SalesVoucher, ctx: AmisContext): Amis
   if (rows.length === 0) at('no_lines', null);
   const code = partyCode(voucher.customer, ctx);
   if (code === undefined) at('party_code_unknown', null);
-  if (ctx.salesItemCode === null) for (const row of rows) at('item_code_unknown', row.line.lineNo);
+  if (!itemKnown(ctx.salesItemCode, ctx)) for (const row of rows) at('item_code_unknown', row.line.lineNo);
   for (const row of rows) if (vatFields(row.vat) === null) at('vat_rate_unmapped', row.line.lineNo);
   if (blockers.length > 0) return blocked(meta, blockers);
 

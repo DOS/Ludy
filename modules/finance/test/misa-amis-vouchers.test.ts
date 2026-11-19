@@ -25,6 +25,7 @@ const ctx = (overrides: Partial<AmisContext> = {}): AmisContext => ({
   salesItemCode: 'BH_CHUNG',
   defaultUnitName: 'Lần',
   partyCodes: null,
+  itemCodes: null,
   ...overrides,
 });
 
@@ -281,6 +282,46 @@ describe('blockers: what AMIS needs that was not given', () => {
     const match = ctx({ partyCodes: new Map([['0101234564', 'NCC_ABC']]) });
     const [data] = sent(purchaseServiceAmisVouchers(purchase(), match));
     expect(data).toMatchObject({ account_object_code: 'NCC_ABC' });
+  });
+
+  it('looks a party up by the digits of its tax code: a formatted one on the voucher is found, one that is not 10 or 13 digits is as unknown as one the catalogue lacks', () => {
+    const matched = ctx({ partyCodes: new Map([['0101234564', 'NCC_ABC']]) });
+    const formatted = purchase({ vendor: { name: 'Công ty TNHH ABC', taxCode: '0101.234.564', address: null } });
+    expect(purchaseServiceAmisVouchers(formatted, matched).blockers).toEqual([]);
+    const broken = purchase({ vendor: { name: 'Công ty TNHH ABC', taxCode: '12345', address: null } });
+    expect(purchaseServiceAmisVouchers(broken, matched).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    // Without a check nothing is judged, so the same broken code is no blocker.
+    expect(purchaseServiceAmisVouchers(broken, ctx({ partyCodes: null })).blockers).toEqual([]);
+  });
+
+  it('names an item code the catalogue does not have, by line, once a check is done; with no check it judges nothing', () => {
+    const checked = ctx({ itemCodes: new Set(['KHAC']) });
+    expect(purchaseServiceAmisVouchers(purchase(), checked).blockers.map((b) => [b.code, b.lineNo])).toEqual([
+      ['item_code_unknown', 1],
+      ['item_code_unknown', 2],
+      ['item_code_unknown', 3],
+    ]);
+    expect(salesAmisVouchers(sale(), checked).blockers.map((b) => b.code)).toEqual(['item_code_unknown', 'item_code_unknown']);
+    expect(purchaseServiceAmisVouchers(purchase(), ctx({ itemCodes: new Set(['DV_CHUNG']) })).blockers).toEqual([]);
+    expect(salesAmisVouchers(sale(), ctx({ itemCodes: new Set(['BH_CHUNG']) })).blockers).toEqual([]);
+    expect(purchaseServiceAmisVouchers(purchase(), ctx({ itemCodes: null })).blockers).toEqual([]);
+  });
+
+  it('names a saved goods item code the catalogue does not have', () => {
+    const goods = purchaseGoodsAmisVouchers(
+      {
+        ...purchase(),
+        vatAmount: '60000',
+        lines: [{ lineNo: 1, description: 'Giấy A4', unit: 'Ram', quantity: '10', unitPrice: '60000', amount: '600000', vatRate: '10%', debitAccount: '1561' }],
+      },
+      [{ accountCode: '156', itemCode: 'HH_VPP', warehouseCode: 'KHO1' }],
+      accountParents([
+        { code: '156', parentCode: null },
+        { code: '1561', parentCode: '156' },
+      ]),
+      ctx({ itemCodes: new Set(['DV_CHUNG']) }),
+    );
+    expect(goods.blockers).toEqual([{ code: 'item_code_unknown', sourceId: SOURCE_ID, lineNo: 1 }]);
   });
 
   it('names a VAT rate AMIS cannot take, by line', () => {

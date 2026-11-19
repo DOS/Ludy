@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What would be sent to MISA AMIS Kế toán, on the API side (#3901, S3a of #3854). It loads the vouchers the MISA SME export of the same kind loads (finance.vouchers.purchases, .sales or .cash, the same range), writes each as
-// the AMIS voucher the push would send (modules/finance misa-amis-build.ts, the push's own path) and lists them with their blockers and the digest a confirmation carries. A read: it writes nothing, calls nothing outside the database, and never sends. The AMIS-side
-// references (the branch, the party codes of get_dictionary) are not read yet (#3885), so a placeholder branch stands in, party codes are not checked, and `checkedAgainstAmis` is false.
-import { amisBatchDigest, amisContextOf, amisTotals, loadAmisEntries, type AmisEntry, type AmisQuery } from '@crove/mod-finance';
+// the AMIS voucher the push would send (modules/finance misa-amis-build.ts, the push's own path) and lists them with their blockers and the digest a confirmation carries. A read: it writes nothing, calls nothing outside the database, and never sends. The branch is
+// read from AMIS only by the push's worker, so a placeholder branch stands in. The party and item codes are those the last check against the firm's catalogue matched (S3a, #4112: a person asks for it, the worker
+// reads the catalogue): without a check they are not checked and `checkedAgainstAmis` is false; with one, a party or item it did not match is a blocker, and the check's time is shown.
+import { amisBatchDigest, amisContextOf, amisTotals, AMIS_PLACEHOLDER_BRANCH, loadAmisEntries, type AmisEntry, type AmisQuery, type MisaAmisMatchResults } from '@crove/mod-finance';
 import { MISA_AMIS_PREVIEW_BLOCKERS, MISA_AMIS_PREVIEW_LIMIT, type MisaAmisPreview, type MisaAmisPreviewAsk, type MisaAmisPreviewItem } from '@crove/kernel-contract';
 
 export type MisaAmisPreviewQuery = AmisQuery;
@@ -36,12 +37,14 @@ function item(entry: Entry): MisaAmisPreviewItem {
 }
 
 export async function misaAmisPreview(query: MisaAmisPreviewQuery, ask: MisaAmisPreviewAsk): Promise<MisaAmisPreview> {
-  const ctx = amisContextOf(ask);
+  // The same read the push command makes, so what a person confirms is what was shown. The check is of the ask's entity (the caller's own when the ask names none).
+  const matches = await query<MisaAmisMatchResults>('finance.misa_amis_match.results', ask.legalEntityId === undefined ? {} : { legalEntityId: ask.legalEntityId });
+  const ctx = amisContextOf(ask, AMIS_PLACEHOLDER_BRANCH, matches);
   // One more than the list holds, so `more` is known; the loaders' own limit is the export limit.
   const { entries, loaded } = await loadAmisEntries(query, ask, ctx, MISA_AMIS_PREVIEW_LIMIT + 1);
   const more = loaded > MISA_AMIS_PREVIEW_LIMIT;
   const listed = entries.slice(0, MISA_AMIS_PREVIEW_LIMIT);
   const items = listed.map(item);
   const blocked = items.filter((i) => i.blockers.length > 0).length;
-  return { kind: ask.kind, vouchers: items.length, ready: items.length - blocked, blocked, checkedAgainstAmis: false, purchasePurpose: ctx.purchasePurpose, more, digest: amisBatchDigest(listed), items };
+  return { kind: ask.kind, vouchers: items.length, ready: items.length - blocked, blocked, checkedAgainstAmis: matches.status.state === 'done', matchCheck: matches.status, purchasePurpose: ctx.purchasePurpose, more, digest: amisBatchDigest(listed), items };
 }

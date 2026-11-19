@@ -930,6 +930,8 @@ export const KERNEL_ERROR_CODES = [
   // The push to MISA AMIS (#3902).
   'MISA_AMIS_NOT_TESTED',
   'MISA_AMIS_ENTITY_MISMATCH',
+  // The check against the firm's catalogue (#4112).
+  'MISA_AMIS_MATCH_ENTITY',
   'MISA_AMIS_PUSH_DISABLED',
   'MISA_AMIS_PUSH_BLOCKED',
   'MISA_AMIS_PUSH_EMPTY',

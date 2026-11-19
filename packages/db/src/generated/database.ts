@@ -85,6 +85,8 @@ export interface CroveFinanceSchema {
   'crove_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
   'crove_finance.marketplace_party': FinanceMarketplacePartyTable;
   'crove_finance.misa_amis_connection': FinanceMisaAmisConnectionTable;
+  'crove_finance.misa_amis_match': FinanceMisaAmisMatchTable;
+  'crove_finance.misa_amis_match_check': FinanceMisaAmisMatchCheckTable;
   'crove_finance.misa_amis_push': FinanceMisaAmisPushTable;
   'crove_finance.misa_goods_code': FinanceMisaGoodsCodeTable;
   'crove_finance.org_account': FinanceOrgAccountTable;
@@ -1438,6 +1440,34 @@ export interface FinanceMisaAmisConnectionTable {
   last_tested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.misa_amis_match */
+export interface FinanceMisaAmisMatchTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  connection_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  ref: ColumnType<string, string, NotGranted>;
+  state: ColumnType<string, string, NotGranted>;
+  catalogue_code: ColumnType<string | null, string | null, NotGranted>;
+  catalogue_id: ColumnType<string | null, string | null, NotGranted>;
+  checked_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.misa_amis_match_check */
+export interface FinanceMisaAmisMatchCheckTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  connection_id: ColumnType<string, string, NotGranted>;
+  params: ColumnType<unknown, string | undefined, string>;
+  state: Generated<string>;
+  failure: string | null;
+  requested_by: string | null;
+  requested_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  finished_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_finance.misa_amis_push */

@@ -103,7 +103,7 @@ function ConnectionItem({ connection, entities, canManage, pushOffered }: { conn
       )}
       {disconnect.error && <ErrorText>{errorMessage(disconnect.error)}</ErrorText>}
       {test.error && <ErrorText>{errorMessage(test.error)}</ErrorText>}
-      {connection.status === 'active' && <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }) }} />}
+      {connection.status === 'active' && <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} {...(canManage ? { checkConnectionId: connection.id } : {})} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }) }} />}
       {connection.status === 'active' && <MisaAmisPushList connectionId={connection.id} canManage={canManage} />}
     </li>
   );
