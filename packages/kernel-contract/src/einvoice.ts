@@ -425,6 +425,10 @@ export const zEInvoiceSuggestInput = z
     invoiceDraftId: zId.optional(),
     // The buyer the form is for, with `invoiceDraftId`.
     buyerPartyId: zId.optional(),
+    // The customer the form already names (#2713): a line the text states no VAT rate for takes the usual rate of THIS customer's earlier drafts (else the org's), whichever customer the coworker picked from
+    // the text, so the rate history is the one of the buyer the form keeps. Not the previous-invoice source above (`buyerPartyId`, which may be another customer). Unknown, another org's or a merged
+    // (duplicate) customer is the same as none.
+    formBuyerPartyId: zId.optional(),
     // The legal entity of the form, as in zLegalEntityChoice: the default (or only visible) one when omitted.
     legalEntityId: zId.optional(),
   })

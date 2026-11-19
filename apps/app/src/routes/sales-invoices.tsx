@@ -251,7 +251,7 @@ function CrmSource({ onAdd }: { onAdd: (sentence: string) => void }) {
 
 /** The coworker's box on the draft form (#2505): a person pastes or types a text about the sale, and the coworker proposes the lines, the VAT rate the text states and the buyer. The form works the same
  * with AI off; a proposal only fills the fields, marked as the coworker's, and issuing keeps its own approval. */
-function CoworkerBox({ date, room, legalEntityId, invoiceSource, text, onText, onProposal }: { date: string; room: number; legalEntityId: string | undefined; invoiceSource: { draftId: string; buyerPartyId: string } | null; text: string; onText: (text: string) => void; onProposal: (proposal: EInvoiceSuggested) => void }) {
+function CoworkerBox({ date, room, legalEntityId, invoiceSource, buyerPartyId, text, onText, onProposal }: { date: string; room: number; legalEntityId: string | undefined; invoiceSource: { draftId: string; buyerPartyId: string } | null; buyerPartyId: string | null; text: string; onText: (text: string) => void; onProposal: (proposal: EInvoiceSuggested) => void }) {
   const t = useTranslations('salesInvoices.ai');
   const tp = useTranslations('salesInvoices.ai.previous');
   const current = useRef(date);
@@ -262,7 +262,7 @@ function CoworkerBox({ date, room, legalEntityId, invoiceSource, text, onText, o
   const [state, setState] = useState<'filled' | 'partial' | 'stale' | Exclude<EInvoiceSuggested['ai'], 'used'> | null>(null);
   const ask = useMutation({
     // The date the request was made for travels in the mutation's variables: the options of a request still pending are replaced on every render, so a date taken from the closure could already be the new one.
-    mutationFn: (asked: string) => client.einvoice.drafts.suggest({ text: text.trim(), date: asked === '' ? vietnamToday() : asked, ...(invoiceSource ? { invoiceDraftId: invoiceSource.draftId, buyerPartyId: invoiceSource.buyerPartyId } : {}), ...(legalEntityId ? { legalEntityId } : {}) }),
+    mutationFn: (asked: string) => client.einvoice.drafts.suggest({ text: text.trim(), date: asked === '' ? vietnamToday() : asked, ...(invoiceSource ? { invoiceDraftId: invoiceSource.draftId, buyerPartyId: invoiceSource.buyerPartyId } : {}), ...(buyerPartyId ? { formBuyerPartyId: buyerPartyId } : {}), ...(legalEntityId ? { legalEntityId } : {}) }),
     onSuccess: (proposal, asked) => {
       // The VAT rates were checked for the date asked with: if the invoice date was changed meanwhile, nothing is filled.
       if (proposal.ai === 'used' && current.current !== asked) {
@@ -276,7 +276,8 @@ function CoworkerBox({ date, room, legalEntityId, invoiceSource, text, onText, o
   return (
     <div className="mt-3 space-y-2 rounded-lg border border-dashed border-proposal/60 p-3" data-testid="invoice-ai">
       <Label htmlFor="sales-invoice-ai-text">{t('label')}</Label>
-      <Textarea id="sales-invoice-ai-text" rows={2} value={text} maxLength={EINVOICE_SUGGEST_TEXT_MAX} placeholder={t('placeholder')} onChange={(e) => onText(e.target.value)} data-testid="invoice-ai-text" />
+      {/* Locked while a request is pending (#2713): an answer for the old text would otherwise fill the draft beside a text the person has since changed. */}
+      <Textarea id="sales-invoice-ai-text" rows={2} value={text} maxLength={EINVOICE_SUGGEST_TEXT_MAX} placeholder={t('placeholder')} disabled={ask.isPending} onChange={(e) => onText(e.target.value)} data-testid="invoice-ai-text" />
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="outline" size="sm" loading={ask.isPending} disabled={text.trim() === '' || ask.isPending} onClick={() => ask.mutate(date)} data-testid="invoice-ai-ask">
           {t('button')}
@@ -391,7 +392,7 @@ function DraftForm({ initial, series, legalEntityId, originalNumber, onClose }: 
         }}
       />
       <CrmSource onAdd={(sentence) => setAiText((text) => appendSource(text, sentence, EINVOICE_SUGGEST_TEXT_MAX))} />
-      <CoworkerBox date={form.date} room={EINVOICE_DRAFT_MAX_LINES - form.lines.filter((l) => !isBlankLine(l)).length} legalEntityId={legalEntityId} invoiceSource={sourceInvoice} text={aiText} onText={setAiText} onProposal={(proposal) => setForm((s) => applySuggestion(s, proposal))} />
+      <CoworkerBox date={form.date} room={EINVOICE_DRAFT_MAX_LINES - form.lines.filter((l) => !isBlankLine(l)).length} legalEntityId={legalEntityId} invoiceSource={sourceInvoice} buyerPartyId={form.buyer.kind !== 'consumer' ? form.buyer.partyId : null} text={aiText} onText={setAiText} onProposal={(proposal) => setForm((s) => applySuggestion(s, proposal))} />
       {form.buyerAi && (
         <p className="mt-3 text-xs text-subtle-foreground" data-testid="invoice-buyer-ai">
           <Badge variant="proposal">{t('ai.badge')}</Badge> <span className="ml-1">{t('ai.buyerNote')}</span>
