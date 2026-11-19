@@ -5,7 +5,7 @@ import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_PLATFORM_ERROR_CODES, MEETING_PL
 import { IMPORT_NOTICE } from '@crove/meeting-recorder';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { IMPORT_MAX_SECONDS, POLL_BUSY_MS, POLL_IDLE_MS, canRetry, canSubmitImport, errorKey, importBlock, isBenignClaimRefusal, isInFlight, lengthParts, pollMs, rowsToClaim } from '../src/lib/meeting-platform.ts';
+import { IMPORT_MAX_SECONDS, POLL_BUSY_MS, POLL_IDLE_MS, canRetry, canSubmitImport, errorKey, importBlock, isBenignClaimRefusal, isInFlight, isTranscriptImport, lengthParts, pollMs, rowsToClaim } from '../src/lib/meeting-platform.ts';
 
 const row = (over: Partial<MeetingPlatformRecordingView> = {}): MeetingPlatformRecordingView => ({
   id: 'r1',
@@ -45,6 +45,23 @@ describe('importBlock', () => {
   });
 
   it('is 90 minutes', () => expect(IMPORT_MAX_SECONDS).toBe(5400));
+
+  it('imports a recording that has only the platform\'s transcript when its provider has a transcript path (C2, #3174), with no length or size limit of Ludy\'s own', () => {
+    const only = { hasAudio: false, hasVideo: false, hasTranscript: true } as const;
+    for (const provider of ['sandbox', 'google_meet', 'microsoft_teams'] as const) {
+      expect(isTranscriptImport(row({ ...only, provider }))).toBe(true);
+      expect(importBlock(row({ ...only, provider, lengthSeconds: IMPORT_MAX_SECONDS * 4, sizeBytes: MEETING_PLATFORM_IMPORT_MAX_BYTES * 2 }))).toBeNull();
+    }
+    // Zoom has no transcript path: shown as such, not as "video only".
+    expect(isTranscriptImport(row({ ...only, provider: 'zoom' }))).toBe(false);
+    expect(importBlock(row({ ...only, provider: 'zoom' }))).toBe('transcript_only');
+    // Any audio or video file wins over the transcript, and a row with no transcript is not one.
+    expect(isTranscriptImport(row({ ...only, hasAudio: true }))).toBe(false);
+    expect(isTranscriptImport(row({ ...only, hasVideo: true }))).toBe(false);
+    expect(importBlock(row({ ...only, hasVideo: true }))).toBe('video_only');
+    expect(isTranscriptImport(row({ hasAudio: false, hasVideo: false, hasTranscript: false }))).toBe(false);
+    expect(importBlock(row({ hasAudio: false, hasVideo: false, hasTranscript: false }))).toBe('video_only');
+  });
 });
 
 describe('polling', () => {
@@ -72,7 +89,9 @@ describe('errorKey and canRetry', () => {
     expect(canRetry(row({ errorCode: 'download_failed' }))).toBe(true);
     expect(canRetry(row({ errorCode: 'not_claimed' }))).toBe(true);
     expect(canRetry(row({ errorCode: 'connection_expired' }))).toBe(true);
-    for (const code of ['recording_gone', 'no_audio', 'too_large', 'too_long']) expect(canRetry(row({ errorCode: code }))).toBe(false);
+    for (const code of ['recording_gone', 'no_audio', 'no_transcript', 'too_large', 'too_long']) expect(canRetry(row({ errorCode: code }))).toBe(false);
+    // A tenant administrator can fix these, so trying again can work.
+    for (const code of ['transcripts_disabled', 'speakers_disabled']) expect(canRetry(row({ errorCode: code, hasAudio: false, hasTranscript: true }))).toBe(true);
     expect(canRetry(row({ errorCode: 'download_failed', hasAudio: false }))).toBe(false);
   });
 });
@@ -88,10 +107,12 @@ describe('rowsToClaim', () => {
       row({ id: 'f', status: 'imported', meetingId: 'm6' }),
     ];
     expect(rowsToClaim(rows, new Set())).toEqual([
-      { id: 'a', meetingId: 'm1' },
-      { id: 'b', meetingId: 'm2' },
+      { id: 'a', meetingId: 'm1', transcript: false },
+      { id: 'b', meetingId: 'm2', transcript: false },
     ]);
-    expect(rowsToClaim(rows, new Set(['a']))).toEqual([{ id: 'b', meetingId: 'm2' }]);
+    expect(rowsToClaim(rows, new Set(['a']))).toEqual([{ id: 'b', meetingId: 'm2', transcript: false }]);
+    // A transcript-only row is claimed through its own route (C2, #3174).
+    expect(rowsToClaim([row({ id: 't', status: 'staged', meetingId: 'm7', hasAudio: false, hasTranscript: true })], new Set())).toEqual([{ id: 't', meetingId: 'm7', transcript: true }]);
     expect(rowsToClaim(undefined, new Set())).toEqual([]);
   });
 });

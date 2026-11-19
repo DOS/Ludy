@@ -2675,6 +2675,10 @@ export const vi = {
     },
     agenda: {
       title: 'Cuộc họp hôm nay trong lịch của bạn',
+      summary: 'Hôm nay có {count} cuộc họp, tổng cộng {duration}.',
+      durationM: '{minutes} phút',
+      durationH: '{hours} giờ',
+      durationHM: '{hours} giờ {minutes} phút',
       none: 'Hôm nay lịch của bạn không có cuộc họp nào. Nếu bạn vừa bật công tắc, lần đọc đầu tiên có thể mất tới 15 phút.',
       untitled: '(không có tên)',
       invitees: '{count} người được mời',
@@ -2744,7 +2748,7 @@ export const vi = {
         offers: 'Có: {items}',
         offerAudio: 'âm thanh',
         offerVideo: 'hình',
-        offerTranscript: 'bản ghi lời của nền tảng (Ludy không dùng)',
+        offerTranscript: 'bản chép lời của nền tảng',
         offerNothing: 'chưa rõ',
         import: 'Nhập',
         importOf: 'Nhập bản ghi {title}',
@@ -2756,6 +2760,8 @@ export const vi = {
         tooLong: 'Quá dài để nhập (tối đa 90 phút)',
         tooLarge: 'Quá lớn để nhập (âm thanh tối đa 300 MB, video tối đa 2 GB)',
         videoKeepsAudio: 'Chỉ có bản hình: Ludy chỉ lấy phần âm thanh và không lưu hình.',
+        transcriptOnly: 'Chỉ có bản chép lời của nền tảng này, chưa nhập được',
+        transcriptKeepsText: 'Chỉ có bản chép lời của {platform}: Ludy chỉ lấy chữ, không có âm thanh.',
         importing: 'Đang tải từ nền tảng...',
         importingHint: 'Hãy mở một trang Cuộc họp cho tới khi xong: bản tải về chỉ chờ được nhận trong 55 phút.',
         processing: 'Đang xử lý...',
@@ -2772,6 +2778,7 @@ export const vi = {
         recording_gone: 'Bản ghi không còn trên nền tảng (có thể đã bị xóa).',
         too_large: 'Tệp quá lớn nên Ludy không nhập được (âm thanh tối đa 300 MB, video tối đa 2 GB).',
         too_long: 'Bản ghi dài hơn mức Ludy phiên âm được.',
+        no_transcript: 'Nền tảng có bản chép lời cho cuộc họp này nhưng không có dòng chữ nào dùng được.',
         no_audio: 'Bản ghi không có âm thanh để nhập: nền tảng chỉ có bản hình và chưa tách được âm thanh từ đó, hoặc bản hình không có tiếng.',
         invalid_media: 'Tệp tải về không phải âm thanh hay video hợp lệ.',
         normalize_failed: 'Ludy không chuyển được tệp sang định dạng âm thanh cần dùng.',
@@ -2785,6 +2792,9 @@ export const vi = {
       dialog: {
         title: 'Nhập bản ghi từ nền tảng',
         desc: 'Ludy sao chép phần âm thanh của bản ghi này về để lập biên bản.',
+        descTranscript: 'Bản ghi này chỉ có bản chép lời của nền tảng. Ludy sao chép phần chữ về để bạn đọc lại và lập biên bản.',
+        copyTranscript: 'Ludy chỉ sao chép bản chép lời của {platform}, không có âm thanh.',
+        platformTranscript: 'Đây là bản chép lời của {platform}, không phải của Ludy. Bạn đọc lại và sửa trước khi chia sẻ.',
         titleLabel: 'Tên cuộc họp',
         copyAudio: 'Ludy chỉ sao chép phần âm thanh.',
         teamsVideo: 'Bản ghi Teams là video: Ludy chỉ tải về để lấy phần âm thanh ra, và chỉ giữ lại phần âm thanh.',
@@ -3133,6 +3143,12 @@ export const vi = {
       save: 'Lưu',
       saved: 'Đã lưu thời gian lưu cuộc họp.',
       adminOnly: 'Chỉ chủ sở hữu hoặc quản trị viên mới đổi được các thời hạn này.',
+    },
+    // Ngôn ngữ để dịch sang (E3, #3186): mỗi tên viết bằng chính ngôn ngữ đó.
+    translationTargets: {
+      label: 'Dịch sang',
+      to: 'Dịch sang {language}',
+      names: { vi: 'Tiếng Việt', en: 'English', zh: '中文 (简体)', ja: '日本語', ko: '한국어' },
     },
     transcript: {
       title: 'Bản ghi lời',
@@ -15288,6 +15304,9 @@ export const vi = {
         facts: 'Xem tên được nhắc cho một việc cần làm và những người có thể nhận việc',
         start: 'Nhờ Vy xem một việc cần làm là của ai, theo tên được nhắc trong cuộc họp',
         status: 'Xem Vy có thể cho biết một việc cần làm là của ai hay không',
+      },
+      today: {
+        facts: 'Xem các cuộc họp hôm nay trong lịch của bạn, kèm những gì đã chốt lần trước, việc còn dở và cơ hội đang mở của khách cho từng cuộc',
       },
       brief: {
         facts: 'Xem những gì đã chốt, việc còn dở và cơ hội đang mở của khách trước một cuộc họp',

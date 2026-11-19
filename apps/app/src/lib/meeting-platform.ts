@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The facts the Meetings screens use about recordings a meeting platform finished (meetings integrations C1, #3173): what a row offers, why it cannot be imported, how often to look again
 // and which words a failure code gets. Pure functions, so the screens and their tests share one reading of a row.
-import { MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_VIDEO_MAX_BYTES, type MeetingPlatformErrorCode, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
+import { MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_TRANSCRIPT_PROVIDERS, MEETING_PLATFORM_VIDEO_MAX_BYTES, type MeetingPlatformErrorCode, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
 
 // The guide for the Microsoft 365 administrator of a Teams connection (the two steps in their own admin pages): the runbook of the repository, which is public.
 export const MEETINGS_TEAMS_GUIDE = 'https://github.com/DOS/Ludy/blob/main/docs/runbooks/meetings-teams.md';
@@ -22,12 +22,22 @@ export function pollMs(rows: readonly MeetingPlatformRecordingView[] | undefined
 }
 
 // Why a recording cannot be imported by a click, in the order the server's own checks would meet them; null when it can.
-export type ImportBlock = 'video_only' | 'too_long' | 'too_large';
+export type ImportBlock = 'video_only' | 'transcript_only' | 'too_long' | 'too_large';
+
+// A recording with neither an audio nor a video file whose provider can hand over its own transcript is imported as that transcript (C2, #3174): Ludy copies the platform's lines and keeps no audio. The
+// server applies the same rule (the command, the job and the claim route), so the screen never offers a click the server would refuse.
+export function isTranscriptImport(row: Pick<MeetingPlatformRecordingView, 'provider' | 'hasAudio' | 'hasVideo' | 'hasTranscript'>): boolean {
+  return !row.hasAudio && !row.hasVideo && row.hasTranscript && (MEETING_PLATFORM_TRANSCRIPT_PROVIDERS as readonly string[]).includes(row.provider);
+}
 
 // Why a recording cannot be imported, or null. A recording with only a video file can be imported where the deployment can take the audio out of it (`videoImportMaxBytes`, C2a #3306); then the video's own size
-// cap applies, as that deployment sets it (the audio that comes out is capped when it is staged).
-export function importBlock(row: Pick<MeetingPlatformRecordingView, 'hasAudio' | 'hasVideo' | 'videoImportMaxBytes' | 'lengthSeconds' | 'sizeBytes'>): ImportBlock | null {
-  if (!row.hasAudio && !(row.hasVideo && row.videoImportMaxBytes !== null)) return 'video_only';
+// cap applies, as that deployment sets it (the audio that comes out is capped when it is staged). A transcript-only recording of a provider with a transcript path has no length or size limit of Ludy's own
+// (nothing is transcribed or stored but its lines); one of a provider without that path is shown as such.
+export function importBlock(
+  row: Pick<MeetingPlatformRecordingView, 'provider' | 'hasAudio' | 'hasVideo' | 'hasTranscript' | 'videoImportMaxBytes' | 'lengthSeconds' | 'sizeBytes'>,
+): ImportBlock | null {
+  if (isTranscriptImport(row)) return null;
+  if (!row.hasAudio && !(row.hasVideo && row.videoImportMaxBytes !== null)) return row.hasTranscript && !row.hasVideo ? 'transcript_only' : 'video_only';
   if (row.lengthSeconds !== null && row.lengthSeconds > IMPORT_MAX_SECONDS) return 'too_long';
   if (row.sizeBytes !== null && row.sizeBytes > (row.hasAudio ? MEETING_PLATFORM_IMPORT_MAX_BYTES : Math.min(MEETING_PLATFORM_VIDEO_MAX_BYTES, row.videoImportMaxBytes ?? 0))) return 'too_large';
   return null;
@@ -50,16 +60,16 @@ export function canSubmitImport(input: { consentTicked: boolean; title: string; 
 }
 
 // A failed row can be tried again unless the same failure would come back: the platform no longer has it, it has no audio, or it is too large or too long.
-const FINAL_ERRORS: readonly string[] = ['recording_gone', 'no_audio', 'too_large', 'too_long'];
-export function canRetry(row: Pick<MeetingPlatformRecordingView, 'errorCode' | 'hasAudio' | 'hasVideo' | 'videoImportMaxBytes' | 'lengthSeconds' | 'sizeBytes'>): boolean {
+const FINAL_ERRORS: readonly string[] = ['recording_gone', 'no_audio', 'no_transcript', 'too_large', 'too_long'];
+export function canRetry(row: Pick<MeetingPlatformRecordingView, 'errorCode' | 'provider' | 'hasAudio' | 'hasVideo' | 'hasTranscript' | 'videoImportMaxBytes' | 'lengthSeconds' | 'sizeBytes'>): boolean {
   return importBlock(row) === null && !(row.errorCode !== null && FINAL_ERRORS.includes(row.errorCode));
 }
 
 // The rows the member's own request should claim now: staged, linked to their meeting and not tried on this page yet. The caller adds each id to `tried` as it starts, so a row is claimed once per
 // page mount and a refusal is never retried in a loop.
-export function rowsToClaim(rows: readonly MeetingPlatformRecordingView[] | undefined, tried: ReadonlySet<string>): Array<{ id: string; meetingId: string }> {
-  const out: Array<{ id: string; meetingId: string }> = [];
-  for (const row of rows ?? []) if (row.status === 'staged' && row.meetingId !== null && !tried.has(row.id)) out.push({ id: row.id, meetingId: row.meetingId });
+export function rowsToClaim(rows: readonly MeetingPlatformRecordingView[] | undefined, tried: ReadonlySet<string>): Array<{ id: string; meetingId: string; transcript: boolean }> {
+  const out: Array<{ id: string; meetingId: string; transcript: boolean }> = [];
+  for (const row of rows ?? []) if (row.status === 'staged' && row.meetingId !== null && !tried.has(row.id)) out.push({ id: row.id, meetingId: row.meetingId, transcript: isTranscriptImport(row) });
   return out;
 }
 

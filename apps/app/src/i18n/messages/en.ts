@@ -2678,6 +2678,10 @@ export const en = {
     },
     agenda: {
       title: "Today's meetings in your calendar",
+      summary: '{count} meeting(s) today, {duration} in all.',
+      durationM: '{minutes} min',
+      durationH: '{hours} h',
+      durationHM: '{hours} h {minutes} min',
       none: 'Your calendar has no meetings today. If you just turned the switch on, the first read can take up to 15 minutes.',
       untitled: '(no title)',
       invitees: '{count} invited',
@@ -2747,7 +2751,7 @@ export const en = {
         offers: 'Offers: {items}',
         offerAudio: 'audio',
         offerVideo: 'video',
-        offerTranscript: "the platform's transcript (Ludy does not use it)",
+        offerTranscript: "the platform's transcript",
         offerNothing: 'unknown',
         import: 'Import',
         importOf: 'Import the recording {title}',
@@ -2759,6 +2763,8 @@ export const en = {
         tooLong: 'Too long to import (90 minutes at most)',
         tooLarge: 'Too large to import (audio 300 MB at most, video 2 GB at most)',
         videoKeepsAudio: 'Video only: Ludy takes only the audio and does not keep the picture.',
+        transcriptOnly: 'Only this platform\'s transcript is available, which cannot be imported yet',
+        transcriptKeepsText: 'Only the {platform} transcript is available: Ludy takes only the text, with no audio.',
         importing: 'Downloading from the platform...',
         importingHint: 'Keep a Meetings page open until it is done: the download waits only 55 minutes to be received.',
         processing: 'Processing...',
@@ -2775,6 +2781,7 @@ export const en = {
         recording_gone: 'The recording is no longer on the platform (it may have been deleted).',
         too_large: 'The file is too large, so Ludy cannot import it (audio 300 MB at most, video 2 GB at most).',
         too_long: 'The recording is longer than Ludy can transcribe.',
+        no_transcript: 'The platform has a transcript for this meeting but it has no usable line of text.',
         no_audio: 'The recording has no audio to import: the platform offers only a video file and the audio could not be taken out of it, or the video has no sound.',
         invalid_media: 'The downloaded file is not valid audio or video.',
         normalize_failed: 'Ludy could not convert the file to the audio format it needs.',
@@ -2788,6 +2795,9 @@ export const en = {
       dialog: {
         title: 'Import a recording from a platform',
         desc: 'Ludy copies the audio of this recording to prepare the minutes.',
+        descTranscript: 'This recording has only the platform\'s transcript. Ludy copies the text so you can read it over and prepare the minutes.',
+        copyTranscript: 'Ludy copies only the {platform} transcript, with no audio.',
+        platformTranscript: 'This is the {platform} transcript, not Ludy\'s. Read it over and correct it before you share it.',
         titleLabel: 'Meeting name',
         copyAudio: 'Ludy copies only the audio.',
         teamsVideo: 'A Teams recording is a video: Ludy downloads it only to take the audio out of it, and keeps only the audio.',
@@ -3135,6 +3145,12 @@ export const en = {
       save: 'Save',
       saved: 'The retention settings were saved.',
       adminOnly: 'Only an owner or admin changes these periods.',
+    },
+    // The language to translate into (E3, #3186): each name is written in its own language.
+    translationTargets: {
+      label: 'Translate to',
+      to: 'Translate to {language}',
+      names: { vi: 'Tiếng Việt', en: 'English', zh: '中文 (简体)', ja: '日本語', ko: '한국어' },
     },
     transcript: {
       title: 'Transcript',
@@ -15288,6 +15304,9 @@ export const en = {
         facts: 'See the name said for an action item and the people it may be given to',
         start: 'Ask Vy who an action item belongs to, from the name said in the meeting',
         status: 'See whether Vy can say who an action item belongs to',
+      },
+      today: {
+        facts: "See today's meetings in your calendar with what was decided last time, what is still open and the customer's open deals for each",
       },
       brief: {
         facts: "See what was decided, what is still open and the customer's open deals before a meeting",
