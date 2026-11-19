@@ -26,7 +26,7 @@ const suite = ADMIN ? describe : describe.skip;
 const confirmedMaps = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.');
 
@@ -408,14 +408,14 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     // Both months carry their own tax lines; the two parts add up to what was withheld.
     expect(credit('3331')).toBe(vat);
     expect(credit('3335')).toBe(45000 - vat);
-    expect(debit('6422')).toBe(45000 - vat);
+    expect(debit('4212')).toBe(45000 - vat);
     expect(debit('511')).toBe(vat);
     await approve(o, proposalId);
     // Posted: the org holds only this settlement's entries, so the ledger totals by account are exactly the proposal's, and the tax accounts net to what the payout will debit.
     const posted = Object.fromEntries(
       (await rows<{ account: string; d: string; c: string }>('SELECT account_code AS account, sum(debit)::bigint::text AS d, sum(credit)::bigint::text AS c FROM crove_finance.journal_line WHERE org_id = $1 GROUP BY 1', [o.orgId])).map((l) => [l.account, [Number(l.d), Number(l.c)]]),
     );
-    expect(posted).toEqual({ '131': [3000000, 0], '511': [vat, 3000000], '3331': [0, vat], '6422': [45000 - vat, 0], '3335': [0, 45000 - vat] });
+    expect(posted).toEqual({ '131': [3000000, 0], '511': [vat, 3000000], '3331': [0, vat], '4212': [45000 - vat, 0], '3335': [0, 45000 - vat] });
   });
 
   it('refuses a household whose rate row is not confirmed, or whose profile has no single trade, and posts nothing', async () => {

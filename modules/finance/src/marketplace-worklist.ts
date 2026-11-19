@@ -45,7 +45,8 @@ async function postingConfirmed(ctx: QueryContext, legalEntityId: string | undef
   const today = await databaseToday(ctx.trx);
   for (const entity of entities) {
     try {
-      requireConfirmedMarketplaceMap((await booksOn(ctx, entity.id, today)).regime, maps);
+      // The paths every entity uses; the household tax path is gated at the request itself (refused as unconfirmed), so it does not lock the other buttons.
+      requireConfirmedMarketplaceMap((await booksOn(ctx, entity.id, today)).regime, maps, ['sales', 'payout', 'fee_accrual']);
     } catch {
       return false;
     }
