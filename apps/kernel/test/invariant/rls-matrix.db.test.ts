@@ -111,7 +111,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_vy_result',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
-  'crove_meetings.morning_notice',
   'crove_notes.attachment',
   'crove_notes.link',
   'crove_notes.note',
