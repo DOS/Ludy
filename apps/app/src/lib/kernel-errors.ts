@@ -460,6 +460,9 @@ export const KERNEL_ERROR_CODES = [
   'ASK_BUSY',
   'BRIEF_OFF',
   'BRIEF_BUSY',
+  // Vy naming who an action item belongs to (#3921).
+  'ASSIGNEE_OFF',
+  'ASSIGNEE_BUSY',
   'TRANSLATION_NOT_FOUND',
   'TRANSLATION_NOTHING',
   'TRANSLATION_RESULT_INVALID',

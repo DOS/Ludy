@@ -5,6 +5,7 @@
 // interests; automatic placements only; a daily budget and an end date. Nothing here calls a platform: the plan is local until W2 launches it.
 // Money is a decimal string in the account's currency, never a number.
 import { z } from 'zod';
+import { zAdsManageStateView } from './ads-manage.ts';
 import { zId, zLocalDate } from './schemas.ts';
 
 // The objectives of the first slice (owner Q4): none needs a pixel, a customer list or a lead form.
@@ -162,6 +163,8 @@ export const zAdsLaunchView = z.object({
   statesReadAt: z.string().nullable(),
   // Whether that last read worked; false says the states shown are the last known ones. null for a launch never read. Never carries the platform's own words.
   statesReadOk: z.boolean().nullable(),
+  // The management state of a launch that is live (W4, #3835): what it holds now, its objects and the changes asked; absent before it is live.
+  manage: zAdsManageStateView.optional(),
 });
 export type AdsLaunchView = z.infer<typeof zAdsLaunchView>;
 export const zAdsLaunchCancelCall = z.strictObject({ launchId: zId, idempotencyKey: zId });
