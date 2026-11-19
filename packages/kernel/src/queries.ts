@@ -7,6 +7,7 @@ import {
   zCashVoucherProposal,
   zJournalVoucherProposal,
   zId,
+  plainLine,
   LEARNED_RULE_IDS_MAX,
   zJournalReversal,
   zLocalDate,
@@ -276,7 +277,7 @@ function agentFields(
   return {
     requestedByAgent: row.requested_by_agent ? { id: row.requested_by_agent, name: agentName ?? '' } : null,
     // An outside AI app connected over MCP asked for it (ADR-0051 decision 10): the client's self-declared name and the host it returns to, both stamped from the grant by the database, so the card says who asked.
-    requestedByMcp: row.requested_by_grant && row.mcp_client_name ? { client: row.mcp_client_name, host: row.mcp_client_host ?? '' } : null,
+    requestedByMcp: row.requested_by_grant && row.mcp_client_name ? { client: plainLine(row.mcp_client_name, 120), host: plainLine(row.mcp_client_host ?? '', 253) } : null,
     extracted: row.extraction_id !== null,
   };
 }

@@ -18,6 +18,7 @@ import { MCP_SCOPE_IDS, plainLine, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMem
 import type { MemberRole } from '@crove/db';
 import { DomainError, MCP_PROPOSE_COMMAND, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
 import { eligibleApprovers, hasApprovalPolicy } from './approval.ts';
+import { PROPOSAL_PREPARERS } from './proposal-resubmit.ts';
 import { mcpSignals } from './mcp-signals.ts';
 import { mcpWakeCommands, mcpWakeQueries } from './mcp-wake.ts';
 
@@ -303,18 +304,23 @@ export const mcpPropose = defineCommand({
   sideEffect: 'internal',
   access: GRANTORS,
   handler: async (ctx, input) => {
-    const mcp = ctx.actor.type === 'user' ? ctx.actor.mcp : undefined;
-    if (!mcp || mcp.kind === 'member') throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP của công ty mới tạo được đề xuất này', { rule: 'mcp_scope' });
+    const actor = ctx.actor;
+    const mcp = actor.type === 'user' ? actor.mcp : undefined;
+    if (actor.type !== 'user' || !mcp || mcp.kind === 'member') throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP của công ty mới tạo được đề xuất này', { rule: 'mcp_scope' });
     const info = ctx.command(input.command);
     // The command must be reachable by a grant as a proposal under a scope this grant holds (the runtime checked the scope against the command's own declaration; this checks it is that command), run
     // through a proposal, and have an approval policy that names an approver. R3 without one is refused (the database refuses the same row).
+    // A command that has a preparer (the deterministic step that builds the payload the approver signs from the books: payees, amounts, checks) is not proposable by a client's raw payload: the call would skip it
+    // (review of slice d, B2). Such a command reaches MCP only through its preparer, in a later slice that builds that path; every other command is listed by a migration (crove_kernel.mcp_proposal_command) first.
+    // The purchase invoice's payload is the extraction's (its checks, its lines), so it is no client's either.
+    if (Object.hasOwn(PROPOSAL_PREPARERS, input.command) || input.command === 'finance.purchase.record') throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
     if (!info || info.mcp?.mode !== 'proposal' || info.access !== 'proposal' || !mcp.scopes.includes(info.mcp.scope) || !hasApprovalPolicy(input.command)) {
       throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
     }
     if (Buffer.byteLength(JSON.stringify(input.payload), 'utf8') > PROPOSAL_PAYLOAD_MAX_BYTES) throw new DomainError('INVALID', 422, 'Nội dung đề xuất quá lớn');
     const kind = info.proposalKind;
     // The Inbox renders a proposal by its kind and a title built here from the client's self-declared name (marked as such), never from text the call supplied.
-    const title = `Ứng dụng AI “${mcp.clientName}” đề xuất: ${kind}`.slice(0, 300);
+    const title = `Ứng dụng AI “${plainLine(mcp.clientName, 120)}” đề xuất: ${kind}`.slice(0, 300);
     const approvers = await eligibleApprovers(ctx.trx, ctx.orgId, input.command);
     let proposalId: string;
     try {
@@ -327,7 +333,9 @@ export const mcpPropose = defineCommand({
           title,
           payload: JSON.stringify(input.payload),
           eligible_approvers: approvers,
-          authors: JSON.stringify([{ type: 'agent', id: mcp.grantId, run: mcp.grantId }]),
+          // The grant (an agent entry, never an approver) and the person who connected it (a user entry): the grantor stands for what their AI app asks, so with two or more eligible approvers someone else approves
+          // when the policy asks for four-eyes (P10), as for a proposal a person asked for or one an org-chart agent's human chain stands behind.
+          authors: JSON.stringify([{ type: 'agent', id: mcp.grantId, run: mcp.grantId }, { type: 'user', id: actor.userId }]),
           tainted: true,
           requested_by_grant: mcp.grantId,
           mcp_client_name: mcp.clientName.slice(0, 120),
@@ -339,6 +347,8 @@ export const mcpPropose = defineCommand({
       proposalId = row.id;
     } catch (error) {
       const message = (error as { message?: unknown } | null)?.message;
+      // The database keeps a grant's scope to its own line's commands (crove_kernel.mcp_proposal_command): a command the catalog does not list under this scope is refused as any out-of-scope call is.
+      if (message === 'AGENT_FORBIDDEN') throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
       if (message === 'MCP_PROPOSAL_CAP') throw new DomainError('MCP_PROPOSAL_CAP', 409, 'Có quá nhiều đề xuất của ứng dụng AI này đang chờ duyệt, hãy duyệt hoặc từ chối bớt rồi thử lại');
       throw error;
     }

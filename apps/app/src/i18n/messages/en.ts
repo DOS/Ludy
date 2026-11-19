@@ -8019,7 +8019,7 @@ export const en = {
     signatureUnverified: 'Signature not verified',
     signatureAll: 'All {count, number} invoices have digital signatures that could not be verified. Check the original invoices before approving.',
     agentProposed: 'Proposed by AI agent: {name}',
-    mcpProposed: 'Proposed by AI app “{client}” ({host}), name given by the app itself',
+    mcpProposed: 'Proposed by AI app “⁨{client}⁩” (⁨{host}⁩), name given by the app itself',
     expiredReason: 'Expired after waiting {days, number} days',
     reversalKind: 'Reversal',
     // A posted invoice whose entry was reversed (#2054), as the file's chip says it.
@@ -8256,7 +8256,7 @@ export const en = {
     rereadVoided: 'The document posted earlier was voided by a reversal; if it can be read, a new proposal is created to post the invoice again.',
     voidedBadge: 'Document voided by a reversal',
     agentProposed: 'Proposed by AI agent: {name}',
-    mcpProposed: 'Proposed by AI app “{client}” ({host}), name given by the app itself',
+    mcpProposed: 'Proposed by AI app “⁨{client}⁩” (⁨{host}⁩), name given by the app itself',
     expiredNotice: 'This proposal expired {at}: it waited {days, number} days and nobody approved it, past the limit the org set in Settings → Approval reminders. An expired proposal can no longer be approved.',
     expiredResubmitHint: 'If it is still needed, you can ask for it again: a new proposal from the same source.',
     expiredAuthorHint: 'If it is still needed, its author can ask for it again.',

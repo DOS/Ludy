@@ -3183,7 +3183,8 @@ export class Runtime {
           orgIsNew = rows[0]?.fresh === true;
         }
         // The per-org app gate (ADR-0053), after the session and the membership and before the role check, the idempotency key and the handler.
-        if (!def.bootstrap) await this.refuseIfAppOff(trx, orgId, context, actor, def);
+        // A proposal an MCP grant makes for a command of an app the org switched off is refused as the command itself would be (the gate reads the target's module, not the proposer's).
+        if (!def.bootstrap) await this.refuseIfAppOff(trx, orgId, context, actor, mcpTarget ?? def);
         const permissionEntities = await this.authorize(trx, def, actor, context, false, mcpTarget);
         this.requireStepUp(def, actor);
         await this.requireLiveSession(def, actor);
@@ -3244,7 +3245,7 @@ export class Runtime {
       // tick for every item of an off org: it writes no row and spends none of the refusal budget when the system is the actor. A person's
       // or an AI agent's call keeps its failed row.
       if (entered && !orgIsNew && AUDITED_REFUSAL_STATUSES.has(domain.status) && !(domain.code === 'MODULE_OFF' && actor.type === 'system')) {
-        await this.writeRefusalAudit((mcpTarget ?? def).name, mcpTarget ?? def, mcpTarget ? (input as { payload: unknown }).payload : input, canonical, actor, orgId, domain);
+        await this.writeRefusalAudit((mcpTarget ?? def).name, mcpTarget ?? def, mcpTarget ? { payload: (input as { payload: unknown }).payload } : input, canonical, actor, orgId, domain);
       } else if ((!entered || orgIsNew) && isPreMembershipRefusal(domain)) {
         // Refused before the caller was a member of the org (or the org-less command's new org rolled back with
         // it): there is no org to audit in, so it is noted in security_event (plan §4.4 step 3, issue #1006).

@@ -160,6 +160,7 @@ export interface CroveKernelSchema {
   'crove_kernel.mail_message': KernelMailMessageTable;
   'crove_kernel.mail_suppression': KernelMailSuppressionTable;
   'crove_kernel.mcp_member_table': KernelMcpMemberTableTable;
+  'crove_kernel.mcp_proposal_command': KernelMcpProposalCommandTable;
   'crove_kernel.meeting_platform_connection': KernelMeetingPlatformConnectionTable;
   'crove_kernel.meeting_platform_recording': KernelMeetingPlatformRecordingTable;
   'crove_kernel.member_availability': KernelMemberAvailabilityTable;
@@ -2598,6 +2599,13 @@ export interface KernelMailSuppressionTable {
 export interface KernelMcpMemberTableTable {
   table_name: ColumnType<string, NotGranted, NotGranted>;
   mode: ColumnType<string, NotGranted, NotGranted>;
+  adr: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** crove_kernel.mcp_proposal_command */
+export interface KernelMcpProposalCommandTable {
+  command: ColumnType<string, NotGranted, NotGranted>;
+  scope: ColumnType<string, NotGranted, NotGranted>;
   adr: ColumnType<string, NotGranted, NotGranted>;
 }
 

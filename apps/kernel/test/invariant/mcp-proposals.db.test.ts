@@ -19,7 +19,7 @@ import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { PROPOSAL_PREPARERS, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { DomainError, Runtime, type UserActor } from '@crove/kernel-runtime';
 import { adsCommands } from '@crove/mod-ads';
 import { crmCommands } from '@crove/mod-crm';
@@ -49,6 +49,8 @@ const proposalCommand = (name: string, risk: 'R2' | 'R3', scope: string, extra: 
   access: 'proposal' as const,
   proposalKind: `${name.split('.')[0]}.kind_${name.replaceAll('.', '_')}`,
   mcp: { scope, mode: 'proposal' as const },
+  // Every real proposal command names the record it acts on from the envelope (input.payload.X), as here: a refusal row built from the wrong shape would be lost.
+  target: (input: { payload: { text: string } }) => ({ type: 'test.record', id: input.payload.text.length > 0 ? '00000000-0000-4000-8000-000000000001' : '00000000-0000-4000-8000-000000000002' }),
   handler: async (_ctx: unknown, input: unknown) => {
     ran.push({ name, input: (input as { payload: unknown }).payload });
     return { done: true };
@@ -96,6 +98,8 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;
+  // A second runtime on the same database that also registers stand-ins named like two finance commands (a preparer's and an extraction's): registered in the first, they would make the finance app look installed.
+  let financeRuntime: Runtime;
   let orgA = '';
   let orgB = '';
   const users: Record<string, string> = {};
@@ -140,8 +144,15 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
   const proposals = async (org = orgA) => (await q<{ id: string; command: string; status: string; requested_by_grant: string | null }>(`SELECT id, command, status, requested_by_grant FROM crove_kernel.proposal WHERE org_id = $1 ORDER BY created_at, id`, [org])).rows;
   const pendingOf = (grantId: string) => q<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.proposal WHERE requested_by_grant = $1 AND status = 'pending'`, [grantId]).then((r) => r.rows[0]?.n ?? 0);
 
+  // The two stand-in names that carry an approval policy (ads.cap.set, ads.budget.raise) have a preparer in the product, so the proposer would refuse them (a client's raw payload must not skip the preparer). Here, in
+  // this file's own module copy, they are taken out of the preparers' table for the run, and put back after.
+  const removedPreparers: Record<string, unknown> = {};
   beforeAll(async () => {
     if (!ADMIN) return;
+    for (const name of ['ads.cap.set', 'ads.budget.raise']) {
+      removedPreparers[name] = (PROPOSAL_PREPARERS as Record<string, unknown>)[name];
+      delete (PROPOSAL_PREPARERS as Record<string, unknown>)[name];
+    }
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
     await root.query(`CREATE DATABASE ${dbName}`);
@@ -168,13 +179,20 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
       ],
       queries: kernelQueries({ inboundDomain: null }),
     });
+    financeRuntime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands, proposalCommand('finance.journal.reverse', 'R3', ENGAGE) as never, proposalCommand('finance.purchase.record', 'R3', ENGAGE) as never],
+      queries: kernelQueries({ inboundDomain: null }),
+    });
     for (const key of ['owner', 'member', 'foreign']) users[key] = await upsertIdentity(db, { issuer: 'mcp-proposals', subject: key, email: `${key}@mcp-proposals.test`, name: key });
     orgA = (await createOrg(runtime, browser('owner'), 'Org A')).orgId;
     orgB = (await createOrg(runtime, browser('foreign'), 'Org B')).orgId;
     await q(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgA, users.member]);
+    // The catalog a migration fills for the commands of a line: here the test commands (the catalog is empty in the product until a line declares one).
+    await q(`INSERT INTO crove_kernel.mcp_proposal_command (command, scope, adr) VALUES ('ads.cap.set', $1, 'ADR-0051'), ('ads.budget.raise', $2, 'ADR-0051'), ('kernel.test.no_policy', $1, 'ADR-0051'), ('finance.journal.reverse', $1, 'ADR-0051'), ('finance.purchase.record', $1, 'ADR-0051')`, [ENGAGE, ADS]);
   }, 300_000);
 
   afterAll(async () => {
+    for (const [name, preparer] of Object.entries(removedPreparers)) (PROPOSAL_PREPARERS as Record<string, unknown>)[name] = preparer;
     for (const pool of pools) await pool.end();
     if (!ADMIN) return;
     const root = new pg.Client({ connectionString: ADMIN });
@@ -191,7 +209,7 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
     const row = (await q(`SELECT * FROM crove_kernel.proposal WHERE id = $1`, [made.proposalId])).rows[0] as Record<string, any>;
     expect(row).toMatchObject({ org_id: orgA, command: 'ads.cap.set', kind: 'ads.kind_ads_cap_set', status: 'pending', revision: 1, tainted: true, requested_by_grant: grant, mcp_client_name: 'Dy', mcp_client_host: 'dy.example.org' });
     expect(row.payload).toEqual({ text: `${CANARY} báo giá`, approved: true });
-    expect(row.authors).toEqual([{ type: 'agent', id: grant, run: grant }]);
+    expect(row.authors).toEqual([{ type: 'agent', id: grant, run: grant }, { type: 'user', id: users.owner }]);
     expect(row.requested_by_agent).toBeNull();
     expect(row.decided_by).toBeNull();
     expect(row.eligible_approvers).toEqual([users.owner]);
@@ -241,6 +259,11 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
     // Not declared for MCP at all: closed, as before.
     const undeclared = await refusal(runtime.execute('kernel.proposal.approve', { id: randomUUID(), revision: 1 }, { actor, orgId: orgA }));
     expect([undeclared.status, ruleOf(undeclared)]).toEqual([403, 'mcp_scope']);
+    // A command that has a preparer is not proposable by a raw payload, though it is declared, listed and has an approval policy.
+    for (const name of ['finance.journal.reverse', 'finance.purchase.record']) {
+      const preparer = await refusal(financeRuntime.execute(name, { payload: { text: 'x' } }, { actor, orgId: orgA }));
+      expect([preparer.status, ruleOf(preparer)], name).toEqual([403, 'mcp_scope']);
+    }
     // Declared, R3, but no approval policy names an approver: refused (R3 only as a proposal an approver can take), nothing inserted.
     const before = (await proposals()).length;
     const noPolicy = await refusal(propose(actor, 'kernel.test.no_policy'));
@@ -308,8 +331,8 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
 
   // ---- the database, with the sealed contexts written by the superuser in the exact shape the entries write --------------------------------------------------------------------------------------------------
   type Sealed = Record<string, unknown>;
-  const proposalCtx = (org: string, grant: string, who = 'owner'): Sealed => ({
-    v: 1, org, actor: 'agent', user: null, role: 'owner', agent: grant, run: null, position: null, module: 'kernel', max_risk: 'R1', tainted: true, le_scope: ['*'], flags: [], kind: 'mcp_company_proposal', grantor: users[who],
+  const proposalCtx = (org: string, grant: string, who = 'owner', scope = ENGAGE): Sealed => ({
+    v: 1, org, actor: 'agent', user: null, role: 'owner', agent: grant, run: null, position: null, module: 'kernel', max_risk: 'R1', tainted: true, le_scope: ['*'], flags: [], kind: 'mcp_company_proposal', grantor: users[who], scope,
   });
   async function inContext<T>(ctx: Sealed, fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = new pg.Client({ connectionString: adminUrl });
@@ -340,7 +363,7 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
     const grant = await insertGrant(orgA, 'owner', ['ludy.read', ENGAGE]);
     const insert = (over: Record<string, unknown> = {}, command = 'ads.cap.set') => {
       const row: Record<string, unknown> = {
-        org_id: orgA, kind: 'ads.kind_x', command, title: 't', payload: '{}', eligible_approvers: [users.owner], authors: JSON.stringify([{ type: 'agent', id: grant, run: grant }]), tainted: true,
+        org_id: orgA, kind: 'ads.kind_x', command, title: 't', payload: '{}', eligible_approvers: [users.owner], authors: JSON.stringify([{ type: 'agent', id: grant, run: grant }, { type: 'user', id: users.owner }]), tainted: true,
         requested_by_grant: grant, mcp_client_name: 'Dy', mcp_client_host: 'h', ...over,
       };
       const cols = Object.keys(row);
@@ -354,7 +377,12 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
         ['decided by a person', { decided_by: users.owner, decided_at: new Date().toISOString() }],
         ['not tainted', { tainted: false }],
         ['a human author', { authors: JSON.stringify([{ type: 'user', id: users.owner }]) }],
-        ['two authors', { authors: JSON.stringify([{ type: 'agent', id: grant, run: grant }, { type: 'user', id: users.owner }]) }],
+        ['the grant alone as author', { authors: JSON.stringify([{ type: 'agent', id: grant, run: grant }]) }],
+        ['another person as the user author', { authors: JSON.stringify([{ type: 'agent', id: grant, run: grant }, { type: 'user', id: users.member }]) }],
+        ['three authors', { authors: JSON.stringify([{ type: 'agent', id: grant, run: grant }, { type: 'user', id: users.owner }, { type: 'user', id: users.member }]) }],
+        ['a request input', { request_input: '{}' }],
+        ['a far-future creation time', { created_at: new Date(Date.now() + 86_400_000 * 400).toISOString() }],
+        ['no eligible approver', { eligible_approvers: [] }],
         ['another grant\'s author', { authors: JSON.stringify([{ type: 'agent', id: randomUUID(), run: randomUUID() }]) }],
         ['another grant', { requested_by_grant: randomUUID() }],
         ['no grant', { requested_by_grant: null, mcp_client_name: null, mcp_client_host: null }],
@@ -368,6 +396,10 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
       for (const [label, over] of deviations) expect(await attempt(c, ...insert(over)), label).not.toBe('ok');
       // A command whose approval policy names nobody, even in the exact shape.
       expect(await attempt(c, ...insert({}, 'kernel.test.no_policy')), 'no approval policy').toMatch(/AGENT_FORBIDDEN/);
+      // The database keeps the grant's scope to its line's commands: ads.cap.set is listed under the engage scope, so a context entered for the ads scope inserts none of it, and a command the catalog does not list
+      // at all (a real one, with an approval policy) is refused under any scope.
+      await inContext(proposalCtx(orgA, grant, 'owner', ADS), async (other) => expect(await attempt(other, ...insert()), 'a command of another scope').toMatch(/AGENT_FORBIDDEN/));
+      await inContext(proposalCtx(orgA, grant), async (other) => expect(await attempt(other, ...insert({}, 'finance.supplier_payment.record')), 'a command outside the catalog').toMatch(/AGENT_FORBIDDEN/));
       // Nothing but that insert: no update, no delete, no other table.
       expect(await attempt(c, `UPDATE crove_kernel.proposal SET status = 'approved' WHERE org_id = $1`, [orgA])).toMatch(/AGENT_FORBIDDEN|no rows/);
       expect(await attempt(c, `DELETE FROM crove_kernel.proposal WHERE org_id = $1`, [orgA])).toMatch(/AGENT_FORBIDDEN|no rows/);
@@ -389,7 +421,7 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
 
   it('inserts nothing for a grant that no longer stands: revoked, or its org stopped by a kill switch, even with a context sealed before', async () => {
     const grant = await insertGrant(orgA, 'owner', ['ludy.read', ENGAGE]);
-    const row = [orgA, 'ads.kind_x', 'ads.cap.set', 't', '{}', [users.owner], JSON.stringify([{ type: 'agent', id: grant, run: grant }]), grant];
+    const row = [orgA, 'ads.kind_x', 'ads.cap.set', 't', '{}', [users.owner], JSON.stringify([{ type: 'agent', id: grant, run: grant }, { type: 'user', id: users.owner }]), grant];
     const text = `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors, tainted, requested_by_grant, mcp_client_name, mcp_client_host) VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, 'x', 'x')`;
     await inContext(proposalCtx(orgA, grant), async (c) => expect(await attempt(c, text, row)).toBe('ok'));
     await q(`UPDATE crove_kernel.agent_grant SET revoked_at = now() WHERE id = $1`, [grant]);
@@ -397,7 +429,7 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
     const live = await insertGrant(orgA, 'owner', ['ludy.read', ENGAGE]);
     await q(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1::uuid, 'org', '*', $2)`, [orgA, users.owner]);
     try {
-      await inContext(proposalCtx(orgA, live), async (c) => expect(await attempt(c, text, [...row.slice(0, 6), JSON.stringify([{ type: 'agent', id: live, run: live }]), live])).toBe('MCP_GRANT_INVALID'));
+      await inContext(proposalCtx(orgA, live), async (c) => expect(await attempt(c, text, [...row.slice(0, 6), JSON.stringify([{ type: 'agent', id: live, run: live }, { type: 'user', id: users.owner }]), live])).toBe('MCP_GRANT_INVALID'));
     } finally {
       await q(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1 AND released_at IS NULL`, [orgA, users.owner]);
     }
@@ -436,6 +468,22 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
     expect(await entry(randomUUID(), ENGAGE)).toBe('MCP_GRANT_INVALID');
   });
 
+  it('counts the grantor as an author, so four-eyes holds: with two admins the grantor cannot approve their own AI app\'s proposal alone, the other admin can, and a sole approver uses the one-person path', async () => {
+    const admin2 = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'mcp-proposals', subject: 'admin2', email: 'admin2@mcp-proposals.test', name: 'admin2' });
+    users.admin2 = admin2;
+    await q(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgA, admin2]);
+    const grant = await insertGrant(orgA, 'owner', ['ludy.read', ADS]);
+    const made = await propose(grantActor('owner', grant, ['ludy.read', ADS]), 'ads.budget.raise', { text: 'tăng ngân sách' });
+    const revision = (await q(`SELECT revision FROM crove_kernel.proposal WHERE id = $1`, [made.proposalId])).rows[0]?.revision as number;
+    const ownApproval = await refusal(runtime.execute('kernel.proposal.approve', { id: made.proposalId, revision }, { actor: browser('owner', true), orgId: orgA }));
+    expect(ownApproval.code).toBe('FOUR_EYES_REQUIRED');
+    ran.length = 0;
+    await runtime.execute('kernel.proposal.approve', { id: made.proposalId, revision }, { actor: { type: 'user', userId: admin2, aal: 'aal2', mfaAt: Math.floor(Date.now() / 1000) }, orgId: orgA });
+    expect(ran).toEqual([{ name: 'ads.budget.raise', input: { text: 'tăng ngân sách' } }]);
+    // Back to one eligible approver for the later cases.
+    await q(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgA, admin2]).catch(() => undefined);
+  });
+
   it('caps pending proposals in the database: 20 per grant, 100 per org over all grants, and a decision frees room', async () => {
     const grant = await insertGrant(orgA, 'owner', ['ludy.read', ENGAGE]);
     const actor = grantActor('owner', grant, ['ludy.read', ENGAGE]);
@@ -454,13 +502,20 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
     expect(await pendingOf(grant)).toBe(20);
     // The org's cap: 100 pending proposals of grants in all. Fill to 100 with raw rows of fresh grants, and the next call of any grant is refused.
     const total = (await q<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.proposal WHERE org_id = $1 AND requested_by_grant IS NOT NULL AND status = 'pending'`, [orgA])).rows[0]?.n ?? 0;
-    let need = 100 - total;
+    let need = 99 - total;
     while (need > 0) {
       const filler = await insertGrant(orgA, 'owner', ['ludy.read', ENGAGE]);
       const take = Math.min(20, need);
       for (let i = 0; i < take; i += 1) await propose(grantActor('owner', filler, ['ludy.read', ENGAGE]), 'ads.cap.set', { text: `f${i}` });
       need -= take;
     }
+    // 99 pending: two calls of two different grants at once make exactly one more (the org's cap is taken under one lock per org), and every later call is refused.
+    const racers = await Promise.all(
+      [await insertGrant(orgA, 'owner', ['ludy.read', ENGAGE]), await insertGrant(orgA, 'owner', ['ludy.read', ENGAGE])].map((g) =>
+        propose(grantActor('owner', g, ['ludy.read', ENGAGE])).then(() => 'made', (e: DomainError) => e.code),
+      ),
+    );
+    expect(racers.sort()).toEqual(['MCP_PROPOSAL_CAP', 'made']);
     const fresh = await insertGrant(orgA, 'owner', ['ludy.read', ENGAGE]);
     const orgFull = await refusal(propose(grantActor('owner', fresh, ['ludy.read', ENGAGE])));
     expect(orgFull.code).toBe('MCP_PROPOSAL_CAP');

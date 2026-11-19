@@ -120,7 +120,7 @@ const POLICIES: Record<string, CommandPolicy> = {
 // command reaches it as a proposal only when this holds, R2 and R3 alike (ADR-0051 decision 10); the database checks the same in the proposal context's guard (approval_command_policy).
 export function hasApprovalPolicy(command: string): boolean {
   const policy = POLICIES[command];
-  return policy !== undefined && (policy.roles.length > 0 || policy.permission !== null);
+  return policy !== undefined && policy.roles.length > 0;
 }
 
 const NOBODY: CommandPolicy = { roles: [], permission: null, fourEyes: true };

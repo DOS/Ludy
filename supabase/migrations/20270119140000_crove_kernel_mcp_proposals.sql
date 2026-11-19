@@ -6,9 +6,12 @@
 --                        agent-shaped, tainted R1 context of kind mcp_company_proposal with no user, naming the grant and the grantor;
 --   refuse_agent_write and agent_write_guard (restated whole, one branch each)   that context may INSERT one pending proposal of an exact shape into crove_kernel.proposal and write its audit row (the branch every
 --                        MCP context has) and nothing else; the approval policy must name an approver for the command, so an R3 call without a policy that allows a proposal inserts nothing;
+--   mcp_proposal_command (catalog)   the commands an MCP proposal may name, each with the one write scope it needs; filled only by a migration (the migration of the line that declares the command, with
+--                        its approval policy), empty here, and read by the guard below, so the database itself keeps a grant's scope to its own line's commands (a grant holding ludy.social.draft cannot insert a proposal of
+--                        any other command, whatever the caller's TypeScript does). The sealed context carries the scope it was entered for;
 --   mcp_proposal_cap (before insert, a definer)   checks the grant stands now (not revoked, the org not stopped), stamps the client name and host from the grant's own record, and applies a DB-backed cap of pending proposals per grant (20) and per org (100) over all grants, serialised per grant, so a looping client cannot flood the Inbox whatever
 --                        the API process's memory holds; the insert is refused with MCP_PROPOSAL_CAP and a person's decision (approve, reject) or the expiry frees room.
--- The author of such a proposal is the grant (an agent entry), which never counts as an approver or for four-eyes, so the person who consented (or any eligible approver) approves it in Ludy as for any proposal.
+-- The authors of such a proposal are the grant (an agent entry, never an approver) and the grantor (a user entry): where the approval policy asks for four-eyes (P10) with two or more eligible approvers, someone other than the grantor approves; a sole approver uses the one-person path, flagged as self-approved, as for any proposal.
 -- Idempotent (add column if not exists, create or replace, drop and create); applied files untouched.
 SET LOCAL lock_timeout = '2s';
 
@@ -34,6 +37,15 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+CREATE TABLE IF NOT EXISTS crove_kernel.mcp_proposal_command (
+  command text PRIMARY KEY CHECK (command ~ '^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$'),
+  scope text NOT NULL CHECK (scope IN ('ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft')),
+  adr text NOT NULL CHECK (adr ~ '^ADR-[0-9]{4}( .*)?$')
+);
+REVOKE ALL ON crove_kernel.mcp_proposal_command FROM PUBLIC;
+GRANT SELECT ON crove_kernel.mcp_proposal_command TO crove_tenant;
+SELECT crove_kernel.agent_write_guard_install('crove_kernel.mcp_proposal_command');
+
 DROP TRIGGER IF EXISTS proposal_keep_mcp_provenance ON crove_kernel.proposal;
 CREATE TRIGGER proposal_keep_mcp_provenance BEFORE UPDATE ON crove_kernel.proposal FOR EACH ROW EXECUTE FUNCTION crove_kernel.proposal_keep_mcp_provenance();
 
@@ -61,8 +73,8 @@ BEGIN
   END IF;
   NEW.mcp_client_name := pg_catalog.left(v_name, 120);
   NEW.mcp_client_host := pg_catalog.left(v_host, 253);
-  -- Inserts of one grant queue here, so two calls never both see room for one more.
-  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(NEW.org_id::text || ':' || NEW.requested_by_grant::text, 3858));
+  -- Inserts of one org queue here (the per-grant cap and the org's both count under it), so two calls, of one grant or of two, never both see room for one more.
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('mcp_proposal:' || NEW.org_id::text, 3858));
   SELECT pg_catalog.count(*) FILTER (WHERE p.requested_by_grant = NEW.requested_by_grant), pg_catalog.count(*) INTO v_grant, v_org
   FROM crove_kernel.proposal p WHERE p.org_id = NEW.org_id AND p.requested_by_grant IS NOT NULL AND p.status = 'pending';
   IF v_grant >= 20 OR v_org >= 100 THEN
@@ -127,7 +139,7 @@ BEGIN
   PERFORM crove_kernel.ctx_write(pg_catalog.jsonb_build_object(
     'v', 1, 'org', p_org_id, 'actor', 'agent', 'user', NULL, 'role', v_role, 'agent', p_grant_id, 'run', NULL, 'position', NULL,
     'module', 'kernel', 'max_risk', 'R1', 'tainted', true, 'le_scope', pg_catalog.jsonb_build_array('*'), 'flags', '[]'::jsonb,
-    'kind', 'mcp_company_proposal', 'grantor', v_user));
+    'kind', 'mcp_company_proposal', 'grantor', v_user, 'scope', p_scope));
   RETURN pg_catalog.jsonb_build_object('role', v_role, 'grantor', v_user, 'maxRisk', 'R1', 'tainted', true);
 END $$;
 REVOKE ALL ON FUNCTION crove_kernel.enter_mcp_company_proposal_context(uuid, uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
@@ -219,8 +231,9 @@ BEGIN
       END IF;
     END IF;
     -- The sealed context in which an MCP call to an R2 or R3 command becomes a proposal (#3858 slice d, kind mcp_company_proposal) inserts ONE row and nothing else: a pending proposal of an exact shape,
-    -- stamped with the grant of the context (the sealed agent), authored by that grant alone (an agent entry, never a human author), tainted, with no decision, execution, result, provenance of an agent run,
-    -- extraction or file, and no policy flags; of a command whose approval policy names an approver (crove_kernel.approval_command_policy). Never an update and never a delete, and no other table.
+    -- stamped with the grant of the context (the sealed agent), authored by that grant (an agent entry) and the sealed grantor (the person who connected it, so four-eyes counts them), tainted, with no decision, execution, result, provenance of an agent run,
+    -- extraction or file, and no policy flags; of a command whose approval policy names an approver (crove_kernel.approval_command_policy) and that the catalog lists under the very scope the context was
+    -- entered for (crove_kernel.mcp_proposal_command). Never an update and never a delete, and no other table.
     IF v_ctx ->> 'kind' = 'mcp_company_proposal' AND v_ctx ->> 'grantor' IS NOT NULL AND TG_OP = 'INSERT'
        AND TG_TABLE_SCHEMA = 'crove_kernel' AND TG_TABLE_NAME = 'proposal' THEN
       IF NEW.requested_by_grant = v_agent AND NEW.status = 'pending' AND NEW.revision = 1 AND NEW.tainted IS TRUE
@@ -230,9 +243,13 @@ BEGIN
          AND NEW.duplicate_of IS NULL AND NEW.resubmitted_from IS NULL AND NEW.policy_flags IS NULL AND NEW.co_authors IS NULL
          AND NEW.reminded_at IS NULL AND NEW.escalated_at IS NULL
          AND NEW.mcp_client_name IS NOT NULL AND NEW.mcp_client_host IS NOT NULL
-         AND pg_catalog.jsonb_typeof(NEW.authors) = 'array' AND pg_catalog.jsonb_array_length(NEW.authors) = 1
-         AND NEW.authors -> 0 ->> 'type' = 'agent' AND NEW.authors -> 0 ->> 'id' = v_agent::text
-         AND pg_catalog.cardinality((crove_kernel.approval_command_policy(NEW.command)).roles) > 0 THEN
+         AND NEW.request_input IS NULL AND NEW.created_at BETWEEN pg_catalog.now() - interval '1 minute' AND pg_catalog.now() + interval '1 minute'
+         AND NEW.eligible_approvers IS NOT NULL AND pg_catalog.cardinality(NEW.eligible_approvers) > 0
+         AND pg_catalog.jsonb_typeof(NEW.authors) = 'array' AND pg_catalog.jsonb_array_length(NEW.authors) = 2
+         AND NEW.authors -> 0 ->> 'type' = 'agent' AND NEW.authors -> 0 ->> 'id' = v_agent::text AND NEW.authors -> 0 ->> 'run' = v_agent::text
+         AND NEW.authors -> 1 ->> 'type' = 'user' AND NEW.authors -> 1 ->> 'id' = v_ctx ->> 'grantor'
+         AND pg_catalog.cardinality((crove_kernel.approval_command_policy(NEW.command)).roles) > 0
+         AND EXISTS (SELECT 1 FROM crove_kernel.mcp_proposal_command mc WHERE mc.command = NEW.command AND mc.scope = v_ctx ->> 'scope') THEN
         RETURN NEW;
       END IF;
     END IF;
