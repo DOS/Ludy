@@ -61,5 +61,5 @@ A one-person company is its own administrator: this is three steps in its own ad
 
 ## What is not built yet
 
-- A Teams recording is a video file, and the database still refuses to start an import of a recording that has no audio file (`MEETING_PLATFORM_NO_AUDIO`, the second half of [#3306](https://github.com/DOS/Ludy/issues/3306)); the app still shows such a recording as "video only, cannot be imported yet". Until that lands a Teams recording is listed and can be connected, but not imported. The same holds for Google Meet.
+- A Teams recording is a video file. Importing one needs the video-only import of [#3306](https://github.com/DOS/Ludy/issues/3306) (PR 2, [#3873](https://github.com/DOS/Ludy/pull/3873)) **and** the media sandbox (`MEDIA_URL`, [meetings-video-import.md](meetings-video-import.md)). Until #3873 has merged the app shows a Teams recording as "video only, cannot be imported yet", so the import dialog's cost line below is not reachable; the cost line of the Settings card is.
 - The transcript-only import path (a Teams transcript without its recording) is not wired for any platform yet.
