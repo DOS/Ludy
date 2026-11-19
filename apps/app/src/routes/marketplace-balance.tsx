@@ -101,7 +101,14 @@ export function MarketplaceBalancePage() {
                 <TableCell className={NUM} data-testid="marketplace-balance-awaiting">
                   {f.money(r.awaitingPayout)}
                 </TableCell>
-                <TableCell className={NUM}>{f.money(r.feesAwaitingInvoice)}</TableCell>
+                <TableCell className={NUM}>
+                  {f.money(r.feesAwaitingInvoice)}
+                  {r.feesOverdue && r.feesAgeDays !== null ? (
+                    <p className="mt-1 text-xs text-warning" data-testid="marketplace-balance-fees-overdue">
+                      {t('feesOverdue', { days: String(r.feesAgeDays) })}
+                    </p>
+                  ) : null}
+                </TableCell>
               </TableRow>
             ))}
           </DataTable>
