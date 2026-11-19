@@ -30,6 +30,7 @@ import {
   type RecruitingBriefResult,
   type ReviewCandidateProfileOptions,
 } from './recruiting-coworker.ts';
+import { checkMarketplaceFeeNotes, marketplaceFeeNotesInstructions, marketplaceFeeNotesPrompt, type MarketplaceFeeNoteFacts, type MarketplaceFeeNotesResult } from './marketplace-fee-note.ts';
 import { checkMisaAmisBlockerNotes, MISA_AMIS_BLOCKER_KINDS, misaAmisBlockerNotesInstructions, misaAmisBlockerNotesPrompt, type MisaAmisBlockerNotesFacts, type MisaAmisBlockerNotesResult } from './misa-amis-blocker-notes.ts';
 import { checkMisaCheckLineSentence, misaCheckLineInstructions, misaCheckLinePrompt, type MisaCheckLineFacts, type MisaCheckLineResult } from './misa-check-line.ts';
 import { checkEInvoiceReason, einvoiceReasonInstructions, einvoiceReasonPrompt, type EInvoiceReasonFacts, type EInvoiceReasonResult } from './einvoice-reason.ts';
@@ -161,6 +162,10 @@ const zMisaCheckLineOut = z.object({
 const zMisaAmisBlockerNotesOut = z.object({
   notes: z.array(z.object({ kind: z.enum(MISA_AMIS_BLOCKER_KINDS), text: z.string().describe('One plain sentence on what this kind of problem means in MISA AMIS and how to fix it in Ludy, with no number') })).describe('One note for each kind of problem listed, under its kind'),
 });
+const zMarketplaceFeeNotesOut = z.object({
+  notes: z.array(z.object({ row: z.number().int().min(1).describe('The number of the row, as given'), text: z.string().describe('One plain sentence on what the fees waiting on the platform account mean and what to do, using only the numbers given for that row') })).describe('One note for each row, under its row number'),
+});
+export type MarketplaceFeeNotesGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMarketplaceFeeNotesOut> | null; usage?: AiUsage }>;
 export type MisaAmisBlockerNotesGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMisaAmisBlockerNotesOut> | null; usage?: AiUsage }>;
 export type MisaCheckLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zMisaCheckLineOut> | null; usage?: AiUsage }>;
 export type SupplierPayableLineGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zSupplierPayableLineOut> | null; usage?: AiUsage }>;
@@ -285,6 +290,7 @@ export class InboxReader {
   private readonly generateSupplierPayableLine: SupplierPayableLineGenerator;
   private readonly generateMisaCheckLine: MisaCheckLineGenerator;
   private readonly generateMisaAmisBlockerNotes: MisaAmisBlockerNotesGenerator;
+  private readonly generateMarketplaceFeeNotes: MarketplaceFeeNotesGenerator;
   private readonly generateEInvoiceRate: EInvoiceRateGenerator;
   private readonly generateStockSurplus: StockSurplusGenerator;
   private readonly generateEInvoiceReason: EInvoiceReasonGenerator;
@@ -298,7 +304,7 @@ export class InboxReader {
   private readonly payroll: PayrollCoworker;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; followup?: FollowupGenerator; crmFollowup?: CrmFollowupGenerator; meetingBrief?: MeetingBriefGenerator; overview?: OverviewGenerator; vatLate?: VatLateGenerator; payrollMatch?: PayrollMatchGenerator; einvoiceReason?: EInvoiceReasonGenerator; einvoiceRate?: EInvoiceRateGenerator; marketplaceLine?: MarketplaceLineGenerator; supplierPayableLine?: SupplierPayableLineGenerator; misaCheckLine?: MisaCheckLineGenerator; misaAmisBlockerNotes?: MisaAmisBlockerNotesGenerator; marketplaceFeeNotes?: MarketplaceFeeNotesGenerator; stockSurplus?: StockSurplusGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator; einvoiceDraft?: EInvoiceDraftGenerator; quoteLines?: QuoteLinesGenerator; projectWeeklyStatus?: ProjectWeeklyStatusGenerator; laborCheck?: LaborComplianceGenerator; recruitingBrief?: RecruitingBriefGenerator; payroll?: ConstructorParameters<typeof PayrollCoworker>[1] } = {}) {
     this.payroll = new PayrollCoworker(config, generators.payroll);
     this.generateLaborCheck = generators.laborCheck ?? createLaborComplianceGenerator(config);
     this.generateRecruitingBrief = generators.recruitingBrief ?? createRecruitingBriefGenerator(config);
@@ -420,6 +426,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.misa_amis_blocker_notes', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zMisaAmisBlockerNotesOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateMarketplaceFeeNotes =
+      generators.marketplaceFeeNotes ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.marketplace_fee_note', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zMarketplaceFeeNotesOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -655,6 +669,14 @@ export class InboxReader {
     const { output, usage } = await this.generateMisaAmisBlockerNotes({ system: misaAmisBlockerNotesInstructions(facts.language), prompt: misaAmisBlockerNotesPrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkMisaAmisBlockerNotes(facts, output);
+  }
+
+  /** The finance coworker's notes under the Sàn table (#3711 slice 7), from the fees waiting on each platform's 331 (amount, age, past the cycle) and nothing else, or why there is none: a note is dropped when it has
+   * a number that is not its row's, a platform name, a link, says something was done or promises a result (marketplace-fee-note.ts). onUsage gets the tokens the call used. */
+  async marketplaceFeeNotes(facts: MarketplaceFeeNoteFacts, onUsage?: (usage: AiUsage) => void): Promise<MarketplaceFeeNotesResult> {
+    const { output, usage } = await this.generateMarketplaceFeeNotes({ system: marketplaceFeeNotesInstructions(facts.language), prompt: marketplaceFeeNotesPrompt(facts) });
+    if (usage) onUsage?.(usage);
+    return checkMarketplaceFeeNotes(facts, output);
   }
 
   /** The finance coworker's one line above the received invoices to pay (#3113 S4c), from four facts code read from the books and nothing else, or why there is none: the text is refused when it states a

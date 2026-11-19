@@ -158,3 +158,15 @@ export const zMarketplaceWorklist = z.object({
   accrualReversals: z.array(zMarketplaceFeeAccrualReversal),
 });
 export type MarketplaceWorklist = z.infer<typeof zMarketplaceWorklist>;
+
+// The finance coworker's notes under the Sàn table (#3711 slice 7): a second read that loads the balance again on the server (so the model is told what the books say, never what the caller says) and, for each
+// platform with fees waiting on its 331, answers one plain note on what they mean and what to do, or why there are none: `off` (no model), `busy` (too frequent), `budget` (the AI budget is spent), `failed`
+// (the call failed or every note was dropped by the checks; the reason is logged as a code, never the words) or `none` (no platform has fees waiting). A note is keyed by the platform's row (its entity and
+// platform); the model is told neither. The notes never change a figure or a flag and post nothing.
+export const zMarketplaceFeeNotesAsk = z.strictObject({ legalEntityId: zId.optional(), lang: z.enum(['vi', 'en']).optional() });
+export type MarketplaceFeeNotesAsk = z.infer<typeof zMarketplaceFeeNotesAsk>;
+export const zMarketplaceFeeNotes = z.strictObject({
+  ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']),
+  notes: z.array(z.strictObject({ legalEntityId: zId, platform: z.string().max(40), text: z.string().max(480) })).max(200),
+});
+export type MarketplaceFeeNotes = z.infer<typeof zMarketplaceFeeNotes>;

@@ -5,7 +5,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MarketplaceBalance, MarketplaceFacts, MarketplaceLine } from '@crove/kernel-contract';
+import type { MarketplaceBalance, MarketplaceFacts, MarketplaceFeeNotes, MarketplaceLine } from '@crove/kernel-contract';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient, calls: [] as string[] }));
 
@@ -171,5 +171,67 @@ describe('the Sàn screen (#2516)', () => {
       expect(html).toContain('không ghi sổ giúp');
       expect(html).not.toContain('{finance}');
     });
+  });
+});
+
+describe("the coworker's notes under the table (#3711 slice 7)", () => {
+  const row = (platform: string, platformName: string, fees: string, age: number | null, overdue: boolean): MarketplaceBalance['rows'][number] => ({
+    legalEntityId: entity,
+    platform,
+    platformName,
+    salesPosted: '5000000',
+    paidOut: '4000000',
+    awaitingPayout: '1000000',
+    feesAwaitingInvoice: fees,
+    oldestFeeDate: age === null ? null : '2026-09-01',
+    feesAgeDays: age,
+    feesOverdue: overdue,
+  });
+  const BALANCE: MarketplaceBalance = { rows: [row('shopee', 'Shopee', '1200000', 51, true), row('lazada', 'Lazada', '0', null, false), row('tiktok_shop', 'TikTok Shop', '350000', 12, false)] };
+  const NOTES: MarketplaceFeeNotes = {
+    ai: 'used',
+    notes: [
+      { legalEntityId: entity, platform: 'shopee', text: 'The fees have waited 51 days, past one settlement cycle of 45 days: ask the platform for its fee invoice or enter it.' },
+      { legalEntityId: entity, platform: 'lazada', text: 'A note for a platform with no fees waiting is never shown.' },
+    ],
+  };
+  const withNotes = (notes: MarketplaceFeeNotes | null, locale: 'vi' | 'en' = 'en', answer: MarketplaceBalance = BALANCE) => {
+    cache.current.clear();
+    if (notes) cache.current.setQueryData(['marketplace', 'feeNotes'], notes);
+    return render(answer, locale);
+  };
+  const withoutNotes = (html: string) => html.replace(/<section class="mt-3 rounded-md border border-border p-3 text-sm" data-testid="marketplace-fee-notes">.*?<\/section>/s, '');
+
+  it('shows a note beside each platform that has fees waiting, and none for a platform that has not', () => {
+    const html = withNotes(NOTES);
+    expect(html).toContain('data-testid="marketplace-fee-notes"');
+    expect(html.match(/data-testid="marketplace-fee-note"/g)).toHaveLength(1);
+    expect(html).toContain('ask the platform for its fee invoice or enter it');
+    expect(html).not.toContain('never shown');
+  });
+
+  it('never changes the table: with the notes taken out the markup is the markup with no notes at all', () => {
+    const plain = withNotes(null);
+    expect(withoutNotes(withNotes(NOTES))).toBe(plain);
+    expect(withNotes({ ai: 'off', notes: [] })).toBe(plain);
+    expect(withNotes({ ai: 'none', notes: [] })).toBe(plain);
+  });
+
+  it('says why there are no notes when the coworker is busy, out of budget or could not word them, and keeps the table', () => {
+    for (const ai of ['busy', 'budget', 'failed'] as const) {
+      const html = withNotes({ ai, notes: [] });
+      expect(html).toContain('data-testid="marketplace-fee-notes-ai-state"');
+      expect(html).not.toContain('data-testid="marketplace-fee-note"');
+      expect(html.match(/data-testid="marketplace-balance-row"/g)).toHaveLength(3);
+    }
+  });
+
+  it('asks for nothing when no platform has fees waiting, and reads in Vietnamese', () => {
+    const quiet = withNotes(NOTES, 'en', { rows: [row('shopee', 'Shopee', '0', null, false)] });
+    expect(quiet).not.toContain('data-testid="marketplace-fee-notes"');
+    const vi = withNotes({ ai: 'used', notes: [{ legalEntityId: entity, platform: 'shopee', text: 'Phí chờ 51 ngày, quá chu kỳ 45 ngày: hãy xin hóa đơn phí từ sàn.' }] }, 'vi');
+    expect(vi).toContain('Ghi chú của');
+    expect(vi).toContain('hãy xin hóa đơn phí từ sàn');
+    expect(withNotes({ ai: 'busy', notes: [] }, 'vi')).toContain('bảng bên trên đứng một mình');
   });
 });
