@@ -159,6 +159,7 @@ describe('what was sent to MISA AMIS (#3902)', () => {
     expect(html).toContain('The MISA catalogue changed since the check; nothing was sent.');
     expect(html).toContain('The voucher changed since you confirmed; nothing was sent.');
     expect(html).not.toContain('>MATCH_STALE<');
+    expect(list([row({ state: 'failed', reason: 'MATCH_UNREAD' })], false)).toContain('The MISA catalogue could not be read to check it again before sending');
     expect(html).toContain('BRANCH_UNKNOWN');
   });
 

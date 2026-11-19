@@ -116,6 +116,8 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
   let waiting = false;
   // The last read of the catalogue for a send: what it was asked for, when, and what it found (held in memory for CATALOGUE_REREAD_MS, never stored).
   let reread: { key: string; at: number; results: MisaAmisMatchResult[] } | null = null;
+  // The references a read already failed for in this run (too large, or no page): the batches that follow with the same ones fail at once, without reading 20 pages again to fail the same way.
+  let unreadable: string | null = null;
 
   for (let step = 0; step < MAX_STEPS * 2; step++) {
     const begun = await deps.runtime.execute<MisaAmisPushBegin>('finance.misa_amis.push_begin', { connectionId: job.connectionId, branchKnown, checked }, options);
@@ -178,6 +180,7 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
       // part that is gone, blocked or different from what the person approved is `failed` and never sent.
       let parts: Map<string, AmisPartRow>;
       let matchStale = false;
+      let readKey: string | null = null;
       try {
         // The same matches the person's confirmation was made on (the stored result of the last check against the catalogue): a check made since changes the part, and the part is then `STALE`, never sent.
         const matches = await query<MisaAmisMatchResults>('finance.misa_amis_match.results', { legalEntityId: target.legalEntityId, ask });
@@ -187,13 +190,15 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
         const verify = relied(matches, wanted);
         if (verify.taxCodes.length > 0 || verify.itemCodes.length > 0) {
           const key = JSON.stringify(verify);
+          if (unreadable === key) throw new TooLarge();
+          readKey = key;
           if (reread === null || reread.key !== key || now().getTime() - reread.at > CATALOGUE_REREAD_MS) {
             reread = { key, at: now().getTime(), results: await matchCatalogue(deps.client, connection, verify) };
           }
           matchStale = staleMatches(matches, reread.results);
         }
       } catch (error) {
-        if (error instanceof AmisError && error.kind === 'credentials') {
+        if (error instanceof AmisError && (error.kind === 'credentials' || error.kind === 'token')) {
           // MISA refused the connection before the catalogue could be read: nothing was sent, the rows go back to the queue with the code on screen.
           await record(
             begun.rows.map((row) => ({ orgRefid: row.orgRefid, from: 'sending' as const, to: 'queued' as const, reason: 'CREDENTIALS' })),
@@ -204,11 +209,16 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
         // The catalogue is too large to read whole or answered something that is not a page: a retry would fail the same way, so the batch is `failed` with a fixed reason and a person looks (nothing was sent).
         if (error instanceof TooLarge || (error instanceof AmisError && error.kind === 'invalid_response')) {
           console.warn(`[misa-amis] push ${job.connectionId.slice(0, 8)}: catalogue not read (${error instanceof AmisError ? error.kind : 'too_large'})`);
+          unreadable = readKey ?? unreadable;
           await record(
             begun.rows.map((row) => ({ orgRefid: row.orgRefid, from: 'sending' as const, to: 'failed' as const, reason: 'MATCH_UNREAD' })),
             { key: begun.callKey, end: { state: 'failed', kind: 'bad_request', code: 'MATCH_UNREAD' } },
           );
           tally.failed += begun.rows.length;
+          if (tally.batches >= MAX_STEPS) {
+            waiting = true;
+            break;
+          }
           continue;
         }
         // The batch could not be built, or the catalogue could not be reached: nothing was sent, so the rows go back to the queue and the run asks to be tried again.

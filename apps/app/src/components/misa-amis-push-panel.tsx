@@ -110,7 +110,7 @@ function PushRow({ row, connectionId, canManage, now }: { row: MisaAmisPushRow; 
       {row.reason && (row.state === 'refused' || row.state === 'failed') && (
         <p className="mt-1 break-words text-xs text-muted-foreground" data-testid="misa-amis-push-reason">
           {row.state === 'refused' ? `${t('refusedNote')} ` : ''}
-          {row.reason === 'MATCH_STALE' ? t('reasons.MATCH_STALE') : row.reason === 'STALE' ? t('reasons.STALE') : row.reason}
+          {row.reason === 'MATCH_STALE' ? t('reasons.MATCH_STALE') : row.reason === 'MATCH_UNREAD' ? t('reasons.MATCH_UNREAD') : row.reason === 'STALE' ? t('reasons.STALE') : row.reason}
         </p>
       )}
       {settle && (

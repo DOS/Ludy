@@ -261,10 +261,8 @@ suite('MISA AMIS push (#3902)', () => {
     await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_CHECK_REQUIRED' });
     await age(14);
     await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_PUSH_STALE' });
-    // A re-check that is waiting keeps the last done one's age: it is the age of the last check that finished.
+    // A re-check that waits (or failed) has no finished check to stand on: the person waits for it, whatever the age of the one before. The earlier results still stand for the blockers, but nothing is confirmed on them.
     await api.execute('finance.misa_amis_match.request_check', { id: connectionId, ask: ASK }, asUser('owner'));
-    await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_PUSH_STALE' });
-    await age(16);
     await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_CHECK_REQUIRED' });
     expect(await pushRows()).toEqual([]);
     // Back to a fresh one for the tests that follow.

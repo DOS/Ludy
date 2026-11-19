@@ -7737,6 +7737,7 @@ export const en = {
     refusedNote: 'MISA\'s reason:',
     reasons: {
       MATCH_STALE: 'The MISA catalogue changed since the check; nothing was sent. Check against the catalogue again, then send again.',
+      MATCH_UNREAD: 'The MISA catalogue could not be read to check it again before sending (it is too large, or MISA answered something unreadable); nothing was sent. Try again later or contact support.',
       STALE: 'The voucher changed since you confirmed; nothing was sent. Preview again, then send again.',
     },
   },

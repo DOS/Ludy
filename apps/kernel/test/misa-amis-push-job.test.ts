@@ -322,6 +322,46 @@ describe('the MISA AMIS push job: sending', () => {
     }
   });
 
+  it('does not read a catalogue that failed once again for the next batch of the run, and fails that batch at once', async () => {
+    const other = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5e';
+    const matches = checkedAs(new Map([['0101234564', 'NCC_ABC']]));
+    const all = await approvedUnder([cash(), cash({ sourceId: other, code: 'PC00013' })], matches);
+    const vouchers = [cash(), cash({ sourceId: other, code: 'PC00013' })];
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const full = Array.from({ length: 1000 }, (_v, i) => ({ account_object_code: `K${i}`, company_tax_code: '0309999990' }));
+    const amis = fakeAmis({ behave: (path, body) => (path.endsWith('/get_dictionary') && body.data_type === 1 ? ok(full) : undefined) });
+    const h = harness({ script: [{ action: 'need_branch' }, send(all.filter((r) => r.sourceId === SOURCE)), send(all.filter((r) => r.sourceId === other))], matches, vouchers });
+    expect(await run(h, amis)).toMatchObject({ state: 'done', sent: 0, failed: 2 });
+    // 20 pages of 1000 for the first batch, none for the second.
+    expect(dictionaryReads(amis).filter((t) => t === 1)).toHaveLength(20);
+    expect(records(h).map((r) => r.rows.map((x) => [x.orgRefid, x.reason]))).toEqual([[[SOURCE, 'MATCH_UNREAD']], [[other, 'MATCH_UNREAD']]]);
+  });
+
+  it('treats a token MISA refuses while the catalogue is read like a refused access code', async () => {
+    const matches = checkedAs(new Map([['0101234564', 'NCC_ABC']]));
+    const rows = await approvedUnder([cash()], matches);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const h = harness({ script: [{ action: 'need_branch' }, send(rows)], matches });
+    const amis = fakeAmis({ behave: (path, body) => (path.endsWith('/get_dictionary') && body.data_type === 1 ? fail('InvalidToken') : undefined) });
+    expect(await run(h, amis)).toEqual({ state: 'credentials', waiting: false });
+    expect(records(h)[0]?.rows).toEqual([{ orgRefid: SOURCE, from: 'sending', to: 'queued', reason: 'CREDENTIALS' }]);
+  });
+
+  it('in one batch says STALE for the part that changed since the person approved it and MATCH_STALE for the others when a match no longer holds', async () => {
+    const other = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5e';
+    const matches = checkedAs(new Map([['0101234564', 'NCC_ABC']]));
+    const all = await approvedUnder([cash(), cash({ sourceId: other, code: 'PC00013' })], matches);
+    const changed = cash({ lines: [{ lineNo: 1, account: '331', amount: '999', memo: null }] });
+    const h = harness({ script: [{ action: 'need_branch' }, send(all)], matches, vouchers: [changed, cash({ sourceId: other, code: 'PC00013' })] });
+    const amis = fakeAmis({ parties: [] });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await run(h, amis)).toMatchObject({ state: 'done', sent: 0, failed: 2 });
+    expect(amis.calls.some((c) => c.path === '/amiskt/v1/save')).toBe(false);
+    const reasons = Object.fromEntries((records(h)[0]?.rows ?? []).map((r) => [r.orgRefid, r.reason]));
+    expect(reasons).toEqual({ [SOURCE]: 'STALE', [other]: 'MATCH_STALE' });
+  });
+
   it('every batch is rebuilt from the source: a voucher changed between two batches of one run is STALE in the second, one that is unchanged is still sent', async () => {
     const other = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5e';
     const a = cash();

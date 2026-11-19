@@ -7733,6 +7733,7 @@ export const vi = {
     refusedNote: 'Lý do của MISA:',
     reasons: {
       MATCH_STALE: 'Danh mục MISA đã đổi so với lần kiểm tra; chưa gửi gì. Hãy kiểm tra lại với danh mục rồi gửi lại.',
+      MATCH_UNREAD: 'Không đọc được danh mục MISA để kiểm tra lại trước khi gửi (danh mục quá lớn hoặc MISA trả lời không đọc được); chưa gửi gì. Hãy thử lại sau hoặc liên hệ hỗ trợ.',
       STALE: 'Chứng từ đã đổi so với lúc bạn xác nhận; chưa gửi gì. Hãy xem trước lại rồi gửi lại.',
     },
   },
