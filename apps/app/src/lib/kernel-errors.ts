@@ -343,6 +343,7 @@ export const KERNEL_ERROR_CODES = [
   'HOUSEHOLD_PROFILE_LOCKED',
   'HOUSEHOLD_BOOK_NOT_REQUIRED',
   'HOUSEHOLD_TRADES_CHANGED',
+  'HOUSEHOLD_S2D_MONTH_ONLY',
   'HOUSEHOLD_VAT_CUT_CHANGED',
   // The 01/CNKD quarterly return worksheet (#2518).
   'HOUSEHOLD_RETURN_NOT_REQUIRED',
@@ -465,6 +466,7 @@ export const KERNEL_ERROR_CODES = [
   'ADHERENCE_BUSY',
   // The recorder's Vy suggesting a meeting title and the rename (#3947).
   'TITLE_BUSY',
+  'COMMITMENTS_BUSY',
   'MEETING_TITLE_EMPTY',
   'MEETING_TITLE_TOO_LONG',
   // The weekly digest across meetings (#3949).
@@ -920,6 +922,7 @@ export const KERNEL_ERROR_CODES = [
   'MISA_AMIS_DISABLED',
   'MISA_AMIS_CONNECTION_EXISTS',
   'MISA_AMIS_CONNECTION_LIVE',
+  'MISA_AMIS_CONNECTION_NOT_FOUND',
   'MARKETPLACE_PROVIDER_NOT_READY',
   // Marketplace order reports (#2515).
   'MARKETPLACE_NOT_STAGED',

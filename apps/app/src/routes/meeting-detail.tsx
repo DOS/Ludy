@@ -19,6 +19,7 @@ import { MeetingBrief } from '../components/meeting-brief.tsx';
 import { MeetingSeries } from '../components/meeting-series.tsx';
 import { MeetingTitleSuggest } from '../components/meeting-title.tsx';
 import { MeetingChapters } from '../components/meeting-chapters.tsx';
+import { MeetingCommitments } from '../components/meeting-commitments.tsx';
 import { MeetingNotes } from '../components/meeting-notes.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
@@ -355,7 +356,9 @@ export function MeetingDetailPage() {
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
       {/* The chapters (#3844): the published table of contents for every reader, the recorder's own draft editor; a click takes the transcript below to the line */}
       <MeetingChapters key={id} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
-      <MeetingTranscript meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} />
+      {/* What each speaker said they would do or decided (#3954): the recorder's own Vy on a click, each line opens the transcript where it was said, nothing is saved */}
+      <MeetingCommitments key={id} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
+      <MeetingTranscript key={id} meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} />
       {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}
       <MeetingAdherence key={id} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}
@@ -365,6 +368,7 @@ export function MeetingDetailPage() {
       <MeetingSeries meetingId={id} isRecorder={meeting.isRecorder} startedAt={meeting.startedAt} />
       {meeting.isRecorder && <MeetingNotes meetingId={id} minutesTemplate={meeting.minutesTemplate} />}
       <MeetingResults
+        key={id}
         meetingId={id}
         slug={slug}
         visibility={meeting.visibility}

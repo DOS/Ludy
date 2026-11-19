@@ -13,6 +13,7 @@ export * from './meetings-assignee.ts';
 export * from './meetings-adherence.ts';
 export * from './meeting-chapters.ts';
 export * from './meeting-title.ts';
+export * from './meeting-commitments.ts';
 export * from './tasks-from-note.ts';
 export * from './tasks-from-source.ts';
 export * from './note-ai.ts';

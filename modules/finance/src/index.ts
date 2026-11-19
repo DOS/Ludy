@@ -82,6 +82,8 @@ import { householdReturnQueries } from './household-return.ts';
 import { householdS2aQueries } from './household-s2a.ts';
 import { householdS2bQueries } from './household-s2b.ts';
 import { householdS2cQueries } from './household-s2c.ts';
+import { householdS2dQueries } from './household-s2d.ts';
+import { householdS2eQueries } from './household-s2e.ts';
 import { stockReportQueries } from './stock-report.ts';
 import { stockLowQueries } from './stock-low.ts';
 export type { ReorderSource, SuggestSource } from './stock-low.ts';
@@ -90,6 +92,7 @@ export type { EInvoiceSuggestSource, EInvoiceSuggestParty, RateCount } from './e
 
 export { AI_BUDGET_MESSAGE, AI_BUDGET_RECHECK_MS, aiCost, extractAndPropose, recordExtractionFailure, type ExtractDeps } from './extract.ts';
 export { MARKETPLACE_POLL_DUE_PAGE, MARKETPLACE_POLL_REQUESTED, marketplacePollDue, marketplaceAdapterOf, type MarketplacePollTarget } from './marketplace-connections.ts';
+export { MISA_AMIS_TEST_REQUESTED, type MisaAmisTestTarget } from './misa-amis-connections.ts';
 export * from './marketplace-provider.ts';
 export { NOT_A_REPORT, readMarketplaceFile, recordMarketplaceReadFailure, type MarketplaceFileDeps } from './marketplace-orders.ts';
 export { createMarketplaceSettlementCommands } from './marketplace-settlement-record.ts';
@@ -160,7 +163,7 @@ export { buildStatementsHtkkXml, type StatementsFiling } from './statements-htkk
 export * from './domain/statements-htkk-xml.ts';
 export { buildFixedAssetsWorkbook } from './fixed-assets-export.ts';
 export { buildStockWorkbook } from './stock-export.ts';
-export { buildCnkdWorkbook, buildS1aWorkbook, buildS2aWorkbook, buildS2bWorkbook, buildS2cWorkbook } from './household-export.ts';
+export { buildCnkdWorkbook, buildS1aWorkbook, buildS2aWorkbook, buildS2bWorkbook, buildS2cWorkbook, buildS2dWorkbook, buildS2eWorkbook } from './household-export.ts';
 export {
   MISA_SME_BANK_CREDIT,
   MISA_SME_BANK_DEBIT,
@@ -235,6 +238,8 @@ export const financeQueries = [
   ...householdS2aQueries,
   ...householdS2bQueries,
   ...householdS2cQueries,
+  ...householdS2dQueries,
+  ...householdS2eQueries,
   ...fixedAssetQueries,
   ...bankFeedQueries,
   ...bankAccountNumberQueries,

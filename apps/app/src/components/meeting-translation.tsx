@@ -3,14 +3,18 @@
 // the recorder for their own draft: the button says the language it will translate into (the other of Vietnamese and English), what it is expected to cost and, when it cannot be
 // pressed, why. Vy translates on the click; the answer is the member's alone, shown beside the original as "Bản dịch máy" and never in its place. A line the checks refused shows
 // the original with a fixed word; a line with a mark shows the translation and the mark. A translation is never shared, mailed or turned into a task from here.
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { AiMeter, Translated, TranslationSegment, TranslationStatus, Translations } from '@crove/kernel-contract';
+import type { AiMeter, Translated, TranslationSegment, TranslationStatus, TranslationTarget, Translations } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
+import { Label } from '@crove/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { ErrorText } from './ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { hasChoice, langTag, pickedTarget } from '../lib/translation-targets.ts';
 
 type Stage = 'draft' | 'published';
 // What the screen shows of the original it translates, so the translation can sit beside it line by line.
@@ -28,6 +32,28 @@ export function translateBlocked(status: Pick<TranslationStatus, 'enabled' | 're
   if (meter && !meter.aiOn) return 'noModel';
   if (meter && meter.state === 'stop') return 'budget';
   return null;
+}
+
+// The picker of the language to translate into (E3, #3186): shown only when the server offers more than the other language of the pair, so a deployment that has switched none on sees no new control. Each
+// name is written in its own language, whatever the screen's.
+export function TranslationTargetPicker({ id, targets, value, onChange, disabled }: { id: string; targets: readonly TranslationTarget[]; value: TranslationTarget; onChange: (to: TranslationTarget) => void; disabled?: boolean }) {
+  const t = useTranslations('meetings.translationTargets');
+  // Literal keys, one by one: a template key over the whole union makes the type checker build a big key union for every use of the translator.
+  const names: Record<TranslationTarget, string> = { en: t('names.en'), vi: t('names.vi'), zh: t('names.zh'), ja: t('names.ja'), ko: t('names.ko') };
+  return (
+    <div className="flex items-center gap-2" data-testid="translation-target">
+      <Label htmlFor={id} className="text-xs text-muted-foreground">
+        {t('label')}
+      </Label>
+      <NativeSelect id={id} value={value} disabled={disabled === true} onChange={(e) => onChange(e.target.value as TranslationTarget)} className="w-auto">
+        {targets.map((to) => (
+          <NativeSelectOption key={to} value={to} lang={langTag(to)}>
+            {names[to]}
+          </NativeSelectOption>
+        ))}
+      </NativeSelect>
+    </div>
+  );
 }
 
 const refresh = () => {
@@ -72,7 +98,7 @@ function TranslatedLines({ translation, original }: { translation: Translations[
     return l ? [{ id: item.id, l }] : [];
   });
   return (
-    <div className="space-y-2 text-sm" lang={translation.to}>
+    <div className="space-y-2 text-sm" lang={langTag(translation.to)}>
       {summary && <p className="whitespace-pre-wrap">{summary}</p>}
       {decisions.length > 0 && (
         <ul className="list-disc space-y-1 pl-5">
@@ -95,17 +121,26 @@ function TranslatedLines({ translation, original }: { translation: Translations[
 export function MeetingTranslation({ meetingId, stage, original }: { meetingId: string; stage: Stage; original: TranslationOriginal }) {
   const t = useTranslations('meetings.results.translation');
   const f = useFormat();
-  const status = useQuery({ ...orpc.meetings.translation.status.queryOptions({ input: { meetingId, stage } }), ...READ_ONCE });
+  const tt = useTranslations('meetings.translationTargets');
+  // The language the member picked; none until they do (the server then takes the other language of the pair, as before the picker).
+  const [picked, setPicked] = useState<TranslationTarget | undefined>(undefined);
+  const status = useQuery({ ...orpc.meetings.translation.status.queryOptions({ input: { meetingId, stage, ...(picked ? { to: picked } : {}) } }), ...READ_ONCE, placeholderData: keepPreviousData });
   const meter = useQuery({ ...orpc.ai.meter.queryOptions({ input: { module: 'meetings' } }), staleTime: 15_000 });
   const mine = useQuery({ ...orpc.meetings.translation.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
-  const ask = useMutation({ mutationFn: (): Promise<Translated> => orpc.meetings.translation.translate.call({ meetingId, stage }), onSuccess: refresh });
+  const ask = useMutation({ mutationFn: (): Promise<Translated> => orpc.meetings.translation.translate.call({ meetingId, stage, ...(picked ? { to: picked } : {}) }), onSuccess: refresh });
   // Nothing to show before the server has answered; a deployment without Vy for meetings has no status data, so no panel at all.
   if (!status.data) return null;
   const blocked = translateBlocked(status.data, meter.data);
-  const translation = mine.data?.translations.find((x) => x.stage === stage);
+  // The member's own translation into the language shown (one per stage and language).
+  // The language shown: the member's pick at once (the status of a new pick takes a moment to arrive and the card keeps the previous one meanwhile), else what the server answered.
+  const shown = picked ?? status.data.to;
+  const switching = status.isPlaceholderData;
+  const translation = mine.data?.translations.find((x) => x.stage === stage && x.to === shown);
   const answer = ask.data;
   const failure = answer?.state === 'failed' ? ((KNOWN_FAILURES as readonly string[]).includes(answer.errorCode ?? '') ? (answer.errorCode as (typeof KNOWN_FAILURES)[number]) : 'default') : null;
-  const label = status.data.to === 'en' ? t('toEnglish') : t('toVietnamese');
+  // The button's words for the language shown: the long-standing ones for the pair, and "Dịch sang {language}" for the rest (literal keys, so the translator keeps its narrow type).
+  const otherNames = { zh: tt('names.zh'), ja: tt('names.ja'), ko: tt('names.ko') };
+  const label = shown === 'en' ? t('toEnglish') : shown === 'vi' ? t('toVietnamese') : tt('to', { language: otherNames[shown] });
   const cost = status.data.estimate?.cost ?? null;
   return (
     <div className="space-y-2 rounded-lg border p-3" data-testid="meeting-translation" data-stage={stage}>
@@ -120,7 +155,12 @@ export function MeetingTranslation({ meetingId, stage, original }: { meetingId: 
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant={translation && !translation.stale ? 'outline' : 'default'} loading={ask.isPending} disabled={blocked !== null || ask.isPending} onClick={() => ask.mutate()}>
+        {hasChoice(status.data.targets) && <TranslationTargetPicker id={`translate-to-${stage}`} targets={status.data.targets} value={shown} disabled={ask.isPending} onChange={(to) => {
+          // A new language is a new request: the answer or the failure of the one before is not shown beside it.
+          ask.reset();
+          setPicked(pickedTarget(to, status.data.targets));
+        }} />}
+        <Button size="sm" variant={translation && !translation.stale ? 'outline' : 'default'} loading={ask.isPending} disabled={blocked !== null || ask.isPending || switching} onClick={() => ask.mutate()}>
           {translation ? (translation.stale ? t('again') : t('againFresh')) : label}
         </Button>
         {blocked !== null && (

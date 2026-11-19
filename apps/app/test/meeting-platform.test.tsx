@@ -285,6 +285,24 @@ describe('PlatformRecordings (Meetings tab)', () => {
     expect(off).not.toContain(en.meetings.platform.recordings.videoKeepsAudio);
   });
 
+  it('offers "Nhập" for a recording that has only the platform\'s transcript, names the platform whose text it is in both languages, and blocks a provider with no transcript path (C2, #3174)', () => {
+    for (const locale of ['en', 'vi'] as const) {
+      const messages = locale === 'en' ? en : viMessages;
+      reset();
+      client.current.setQueryData(KEYS.connections, [connection()]);
+      client.current.setQueryData(KEYS.recordings, [recording({ provider: 'google_meet', hasAudio: false, hasVideo: false, hasTranscript: true })]);
+      const on = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+      expect(count(on, 'data-testid="meeting-recording-import"'), locale).toBe(1);
+      expect(count(on, 'data-testid="meeting-recording-blocked"'), locale).toBe(0);
+      expect(on).toContain(esc(messages.meetings.platform.recordings.transcriptKeepsText.replace('{platform}', 'Google Meet')));
+      client.current.setQueryData(KEYS.recordings, [recording({ provider: 'zoom', hasAudio: false, hasVideo: false, hasTranscript: true })]);
+      const off = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+      expect(count(off, 'data-testid="meeting-recording-import"'), locale).toBe(0);
+      expect(off).toContain(esc(messages.meetings.platform.recordings.transcriptOnly));
+      expect(off).not.toContain('data-testid="meeting-recording-transcript-note"');
+    }
+  });
+
   it('shows a suggested recording with its facts, a primary "Nhập" and a quiet "Bỏ qua"', () => {
     reset();
     client.current.setQueryData(KEYS.connections, [connection()]);
@@ -369,7 +387,7 @@ describe('PlatformRecordings (Meetings tab)', () => {
         const messages = locale === 'en' ? en : viMessages;
         expect(html, `${locale} ${code}`).toContain(esc(messages.meetings.platform.recordings.failed.replace('{reason}', messages.meetings.platform.errors[code])));
         const retry = count(html, 'data-testid="meeting-recording-retry"');
-        expect(retry, code).toBe(['recording_gone', 'no_audio', 'too_large', 'too_long'].includes(code) ? 0 : 1);
+        expect(retry, code).toBe(['recording_gone', 'no_audio', 'no_transcript', 'too_large', 'too_long'].includes(code) ? 0 : 1);
         // The dismiss stays for a failed row.
         expect(html).toContain(messages.meetings.platform.recordings.dismiss);
       }
