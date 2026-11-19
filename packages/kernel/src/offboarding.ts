@@ -246,6 +246,8 @@ export const EXPORT_TABLES = {
   'ads.ad_campaign_request': { from: 'crove_ads.ad_campaign_request', omit: [] },
   'ads.ad_flag_setting': { from: 'crove_ads.ad_flag_setting', omit: [] },
   'ads.ad_launch': { from: 'crove_ads.ad_launch', omit: [] },
+  // The changes of a running ad (#3835, W4): what was asked and where it stands, ids, amounts, dates and codes only.
+  'ads.ad_manage_change': { from: 'crove_ads.ad_manage_change', omit: [] },
   'ads.ad_object': { from: 'crove_ads.ad_object', omit: [] },
   'ads.ad_org_setting': { from: 'crove_ads.ad_org_setting', omit: [] },
   'ads.ad_spend_cap': { from: 'crove_ads.ad_spend_cap', omit: [] },

@@ -58,6 +58,9 @@ const NOT_SHOWN: Record<string, string> = {
   // The revoke at the platform of a closed ads connection's token (#2296, W2-1): the sweep's system commands alone raise these.
   ADS_REVOKE_NOT_FOUND: 'worker',
   ADS_REVOKE_STALE: 'worker',
+  // Managing a running ad (W4, #3835): a resume, a raise and an extension run only from an approved proposal (the commands refuse a direct call). The screen asks through
+  // ads.requestChange, which makes the proposal, so a person never receives it.
+  ADS_ONLY_APPROVED: 'ads manage',
   CHANNEL_NOT_ORPHAN: 'worker',
   // A bank feed's batch (ADR-0039, #2044): finance.bank.ingest is a system command the feed job runs.
   BANK_FEED_INVALID: 'worker',

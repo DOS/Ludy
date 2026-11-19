@@ -200,7 +200,7 @@ import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './
 import { zMisaAmisPreview, zMisaAmisPreviewAsk } from './misa-amis-preview.ts';
 import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceFeeClearingRequest, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePayoutRequest, zMarketplacePreview, zMarketplaceSettlementRequest, zMarketplaceStaged, zMarketplaceSuggested, zMarketplaceSuggestInput, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
-import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
+import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseCheck, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
 import { zBankSupplierMatch, zSupplierPayableLine, zSupplierPayableLineAsk, zSupplierPayableList, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentPrepare, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
 import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep } from './einvoice-notice.ts';
@@ -581,6 +581,7 @@ import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoi
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsCommitted, zAdsCommittedInput, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
 import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStatesInput, zAdsBoostStateView } from './ads-boost.ts';
+import { zAdsBudgetLowerCall, zAdsManageCancelCall, zAdsManageChanged, zAdsManageStateView, zAdsManageSuggestion, zAdsObjectCall, zAdsScheduleShortenCall } from './ads-manage.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
@@ -2634,6 +2635,8 @@ export const contract = {
     // Closes a month that has no cost to post, with no entry and so with no approval (owners and admins; R3, a closed month is not reopened). A month with cost goes through inbox.request
     // (finance.stock.close_period). STOCK_CLOSE_NOT_ENDED, STOCK_CLOSE_NEGATIVE, STOCK_CLOSE_UNPRICED (422), STOCK_CLOSE_DONE, STOCK_CLOSE_ORDER, STOCK_CLOSE_HAS_COST (409).
     closeEmpty: oc.input(zStockCloseRequest).output(zStockCloseEmptyResult),
+    // What to know before closing a month (#3712 slice 3): the 1381 balance and whether Circular 99 asks it to be expensed at the reporting date. A read, a warning only; never blocks a close.
+    closeCheck: oc.input(zStockCloseRequest).output(zStockCloseCheck),
     // The finance coworker on stock (#2514), all read-only. suggest: the item each unassigned line is most likely about (the model sees the line's description and unit and the
     // entity's item codes, names and units, nothing else; a person still assigns, which teaches the name); ai says why there is none. low: the items whose stock will not last the lead
     // days at the pace of the last eight weeks, with the supplier they were last bought from. reorderDraft: the message to that supplier (the model's, or the fixed template when there is
@@ -2906,6 +2909,16 @@ export const contract = {
     // Runs a launch that needs attention again (W2-4b): owners and admins. The request is stamped and the launch job takes it, with the next attempt: it first looks at what the
     // earlier attempts left unsettled at the platform, then creates what is missing, then switches the objects on if the approved launch is still in force.
     retryLaunch: oc.input(zAdsLaunchRetryCall).output(z.object({ launchId: zId, requested: z.boolean() })),
+    // Managing a running ad (W4, #3835): owners and admins. A pause, an archive, a lower budget and a shorter schedule only reduce spend, so they are their own commands; each is
+    // queued and the platform is called afterwards, from the queue (never in this request). A resume, a raise and an extension are proposals (requestChange). Members read the state.
+    pauseObject: oc.input(zAdsObjectCall).output(zAdsManageChanged),
+    archiveObject: oc.input(zAdsObjectCall).output(zAdsManageChanged),
+    lowerBudget: oc.input(zAdsBudgetLowerCall).output(zAdsManageChanged),
+    shortenSchedule: oc.input(zAdsScheduleShortenCall).output(zAdsManageChanged),
+    cancelChange: oc.input(zAdsManageCancelCall).output(z.object({ changeId: zId, cancelled: z.literal(true) })),
+    manageState: oc.input(z.strictObject({ launchId: zId })).output(zAdsManageStateView),
+    // What the AI coworker suggests for a campaign that spends with poor results: a pause or a lower budget for a person to apply, never a raise (owners and admins).
+    manageSuggestions: oc.input(z.strictObject({ adAccountId: zId.optional() })).output(z.array(zAdsManageSuggestion)),
     // Asking the AI coworker for a draft (W1b, #2295): a request the worker answers with a draft or a visible reason why there is none; the model call
     // is rationed by the member's draft budget (RATE_LIMITED over it) and the org's AI budget (the job records AI_BUDGET), and the core works with AI off.
     campaignRequests: oc.input(z.strictObject({ adAccountId: zId.optional() })).output(z.array(zAdsCampaignRequestView)),

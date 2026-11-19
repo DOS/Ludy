@@ -87,6 +87,7 @@ describe('formatMeetingTaskSource & formatConversationTaskSource (#2608)', () =>
             taskId: null,
             positions: [],
             clean: false,
+            suggestion: null,
           },
           {
             id: 'item-2',
@@ -103,6 +104,7 @@ describe('formatMeetingTaskSource & formatConversationTaskSource (#2608)', () =>
             taskId: null,
             positions: [],
             clean: false,
+            suggestion: null,
           },
         ],
       }),

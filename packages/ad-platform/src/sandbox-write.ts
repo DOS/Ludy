@@ -97,6 +97,9 @@ export interface SandboxWrittenObject {
   effectiveStatus?: string;
   reviewReason?: string | null;
   deleted?: boolean;
+  // An ad set's daily budget (a decimal string in the account currency's own units) and end time, as it was created and as the manager (sandbox-manage.ts) changes them.
+  dailyBudget?: string;
+  endTime?: string;
 }
 
 // A failure the sandbox can be told to make, so a test can kill a launch between a create and its record: `after` makes the object and loses the answer (the
@@ -216,7 +219,13 @@ export class SandboxAdWriter implements AdWriter {
   async createAdSet(secret: string, account: AdWriterAccount, input: AdCreateAdSet): Promise<{ id: string }> {
     this.parent(this.reach(secret, account), 'campaign', input.campaignId);
     if (!BUDGET.test(input.dailyBudget)) throw new AdPlatformError('bad_request', 'BUDGET_INVALID');
-    return this.make(secret, account, 'ad_set', input.name, input.campaignId);
+    const made = this.make(secret, account, 'ad_set', input.name, input.campaignId);
+    const created = this.objects.get(made.id);
+    if (created) {
+      created.dailyBudget = input.dailyBudget;
+      created.endTime = input.endTime;
+    }
+    return made;
   }
 
   async createCreative(secret: string, account: AdWriterAccount, input: AdCreateCreative): Promise<{ id: string }> {
