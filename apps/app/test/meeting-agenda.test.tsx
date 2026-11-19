@@ -32,8 +32,8 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
   return {
     ...(await importOriginal<object>()),
-    Link: ({ children, to, params, search, ...rest }: { children?: ReactNode; to: string; params?: Record<string, string>; search?: Record<string, string>; 'data-testid'?: string }) =>
-      createElement('a', { href: to, 'data-testid': rest['data-testid'], 'data-params': JSON.stringify(params ?? {}), 'data-search': JSON.stringify(search ?? {}) }, children),
+    Link: ({ children, to, params, search, ...rest }: { children?: ReactNode; to: string; params?: Record<string, string>; search?: Record<string, string>; 'data-testid'?: string; 'aria-describedby'?: string }) =>
+      createElement('a', { href: to, 'data-testid': rest['data-testid'], 'aria-describedby': rest['aria-describedby'], 'data-params': JSON.stringify(params ?? {}), 'data-search': JSON.stringify(search ?? {}) }, children),
   };
 });
 
@@ -92,6 +92,26 @@ describe('TodayAgenda', () => {
     expect(html).toContain(en.meetings.agenda.private.replaceAll('"', '&quot;'));
     // The address itself is never drawn, only the service it leads to.
     expect(html).not.toContain('abc-defg-hij');
+  });
+
+  it('names the event a row\'s link acts on: the same words "Record this meeting" and "Recorded" on every row say which row they are on (WCAG 2.4.6, 4.1.2; #4055)', () => {
+    reset();
+    client.current.setQueryData(['meetings', 'today', 'facts'], todayOf([event({}), event({ id: 'a2', title: 'Chốt báo giá', meetingId: 'm9', joinUrl: null, invitees: 0 })]));
+    const html = renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />));
+    // One row per <li>: the link's description is the id of the title span inside the same row.
+    const rows = html.split('<li ').slice(1);
+    expect(rows).toHaveLength(2);
+    const titles: string[] = [];
+    for (const row of rows) {
+      const described = /<a [^>]*aria-describedby="([^"]+)"/.exec(row)?.[1];
+      expect(described, row.slice(0, 80)).toBeDefined();
+      const title = new RegExp(`<span id="${described}"[^>]*>([^<]*)</span>`).exec(row)?.[1];
+      expect(title, `the title of ${described}`).toBeDefined();
+      titles.push(title as string);
+    }
+    expect(titles).toEqual(['Họp với khách A', 'Chốt báo giá']);
+    // Two rows, two different ids.
+    expect(new Set(rows.map((row) => /aria-describedby="([^"]+)"/.exec(row)?.[1])).size).toBe(2);
   });
 
   it('says so when today has no meetings, and shows the opt-in line when the switch is off and Google can be connected', () => {
