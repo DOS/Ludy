@@ -109,6 +109,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
+  'crove_meetings.glossary_term',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
   'crove_meetings.morning_notice',
@@ -3068,6 +3069,13 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_meetings.minutes_template': {
     make: (o) => ({
       row: { org_id: o.id, id: randomUUID(), name: `RLS matrix template ${tag()}`, sections: JSON.stringify([{ key: 's1', title: 'Nội dung', hint: '' }]), created_by: o.owner },
+    }),
+  },
+  // #4043 (meetings glossary): a term the org spells one way (a product, an acronym, jargon). Only an owner or admin reads and writes it (restrictive policies; the factory's owner is one), and a
+  // recorder's run reads it through a definer. Its factory lands before the table (step 1 of 4), so PENDING_TABLES holds it until the migration of step 2.
+  'crove_meetings.glossary_term': {
+    make: (o) => ({
+      row: { org_id: o.id, id: randomUUID(), term: `Glossary${tag()}`, created_by: o.owner },
     }),
   },
   // #3955 (part B): a member's own opt-in to the morning notice of the day's meetings (a time of day, their zone and language), one row per member, read, written and deleted by that member alone, so the
