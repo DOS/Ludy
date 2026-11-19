@@ -455,6 +455,7 @@ export const en = {
       at: 'At',
       zone: 'In your time zone: {zone}',
       noMail: 'This server cannot send email yet, so only the notice in the app is shown until the installer sets up mail.',
+      saved: 'Saved',
     },
     todayMail: {
       title: 'Daily brief by email',
@@ -2883,6 +2884,7 @@ export const en = {
       title: 'This week in your meetings',
       description: 'What was decided and what is still open, meeting by meeting.',
       window: 'How far back',
+      windowShown: 'Showing the last {count} days',
       days: 'The last {count} days',
       decision: 'Decided',
       open: 'Open',

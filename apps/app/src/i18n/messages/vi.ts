@@ -453,6 +453,7 @@ export const vi = {
       at: 'Lúc',
       zone: 'Theo múi giờ của bạn: {zone}',
       noMail: 'Máy chủ này chưa gửi được email, nên chỉ có thông báo trong ứng dụng cho đến khi người cài đặt thiết lập thư.',
+      saved: 'Đã lưu',
     },
     todayMail: {
       title: 'Tóm tắt hằng ngày qua email',
@@ -2880,6 +2881,7 @@ export const vi = {
       title: 'Tuần này trong các cuộc họp của bạn',
       description: 'Những gì đã chốt và việc còn dở, theo từng cuộc họp.',
       window: 'Xem lại bao lâu',
+      windowShown: 'Đang xem {count} ngày gần đây',
       days: '{count} ngày gần đây',
       decision: 'Đã chốt',
       open: 'Còn dở',

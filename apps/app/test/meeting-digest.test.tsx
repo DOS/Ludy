@@ -104,6 +104,14 @@ describe('MeetingDigest', () => {
     expect(t).not.toContain(NAM);
   });
 
+  it('has one polite line that is always in the page and says which window is shown once the member has used the picker (#4055)', () => {
+    const html = render(facts(), { status: status() });
+    // Empty until the picker is used: nothing is announced on load. It is in the page from the start, so the later text is read when it is filled in.
+    expect(html).toMatch(/<p[^>]*role="status"[^>]*data-testid="digest-window-status"[^>]*><\/p>|<p[^>]*data-testid="digest-window-status"[^>]*role="status"[^>]*><\/p>/);
+    expect(en.meetings.digest.windowShown).toBe('Showing the last {count} days');
+    expect(viMessages.meetings.digest.windowShown).toBe('Đang xem {count} ngày gần đây');
+  });
+
   it('says plainly when there is nothing, with the window still pickable, and says when the caps cut', () => {
     const none = render(EMPTY);
     expect(none).toContain('data-testid="digest-nothing"');

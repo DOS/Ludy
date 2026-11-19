@@ -12,6 +12,7 @@ import { Input } from '@crove/ui/components/input';
 import { ErrorText } from './ui.tsx';
 import { client, errorMessage, orpc } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
+import { toast } from '../lib/toast.ts';
 
 // "07:30" and 450 are the same time of day.
 export const minuteToTime = (minute: number): string => `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
@@ -43,6 +44,8 @@ export function MorningNoticeSetting({ muted = false }: { muted?: boolean }) {
       if (input.enabled && muted) await client.notifications.mute({ kind: MORNING_KIND, muted: false });
       return client.meetings.morning.set({ enabled: input.enabled, minute: input.minute, timeZone: browserZone(), language });
     },
+    // Saving is silent otherwise (the switch moves, a time is saved when its field is left): the toaster is a live region, so a screen reader hears that it was kept (WCAG 4.1.3).
+    onSuccess: () => toast(t('saved'), 'success'),
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.morning.get.queryOptions({ input: {} }).queryKey });
       void queryClient.invalidateQueries({ queryKey: orpc.notifications.list.key() });
@@ -63,10 +66,10 @@ export function MorningNoticeSetting({ muted = false }: { muted?: boolean }) {
     <Card className="block space-y-3 p-4" data-testid="morning-notice-setting">
       <div>
         <h2 className="text-sm font-medium text-foreground">{t('title')}</h2>
-        <p className="text-xs text-subtle-foreground">{t('hint')}</p>
+        <p id="morning-notice-hint" className="text-xs text-subtle-foreground">{t('hint')}</p>
       </div>
       <label className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Checkbox checked={enabled} disabled={setting.isPending || set.isPending} onCheckedChange={(checked) => set.mutate({ enabled: checked === true, minute })} />
+        <Checkbox checked={enabled} aria-describedby="morning-notice-hint" disabled={setting.isPending || set.isPending} onCheckedChange={(checked) => set.mutate({ enabled: checked === true, minute })} />
         {t('label')}
       </label>
       <label className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -74,6 +77,7 @@ export function MorningNoticeSetting({ muted = false }: { muted?: boolean }) {
         <Input
           type="time"
           aria-label={t('at')}
+          aria-describedby={enabled ? 'morning-notice-zone' : undefined}
           className="w-32"
           value={draft ?? minuteToTime(minute)}
           disabled={!enabled || setting.isPending}
@@ -82,7 +86,7 @@ export function MorningNoticeSetting({ muted = false }: { muted?: boolean }) {
           data-testid="morning-notice-time"
         />
       </label>
-      {enabled && <p className="text-xs text-subtle-foreground">{t('zone', { zone: state?.timeZone ?? browserZone() })}</p>}
+      {enabled && <p id="morning-notice-zone" className="text-xs text-subtle-foreground">{t('zone', { zone: state?.timeZone ?? browserZone() })}</p>}
       {!mailOn && <p className="text-xs text-subtle-foreground">{t('noMail')}</p>}
       {(setting.error || set.error) && <ErrorText>{errorMessage(setting.error ?? set.error)}</ErrorText>}
     </Card>

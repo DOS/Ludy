@@ -52,6 +52,29 @@ describe('the time of day', () => {
   });
 });
 
+describe('what a screen reader is told (#4055)', () => {
+  // The text of each element a tag's aria-describedby names (read from the markup: these tests run without a DOM).
+  const describedBy = (html: string, tag: RegExp): string[] => {
+    const ids = (tag.exec(html)?.[0].match(/aria-describedby="([^"]*)"/)?.[1] ?? '').split(' ').filter(Boolean);
+    return ids.map((id) => new RegExp(`<p id="${id}"[^>]*>([^<]*)</p>`).exec(html)?.[1] ?? '');
+  };
+
+  it('describes the switch by the hint and, once on, the time field by the zone it counts in', () => {
+    const off = render({ enabled: false });
+    expect(describedBy(off, /<span[^>]*role="checkbox"[^>]*>/)[0]).toContain('how many meetings you have today');
+    // Nothing to describe the time with while the notice is off: no dangling reference.
+    expect(/<input[^>]*type="time"[^>]*>/.exec(off)?.[0]).not.toContain('aria-describedby');
+    const on = render({ enabled: true });
+    expect(describedBy(on, /<input[^>]*type="time"[^>]*>/)).toEqual(['In your time zone: Asia/Ho_Chi_Minh']);
+    expect(describedBy(on, /<span[^>]*role="checkbox"[^>]*>/)).toHaveLength(1);
+  });
+
+  it('has the words that say it was saved, in both languages', () => {
+    expect(catalog('en').notifications.morningNotice.saved).toBe('Saved');
+    expect(catalog('vi').notifications.morningNotice.saved).toBe('Đã lưu');
+  });
+});
+
 describe('MorningNoticeSetting', () => {
   it('is off until the member turns it on, with the default time and a time input that waits', () => {
     const html = render({ enabled: false });
