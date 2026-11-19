@@ -1061,10 +1061,16 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(notAsked.consentStatus).toBe(422);
     const asMember = await consent('owner', orgId, 'approve', 'member', { scope: ALL_WRITES, writes: [ENGAGE] });
     expect(asMember.consentStatus).toBe(422);
+    // The old one-box form means the Social draft scope: refused when the client did not ask for it, and the same scope as `writes: [DRAFT]` (one scope, not two) when it did.
+    const oldBoxNotAsked = await consent('owner', orgId, 'approve', undefined, { scope: `ludy.read ${ENGAGE}`, draft: true, writes: [ENGAGE] });
+    expect(oldBoxNotAsked.consentStatus).toBe(422);
+    const oldBoxAndWrites = await consent('owner', orgId, 'approve', undefined, { scope: `ludy.read ${DRAFT}`, draft: true, writes: [DRAFT] });
+    expect(oldBoxAndWrites.consentStatus).toBe(200);
+    expect(claimsOf(await tokenOf(oldBoxAndWrites)).scope.split(' ').sort()).toEqual(['ludy.read', DRAFT]);
     const noRead = await consent('owner', orgId, 'approve', undefined, { scope: ENGAGE, writes: [ENGAGE] });
     expect(noRead.details.body).toMatchObject({ scopes: ['ludy.read'] });
     expect(noRead.consentStatus).toBe(422);
-    for (const c of [notAsked, asMember, noRead]) {
+    for (const c of [notAsked, asMember, oldBoxNotAsked, noRead]) {
       expect((await admin((client) => client.query(`SELECT count(*)::int AS n FROM crove_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].n).toBe(0);
     }
   });

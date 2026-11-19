@@ -588,7 +588,7 @@ function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draftBudget
     {
       name: 'ludy_about',
       title: 'About this connection',
-      description: 'Tells which Ludy organization this connection is for, the name this client gave itself, and what the connection may do (its scopes: reading, and for some connections writing Social post drafts). It reads no business data. Call it to check the connection works.',
+      description: 'Tells which Ludy organization this connection is for, the name this client gave itself, and what the connection may do (its scopes: reading, and for some connections the write scopes the person ticked: Social post drafts, Engage inbox and CRM, ad drafts). It reads no business data. Call it to check the connection works.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       argsSchema: z.strictObject({}),
       outputSchema: {

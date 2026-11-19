@@ -93,15 +93,20 @@ export function OauthConsentPage({ uid }: { uid: string }) {
                 ))}
               </fieldset>
             )}
-            {offeredWrites.map((option) => (
-              <label key={option.scope} className="flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm text-foreground" data-testid={option.testId}>
-                <input type="checkbox" className="mt-1" checked={ticked.includes(option.scope)} onChange={(event) => toggle(option.scope, event.target.checked)} />
-                <span>
-                  <span className="block font-medium">{t(option.option)}</span>
-                  <span className="block text-muted-foreground">{t(option.detail)}</span>
-                </span>
-              </label>
-            ))}
+            {offeredWrites.length > 0 && (
+              <fieldset className="space-y-2" data-testid="oauth-consent-writes">
+                <legend className="text-sm font-medium text-foreground">{t('chooseWrites')}</legend>
+                {offeredWrites.map((option) => (
+                  <label key={option.scope} className="flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm text-foreground" data-testid={option.testId}>
+                    <input type="checkbox" className="mt-1" checked={ticked.includes(option.scope)} onChange={(event) => toggle(option.scope, event.target.checked)} />
+                    <span>
+                      <span className="block font-medium">{t(option.option)}</span>
+                      <span className="block text-muted-foreground">{t(option.detail)}</span>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
+            )}
             {askedWrites.length > 0 && org && kind === 'member' && (
               <p className="text-sm text-muted-foreground" data-testid="oauth-consent-draft-company-only">
                 {t(privileged ? 'writeCompanyOnly' : 'writeOwnerOnly')}

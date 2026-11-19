@@ -6,7 +6,8 @@
 --   - mcp_member_grant_approve is untouched: a member grant still cannot hold a write scope (its list does not have them, and the CHECK refuses one);
 --   - no write context exists for the two new scopes (enter_mcp_company_draft_context serves `ludy.social.draft` alone, and agent_write_guard lets the draft kind insert a draft post and nothing else), so a grant that
 --     holds one still writes nothing: the commands that use them (Engage E2, #3861) bring their own context and guard branch, each reviewed on its own.
--- Existing grants hold none of the new scopes, so the CHECK is added NOT VALID and validated at once (it holds for every row). Idempotent; applied files untouched.
+-- The CHECK is added NOT VALID and validated only when every row already holds it, as 20270101030000 did: a grant that holds the draft scope without the read scope (accepted by 20261231180000 and ended, not
+-- deleted, by 20270101030000) may still exist, would fail the new rule too, and must never fail the deploy; every new or changed row is held to the rule either way. Idempotent; applied files untouched.
 SET LOCAL lock_timeout = '2s';
 
 DO $$
@@ -19,7 +20,12 @@ BEGIN
            AND (NOT (scopes && ARRAY['ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft']::text[]) OR (kind = 'company' AND 'ludy.read' = ANY (scopes)))) NOT VALID;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
-ALTER TABLE crove_kernel.agent_grant VALIDATE CONSTRAINT agent_grant_scopes_ck;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM crove_kernel.agent_grant g WHERE g.scopes && ARRAY['ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft']::text[] AND NOT ('ludy.read' = ANY (g.scopes))) THEN
+    ALTER TABLE crove_kernel.agent_grant VALIDATE CONSTRAINT agent_grant_scopes_ck;
+  END IF;
+END $$;
 
 -- The company grant's definer, restated whole from 20270101030000 with the scope list changed.
 CREATE OR REPLACE FUNCTION crove_kernel.mcp_grant_approve(
