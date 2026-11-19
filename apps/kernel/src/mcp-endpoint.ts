@@ -592,7 +592,7 @@ const MEETING_REQUIRED = ['id', 'title', 'startedAt', 'lengthSeconds', 'language
 
 // The tools: `ludy_about` (kernel.mcp.about) and, from slice 1b, `ludy_parties_list` (kernel.mcp.parties) and `ludy_invoices_list` (finance.mcp.invoices), from step S4 `ludy_signals` (kernel.mcp.signals), and from #3227 `ludy_social_posts_list` and `ludy_social_review_queue` (social.mcp.posts, social.mcp.review_queue). A tool is a
 // descriptor over one query; the endpoint never builds SQL and runs nothing that is not on this list. Each query's own comment is the privacy review of its output.
-export function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draftBudget: DraftBudget, writeBudget: McpWriteBudget = new McpWriteBudget()): ToolDescriptor[] {
+export function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draftBudget: DraftBudget, writeBudget: McpWriteBudget): ToolDescriptor[] {
   // The one write tool is listed, and runnable, only for a company grant that holds the draft scope; the runtime and the database check the same again, so this list is a courtesy, not the control.
   const tools: ToolDescriptor[] = [
     {

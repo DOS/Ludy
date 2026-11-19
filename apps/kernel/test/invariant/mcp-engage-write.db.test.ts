@@ -441,7 +441,8 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
         }
         // The tables the guard exempts (they carry an agent rule of their own: a lease on a run, which a sealed MCP context never has) take no row from it either.
         for (const t of ['crove_kernel.task', 'crove_kernel.task_comment', 'crove_kernel.ai_run', 'crove_kernel.outbox_event', 'crove_kernel.refusal_tally']) {
-          expect(await attempt(`INSERT INTO ${t} DEFAULT VALUES`), `${kind}: insert into ${t}`).not.toBeNull();
+          const result = await attempt(`INSERT INTO ${t} DEFAULT VALUES`);
+          expect(result, `${kind}: insert into ${t}`).toMatch(/AGENT_LEASE_REQUIRED|AGENT_FORBIDDEN|permission denied/);
         }
         // The rows the engage context writes are still there after the refused deletes (they ran in savepoints; the check is that none of them removed what it should not).
         expect(await attempt(`SELECT crove_kernel.emit('kernel.test.event', '{}'::jsonb, NULL)`)).not.toBeNull();

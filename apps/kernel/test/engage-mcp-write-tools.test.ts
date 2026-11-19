@@ -43,7 +43,7 @@ describe('the Engage write tools in the tool list (#3861)', () => {
     expect(names(grant(['ludy.read', 'ludy.engage.write', 'ludy.ads.draft'])).filter((n) => n in ENGAGE || n in ADS).length).toBe(13);
     // A member-bound grant never writes, whatever it claims; neither does a person's own session.
     expect(names(grant(['ludy.member.read', 'ludy.engage.write', 'ludy.ads.draft'], 'member')).filter((n) => n in ENGAGE || n in ADS)).toEqual([]);
-    expect(toolsFor(runtime, { type: 'user', userId: 'u', aal: 'aal1' }, 'org', new DraftBudget()).filter((t) => t.name in ENGAGE || t.name in ADS)).toEqual([]);
+    expect(toolsFor(runtime, { type: 'user', userId: 'u', aal: 'aal1' }, 'org', new DraftBudget(), new McpWriteBudget()).filter((t) => t.name in ENGAGE || t.name in ADS)).toEqual([]);
   });
 
   it('makes each a write descriptor of its scope with a strict argument schema that says the text is data and that nothing is sent', () => {
