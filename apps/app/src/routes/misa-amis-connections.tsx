@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import type { LegalEntity, MisaAmisConnection } from '@crove/kernel-contract';
+import { MISA_AMIS_PRODUCTS, type LegalEntity, type MisaAmisConnection, type MisaAmisProduct } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -26,6 +26,8 @@ const refresh = async () => {
 
 const STATUS_KEYS = { active: 'status.active', expired: 'status.expired', revoked: 'status.revoked', error: 'status.error' } as const;
 const TEST_STATE_KEYS = { works: 'testState.works', wrong_credentials: 'testState.wrong_credentials', unreachable: 'testState.unreachable' } as const;
+// MISA ASP's connection (#4111, S2 of #4103) has its own words for a refused or unreachable test: they name ASP, not AMIS.
+const TEST_STATE_KEYS_ASP = { works: 'testState.works', wrong_credentials: 'testStateAsp.wrong_credentials', unreachable: 'testStateAsp.unreachable' } as const;
 // The test runs in the worker: after it is queued the list is read again every two seconds until the time of the last test changes, for half a minute at most.
 const TEST_POLL_MS = 2000;
 const TEST_WAIT_MS = 30_000;
@@ -66,6 +68,9 @@ function ConnectionItem({ connection, entities, canManage, pushOffered }: { conn
   return (
     <li className="py-3" data-testid="misa-amis-connection">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Badge variant="outline" data-testid="misa-amis-product">
+          {t(`product.${connection.product}`)}
+        </Badge>
         <Badge variant={connection.status === 'active' ? 'secondary' : 'outline'}>{t(STATUS_KEYS[connection.status])}</Badge>
         {entity && <span className="text-xs text-muted-foreground">{entity.name}</span>}
         <span className="text-xs text-muted-foreground">{t('connectedSince', { when: f.dateTime(connection.connectedAt) })}</span>
@@ -73,7 +78,7 @@ function ConnectionItem({ connection, entities, canManage, pushOffered }: { conn
       {/* A status region that exists before its text changes, so a screen reader announces the result (and the slow note) without moving focus. */}
       <div role="status">
         <p className="mt-1 text-sm text-muted-foreground" data-testid="misa-amis-test-state">
-          {connection.lastTestState ? `${t(TEST_STATE_KEYS[connection.lastTestState])}${connection.lastTestedAt ? ` · ${t('testedAt', { when: f.dateTime(connection.lastTestedAt) })}` : ''}` : t('neverTested')}
+          {connection.lastTestState ? `${t((connection.product === 'asp' ? TEST_STATE_KEYS_ASP : TEST_STATE_KEYS)[connection.lastTestState])}${connection.lastTestedAt ? ` · ${t('testedAt', { when: f.dateTime(connection.lastTestedAt) })}` : ''}` : t('neverTested')}
         </p>
         {slow && <p className="mt-1 text-xs text-muted-foreground">{t('testSlow')}</p>}
       </div>
@@ -103,15 +108,27 @@ function ConnectionItem({ connection, entities, canManage, pushOffered }: { conn
       )}
       {disconnect.error && <ErrorText>{errorMessage(disconnect.error)}</ErrorText>}
       {test.error && <ErrorText>{errorMessage(test.error)}</ErrorText>}
-      {connection.status === 'active' && <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} {...(canManage ? { checkConnectionId: connection.id } : {})} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }) }} />}
-      {connection.status === 'active' && <MisaAmisPushList connectionId={connection.id} canManage={canManage} />}
+      {/* The preview and the push belong to AMIS Kế toán: the push to MISA ASP is a later slice (#4103), so an ASP connection is connected and tested here and nothing more. */}
+      {connection.status === 'active' && connection.product === 'amis' && (
+        <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} {...(canManage ? { checkConnectionId: connection.id } : {})} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }) }} />
+      )}
+      {connection.status === 'active' && connection.product === 'amis' && <MisaAmisPushList connectionId={connection.id} canManage={canManage} />}
+      {connection.status === 'active' && connection.product === 'asp' && (
+        <p className="mt-2 text-xs text-subtle-foreground" data-testid="misa-asp-later">
+          {t('aspLater')}
+        </p>
+      )}
     </li>
   );
 }
 
 // Connect: the entity (when the org has several without a connection) and the access code. What is typed goes to the server once, sealed there, and is cleared here at once.
-function ConnectForm({ entities, namesEntity }: { entities: readonly LegalEntity[]; namesEntity: boolean }) {
+function ConnectForm({ entities, namesEntity, products }: { entities: readonly LegalEntity[]; namesEntity: boolean; products: readonly MisaAmisProduct[] }) {
   const t = useTranslations('misaAmisConnections');
+  // The product is chosen only where the deployment offers both; with one, it is that one. A legal entity is on one product, never both (the server enforces it).
+  const [chosen, setChosen] = useState<MisaAmisProduct>(products[0] ?? 'amis');
+  const product = products.includes(chosen) ? chosen : (products[0] ?? 'amis');
+  const productKey = useId();
   const defaultEntity = entities.find((e) => e.isDefault) ?? entities[0];
   const [entityId, setEntityId] = useState(defaultEntity?.id ?? '');
   const [accessCode, setAccessCode] = useState('');
@@ -128,12 +145,26 @@ function ConnectForm({ entities, namesEntity }: { entities: readonly LegalEntity
   );
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    connect.mutate({ legalEntityId: entity?.id ?? null, accessCode });
+    connect.mutate({ legalEntityId: entity?.id ?? null, product, accessCode });
   };
   return (
-    <form className="mt-4 space-y-2" onSubmit={submit} aria-label={t('connectTitle')} noValidate>
-      <p className="text-xs font-medium text-muted-foreground">{t('connectTitle')}</p>
+    <form className="mt-4 space-y-2" onSubmit={submit} aria-label={t(product === 'asp' ? 'connectTitleAsp' : 'connectTitle')} noValidate>
+      <p className="text-xs font-medium text-muted-foreground">{t(product === 'asp' ? 'connectTitleAsp' : 'connectTitle')}</p>
       <div className="flex flex-wrap items-end gap-2">
+        {products.length > 1 && (
+          <div className="flex flex-col gap-1">
+            <label htmlFor={productKey} className="text-xs text-muted-foreground">
+              {t('productLabel')}
+            </label>
+            <NativeSelect id={productKey} className="min-w-48" value={product} onChange={(e) => setChosen(e.target.value as MisaAmisProduct)}>
+              {products.map((p) => (
+                <NativeSelectOption key={p} value={p}>
+                  {t(`product.${p}`)}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+        )}
         {entities.length > 1 ? (
           <div className="flex flex-col gap-1">
             <label htmlFor={entityKey} className="text-xs text-muted-foreground">
@@ -158,7 +189,7 @@ function ConnectForm({ entities, namesEntity }: { entities: readonly LegalEntity
         )}
         <div className="flex flex-col gap-1">
           <label htmlFor={codeKey} className="text-xs text-muted-foreground">
-            {t('accessCode')}
+            {t(product === 'asp' ? 'accessCodeAsp' : 'accessCode')}
           </label>
           <Input id={codeKey} className="min-w-48" maxLength={500} autoComplete="off" type="password" value={accessCode} onChange={(e) => setAccessCode(e.target.value)} />
         </div>
@@ -166,7 +197,7 @@ function ConnectForm({ entities, namesEntity }: { entities: readonly LegalEntity
           {t('connect')}
         </Button>
       </div>
-      <p className="text-xs text-subtle-foreground">{t('accessCodeNote')}</p>
+      <p className="text-xs text-subtle-foreground">{t(product === 'asp' ? 'accessCodeNoteAsp' : 'accessCodeNote')}</p>
       {connect.error && <ErrorText>{errorMessage(connect.error)}</ErrorText>}
     </form>
   );
@@ -179,8 +210,12 @@ export function MisaAmisConnectionsCard({ role }: { role: Role }) {
   const status = useQuery(orpc.misaAmis.status.queryOptions());
   const connections = useQuery(orpc.misaAmis.connections.list.queryOptions());
   const entities = useQuery({ ...orpc.legalEntities.list.queryOptions(), enabled: canManage });
-  const offered = status.data?.offered === true;
   const list = connections.data ?? [];
+  // Each product is offered only with its own ClientID on the deployment (#4111); the card draws when either is, or when the org already has a connection of either.
+  const products = MISA_AMIS_PRODUCTS.filter((p) => (p === 'asp' ? status.data?.aspOffered === true : status.data?.offered === true));
+  const offered = products.length > 0;
+  // ASP in play (offered, or a connection of it exists): the card speaks of MISA, not of AMIS alone.
+  const both = products.includes('asp') || list.some((c) => c.product === 'asp');
   const loading = status.isLoading || connections.isLoading || (canManage && entities.isLoading);
   const failure = status.error ?? connections.error ?? entities.error;
   // The connector is not offered and nothing is connected: nothing to show.
@@ -189,9 +224,9 @@ export function MisaAmisConnectionsCard({ role }: { role: Role }) {
   return (
     <Card role="group" aria-labelledby={headingId} className="block p-4">
       <p id={headingId} className="text-sm font-medium text-muted-foreground">
-        {t('title')}
+        {both ? t('titleBoth') : t('title')}
       </p>
-      <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
+      <p className="mt-2 text-sm text-muted-foreground">{both ? t('introBoth') : t('intro')}</p>
       {loading ? (
         <RowsSkeleton />
       ) : failure ? (
@@ -208,7 +243,7 @@ export function MisaAmisConnectionsCard({ role }: { role: Role }) {
               ))}
             </ul>
           )}
-          {canManage && offered && free.length > 0 && <ConnectForm key={free.map((e) => e.id).join(',')} entities={free} namesEntity={(entities.data ?? []).length > 1} />}
+          {canManage && offered && free.length > 0 && <ConnectForm key={`${products.join('+')}:${free.map((e) => e.id).join(',')}`} entities={free} namesEntity={(entities.data ?? []).length > 1} products={products} />}
         </>
       )}
     </Card>

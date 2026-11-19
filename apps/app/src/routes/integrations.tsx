@@ -30,7 +30,7 @@ export function IntegrationsSection({ role, orgSlug }: { role: Role; orgSlug: st
   const marketplace = marketplaceCardShown(marketplaceProviders.data?.adapters, marketplaceConnections.data);
   const misaAmisStatus = useQuery(orpc.misaAmis.status.queryOptions());
   const misaAmisConnections = useQuery(orpc.misaAmis.connections.list.queryOptions());
-  const misaAmis = misaAmisCardShown(misaAmisStatus.data?.offered, misaAmisConnections.data);
+  const misaAmis = misaAmisCardShown(misaAmisStatus.data?.offered === true || misaAmisStatus.data?.aspOffered === true, misaAmisConnections.data);
   const shown = bank || einvoice || marketplace || misaAmis;
   // A link to #integrations (the sales invoices screen sends owners here to connect a provider, #3602) scrolls here once the section is drawn.
   useEffect(() => {

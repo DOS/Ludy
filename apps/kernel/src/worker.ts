@@ -543,6 +543,8 @@ export interface WorkerDeps {
     // The MISA AMIS Kế toán client (#3854, S2b): built only where the deployment holds the integrator's ClientID, over a transport bound to developer.misa.vn by the egress guard. The test job alone
     // uses it, with the access code it opens.
     misaAmis?: AmisClient;
+    // The MISA ASP client (#4111, S2 of #4103): there only where the deployment holds its own ClientID for that product. The connection test alone uses it so far.
+    misaAsp?: AmisClient;
     // The push to MISA AMIS (S3b, #3902) is on only when the deployment says so (MISA_AMIS_PUSH=on); until the sandbox check has confirmed what the push assumes, no org's vouchers go to MISA.
     misaAmisPush?: boolean;
     // The ad platform adapters this deployment offers (ADR-0040, #2217), by provider id: read-only, the worker alone uses
@@ -1622,10 +1624,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
 
   // MISA AMIS Kế toán (#3854, S2b, #3885): a connection's test, queued by the relay below when an owner or admin asks. It reads a token and the company's information and records a state.
   const misaAmisClient = deps.channels?.misaAmis;
-  if (finance && misaAmisClient && marketplaceBroker) {
+  const misaAspClient = deps.channels?.misaAsp;
+  // The test of a MISA ASP connection (#4111, S2 of #4103) runs here too, with the ASP client: the job picks the client of the connection's product, so a product the deployment does not hold is left alone.
+  if (finance && (misaAmisClient || misaAspClient) && marketplaceBroker) {
     await boss.work<MisaAmisTestJob>(QUEUES.misaAmisTest, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
-      const done = await runMisaAmisTest({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient }, job.data);
+      const done = await runMisaAmisTest({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient ?? null, aspClient: misaAspClient ?? null }, job.data);
       console.log(`[misa-amis] ${job.data.connectionId.slice(0, 8)}: ${done.state}`);
     });
   }
@@ -2858,7 +2862,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 });
               }
               // An owner or admin asked for a MISA AMIS connection's test (#3885): its job asks AMIS for a token and the company's information. Ids only in the job.
-              if (finance && deps.channels?.misaAmis && deps.channels.broker && row.type === 'finance.misa_amis_connection.test_requested') {
+              if (finance && (deps.channels?.misaAmis || deps.channels?.misaAsp) && deps.channels.broker && row.type === 'finance.misa_amis_connection.test_requested') {
                 const connectionId = String(row.payload.connection_id);
                 await boss.send(QUEUES.misaAmisTest, { orgId: row.org_id, connectionId } satisfies MisaAmisTestJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.misaAmisTest, connectionId),

@@ -5514,6 +5514,14 @@ export const vi = {
   },
   misaAmisConnections: {
     title: 'MISA AMIS Kế toán: gửi chứng từ cho kế toán',
+    titleBoth: 'MISA (AMIS Kế toán hoặc ASP): kết nối với phần mềm kế toán',
+    introBoth: 'Kết nối dữ liệu kế toán MISA của công ty (AMIS Kế toán hoặc MISA ASP). Bạn có thể kiểm tra kết nối (chỉ đọc). Việc gửi chứng từ sang MISA ASP chưa có. Một pháp nhân chỉ nối với một phần mềm MISA.',
+    productLabel: 'Phần mềm MISA',
+    product: { amis: 'MISA AMIS Kế toán', asp: 'MISA ASP' },
+    connectTitleAsp: 'Kết nối MISA ASP',
+    accessCodeAsp: 'Mã kết nối lấy từ MISA ASP',
+    accessCodeNoteAsp: 'Mã kết nối do người có quyền quản trị dữ liệu kết nối trong MISA ASP tạo. Mã vừa nhập được mã hóa khi lưu và không hiển thị lại. Một pháp nhân chỉ nối với một phần mềm MISA.',
+    aspLater: 'Kết nối MISA ASP đã dùng được và kiểm tra được. Việc gửi chứng từ sang MISA ASP chưa có, sẽ làm ở bước sau.',
     intro:
       'Kết nối dữ liệu AMIS Kế toán của công ty để sau này gửi chứng từ sang AMIS dưới dạng đề nghị sinh chứng từ; người của bạn trong AMIS vẫn là người lập chứng từ. Bạn có thể kiểm tra kết nối (chỉ đọc thông tin công ty); chưa có chứng từ nào được gửi sang AMIS.',
     off: 'Bộ kết nối MISA AMIS đang tắt trên hệ thống này.',
@@ -5537,6 +5545,10 @@ export const vi = {
       works: 'Kết nối dùng được',
       wrong_credentials: 'AMIS từ chối kết nối. Hãy kiểm tra mã kết nối và dữ liệu kế toán đã nối trong AMIS; nếu cần, tạo mã mới rồi ngắt kết nối và kết nối lại',
       unreachable: 'Chưa kiểm tra được với AMIS (AMIS không trả lời hoặc báo lỗi). Hãy thử lại sau; nếu vẫn lỗi, báo quản trị viên Ludy',
+    },
+    testStateAsp: {
+      wrong_credentials: 'MISA ASP từ chối kết nối. Hãy kiểm tra mã kết nối và dữ liệu kế toán đã nối trong MISA ASP; nếu cần, tạo mã mới rồi ngắt kết nối và kết nối lại',
+      unreachable: 'Chưa kiểm tra được với MISA ASP (MISA ASP không trả lời hoặc báo lỗi). Hãy thử lại sau; nếu vẫn lỗi, báo quản trị viên Ludy',
     },
     status: {
       active: 'Đang kết nối',
@@ -13674,8 +13686,9 @@ export const vi = {
       MARKETPLACE_CONNECTION_EXISTS: 'Pháp nhân này đã có một kết nối với sàn này.',
       MARKETPLACE_CONNECTION_NOT_FOUND: 'Không tìm thấy kết nối sàn này.',
       MARKETPLACE_CONNECTION_LIVE: 'Hãy ngắt kết nối với sàn trước khi xóa dòng này.',
-      MISA_AMIS_DISABLED: 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này.',
-      MISA_AMIS_CONNECTION_EXISTS: 'Pháp nhân này đã có một kết nối MISA AMIS.',
+      MISA_AMIS_DISABLED: 'Bộ kết nối MISA (AMIS Kế toán hoặc ASP) này chưa được bật trên hệ thống này.',
+      MISA_AMIS_CONNECTION_EXISTS: 'Pháp nhân này đã có một kết nối MISA (AMIS Kế toán hoặc ASP); hãy ngắt kết nối cũ trước khi kết nối lại.',
+      MISA_ASP_PUSH_NOT_AVAILABLE: 'Việc gửi chứng từ sang MISA ASP chưa có; hiện chỉ kết nối MISA AMIS Kế toán gửi được chứng từ.',
       MISA_AMIS_CONNECTION_LIVE: 'Hãy ngắt kết nối MISA AMIS trước khi xóa dòng này.',
       MISA_AMIS_CONNECTION_NOT_FOUND: 'Không tìm thấy kết nối MISA AMIS này.',
       MISA_AMIS_NOT_TESTED: 'Hãy kiểm tra kết nối MISA AMIS thành công trước khi gửi chứng từ.',
