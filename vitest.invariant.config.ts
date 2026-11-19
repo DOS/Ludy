@@ -3,18 +3,17 @@
 // (supabase/tests/database/_*.test.sql, #1643) from the base branch and runs them against the PR's code, so the
 // PR's own vitest.config.ts cannot exclude or weaken them.
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 const ROOT_DIR = fileURLToPath(new URL('.', import.meta.url));
+const INVARIANT_IMPORTER_RE = /^(?:apps|packages|modules)\/[^/]+\/test\/invariant\//;
 
-const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-// Two-step package rename bridge (#3965, ADR-0054): when all workspace packages carry the @ludy/* scope on the PR branch
-// while the base-branch invariant suite still imports @crove/*, map @crove/<pkg> to the renamed workspace's exports.
-// Refuses duplicate workspace names/slugs and stays inactive whenever any workspace package still uses @crove/*.
-function legacyCroveAliases(rootDir: string): Array<{ find: RegExp; replacement: string }> {
+// Two-step package rename bridge (#3965, ADR-0054): once all workspace packages carry the @ludy/* scope,
+// rewrite @crove/<pkg> imports originating inside the base-branch invariant suite (never in PR application code)
+// to @ludy/<pkg> and let Vite's standard package/exports resolver select the exact same module entry.
+function legacyCroveInvariantBridge(rootDir: string) {
   const pkgDirs: string[] = [];
   if (existsSync(join(rootDir, 'e2e', 'package.json'))) pkgDirs.push(join(rootDir, 'e2e'));
   for (const group of ['apps', 'modules', 'packages']) {
@@ -28,18 +27,10 @@ function legacyCroveAliases(rootDir: string): Array<{ find: RegExp; replacement:
 
   const seenNames = new Set<string>();
   const seenSlugs = new Set<string>();
-  const manifests: Array<{
-    pkgDir: string;
-    name: string;
-    exports?: string | Record<string, string | { default?: string; types?: string }>;
-  }> = [];
-
+  const names: string[] = [];
   for (const pkgDir of pkgDirs) {
     const manifestPath = join(pkgDir, 'package.json');
-    const pkg = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
-      name?: string;
-      exports?: string | Record<string, string | { default?: string; types?: string }>;
-    };
+    const pkg = JSON.parse(readFileSync(manifestPath, 'utf8')) as { name?: string };
     if (typeof pkg.name !== 'string' || pkg.name.length === 0) {
       throw new Error(`vitest.invariant.config.ts: ${manifestPath} has no package name`);
     }
@@ -52,66 +43,37 @@ function legacyCroveAliases(rootDir: string): Array<{ find: RegExp; replacement:
       throw new Error(`vitest.invariant.config.ts: duplicate workspace package slug ${slug} (${manifestPath})`);
     }
     seenSlugs.add(slug);
-    manifests.push({ pkgDir, name: pkg.name, exports: pkg.exports });
+    names.push(pkg.name);
   }
 
-  // Strictly inactive until every workspace package has left the @crove/* scope.
-  if (manifests.some((m) => m.name.startsWith('@crove/'))) return [];
+  const bridgeActive = !names.some((name) => name.startsWith('@crove/'));
+  const ludySlugs = new Set(names.filter((name) => name.startsWith('@ludy/')).map((name) => name.slice('@ludy/'.length)));
 
-  const aliases: Array<{ find: RegExp; replacement: string }> = [];
-  for (const pkg of manifests) {
-    if (!pkg.name.startsWith('@ludy/')) continue;
-    const legacyName = `@crove/${pkg.name.slice('@ludy/'.length)}`;
-    const exportsMap =
-      typeof pkg.exports === 'string'
-        ? { '.': pkg.exports }
-        : (pkg.exports ?? { '.': './src/index.ts' });
-    const entries = Object.entries(exportsMap).sort(([a], [b]) => {
-      const aStar = a.includes('*') ? 1 : 0;
-      const bStar = b.includes('*') ? 1 : 0;
-      if (aStar !== bStar) return aStar - bStar;
-      return b.length - a.length;
-    });
-    for (const [subpath, targetRaw] of entries) {
-      const targetRel = typeof targetRaw === 'string' ? targetRaw : targetRaw?.default;
-      if (!targetRel) continue;
-      if (subpath === '.') {
-        aliases.push({
-          find: new RegExp(`^${escapeRegExp(legacyName)}$`),
-          replacement: resolve(pkg.pkgDir, targetRel),
-        });
-      } else if (subpath.includes('*') && targetRel.includes('*')) {
-        const cleanSub = subpath.startsWith('./') ? subpath.slice(2) : subpath;
-        const subStar = cleanSub.indexOf('*');
-        const subPrefix = cleanSub.slice(0, subStar);
-        const subSuffix = cleanSub.slice(subStar + 1);
-        const targetStar = targetRel.indexOf('*');
-        const beforeStar = targetRel.slice(0, targetStar);
-        const resolvedPrefix = resolve(pkg.pkgDir, beforeStar) + (beforeStar.endsWith('/') ? '/' : '');
-        const targetSuffix = targetRel.slice(targetStar + 1);
-        aliases.push({
-          find: new RegExp(`^${escapeRegExp(legacyName)}/${escapeRegExp(subPrefix)}(.+)${escapeRegExp(subSuffix)}$`),
-          replacement: `${resolvedPrefix}$1${targetSuffix}`,
-        });
-      } else {
-        const cleanSub = subpath.startsWith('./') ? subpath.slice(2) : subpath;
-        aliases.push({
-          find: new RegExp(`^${escapeRegExp(legacyName)}/${escapeRegExp(cleanSub)}$`),
-          replacement: resolve(pkg.pkgDir, targetRel),
-        });
-      }
-    }
-  }
-  return aliases;
+  return {
+    name: 'legacy-crove-invariant-bridge',
+    enforce: 'pre' as const,
+    resolveId(
+      this: { resolve: (source: string, importer?: string, options?: { skipSelf?: boolean }) => Promise<unknown> },
+      source: string,
+      importer?: string,
+    ) {
+      if (!bridgeActive || !importer || !source.startsWith('@crove/')) return null;
+      const cleanImporter = importer.split(/[?#]/, 1)[0] ?? '';
+      const relImporter = relative(rootDir, cleanImporter).replaceAll('\\', '/');
+      if (!INVARIANT_IMPORTER_RE.test(relImporter)) return null;
+      const rest = source.slice('@crove/'.length);
+      const slug = rest.split('/', 1)[0] ?? '';
+      if (!ludySlugs.has(slug)) return null;
+      return this.resolve(`@ludy/${rest}`, importer, { skipSelf: true });
+    },
+  };
 }
 
 // The context token key of the test suites (#1822), as in vitest.config.ts.
 const env = { CROVE_CONTEXT_TOKEN_KEY: Buffer.from('test-only-context-token-key-0123456789').toString('base64') };
 
 export default defineConfig({
-  resolve: {
-    alias: legacyCroveAliases(ROOT_DIR),
-  },
+  plugins: [legacyCroveInvariantBridge(ROOT_DIR)],
   test: {
     env,
     root: ROOT_DIR,
