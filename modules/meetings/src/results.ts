@@ -37,7 +37,7 @@ import {
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { enqueueMinutesHook } from './hook.ts';
 import { vnDayStart } from './retention.ts';
-import { ROLES, openMeeting, userOf } from './transcript.ts';
+import { ROLES, missingAnchors, openMeeting, userOf } from './transcript.ts';
 
 // What code finds wrong with an item's text: a link, an email address or a phone number in a title (a task is read by every member, and a title the model
 // wrote from a transcript must not carry a way to reach someone off the page). Fixed words, never the text.
@@ -327,9 +327,14 @@ export const resultPublish = defineCommand({
       .returning(['id', 'title', 'who_drafted', 'when_parsed'])
       .execute();
     // The draft chapters (#3844) replace the chapters published before them, as the summary does.
-    const draftChapters = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().execute();
+    const draftChapters = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select(['id', 'start_seconds']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().execute();
     let chapters = 0;
     if (draftChapters.length > 0) {
+      // Each chapter must still start at a line of the transcript: a re-transcription since the save may have replaced the lines (#3881). Refused as a whole, and nothing of this publish is kept (the same
+      // transaction), so the recorder saves the chapters again and publishes once.
+      if ((await missingAnchors(ctx, input.meetingId, draftChapters.map((c) => c.start_seconds))).length > 0) {
+        throw new DomainError('CHAPTER_ANCHOR_LOST', 409, 'A chapter no longer starts at a line of the transcript (the transcript changed): save the chapters again, then share');
+      }
       await ctx.trx.deleteFrom('crove_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
       const flipped = await ctx.trx
         .updateTable('crove_meetings.meeting_chapter')

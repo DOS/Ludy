@@ -163,3 +163,16 @@ export const transcriptGet = defineQuery({
     };
   },
 });
+
+// The whole seconds, among `seconds`, at which no line of the meeting's transcript starts (a line starts at a second when its start, cut to the whole second, is that second). The caller is the
+// recorder, who reads every line of their meeting (the draft as well as a published one), so every line counts. Chapters are saved against this and checked against it again at publish (#3881), so a
+// re-transcription that replaced the lines since the save cannot leave a chapter pointing at a second where no line starts.
+export async function missingAnchors(ctx: { trx: QueryContext['trx']; orgId: string }, meetingId: string, seconds: readonly number[]): Promise<number[]> {
+  if (seconds.length === 0) return [];
+  const found = await sql<{ second: number }>`
+    SELECT DISTINCT pg_catalog.floor(s.start_seconds)::int AS second
+      FROM crove_meetings.transcript_segment s
+     WHERE s.org_id = ${ctx.orgId}::uuid AND s.meeting_id = ${meetingId}::uuid AND pg_catalog.floor(s.start_seconds)::int = ANY(${sql.val([...seconds])}::int[])`.execute(ctx.trx);
+  const anchored = new Set(found.rows.map((r) => r.second));
+  return seconds.filter((s) => !anchored.has(s));
+}
