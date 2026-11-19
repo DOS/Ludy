@@ -13332,6 +13332,7 @@ export const en = {
       MISA_AMIS_DISABLED: 'The MISA AMIS connector is not turned on in this system.',
       MISA_AMIS_CONNECTION_EXISTS: 'This legal entity already has a MISA AMIS connection.',
       MISA_AMIS_CONNECTION_LIVE: 'Disconnect MISA AMIS before removing this row.',
+      MISA_AMIS_CONNECTION_NOT_FOUND: 'That MISA AMIS connection was not found.',
       MARKETPLACE_PROVIDER_NOT_READY: 'This connector cannot be tested or pulled from the screen yet; it can once its connector is finished.',
       MARKETPLACE_NOT_STAGED: 'This report was already handled or was read again; reload the list.',
       MARKETPLACE_BUSY: 'Another report is being imported at the same moment; try again in a few minutes.',
@@ -14337,7 +14338,10 @@ export const en = {
       misa_amis_connection: {
         connect: 'Connect MISA AMIS Kế toán',
         list: 'View the MISA AMIS connections',
+        record_test: 'Record the result of a MISA AMIS connection test',
+        request_test: 'Ask for a test of a MISA AMIS connection',
         target: 'Check the legal entity of a MISA AMIS connection',
+        test_target: 'Read a MISA AMIS connection to test it',
         unlink: 'Disconnect MISA AMIS',
       },
       misa_goods_code: {

@@ -13345,6 +13345,7 @@ export const vi = {
       MISA_AMIS_DISABLED: 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này.',
       MISA_AMIS_CONNECTION_EXISTS: 'Pháp nhân này đã có một kết nối MISA AMIS.',
       MISA_AMIS_CONNECTION_LIVE: 'Hãy ngắt kết nối MISA AMIS trước khi xóa dòng này.',
+      MISA_AMIS_CONNECTION_NOT_FOUND: 'Không tìm thấy kết nối MISA AMIS này.',
       MARKETPLACE_PROVIDER_NOT_READY: 'Bộ kết nối này chưa kiểm tra hoặc lấy đơn được từ màn hình; sẽ có khi bộ kết nối của nó hoàn thành.',
       MARKETPLACE_NOT_STAGED: 'Báo cáo này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách.',
       MARKETPLACE_BUSY: 'Có báo cáo khác đang được nhập cùng lúc; hãy thử lại sau ít phút.',
@@ -14336,7 +14337,10 @@ export const vi = {
       misa_amis_connection: {
         connect: 'Kết nối MISA AMIS Kế toán',
         list: 'Xem các kết nối MISA AMIS',
+        record_test: 'Ghi kết quả kiểm tra kết nối MISA AMIS',
+        request_test: 'Yêu cầu kiểm tra kết nối MISA AMIS',
         target: 'Kiểm tra pháp nhân của kết nối MISA AMIS',
+        test_target: 'Lấy thông tin kết nối MISA AMIS để kiểm tra',
         unlink: 'Ngắt kết nối MISA AMIS',
       },
       misa_goods_code: {
