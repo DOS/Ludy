@@ -3084,7 +3084,6 @@ export function createRpcHandler(
       misaAmisPreview: os.vouchers.misaAmisPreview.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => misaAmisPreview((name, query) => runtime.query(name, query, { actor, orgId }), input)),
       ),
-      // The preview is run again here, so what the model is told comes from the books, never from the caller; the notes are a read and change no voucher, blocker or push.
       // F4 (security review of #4013): with the push switched off the command is not reached at all, so a confirmation made while it is off can never be sent within its seven days once it is turned on.
       misaAmisPush: os.vouchers.misaAmisPush.handler(({ context, input }) =>
         inFinance(context, async (orgId, actor) => {
@@ -3092,6 +3091,7 @@ export function createRpcHandler(
           return runtime.execute('finance.misa_amis.push', input, { actor, orgId });
         }),
       ),
+      // The preview is run again here, so what the model is told comes from the books, never from the caller; the notes are a read and change no voucher, blocker or push.
       misaAmisBlockerNotes: os.vouchers.misaAmisBlockerNotes.handler(({ context, input }) =>
         inFinance(context, async (orgId, actor) => {
           const { lang, ...ask } = input;
@@ -3577,6 +3577,7 @@ export function createRpcHandler(
       // and settleable while it is off (nothing is sent by either).
       pushes: {
         list: os.misaAmis.pushes.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.misa_amis.push_list', input, { actor, orgId }))),
+        // An `ambiguous` row settled "in AMIS" while the push is off becomes `sent` and waits: the worker that reads its result is not running, so the row is settled again after the 24 hours (an edge: ambiguous rows exist only where the push was on).
         resolve: os.misaAmis.pushes.resolve.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.misa_amis.push_resolve', input, { actor, orgId }))),
       },
     },

@@ -13,6 +13,9 @@ import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { canSettle, confirmedAnything, openRows, previewSendable, type PushOffer } from '../lib/misa-amis-push.ts';
 import { ErrorText } from './ui.tsx';
 
+// How often the list is read again while a request is open.
+const PUSH_REFRESH_MS = 15_000;
+
 const refresh = async () => {
   await queryClient.invalidateQueries({ queryKey: orpc.misaAmis.pushes.list.key() });
 };
@@ -36,30 +39,35 @@ export function MisaAmisPushConfirm({ result, ask, connectionId, offer }: { resu
   const done = send.data;
   return (
     <div className="mt-3 rounded-md border border-border p-2" data-testid="misa-amis-push-confirm">
-      {done ? (
-        <p role="status" className="text-foreground" data-testid="misa-amis-push-done">
-          {confirmedAnything(done) || done.revised > 0 ? t('done', { queued: String(done.queued), requeued: String(done.requeued), already: String(done.already), revised: String(done.revised) }) : t('nothingNew')}
-        </p>
-      ) : confirming ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground" data-testid="misa-amis-push-ask">
-            {t('confirmAsk', { count: String(result.vouchers) })}
-          </span>
-          <Button size="sm" loading={send.isPending} onClick={() => send.mutate()} data-testid="misa-amis-push-yes">
-            {t('confirmYes')}
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
-            {t('cancel')}
-          </Button>
-        </div>
-      ) : (
-        <>
-          <Button size="sm" variant="outline" onClick={() => setConfirming(true)} data-testid="misa-amis-push-start">
-            {t('confirm', { count: String(result.vouchers) })}
-          </Button>
-          <p className="mt-1 text-xs text-subtle-foreground">{t('confirmNote')}</p>
-        </>
-      )}
+      {/* A status region that exists before its text does, so a screen reader announces the result without moving focus. */}
+      <div role="status">
+        {done && (
+          <p className="text-foreground" data-testid="misa-amis-push-done">
+            {confirmedAnything(done) || done.revised > 0 ? t('done', { queued: String(done.queued), requeued: String(done.requeued), already: String(done.already), revised: String(done.revised) }) : t('nothingNew')}
+          </p>
+        )}
+      </div>
+      {!done &&
+        (confirming ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground" data-testid="misa-amis-push-ask">
+              {t('confirmAsk', { count: result.vouchers })}
+            </span>
+            <Button size="sm" loading={send.isPending} onClick={() => send.mutate()} data-testid="misa-amis-push-yes">
+              {t('confirmYes')}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setConfirming(false)}>
+              {t('cancel')}
+            </Button>
+          </div>
+        ) : (
+          <>
+            <Button size="sm" variant="outline" onClick={() => setConfirming(true)} data-testid="misa-amis-push-start">
+              {t('confirm', { count: result.vouchers })}
+            </Button>
+            <p className="mt-1 text-xs text-subtle-foreground">{t('confirmNote')}</p>
+          </>
+        ))}
       {send.error && (
         <div className="mt-1" data-testid="misa-amis-push-error">
           <ErrorText>{errorMessage(send.error)}</ErrorText>
@@ -105,10 +113,10 @@ function PushRow({ row, connectionId, canManage, now }: { row: MisaAmisPushRow; 
           <p className="text-xs text-muted-foreground">{t('settleHint')}</p>
           {outcome === null ? (
             <div className="mt-1 flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => setOutcome('in_amis')}>
+              <Button size="sm" variant="outline" aria-label={`${t('inAmis')}: ${row.orgRefno}`} onClick={() => setOutcome('in_amis')}>
                 {t('inAmis')}
               </Button>
-              <Button size="sm" variant="outline" onClick={() => setOutcome('not_in_amis')}>
+              <Button size="sm" variant="outline" aria-label={`${t('notInAmis')}: ${row.orgRefno}`} onClick={() => setOutcome('not_in_amis')}>
                 {t('notInAmis')}
               </Button>
             </div>
@@ -133,7 +141,8 @@ function PushRow({ row, connectionId, canManage, now }: { row: MisaAmisPushRow; 
 /** What was sent through one connection, newest first (the server's order), read by every member. Only an owner or admin sees the buttons that settle a row. */
 export function MisaAmisPushList({ connectionId, canManage }: { connectionId: string; canManage: boolean }) {
   const t = useTranslations('misaAmisPush');
-  const rows = useQuery(orpc.misaAmis.pushes.list.queryOptions({ input: { connectionId } }));
+  // States change in the worker, not on this screen: while a row is waiting for MISA the list is read again every 15 seconds.
+  const rows = useQuery({ ...orpc.misaAmis.pushes.list.queryOptions({ input: { connectionId } }), refetchInterval: (query) => (openRows(query.state.data ?? []) > 0 ? PUSH_REFRESH_MS : false) });
   const list = rows.data ?? [];
   // Read once per render of the list: a row crossing the 24 hours while the screen is open shows its buttons at the next refetch, and the server checks the age again anyway.
   const now = Date.now();

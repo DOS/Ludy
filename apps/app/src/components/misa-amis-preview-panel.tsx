@@ -51,6 +51,8 @@ export function MisaAmisPreviewPanel({ legalEntityId, push }: { legalEntityId: s
   // The coworker's notes on the kinds of blocker (S5): asked only when something is blocked, after the list is on screen; with AI off or every note dropped the list stands alone.
   const notes = useMutation<MisaAmisBlockerNotes>({ mutationFn: () => client.vouchers.misaAmisBlockerNotes({ ...ask, lang }) });
   const [answeredFor, setAnsweredFor] = useState<string | null>(null);
+  // Counts the previews that landed: the confirm block starts afresh with each one, so a send that is done (or refused as stale) never hides the button for the next confirmation of the same digest.
+  const [runs, setRuns] = useState(0);
   // Anything the answer depended on changing clears it, so an old list is never read beside new choices.
   const { reset } = preview;
   const { reset: resetNotes } = notes;
@@ -122,6 +124,7 @@ export function MisaAmisPreviewPanel({ legalEntityId, push }: { legalEntityId: s
             preview.mutate(undefined, {
               onSuccess: (data) => {
                 setAnsweredFor(asked);
+                setRuns((n) => n + 1);
                 if (data.blocked > 0) notes.mutate();
               },
             })
@@ -135,7 +138,7 @@ export function MisaAmisPreviewPanel({ legalEntityId, push }: { legalEntityId: s
         </div>
       )}
       {result && <MisaAmisPreviewResult result={result} notes={notes.data ?? null} />}
-      {result && push && <MisaAmisPushConfirm key={result.digest} result={result} ask={ask} connectionId={push.connectionId} offer={push.offer} />}
+      {result && push && <MisaAmisPushConfirm key={runs} result={result} ask={ask} connectionId={push.connectionId} offer={push.offer} />}
     </details>
   );
 }
