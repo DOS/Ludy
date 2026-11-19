@@ -8,12 +8,16 @@
 // One Google client: a token is refreshed by the calendar adapter's own refresh (`GoogleCalendarAdapter.refresh`, the same OAuth client and sealed-secret shape), passed in as `refresher`. This file only
 // calls `meet.googleapis.com`, through an allowlisted fetch (ADR-0025); an error message carries a short code and the HTTP status, never a token or a response body.
 import { MEETING_PLATFORM_LIST_MAX, MeetingPlatformError } from './meeting-platform.ts';
-import type { MeetingPlatformAdapter, MeetingPlatformCredential, MeetingPlatformDownload, MeetingPlatformFormat, MeetingPlatformListed, MeetingPlatformTranscript, MeetingPlatformTranscriptEntry } from './meeting-platform.ts';
+import type { MeetingPlatformAccount, MeetingPlatformAdapter, MeetingPlatformAuthorizeInput, MeetingPlatformCredential, MeetingPlatformDownload, MeetingPlatformFormat, MeetingPlatformListed, MeetingPlatformOAuth, MeetingPlatformTranscript, MeetingPlatformTranscriptEntry } from './meeting-platform.ts';
 import { allowlistedFetch, type Fetch } from './oauth.ts';
 
 export const GOOGLE_MEET_HOSTS = ['meet.googleapis.com'] as const;
+// The hosts of the connect step only (the code exchange and the one read of who the grant belongs to); the conference reads never go there.
+export const GOOGLE_MEET_OAUTH_HOSTS = ['oauth2.googleapis.com', 'www.googleapis.com'] as const;
 // The narrowest scope that reads conference records and transcript entries (sensitive, not restricted).
 export const GOOGLE_MEET_SPACE_READ_SCOPE = 'https://www.googleapis.com/auth/meetings.space.readonly';
+// What the connect dialog asks for: who the account is (`openid`, `email`) and the Meet transcript read. No Drive scope, no calendar scope: the recording file is not read (C-OA1, #3177).
+export const GOOGLE_MEET_AUTH_SCOPES = ['openid', 'email', GOOGLE_MEET_SPACE_READ_SCOPE] as const;
 
 const API = 'https://meet.googleapis.com/v2';
 // Pages of conference records read per listing (100 each): the newest 300 conferences in the window are looked at, and at most MEETING_PLATFORM_LIST_MAX with a finished transcript are returned.
@@ -36,9 +40,18 @@ export interface GoogleTokenRefresher {
   refresh(secret: string): Promise<{ secret: string; expiresAt: Date | null } | { refused: string } | { failed: string }>;
 }
 
+// The Google OAuth client of the Meet connection (MEETINGS_GOOGLE_CLIENT_ID and MEETINGS_GOOGLE_CLIENT_SECRET): a client of its own, so the calendar's consent screen stays narrow (plan 6.2, C-OA1 item 4).
+export interface GoogleMeetAppConfig {
+  clientId: string;
+  clientSecret: string;
+}
+
 export interface GoogleMeetOptions {
   refresher: GoogleTokenRefresher;
   fetch?: Fetch | undefined;
+  // The client of the connect dialog and the code exchange. Without it the adapter only reads conferences (a test of the reads); the registry always gives it.
+  app?: GoogleMeetAppConfig | undefined;
+  now?: (() => Date) | undefined;
 }
 
 type Json = Record<string, unknown>;
@@ -59,15 +72,96 @@ function failure(status: number): MeetingPlatformError {
   return new MeetingPlatformError('platform_refused', `Google answered ${status}`);
 }
 
-export class GoogleMeetAdapter implements MeetingPlatformAdapter {
+export class GoogleMeetAdapter implements MeetingPlatformAdapter, MeetingPlatformOAuth {
   readonly provider = 'google_meet' as const;
+  readonly oauthProvider = 'google_recordings' as const;
+  // Google's authorization code flow takes PKCE with the client secret; the verifier is kept in the attempt like a calendar's.
+  readonly pkce = true;
   readonly hosts: readonly string[] = GOOGLE_MEET_HOSTS;
   private readonly fetch: Fetch;
+  private readonly oauthFetch: Fetch;
   private readonly refresher: GoogleTokenRefresher;
+  private readonly app: GoogleMeetAppConfig | undefined;
+  private readonly now: () => Date;
 
   constructor(options: GoogleMeetOptions) {
     this.fetch = allowlistedFetch(GOOGLE_MEET_HOSTS, options.fetch);
+    this.oauthFetch = allowlistedFetch(GOOGLE_MEET_OAUTH_HOSTS, options.fetch);
     this.refresher = options.refresher;
+    this.app = options.app;
+    this.now = options.now ?? (() => new Date());
+  }
+
+  private requireApp(): GoogleMeetAppConfig {
+    if (!this.app) throw new MeetingPlatformError('platform_refused', 'this Google Meet adapter has no OAuth client');
+    return this.app;
+  }
+
+  // The Google authorize address: the Meet transcript scope and who the account is, offline access with consent each time (so Google returns a refresh token even for an account connected before), and
+  // none of the scopes a member granted to this client before (`include_granted_scopes=false`: the grant is this scope only).
+  authorizeUrl(input: MeetingPlatformAuthorizeInput): string {
+    const app = this.requireApp();
+    const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    url.searchParams.set('client_id', app.clientId);
+    url.searchParams.set('redirect_uri', input.redirectUri);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope', GOOGLE_MEET_AUTH_SCOPES.join(' '));
+    url.searchParams.set('state', input.state);
+    url.searchParams.set('access_type', 'offline');
+    url.searchParams.set('prompt', 'consent');
+    url.searchParams.set('include_granted_scopes', 'false');
+    if (input.codeChallenge) {
+      url.searchParams.set('code_challenge', input.codeChallenge);
+      url.searchParams.set('code_challenge_method', 'S256');
+    }
+    return url.toString();
+  }
+
+  // One call of the connect step, as JSON. A network failure or an unreadable answer is `platform_unavailable`; a 429 or 5xx too; any other refusal (a code Google will not take, an unknown client, a profile it
+  // will not give) is `platform_refused`. Google's own words are never copied into the error (the answer can hold the code).
+  private async oauthCall(url: string, init: RequestInit): Promise<Json> {
+    let response: Response;
+    try {
+      response = await this.oauthFetch(url, init);
+    } catch {
+      throw new MeetingPlatformError('platform_unavailable', 'Google did not answer');
+    }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      if (response.status === 429 || response.status >= 500) throw new MeetingPlatformError('platform_unavailable', `Google answered ${response.status}`);
+      throw new MeetingPlatformError('platform_refused', `Google answered ${response.status}`);
+    }
+    const body = object(await response.json().catch(() => null));
+    if (!body) throw new MeetingPlatformError('platform_unavailable', 'Google answered with something unreadable');
+    return body;
+  }
+
+  // The code grant, then the one read of who the grant belongs to. A grant without the Meet transcript scope (the member unticked it) or without a refresh token (the connection would die in an hour) is refused
+  // now, so the member is told while they are here. The account is keyed by Google's stable subject id (an address can change); the address is the name shown.
+  async exchange(input: { code: string; redirectUri: string; codeVerifier: string | null }, signal?: AbortSignal): Promise<MeetingPlatformAccount> {
+    const app = this.requireApp();
+    const form = new URLSearchParams({ client_id: app.clientId, client_secret: app.clientSecret, grant_type: 'authorization_code', code: input.code, redirect_uri: input.redirectUri });
+    if (input.codeVerifier) form.set('code_verifier', input.codeVerifier);
+    const grant = await this.oauthCall('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+      body: form.toString(),
+      ...(signal ? { signal } : {}),
+    });
+    const accessToken = text(grant.access_token);
+    const refreshToken = text(grant.refresh_token);
+    if (accessToken === null) throw new MeetingPlatformError('platform_unavailable', 'Google answered without an access token');
+    if (refreshToken === null) throw new MeetingPlatformError('platform_refused', 'Google answered without a refresh token');
+    const granted = (text(grant.scope) ?? '').split(/\s+/).filter((scope) => scope !== '' && scope.length <= 200);
+    if (!granted.includes(GOOGLE_MEET_SPACE_READ_SCOPE)) throw new MeetingPlatformError('platform_refused', 'Google did not grant the Meet transcript permission');
+    const info = await this.oauthCall('https://www.googleapis.com/oauth2/v3/userinfo', { method: 'GET', headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' }, ...(signal ? { signal } : {}) });
+    const subject = (text(info.sub) ?? '').trim().toLowerCase();
+    const email = (text(info.email) ?? '').trim().toLowerCase();
+    // No subject or address (the profile scopes were unticked), or an address Google has not verified: nothing identifies the account, so nothing is stored.
+    if (subject === '' || subject.length > 200 || email === '' || email.length > 200 || info.email_verified === false) throw new MeetingPlatformError('platform_refused', 'Google did not return a verified account');
+    const seconds = Number(grant.expires_in);
+    const expiresAt = new Date(this.now().getTime() + (Number.isFinite(seconds) && seconds > 0 ? seconds : 3600) * 1000);
+    return { externalAccount: subject, displayName: email, scopes: granted.slice(0, 20), expiresAt, secret: JSON.stringify({ accessToken, refreshToken, expiresAt: expiresAt.toISOString() }) };
   }
 
   // `skipMissing`: a 403 or 404 on this one resource answers null (one conference's transcripts are gone or not the member's) instead of failing the whole call.

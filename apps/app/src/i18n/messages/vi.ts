@@ -2717,6 +2717,8 @@ export const vi = {
         disconnectNo: 'Giữ lại',
         connectSandbox: 'Kết nối bản thử',
         connectedToast: 'Đã kết nối bản thử.',
+        connectGoogle: 'Kết nối Google Meet',
+        googleNote: 'Google Meet: Ludy chỉ đọc bản chép lời mà chính Google Meet tạo cho các cuộc họp bạn tổ chức (cần tài khoản Google Workspace có bật chép lời cuộc họp); Ludy không đọc bản ghi âm hay hình và không động đến Drive. Chữ đó là bản chép lời của Google, không phải của Ludy, nên hãy đọc lại trước khi chia sẻ. Bạn tự duyệt quyền ngay trên màn hình của Google và có thể thu hồi bất cứ lúc nào trong trang Tài khoản Google của bạn.',
         connectZoom: 'Kết nối Zoom',
         zoomNote: 'Zoom: Ludy liệt kê các bản ghi đám mây của chính tài khoản Zoom của bạn (cần gói Zoom có lưu bản ghi đám mây) và ưu tiên tệp chỉ có âm thanh. Bản ghi chỉ có video chỉ nhập được khi người quản trị hệ thống đã bật xử lý video; hãy nhờ họ bật. Bạn tự duyệt các quyền ngay trên màn hình của Zoom và có thể gỡ ứng dụng trong Zoom bất cứ lúc nào.',
         connectTeams: 'Kết nối Microsoft Teams',

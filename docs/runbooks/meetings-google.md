@@ -1,0 +1,50 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+# Google Meet transcripts in Ludy Meetings: set up and operate
+
+A member connects their own Google account in Settings and Ludy then lists the conferences they organized that have a transcript Google finished writing, as suggestions. Ludy reads **only the transcript text Google Meet itself makes**: no audio, no video, nothing from Drive ([plan, section 6.1](../plan/meetings-integrations.md)). Nothing is read until the member presses "Import" on the Meetings tab, and the imported lines are Google's transcription, labelled as such, for the recorder to read over before anything is shared. It is **off by default**: without the two settings below there is no Google Meet adapter, no connect button and no connection.
+
+> **Facts to re-check on the first live run.** This page and the code were written from Google's own documentation and tested only against fixtures and a stub transport; no real Google account has been used yet. The scope's category (sensitive or restricted), what Google's verification asks for, which Workspace editions keep transcripts and what the Meet REST API returns for a transcript are the facts to confirm against Google's current pages when the first real account is connected. A reported difference is a fix to this page and to the adapter, not a surprise.
+
+## What the owner must do before the switch can be flipped
+
+The code ships switched off and nothing here turns anything on in production. These are the owner's steps; the ones that touch a Google project, a secret or a production setting are **production and credential steps**: they run only through the coordinator, under the owner's approval in that session, and never from a worker or a pull request.
+
+1. **Decide C-OA1 ([#3177](https://github.com/DOS/Ludy/issues/3177)).** Write on that issue the category Google gives `https://www.googleapis.com/auth/meetings.space.readonly` (the adapter is written for **sensitive**; if Google says restricted, stop and tell the Meetings PO: a restricted scope needs the yearly independent security assessment, a spending decision) and which client carries it. This page assumes a **client of its own**, so the calendar's consent screen stays narrow; the owner may decide to use the calendar client's values instead.
+2. **Create or pick a Google Cloud project and an OAuth client** (type: Web application). Enable the **Google Meet REST API** in that project.
+3. **Fill the consent screen.** Add the scope `meetings.space.readonly` (and the basic `openid` and `email`). For members inside **one Google Workspace organization** the app can be set to *Internal*: no Google verification, no 100-user limit and no 7-day token expiry. For anyone outside that organization it must be *External* and Google has to **verify the app** (a privacy policy page, a demo video of the consent flow, a justification of the scope). Until it is verified, only the listed test users can connect and, while the app is in *Testing*, Google expires the refresh token after 7 days.
+4. **Register the redirect address** on the client: `APP_URL/meetings/oauth/google_meet/callback` (`APP_URL` is the address of the web app, the same value the calendar and the other meeting platforms use; see [split-app-api.md](split-app-api.md)).
+5. **Set the two settings** on the API **and** the worker (the worker needs them to renew tokens): `MEETINGS_GOOGLE_CLIENT_ID` and `MEETINGS_GOOGLE_CLIENT_SECRET`. Set both or neither; the server refuses to start with one. `CREDENTIAL_KEY` must be set too ([credential-key.md](credential-key.md)), or the connect button stays hidden.
+6. **Test with one real account**: a Google Workspace account whose meetings are transcribed. Organize a short Meet, turn on "Transcribe the meeting", end it, wait for Google to finish the transcript (a few minutes), connect in Settings, import, and read the result against what was said. Write what differs on [#3174](https://github.com/DOS/Ludy/issues/3174).
+
+The audio path (the recording file in the organizer's Drive, a **restricted** scope) is deliberately not built and has no setting.
+
+## What a member sees
+
+- Settings, **Security** tab, card "Kết nối nền tảng họp" (Meeting platforms): a button "Kết nối Google Meet" appears only where steps 1 to 5 are done. It opens Google's own permission screen; the member approves there and comes back to a page that says which account was connected. The words next to the button say what is read (the transcript Google makes, no recording, nothing from Drive) and whose words they are.
+- Ludy then lists the conferences of the last 14 days that the member **organized** and that have a finished transcript, within a few minutes, and the member imports one with a click. The result is a meeting whose transcript is Google's lines as a draft, labelled "Google Meet", with its own cost line: no model call and no cost at all.
+- Google keeps a transcript **only if the organizer's Workspace edition has meeting transcripts and the transcript was switched on** in the meeting. A free Google account lists nothing. A conference with no transcript is not offered. A transcript over 5000 lines is cut and the transcript panel says so.
+- The member can disconnect in Settings at any time: Ludy forgets the access and deletes the list of suggestions. Meetings already imported stay. To also take the app away on Google's side the member removes it in their Google Account (Security, Third-party access).
+
+## How the access is kept
+
+- Google access tokens last about an hour; the worker renews a token shortly before it expires, under a row lock, using the Meet client's own id and secret. If Google will not renew the grant (the member removed the app, or the refresh token expired) the connection is marked expired and the member is told to connect again; it is the same row.
+- The tokens are sealed with the credential key for the member's org, platform and account (the account is keyed by Google's stable subject id, so a changed address is still the same connection), and only the worker opens them. No screen, answer, log line or audit row carries a token, the code or Google's own words; an error is a short code.
+- A connect attempt (the state) lasts 10 minutes, works once and only for the member who started it. The one-time code is exchanged before anything is stored, and a refused code uses the attempt up. A grant without the Meet transcript permission (the member unticked it on Google's screen) or without a refresh token is refused at once, and nothing is stored.
+- The only hosts Ludy calls for Google Meet are `oauth2.googleapis.com` and `www.googleapis.com` (the code exchange and who the member is) and `meet.googleapis.com` (the conferences and their transcripts); the member's browser alone visits `accounts.google.com`.
+
+## When something fails
+
+| What the member sees | Likely cause | What to do |
+|---|---|---|
+| Google says the redirect address is invalid | The redirect URI on the OAuth client is not exactly `APP_URL/meetings/oauth/google_meet/callback` | Fix it on the client; no Ludy change |
+| Google says the app is blocked or unverified | The app is *External* and not verified, or the member is not a listed test user | Finish Google's verification (step 3), or add the member as a test user |
+| "The platform refused the code ... or does not let Ludy read the account address" (`OAUTH_CODE_REJECTED`) | The code was used or expired, the redirect address differs, the client secret is wrong, the member unticked the transcript permission, or Google gave no verified address | The member connects again and keeps every permission ticked |
+| "The platform is not answering" (`OAUTH_PROVIDER_FAILED`) | Google was unreachable or answered something unexpected | Try again; the log line names a short code, never a token |
+| No "Kết nối Google Meet" button | One of the two settings is missing, `CREDENTIAL_KEY` is not set, or the Meetings screens are hidden (the Meetings module is off) | Check the settings of the API |
+| "Connection expired: connect again" | Google would not renew the grant (removed, or the 7-day limit of an app in *Testing*) | The member connects again |
+| The list stays empty | The member did not organize the conference, transcripts are off for their edition or that meeting, Google is still writing the transcript, or the Meet REST API is off in the project | Check step 2 and the meeting's own transcript setting; nothing in Ludy to fix |
+
+## What is not built
+
+- The **audio path**: the recording file in the organizer's Drive needs `drive.meet.readonly`, a restricted scope (C-OA1, [#3177](https://github.com/DOS/Ludy/issues/3177)); there is no setting for it.
+- Google's push notification that a transcript is ready (Workspace Events); until then the listing runs about every 10 minutes and the member's "Refresh" button asks for one at the next pass.
