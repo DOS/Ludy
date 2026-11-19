@@ -13,10 +13,19 @@ export interface SearchToken {
 
 // One character folded: its marks dropped, lower case, đ as d; every character that is then not a-z or 0-9 is a separator (a space). A lone combining mark folds to nothing, so a letter written as a base
 // and a mark is the same word as the composed letter.
+const folded = new Map<string, string>();
+const FOLDED_MAX = 4096;
 function foldChar(ch: string): string {
+  const cp = ch.codePointAt(0) as number;
+  // ASCII is the common case and needs no normalisation.
+  if (cp < 128) return cp >= 97 && cp <= 122 || cp >= 48 && cp <= 57 ? ch : cp >= 65 && cp <= 90 ? ch.toLowerCase() : ' ';
+  const known = folded.get(ch);
+  if (known !== undefined) return known;
   const base = ch.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/đ/g, 'd');
   let out = '';
   for (const c of base) out += c >= 'a' && c <= 'z' || c >= '0' && c <= '9' ? c : ' ';
+  // A small cache: the letters of one language repeat; it never grows past FOLDED_MAX characters.
+  if (folded.size < FOLDED_MAX) folded.set(ch, out);
   return out;
 }
 

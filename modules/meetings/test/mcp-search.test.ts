@@ -109,3 +109,16 @@ describe('snippetAround', () => {
     }
   });
 });
+
+describe('tokenize speed', () => {
+  it('handles the worst case a search can meet (200 meetings of 161 lines of 2,000 characters, 8 words) in a fraction of a second per million characters', () => {
+    const line = `${'xin chào các bạn, ngân sách quảng cáo quý một '.repeat(45)}`.slice(0, 2000);
+    const words = ['zebra', 'khong', 'co', 'tu', 'nay', 'dau', 'ca', 'luon'];
+    const started = performance.now();
+    let found = 0;
+    for (let i = 0; i < 40; i += 1) for (let j = 0; j < 161; j += 1) if (matchLine(line, words)) found += 1;
+    expect(found).toBe(0);
+    // 40 x 161 lines of 2,000 characters is 12.9 million characters; a generous bound that still fails on a per-character normalisation of everything.
+    expect(performance.now() - started).toBeLessThan(6000);
+  });
+});
