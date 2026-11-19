@@ -20,6 +20,7 @@ import {
   scheduleProblem,
   statusProblem,
   ownAround,
+  settleCandidate,
   unclearOpen,
   judgedFrom,
   stopsChange,
@@ -407,5 +408,24 @@ describe('judging a change from the day before today', () => {
     expect(unclearOpen([budget(1, 'budget_raise', 'unclear', '150000'), budget(2, 'budget_lower', 'applied', '120000')], ['budget_lower', 'budget_raise'])).toBe(false);
     expect(unclearOpen([budget(1, 'budget_raise', 'applied', '150000'), budget(2, 'budget_lower', 'unclear', '120000')], ['budget_lower', 'budget_raise'])).toBe(true);
     expect(unclearOpen([schedule(1, 'schedule_extend', 'unclear', '2026-11-20')], ['budget_lower', 'budget_raise'])).toBe(false);
+  });
+
+  // The sweep reads the platform for an unclear change only when what it shows is about THAT change (#3898).
+  it('settles an unclear change by a read only while no newer change of its family is queued, applied or unclear', () => {
+    const withId = (id: string, row: ChangeRow) => ({ ...row, id });
+    const u = withId('u', budget(1, 'budget_raise', 'unclear', '150000'));
+    expect(settleCandidate([u], 'u')).toBe(true);
+    // A change that is not unclear, or not there, is not read for.
+    expect(settleCandidate([withId('a', budget(1, 'budget_raise', 'applied', '150000'))], 'a')).toBe(false);
+    expect(settleCandidate([u], 'nope')).toBe(false);
+    // A newer change of the family that is queued, applied or unclear overtakes it (the platform shows that one now); a failed or cancelled one never ran.
+    for (const state of ['queued', 'applied', 'unclear'] as const) expect(settleCandidate([u, withId('n', budget(2, 'budget_lower', state, '120000'))], 'u'), state).toBe(false);
+    for (const state of ['failed', 'cancelled'] as const) expect(settleCandidate([u, withId('n', budget(2, 'budget_lower', state, '120000'))], 'u'), state).toBe(true);
+    // An older change of the family is no obstacle, and another family never is: the schedule, and the status of another slot.
+    expect(settleCandidate([withId('o', budget(1, 'budget_raise', 'applied', '130000')), withId('u2', budget(2, 'budget_raise', 'unclear', '150000'))], 'u2')).toBe(true);
+    expect(settleCandidate([u, withId('s', schedule(2, 'schedule_extend', 'queued', '2026-11-20'))], 'u')).toBe(true);
+    const pause = (id: string, seq: number, slot: 'campaign' | 'ad_set', state: ChangeRow['state']) => withId(id, { seq, slot, kind: 'pause', state, toBudget: null, toEndOn: null });
+    expect(settleCandidate([pause('p1', 1, 'campaign', 'unclear'), pause('p2', 2, 'ad_set', 'queued')], 'p1')).toBe(true);
+    expect(settleCandidate([pause('p1', 1, 'campaign', 'unclear'), pause('p2', 2, 'campaign', 'queued')], 'p1')).toBe(false);
   });
 });

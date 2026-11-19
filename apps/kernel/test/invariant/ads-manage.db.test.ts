@@ -205,6 +205,15 @@ suite('the changes of a running ad (#3835, W4)', () => {
     const [text, params] = defaults(r, change);
     return inContext(r.org, who, async (c) => (await c.query<{ id: string }>(text, params)).rows[0]?.id as string, true);
   }
+  // A lower budget asked behind an unclear change of the family, as the table's owner makes it when the guard (as the commands) refuses a person's (ADS_MANAGE_UNCLEAR): these tests
+  // set up a hold that has an unclear change and a later lower budget under it, which they accept whichever path puts the row there (#3898).
+  async function requestBehindUnclear(r: Rig, change: Change): Promise<string> {
+    return request(r, change).catch(async (error: unknown) => {
+      if (!String((error as { message?: string }).message).includes('ADS_MANAGE_UNCLEAR')) throw error;
+      const [text, params] = defaults(r, change);
+      return admin(async (c) => (await c.query<{ id: string }>(text, params)).rows[0]?.id as string);
+    });
+  }
   // The system's settlement of a change (the record step of the job), committed.
   const settle = (r: Rig, id: string, state: 'applied' | 'failed' | 'unclear', code: string | null = null) =>
     inContext(r.org, 'system', (c) => c.query(`UPDATE crove_ads.ad_manage_change SET state = $3, code = $4 WHERE org_id = $1 AND id = $2`, [r.org.orgId, id, state, code]), true);
@@ -603,6 +612,105 @@ suite('the changes of a running ad (#3835, W4)', () => {
     }
   });
 
+  it('lets the system settle an unclear change as applied or failed and nothing else; no person does, and a change a newer one overtook stays as it is (#3898)', async () => {
+    const r = await rig();
+    const unclear = await request(r, LOWER);
+    await settle(r, unclear, 'unclear', 'reconcile_unclear');
+    // A person never settles it, and nothing but applied or failed is a move out of unclear: cancelled, queued, and a new unclear are frozen or no move.
+    for (const who of ['owner', 'admin', 'member', 'viewer'] as const) {
+      for (const state of ['applied', 'failed', 'cancelled']) {
+        await inContext(r.org, who, (c) => refused(c, `UPDATE crove_ads.ad_manage_change SET state = '${state}', code = 'X' WHERE org_id = $1 AND id = $2`, [r.org.orgId, unclear], 'ADS_MANAGE_FROZEN'));
+      }
+    }
+    await inContext(r.org, 'system', (c) => refused(c, `UPDATE crove_ads.ad_manage_change SET state = 'cancelled', code = 'X' WHERE org_id = $1 AND id = $2`, [r.org.orgId, unclear], 'ADS_MANAGE_FROZEN'));
+    await inContext(r.org, 'system', (c) => refused(c, `UPDATE crove_ads.ad_manage_change SET state = 'queued', code = NULL WHERE org_id = $1 AND id = $2`, [r.org.orgId, unclear], 'ADS_MANAGE_FROZEN'));
+    // Nothing that identifies the change moves, whoever writes it, from unclear as from queued.
+    for (const [column, value] of [['to_budget', '1'], ['kind', "'pause'"], ['launch_id', 'gen_random_uuid()']] as const) {
+      await expect(inContext(r.org, 'system', (c) => c.query(`UPDATE crove_ads.ad_manage_change SET ${column} = ${value}, state = 'applied' WHERE org_id = $1 AND id = $2`, [r.org.orgId, unclear])), column).rejects.toMatchObject({ code: '42501' });
+    }
+    expect((await get(r, unclear))?.state).toBe('unclear');
+    // A newer change of the family that is queued, applied or unclear is what the platform shows: the older unclear one is not settled by a read of it. A raise approved behind it
+    // (a raise is not held back by an unclear change) is such a change.
+    const raise = await approved<{ id: string }>(r, RAISE, { commit: true });
+    await inContext(r.org, 'system', (c) => refused(c, `UPDATE crove_ads.ad_manage_change SET state = 'applied' WHERE org_id = $1 AND id = $2`, [r.org.orgId, unclear], 'ADS_MANAGE_FROZEN'));
+    await settle(r, raise.id, 'applied');
+    await inContext(r.org, 'system', (c) => refused(c, `UPDATE crove_ads.ad_manage_change SET state = 'failed' WHERE org_id = $1 AND id = $2`, [r.org.orgId, unclear], 'ADS_MANAGE_FROZEN'));
+    expect((await get(r, unclear))?.state).toBe('unclear');
+    // Another family does not overtake it: a pause is not a change of the budget.
+    const other = await rig();
+    const lower = await request(other, LOWER);
+    await settle(other, lower, 'unclear', 'reconcile_unclear');
+    await request(other, { kind: 'pause', slot: 'campaign' });
+    // Applied by the system: the day is the database's, the time too, whatever the statement said; and the held budget is the confirmed one.
+    await inContext(other.org, 'system', (c) => c.query(`UPDATE crove_ads.ad_manage_change SET state = 'applied', code = NULL, settled_on = '2001-01-01' WHERE org_id = $1 AND id = $2`, [other.org.orgId, lower]), true);
+    expect(await get(other, lower)).toMatchObject({ state: 'applied', code: null, settled_on: today });
+    expect(await hold(other)).toEqual({ daily_budget: '60000', end_on: other.end });
+    // And it is settled for good: a settled change never changes.
+    for (const state of ['failed', 'applied', 'unclear']) {
+      await inContext(other.org, 'system', (c) => refused(c, `UPDATE crove_ads.ad_manage_change SET state = '${state}', code = 'AGAIN' WHERE org_id = $1 AND id = $2`, [other.org.orgId, lower], 'ADS_MANAGE_FROZEN'));
+    }
+    // Failed by the system (the object was as it was): nothing was released and nothing is held, and the lower budget the person wanted can be asked for again.
+    const third = await rig();
+    const missed = await request(third, LOWER);
+    await settle(third, missed, 'unclear', 'reconcile_unclear');
+    await settle(third, missed, 'failed', 'unclear_not_applied');
+    expect(await get(third, missed)).toMatchObject({ state: 'failed', code: 'unclear_not_applied', settled_on: null });
+    expect(await hold(third)).toEqual({ daily_budget: '100000', end_on: third.end });
+    expect(await request(third, LOWER)).toBeTruthy();
+  });
+
+  it('picks the unclear changes a worker may read, and only the worker: old enough, nothing newer of the family, an active write connection of a provider it has a manager for (#3898)', async () => {
+    const r = await rig();
+    const connection = randomUUID();
+    await owner(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandboxwrite_ads', $3, 'Thử ghi', '{}', $4)`, [r.org.orgId, connection, `write-${connection.slice(0, 8)}`, r.org.owner]);
+    // The account's write connection (its own guard is not what this test is about, so the table's owner sets it with that guard aside for the one statement, as a backfill would).
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query('ALTER TABLE crove_ads.ad_account DISABLE TRIGGER write_connection_guard');
+        await c.query(`UPDATE crove_ads.ad_account SET write_connection_id = $3 WHERE org_id = $1 AND id = $2`, [r.org.orgId, r.account, connection]);
+        await c.query('ALTER TABLE crove_ads.ad_account ENABLE ALWAYS TRIGGER write_connection_guard');
+        await c.query('COMMIT');
+      } catch (e) {
+        await c.query('ROLLBACK');
+        throw e;
+      }
+    });
+    const pick = (providers: string[] = ['sandboxwrite_ads']) => withClient(workerUrl, async (c) => (await c.query<{ org_id: string; change_id: string }>(`SELECT org_id, change_id FROM crove_ads.manage_unclear_pick($1::text[], 100)`, [providers])).rows.filter((x) => x.org_id === r.org.orgId));
+    const unclear = await request(r, LOWER);
+    await settle(r, unclear, 'unclear', 'reconcile_unclear');
+    // Without the ledger row of its call (begun and committed before the platform is called) there is nothing to read for.
+    expect(await pick()).toEqual([]);
+    const key = `ads.manage:${unclear}:apply`;
+    await owner(`INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety, started_at) VALUES ($1, $2, 'ads', 'launch', 'manage_budget_lower', 'idempotent', now())`, [r.org.orgId, key]);
+    await owner(`UPDATE crove_kernel.external_call SET state = 'ambiguous', error_kind = 'unknown', error_code = 'NETWORK' WHERE org_id = $1 AND key = $2`, [r.org.orgId, key]);
+    // Too soon: a call whose answer was lost may still be landing.
+    expect(await pick()).toEqual([]);
+    await owner(`UPDATE crove_kernel.external_call SET updated_at = now() - interval '11 minutes' WHERE org_id = $1 AND key = $2`, [r.org.orgId, key]);
+    expect(await pick()).toEqual([{ org_id: r.org.orgId, change_id: unclear }]);
+    // A provider the worker has no manager for, and a closed connection, are not picked.
+    expect(await pick(['other_ads'])).toEqual([]);
+    await owner(`UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2`, [r.org.orgId, connection]);
+    expect(await pick()).toEqual([]);
+    await owner(`UPDATE crove_kernel.channel_connection SET status = 'active' WHERE org_id = $1 AND id = $2`, [r.org.orgId, connection]);
+    expect(await pick()).toEqual([{ org_id: r.org.orgId, change_id: unclear }]);
+    // A newer change of its family (queued here) is what the platform shows: the read would say nothing of the older one.
+    const raise = await approved<{ id: string }>(r, RAISE, { commit: true });
+    expect(await pick()).toEqual([]);
+    await settle(r, raise.id, 'failed', 'REFUSED');
+    expect(await pick()).toEqual([{ org_id: r.org.orgId, change_id: unclear }]);
+    // Only the worker's login picks, and it settles nothing: a login of the API refuses.
+    await withClient(appUrl, async (c) => {
+      await expect(c.query(`SELECT * FROM crove_ads.manage_unclear_pick(ARRAY['sandboxwrite_ads'], 10)`)).rejects.toMatchObject({ code: '42501' });
+    });
+    const fn = (await rows<{ definer: boolean; config: string[] | null; app: boolean; worker: boolean; tenant: boolean; pub: boolean }>(
+      `SELECT p.prosecdef AS definer, p.proconfig AS config, has_function_privilege('crove_app', p.oid, 'EXECUTE') AS app, has_function_privilege('crove_worker', p.oid, 'EXECUTE') AS worker, has_function_privilege('crove_tenant', p.oid, 'EXECUTE') AS tenant,
+              EXISTS (SELECT 1 FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x WHERE x.grantee = 0) AS pub
+       FROM pg_proc p WHERE p.oid = to_regprocedure('crove_ads.manage_unclear_pick(text[], integer)')`,
+    ))[0];
+    expect(fn).toMatchObject({ definer: true, config: ['search_path=pg_catalog, pg_temp'], app: false, worker: true, tenant: false, pub: false });
+  });
+
   it('refuses the cancel of a change the job has begun (it may have landed), whoever asks, and never deletes: no login can delete a row, and a purge goes with the account', async () => {
     const r = await rig();
     const id = await request(r, LOWER);
@@ -658,7 +766,7 @@ suite('the changes of a running ad (#3835, W4)', () => {
     await settle(r, unclearLower, 'unclear', 'reconcile_unclear');
     expect(await hold(r)).toEqual({ daily_budget: '100000', end_on: r.end });
     // Applied: the commitment is the confirmed one, and the next change moves from it.
-    const next = await request(r, { kind: 'budget_lower', fromBudget: '100000', toBudget: '70000' });
+    const next = await requestBehindUnclear(r, { kind: 'budget_lower', fromBudget: '100000', toBudget: '70000' });
     await settle(r, next, 'applied');
     expect(await hold(r)).toEqual({ daily_budget: '70000', end_on: r.end });
     expect(await committed(r)).toEqual({ daily_budget: '70000', commit_until: r.end });
@@ -688,7 +796,7 @@ suite('the changes of a running ad (#3835, W4)', () => {
     await settle(r, raise.id, 'unclear', 'reconcile_unclear');
     expect(await hold(r)).toEqual({ daily_budget: '150000', end_on: r.end });
     // A lower budget asked while the raise is unclear goes from what is held (150 000), releases nothing until applied, and once applied it ends the hold of the older raise.
-    const lower = await request(r, { kind: 'budget_lower', fromBudget: '150000', toBudget: '120000' });
+    const lower = await requestBehindUnclear(r, { kind: 'budget_lower', fromBudget: '150000', toBudget: '120000' });
     expect(await hold(r)).toEqual({ daily_budget: '150000', end_on: r.end });
     await settle(r, lower, 'applied');
     expect(await hold(r)).toEqual({ daily_budget: '120000', end_on: r.end });
@@ -772,7 +880,7 @@ suite('the changes of a running ad (#3835, W4)', () => {
     const unclear = await approved<{ id: string }>(d, RAISE, { commit: true });
     await settle(d, unclear.id, 'unclear', 'reconcile_unclear');
     const fromD = await asked(d, unclear.id);
-    const ld = await request(d, { kind: 'budget_lower', fromBudget: '150000', toBudget: '120000' });
+    const ld = await requestBehindUnclear(d, { kind: 'budget_lower', fromBudget: '150000', toBudget: '120000' });
     await settle(d, ld, 'applied');
     const Sd = (await get(d, ld))?.settled_on as string;
     const out = await perDay(d);
@@ -862,7 +970,7 @@ suite('the changes of a running ad (#3835, W4)', () => {
     const raise = await approved<{ id: string }>(r, RAISE, { commit: true });
     expect(raise.id).toBeTruthy();
     const except = (who: Who, launch: string | null) =>
-      inContext(r.org, who, async (c) => (await c.query<{ daily_budget: string }>(`SELECT daily_budget FROM crove_ads.launch_commitments_except('VND', $1::date, $2::date, $3::uuid)`, [D(-30), D(300), launch])).rows);
+      inContext(r.org, who, async (c) => (await c.query<{ ad_account_id: string; daily_budget: string }>(`SELECT ad_account_id, daily_budget FROM crove_ads.launch_commitments_except('VND', $1::date, $2::date, $3::uuid)`, [D(-30), D(300), launch])).rows);
     // A launch with a raise answers a row a day: the days before the raise was asked for at the old budget, the days after at the raised one.
     expect([...new Set((await except('owner', null)).map((x) => x.daily_budget))].sort()).toEqual(['100000', '150000']);
     expect(await except('admin', r.launch)).toEqual([]);
@@ -871,9 +979,14 @@ suite('the changes of a running ad (#3835, W4)', () => {
       await inContext(r.org, who, (c) => refused(c, `SELECT * FROM crove_ads.launch_commitments_except('VND', $1::date, $2::date, NULL)`, [D(-30), D(300)], 'ADS_LAUNCH_FORBIDDEN'));
       await inContext(r.org, who, (c) => refused(c, `SELECT * FROM crove_ads.launch_commitments('VND', $1::date, $2::date)`, [D(-30), D(300)], 'ADS_LAUNCH_FORBIDDEN'));
     }
-    // Another org's launches are never in the answer.
+    // Another org's launches are never in the answer. The other org's launch holds the same budget (100 000) as this one's, so the set of budgets cannot show a leak: the rows
+    // are compared before and after the other org exists, and every row is this org's own account.
+    const own = await except('owner', null);
     const other = await rig();
-    expect(new Set((await except('owner', null)).map((x) => x.daily_budget)).size).toBe(2);
+    const after = await except('owner', null);
+    expect(after).toEqual(own);
+    expect(new Set(after.map((x) => x.ad_account_id))).toEqual(new Set([r.account]));
+    expect(after.some((x) => x.ad_account_id === other.account)).toBe(false);
     expect((await inContext(other.org, 'owner', async (c) => (await c.query(`SELECT * FROM crove_ads.launch_commitments('VND', $1::date, $2::date)`, [D(-30), D(300)])).rows)).length).toBe(1);
   });
 

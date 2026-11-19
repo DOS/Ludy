@@ -50,6 +50,7 @@ import { launchAccountOf, launchSelect, requireSystem, type Db } from './launch-
 import { STARTED_STALE_SECONDS, UNCLEAR_GIVE_UP_SECONDS, UNCLEAR_MAX_CALLS, dayAfter, stepAction, zoneKnown, zonedMidnight } from './launch-steps.ts';
 import {
   OPENING_KINDS,
+  SETTLE_MIN_AGE_SECONDS,
   budgetProblem,
   ownAround,
   unclearOpen,
@@ -62,12 +63,13 @@ import {
   manageStep,
   objectStatusOf,
   scheduleProblem,
+  settleCandidate,
   statusProblem,
   stopConditions,
   stopsChange,
   suggestionFor,
 } from './manage-rules.ts';
-import { changesOf, manageStateOf, objectsOf } from './manage-state.ts';
+import { changesOf, manageStateOf, objectsOf, type ChangeRecord } from './manage-state.ts';
 import { loadFlags } from './spend-flags.ts';
 import { lockedSetting, refuseOpenRequest } from './write.ts';
 
@@ -542,7 +544,8 @@ export const adsScheduleExtend = defineCommand({
 export type ManageBegin =
   | { action: 'none'; reason: string }
   | {
-      action: 'call' | 'reconcile';
+      // `settle` is a read only, for a change that ended unclear (#3898): nothing is called and no ledger row is made.
+      action: 'call' | 'reconcile' | 'settle';
       changeId: string;
       callKey: string;
       kind: AdsManageKind;
@@ -565,6 +568,8 @@ export const zManageBeginInput = z.strictObject({
   changeId: zId,
   // The providers this worker has a manager for: a change whose write connection is of another is left queued until a deployment that has one runs it.
   providers: z.array(z.string().min(1).max(32)).max(8),
+  // The sweep that settles an unclear change by reading its object (#3898): the change must be unclear, and the answer is a read, never a call.
+  settle: z.boolean().optional(),
 });
 
 const zCode = z.string().regex(/^[A-Za-z0-9_.]{1,64}$/);
@@ -591,6 +596,33 @@ export interface ManageRecorded {
   next?: 'call' | 'stop';
 }
 
+// What begin hands the job for a change: the object, the connection and what the change sets (the call, the read that settles a lost answer and the sweep's read all use it).
+function workOf(
+  action: 'call' | 'reconcile' | 'settle',
+  change: ChangeRecord,
+  connection: { id: string; provider: string },
+  object: { externalId: string },
+  account: { externalAccountId: string; currency: string },
+  zone: string | null,
+): Extract<ManageBegin, { action: 'call' | 'reconcile' | 'settle' }> {
+  const kindStatus = change.kind === 'pause' || change.kind === 'resume' || change.kind === 'archive' ? STATUS_OF_KIND[change.kind] : null;
+  return {
+    action,
+    changeId: change.id,
+    callKey: manageCallKey(change.id),
+    kind: change.kind,
+    level: change.level,
+    slot: change.slot,
+    objectId: object.externalId,
+    connectionId: connection.id,
+    provider: connection.provider,
+    account,
+    toStatus: kindStatus,
+    toBudget: change.toBudget,
+    toEndTime: change.toEndOn && zone ? zonedMidnight(dayAfter(change.toEndOn), zone) : null,
+  };
+}
+
 export const adsManageBegin = defineCommand({
   name: 'ads.manage.begin',
   // Begins a change that may raise spend, which a switch-off must not overtake: it holds the tenant row, as the switch does (ADR-0053).
@@ -607,7 +639,7 @@ export const adsManageBegin = defineCommand({
     const changeId = input.changeId.toLowerCase();
     const seen = await ctx.trx.selectFrom('crove_ads.ad_manage_change').select(['id', 'launch_id', 'state']).where('org_id', '=', ctx.orgId).where('id', '=', changeId).executeTakeFirst();
     if (!seen) return none('not_found');
-    if (seen.state !== 'queued') return none('settled');
+    if (seen.state !== (input.settle === true ? 'unclear' : 'queued')) return none('settled');
     // The org's lock first (the stops, the approvals and the other changes take it), then the account, the launch, the change.
     const setting = await lockedSetting(ctx);
     const launch = await launchSelect(ctx).where('id', '=', seen.launch_id).executeTakeFirst();
@@ -617,12 +649,26 @@ export const adsManageBegin = defineCommand({
     const lockedLaunchRow = await launchSelect(ctx).where('id', '=', launch.id).forUpdate().executeTakeFirstOrThrow();
     const changes = await changesOf(ctx, launch.id);
     const change = changes.find((c) => c.id === changeId);
-    if (!change || change.state !== 'queued') return none('settled');
+    if (!change || change.state !== (input.settle === true ? 'unclear' : 'queued')) return none('settled');
     const { account, connection } = found;
     // A worker with no manager for the connection's provider leaves the change queued.
     if (connection && !input.providers.includes(connection.provider)) return none('no_manager');
     const objects = await objectsOf(ctx, launch.id);
     const object = objects.find((o) => o.slot === change.slot);
+
+    // A read that settles an unclear change (#3898) makes no call and no ledger row, so none of the checks below that gate a call applies (the stops, the caps, a launch that is no
+    // longer running: a read of an object changes nothing). It needs what makes the read mean something: nothing newer of the family has overtaken the change, its call is old enough
+    // that a late landing is not taken for a miss, and a connection to read through. The record decides again under the locks.
+    if (input.settle === true) {
+      if (!object) return none('object_missing');
+      if (!connection) return none('no_manager');
+      if (!settleCandidate(changes, change.id)) return none('superseded');
+      const asked = await ctx.trx.selectFrom('crove_kernel.external_call').select(['updated_at']).where('org_id', '=', ctx.orgId).where('key', '=', manageCallKey(change.id)).executeTakeFirst();
+      if (!asked) return none('no_call');
+      if ((ctx.now.getTime() - asked.updated_at.getTime()) / 1000 < SETTLE_MIN_AGE_SECONDS) return none('too_soon');
+      if (change.toEndOn !== null && !zoneKnown(account.time_zone)) return none('zone_unknown');
+      return workOf('settle', change, connection, object, { externalAccountId: account.external_account_id, currency: lockedLaunchRow.currency }, account.time_zone);
+    }
 
     // A call that was begun may have landed, so the change can no longer be cancelled (the database refuses it): the checks below that would cancel it apply only to a change
     // whose call was never begun. One whose call was begun goes on to the ledger below, which reads the object (a read, never a second call while a stop stands: the record
@@ -688,28 +734,13 @@ export const adsManageBegin = defineCommand({
       // A reconcile: the row is taken by this run, so a job that begins at the same moment waits.
       await ctx.trx.updateTable('crove_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
     }
-    const kindStatus = change.kind === 'pause' || change.kind === 'resume' || change.kind === 'archive' ? STATUS_OF_KIND[change.kind] : null;
-    return {
-      action: action === 'reconcile' ? 'reconcile' : 'call',
-      changeId: change.id,
-      callKey,
-      kind: change.kind,
-      level: change.level,
-      slot: change.slot,
-      objectId: object.externalId,
-      connectionId: connection.id,
-      provider: connection.provider,
-      account: { externalAccountId: account.external_account_id, currency: lockedLaunchRow.currency },
-      toStatus: kindStatus,
-      toBudget: change.toBudget,
-      toEndTime: change.toEndOn ? zonedMidnight(dayAfter(change.toEndOn), zone) : null,
-    };
+    return workOf(action === 'reconcile' ? 'reconcile' : 'call', change, connection, object, { externalAccountId: account.external_account_id, currency: lockedLaunchRow.currency }, zone);
   },
 });
 
 export const adsManageRecord = defineCommand({
   name: 'ads.manage.record',
-  input: z.strictObject({ changeId: zId, callKey: z.string().min(1).max(200), phase: z.enum(['call', 'reconcile']), result: zManageResult }),
+  input: z.strictObject({ changeId: zId, callKey: z.string().min(1).max(200), phase: z.enum(['call', 'reconcile', 'settle']), result: zManageResult }),
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
@@ -722,14 +753,37 @@ export const adsManageRecord = defineCommand({
     if (!seen) return { recorded: false, reason: 'not_found' };
     const setting = await lockedSetting(ctx);
     const change = await ctx.trx.selectFrom('crove_ads.ad_manage_change').select(['id', 'state', 'kind', 'launch_id', 'ad_account_id', 'slot']).where('org_id', '=', ctx.orgId).where('id', '=', changeId).forUpdate().executeTakeFirst();
-    const row = await ctx.trx.selectFrom('crove_kernel.external_call').select(['id', 'state', 'calls']).where('org_id', '=', ctx.orgId).where('key', '=', input.callKey).forUpdate().executeTakeFirst();
+    const row = await ctx.trx.selectFrom('crove_kernel.external_call').select(['id', 'state', 'calls', 'updated_at']).where('org_id', '=', ctx.orgId).where('key', '=', input.callKey).forUpdate().executeTakeFirst();
     if (!change || !row) return { recorded: false, reason: 'stale' };
-    if (change.state !== 'queued' || row.state === 'succeeded' || row.state === 'failed') return { recorded: false, reason: 'settled' };
+    if (input.phase === 'settle' ? change.state !== 'unclear' : change.state !== 'queued') return { recorded: false, reason: 'settled' };
+    if (row.state === 'succeeded' || row.state === 'failed') return { recorded: false, reason: input.phase === 'settle' ? 'stale' : 'settled' };
     const result = input.result;
     const settleRow = (values: { state: 'started' | 'succeeded' | 'failed' | 'ambiguous'; calls?: number; error_kind?: 'token_expired' | 'permission' | 'bad_request' | 'rate_limited' | 'transient' | 'unknown'; error_code?: string; finished_at?: Date }) =>
       ctx.trx.updateTable('crove_kernel.external_call').set({ updated_at: ctx.now, ...values }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
     const setChange = (state: 'applied' | 'failed', code: string | null) => ctx.trx.updateTable('crove_ads.ad_manage_change').set({ state, code }).where('org_id', '=', ctx.orgId).where('id', '=', change.id).execute();
 
+    if (input.phase === 'settle') {
+      // The sweep's read of an unclear change (#3898): the answer is what the object shows, never a call. Decided again under the locks: the change is still unclear, nothing newer
+      // of its family has overtaken it, and its call is old enough that a late landing is not taken for a miss.
+      if (result.kind !== 'found' && result.kind !== 'missing' && result.kind !== 'unknowable') return { recorded: false, reason: 'stale' };
+      if (!settleCandidate(await changesOf(ctx, change.launch_id), change.id) || (ctx.now.getTime() - row.updated_at.getTime()) / 1000 < SETTLE_MIN_AGE_SECONDS) return { recorded: false, reason: 'stale' };
+      if (result.kind === 'unknowable') {
+        // The read could not be made: the change stays unclear and what it holds stays held (never under-counted). Only the ledger row's clock moves, so the next read waits its turn.
+        await settleRow({ state: 'ambiguous' });
+        ctx.audit({ changeId: change.id, launchId: change.launch_id, adAccountId: change.ad_account_id, kind: change.kind, slot: change.slot, phase: input.phase, outcome: result.kind, code: result.code ?? 'UNKNOWN' });
+        return { recorded: true, state: 'unclear', next: 'stop' };
+      }
+      if (result.kind === 'found') {
+        await settleRow({ state: 'succeeded', finished_at: ctx.now });
+        await setChange('applied', null);
+      } else {
+        // The object is as it was, long after the call: it did not land, so the change fails and what it held is released.
+        await settleRow({ state: 'failed', error_kind: 'unknown', error_code: 'UNCLEAR_NOT_APPLIED', finished_at: ctx.now });
+        await setChange('failed', 'unclear_not_applied');
+      }
+      ctx.audit({ changeId: change.id, launchId: change.launch_id, adAccountId: change.ad_account_id, kind: change.kind, slot: change.slot, phase: input.phase, outcome: result.kind });
+      return { recorded: true, state: result.kind === 'found' ? 'applied' : 'failed', next: 'stop' };
+    }
     if (result.kind === 'accepted' || result.kind === 'found') {
       // The change is made at the platform: a fact whatever became of the launch meanwhile, so it is recorded as applied (what it released or raised is the hold's business).
       await settleRow({ state: 'succeeded', finished_at: ctx.now });

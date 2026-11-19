@@ -2822,6 +2822,8 @@ suite('ads on PostgreSQL (#2217)', () => {
             };
             type Rig = ReturnType<typeof rigOf>;
             const manage = (rig: Rig, changeId: string, runtime: Runtime = worker) => runAdsManage({ runtime, broker: vault, managers: rig.managers }, { orgId, changeId });
+            // The sweep's job for a change that ended unclear (#3898): a read of its object, never a call.
+            const settleRun = (rig: Rig, changeId: string, runtime: Runtime = worker) => runAdsManage({ runtime, broker: vault, managers: rig.managers }, { orgId, changeId, settle: true });
             const activateRun = (w: SandboxAdWriter, launchId: string) => runAdsActivate({ runtime: worker, broker: vault, activators: adActivators({ sandbox: w }) }, { orgId, launchId });
             // An account that can run ads, with the sandbox's write connection, an approved plan that began today, its objects created and switched on: a LIVE launch.
             const liveOn = async (account: string, w: SandboxAdWriter, over: Record<string, unknown> = {}) => {
@@ -3556,6 +3558,142 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(rig.manager.changes).toEqual([]);
             });
 
+            // A raise whose call and whose reads failed again and again: the change is unclear and what it would add stays held (as the test above makes it).
+            const unclearRaise = async (w: SandboxAdWriter, launchId: string, dailyBudget: string, landed: boolean) => {
+              const rig = rigOf(w);
+              await approved(await askRaise(launchId, dailyBudget));
+              const raise = await lastChange(launchId);
+              // The call is made and its answer is lost (the raise landed at the platform), or it fails before it reaches the platform (nothing changed there).
+              w.inject({ level: 'ad_set', when: landed ? 'status_after' : 'status' });
+              expect(await manage(rig, raise.id)).toEqual({ steps: 1, ended: 'unknown' });
+              for (let i = 0; i < 2; i++) {
+                await ageCall(raise.id, 61);
+                w.inject({ level: 'ad_set', when: 'read' });
+                expect(await manage(rig, raise.id)).toEqual({ steps: 1, ended: 'unknowable' });
+              }
+              await row(`UPDATE crove_kernel.external_call SET calls = 3, updated_at = updated_at - interval '61 seconds' WHERE org_id = $1 AND key = $2`, [orgId, `ads.manage:${raise.id}:apply`]);
+              expect(await manage(rig, raise.id)).toEqual({ steps: 0, ended: 'reconcile_unclear' });
+              expect(await changesOf(launchId)).toMatchObject([{ id: raise.id, state: 'unclear' }]);
+              return { rig, raise };
+            };
+
+            it('settles an unclear change by reading its object, so a lower budget works again: the raise that landed is applied, and no call is made (#3898)', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await live('Đọc để xác nhận đã áp dụng', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              const { rig, raise } = await unclearRaise(w, launch.id, '150000', true);
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('150000');
+              const calls = rig.manager.changes.length;
+              // Held at the raise, and a lower budget is refused behind it.
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+              expect(await lower(owner, launch.id, '120000')).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_UNCLEAR' } });
+              // Too soon: the last touch of its call is a minute old, and a late landing must not be taken for a miss.
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 0, ended: 'too_soon' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'unclear' }]);
+              // Old enough, and the read cannot be made: it stays unclear and still counted (never under-counted), and its clock starts again.
+              await ageCall(raise.id, 700);
+              w.inject({ level: 'ad_set', when: 'read' });
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 1, ended: 'unknowable' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'unclear' }]);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+              expect(await commit(account)).toMatchObject({ daily_budget: '150000' });
+              expect(await lower(owner, launch.id, '120000')).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_UNCLEAR' } });
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 0, ended: 'too_soon' });
+              // The read works: the object shows the raise, so it is applied (the confirmed budget), and the lower budget goes from it.
+              await ageCall(raise.id, 700);
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'applied', code: null, settled_on: expect.any(String) }]);
+              expect(await callOf(raise.id)).toMatchObject({ state: 'succeeded' });
+              expect(rig.manager.changes).toHaveLength(calls);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+              const lowered = changeId(await lower(owner, launch.id, '120000'));
+              expect(await manage(rig, lowered)).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('120000');
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '120000' });
+              // A settled change is read no more.
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 0, ended: 'settled' });
+            });
+
+            it('settles an unclear change whose object is as it was as failed and releases what it held, and leaves one a newer change overtook alone (#3898)', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await live('Đọc để xác nhận không áp dụng', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              const { rig, raise } = await unclearRaise(w, launch.id, '150000', false);
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('100000');
+              expect(await commit(account)).toMatchObject({ daily_budget: '150000' });
+              // A newer raise, approved behind it (a raise is not held back by an unclear one), is what the platform shows next: a read says nothing of the older one.
+              await approved(await askRaise(launch.id, '160000'));
+              const newer = await lastChange(launch.id);
+              expect(newer.id).not.toBe(raise.id);
+              await ageCall(raise.id, 700);
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 0, ended: 'superseded' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'unclear' }, { id: newer.id, state: 'queued' }]);
+              // The newer one goes by (the object is as it was: refused), and the unclear one is settled now: not applied, and the budget it held is released.
+              w.inject({ level: 'ad_set', when: 'status', error: new AdPlatformError('bad_request', 'REFUSED') });
+              expect(await manage(rig, newer.id)).toEqual({ steps: 1, ended: 'rejected' });
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 1, ended: 'not_applied' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'failed', code: 'unclear_not_applied', settled_on: null }, { id: newer.id, state: 'failed' }]);
+              expect(await callOf(raise.id)).toMatchObject({ state: 'failed', error_code: 'UNCLEAR_NOT_APPLIED' });
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+              expect(await commit(account)).toMatchObject({ daily_budget: '100000' });
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('100000');
+              expect(rig.manager.changes).toEqual([]);
+              // The lower budget the person wanted works again.
+              expect(await lower(owner, launch.id, '70000')).toMatchObject({ status: 200 });
+            });
+
+            it('settles an unclear pause the same way, reads nothing for a change that is not unclear, and never from a worker with no manager or no credential key (#3898)', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Đọc trạng thái và lịch', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              // A pause whose answer is lost and whose reads fail: unclear, though the object is paused.
+              const paused = changeId(await pause(owner, launch.id, 'ad_set'));
+              w.inject({ level: 'ad_set', when: 'status_after' });
+              expect(await manage(rig, paused)).toEqual({ steps: 1, ended: 'unknown' });
+              for (let i = 0; i < 2; i++) {
+                await ageCall(paused, 61);
+                w.inject({ level: 'ad_set', when: 'read' });
+                expect(await manage(rig, paused)).toEqual({ steps: 1, ended: 'unknowable' });
+              }
+              await row(`UPDATE crove_kernel.external_call SET calls = 3, updated_at = updated_at - interval '700 seconds' WHERE org_id = $1 AND key = $2`, [orgId, `ads.manage:${paused}:apply`]);
+              expect(await manage(rig, paused)).toEqual({ steps: 0, ended: 'reconcile_unclear' });
+              expect(w.objects.get(adSet)?.status).toBe('paused');
+              // No manager for its provider, no credential key: nothing is read.
+              expect(await runAdsManage({ runtime: worker, broker: vault, managers: {} }, { orgId, changeId: paused, settle: true })).toEqual({ steps: 0, ended: 'no_manager' });
+              expect(await runAdsManage({ runtime: worker, broker: { ...vault, id: 'none' } as unknown as typeof vault, managers: rig.managers }, { orgId, changeId: paused, settle: true })).toEqual({ steps: 0, ended: 'no_broker' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: paused, state: 'unclear' }]);
+              // The read finds the object paused: the pause is applied.
+              expect(await settleRun(rig, paused)).toEqual({ steps: 1, ended: 'applied' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: paused, kind: 'pause', state: 'applied' }]);
+              // A change that is queued, never begun, is not read: only an unclear one is (the begin of a queued change is the job's own).
+              const queued = changeId(await lower(owner, launch.id, '70000'));
+              expect(await settleRun(rig, queued)).toEqual({ steps: 0, ended: 'settled' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: paused }, { id: queued, state: 'queued' }]);
+              expect(rig.manager.changes).toHaveLength(1);
+            });
+
+            it('records nothing for a begin that waited too long even when the credential cannot be opened: the change stays queued and a later begin reads first (#3898)', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Treo rồi không mở được khóa', w);
+              const id = changeId(await pause(owner, launch.id, 'ad_set'));
+              // Worker A: begin at time 0, then it stalls, and the token cannot be opened (the connection closed just after another worker's call): the clock is a minute and a second on.
+              let reads = 0;
+              const stalled = () => (reads++ === 0 ? 0 : BEGIN_TO_CALL_MS + 1000);
+              const noKey = { ...vault, open: () => { throw new Error('no key'); } } as unknown as typeof vault;
+              expect(await runAdsManage({ runtime: worker, broker: noKey, managers: rig.managers, now: stalled }, { orgId, changeId: id })).toEqual({ steps: 1, ended: 'stale_begin' });
+              // Nothing was recorded, so a worker that landed the call meanwhile is not undone by a `blocked` of this one: the change is queued, the row is the one begin made.
+              expect(await changesOf(launch.id)).toMatchObject([{ id, state: 'queued', code: null }]);
+              expect(await callOf(id)).toMatchObject({ state: 'started', calls: 1 });
+              // The row is old enough to be lost: a later begin reads the object first, and a read that cannot ask records the answer as unknowable, never as a call that was not made.
+              await ageCall(id, 3600);
+              expect(await runAdsManage({ runtime: worker, broker: noKey, managers: rig.managers }, { orgId, changeId: id })).toMatchObject({ steps: 1, ended: 'CREDENTIAL_UNREADABLE' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id, state: 'queued' }]);
+              expect(await callOf(id)).toMatchObject({ state: 'ambiguous' });
+              expect(rig.manager.changes).toEqual([]);
+            });
+
             it('lets a pause through whatever is switched off, and refuses every other change then (ADS_WRITE_OFF); a queued raise is cancelled by begin once writing went off', async () => {
               const w = new SandboxAdWriter();
               const rig = rigOf(w);
@@ -4153,6 +4291,38 @@ suite('ads on PostgreSQL (#2217)', () => {
               const again = await boosted(member, account, post, { budget: '150000' });
               expect(again.draft.id).not.toBe(made.draft.id);
               expect((await boostStates(member, [post]))[0]).toMatchObject({ state: 'draft', draftId: again.draft.id });
+            });
+
+            it('keeps a boost whose schedule was extended live, and refuses a second boost of its post: the day it holds is the extended one, applied or still unclear (#3898)', async () => {
+              // A flight that ran out ten days ago, extended: the launch row still says its first end, the changes say the day it holds now.
+              const extended = async (name: string, state: 'applied' | 'unclear', toDays: number) => {
+                const account = await ready(name);
+                const post = randomUUID();
+                const made = await boosted(member, account, post);
+                expect((await approve(adminAccount, proposalId(await submitBoost(owner, made.draft.id)))).status).toBe(200);
+                await setLaunch(`UPDATE crove_ads.ad_launch SET start_on = start_on - 10, end_on = end_on - 10, commit_until = commit_until - 10, state = 'live', step = 'live' WHERE org_id = $1 AND draft_id = $2`, [orgId, made.draft.id]);
+                expect((await boostStates(member, [post]))[0]).toMatchObject({ state: 'ended' });
+                // The change as the manage job leaves it (the table's owner puts it there: no command writes a settled change), a schedule extension to a day ahead.
+                await row(
+                  `INSERT INTO crove_ads.ad_manage_change (org_id, ad_account_id, launch_id, kind, slot, level, object_id, from_end_on, to_end_on, proposal_id, requested_by, state, settled_at, settled_on)
+                   SELECT l.org_id, l.ad_account_id, l.id, 'schedule_extend', 'ad_set', 'ad_set', 'set-extended', l.end_on, $3::date, gen_random_uuid(), l.created_by, $4::text, now(), CASE WHEN $4::text = 'applied' THEN current_date END
+                   FROM crove_ads.ad_launch l WHERE l.org_id = $1 AND l.draft_id = $2`,
+                  [orgId, made.draft.id, inDays(toDays), state],
+                );
+                return { account, post, made };
+              };
+              // Applied: the boost is still going (its launch is live), whatever its first end said, and the post cannot be boosted again.
+              const done = await extended('Đẩy bài đã gia hạn', 'applied', 5);
+              expect((await boostStates(member, [done.post]))[0]).toMatchObject({ state: 'live', draftId: done.made.draft.id });
+              expect(await boost(member, done.account, done.post)).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_EXISTS' } });
+              // Unclear (the platform's answer was never read): the day it may run to is held, so the boost is going too.
+              const unclear = await extended('Đẩy bài gia hạn chưa rõ', 'unclear', 5);
+              expect((await boostStates(member, [unclear.post]))[0]).toMatchObject({ state: 'live' });
+              expect(await boost(member, unclear.account, unclear.post)).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_EXISTS' } });
+              // An extension that ends before today does not keep it going.
+              const short = await extended('Đẩy bài gia hạn vẫn đã qua', 'applied', -2);
+              expect((await boostStates(member, [short.post]))[0]).toMatchObject({ state: 'ended' });
+              expect(await boosted(member, short.account, short.post, { budget: '150000' })).toMatchObject({ edited: false });
             });
 
             it('does not offer an account whose time zone is not read yet, and refuses it: a launch cannot start without the zone', async () => {
