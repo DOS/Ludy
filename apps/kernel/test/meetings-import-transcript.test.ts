@@ -120,6 +120,35 @@ describe('stageTranscript', () => {
   });
 });
 
+describe('a transcript that was cut (#3922)', () => {
+  const read = (bytes: Uint8Array) => JSON.parse(new TextDecoder().decode(bytes)) as { segments: unknown[]; truncated?: unknown };
+
+  it('stages `truncated: true` when the adapter says it cut the transcript, and only then', () => {
+    const lines = [entry(), entry({ text: 'Vâng.' })];
+    expect(read(stageTranscript({ ...transcript(lines), truncated: true })).truncated).toBe(true);
+    // A whole transcript stages the bytes it always did: no extra field at all.
+    const whole = read(stageTranscript(transcript(lines)));
+    expect(whole.truncated).toBeUndefined();
+    expect(Object.keys(whole)).toEqual(['segments']);
+  });
+
+  it('stages `truncated: true` when the platform sent more lines than a draft takes, though the adapter said nothing', () => {
+    const many = Array.from({ length: TRANSCRIPT_SEGMENTS_MAX + 1 }, (_, i) => entry({ startSeconds: i, endSeconds: i + 1, text: `dòng ${i}` }));
+    const out = read(stageTranscript(transcript(many)));
+    expect(out.truncated).toBe(true);
+    expect(out.segments).toHaveLength(TRANSCRIPT_SEGMENTS_MAX);
+    // Exactly as many as a draft takes is whole.
+    expect(read(stageTranscript(transcript(many.slice(0, TRANSCRIPT_SEGMENTS_MAX)))).truncated).toBeUndefined();
+  });
+
+  it('is a flag the command schema takes, false unless the route says so, and nothing else', () => {
+    const base = { meetingId: '00000000-0000-4000-8000-000000000002', segments: [{ startSeconds: 0, endSeconds: 1, speakerLabel: 'A', text: 'x' }] };
+    expect(zMeetingTranscriptImport.parse(base).platformCut).toBe(false);
+    expect(zMeetingTranscriptImport.parse({ ...base, platformCut: true }).platformCut).toBe(true);
+    expect(zMeetingTranscriptImport.safeParse({ ...base, platformCut: 'yes' }).success).toBe(false);
+  });
+});
+
 describe('a transcript-only recording in the import job', () => {
   it('asks the adapter for the transcript (never for a download) and stages the lines under the row\'s key', async () => {
     const run = setup({ transcript: async () => transcript([entry(), entry({ speaker: null, text: 'Vâng.' })]) });

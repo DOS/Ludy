@@ -358,7 +358,7 @@ export function MeetingDetailPage() {
       <MeetingChapters key={id} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* What each speaker said they would do or decided (#3954): the recorder's own Vy on a click, each line opens the transcript where it was said, nothing is saved */}
       <MeetingCommitments key={id} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
-      <MeetingTranscript key={id} meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} />
+      <MeetingTranscript key={id} meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} platformCut={meeting.platformTranscriptCut} />
       {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}
       <MeetingAdherence key={id} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}

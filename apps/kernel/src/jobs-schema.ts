@@ -79,6 +79,8 @@ export const QUEUES = {
   meetingHookSweep: 'kernel-meeting-hook-sweep',
   // Created by the series nudge migration (20270107120000): the sweep, every 5 minutes, of the nudges about open items before the next meeting of a series (#3542).
   meetingsSeriesNudge: 'meetings-series-nudge',
+  // Created by the morning notice migration (20270120110000): the sweep, every 5 minutes, of the opt-in notices of the day's meetings (a count and a link, never a title; #3955).
+  meetingsMorning: 'meetings-morning',
   // Meeting platform recordings (meetings integrations C1, #3173): one download of a recording the member chose to import, and the sweep that hands them over, lists suggestions and expires.
   meetingsImport: 'kernel-meeting-import',
   meetingsImportSweep: 'kernel-meeting-import-sweep',
@@ -203,6 +205,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.notesRemind]: 'none',
   // The sweep reads the database and runs a command that writes an in-app notice; it reaches nothing.
   [QUEUES.meetingsSeriesNudge]: 'none',
+  // The sweep reads the database and runs a command that writes an in-app notice and queues a mail (the mail queues send it); it reaches nothing itself.
+  [QUEUES.meetingsMorning]: 'none',
   [QUEUES.memberVySweep]: 'none',
   // The one request to the receiver URL an org set, through the egress guard (egressFetch, https only): the delivery's only reach. The sweep reads and writes the database and hands jobs over, nothing else.
   [QUEUES.mcpWake]: ['tenant_url'],
