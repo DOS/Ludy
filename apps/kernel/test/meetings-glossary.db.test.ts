@@ -2,13 +2,13 @@
 // The glossary an organization keeps (#4043, step 2: the table, the commands) on a real database. Only an owner or admin reads or writes it, in the command and in the database itself (a member's
 // own SELECT sees no row and a direct INSERT is refused); a term is plain text (control and invisible characters stripped, Unicode form C), judged by the same rules in the contract and the
 // database; one row per term whatever the case; at most 60 terms; another org's terms are neither read nor changed; and the audit row carries ids and counts, never a term.
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { EXPORT_TABLE_NAMES, OWNER_RUN_EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { GlossaryTerms } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
@@ -77,8 +77,8 @@ suite('the glossary an organization keeps (#4043)', () => {
     appPool = createPool({ connectionString: login.toString(), max: 4 });
     pools.push(appPool);
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
-    runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
-    for (const key of ['owner', 'adm', 'rec', 'viewer', 'ownerB']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'glossary', subject: key, email: `${key}@glossary.test`, name: key });
+    runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS, readAuditKey: randomBytes(32) }).register(registry);
+    for (const key of ['owner', 'adm', 'rec', 'viewer', 'ownerB', 'ownerC']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'glossary', subject: key, email: `${key}@glossary.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Mẫu')).orgId;
     otherOrgId = (await createOrg(runtime, asUser('ownerB'), 'Công ty Khác')).orgId;
     await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, users.adm, users.rec, users.viewer]);
@@ -182,5 +182,37 @@ suite('the glossary an organization keeps (#4043)', () => {
       expect((await run('SELECT count(*)::int AS n FROM crove_meetings.glossary_term')).rows[0]?.n).toBe(1);
     });
     expect(await stored(one.termId)).toBe('Crove');
+  });
+
+  // The export (#4043, found by the shared-core review): the table's owner_admin policy shows the system actor nothing, so the export job's snapshot would write an empty file. The owner's own session
+  // reads it while the org is closing, like the HR owner_admin tables (kernel.org.export.people).
+  it('exports the glossary through the owner own session while the org closes, not through the snapshot, and only this org terms', async () => {
+    expect(EXPORT_TABLE_NAMES as readonly string[]).not.toContain('meetings.glossary_term');
+    expect(OWNER_RUN_EXPORT_TABLE_NAMES as readonly string[]).toContain('meetings.glossary_term');
+    const closing = await createOrg(runtime, asUser('ownerC'), 'Công ty Đóng cửa');
+    const mfa = { type: 'user' as const, userId: users.ownerC as string, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
+    const first = await add('ownerC', 'Crove Cloud', closing.orgId);
+    const second = await add('ownerC', 'Thông tư 99', closing.orgId);
+    await wipe(otherOrgId);
+    const theirs = await add('ownerB', 'Của nhà khác', otherOrgId);
+    const read = async (org: string, actor: Parameters<Runtime['stream']>[2]['actor']) => {
+      const lines: string[] = [];
+      await runtime.stream('kernel.org.export.people', { table: 'meetings.glossary_term' }, { actor, orgId: org }, async (raw) => {
+        lines.push(...(raw as { lines: string[] }).lines);
+      });
+      return lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    };
+    // The download is part of closing the org: an active org reads nothing.
+    expect(await refuses(read(closing.orgId, mfa))).toBe('ORG_NOT_OFFBOARDING');
+    await runtime.execute('kernel.org.offboard', { confirmSlug: closing.slug }, { actor: mfa, orgId: closing.orgId });
+    const rows = await read(closing.orgId, mfa);
+    expect(rows.map((r) => r.id).sort()).toEqual([first.termId, second.termId].sort());
+    expect(rows.map((r) => r.term).sort()).toEqual(['Crove Cloud', 'Thông tư 99']);
+    expect(rows.every((r) => r.org_id === closing.orgId)).toBe(true);
+    expect(JSON.stringify(rows)).not.toContain('Của nhà khác');
+    // The other org's terms are untouched by it.
+    expect(theirs.termId).toBeTruthy();
+    expect((await list('ownerB', otherOrgId)).map((t) => t.id)).toEqual([theirs.termId]);
+    await wipe(otherOrgId);
   });
 });

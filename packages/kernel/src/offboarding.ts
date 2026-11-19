@@ -257,8 +257,6 @@ export const EXPORT_TABLES = {
   'meetings.chat_channel': { from: 'crove_meetings.chat_channel', omit: [] },
   // Meetings (#3578): the minutes templates the org wrote, its own layout text (a name and sections; no personal data), archived ones included.
   'meetings.minutes_template': { from: 'crove_meetings.minutes_template', omit: [] },
-  // Meetings (#4043): the glossary the org keeps for Vy's spelling, plain text an owner or admin wrote (no personal data by its rules).
-  'meetings.glossary_term': { from: 'crove_meetings.glossary_term', omit: [] },
   // Each member's Vy (ADR-0049, #2822): per member how many private results and memory entries it holds (crove_kernel.member_vy_private_counts(), a definer that answers counts only, for the
   // worker's system context). Never a body: the results and the memory are sealed to their member, and a person who leaves is purged, so an export carries only that they existed.
   'kernel.member_vy_private_count': { from: 'crove_kernel.member_vy_private_counts()', omit: [] },
@@ -472,6 +470,9 @@ export const OWNER_RUN_EXPORT_TABLES = {
   // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
   'hr.job_opening': { from: 'crove_hr.job_opening', omit: [] },
   'hr.candidate': { from: 'crove_hr.candidate', omit: [] },
+  // The glossary the org keeps for Vy's spelling (#4043): plain text an owner or admin wrote (no personal data by its rules). Its owner_admin policy shows the system actor nothing, so the snapshot would
+  // export an empty table: the owner's own session reads it here.
+  'meetings.glossary_term': { from: 'crove_meetings.glossary_term', omit: [] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 export type OwnerRunExportTable = keyof typeof OWNER_RUN_EXPORT_TABLES;
 export const OWNER_RUN_EXPORT_TABLE_NAMES = Object.keys(OWNER_RUN_EXPORT_TABLES) as [OwnerRunExportTable, ...OwnerRunExportTable[]];
