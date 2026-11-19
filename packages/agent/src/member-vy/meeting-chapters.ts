@@ -53,7 +53,7 @@ export interface MeetingChaptersResult {
 // invisible fillers, zero-width and directional marks, line and paragraph separators, bidi isolates, the Braille blank, the byte order mark, interlinear annotation and tag characters.
 // The combining grapheme joiner is outside the class: a combining mark inside one is a lint warning (no-misleading-character-class).
 // oxlint-disable-next-line no-control-regex
-const STRIP = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\u2800\u3164\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]|\u034f/gu;
+const STRIP = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180b-\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\u2800\u3164\uffa0\ufeff\ufff9-\ufffb\u{1d173}-\u{1d17a}\u{e0000}-\u{e007f}]|\u034f/gu;
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
 // oxlint-disable-next-line no-control-regex
 const NUL = /\u0000/g;
