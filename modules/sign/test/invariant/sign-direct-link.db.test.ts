@@ -21,7 +21,7 @@ import {
   kernelQueries,
   upsertIdentity,
 } from '@crove/kernel';
-import { Runtime, contentGeneration, fileKey, sha256Hex } from '@crove/kernel-runtime';
+import { Runtime, contentGeneration, fileKey, mintContextToken, sha256Hex } from '@crove/kernel-runtime';
 import {
   generateCertificateCode,
   generateRawSigningToken,
@@ -366,6 +366,79 @@ suite('eSign Slice 2a A1 direct link & #3565 PostgreSQL security invariants (#35
     // Recently revoked link (< 30 days) and active link remain intact.
     expect(remaining.some((r) => r.id === linkId)).toBe(true);
     expect(remaining.some((r) => r.revoked_at === null)).toBe(true);
+  });
+
+  it('rejects raw SQL template_guard bypasses with passed inspect_status and NULL page_count or uninspected PDF (#3566)', async () => {
+    const setup = await createActiveDirectTemplate({ title: 'Guard Invariant Inspected Template' });
+    const { rows: tplSourceRows } = await adminPool!.query<{
+      source_file_id: string;
+      source_storage_key: string;
+      source_generation: string;
+      source_sha256: string;
+    }>(
+      `SELECT source_file_id, source_storage_key, source_generation, source_sha256
+       FROM crove_sign.template
+       WHERE org_id = $1 AND id = $2`,
+      [orgA, setup.templateId],
+    );
+    const inspectedSource = tplSourceRows[0]!;
+    const uninspected = await ingestPdf(userA, orgA, `uninspected-guard-${randomUUID()}`);
+
+    const expectTenantSqlRejects = async (sqlText: string, params: unknown[], pattern: RegExp) => {
+      const client = await appPool!.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [
+          orgA,
+          mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', {
+            userId: userA,
+            orgId: orgA,
+            sessionId: null,
+            aal: 'aal1',
+            mfaAt: null,
+          }),
+        ]);
+        await expect(client.query(sqlText, params)).rejects.toThrow(pattern);
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+      }
+    };
+
+    await expectTenantSqlRejects(
+      `INSERT INTO crove_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, status, created_by)
+       VALUES ($1, 'Forged Uninspected Draft', $2, $3, $4, $5, 'passed', 'draft', $6)`,
+      [
+        orgA,
+        uninspected.fileId,
+        fileKey(orgA, uninspected.sha256),
+        contentGeneration(uninspected.sha256),
+        uninspected.sha256,
+        userA,
+      ],
+      /SIGN_TEMPLATE_SYSTEM_ONLY/,
+    );
+
+    await expectTenantSqlRejects(
+      `INSERT INTO crove_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, status, created_by)
+       VALUES ($1, 'Forged Inspected Null PageCount', $2, $3, $4, $5, 'passed', 'active', $6)`,
+      [
+        orgA,
+        inspectedSource.source_file_id,
+        inspectedSource.source_storage_key,
+        inspectedSource.source_generation,
+        inspectedSource.source_sha256,
+        userA,
+      ],
+      /SIGN_TEMPLATE_SYSTEM_ONLY/,
+    );
+
+    await expect(
+      adminPool!.query(
+        `UPDATE crove_sign.template SET page_count = NULL WHERE org_id = $1 AND id = $2`,
+        [orgA, setup.templateId],
+      ),
+    ).rejects.toThrow(/SIGN_TEMPLATE_SYSTEM_ONLY/);
   });
 
   it('returns identical opaque NULL / not_found across unknown, disabled, rotated, expired, multi-role, and MODULE_OFF states', async () => {
