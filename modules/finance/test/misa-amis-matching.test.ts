@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The matching of a connection's vouchers against the firm's MISA catalogue (#4112, S3a of #4103): a party only by its tax code, an item only by its exact code, active entries only, one entry matched, none
-// unknown, several ambiguous, and nothing in the result that is not the matched entry's code and id.
+// unknown, several ambiguous, and nothing in the result that is not the matched entry's code and id. Plus (#4124, S3b) how young a check must be for a confirmation and when a stored match no longer holds.
 import { describe, expect, it } from 'vitest';
 import { sameBatch } from '../src/misa-amis-match.ts';
-import { catalogueItems, catalogueParties, matchItems, matchParties, normalizeTaxCode } from '../src/misa-amis-matching.ts';
+import { catalogueItems, catalogueParties, checkIsFresh, matchItems, matchParties, MISA_AMIS_CHECK_MAX_AGE_MS, normalizeTaxCode, relied, staleMatches } from '../src/misa-amis-matching.ts';
 
 const ID1 = '0194a1c2-8f3e-7b10-9d4a-1e2f3a4b5c6d';
 const ID2 = '0194A1C2-8F3E-7B10-9D4A-1E2F3A4B5C6E';
@@ -103,5 +103,47 @@ describe('sameBatch', () => {
     expect(sameBatch(stored, { kind: 'purchase_services', from: '2026-09-01', to: '2026-10-31', serviceItemCode: 'DV_CHUNG' })).toBe(false);
     expect(sameBatch(stored, { kind: 'sales', from: '2026-10-01', to: '2026-10-31', salesItemCode: 'BH' })).toBe(false);
     expect(sameBatch({ junk: 1 }, { kind: 'sales' })).toBe(false);
+  });
+});
+
+describe('the age of a check (#4124)', () => {
+  const now = new Date('2026-11-19T12:00:00.000Z');
+  const ago = (ms: number) => new Date(now.getTime() - ms).toISOString();
+  it('takes a check of the last 15 minutes, to the millisecond, and nothing older, in the future or missing', () => {
+    expect(MISA_AMIS_CHECK_MAX_AGE_MS).toBe(15 * 60 * 1000);
+    expect(checkIsFresh(ago(0), now)).toBe(true);
+    expect(checkIsFresh(ago(MISA_AMIS_CHECK_MAX_AGE_MS), now)).toBe(true);
+    expect(checkIsFresh(ago(MISA_AMIS_CHECK_MAX_AGE_MS + 1), now)).toBe(false);
+    expect(checkIsFresh(ago(-1000), now)).toBe(false);
+    expect(checkIsFresh(null, now)).toBe(false);
+    expect(checkIsFresh('not a time', now)).toBe(false);
+  });
+});
+
+describe('the matches a send relies on (#4124)', () => {
+  const stored = { partyCodes: new Map([['0101234564', 'KH001']]), itemCodes: new Set(['DV_CHUNG']) };
+  const wanted = { taxCodes: ['0101234564', '0309999990'], itemCodes: ['DV_CHUNG', 'HANG_MOI'] };
+  const party = (state: 'matched' | 'unknown' | 'ambiguous', code: string | null) => ({ kind: 'party' as const, ref: '0101234564', state, code, entryId: null });
+  const item = (state: 'matched' | 'unknown' | 'ambiguous') => ({ kind: 'item' as const, ref: 'DV_CHUNG', state, code: state === 'matched' ? 'DV_CHUNG' : null, entryId: null });
+
+  it('relies only on the references of the batch that a check matched', () => {
+    expect(relied(stored, wanted)).toEqual({ taxCodes: ['0101234564'], itemCodes: ['DV_CHUNG'] });
+    expect(relied({ partyCodes: null, itemCodes: null }, wanted)).toEqual({ taxCodes: [], itemCodes: [] });
+    expect(relied(stored, { taxCodes: [], itemCodes: [] })).toEqual({ taxCodes: [], itemCodes: [] });
+  });
+
+  it('holds while the catalogue answers the same, and stops holding when an entry is gone, inactive, ambiguous or has another code', () => {
+    expect(staleMatches(stored, [party('matched', 'KH001'), item('matched')])).toBe(false);
+    expect(staleMatches(stored, [party('unknown', null), item('matched')])).toBe(true);
+    expect(staleMatches(stored, [party('ambiguous', null), item('matched')])).toBe(true);
+    expect(staleMatches(stored, [party('matched', 'KH999'), item('matched')])).toBe(true);
+    expect(staleMatches(stored, [party('matched', 'KH001'), item('unknown')])).toBe(true);
+    expect(staleMatches(stored, [party('matched', 'KH001'), item('ambiguous')])).toBe(true);
+  });
+
+  it('ignores what the read did not ask for and what was never matched', () => {
+    expect(staleMatches(stored, [])).toBe(false);
+    expect(staleMatches({ partyCodes: null, itemCodes: null }, [party('unknown', null)])).toBe(false);
+    expect(staleMatches(stored, [{ kind: 'party', ref: '0309999990', state: 'unknown', code: null, entryId: null }])).toBe(false);
   });
 });

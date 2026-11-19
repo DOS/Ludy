@@ -7729,7 +7729,13 @@ export const vi = {
     settleAsk: 'Xác nhận: chứng từ {no} {outcome}?',
     settleYes: 'Xác nhận',
     outcome: { in_amis: 'có trong MISA', not_in_amis: 'không có trong MISA' },
+    checkFirst: 'Trước khi gửi, hãy bấm kiểm tra với danh mục MISA; lần kiểm tra phải mới trong 15 phút gần đây.',
     refusedNote: 'Lý do của MISA:',
+    reasons: {
+      MATCH_STALE: 'Danh mục MISA đã đổi so với lần kiểm tra; chưa gửi gì. Hãy kiểm tra lại với danh mục rồi gửi lại.',
+      MATCH_UNREAD: 'Không đọc được danh mục MISA để kiểm tra lại trước khi gửi (danh mục quá lớn hoặc MISA trả lời không đọc được); chưa gửi gì. Hãy thử lại sau hoặc liên hệ hỗ trợ.',
+      STALE: 'Chứng từ đã đổi so với lúc bạn xác nhận; chưa gửi gì. Hãy xem trước lại rồi gửi lại.',
+    },
   },
   misaCheck: {
     title: 'Kiểm tra file MISA trước khi tải',
@@ -13717,6 +13723,7 @@ export const vi = {
       MISA_AMIS_NOT_TESTED: 'Hãy kiểm tra kết nối MISA AMIS thành công trước khi gửi chứng từ.',
       MISA_AMIS_ENTITY_MISMATCH: 'Kết nối MISA AMIS này thuộc pháp nhân khác.',
       MISA_AMIS_MATCH_ENTITY: 'Kết nối MISA AMIS này thuộc pháp nhân khác với chứng từ đang xem.',
+      MISA_AMIS_CHECK_REQUIRED: 'Hãy kiểm tra chứng từ với danh mục MISA (trong 15 phút gần đây) rồi mới gửi.',
       MISA_AMIS_PUSH_BLOCKED: 'Có chứng từ chưa đủ điều kiện gửi sang MISA AMIS; hãy xem lại bản xem trước.',
       MISA_AMIS_PUSH_EMPTY: 'Không có chứng từ nào để gửi sang MISA AMIS.',
       MISA_AMIS_PUSH_DISABLED: 'Việc gửi chứng từ sang MISA chưa được bật trên hệ thống này.',

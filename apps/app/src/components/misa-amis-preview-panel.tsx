@@ -29,7 +29,7 @@ function kindsOnList(result: MisaAmisPreview): Set<string> {
 
 // `push` is given where the connection card can offer to send what the preview shows (an owner or admin, the push on, the connection tested): the preview itself stays a read.
 // `checkConnectionId` is given only to an owner or admin (the route refuses anyone else): it shows the button that asks for the check.
-export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }: { legalEntityId: string; push?: { connectionId: string; offer: PushOffer }; checkConnectionId?: string }) {
+export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }: { legalEntityId: string; push?: { connectionId: string; offer: PushOffer; checkRequired?: boolean }; checkConnectionId?: string }) {
   const t = useTranslations('misaAmisPreview');
   const lang = useLocale() === 'en' ? 'en' : 'vi';
   const [kind, setKind] = useState<MisaAmisKind>(MISA_AMIS_KINDS[0]);
@@ -186,7 +186,7 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
       )}
       {result && <MisaAmisPreviewResult result={result} notes={notes.data ?? null} />}
       {result && checkConnectionId && <MisaAmisCheckButton state={result.matchCheck.state} pending={check.isPending} waiting={waiting} slow={slow && result.matchCheck.state === 'requested'} error={check.error} onAsk={askCheck} />}
-      {result && push && <MisaAmisPushConfirm key={`${runs}:${result.digest}`} result={result} ask={ask} connectionId={push.connectionId} offer={push.offer} />}
+      {result && push && <MisaAmisPushConfirm key={`${runs}:${result.digest}`} result={result} ask={ask} connectionId={push.connectionId} offer={push.offer} checkRequired={push.checkRequired ?? true} />}
     </details>
   );
 }

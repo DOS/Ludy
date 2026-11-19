@@ -4,25 +4,13 @@
 // looking at, reads the catalogue pages that hold them through the client, matches them in memory (modules/finance misa-amis-matching.ts) and records only what it found: for each party and item whether one active
 // entry matched (and its code and id), none did, or several did. The catalogue pages live in this function's variables and nowhere else: no name, address or tax code of a catalogue entry is recorded, put in a
 // job's output, an audit row or an error, or logged. The log carries the connection's first eight characters, the state and the adapter's error kind.
-import { AMIS_DICTIONARIES, AmisError, type AmisClient, type AmisConnection } from '@crove/misa-amis';
+import { AmisError, type AmisClient, type AmisConnection } from '@crove/misa-amis';
 import { MISA_AMIS_PREVIEW_LIMIT, type MisaAmisMatchResult } from '@crove/kernel-contract';
-import {
-  amisContextOf,
-  catalogueItems,
-  catalogueParties,
-  loadAmisEntries,
-  matchItems,
-  matchParties,
-  MISA_AMIS_CHANNEL_PROVIDER,
-  type MisaAmisMatchTarget,
-} from '@crove/mod-finance';
+import { amisContextOf, loadAmisEntries, MISA_AMIS_CHANNEL_PROVIDER, type MisaAmisMatchTarget } from '@crove/mod-finance';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { matchCatalogue, TooLarge } from './misa-amis-catalogue.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.misa_amis' };
-// A page of the catalogue, and how many pages one check reads: 20 000 entries of a kind. A catalogue that fills all of them (20 000 or more) is not read in part (a party past the cut would read as unknown): the
-// check fails with `catalogue_too_large` and nothing is recorded as found.
-const PAGE = 1000;
-const MAX_PAGES = 20;
 
 export interface MisaAmisMatchJob {
   orgId: string;
@@ -48,19 +36,6 @@ interface SealedChannelCredential {
   externalAccountId: string;
   keyId: string;
   envelope: string;
-}
-
-class TooLarge extends Error {}
-
-type Rows = Array<Readonly<Record<string, unknown>>>;
-async function readCatalogue(client: AmisClient, connection: AmisConnection, dataType: typeof AMIS_DICTIONARIES.accountObject | typeof AMIS_DICTIONARIES.inventoryItem): Promise<Rows> {
-  const all: Rows = [];
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const rows = await client.dictionary(connection, { dataType, skip: page * PAGE, take: PAGE, lastSyncTime: null, branchId: null });
-    all.push(...rows);
-    if (rows.length < PAGE) return all;
-  }
-  throw new TooLarge();
 }
 
 export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMatchJob): Promise<MisaAmisMatchOutcome> {
@@ -93,10 +68,9 @@ export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMat
   const query = <T>(name: string, input: unknown): Promise<T> => deps.runtime.query<T>(name, input, options);
   const { wanted } = await loadAmisEntries(query, target.ask, amisContextOf(target.ask), MISA_AMIS_PREVIEW_LIMIT + 1);
 
-  const results: MisaAmisMatchResult[] = [];
+  let results: MisaAmisMatchResult[];
   try {
-    if (wanted.taxCodes.length > 0) results.push(...matchParties(wanted.taxCodes, catalogueParties(await readCatalogue(deps.client, connection, AMIS_DICTIONARIES.accountObject))));
-    if (wanted.itemCodes.length > 0) results.push(...matchItems(wanted.itemCodes, catalogueItems(await readCatalogue(deps.client, connection, AMIS_DICTIONARIES.inventoryItem))));
+    results = await matchCatalogue(deps.client, connection, wanted);
   } catch (error) {
     if (error instanceof TooLarge) return fail('catalogue_too_large', 'too_large');
     // Only the adapter's own kind is kept: its message and whatever else a failure carries are neither stored nor logged.

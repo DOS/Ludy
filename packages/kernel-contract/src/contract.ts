@@ -2416,7 +2416,7 @@ export const contract = {
     misaAmisBlockerNotes: oc.input(zMisaAmisBlockerNotesAsk).output(zMisaAmisBlockerNotes),
     // A person confirms a previewed batch for MISA AMIS (#3902, S3b): the requests are queued and the worker sends them. Owner or admin, never an agent. MISA_AMIS_PUSH_DISABLED (404) while the deployment has not
     // switched the push on, MISA_AMIS_NOT_TESTED, CHANNEL_NOT_ACTIVE, MISA_AMIS_CONNECTION_NOT_FOUND (404), MISA_AMIS_ENTITY_MISMATCH, MISA_AMIS_PUSH_TOO_MANY, MISA_AMIS_PUSH_EMPTY (422), MISA_AMIS_PUSH_BLOCKED and
-    // MISA_AMIS_PUSH_STALE (409: the data changed since the preview; nothing is queued), FORBIDDEN (403).
+    // MISA_AMIS_PUSH_STALE (409: the data changed since the preview; nothing is queued), MISA_AMIS_CHECK_REQUIRED (409: no check of this batch against the catalogue in the last 15 minutes, #4124), FORBIDDEN (403).
     misaAmisPush: oc.input(zMisaAmisPushConfirm).output(zMisaAmisPushConfirmed),
   },
   // Opening balances from Excel (#320), owners and admins. preview checks a trial balance read from the template and

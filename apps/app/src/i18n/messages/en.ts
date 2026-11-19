@@ -7733,7 +7733,13 @@ export const en = {
     settleAsk: 'Confirm: voucher {no} {outcome}?',
     settleYes: 'Confirm',
     outcome: { in_amis: 'is in MISA', not_in_amis: 'is not in MISA' },
+    checkFirst: 'Before sending, check against the MISA catalogue; the check must be from the last 15 minutes.',
     refusedNote: 'MISA\'s reason:',
+    reasons: {
+      MATCH_STALE: 'The MISA catalogue changed since the check; nothing was sent. Check against the catalogue again, then send again.',
+      MATCH_UNREAD: 'The MISA catalogue could not be read to check it again before sending (it is too large, or MISA answered something unreadable); nothing was sent. Try again later or contact support.',
+      STALE: 'The voucher changed since you confirmed; nothing was sent. Preview again, then send again.',
+    },
   },
   misaCheck: {
     title: 'Check a MISA file before you download it',
@@ -13704,6 +13710,7 @@ export const en = {
       MISA_AMIS_NOT_TESTED: 'Test the MISA AMIS connection successfully before sending vouchers.',
       MISA_AMIS_ENTITY_MISMATCH: 'This MISA AMIS connection belongs to another legal entity.',
       MISA_AMIS_MATCH_ENTITY: 'This MISA AMIS connection belongs to a different legal entity than the vouchers you are viewing.',
+      MISA_AMIS_CHECK_REQUIRED: 'Check the vouchers against the MISA catalogue (within the last 15 minutes), then send.',
       MISA_AMIS_PUSH_BLOCKED: 'Some vouchers are not ready to send to MISA AMIS; check the preview again.',
       MISA_AMIS_PUSH_EMPTY: 'There are no vouchers to send to MISA AMIS.',
       MISA_AMIS_PUSH_DISABLED: 'Sending vouchers to MISA is not turned on in this system.',
