@@ -15,7 +15,7 @@ import type { Db } from '@crove/db';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ, kernelQueries } from '@crove/kernel';
 import type { TodayItem } from '@crove/kernel-contract';
-import { WAKE_ITEMS_MAX, WAKE_RULES, wakeEvent, type WakeItem } from './mcp-wake-body.ts';
+import { LINE_WAKE_EVENTS, WAKE_ITEMS_MAX, WAKE_RULES, wakeEvent, type LineWakeRegistry, type WakeItem } from './mcp-wake-body.ts';
 import type { WakeJob } from './mcp-wake.ts';
 
 export const MCP_WAKE_SWEEP_CRON = '* * * * *';
@@ -40,12 +40,24 @@ export interface SignalAnswer {
 }
 export type SignalEvaluator = (grant: WakeGrant) => Promise<SignalAnswer>;
 
+// A line's source of wake events (Engage's wake rules, #3862; ADR-0051 decision 13): the `data` of each event of ONE registered line type for one grant, built from ids, enum words, dates and amounts of the line's
+// own rows, read as the grant itself (an MCP actor in its sealed read-only context, so the database's own policies decide which items it may read: slice b). The sweep stores an event only if its type is registered, the body
+// fits the registered fields exactly and the grant holds the type's scope (the database refuses the rest); up to 20 events of a source go out in one pass.
+export interface LineWakeSource {
+  type: string;
+  events: (grant: WakeGrant) => Promise<Array<Record<string, string>>>;
+}
+
 export interface WakeSweepDeps {
   runtime: Runtime;
   workerDb: Db;
   // Hands one delivery to the kernel-mcp-wake queue (a singleton job per delivery).
   send: (job: WakeJob) => Promise<unknown>;
   evaluate?: SignalEvaluator;
+  // The lines' sources of events; none until a line ships one.
+  lines?: readonly LineWakeSource[];
+  // The registry the sources' types are checked against and bodies built with (the lines' own, by default; a test gives its own).
+  lineRegistry?: LineWakeRegistry;
   now?: () => Date;
   newId?: () => string;
 }
@@ -134,9 +146,9 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
 
   // Stores one event for a grant (with the keys it carries, or moving a due schedule on, in the same transaction) and hands it over; a replay of the id, or a schedule
   // another pass already took, stores nothing.
-  const post = async (grant: WakeGrant, type: 'signal.fired' | 'schedule.due', data: unknown, keys?: string[]): Promise<boolean> => {
+  const post = async (grant: WakeGrant, type: string, data: unknown, keys?: string[]): Promise<boolean> => {
     const id = newId();
-    const body = wakeEvent({ id, type, created_at: now().toISOString(), org: grant.orgId, grant: grant.grantId, data });
+    const body = wakeEvent({ id, type, created_at: now().toISOString(), org: grant.orgId, grant: grant.grantId, data }, deps.lineRegistry ?? LINE_WAKE_EVENTS);
     const stored = await deps.runtime.execute<{ stored: boolean }>('kernel.mcp.wake.enqueue', { id, grantId: grant.grantId, type, body, ...(keys ? { keys } : {}) }, { actor: ACTOR, orgId: grant.orgId });
     if (stored.stored) await deps.send({ orgId: grant.orgId, id }).catch((error: unknown) => console.warn(`[mcp-wake-sweep] ${id.slice(0, 8)} not handed over, will be again`, codeOf(error)));
     return stored.stored;
@@ -177,6 +189,15 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
         for (let at = 0; at < news.length; at += WAKE_ITEMS_MAX) {
           const chunk = news.slice(at, at + WAKE_ITEMS_MAX);
           if (await post(grant, 'signal.fired', { items: chunk }, chunk.map((i) => i.key))) done.signals += 1;
+        }
+      }
+      // The lines' own events: a source of a type the registry does not list is never asked, and a grant that does not hold the type's scope is refused by the database (MCP_WAKE_SCOPE) and left alone.
+      for (const source of deps.lines ?? []) {
+        if (!Object.hasOwn(deps.lineRegistry ?? LINE_WAKE_EVENTS, source.type)) continue;
+        try {
+          for (const data of (await source.events(grant)).slice(0, WAKE_ITEMS_MAX)) await post(grant, source.type, data);
+        } catch (error) {
+          if (!(error instanceof DomainError) || error.code !== 'MCP_WAKE_SCOPE') throw error;
         }
       }
     } catch (error) {
