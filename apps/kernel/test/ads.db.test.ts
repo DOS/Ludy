@@ -2977,27 +2977,52 @@ suite('ads on PostgreSQL (#2217)', () => {
               await dropCap(lowered);
             });
 
-            it('never calls the platform for a begin that waited too long (a stalled worker): the change fails as STALE_BEGIN, nothing is sent, and a resume can never land after the launch was wound down', async () => {
+            it('never calls the platform for a begin that waited too long and records nothing for it: the row stays as begin left it, a later begin reads first, and a late worker cannot undo another one', async () => {
               const w = new SandboxAdWriter();
               const rig = rigOf(w);
               const { launch } = await live('Worker bị treo sau khi begin', w);
               const adSet = await objectId(launch.id, 'ad_set');
               expect((await manage(rig, changeId(await pause(owner, launch.id, 'ad_set')))).ended).toBe('applied');
-              const resumeId = await approved(await askResume(launch.id, 'ad_set'));
-              void resumeId;
+              await approved(await askResume(launch.id, 'ad_set'));
               const resume = (await changesOf(launch.id)).find((c) => c.kind === 'resume') as NonNullable<Awaited<ReturnType<typeof lastChange>>>;
-              // Begin is made at time 0; the worker stalls and the next look at the clock, right before the call, is a minute and a second later.
+              // Worker A: begin is made at time 0, then the worker stalls and the next look at the clock, right before the call, is a minute and a second later.
               let reads = 0;
               const stalled = () => (reads++ === 0 ? 0 : BEGIN_TO_CALL_MS + 1000);
-              const ran = await runAdsManage({ runtime: worker, broker: vault, managers: rig.managers, now: stalled }, { orgId, changeId: resume.id });
-              expect(ran).toEqual({ steps: 1, ended: 'STALE_BEGIN' });
+              expect(await runAdsManage({ runtime: worker, broker: vault, managers: rig.managers, now: stalled }, { orgId, changeId: resume.id })).toEqual({ steps: 1, ended: 'stale_begin' });
+              // Nothing was sent, and NOTHING was recorded: the change is still queued (what it holds stays held), its row is the one begin made.
               expect(rig.manager.changes.filter((c) => c.set === 'status' && c.value === 'active')).toEqual([]);
               expect(w.objects.get(adSet)?.status).toBe('paused');
-              expect(await lastChange(launch.id)).toMatchObject({ id: resume.id, state: 'failed', code: 'STALE_BEGIN' });
-              // The launch is stopped and wound down afterwards: the object stays paused, nothing can switch it on.
+              expect(await lastChange(launch.id)).toMatchObject({ id: resume.id, state: 'queued', code: null });
+              expect(await callOf(resume.id)).toMatchObject({ state: 'started', calls: 1 });
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+              // Worker B, when the job is delivered again: the row is old enough to be lost, so it READS the object (still paused), takes the row and sends the resume once.
+              await ageCall(resume.id, 3600);
+              expect(await manage(rig, resume.id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(rig.manager.changes.filter((c) => c.set === 'status' && c.value === 'active')).toHaveLength(1);
+              expect(w.objects.get(adSet)?.status).toBe('active');
+              // Worker A wakes up late: it has nothing to record and nothing to send (its job returned), so the change B settled stays applied.
+              expect(await lastChange(launch.id)).toMatchObject({ id: resume.id, state: 'applied' });
+              expect(await callOf(resume.id)).toMatchObject({ state: 'succeeded' });
+            });
+
+            it('a resume left stale by a stalled worker never lands after the launch was stopped and wound down: the later begin reads the object, finds it paused and fails the change as stopped', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Worker treo rồi dừng', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              expect((await manage(rig, changeId(await pause(owner, launch.id, 'ad_set')))).ended).toBe('applied');
+              await approved(await askResume(launch.id, 'ad_set'));
+              const resume = (await changesOf(launch.id)).find((c) => c.kind === 'resume') as NonNullable<Awaited<ReturnType<typeof lastChange>>>;
+              let reads = 0;
+              const stalled = () => (reads++ === 0 ? 0 : BEGIN_TO_CALL_MS + 1000);
+              expect((await runAdsManage({ runtime: worker, broker: vault, managers: rig.managers, now: stalled }, { orgId, changeId: resume.id })).ended).toBe('stale_begin');
               expect((await stopLaunchAs(owner, launch.id)).status).toBe(200);
+              await ageCall(resume.id, 3600);
               await runAdsPause({ runtime: worker, broker: vault, pausers: adPausers({ sandbox: w }) }, { orgId, launchId: launch.id });
+              expect(await manage(rig, resume.id)).toEqual({ steps: 1, ended: 'missing' });
+              expect(await lastChange(launch.id)).toMatchObject({ id: resume.id, state: 'failed', code: 'stopped' });
               expect(w.objects.get(adSet)?.status).toBe('paused');
+              expect(rig.manager.changes.filter((c) => c.set === 'status' && c.value === 'active')).toEqual([]);
             });
 
             it('makes the pause of a stopped launch wait for a change of its objects that may still be in flight (a resume could switch an object on after it was paused)', async () => {

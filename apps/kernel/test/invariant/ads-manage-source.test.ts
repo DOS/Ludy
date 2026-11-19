@@ -102,9 +102,13 @@ describe('what may change a running ad at the platform (#3835, W4)', () => {
     expect((Number(String(bound?.[1]).replaceAll('_', '')) + Number(String(callTimeout?.[1]).replaceAll('_', ''))) / 1000).toBeLessThan(wait);
     expect(pause).toMatch(/ads\.manage:' \|\| c\.id::text \|\| ':apply'/);
     // The check is before the call, after the token is opened, on the call path and after the read on the reconcile path.
-    expect(job).toMatch(/if \(work\.action === 'call' && stale\(\)\) return ended\(await record\('call', \{ kind: 'blocked', code: 'STALE_BEGIN' \}\)/);
-    expect(job.indexOf("stale()) return ended(await record('call'")).toBeLessThan(job.indexOf('await timed(() => make('));
-    expect(job.indexOf('broker.open(')).toBeLessThan(job.indexOf("stale()) return ended(await record('call'"));
+    // A stale begin records NOTHING (a record from a worker that woke late could undo the call another worker made after reconciling), and the clock is monotonic.
+    expect(job).toMatch(/if \(work\.action === 'call' && stale\(\)\) return 'stale_begin';/);
+    expect(job).not.toMatch(/STALE_BEGIN'? \}/);
+    expect(job).toContain('performance.now()');
+    expect(job).not.toContain('Date.now');
+    expect(job.indexOf("stale()) return 'stale_begin'")).toBeLessThan(job.indexOf('await timed(() => make('));
+    expect(job.indexOf('broker.open(')).toBeLessThan(job.indexOf("stale()) return 'stale_begin'"));
     expect(job).toMatch(/if \(stale\(\)\) return 'stale_begin';/);
   });
 

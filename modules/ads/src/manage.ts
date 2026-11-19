@@ -683,7 +683,7 @@ export const adsManageBegin = defineCommand({
     }
     if (action === 'wait') return none(row?.state === 'started' ? 'in_flight' : 'reconcile_wait');
     if (action === 'call') {
-      await ctx.trx.insertInto('crove_kernel.external_call').values({ org_id: ctx.orgId, key: callKey, module: 'ads', target: 'launch', step: manageStep(change.kind), retry_safety: 'idempotent', started_at: ctx.now }).execute();
+      await ctx.trx.insertInto('crove_kernel.external_call').values({ org_id: ctx.orgId, key: callKey, module: 'ads', target: 'launch', step: manageStep(change.kind), retry_safety: 'idempotent', started_at: ctx.now, updated_at: ctx.now }).execute();
     } else if (row) {
       // A reconcile: the row is taken by this run, so a job that begins at the same moment waits.
       await ctx.trx.updateTable('crove_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
