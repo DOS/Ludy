@@ -2,11 +2,13 @@
 // The push of vouchers to MISA AMIS, the worker's half (#3902, S3b of #3854), against a fake AMIS and a scripted runtime: what is sent (the exact body, one kind, at most a batch, the real branch), what is
 // recorded for each way a send ends, that a voucher that changed since the person approved it is never sent, that a lost answer is never sent again, that results are read by polling, and that nothing but
 // ids, codes and states is recorded or logged (not the access code, not the integrator's ClientID, not a party's name). The database side (the table's states, idempotency, the ledger) is the DB tests'.
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AmisError, createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@crove/misa-amis';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { amisContextOf, amisPartRows, loadAmisEntries, type CashVoucher, type MisaAmisPushBegin } from '@crove/mod-finance';
-import { PUSH_PRESS_RECHECK_SECONDS, PUSH_RECHECK_SECONDS, PUSH_UNREACHABLE_ROUNDS, PUSH_WAIT_ROUNDS, pushFollowUp, runMisaAmisPush, type MisaAmisPushOutcome } from '../src/misa-amis-push-job.ts';
+import { amisContextOf, amisPartRows, loadAmisEntries, PUSH_IN_FLIGHT_SECONDS, type CashVoucher, type MisaAmisPushBegin } from '@crove/mod-finance';
+import { PUSH_PRESS_RECHECK_SECONDS, PUSH_RECHECK_SECONDS, PUSH_UNREACHABLE_ROUNDS, PUSH_WAIT_ROUNDS, pushFollowUp, pushGiveUp, runMisaAmisPush, type MisaAmisPushOutcome } from '../src/misa-amis-push-job.ts';
 
 const CLIENT_ID = 'planted-client-id-0123456789';
 const ACCESS_CODE = 'planted-access-code-abcdef';
@@ -476,5 +478,56 @@ describe('the MISA AMIS push job: when it comes back', () => {
     expect(pushFollowUp({ ...job, round: PUSH_UNREACHABLE_ROUNDS }, { state: 'unreachable', waiting: true })).toBeNull();
     expect(pushFollowUp(job, { state: 'credentials', waiting: false })).toBeNull();
     expect(pushFollowUp(job, { state: 'skipped', reason: 'not_found' })).toBeNull();
+  });
+});
+
+describe('the MISA AMIS push job: when a chain gives up it says so, and a row on its way is not flipped (#4041)', () => {
+  const job = { orgId: ORG, connectionId: CONNECTION };
+  const done = (waiting: boolean): MisaAmisPushOutcome => ({ state: 'done', batches: 0, sent: 0, failed: 0, accepted: 0, refused: 0, waiting });
+  const outcomes: Array<[string, MisaAmisPushOutcome]> = [
+    ['waiting', done(true)],
+    ['nothing waits', done(false)],
+    ['unreachable', { state: 'unreachable', waiting: true }],
+    ['credentials', { state: 'credentials', waiting: false }],
+    ['skipped', { state: 'skipped', reason: 'not_active' }],
+  ];
+
+  it('says nothing while the chain goes on, and never for a chain with nothing waiting', () => {
+    for (const [, outcome] of outcomes) {
+      if (pushFollowUp(job, outcome) !== null) expect(pushGiveUp(job, outcome)).toBeNull();
+    }
+    expect(pushGiveUp({ ...job, round: 3 }, done(false))).toBeNull();
+    expect(pushGiveUp(job, done(false))).toBeNull();
+  });
+
+  it('says why the chain stopped for each way it stops with rows that may still wait', () => {
+    expect(pushGiveUp({ ...job, round: PUSH_WAIT_ROUNDS }, done(true))).toContain('rows still wait for MISA');
+    expect(pushGiveUp({ ...job, round: PUSH_UNREACHABLE_ROUNDS }, { state: 'unreachable', waiting: true })).toContain('AMIS unreachable');
+    expect(pushGiveUp(job, { state: 'credentials', waiting: false })).toContain('access code not usable');
+    expect(pushGiveUp(job, { state: 'skipped', reason: 'not_active' })).toContain('connection left alone (not_active)');
+  });
+
+  it('names ids and codes only: a short connection id and a short org id, no access code and no name', () => {
+    const lines = [
+      pushGiveUp({ ...job, round: PUSH_WAIT_ROUNDS }, done(true)),
+      pushGiveUp({ ...job, round: PUSH_UNREACHABLE_ROUNDS }, { state: 'unreachable', waiting: true }),
+      pushGiveUp(job, { state: 'credentials', waiting: false }),
+      pushGiveUp(job, { state: 'skipped', reason: 'not_found' }),
+    ] as string[];
+    for (const line of lines) {
+      expect(line.startsWith(`[misa-amis] push ${CONNECTION.slice(0, 8)} (org ${ORG.slice(0, 8)}): chain stopped at round `)).toBe(true);
+      expect(line).not.toContain(CONNECTION);
+      expect(line).not.toContain(ORG);
+      expect(line).not.toContain(ACCESS_CODE);
+      expect(line).not.toContain(PARTY_NAME);
+    }
+  });
+
+  it('keeps a `sending` row for longer than a call can take: the begin step does not flip a row whose save or token renewal is still inside the transport deadline', () => {
+    const transport = readFileSync(fileURLToPath(new URL('../src/misa-amis-transport.ts', import.meta.url)), 'utf8');
+    const deadlineSeconds = Number(/const TIMEOUT_MS = (\d[\d_]*);/.exec(transport)?.[1]?.replaceAll('_', '')) / 1000;
+    expect(deadlineSeconds).toBeGreaterThan(0);
+    // At worst: a save, a token request and a second save (the one renewal of an expired token), each at the deadline, then the rebuild of the batch and the record, given two minutes.
+    expect(PUSH_IN_FLIGHT_SECONDS).toBeGreaterThanOrEqual(3 * deadlineSeconds + 120);
   });
 });
