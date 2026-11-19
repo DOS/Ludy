@@ -22,6 +22,7 @@ import { translateCommands } from './translate.ts';
 import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
+import { digestCommands, digestQueries } from './digest.ts';
 import { agendaCommands, agendaQueries } from './agenda.ts';
 import { chatCommands, chatQueries } from './chat.ts';
 import { linkCommands, linkQueries } from './links.ts';
@@ -1018,6 +1019,7 @@ export const meetingsCommands = [
   ...translateRunCommands,
   ...askRunCommands,
   ...briefCommands,
+  ...digestCommands,
   ...agendaCommands,
   ...chatCommands,
   ...linkCommands,
@@ -1055,6 +1057,7 @@ export const meetingsQueries = [
   ...translateRunQueries,
   ...askRunQueries,
   ...briefQueries,
+  ...digestQueries,
   ...agendaQueries,
   ...chatQueries,
   ...linkQueries,

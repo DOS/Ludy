@@ -460,6 +460,9 @@ export const KERNEL_ERROR_CODES = [
   'ASK_BUSY',
   'BRIEF_OFF',
   'BRIEF_BUSY',
+  // The weekly digest across meetings (#3949).
+  'DIGEST_OFF',
+  'DIGEST_BUSY',
   'TRANSLATION_NOT_FOUND',
   'TRANSLATION_NOTHING',
   'TRANSLATION_RESULT_INVALID',
