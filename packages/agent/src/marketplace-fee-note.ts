@@ -82,6 +82,10 @@ const COUNT_WORDS_FOLDED = /\b(?:hai|ba|bon|sau|bay|tam|chin|muoi|mau|vai|nhieu)
 const NUMERIC_SYMBOL = /[\p{Nl}\p{No}]/u;
 const PICTOGRAPH = /\p{Extended_Pictographic}/u;
 // Future tense and promises: the note says what is so now and what to do, never what will happen.
+// A promise of timing or certainty, or a claim of something that already happened, in words the shared checks do not know ("guaranteed", "soon", "chắc chắn", "sắp", "hẹn", "mai", "emailed", "already").
+const PROMISE = /\b(?:guarantee[ds]?|certain(?:ly)?|sure(?:ly)?|soon|shortly|should\s+(?:arrive|come|be\s+(?:here|in|sent))|is\s+coming|already|emailed|chac\s+chan|dam\s+bao|sap\s+(?:ve|toi|co|den|gui)|hen|ngay\s+mai|tuan\s+nay|ngay\s+thoi|kip)\b/;
+// Words that say the fees are late: a note on a row that is NOT past the cycle must not use them (the flag shown beside the note is the deterministic one).
+const SAYS_LATE = /\b(?:qua\s+(?:chu\s+ky|han|ky)|tre\b|past|longer\s+than|late\b|overdue|exceed(?:s|ed)?|beyond|more\s+than\s+one)/;
 const FUTURE = /\b(?:will|se|going\s+to|goes\s+through|go\s+through|de\s+(?:san|nen\s+tang)\s+(?:nhan|chap\s+nhan|xu\s+ly|tra))\b/;
 
 type Cue = 'fee' | 'day' | 'cycle';
@@ -116,19 +120,24 @@ function nearestCues(before: string, after: string): Cue[] {
   return cues;
 }
 
-// Each number in a note must be its own row's amount, age or cycle length and stand beside the words of that: the amount beside "fees", the age beside "days", the cycle length beside "cycle" or "days".
+// Each number in a note must be its own row's amount, age or cycle length and stand beside the words of that. The amount: beside "fees" and nothing else. The age: beside "days" and nothing else, and with no cycle
+// word in front of it in its clause, so "cycle of 51 days" cannot pass for the age. The cycle length: beside "days" or a cycle word, with a cycle word somewhere in its clause. A number equal to two of
+// them passes if it suits either.
 function bindingProblem(facts: MarketplaceFeeNoteFacts, row: MarketplaceFeeNoteRow, text: string): boolean {
   const read = fold(text.normalize('NFKC'));
-  const meaning: Record<string, Cue[]> = {};
-  const add = (token: string, cues: Cue[]) => (meaning[token] = [...(meaning[token] ?? []), ...cues]);
-  add(payrollMatchAmountText(row.fees, facts.language), ['fee']);
-  add(String(row.ageDays), ['day']);
-  add(String(facts.cycleDays), ['day', 'cycle']);
+  const has = (cue: Cue, part: string) => CUES.some(([c, re]) => c === cue && new RegExp(re.source).test(part));
+  type Rule = (near: Cue[], before: string, after: string) => boolean;
+  const only = (near: Cue[], ...allowed: Cue[]) => near.length > 0 && near.every((c) => allowed.includes(c));
+  const rules: Record<string, Rule[]> = {};
+  const add = (token: string, rule: Rule) => (rules[token] = [...(rules[token] ?? []), rule]);
+  add(payrollMatchAmountText(row.fees, facts.language), (near) => only(near, 'fee'));
+  add(String(row.ageDays), (near, before) => only(near, 'day') && !has('cycle', before));
+  add(String(facts.cycleDays), (near, before, after) => only(near, 'day', 'cycle') && (has('cycle', before) || has('cycle', after)));
   for (const match of read.matchAll(NUMBER)) {
     const token = match[0].replace(/[.,]+$/, '');
     const { before, after } = clause(read, match.index ?? 0, (match.index ?? 0) + match[0].length);
-    const cues = nearestCues(before, after);
-    if (cues.length === 0 || !cues.every((cue) => (meaning[token] ?? []).includes(cue))) return true;
+    const near = nearestCues(before, after);
+    if (!(rules[token] ?? []).some((rule) => rule(near, before, after))) return true;
   }
   return false;
 }
@@ -155,7 +164,8 @@ export function checkMarketplaceFeeNotes(facts: MarketplaceFeeNoteFacts, output:
     // Only the Latin script (Vietnamese is Latin): a Cyrillic or Greek look-alike inside a word could hide one of the words checked here.
     if (/[^\p{Script=Latin}\p{N}\p{P}\p{Z}\p{S}\p{M}]/u.test(text)) continue;
     const folded = fold(text);
-    if (MARKETPLACE_PLATFORM_NAMES.test(folded) || MARKETPLACE_SAYS_NOTHING.test(folded) || marketplaceLineClaimsDone(text) || FUTURE.test(folded)) continue;
+    if (MARKETPLACE_PLATFORM_NAMES.test(folded) || MARKETPLACE_SAYS_NOTHING.test(folded) || marketplaceLineClaimsDone(text) || FUTURE.test(folded) || PROMISE.test(folded)) continue;
+    if (!row.overdue && SAYS_LATE.test(folded)) continue;
     if (bindingProblem(facts, row, text)) continue;
     stand.set(place, text);
   }

@@ -167,6 +167,6 @@ export const zMarketplaceFeeNotesAsk = z.strictObject({ legalEntityId: zId.optio
 export type MarketplaceFeeNotesAsk = z.infer<typeof zMarketplaceFeeNotesAsk>;
 export const zMarketplaceFeeNotes = z.strictObject({
   ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']),
-  notes: z.array(z.strictObject({ legalEntityId: zId, platform: z.string().max(40), text: z.string().max(480) })).max(50),
+  notes: z.array(z.strictObject({ legalEntityId: zId, platform: z.string().max(40), text: z.string().max(480) })).max(200),
 });
 export type MarketplaceFeeNotes = z.infer<typeof zMarketplaceFeeNotes>;

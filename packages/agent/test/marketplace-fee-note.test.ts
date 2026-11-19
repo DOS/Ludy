@@ -99,6 +99,28 @@ describe('a note that is dropped', () => {
     dropped(EN, 1, 'Nothing is waiting: enter the invoice when the platform sends it.');
   });
 
+  it('puts the cycle length where the age belongs, or the age beside the cycle word', () => {
+    // Row 2 is 12 days old and not past the cycle of 45 days.
+    dropped(VI, 2, 'Phí 350.000 đồng chờ hóa đơn được 45 ngày: hãy nhập hóa đơn phí khi sàn gửi.');
+    dropped(EN, 2, 'The fees of 350,000 dong are 45 days old: enter the fee invoice when the platform sends it.');
+    dropped(EN, 1, 'The fees of 1,200,000 dong are past the settlement cycle of 51 days: ask the platform for its fee invoice.');
+    expect(one(EN, 1, 'The fees of 1,200,000 dong have waited 51 days, past the settlement cycle of 45 days: ask the platform for its fee invoice.')).toMatchObject({ kind: 'notes' });
+  });
+
+  it('says the fees are late when the row is not past the cycle', () => {
+    dropped(VI, 2, 'Phí 350.000 đồng đang chờ hóa đơn, quá chu kỳ đối soát: hãy nhập hóa đơn phí khi sàn gửi.');
+    dropped(EN, 2, 'The fees of 350,000 dong are overdue for an invoice: enter the fee invoice when the platform sends it.');
+    dropped(EN, 2, 'The fees of 350,000 dong have waited longer than the settlement cycle: enter the fee invoice.');
+  });
+
+  it('promises or claims in words the shared checks do not know', () => {
+    dropped(EN, 1, 'The fees of 1,200,000 dong wait for an invoice: the platform is guaranteed to send its fee invoice.');
+    dropped(EN, 1, 'The fees of 1,200,000 dong wait for an invoice: the invoice should arrive shortly.');
+    dropped(EN, 1, 'The fees of 1,200,000 dong wait for an invoice: the platform emailed the invoice already.');
+    dropped(VI, 1, 'Phí 1.200.000 đồng chờ hóa đơn: sàn hẹn gửi hóa đơn trong tuần này.');
+    dropped(VI, 1, 'Phí 1.200.000 đồng chờ hóa đơn: hóa đơn sắp về, chắc chắn kịp.');
+  });
+
   it('gives no notes at all when the model gives none', () => {
     expect(checkMarketplaceFeeNotes(VI, null)).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(checkMarketplaceFeeNotes(VI, { notes: [] })).toEqual({ kind: 'none', code: 'EMPTY' });
