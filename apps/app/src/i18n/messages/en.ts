@@ -14187,6 +14187,11 @@ export const en = {
         prepare_enable: 'Ask to turn on running ads for the org',
         state: 'Read the switches and spend caps of running ads',
       },
+      mcp: {
+        flags: 'Let an AI app read the ad spend flags',
+        spend: 'Let an AI app read the ad accounts and the spend of one',
+        today: 'Let an AI app read what needs a person in Ads today',
+      },
     },
     crm: {
       booking: {
@@ -14307,6 +14312,13 @@ export const en = {
         won_deals: 'Read the won deals, to check them against sales invoices',
       },
       today: 'Read the CRM items that need you today',
+      mcp: {
+        bookings: 'Let an AI app list the bookings',
+        deal: 'Let an AI app read one deal',
+        deals: 'Let an AI app list the deals',
+        quote: 'Let an AI app read one quote with its lines',
+        quotes: 'Let an AI app list the quotes',
+      },
     },
     finance: {
       today: 'Read what needs you in accounting today',
@@ -15250,6 +15262,8 @@ export const en = {
         set_shared: 'Share or unshare a saved view',
       },
       mcp: {
+        conversation: 'Let an AI app read one inbox conversation with its messages',
+        conversations: 'Let an AI app list the inbox conversations',
         about: 'Show an AI app the organization name and its own connection',
         grant: {
           approve: 'Let an AI app read the organization’s data',
@@ -15896,6 +15910,8 @@ export const en = {
         revoke_for_member: 'Revoke the links of a member who lost access',
       },
       mcp: {
+        metrics_summary: 'Let an AI app read how the published posts are doing',
+        metrics_totals: 'Let an AI app read the totals of the published posts',
         draft_create: 'Let an AI app write an Engage post draft for a person to review',
         posts: 'Let an AI app list the Engage posts',
         review_queue: 'Let an AI app read the Engage review queue',

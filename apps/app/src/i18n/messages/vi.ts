@@ -14187,6 +14187,11 @@ export const vi = {
         prepare_enable: 'Đề nghị bật chạy quảng cáo cho tổ chức',
         state: 'Xem công tắc và hạn mức chi tiêu của việc chạy quảng cáo',
       },
+      mcp: {
+        flags: 'Cho ứng dụng AI xem các cảnh báo chi tiêu quảng cáo',
+        spend: 'Cho ứng dụng AI xem các tài khoản quảng cáo và chi tiêu của một tài khoản',
+        today: 'Cho ứng dụng AI xem việc cần người xử lý hôm nay trong Quảng cáo',
+      },
     },
     crm: {
       booking: {
@@ -14307,6 +14312,13 @@ export const vi = {
         won_deals: 'Xem các deal đã thắng, để đối chiếu với hóa đơn bán hàng',
       },
       today: 'Xem việc CRM cần bạn trong hôm nay',
+      mcp: {
+        bookings: 'Cho ứng dụng AI xem danh sách lịch hẹn',
+        deal: 'Cho ứng dụng AI xem một cơ hội bán hàng',
+        deals: 'Cho ứng dụng AI xem danh sách cơ hội bán hàng',
+        quote: 'Cho ứng dụng AI xem một báo giá cùng các dòng của nó',
+        quotes: 'Cho ứng dụng AI xem danh sách báo giá',
+      },
     },
     finance: {
       today: 'Xem việc kế toán cần bạn hôm nay',
@@ -15250,6 +15262,8 @@ export const vi = {
         set_shared: 'Chia sẻ hoặc thôi chia sẻ chế độ xem đã lưu',
       },
       mcp: {
+        conversation: 'Cho ứng dụng AI xem một cuộc trò chuyện trong Hộp thư cùng các tin nhắn',
+        conversations: 'Cho ứng dụng AI xem danh sách cuộc trò chuyện trong Hộp thư',
         about: 'Cho ứng dụng AI xem tên tổ chức và quyền kết nối của nó',
         grant: {
           approve: 'Cho phép một ứng dụng AI đọc dữ liệu tổ chức',
@@ -15896,6 +15910,8 @@ export const vi = {
         revoke_for_member: 'Thu hồi liên kết của thành viên đã mất quyền',
       },
       mcp: {
+        metrics_summary: 'Cho ứng dụng AI xem các bài đã đăng đang đạt kết quả ra sao',
+        metrics_totals: 'Cho ứng dụng AI xem tổng kết quả các bài đã đăng',
         draft_create: 'Cho ứng dụng AI soạn bản nháp bài đăng Engage chờ người duyệt',
         posts: 'Cho ứng dụng AI xem danh sách bài đăng Engage',
         review_queue: 'Cho ứng dụng AI xem hàng chờ duyệt của Engage',
