@@ -29,7 +29,7 @@ describe('marketplace posting map and gate', () => {
     expect(code(() => settlementProposal(input([{ sales: '100', sellerDiscount: '0', refund: '0' }])))).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
   });
   it('refuses a regime with no map, including inherited names', () => {
-    expect(code(() => requireConfirmedMarketplaceMap('tt99'))).toEqual({ code: 'MARKETPLACE_POSTING_REGIME_UNKNOWN', status: 422 });
+    expect(code(() => requireConfirmedMarketplaceMap('tt200'))).toEqual({ code: 'MARKETPLACE_POSTING_REGIME_UNKNOWN', status: 422 });
     expect(code(() => requireConfirmedMarketplaceMap('toString'))).toEqual({ code: 'MARKETPLACE_POSTING_REGIME_UNKNOWN', status: 422 });
   });
   it('passes a map the test confirmed for itself, leaving the shipped one alone', () => {
@@ -144,6 +144,38 @@ describe('the gate is per path (#3711 slice 1)', () => {
     const account = MARKETPLACE_POSTING_MAPS.tt133!.pitOwnerEquity;
     expect(account.code).toMatch(/^4/);
     expect(account.status).toBe('commentary');
+  });
+});
+
+describe('the TT99 map (#3711 slice 4)', () => {
+  const tt99 = MARKETPLACE_POSTING_MAPS.tt99!;
+  // The TT99 map confirmed for the test, leaving the shipped one alone.
+  const confirmedTt99 = (): Record<string, MarketplacePostingMap> => {
+    const c = (r: MarketplacePostingMap['revenue']) => ({ ...r, status: 'confirmed' as const });
+    return { tt99: { ...tt99, status: 'confirmed', receivable: c(tt99.receivable), revenue: c(tt99.revenue), salesReturn: c(tt99.salesReturn), cash: c(tt99.cash), feePayable: c(tt99.feePayable), feeAwaitingInvoice: c(tt99.feeAwaitingInvoice), taxWithheld: c(tt99.taxWithheld), vatPayable: c(tt99.vatPayable), pitPayable: c(tt99.pitPayable), pitOwnerEquity: c(tt99.pitOwnerEquity), feeExpense: c(tt99.feeExpense), accruedExpense: c(tt99.accruedExpense) } };
+  };
+  it('ships as commentary, so no path opens from it until the accountant confirms', () => {
+    expect(tt99.regime).toBe('tt99');
+    expect(tt99.status).toBe('commentary');
+    for (const r of [tt99.receivable, tt99.revenue, tt99.salesReturn, tt99.cash, tt99.feePayable, tt99.feeAwaitingInvoice, tt99.taxWithheld, tt99.vatPayable, tt99.pitPayable, tt99.pitOwnerEquity, tt99.feeExpense, tt99.accruedExpense]) expect(r.status).toBe('commentary');
+    for (const path of ['sales', 'payout', 'fee_accrual', 'household_tax'] as const) expect(code(() => requireConfirmedMarketplaceMap('tt99', undefined, [path])), path).toEqual({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+  });
+  it('books the fees on 641 (sub-account 6417, not the staff cost 6421), the accrual on 335 and a refund on 521', () => {
+    expect([tt99.feePayable.code, tt99.feeExpense.code, tt99.accruedExpense.code, tt99.salesReturn.code]).toEqual(['331', '6417', '335', '521']);
+    // The rows tt133 and tt99 share are the same accounts.
+    const tt133 = MARKETPLACE_POSTING_MAPS.tt133!;
+    for (const key of ['receivable', 'revenue', 'cash', 'feePayable', 'vatPayable', 'pitPayable', 'pitOwnerEquity', 'accruedExpense'] as const) expect(tt99[key].code, key).toBe(tt133[key].code);
+    expect(tt133.feeExpense.code).toBe('6421');
+  });
+  it('posts a TT99 settlement without a refund as 131 against 511', () => {
+    const p = settlementProposal(input([{ sales: '200000', sellerDiscount: '0', refund: '0' }], { regime: 'tt99' }), confirmedTt99());
+    expect(p.lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['131', '200000', '0'], ['511', '0', '200000']]);
+  });
+  it('refuses a TT99 settlement that carries a refund, rather than netting it into 511 (the 521 split is not built)', () => {
+    const refunded = input([{ sales: '200000', sellerDiscount: '0', refund: '30000' }], { regime: 'tt99' });
+    expect(code(() => settlementProposal(refunded, confirmedTt99()))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
+    // TT133 still nets it: a refund reduces 511 there.
+    expect(settlementProposal({ ...refunded, regime: 'tt133' }, confirmed()).lines.map((l) => [l.account, l.debit, l.credit])).toEqual([['131', '170000', '0'], ['511', '0', '170000']]);
   });
 });
 
