@@ -138,11 +138,11 @@ export const meetingsManifest = defineModule({
   },
   permissions: [],
   entities: [
+    // A term of the org's glossary (#4043): the target of its update and remove commands.
+    { type: 'meetings.glossary_term', table: 'glossary_term', legalEntityScoped: false, audit: 'command' },
     { type: 'meetings.meeting', table: 'meeting', legalEntityScoped: false, audit: 'command' },
     // A minutes template the org wrote (#3578): the target of its update and archive commands.
     { type: 'meetings.minutes_template', table: 'minutes_template', legalEntityScoped: false, audit: 'command' },
-    // A term of the org's glossary (#4043): the target of its update and remove commands.
-    { type: 'meetings.glossary_term', table: 'glossary_term', legalEntityScoped: false, audit: 'command' },
   ],
   ...MODULE_SCREENS.meetings,
 });
