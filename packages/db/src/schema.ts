@@ -624,6 +624,20 @@ export type MarketplacePollState = (typeof MARKETPLACE_POLL_STATES)[number];
 export const MISA_AMIS_TEST_STATES = ['works', 'wrong_credentials', 'unreachable'] as const;
 export type MisaAmisTestState = (typeof MISA_AMIS_TEST_STATES)[number];
 export type MisaAmisConnectionTable = Refine<G.FinanceMisaAmisConnectionTable, { last_test_state: MisaAmisTestState | null; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+// The vouchers pushed to MISA AMIS (#3902, S3b of #3854): one row per AMIS voucher part. queued -> sending -> sent -> accepted | refused; ambiguous after a lost answer; failed when ours could not send.
+export const MISA_AMIS_PUSH_STATES = ['queued', 'sending', 'sent', 'accepted', 'refused', 'ambiguous', 'failed'] as const;
+export type MisaAmisPushState = (typeof MISA_AMIS_PUSH_STATES)[number];
+export const MISA_AMIS_PUSH_SOURCES = ['cash_voucher', 'purchase_document', 'sales_document'] as const;
+export type MisaAmisPushSource = (typeof MISA_AMIS_PUSH_SOURCES)[number];
+export type MisaAmisPushTable = Refine<
+  G.FinanceMisaAmisPushTable,
+  {
+    source_type: ColumnType<MisaAmisPushSource, MisaAmisPushSource, G.NotGranted>;
+    state: ColumnType<MisaAmisPushState, MisaAmisPushState | undefined, MisaAmisPushState>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
 export type MarketplaceConnectionTable = Refine<
   G.FinanceMarketplaceConnectionTable,
   { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; legal_entity_id: LegalEntityColumn },
@@ -1474,6 +1488,7 @@ type Refined = Tables<{
   'crove_finance.einvoice_notice': EInvoiceNoticeTable;
   'crove_finance.marketplace_connection': MarketplaceConnectionTable;
   'crove_finance.misa_amis_connection': MisaAmisConnectionTable;
+  'crove_finance.misa_amis_push': MisaAmisPushTable;
   'crove_finance.stock_item': StockItemTable;
   'crove_finance.channel_order': ChannelOrderTable;
   'crove_finance.channel_order_line': ChannelOrderLineTable;

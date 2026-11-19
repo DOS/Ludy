@@ -40,3 +40,23 @@ describe('MISA_AMIS_CLIENT_ID', () => {
     expect(example).toMatch(/^MISA_AMIS_CLIENT_ID=$/m);
   });
 });
+
+describe('MISA_AMIS_PUSH (#3902)', () => {
+  it('is off unless it says on: unset or empty is undefined', () => {
+    expect(loadConfig({ ...BASE }).MISA_AMIS_PUSH).toBeUndefined();
+    expect(loadConfig({ ...BASE, MISA_AMIS_PUSH: '' }).MISA_AMIS_PUSH).toBeUndefined();
+    expect(loadConfig({ ...BASE, MISA_AMIS_PUSH: 'on' }).MISA_AMIS_PUSH).toBe('on');
+    expect(loadConfig({ ...BASE, MISA_AMIS_PUSH: 'off' }).MISA_AMIS_PUSH).toBe('off');
+  });
+
+  it('refuses a value that is neither, naming the setting', () => {
+    expect(() => loadConfig({ ...BASE, MISA_AMIS_PUSH: 'yes' })).toThrow(/MISA_AMIS_PUSH/);
+  });
+
+  it('is passed through by the compose file and documented, empty, in the example env', () => {
+    const compose = readFileSync(fileURLToPath(new URL('../../../docker-compose.yml', import.meta.url)), 'utf8');
+    expect(compose).toContain('MISA_AMIS_PUSH: ${MISA_AMIS_PUSH:-}');
+    const example = readFileSync(fileURLToPath(new URL('../../../.env.example', import.meta.url)), 'utf8');
+    expect(example).toMatch(/^MISA_AMIS_PUSH=$/m);
+  });
+});
