@@ -88,7 +88,7 @@ describe('what may change a running ad at the platform (#3835, W4)', () => {
     const job = code('apps/kernel/src/ads-manage.ts');
     expect(job).not.toMatch(/LaunchWriter|AdPauser|AdRevoker|AdActivator|AdStateReader|\.setStatus\(|\.activate\(|createCampaign|createAdSet|createCreative|createAd\(|revokeToken|findByTag|\.verify\(/);
     // The platform package's names the job imports are the error and the two types of the view.
-    expect(job).toMatch(/import \{ AdPlatformError, type AdManager, type ManagedRead \} from '@crove\/ad-platform';/);
+    expect(job).toMatch(/import \{ AdPlatformError, type AdManager, type ManagedRead \} from '@(?:crove|ludy)\/ad-platform';/);
   });
 
   it('bounds the time between begin and the platform call, inside the wait of the wind-down: a begin that waited too long is never called', () => {

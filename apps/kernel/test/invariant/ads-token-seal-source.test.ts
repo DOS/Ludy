@@ -47,7 +47,7 @@ describe('what may open or name the sealed copy of a closed ads connection token
     expect(file).not.toContain('kernel.channel.credential');
     expect(file).not.toMatch(/runtime\.(execute|query)[^;]*envelope/);
     // The platform adapters it is built on are the revoke view and the typed error, never a writer.
-    const imports = [...read('apps/kernel/src/ads-revoke.ts').matchAll(/import \{([^}]*)\} from '@crove\/ad-platform'/g)].flatMap((m) => (m[1] ?? '').split(',').map((s) => s.replace(/\btype\b/, '').trim()));
+    const imports = [...read('apps/kernel/src/ads-revoke.ts').matchAll(/import \{([^}]*)\} from '@(?:crove|ludy)\/ad-platform'/g)].flatMap((m) => (m[1] ?? '').split(',').map((s) => s.replace(/\btype\b/, '').trim()));
     expect(imports.sort()).toEqual(['AdPlatformError', 'AdRevoker']);
   });
 

@@ -1284,7 +1284,7 @@ const findMatchingSpecifier = (spec: string, re: RegExp): string | null => {
 };
 
 // What a member-Vy feature module must never import: the command runtime and the kernel, the database, and the vendors behind the ports.
-const BANNED_IMPORT = /^(?:node:(?:https?|http2|net|tls|dgram)$|https?$|undici$|axios$|@crove\/(?:kernel|kernel-runtime|kernel-contract|db|mod-[a-z-]+)(?:\/|$)|kysely$|pg$|ai$|@ai-sdk\/|openai$|@anthropic-ai\/|mem0|@mem0\/|zep|@getzep\/|langchain|@langchain\/)/;
+const BANNED_IMPORT = /^(?:node:(?:https?|http2|net|tls|dgram)$|https?$|undici$|axios$|@(?:crove|ludy)\/(?:kernel|kernel-runtime|kernel-contract|db|mod-[a-z-]+)(?:\/|$)|kysely$|pg$|ai$|@ai-sdk\/|openai$|@anthropic-ai\/|mem0|@mem0\/|zep|@getzep\/|langchain|@langchain\/)/;
 
 function collectMemberVyTokenPass(
   text: string,
@@ -2478,6 +2478,10 @@ const isAgentBarrel = (spec: string, fromRelPath?: string): boolean => {
     normalizedSpec === '@crove/agent/index.ts' ||
     normalizedSpec === '@crove/agent/src/index.ts' ||
     normalizedSpec === '@crove/agent/src/index' ||
+    normalizedSpec === '@ludy/agent' ||
+    normalizedSpec === '@ludy/agent/index.ts' ||
+    normalizedSpec === '@ludy/agent/src/index.ts' ||
+    normalizedSpec === '@ludy/agent/src/index' ||
     normalizedSpec === 'packages/agent/src/index.ts' ||
     normalizedSpec === 'packages/agent/src/index'
   ) {
@@ -2624,6 +2628,7 @@ export function workspaceAdapterLeakViolations(
 describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)', () => {
   it('flags what a pure feature must not do (the scanner is not vacuous)', () => {
     expect(memberVyViolations(`import { Runtime } from '@crove/kernel-runtime';`)).toEqual(['imports @crove/kernel-runtime']);
+    expect(memberVyViolations(`import { Runtime } from '@ludy/kernel-runtime';`)).toEqual(['imports @ludy/kernel-runtime']);
     expect(memberVyViolations(`import { generateText } from 'ai';\nimport z from 'zod';`)).toEqual(['imports ai']);
     expect(memberVyViolations(`import mem from 'mem0ai';`)).toEqual(['imports mem0ai']);
     expect(memberVyViolations(`import { 'Runtime' as R } from '@crove/kernel-runtime';`)).toEqual([
@@ -2941,6 +2946,9 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
       'generateNoteSummaryText',
     ]);
     expect(workspaceAdapterLeakViolations(`import * as agent from '@crove/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
+      'namespace import from @crove/agent',
+    ]);
+    expect(workspaceAdapterLeakViolations(`import * as agent from '@ludy/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
       'namespace import from @crove/agent',
     ]);
     expect(workspaceAdapterLeakViolations(`import agent from '@crove/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([

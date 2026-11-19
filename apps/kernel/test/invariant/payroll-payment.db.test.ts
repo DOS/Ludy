@@ -26,7 +26,7 @@ import { contextToken } from './fixtures/context-token.ts';
 
 // Every rule of the shipped set, and every account map of the posting, is `commentary` until the accountant confirms it (#2535), so a real approval or posting cannot pass yet: the tests confirm the
 // rows for themselves (see hr-payroll-run), and one test leaves the maps as shipped to show the posting is refused.
-vi.mock('@crove/l10n-vn', async (importOriginal) => {
+vi.mock('../../../../packages/l10n-vn/src/index.ts', async (importOriginal) => {
   const real = await importOriginal<typeof import('@crove/l10n-vn')>();
   return {
     ...real,
