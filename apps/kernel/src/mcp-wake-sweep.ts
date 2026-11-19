@@ -68,8 +68,9 @@ export interface LineWakeFeed {
   types: readonly string[];
   read: (grant: WakeGrant, plan: McpWakeLinePlan) => Promise<LineWakeItem[]>;
 }
-// The most keys of one type a pass checks (a read gives at most 100 of a rule), and the most events of one type it sends (WAKE_ITEMS_MAX, as a signal's event holds); the rest wait for the next look.
+// The most keys one check takes (the database's own limit), the most checks a pass makes for a grant, and the most events of one type it sends (WAKE_ITEMS_MAX, as a signal's event holds); the rest wait for the next look.
 const FEED_KEYS_MAX = 200;
+const FEED_CHECKS_MAX = 4;
 const FEED_PER_TYPE = WAKE_ITEMS_MAX;
 
 export interface WakeSweepDeps {
@@ -208,23 +209,34 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
     }
     return out;
   };
-  // The items that are new for the grant become events, each with its one key (stored with it). Every candidate of a type is checked for newness (a read gives at most 100 of a rule, so a type's keys fit one check), and at
-  // most FEED_PER_TYPE (WAKE_ITEMS_MAX) of the new ones are sent in a pass, so a type whose newest items were all sent already never hides an older one that is new; the rest go in the next pass.
+  // The items that are new for the grant become events, each with its one key (stored with it). The candidates are taken in the reads' own urgency order (newest wait first, the window closing soonest first), the types
+  // dealt round-robin so one type cannot fill the batch, and checked for newness in ONE `line_check` per grant of up to FEED_KEYS_MAX keys (a command writes an audit row, so one a pass, not one a type). The new ones are
+  // sent in that same order, at most FEED_PER_TYPE (WAKE_ITEMS_MAX) of a type; only when a type still has room and candidates are left is the next batch checked (at most FEED_CHECKS_MAX in a pass, which covers the 100
+  // rows a read gives for each of eight types). So a type whose newest items were all sent already never hides an older one that is new, and the rest go in the next pass.
   const sendFeedItems = async (grant: WakeGrant, items: readonly LineWakeItem[]): Promise<number> => {
     if (items.length === 0) return 0;
-    const byType = new Map<string, Map<string, LineWakeItem>>();
+    const lanes = new Map<string, LineWakeItem[]>();
+    const keys = new Set<string>();
     for (const it of items) {
-      const own = byType.get(it.type) ?? new Map<string, LineWakeItem>();
-      if (own.size < FEED_KEYS_MAX && !own.has(it.key)) own.set(it.key, it);
-      byType.set(it.type, own);
+      if (keys.has(it.key)) continue;
+      keys.add(it.key);
+      const lane = lanes.get(it.type) ?? [];
+      lane.push(it);
+      lanes.set(it.type, lane);
     }
+    const ordered: LineWakeItem[] = [];
+    for (let row = 0; ordered.length < keys.size; row += 1) for (const lane of lanes.values()) if (row < lane.length) ordered.push(lane[row] as LineWakeItem);
     const ctx = { actor: ACTOR, orgId: grant.orgId };
+    const sentOf = new Map<string, number>();
     let sent = 0;
-    for (const own of byType.values()) {
-      const { fresh } = await deps.runtime.execute<{ fresh: string[] }>('kernel.mcp.wake.line_check', { grantId: grant.grantId, keys: [...own.keys()] }, ctx);
-      for (const key of fresh.slice(0, FEED_PER_TYPE)) {
-        const it = own.get(key);
-        if (!it) continue;
+    for (let at = 0, checks = 0; at < ordered.length && checks < FEED_CHECKS_MAX; at += FEED_KEYS_MAX, checks += 1) {
+      if (!ordered.slice(at).some((it) => (sentOf.get(it.type) ?? 0) < FEED_PER_TYPE)) break;
+      const batch = ordered.slice(at, at + FEED_KEYS_MAX);
+      const { fresh } = await deps.runtime.execute<{ fresh: string[] }>('kernel.mcp.wake.line_check', { grantId: grant.grantId, keys: batch.map((it) => it.key) }, ctx);
+      const isNew = new Set(fresh);
+      for (const it of batch) {
+        if (!isNew.has(it.key) || (sentOf.get(it.type) ?? 0) >= FEED_PER_TYPE) continue;
+        sentOf.set(it.type, (sentOf.get(it.type) ?? 0) + 1);
         try {
           if (await post(grant, it.type, it.data, [it.key])) sent += 1;
         } catch (error) {

@@ -40,9 +40,9 @@ describe('Engage wake feed helpers', () => {
 
   it('turns the CRM rows into events: the quote follow-up with its amount and currency, a booking tomorrow', () => {
     const [step, deal, booking] = [randomUUID(), randomUUID(), randomUUID()];
-    const items = crmItems({ quoteSteps: [{ stepId: step, dealId: deal, sinceOn: '2026-11-14', amount: '15000000.00' }], bookingsTomorrow: [{ bookingId: booking, on: '2026-11-20' }] });
+    const items = crmItems({ quoteSteps: [{ stepId: step, dealId: deal, sinceOn: '2026-11-14', dealAmount: '15000000.00', currency: 'VND' }], bookingsTomorrow: [{ bookingId: booking, on: '2026-11-20' }] });
     expect(items.map((i) => i.data)).toEqual([
-      { deal_id: deal, next_step_id: step, since: '2026-11-14', amount: '15000000', currency: 'vnd' },
+      { deal_id: deal, next_step_id: step, since: '2026-11-14', deal_amount: '15000000', currency: 'vnd' },
       { booking_id: booking, on: '2026-11-20' },
     ]);
     for (const i of items) {

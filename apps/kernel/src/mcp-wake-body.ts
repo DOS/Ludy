@@ -57,8 +57,8 @@ export interface LineWakeEventType {
   fields: Readonly<Record<string, LineFieldKind>>;
 }
 export type LineWakeRegistry = Readonly<Record<string, LineWakeEventType>>;
-// The currencies of an ad amount, as words (an `amount` field has no unit of its own, N5 of the #4025 review: a line that needs one registers an enum field for it); any other currency is `other`.
-export const ADS_WAKE_CURRENCIES = ['vnd', 'usd', 'eur', 'gbp', 'jpy', 'krw', 'cny', 'thb', 'sgd', 'myr', 'idr', 'php', 'aud', 'twd', 'other'] as const;
+// The currencies of an amount (an ad's, a deal's), as words (an `amount` field has no unit of its own, N5 of the #4025 review: a line that needs one registers an enum field for it); any other currency is `other`.
+export const WAKE_CURRENCIES = ['vnd', 'usd', 'eur', 'gbp', 'jpy', 'krw', 'cny', 'thb', 'sgd', 'myr', 'idr', 'php', 'aud', 'twd', 'other'] as const;
 const ENGAGE = 'ludy.engage.write' as const;
 const SOCIAL = 'ludy.social.draft' as const;
 const ADS = 'ludy.ads.draft' as const;
@@ -68,12 +68,12 @@ export const LINE_WAKE_EVENTS: LineWakeRegistry = Object.freeze({
   'engage.conversation_new': { scope: ENGAGE, fields: { conversation_id: 'id', kind: ['direct', 'email'], since: 'date' } },
   'engage.conversation_unanswered': { scope: ENGAGE, fields: { conversation_id: 'id', kind: ['direct', 'email'], since: 'date' } },
   'engage.reply_window_closing': { scope: ENGAGE, fields: { conversation_id: 'id', closes_on: 'date' } },
-  'engage.quote_unanswered': { scope: ENGAGE, fields: { deal_id: 'id', next_step_id: 'id', since: 'date', amount: 'amount', currency: ['vnd'] } },
+  'engage.quote_unanswered': { scope: ENGAGE, fields: { deal_id: 'id', next_step_id: 'id', since: 'date', deal_amount: 'amount', currency: WAKE_CURRENCIES } },
   'engage.booking_tomorrow': { scope: ENGAGE, fields: { booking_id: 'id', on: 'date' } },
   'social.post_comment_new': { scope: SOCIAL, fields: { conversation_id: 'id', since: 'date' } },
-  'ads.pace_over': { scope: ADS, fields: { subject_id: 'id', scope: ['org', 'account'], month: 'date', projected: 'amount', cap: 'amount', currency: ADS_WAKE_CURRENCIES } },
-  'ads.daily_cap_over': { scope: ADS, fields: { subject_id: 'id', scope: ['org', 'account'], day: 'date', spend: 'amount', cap: 'amount', currency: ADS_WAKE_CURRENCIES } },
-  'ads.monthly_cap_over': { scope: ADS, fields: { subject_id: 'id', scope: ['org', 'account'], day: 'date', spend: 'amount', cap: 'amount', currency: ADS_WAKE_CURRENCIES } },
+  'ads.pace_over': { scope: ADS, fields: { subject_id: 'id', scope: ['org', 'account'], month: 'date', projected: 'amount', cap: 'amount', currency: WAKE_CURRENCIES } },
+  'ads.daily_cap_over': { scope: ADS, fields: { subject_id: 'id', scope: ['org', 'account'], day: 'date', spend: 'amount', cap: 'amount', currency: WAKE_CURRENCIES } },
+  'ads.monthly_cap_over': { scope: ADS, fields: { subject_id: 'id', scope: ['org', 'account'], day: 'date', spend: 'amount', cap: 'amount', currency: WAKE_CURRENCIES } },
 });
 
 const LINE_TYPE = /^[a-z]+(\.[a-z_]+){1,3}$/;

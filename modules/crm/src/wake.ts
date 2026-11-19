@@ -2,7 +2,7 @@
 // The CRM's side of Engage's wake rules (#3862, E3 of epic #3857; contract in packages/kernel-contract/src/engage-wake.ts): one small R0 read, `crm.wake.facts`, that the wake sweep runs as an AI coworker's grant
 // (in its sealed context, a company grant's consenting owner or admin) and that answers only ids, a day and an amount:
 //   - the open follow-ups of a sent quote nobody answered (`quote_unanswered`, the CRM's next step raised N days after the quote was sent, N set in Settings; the same step Home lists in "Hôm nay cần bạn"):
-//     the step, its deal, the day the quote was sent and the deal's amount in VND, raised in the last week (so connecting a wake-up late does not wake the coworker about old steps);
+//     the step, its deal, the day the quote was sent and the DEAL's amount (not the quote's total) with the deal's own currency, raised in the last week (so connecting a wake-up late does not wake the coworker about old steps);
 //   - the confirmed bookings that start tomorrow (Vietnam's calendar).
 // Never a customer's name, a contact, a deal's title, a quote number, a note, a guest's words or a link: the answer goes through the contract's strict schema before it leaves. It writes nothing and calls no model.
 import { sql } from 'kysely';
@@ -22,14 +22,14 @@ export const crmWakeFacts = defineQuery({
   handler: async (ctx, input): Promise<EngageWakeCrm> => {
     // A company grant's alone: the CRM's whole book is the owner's and admin's, so a member-bound grant (and a member) has no way in.
     if (ctx.actor.type !== 'user' || ctx.actor.mcp?.kind === 'member') throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP của công ty hoặc chủ sở hữu, quản trị viên mới dùng được truy vấn này');
-    const now = input.now ? new Date(input.now) : new Date();
+    const now = new Date();
     const tomorrow = vietnamToday(new Date(now.getTime() + DAY_MS));
     const from = new Date(`${tomorrow}T00:00:00${VIETNAM_OFFSET}`);
     const to = new Date(from.getTime() + DAY_MS);
     const raisedSince = new Date(now.getTime() - 7 * DAY_MS);
 
-    const steps = await sql<{ step_id: string; deal_id: string; since_on: string; amount: string }>`
-      SELECT n.id AS step_id, n.deal_id, n.since_on::text AS since_on, d.amount::text AS amount
+    const steps = await sql<{ step_id: string; deal_id: string; since_on: string; amount: string; currency: string }>`
+      SELECT n.id AS step_id, n.deal_id, n.since_on::text AS since_on, d.amount::text AS amount, d.currency
       FROM crove_crm.deal_next_step n
       JOIN crove_crm.deal d ON d.org_id = n.org_id AND d.id = n.deal_id
       WHERE n.org_id = ${ctx.orgId}::uuid AND n.status = 'open' AND n.reason = 'quote_unanswered'
@@ -47,7 +47,7 @@ export const crmWakeFacts = defineQuery({
 
     // Held to the contract before it leaves: ids, two days and an amount.
     return zEngageWakeCrm.parse({
-      quoteSteps: steps.rows.map((r) => ({ stepId: r.step_id, dealId: r.deal_id, sinceOn: r.since_on, amount: r.amount })),
+      quoteSteps: steps.rows.map((r) => ({ stepId: r.step_id, dealId: r.deal_id, sinceOn: r.since_on, dealAmount: r.amount, currency: r.currency })),
       bookingsTomorrow: bookings.rows.map((r) => ({ bookingId: r.booking_id, on: r.on })),
     });
   },

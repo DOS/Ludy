@@ -143,7 +143,7 @@ suite('who reaches the wake reads of Engage, and what they give back (#3862)', (
     for (const r of conversations.unanswered) expect(Object.keys(r).sort()).toEqual(['id', 'kind', 'since']);
     for (const r of conversations.replyWindow) expect(Object.keys(r).sort()).toEqual(['closesAt', 'id']);
     expect(crm.quoteSteps).toHaveLength(1);
-    for (const r of crm.quoteSteps) expect(Object.keys(r).sort()).toEqual(['amount', 'dealId', 'sinceOn', 'stepId']);
+    for (const r of crm.quoteSteps) expect(Object.keys(r).sort()).toEqual(['currency', 'dealAmount', 'dealId', 'sinceOn', 'stepId']);
     const text = JSON.stringify([conversations, crm]);
     for (const word of [CANARY, 'Canary', 'BG-2026', 'Hợp đồng', 'cần báo giá']) expect(text).not.toContain(word);
   });

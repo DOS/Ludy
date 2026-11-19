@@ -3,6 +3,7 @@
 // a wake-up that carries ids and dates only. Owners and admins change them (the command already refuses anyone else, and Settings shows the card to them only); with no choice the defaults apply. It lives in
 // Settings, not on the inbox screen. The AI coworker here: none acts in this card; it only says when a coworker is called in, and a person still sends, approves and spends.
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { useRef } from 'react';
 import { useTranslations } from 'use-intl';
 import { ENGAGE_WAKE_BOUNDS, type EngageWakeRules } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
@@ -23,10 +24,15 @@ const FIELDS = ['unansweredHours', 'replyWindowHours', 'quoteDays'] as const;
 export function EngageWakeRulesCard() {
   const t = useTranslations('conversations');
   const current = useQuery(orpc.conversations.wakeRules.queryOptions({ input: {} }));
+  // The numbers as the person left them: every change sends all three from here, so a second change made while the first is still being saved starts from it and never undoes it.
+  const latest = useRef<EngageWakeRules | null>(null);
   const set = useMutation({
     mutationFn: (rules: EngageWakeRules) => client.conversations.setWakeRules(rules),
-    // The answer is the new truth: put it in the cache at once, so a second change made before a reload starts from it and never undoes the first.
-    onSuccess: (saved) => queryClient.setQueryData(orpc.conversations.wakeRules.queryKey({ input: {} }), saved),
+    // The newest answer is the truth: it goes into the cache only when no later change is on its way.
+    onSuccess: (saved) => {
+      const mine = latest.current;
+      if (mine === null || FIELDS.every((f) => saved[f] === mine[f])) queryClient.setQueryData(orpc.conversations.wakeRules.queryKey({ input: {} }), saved);
+    },
   });
   const heading = <h2 className="text-sm font-medium text-muted-foreground">{t('wake.title')}</h2>;
   if (current.isError) {
@@ -41,8 +47,12 @@ export function EngageWakeRulesCard() {
     );
   }
   if (!current.data) return null;
-  const { isDefault, ...rules } = current.data;
-  const change = (field: keyof EngageWakeRules, value: number) => set.mutate({ ...rules, [field]: value });
+  const { isDefault, ...saved } = current.data;
+  const rules = latest.current ?? saved;
+  const change = (field: keyof EngageWakeRules, value: number) => {
+    latest.current = { ...rules, [field]: value };
+    set.mutate(latest.current);
+  };
   return (
     <Card className="block space-y-3 p-4" data-testid="engage-wake-rules">
       {heading}
@@ -54,9 +64,11 @@ export function EngageWakeRulesCard() {
         return (
           <label key={field} className="flex flex-col gap-1 text-sm">
             <span>{t(`wake.${field}`)}</span>
+            {/* Never disabled while saving, so the keyboard keeps its place; 44 px high on a phone. */}
             <NativeSelect
+              className="[&_select]:h-11 md:[&_select]:h-8"
               value={String(rules[field])}
-              disabled={set.isPending}
+              aria-busy={set.isPending}
               data-testid={`engage-wake-${field}`}
               onChange={(e) => change(field, Number(e.target.value))}
             >

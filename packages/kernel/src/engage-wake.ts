@@ -17,7 +17,7 @@ import {
   ENGAGE_WAKE_ROWS_MAX,
   zEngageWakeConversations,
   zEngageWakeConversationsInput,
-  zEngageWakeRulesSet,
+  zEngageWakeRules,
   zTodayItems,
   type EngageWakeConversations,
   type EngageWakeRulesView,
@@ -59,7 +59,7 @@ export const conversationWakeRules = defineQuery({
 // Owners and admins set the three N. They only move the lines at which a coworker is called in and Home shows a rule, so the command is R1; the row is the one the retention and the auto draft live in.
 export const conversationWakeRulesSet = defineCommand({
   name: 'kernel.conversation.wake_rules_set',
-  input: zEngageWakeRulesSet,
+  input: zEngageWakeRules,
   risk: 'R1',
   sideEffect: 'internal',
   access: ADMINS,
@@ -106,7 +106,7 @@ export const wakeConversations = defineQuery({
     if (ctx.actor.mcp?.kind === 'member') throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP của công ty mới dùng được truy vấn này');
     if (!grant && ctx.role === 'viewer') return empty;
     const me = grant ? null : ctx.actor.userId;
-    const now = input.now ? new Date(input.now) : new Date();
+    const now = new Date();
     const lookback = new Date(now.getTime() - ENGAGE_WAKE_LOOKBACK_DAYS * DAY_MS);
     const windowEnd = new Date(now.getTime() + input.replyWindowHours * HOUR_MS);
     const { rows } = await sql<ThreadRow>`

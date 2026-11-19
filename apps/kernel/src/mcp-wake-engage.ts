@@ -9,7 +9,7 @@
 //   engage.conversation_new         a direct or email thread nobody has answered, started in the last day              window: the day it started
 //   engage.conversation_unanswered  a customer who waited more than N hours (N set in Settings, default 4)             window: the day the wait started
 //   engage.reply_window_closing     the platform's reply window closes within N hours (default 3)                     window: the day it closes
-//   engage.quote_unanswered         the follow-up of a sent quote, raised after N days (default 5)                    window: the day the quote was sent
+//   engage.quote_unanswered         the follow-up of a sent quote, raised after N days (default 5), with the deal's amount and currency   window: the day the quote was sent
 //   engage.booking_tomorrow         a confirmed booking that starts tomorrow                                          window: the day of the booking
 //   social.post_comment_new         a comment under a published post, in the last day                                 window: the day it arrived
 //   ads.pace_over                   a monthly cap on course to be passed (from ads.mcp.flags, as the Ads screen)       window: the month
@@ -20,7 +20,7 @@ import { vietnamDayOf, zEngageWakeConversations, zEngageWakeCrm, zAdsFlag, type 
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { McpWakeLinePlan } from '@crove/kernel';
 import type { LineWakeFeed, LineWakeItem, WakeGrant } from './mcp-wake-sweep.ts';
-import { ADS_WAKE_CURRENCIES } from './mcp-wake-body.ts';
+import { WAKE_CURRENCIES } from './mcp-wake-body.ts';
 
 const ENGAGE_SCOPE = 'ludy.engage.write';
 const SOCIAL_SCOPE = 'ludy.social.draft';
@@ -41,7 +41,7 @@ export function wakeAmount(value: string): string | null {
 }
 const currencyWord = (code: string): string => {
   const word = code.toLowerCase();
-  return (ADS_WAKE_CURRENCIES as readonly string[]).includes(word) ? word : 'other';
+  return (WAKE_CURRENCIES as readonly string[]).includes(word) ? word : 'other';
 };
 
 // The four conversation rules (the inbox's read) as events.
@@ -58,8 +58,9 @@ export function conversationItems(read: EngageWakeConversations): LineWakeItem[]
 export function crmItems(read: EngageWakeCrm): LineWakeItem[] {
   const out: LineWakeItem[] = [];
   for (const s of read.quoteSteps) {
-    const amount = wakeAmount(s.amount);
-    if (amount !== null) out.push(item('engage.quote_unanswered', s.stepId, s.sinceOn, { deal_id: s.dealId, next_step_id: s.stepId, since: s.sinceOn, amount, currency: 'vnd' }));
+    // The deal's amount in the deal's own currency (the quote's total is the quote's, and Ludy's deals are VND today): the field says so.
+    const dealAmount = wakeAmount(s.dealAmount);
+    if (dealAmount !== null) out.push(item('engage.quote_unanswered', s.stepId, s.sinceOn, { deal_id: s.dealId, next_step_id: s.stepId, since: s.sinceOn, deal_amount: dealAmount, currency: currencyWord(s.currency) }));
   }
   for (const b of read.bookingsTomorrow) out.push(item('engage.booking_tomorrow', b.bookingId, b.on, { booking_id: b.bookingId, on: b.on }));
   return out;

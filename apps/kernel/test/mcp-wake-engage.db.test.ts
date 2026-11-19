@@ -196,8 +196,8 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     const grantId = await o.wakeUp();
     const read = await worker.query<EngageWakeCrm>('crm.wake.facts', {}, { actor: { type: 'user', userId: o.owner, aal: 'aal1', mcp: { grantId, clientId: 'wake-up', clientName: 'Wake-up', scopes: ALL_SCOPES } }, orgId: o.orgId });
     expect(read.quoteSteps).toHaveLength(1);
-    expect(read.quoteSteps[0]).toMatchObject({ dealId: deal, amount: '15000000.00' });
-    expect(Object.keys(read.quoteSteps[0] as object).sort()).toEqual(['amount', 'dealId', 'sinceOn', 'stepId']);
+    expect(read.quoteSteps[0]).toMatchObject({ dealId: deal, dealAmount: '15000000.00', currency: 'VND' });
+    expect(Object.keys(read.quoteSteps[0] as object).sort()).toEqual(['currency', 'dealAmount', 'dealId', 'sinceOn', 'stepId']);
     expect(JSON.stringify(read)).not.toContain(CANARY);
     expect(JSON.stringify(read)).not.toContain('BG-2026');
     // Home shows the same step (with no agent in the picture) and tomorrow's booking.
@@ -277,7 +277,7 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     expect(byType('engage.reply_window_closing').map((r) => r.body.data.conversation_id)).toEqual([closing]);
     expect(byType('social.post_comment_new').map((r) => r.body.data.conversation_id)).toEqual([comment]);
     expect(byType('engage.quote_unanswered')).toHaveLength(1);
-    expect(byType('engage.quote_unanswered')[0]?.body.data).toMatchObject({ deal_id: dealId, amount: '15000000', currency: 'vnd' });
+    expect(byType('engage.quote_unanswered')[0]?.body.data).toMatchObject({ deal_id: dealId, deal_amount: '15000000', currency: 'vnd' });
     expect(byType('engage.booking_tomorrow').map((r) => r.body.data)).toEqual([{ booking_id: booking.id, on: booking.on }]);
     expect(byType('ads.pace_over')[0]?.body.data).toMatchObject({ scope: 'account', projected: '6200.4568', cap: '5000', currency: 'usd' });
     expect(byType('ads.monthly_cap_over')[0]?.body.data).toMatchObject({ scope: 'org', day: '2026-11-18', spend: '2400000', cap: '30000000', currency: 'vnd' });
@@ -288,6 +288,9 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     const all = JSON.stringify(rows1.map((r) => r.body));
     for (const secret of [CANARY, 'Canary', DEAL_TITLE, 'BG-2026', 'khach@canary.test', 'Dòng bí mật', 'cần báo giá']) expect(all).not.toContain(secret);
     for (const r of rows1) expect(() => wakeBody(r.body)).not.toThrow();
+    // One check for the whole grant in the pass, whatever the number of types (a command leaves an audit row each): the readOnly and member-bound grants ask nothing, so one row for this org.
+    const checks = await rows<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.line_check'`, [o.orgId]);
+    expect(checks[0]?.n).toBe('1');
     // A grant that only reads, and a member-bound grant, got none of it.
     expect(await o.deliveries(readOnly)).toHaveLength(0);
     expect(await o.deliveries(memberBound)).toHaveLength(0);

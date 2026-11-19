@@ -20,7 +20,6 @@ export const zEngageWakeRules = z.strictObject({
   quoteDays: z.number().int().min(ENGAGE_WAKE_BOUNDS.quoteDays[0]).max(ENGAGE_WAKE_BOUNDS.quoteDays[1]),
 });
 export type EngageWakeRules = z.infer<typeof zEngageWakeRules>;
-export const zEngageWakeRulesSet = zEngageWakeRules;
 export const zEngageWakeRulesView = zEngageWakeRules.extend({ isDefault: z.boolean() });
 export type EngageWakeRulesView = z.infer<typeof zEngageWakeRulesView>;
 
@@ -50,19 +49,17 @@ export type EngageWakeConversations = z.infer<typeof zEngageWakeConversations>;
 export const zEngageWakeConversationsInput = z.strictObject({
   unansweredHours: zEngageWakeRules.shape.unansweredHours,
   replyWindowHours: zEngageWakeRules.shape.replyWindowHours,
-  // The clock, for tests; the sweep and Home never pass it.
-  now: zInstant.optional(),
 });
 
 // What the CRM's read answers (crm.wake.facts).
 export const zEngageWakeCrm = z.strictObject({
-  // Open next steps of a sent quote nobody answered: the step, its deal, the day the quote was sent (Vietnam's calendar) and the deal's amount, a decimal string in VND.
-  quoteSteps: z.array(z.strictObject({ stepId: zId, dealId: zId, sinceOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), amount: z.string().regex(/^-?(0|[1-9]\d{0,17})(\.\d{1,4})?$/) })).max(ENGAGE_WAKE_ROWS_MAX),
+  // Open next steps of a sent quote nobody answered: the step, its deal, the day the quote was sent (Vietnam's calendar), and the DEAL's amount (not the quote's total) as a decimal string in the deal's own currency (ISO 4217).
+  quoteSteps: z.array(z.strictObject({ stepId: zId, dealId: zId, sinceOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), dealAmount: z.string().regex(/^-?(0|[1-9]\d{0,17})(\.\d{1,4})?$/), currency: z.string().regex(/^[A-Z]{3}$/) })).max(ENGAGE_WAKE_ROWS_MAX),
   // Confirmed bookings that start tomorrow (Vietnam's calendar).
   bookingsTomorrow: z.array(z.strictObject({ bookingId: zId, on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })).max(ENGAGE_WAKE_ROWS_MAX),
 });
 export type EngageWakeCrm = z.infer<typeof zEngageWakeCrm>;
-export const zEngageWakeCrmInput = z.strictObject({ now: zInstant.optional() });
+export const zEngageWakeCrmInput = z.strictObject({});
 
 // The day in Vietnam's calendar (UTC+7, no daylight saving) an instant falls on.
 export const vietnamDayOf = (instant: string | Date): string => new Date((typeof instant === 'string' ? Date.parse(instant) : instant.getTime()) + 7 * 3_600_000).toISOString().slice(0, 10);

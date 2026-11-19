@@ -214,7 +214,7 @@ INSERT INTO crove_kernel.mcp_wake_event_type (type, scope, fields, adr) VALUES
   ('engage.reply_window_closing', 'ludy.engage.write',
    '{"conversation_id": "id", "closes_on": "date"}'::jsonb, 'ADR-0051 decision 13'),
   ('engage.quote_unanswered', 'ludy.engage.write',
-   '{"deal_id": "id", "next_step_id": "id", "since": "date", "amount": "amount", "currency": ["vnd"]}'::jsonb, 'ADR-0051 decision 13'),
+   '{"deal_id": "id", "next_step_id": "id", "since": "date", "deal_amount": "amount", "currency": ["vnd", "usd", "eur", "gbp", "jpy", "krw", "cny", "thb", "sgd", "myr", "idr", "php", "aud", "twd", "other"]}'::jsonb, 'ADR-0051 decision 13'),
   ('engage.booking_tomorrow', 'ludy.engage.write',
    '{"booking_id": "id", "on": "date"}'::jsonb, 'ADR-0051 decision 13'),
   ('social.post_comment_new', 'ludy.social.draft',
