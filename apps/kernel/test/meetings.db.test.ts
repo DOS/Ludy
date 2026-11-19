@@ -18,7 +18,7 @@ import {
   type DirectTransfers,
 } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
+import { meetingsCommands, meetingsQueries, setMeetingVideoImport } from '@crove/mod-meetings';
 import { createAuthenticator } from '../src/auth.ts';
 import { resealCredentials } from '../src/credential-reseal.ts';
 import { loadConfig } from '../src/config.ts';
@@ -1829,6 +1829,25 @@ suite('meetings module database integration tests (#2576)', () => {
       expect((await rpc('meetings/consentPolicy/set', 'owner', { policy: 'standard' })).status).toBe(200);
     }
   });
+  it('34b. C2a: a recording with only a video file is refused NO_AUDIO unless this deployment can take its audio out, and one with neither file is always refused', async () => {
+    const videoOnly = await suggest('recorder', { hasAudio: false, hasVideo: true });
+    const neither = await suggest('recorder', { hasAudio: false, hasVideo: false });
+    // Off (the default, no MEDIA_URL): refused before a meeting is made, and the row stays suggested.
+    expect(await refusedWith(startImport('recorder', { recordingId: videoOnly, language: 'vi', visibility: 'attendees' }))).toBe('MEETING_PLATFORM_NO_AUDIO');
+    expect((await recordingRow(videoOnly)).meeting_id).toBeNull();
+    expect((await recordingRow(videoOnly)).status).toBe('suggested');
+    setMeetingVideoImport(true);
+    try {
+      // On: the definer lets the video-only row begin and the import starts; neither file is still refused.
+      const { meetingId } = await startImport('recorder', { recordingId: videoOnly, language: 'vi', visibility: 'attendees' });
+      expect(await recordingRow(videoOnly)).toMatchObject({ status: 'importing', meeting_id: meetingId });
+      expect(await refusedWith(startImport('recorder', { recordingId: neither, language: 'vi', visibility: 'attendees' }))).toBe('MEETING_PLATFORM_NO_AUDIO');
+      expect((await recordingRow(neither)).status).toBe('suggested');
+    } finally {
+      setMeetingVideoImport(false);
+    }
+  });
+
   it('34c. C2: take_transcript writes the claimed transcript-only recording as a tainted draft of Google\'s transcription, ends the meeting and marks the row imported; anyone else, or any other row, is refused and nothing is written (#3174)', async () => {
     const take = (who: string, input: Record<string, unknown>) =>
       runtime.execute<{ meetingId: string; stored: number }>('meetings.import.take_transcript', input, { actor: asUser(who), orgId });
