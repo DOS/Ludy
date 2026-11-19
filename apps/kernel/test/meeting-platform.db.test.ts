@@ -368,7 +368,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
   it('walks suggested, importing, staged, claimed and imported, and refuses every other step', async () => {
     const o = await org();
     const c = await connect(o, o.lan);
-    await replace(o, c.connectionId, [listed('v', { sizeBytes: 5000 }), listed('none', { hasAudio: false, hasVideo: false, hasTranscript: true })]);
+    await replace(o, c.connectionId, [listed('v', { sizeBytes: 5000 }), listed('none', { hasAudio: false, hasVideo: false, hasTranscript: false })]);
     const recordingId = await idOf('v', c.connectionId);
     const meetingId = await meetingFor(o, o.lan);
     const key = stagingKey();
@@ -380,7 +380,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     // The click needs a meeting that exists and is the member's own: a stranger's, or none, is refused and the row stays a suggestion.
     expect(await refuses(as(o.lan, 'test.mp.begin', { recordingId, meetingId: randomUUID(), stagingKey: key }))).toBe('MEETING_PLATFORM_NOT_FOUND');
     expect(await refuses(as(o.lan, 'test.mp.begin', { recordingId, meetingId: await meetingFor(o, o.nam), stagingKey: key }))).toBe('MEETING_PLATFORM_NOT_FOUND');
-    // A recording with a transcript alone is not imported; a malformed key is refused.
+    // A recording with no audio, no video and no transcript is not imported (one with a transcript alone begins since C2, #3174: meetings.db.test.ts 34e); a malformed key is refused.
     expect(await refuses(as(o.lan, 'test.mp.begin', { recordingId: await idOf('none', c.connectionId), meetingId, stagingKey: key }))).toBe('MEETING_PLATFORM_NO_AUDIO');
     expect(await refuses(as(o.lan, 'test.mp.begin', { recordingId, meetingId, stagingKey: 'staging/short' }))).toBe('MEETING_PLATFORM_INVALID');
     // Another member, an owner and a viewer cannot begin, claim or dismiss it: for them it does not exist.

@@ -249,10 +249,11 @@ export function stageTranscript(transcript: MeetingPlatformTranscript): Uint8Arr
   const segments: TranscriptSegmentInput[] = [];
   const clamp = (seconds: number) => Math.min(86_400, Math.max(0, seconds));
   for (const entry of transcript.entries.slice(0, TRANSCRIPT_SEGMENTS_MAX)) {
-    const text = entry.text.trim().slice(0, TRANSCRIPT_TEXT_MAX).trim();
+    // A NUL byte is no text and Postgres refuses it in a text column, which would fail the whole import: it is dropped here.
+    const text = entry.text.replaceAll('\u0000', '').trim().slice(0, TRANSCRIPT_TEXT_MAX).trim();
     if (text === '' || !Number.isFinite(entry.startSeconds) || !Number.isFinite(entry.endSeconds)) continue;
     const startSeconds = clamp(entry.startSeconds);
-    const speakerLabel = (entry.speaker ?? '').trim().slice(0, TRANSCRIPT_SPEAKER_MAX).trim() || UNKNOWN_SPEAKER;
+    const speakerLabel = (entry.speaker ?? '').replaceAll('\u0000', '').trim().slice(0, TRANSCRIPT_SPEAKER_MAX).trim() || UNKNOWN_SPEAKER;
     segments.push({ startSeconds, endSeconds: Math.max(startSeconds, clamp(entry.endSeconds)), speakerLabel, text });
   }
   if (segments.length === 0) throw new MeetingPlatformError('no_transcript');

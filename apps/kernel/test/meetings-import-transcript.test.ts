@@ -93,15 +93,18 @@ describe('stageTranscript', () => {
         entry({ startSeconds: -5, endSeconds: 999_999 }),
         entry({ startSeconds: 9, endSeconds: 3 }),
         entry({ startSeconds: Number.NaN }),
+        entry({ text: 'a\u0000b', speaker: '\u0000Lan\u0000' }),
       ]),
     );
     const { segments } = JSON.parse(new TextDecoder().decode(bytes)) as { segments: Array<{ startSeconds: number; endSeconds: number; speakerLabel: string; text: string }> };
-    expect(segments).toHaveLength(5);
+    expect(segments).toHaveLength(6);
     expect(segments[1]).toMatchObject({ speakerLabel: UNKNOWN_SPEAKER, text: 'Không rõ ai nói.' });
     expect(segments[2]?.text).toHaveLength(TRANSCRIPT_TEXT_MAX);
     expect(segments[2]?.speakerLabel).toHaveLength(TRANSCRIPT_SPEAKER_MAX);
     expect(segments[3]).toMatchObject({ startSeconds: 0, endSeconds: 86_400 });
     expect(segments[4]).toMatchObject({ startSeconds: 9, endSeconds: 9 });
+    // A NUL byte is dropped from text and speaker (Postgres refuses it in a text column).
+    expect(segments[5]).toMatchObject({ speakerLabel: 'Lan', text: 'ab' });
     // What is staged is exactly what the command's own schema takes, so the import route can validate it again.
     expect(zMeetingTranscriptImport.safeParse({ meetingId: '00000000-0000-4000-8000-000000000009', segments }).success).toBe(true);
   });
