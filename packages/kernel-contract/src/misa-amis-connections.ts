@@ -5,7 +5,8 @@ import { z } from 'zod';
 import { zId } from './schemas.ts';
 
 // Whether this deployment offers the connector at all: it does only when the deployment holds the integrator's ClientID (never in any answer).
-export const zMisaAmisStatus = z.object({ offered: z.boolean() });
+// `pushOffered`: the push of vouchers is also switched on (MISA_AMIS_PUSH, after the sandbox check): without it the screen draws no confirm button and the route answers 404.
+export const zMisaAmisStatus = z.object({ offered: z.boolean(), pushOffered: z.boolean() });
 export type MisaAmisStatus = z.infer<typeof zMisaAmisStatus>;
 
 // What a connection test came back with, as a state and never MISA's own text (the column's CHECK).

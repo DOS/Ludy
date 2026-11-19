@@ -12,6 +12,8 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage } from '../lib/api.ts';
+import { MisaAmisPushConfirm } from './misa-amis-push-panel.tsx';
+import type { PushOffer } from '../lib/misa-amis-push.ts';
 import { ErrorText } from './ui.tsx';
 
 const PURPOSES = ['1', '2', '3', '4', '5'] as const;
@@ -24,7 +26,8 @@ function kindsOnList(result: MisaAmisPreview): Set<string> {
   return new Set(result.items.slice(0, SHOWN).flatMap((item) => item.blockers.map((b) => b.code)));
 }
 
-export function MisaAmisPreviewPanel({ legalEntityId }: { legalEntityId: string }) {
+// `push` is given where the connection card can offer to send what the preview shows (an owner or admin, the push on, the connection tested): the preview itself stays a read.
+export function MisaAmisPreviewPanel({ legalEntityId, push }: { legalEntityId: string; push?: { connectionId: string; offer: PushOffer } }) {
   const t = useTranslations('misaAmisPreview');
   const lang = useLocale() === 'en' ? 'en' : 'vi';
   const [kind, setKind] = useState<MisaAmisKind>(MISA_AMIS_KINDS[0]);
@@ -48,6 +51,8 @@ export function MisaAmisPreviewPanel({ legalEntityId }: { legalEntityId: string 
   // The coworker's notes on the kinds of blocker (S5): asked only when something is blocked, after the list is on screen; with AI off or every note dropped the list stands alone.
   const notes = useMutation<MisaAmisBlockerNotes>({ mutationFn: () => client.vouchers.misaAmisBlockerNotes({ ...ask, lang }) });
   const [answeredFor, setAnsweredFor] = useState<string | null>(null);
+  // Counts the previews that landed: the confirm block starts afresh with each one, so a send that is done (or refused as stale) never hides the button for the next confirmation of the same digest.
+  const [runs, setRuns] = useState(0);
   // Anything the answer depended on changing clears it, so an old list is never read beside new choices.
   const { reset } = preview;
   const { reset: resetNotes } = notes;
@@ -119,6 +124,7 @@ export function MisaAmisPreviewPanel({ legalEntityId }: { legalEntityId: string 
             preview.mutate(undefined, {
               onSuccess: (data) => {
                 setAnsweredFor(asked);
+                setRuns((n) => n + 1);
                 if (data.blocked > 0) notes.mutate();
               },
             })
@@ -132,6 +138,7 @@ export function MisaAmisPreviewPanel({ legalEntityId }: { legalEntityId: string 
         </div>
       )}
       {result && <MisaAmisPreviewResult result={result} notes={notes.data ?? null} />}
+      {result && push && <MisaAmisPushConfirm key={runs} result={result} ask={ask} connectionId={push.connectionId} offer={push.offer} />}
     </details>
   );
 }

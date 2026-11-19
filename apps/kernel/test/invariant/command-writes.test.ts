@@ -23,6 +23,7 @@ import { loadConfig } from '../../src/config.ts';
 import { moduleDefinitions, moduleManifests, serverRuntime } from '../../src/kernel.ts';
 import { orgPurgeCommand } from '../../src/org-purge.ts';
 import { numberReseedCommand } from '../../src/restore-report.ts';
+import { pkgImportMatches } from './fixtures/ad-platform-imports.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
 const noDatabase = (): never => {
@@ -351,7 +352,12 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
     expect(start).toBeGreaterThan(0);
     expect(end).toBeGreaterThan(start);
     expect(kernel.slice(start, end)).toMatch(/new Runtime\(/);
-    const runtimeImport = [...kernel.matchAll(/\bimport\b[^;]*?\bfrom\s*'@crove\/kernel-runtime';/g)];
+    const runtimePkg = (JSON.parse(readFileSync(join(ROOT, 'packages/kernel-runtime/package.json'), 'utf8')) as { name: string }).name;
+    expect(['@crove/kernel-runtime', '@ludy/kernel-runtime']).toContain(runtimePkg);
+    const otherRuntimePkg = runtimePkg === '@crove/kernel-runtime' ? '@ludy/kernel-runtime' : '@crove/kernel-runtime';
+    expect(pkgImportMatches(importers[0]?.text ?? '', otherRuntimePkg)).toEqual([]);
+    const escapedPkg = runtimePkg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const runtimeImport = [...kernel.matchAll(new RegExp(`\\bimport\\b[^;]*?\\bfrom\\s*'${escapedPkg}';`, 'g'))];
     expect(runtimeImport).toHaveLength(1);
     const outside = [kernel.slice(0, runtimeImport[0]?.index), kernel.slice((runtimeImport[0]?.index ?? 0) + (runtimeImport[0]?.[0].length ?? 0), start), kernel.slice(end)]
       .join('\n')
@@ -373,10 +379,12 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
     expect(scan("const re = /[`'*]/g;\nconst k = require('x');").problems).toEqual(['require()']);
     expect(scan(`import { 'Runtime' as R } from '@crove/kernel-runtime';`).names).toEqual(['R']);
     expect(scan(`import { Runtime } from '@crove/kernel-runtime';`).names).toEqual(['Runtime']);
+    expect(scan(`import { Runtime } from '@ludy/kernel-runtime';`).names).toEqual(['Runtime']);
     expect(scan(`import {\n  DomainError,\n  Runtime as R, // the class\n} from '@crove/kernel-runtime';`).names).toEqual(['R']);
     expect(scan(`import { Runtime as R } from '../../packages/kernel-runtime/src/runtime.ts';`).names).toEqual(['R']);
     for (const source of [
       `import * as K from '@crove/kernel-runtime';`,
+      `import * as K from '@ludy/kernel-runtime';`,
       `export * from '@crove/kernel-runtime';`,
       `export { Runtime } from '@crove/kernel-runtime';`,
       `import K from '@crove/kernel-runtime';`,
