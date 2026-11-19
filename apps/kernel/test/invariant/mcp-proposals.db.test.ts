@@ -87,9 +87,27 @@ describe('which commands an MCP grant may reach as a proposal (#3858 slice d)', 
     expect(() => rt().register({ commands: [...kernelCommands, base as never], queries: [] }).validate()).not.toThrow();
   });
 
-  it('pins that no real command declares mode proposal yet: slice (d) ships the mechanism, the commands come with their lines (Engage E4, #3863); a new one is a change to this protected file', () => {
+  it('pins which real commands declare mode proposal: only the proposal-only twins of the Engage commands (Engage E4, #3863), each under its line\'s scope; a new one is a change to this protected file', () => {
+    const ENGAGE_TWINS: Record<string, string> = {
+      'kernel.conversation.reply_approved': 'ludy.engage.write',
+      'kernel.conversation.reply_privately_approved': 'ludy.engage.write',
+      'kernel.conversation.hide_approved': 'ludy.engage.write',
+      'crm.quote.send_approved': 'ludy.engage.write',
+      'crm.booking.move_approved': 'ludy.engage.write',
+      'crm.booking.cancel_approved': 'ludy.engage.write',
+      'social.post.submit_approved': 'ludy.engage.write',
+      'social.variant.schedule_approved': 'ludy.engage.write',
+      'ads.launch.stop_approved': 'ludy.ads.draft',
+      'ads.pause_all_approved': 'ludy.ads.draft',
+      'ads.object.pause_approved': 'ludy.ads.draft',
+      'ads.object.archive_approved': 'ludy.ads.draft',
+      'ads.budget.lower_approved': 'ludy.ads.draft',
+      'ads.schedule.shorten_approved': 'ludy.ads.draft',
+    };
     const all = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
-    expect(all.filter((c) => (c as { mcp?: { mode?: string } }).mcp?.mode === 'proposal').map((c) => c.name)).toEqual([]);
+    const declared = all.filter((c) => (c as { mcp?: { mode?: string } }).mcp?.mode === 'proposal');
+    expect(declared.filter((c) => !Object.hasOwn(ENGAGE_TWINS, c.name)).map((c) => c.name)).toEqual([]);
+    for (const c of declared) expect((c as unknown as { mcp: { scope: string } }).mcp.scope, c.name).toBe(ENGAGE_TWINS[c.name]);
   });
 });
 

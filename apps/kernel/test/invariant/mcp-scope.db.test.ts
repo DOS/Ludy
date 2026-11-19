@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What an MCP grant can reach once it is past the HTTP edge (ADR-0051 decision 2, ADR-0032, issue #2975), through the runtime every command and query runs on:
-// - only the commands WRITES and ENGAGE_WRITES name carry `mcp` (the Social draft command of #3227, owner decision 2026-11-14, and the Engage R1 twins of #3861), each pinned to its scope and to the narrow shape the sealed write context runs
-//   (R1, internal, owners and admins, no permission, extension, agent or member-mode declaration), and a grant runs no other command, whatever the command declares;
+// - only the commands WRITES and ENGAGE_WRITES name run for a grant (the Social draft command of #3227, owner decision 2026-11-14, and the Engage R1 twins of #3861), each pinned to its scope and to the narrow shape
+//   the sealed write context runs (R1, internal, owners and admins, no permission, extension, agent or member-mode declaration), and a grant runs no other command, whatever the command declares; the only other
+//   commands that carry `mcp` are the 14 proposal-only Engage twins of E4 (#3863), each declared `{ scope, mode: 'proposal' }`: a call to one never runs it, it leaves a pending proposal a person approves
+//   (pinned below, and in mcp-proposals.db.test.ts);
 // - a grant reaches a query only if that query declares the scope (`mcp`), the set of queries that do is pinned here (a new one is a change to this protected
 //   file), and none of them is sensitive, open to member mode or an extension token, or holds data private to one member (member-bound grants are a later step);
 // - the grant's standing is read in the transaction of every call, with no session check configured: a revoked or expired grant, a consenting user who is no
@@ -142,8 +144,9 @@ const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ..
 const queries = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...socialQueries, ...adsQueries, ...crmQueries, ...hrQueries, ...notesQueries];
 
 describe('which definitions an MCP grant can reach (#2975)', () => {
-  it('has no command that carries `mcp` but the Social draft command and the Engage twins the lists name, with their scope, and each is R1, internal and for owners and admins', () => {
-    const carrying = commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined);
+  it('has no command that runs for a grant but the Social draft command and the Engage twins the lists name, with their scope, and each is R1, internal and for owners and admins', () => {
+    // A command of mode 'proposal' (the 14 proposal-only twins of E4, #3863) never runs for a grant: it is pinned in the test below and in mcp-proposals.db.test.ts.
+    const carrying = commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined && (c as { mcp: { mode?: string } }).mcp.mode !== 'proposal');
     const named = carrying.map((c) => `${c.name}:${(c as { mcp: { scope: string } }).mcp.scope}`).sort();
     // The Social draft command is always there; an Engage twin may be (step 1 of 2 of E2: the list lets the names in, the next change adds the commands and then requires them).
     expect(named.filter((n) => !ENGAGE_WRITES.includes(n))).toEqual([...WRITES].sort());
@@ -151,8 +154,42 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
       expect([c.risk, c.sideEffect, c.access], c.name).toEqual(['R1', 'internal', ['owner', 'admin']]);
       const scope = (c as { mcp: { scope: string } }).mcp.scope;
       // Only the scope, in the mode that runs the command (a command of mode 'proposal' is R2 or R3, and is pinned in mcp-proposals.db.test.ts).
-      expect((c as { mcp: unknown }).mcp, c.name).toEqual({ scope });
+      expect((c as { mcp: unknown }).mcp, c.name).toStrictEqual({ scope });
       expect(WRITES.concat(ENGAGE_WRITES), c.name).toContain(`${c.name}:${scope}`);
+      expect(c.permission, c.name).toBeUndefined();
+      expect(c.extension, c.name).toBeUndefined();
+      expect(c.agent, c.name).toBeUndefined();
+      expect(c.memberVy, c.name).toBeUndefined();
+      expect(c.bootstrap, c.name).toBeUndefined();
+      expect(c.sealedInput, c.name).toBeUndefined();
+      expect((c as { sensitive?: unknown }).sensitive, c.name).toBeUndefined();
+    }
+  });
+
+  // The commands a grant reaches only as a proposal (#3858 slice d; Engage E4, #3863): proposal-only twins of the Engage commands, R2, never run for a grant (the proposer runs in their place), each under its line's scope.
+  const PROPOSALS: Record<string, string> = {
+    'kernel.conversation.reply_approved': 'ludy.engage.write',
+    'kernel.conversation.reply_privately_approved': 'ludy.engage.write',
+    'kernel.conversation.hide_approved': 'ludy.engage.write',
+    'crm.quote.send_approved': 'ludy.engage.write',
+    'crm.booking.move_approved': 'ludy.engage.write',
+    'crm.booking.cancel_approved': 'ludy.engage.write',
+    'social.post.submit_approved': 'ludy.engage.write',
+    'social.variant.schedule_approved': 'ludy.engage.write',
+    'ads.launch.stop_approved': 'ludy.ads.draft',
+    'ads.pause_all_approved': 'ludy.ads.draft',
+    'ads.object.pause_approved': 'ludy.ads.draft',
+    'ads.object.archive_approved': 'ludy.ads.draft',
+    'ads.budget.lower_approved': 'ludy.ads.draft',
+    'ads.schedule.shorten_approved': 'ludy.ads.draft',
+  };
+  it('has only the proposal-only twins of the Engage commands (E4) as commands a grant reaches as a proposal, each R2, access proposal, under its scope', () => {
+    const proposing = commands.filter((c) => (c as { mcp?: { mode?: string } }).mcp?.mode === 'proposal');
+    expect(proposing.filter((c) => !Object.hasOwn(PROPOSALS, c.name)).map((c) => c.name)).toEqual([]);
+    for (const c of proposing) {
+      // Exactly the scope and the mode, nothing more (a command that runs for a grant carries the scope alone).
+      expect((c as { mcp: unknown }).mcp, c.name).toStrictEqual({ scope: PROPOSALS[c.name], mode: 'proposal' });
+      expect([c.risk, c.access], c.name).toEqual(['R2', 'proposal']);
       expect(c.permission, c.name).toBeUndefined();
       expect(c.extension, c.name).toBeUndefined();
       expect(c.agent, c.name).toBeUndefined();
