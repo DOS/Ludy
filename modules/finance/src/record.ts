@@ -469,7 +469,16 @@ export const recordPurchase = defineCommand({
     // A foreign-currency invoice says what it was in its entry's description, which the journal and the MISA export
     // show (#918).
     const memo = foreign ? `${journalMemo(payload)} (${foreignNote(foreign)})` : journalMemo(payload);
-    const regime = await saleRegime(ctx, direction, payload.legalEntityId ?? (await proposalEntity(ctx)), lateDate ?? invoice.issueDate);
+    // The entry the approver saw is the entry posted (DESIGN.md 5.1): a sale posts under the regime its proposal carries, the one its preview was worked out with. A proposal raised before the regime
+    // was carried has none and keeps the earlier posting (Dr 511). If the entity's books have changed since the proposal was made, the entry would no longer be the one shown, so it is refused
+    // with a named error and the proposal is rejected and read again.
+    const regime = sale ? payload.regime : undefined;
+    if (regime !== undefined) {
+      const current = await saleRegime(ctx, direction, payload.legalEntityId ?? (await proposalEntity(ctx)), lateDate ?? invoice.issueDate);
+      if (current !== regime) {
+        throw new DomainError('BOOKS_REGIME_CHANGED', 409, 'Chế độ kế toán của sổ đã đổi từ khi lập đề xuất nên bút toán sẽ khác bản đã xem; hãy từ chối đề xuất này và đọc lại hóa đơn', { proposed: regime, current });
+      }
+    }
     const journal = invoiceJournal(direction, lines, invoice.vatTotal, memo, regime);
     if (!journalIsBalanced(journal)) throw new DomainError('UNBALANCED', 422, 'Bút toán không cân');
     // The payable (purchase) or receivable (sale) booked must equal the invoice total exactly.
