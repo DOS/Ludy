@@ -77,14 +77,14 @@ describe('misaAmisPreview after a check against the firm\'s catalogue (#4112)', 
     const entity = '11111111-1111-4111-8111-111111111111';
     const { query, calls } = fake({ ...all, 'finance.vouchers.purchases': [purchase()], 'finance.misa_amis_match.results': done([['0101234564', 'NCC_ABC']], ['DV_CHUNG']) });
     const result = await misaAmisPreview(query, { ...ask, legalEntityId: entity });
-    expect(calls.find((c) => c.name === 'finance.misa_amis_match.results')?.input).toEqual({ legalEntityId: entity });
+    expect(calls.find((c) => c.name === 'finance.misa_amis_match.results')?.input).toEqual({ legalEntityId: entity, ask: { ...ask, legalEntityId: entity } });
     expect(result).toMatchObject({ checkedAgainstAmis: true, ready: 1, blocked: 0, matchCheck: { state: 'done', failure: null, checkedAt: CHECKED } });
     expect(zMisaAmisPreview.safeParse(result).success).toBe(true);
   });
   it('asks for the caller\'s own entity when the ask names none', async () => {
     const { query, calls } = fake({ ...all, 'finance.vouchers.purchases': [purchase()] });
     await misaAmisPreview(query, ask);
-    expect(calls.find((c) => c.name === 'finance.misa_amis_match.results')?.input).toEqual({});
+    expect(calls.find((c) => c.name === 'finance.misa_amis_match.results')?.input).toEqual({ ask });
   });
   it('blocks a party and an item the check did not match, and does not judge them while no check is done', async () => {
     const unmatched = await misaAmisPreview(fake({ ...all, 'finance.vouchers.purchases': [purchase()], 'finance.misa_amis_match.results': done([], []) }).query, ask);

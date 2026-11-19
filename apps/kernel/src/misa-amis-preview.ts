@@ -38,7 +38,7 @@ function item(entry: Entry): MisaAmisPreviewItem {
 
 export async function misaAmisPreview(query: MisaAmisPreviewQuery, ask: MisaAmisPreviewAsk): Promise<MisaAmisPreview> {
   // The same read the push command makes, so what a person confirms is what was shown. The check is of the ask's entity (the caller's own when the ask names none).
-  const matches = await query<MisaAmisMatchResults>('finance.misa_amis_match.results', ask.legalEntityId === undefined ? {} : { legalEntityId: ask.legalEntityId });
+  const matches = await query<MisaAmisMatchResults>('finance.misa_amis_match.results', ask.legalEntityId === undefined ? { ask } : { legalEntityId: ask.legalEntityId, ask });
   const ctx = amisContextOf(ask, AMIS_PLACEHOLDER_BRANCH, matches);
   // One more than the list holds, so `more` is known; the loaders' own limit is the export limit.
   const { entries, loaded } = await loadAmisEntries(query, ask, ctx, MISA_AMIS_PREVIEW_LIMIT + 1);

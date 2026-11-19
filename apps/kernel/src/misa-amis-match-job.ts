@@ -69,7 +69,7 @@ export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMat
   if (target.action === 'none') return { state: 'skipped', reason: target.reason };
   const fail = async (failure: Failure, kind: string) => {
     console.warn(`[misa-amis] match ${job.connectionId.slice(0, 8)}: failed (${failure}, ${kind})`);
-    await deps.runtime.execute('finance.misa_amis_match.record_check', { connectionId: job.connectionId, state: 'failed', failure, results: [] }, options);
+    await deps.runtime.execute('finance.misa_amis_match.record_check', { connectionId: job.connectionId, requestedAt: target.requestedAt, state: 'failed', failure, results: [] }, options);
     return { state: 'failed', failure } satisfies MisaAmisMatchOutcome;
   };
 
@@ -106,7 +106,7 @@ export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMat
     const failure: Failure = kind === 'credentials' && code !== 'InvalidAPPID' ? 'credentials' : kind === 'invalid_response' ? 'invalid_response' : 'unreachable';
     return fail(failure, `${kind}${code ? `, ${code}` : ''}`);
   }
-  await deps.runtime.execute('finance.misa_amis_match.record_check', { connectionId: job.connectionId, state: 'done', failure: null, results }, options);
+  await deps.runtime.execute('finance.misa_amis_match.record_check', { connectionId: job.connectionId, requestedAt: target.requestedAt, state: 'done', failure: null, results }, options);
   console.log(`[misa-amis] match ${job.connectionId.slice(0, 8)}: done (${results.length})`);
   return { state: 'done', results: results.length };
 }

@@ -183,7 +183,7 @@ describe('the MISA AMIS push job: sending', () => {
     const amis = fakeAmis();
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     expect(await run(h, amis)).toMatchObject({ state: 'done', sent: 0, failed: 1 });
-    expect(h.queries.find((q) => q.name === 'finance.misa_amis_match.results')?.input).toEqual({ legalEntityId: ENTITY });
+    expect(h.queries.find((q) => q.name === 'finance.misa_amis_match.results')?.input).toMatchObject({ legalEntityId: ENTITY });
     expect(amis.calls.some((c) => c.path === '/amiskt/v1/save')).toBe(false);
     expect(records(h)[0]?.rows).toEqual([{ orgRefid: SOURCE, from: 'sending', to: 'failed', reason: 'STALE' }]);
   });

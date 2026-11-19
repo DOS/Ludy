@@ -2,6 +2,7 @@
 // The matching of a connection's vouchers against the firm's MISA catalogue (#4112, S3a of #4103): a party only by its tax code, an item only by its exact code, active entries only, one entry matched, none
 // unknown, several ambiguous, and nothing in the result that is not the matched entry's code and id.
 import { describe, expect, it } from 'vitest';
+import { sameBatch } from '../src/misa-amis-match.ts';
 import { catalogueItems, catalogueParties, matchItems, matchParties, normalizeTaxCode } from '../src/misa-amis-matching.ts';
 
 const ID1 = '0194a1c2-8f3e-7b10-9d4a-1e2f3a4b5c6d';
@@ -91,5 +92,16 @@ describe('items', () => {
       { kind: 'item', ref: 'KHAC', state: 'unknown', code: null, entryId: null },
       { kind: 'item', ref: 'dv_chung', state: 'unknown', code: null, entryId: null },
     ]);
+  });
+});
+
+describe('sameBatch', () => {
+  const stored = { kind: 'purchase_services', from: '2026-10-01', to: '2026-10-31', serviceItemCode: 'DV_CHUNG' };
+  it('is true for the same kind, period and item codes and false for any other batch or an unreadable request', () => {
+    expect(sameBatch(stored, { kind: 'purchase_services', from: '2026-10-01', to: '2026-10-31', serviceItemCode: 'DV_CHUNG' })).toBe(true);
+    expect(sameBatch(stored, { kind: 'purchase_services', from: '2026-10-01', to: '2026-10-31', serviceItemCode: 'DV_KHAC' })).toBe(false);
+    expect(sameBatch(stored, { kind: 'purchase_services', from: '2026-09-01', to: '2026-10-31', serviceItemCode: 'DV_CHUNG' })).toBe(false);
+    expect(sameBatch(stored, { kind: 'sales', from: '2026-10-01', to: '2026-10-31', salesItemCode: 'BH' })).toBe(false);
+    expect(sameBatch({ junk: 1 }, { kind: 'sales' })).toBe(false);
   });
 });

@@ -31,11 +31,14 @@ export const zMisaAmisMatchResult = z.strictObject({
   state: z.enum(MISA_AMIS_MATCH_RESULT_STATES),
   // The one matched entry's code and id; null unless `matched`.
   code: z.string().min(1).max(100).nullable(),
-  entryId: z.uuid().nullable(),
+  // MISA's ids are GUIDs of any version (a SQL Server sequential GUID is not an RFC UUID), so the id is checked for shape, not for version.
+  entryId: z.guid().nullable(),
 });
 export type MisaAmisMatchResult = z.infer<typeof zMisaAmisMatchResult>;
 export const zMisaAmisMatchRecordCheck = z.strictObject({
   connectionId: zId,
+  // The request the worker took (the time it was filed, from the target): a record for an older request than the one now waiting is ignored, so a slow job never records its results under a newer batch.
+  requestedAt: z.iso.datetime({ offset: true }),
   state: z.enum(['done', 'failed']),
   failure: z.enum(MISA_AMIS_MATCH_FAILURE_CODES).nullable(),
   results: z.array(zMisaAmisMatchResult).max(MISA_AMIS_MATCH_RESULTS_MAX),

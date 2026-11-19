@@ -37,6 +37,14 @@ export const MISA_AMIS_MATCH_CHECK_REQUESTED = 'finance.misa_amis_match.check_re
 
 const iso = (value: Date | string): string => new Date(value).toISOString();
 
+/** Whether a stored request is for the batch a caller asks about: the kind, the period and the item codes (the entity is the connection's, the purchase purpose changes no look-up). */
+export function sameBatch(stored: unknown, asked: MisaAmisPreviewAsk): boolean {
+  const parsed = zMisaAmisPreviewAsk.safeParse(stored);
+  if (!parsed.success) return false;
+  const a = parsed.data;
+  return a.kind === asked.kind && (a.from ?? null) === (asked.from ?? null) && (a.to ?? null) === (asked.to ?? null) && (a.serviceItemCode ?? null) === (asked.serviceItemCode ?? null) && (a.salesItemCode ?? null) === (asked.salesItemCode ?? null);
+}
+
 export const misaAmisMatchRequestCheck = defineCommand({
   name: 'finance.misa_amis_match.request_check',
   input: z.strictObject({ id: zId, ask: zMisaAmisPreviewAsk }),
@@ -63,12 +71,13 @@ export const misaAmisMatchRequestCheck = defineCommand({
     const by = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     const existing = await ctx.trx
       .selectFrom('crove_finance.misa_amis_match_check')
-      .select(['id', 'state', 'requested_at'])
+      .select(['id', 'state', 'params', 'requested_at'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.id)
       .forUpdate()
       .executeTakeFirst();
-    if (existing && existing.state === 'requested' && ctx.now.getTime() - new Date(existing.requested_at).getTime() < RUNNING_MS) {
+    // The waiting one is returned only when it is for this same batch: a press for another batch files it anew (an older job's record is then ignored).
+    if (existing && existing.state === 'requested' && ctx.now.getTime() - new Date(existing.requested_at).getTime() < RUNNING_MS && sameBatch(existing.params, input.ask)) {
       ctx.audit({ requested: false, running: true });
       return { queued: false, running: true };
     }
@@ -95,7 +104,7 @@ export const misaAmisMatchRequestCheck = defineCommand({
 // is left alone. The company code is the opaque one MISA is told (not a secret); it reaches the worker and nothing else.
 export type MisaAmisMatchTarget =
   | { action: 'none'; reason: 'not_found' | 'not_active' | 'not_requested' }
-  | { action: 'check'; id: string; channelConnectionId: string; orgCompanyCode: string; legalEntityId: string; ask: MisaAmisPreviewAsk };
+  | { action: 'check'; id: string; channelConnectionId: string; orgCompanyCode: string; legalEntityId: string; ask: MisaAmisPreviewAsk; requestedAt: string };
 
 export const misaAmisMatchCheckTarget = defineQuery({
   name: 'finance.misa_amis_match.check_target',
@@ -106,7 +115,7 @@ export const misaAmisMatchCheckTarget = defineQuery({
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .leftJoin('crove_finance.misa_amis_match_check as k', (join) => join.onRef('k.org_id', '=', 'c.org_id').onRef('k.connection_id', '=', 'c.id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'ch.status', 'k.state as check_state', 'k.params'])
+      .select(['c.id', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'ch.status', 'k.state as check_state', 'k.params', 'k.requested_at'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
       .executeTakeFirst();
@@ -116,7 +125,8 @@ export const misaAmisMatchCheckTarget = defineQuery({
     // What was stored is read back through the ask's own schema, so a row that was changed outside the command is refused, not trusted.
     const parsed = zMisaAmisPreviewAsk.safeParse(row.params);
     if (!parsed.success) return { action: 'none', reason: 'not_requested' };
-    return { action: 'check', id: row.id, channelConnectionId: row.channel_connection_id, orgCompanyCode: row.org_company_code, legalEntityId: row.legal_entity_id, ask: parsed.data };
+    if (row.requested_at === null) return { action: 'none', reason: 'not_requested' };
+    return { action: 'check', id: row.id, channelConnectionId: row.channel_connection_id, orgCompanyCode: row.org_company_code, legalEntityId: row.legal_entity_id, ask: parsed.data, requestedAt: iso(row.requested_at) };
   },
 });
 
@@ -131,13 +141,13 @@ export const misaAmisMatchRecordCheck = defineCommand({
   handler: async (ctx, input): Promise<{ recorded: boolean; results: number }> => {
     const check = await ctx.trx
       .selectFrom('crove_finance.misa_amis_match_check')
-      .select(['id', 'legal_entity_id', 'state'])
+      .select(['id', 'legal_entity_id', 'state', 'requested_at'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
       .forUpdate()
       .executeTakeFirst();
-    // A connection closed while its check ran, or a check another run already recorded: nothing to record.
-    if (!check || check.state !== 'requested') return { recorded: false, results: 0 };
+    // A connection closed while its check ran, a check another run already recorded, or a request filed again since this run took it (a newer batch is waiting): nothing to record.
+    if (!check || check.state !== 'requested' || iso(check.requested_at) !== input.requestedAt) return { recorded: false, results: 0 };
     if (input.state === 'done' && input.failure !== null) throw new DomainError('MISA_AMIS_MATCH_INVALID', 422, 'Một lần kiểm tra thành công không có lý do lỗi');
     if (input.state === 'failed' && (input.failure === null || input.results.length > 0)) throw new DomainError('MISA_AMIS_MATCH_INVALID', 422, 'Một lần kiểm tra lỗi cần một lý do và không có kết quả');
     // The results are replaced whole: what an earlier check found about a party is never kept beside a newer one.
@@ -168,17 +178,19 @@ export const misaAmisMatchRecordCheck = defineCommand({
 
 export const misaAmisMatchResultsQuery = defineQuery({
   name: 'finance.misa_amis_match.results',
-  input: z.strictObject({ legalEntityId: zId.optional() }),
+  // `ask`: the batch the caller looks at. A check applies to the batch it was asked about: for another one the answer is the same as for no check (nothing is judged against a catalogue that was never asked about it).
+  input: z.strictObject({ legalEntityId: zId.optional(), ask: zMisaAmisPreviewAsk.optional() }),
   access: ALL,
   handler: async (ctx, input): Promise<MisaAmisMatchResults> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId ?? null);
     const check = await ctx.trx
       .selectFrom('crove_finance.misa_amis_match_check')
-      .select(['connection_id', 'state', 'failure', 'requested_at', 'finished_at'])
+      .select(['connection_id', 'state', 'failure', 'params', 'requested_at', 'finished_at'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', entity)
       .executeTakeFirst();
     if (!check) return NO_MATCH_RESULTS;
+    if (input.ask !== undefined && !sameBatch(check.params, input.ask)) return { ...NO_MATCH_RESULTS, connectionId: check.connection_id };
     const status: MisaAmisMatchStatus = {
       state: check.state,
       failure: check.failure,

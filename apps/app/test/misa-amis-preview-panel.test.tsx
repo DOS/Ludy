@@ -16,7 +16,7 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 const { MisaAmisPreviewPanel, MisaAmisPreviewResult, MisaAmisCheckButton } = await import('../src/components/misa-amis-preview-panel.tsx');
-const { checkTick, CHECK_WAIT_MS } = await import('../src/lib/misa-amis-match-check.ts');
+const { checkTick, pickResult, CHECK_WAIT_MS } = await import('../src/lib/misa-amis-match-check.ts');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
@@ -207,5 +207,19 @@ describe('the check against the AMIS catalogue (#4112, S3a)', () => {
     expect(checkTick('done', until, 2_000)).toBe('stop');
     expect(checkTick('failed', until, 2_000)).toBe('stop');
     expect(checkTick('requested', until, until + 1)).toBe('slow');
+  });
+
+  it('keeps polling while a re-read is in flight (no state yet) and until the time is up', () => {
+    expect(checkTick(null, 31_000, 2_000)).toBe('poll');
+    expect(checkTick(null, 31_000, 40_000)).toBe('slow');
+  });
+
+  it('keeps showing the last answer while a re-read is in flight, and never one for other choices', () => {
+    const last = { asked: 'a', data: result };
+    expect(pickResult(last, null, 'a', 'a')).toBe(result);
+    expect(pickResult(last, null, null, 'a')).toBe(result);
+    expect(pickResult(last, null, 'a', 'b')).toBeNull();
+    const fresh = { ...result, vouchers: 5 };
+    expect(pickResult(last, fresh, 'a', 'a')).toBe(fresh);
   });
 });

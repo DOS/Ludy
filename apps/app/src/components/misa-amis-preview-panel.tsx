@@ -3,7 +3,7 @@
 // type, lines and total, and the blockers that keep one from being sent. A read (vouchers.misaAmisPreview): nothing is sent from here. The AMIS branch and the party codes are not matched yet, and the choices
 // Ludy made for AMIS (reftype, reason, purchase purpose) are shown, because they are not yet confirmed against a MISA sandbox. A row is told by Ludy's voucher number and the line, never a name or an invoice.
 import { useMutation } from '@tanstack/react-query';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { MISA_AMIS_BLOCKERS, MISA_AMIS_KINDS, type MisaAmisBlockerNotes, type MisaAmisKind, type MisaAmisMatchCheckQueued, type MisaAmisMatchStatus, type MisaAmisPreview, type MisaAmisPreviewItem } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -13,7 +13,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage } from '../lib/api.ts';
 import { MisaAmisPushConfirm } from './misa-amis-push-panel.tsx';
-import { CHECK_POLL_MS, CHECK_WAIT_MS, checkTick } from '../lib/misa-amis-match-check.ts';
+import { CHECK_POLL_MS, CHECK_WAIT_MS, checkTick, pickResult } from '../lib/misa-amis-match-check.ts';
 import type { PushOffer } from '../lib/misa-amis-push.ts';
 import { ErrorText } from './ui.tsx';
 
@@ -62,7 +62,11 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
     reset();
     resetNotes();
   }, [asked, reset, resetNotes]);
-  const result = preview.data && answeredFor === asked ? preview.data : null;
+  // The last answer that landed, kept while a re-read is in flight (a mutation clears its own data when it runs again): the list, the status line and the button stay mounted, so the status text changes in place and focus is kept.
+  const [last, setLast] = useState<{ asked: string; data: MisaAmisPreview } | null>(null);
+  const result = pickResult(last, preview.data ?? null, answeredFor, asked);
+  const inFlight = useRef(false);
+  inFlight.current = preview.isPending;
   const check = useMutation<MisaAmisMatchCheckQueued>({ mutationFn: () => client.misaAmis.matches.check({ id: checkConnectionId ?? '', ask }) });
   const [waitUntil, setWaitUntil] = useState<number | null>(null);
   const [slow, setSlow] = useState(false);
@@ -86,7 +90,8 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
         setSlow(tick === 'slow');
         return;
       }
-      rerun(undefined, { onSuccess: () => setAnsweredFor(asked) });
+      if (inFlight.current) return;
+      rerun(undefined, { onSuccess: (data) => { setAnsweredFor(asked); setLast({ asked, data }); } });
     }, CHECK_POLL_MS);
     return () => clearInterval(timer);
   }, [waitUntil, checkState, rerun, asked]);
@@ -95,7 +100,7 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
     setSlow(false);
     check.mutate(undefined, {
       // The preview is read again at once, so the line says "checking" and the poll starts from what the server holds.
-      onSuccess: () => preview.mutate(undefined, { onSuccess: () => { setAnsweredFor(asked); setWaitUntil(Date.now() + CHECK_WAIT_MS); } }),
+      onSuccess: () => preview.mutate(undefined, { onSuccess: (data) => { setAnsweredFor(asked); setLast({ asked, data }); setWaitUntil(Date.now() + CHECK_WAIT_MS); } }),
     });
   };
   return (
@@ -161,6 +166,7 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
             preview.mutate(undefined, {
               onSuccess: (data) => {
                 setAnsweredFor(asked);
+                setLast({ asked, data });
                 setRuns((n) => n + 1);
                 if (data.blocked > 0) notes.mutate();
               },

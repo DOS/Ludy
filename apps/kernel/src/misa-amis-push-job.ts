@@ -169,7 +169,7 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
       let parts: Map<string, AmisPartRow>;
       try {
         // The same matches the person's confirmation was made on (the stored result of the last check against the catalogue): a check made since changes the part, and the part is then `STALE`, never sent.
-        const matches = await query<MisaAmisMatchResults>('finance.misa_amis_match.results', { legalEntityId: target.legalEntityId });
+        const matches = await query<MisaAmisMatchResults>('finance.misa_amis_match.results', { legalEntityId: target.legalEntityId, ask });
         const { entries } = await loadAmisEntries(query, ask, amisContextOf(ask, branchId, matches), MISA_AMIS_PREVIEW_LIMIT + 1);
         parts = new Map(amisPartRows(entries).map((p) => [p.orgRefid, p]));
       } catch (error) {

@@ -174,7 +174,8 @@ suite('MISA AMIS catalogue match (#4112)', () => {
   const events = async () => (await rows<{ payload: { connection_id?: string } }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.misa_amis_match.check_requested' ORDER BY id", [orgId])).map((r) => r.payload);
   const checkRow = async () => (await rows<{ state: string; failure: string | null; params: Record<string, unknown>; finished_at: Date | null; requested_by: string | null }>('SELECT state, failure, params, finished_at, requested_by FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))[0];
   const results = (who: Account) => api.query<{ connectionId: string | null; status: { state: string; failure: string | null; requestedAt: string | null; checkedAt: string | null }; partyCodes: Map<string, string> | null; itemCodes: Set<string> | null }>('finance.misa_amis_match.results', {}, { actor: asUser(who), orgId });
-  const record = (input: Record<string, unknown>) => worker.execute('finance.misa_amis_match.record_check', { connectionId, ...input }, { actor: SYSTEM, orgId });
+  const requestedAt = async () => new Date((await rows<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))[0]!.requested_at).toISOString();
+  const record = async (input: Record<string, unknown>) => worker.execute('finance.misa_amis_match.record_check', { connectionId, requestedAt: await requestedAt(), ...input }, { actor: SYSTEM, orgId });
 
   it('connects the fixture connection', async () => {
     const connected = await call('connections/connect', owner, connectInput());
@@ -202,6 +203,22 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     expect(await call('matches/check', owner, { id: connectionId, ask: { ...ASK, kind: 'sales', salesItemCode: 'BH_CHUNG' } })).toMatchObject({ status: 200, body: { queued: true, running: false } });
     expect(await events()).toHaveLength(2);
     expect(await checkRow()).toMatchObject({ state: 'requested', requested_by: owner.userId, params: { kind: 'sales', salesItemCode: 'BH_CHUNG' } });
+  });
+
+  it('answers a press for another batch by filing it anew, shows a check only for the batch it was asked about, and ignores a record of an older request', async () => {
+    const asked = { kind: 'sales' as const, salesItemCode: 'BH_CHUNG' };
+    // The check waiting is for the sales batch (the test above): the same ask returns it, another batch files anew.
+    expect(await call('matches/check', owner, { id: connectionId, ask: asked })).toMatchObject({ status: 200, body: { queued: false, running: true } });
+    const before = await events();
+    expect(await call('matches/check', owner, { id: connectionId, ask: ASK })).toMatchObject({ status: 200, body: { queued: true, running: false } });
+    expect(await events()).toHaveLength(before.length + 1);
+    // A check for the purchase batch tells nothing about the sales batch.
+    const other = await api.query<{ status: { state: string } }>('finance.misa_amis_match.results', { ask: asked }, { actor: asUser(owner), orgId });
+    expect(other.status.state).toBe('none');
+    // A job that took the older request records with its time: ignored.
+    const stale = new Date(Date.now() - 3_600_000).toISOString();
+    expect(await record({ requestedAt: stale, state: 'done', failure: null, results: [] })).toMatchObject({ recorded: false });
+    expect((await checkRow())?.state).toBe('requested');
   });
 
   it('refuses where the connector is off, for a connection that is not there, and for an ask about another entity', async () => {

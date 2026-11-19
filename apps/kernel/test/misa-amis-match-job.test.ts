@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@crove/misa-amis';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { zMisaAmisMatchRecordCheck } from '@crove/kernel-contract';
 import { runMisaAmisMatch } from '../src/misa-amis-match-job.ts';
 
 const CLIENT_ID = 'planted-client-id-0123456789';
@@ -61,6 +62,7 @@ const purchase = (taxCode: string | null) => ({
   lines: [{ lineNo: 1, description: 'Phí', unit: null, quantity: null, unitPrice: null, amount: '1000000', vatRate: '10%', debitAccount: '6422' }],
 });
 
+const REQUESTED = '2026-10-31T09:00:00.000Z';
 const ASK = { kind: 'purchase_services', from: '2026-10-01', to: '2026-10-31', legalEntityId: ENTITY, serviceItemCode: 'DV_CHUNG' };
 
 interface Harness {
@@ -74,7 +76,7 @@ function harness(options: { target?: unknown; vouchers?: unknown[]; credential?:
   const queries: Harness['queries'] = [];
   const executed: Harness['executed'] = [];
   const opened: unknown[] = [];
-  const target = options.target ?? { action: 'check', id: CONNECTION, channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: ASK };
+  const target = options.target ?? { action: 'check', id: CONNECTION, channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: ASK, requestedAt: REQUESTED };
   const runtime = {
     query: async (name: string, input: unknown) => {
       queries.push({ name, input });
@@ -128,6 +130,7 @@ describe('the MISA AMIS match check job', () => {
     expect(recorded(h)).toEqual([
       {
         connectionId: CONNECTION,
+        requestedAt: REQUESTED,
         state: 'done',
         failure: null,
         results: [
@@ -149,11 +152,11 @@ describe('the MISA AMIS match check job', () => {
   });
 
   it('asks only for the catalogue a batch needs: no tax code and no item code, no call at all', async () => {
-    const h = harness({ vouchers: [purchase(null)], target: { action: 'check', id: CONNECTION, channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: { ...ASK, serviceItemCode: undefined } } });
+    const h = harness({ vouchers: [purchase(null)], target: { action: 'check', id: CONNECTION, channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: { ...ASK, serviceItemCode: undefined }, requestedAt: REQUESTED } });
     const amis = fakeAmis();
     expect(await run(h, amis)).toEqual({ state: 'done', results: 0 });
     expect(amis.calls).toEqual([]);
-    expect(recorded(h)).toEqual([{ connectionId: CONNECTION, state: 'done', failure: null, results: [] }]);
+    expect(recorded(h)).toEqual([{ connectionId: CONNECTION, requestedAt: REQUESTED, state: 'done', failure: null, results: [] }]);
     // Only items: a batch with no party tax code reads the item catalogue and not the parties.
     const items = harness({ vouchers: [purchase(null)] });
     const itemsAmis = fakeAmis();
@@ -164,7 +167,7 @@ describe('the MISA AMIS match check job', () => {
   it('reads a catalogue of more than a page page by page, and finds an entry on a later page', async () => {
     const many = Array.from({ length: 2500 }, (_, i) => ({ account_object_code: `KH${i}`, company_tax_code: `09${String(i).padStart(8, '0')}` }));
     many[2300] = { account_object_code: 'NCC_ABC', company_tax_code: '0101234564' };
-    const h = harness({ vouchers: [purchase('0101234564')], target: { action: 'check', id: CONNECTION, channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: { ...ASK, serviceItemCode: undefined } } });
+    const h = harness({ vouchers: [purchase('0101234564')], target: { action: 'check', id: CONNECTION, channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: { ...ASK, serviceItemCode: undefined }, requestedAt: REQUESTED } });
     const amis = fakeAmis({ parties: many });
     expect(await run(h, amis)).toEqual({ state: 'done', results: 1 });
     expect(amis.calls.filter((c) => c.path === '/amiskt/v1/get_dictionary').map((c) => c.body.skip)).toEqual([0, 1000, 2000]);
@@ -173,11 +176,11 @@ describe('the MISA AMIS match check job', () => {
 
   it('fails as catalogue_too_large, recording nothing found, when the catalogue is longer than 20 pages: a party past the cut must not read as unknown', async () => {
     const endless = Array.from({ length: 20_000 }, (_, i) => ({ account_object_code: `KH${i}`, company_tax_code: `09${String(i).padStart(8, '0')}` }));
-    const h = harness({ vouchers: [purchase('0999999999')], target: { action: 'check', id: CONNECTION, channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: { ...ASK, serviceItemCode: undefined } } });
+    const h = harness({ vouchers: [purchase('0999999999')], target: { action: 'check', id: CONNECTION, channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: { ...ASK, serviceItemCode: undefined }, requestedAt: REQUESTED } });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const amis = fakeAmis({ parties: endless });
     expect(await run(h, amis)).toEqual({ state: 'failed', failure: 'catalogue_too_large' });
-    expect(recorded(h)).toEqual([{ connectionId: CONNECTION, state: 'failed', failure: 'catalogue_too_large', results: [] }]);
+    expect(recorded(h)).toEqual([{ connectionId: CONNECTION, requestedAt: REQUESTED, state: 'failed', failure: 'catalogue_too_large', results: [] }]);
     expect(amis.calls.filter((c) => c.path === '/amiskt/v1/get_dictionary')).toHaveLength(20);
     expect(JSON.stringify(warn.mock.calls)).not.toContain('KH1');
   });
@@ -195,7 +198,7 @@ describe('the MISA AMIS match check job', () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       const amis = fakeAmis({ behave: (path) => behave(path) });
       expect(await run(h, amis), label).toEqual({ state: 'failed', failure });
-      expect(recorded(h), label).toEqual([{ connectionId: CONNECTION, state: 'failed', failure, results: [] }]);
+      expect(recorded(h), label).toEqual([{ connectionId: CONNECTION, requestedAt: REQUESTED, state: 'failed', failure, results: [] }]);
       const logged = JSON.stringify(warn.mock.calls);
       for (const secret of [ACCESS_CODE, CLIENT_ID, 'planted']) expect(logged, label).not.toContain(secret);
       warn.mockRestore();
@@ -220,5 +223,11 @@ describe('the MISA AMIS match check job', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     expect(await run(h, fakeAmis())).toEqual({ state: 'failed', failure: 'credentials' });
     expect(h.executed.map((e) => e.name)).toEqual(['kernel.channel.mark_expired', 'finance.misa_amis_match.record_check']);
+  });
+
+  it('accepts a SQL Server style GUID (not an RFC UUID) as an entry id and refuses a record without the request time', () => {
+    const base = { connectionId: CONNECTION, state: 'done', failure: null, results: [{ kind: 'party', ref: '0101234564', state: 'matched', code: 'NCC_A', entryId: '6F9619FF-8B86-D011-B42D-00C04FC964FF' }] };
+    expect(zMisaAmisMatchRecordCheck.safeParse({ ...base, requestedAt: REQUESTED }).success).toBe(true);
+    expect(zMisaAmisMatchRecordCheck.safeParse(base).success).toBe(false);
   });
 });
