@@ -171,8 +171,9 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
     const [row] = await sessionsOf(first);
     const since = (await rows<{ s: string }>('SELECT started_at AS s FROM crove_meetings.capture_session WHERE meeting_id = $1', [first]))[0]!.s;
     const before = await meetingCount(users.m2);
-    for (const attempt of [create(app(users.m2), orgA, { joinUrl: meetUrl(code.toUpperCase(), '/?hs=179&authuser=2') }), create(ext(users.m2, tokens.m2), orgA, { joinUrl: meetUrl(code, '/') })]) {
-      const error = await refusal(attempt);
+    // One after the other: a started promise that is refused must have its refusal awaited at once.
+    for (const attempt of [() => create(app(users.m2), orgA, { joinUrl: meetUrl(code.toUpperCase(), '/?hs=179&authuser=2') }), () => create(ext(users.m2, tokens.m2), orgA, { joinUrl: meetUrl(code, '/') })]) {
+      const error = await refusal(attempt());
       expect(error.code).toBe('CAPTURE_ALREADY_RUNNING');
       expect(error.status).toBe(409);
       expect(error.details).toEqual({ kind: 'app', since: new Date(since).toISOString() });
@@ -216,6 +217,25 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
     expect(await beat(m2, orgA, second, true)).toEqual({ open: false });
     expect(await beat(m1, orgA, first)).toEqual({ open: true });
     expect((await sessionsOf(first))[0]).toMatchObject({ ended_at: null, ended_reason: null });
+  });
+
+  it('a late heartbeat cannot take the call back for a recording that is over', async () => {
+    const code = meet();
+    const m1 = app(users.m1);
+    const m2 = app(users.m2);
+    const first = await create(m1, orgA, { joinUrl: meetUrl(code) });
+    await silence(first);
+    const second = await create(m2, orgA, { joinUrl: meetUrl(code) });
+    expect((await sessionsOf(first))[0]).toMatchObject({ ended_reason: 'lost' });
+    // The first recording ends (reported stopped): its capture is finished with that reason, not left as lost.
+    await runtime.execute('meetings.meeting.recording_stopped', { meetingId: first }, { actor: m1, orgId: orgA });
+    expect((await sessionsOf(first))[0]).toMatchObject({ ended_reason: 'stopped' });
+    await beat(m2, orgA, second, true);
+    // A heartbeat still in flight arrives after: the call stays free, the finished capture stays finished.
+    expect(await beat(m1, orgA, first)).toEqual({ open: false });
+    expect((await sessionsOf(first))[0]).toMatchObject({ ended_reason: 'stopped' });
+    const third = await create(m2, orgA, { joinUrl: meetUrl(code) });
+    expect((await sessionsOf(third))[0]).toMatchObject({ ended_reason: null });
   });
 
   it('the person stopping ends the capture at once, and so does the report that a recording stopped', async () => {

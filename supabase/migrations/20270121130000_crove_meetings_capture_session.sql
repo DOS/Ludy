@@ -125,11 +125,13 @@ BEGIN
   IF FOUND THEN
     RETURN true;
   END IF;
-  -- Ended as lost (no beat for 90 seconds, for example a laptop that slept): take the call back unless another capture holds it now (the unique indexes say so).
+  -- Ended as lost (no beat for 90 seconds, for example a laptop that slept): take the call back unless another capture holds it now (the unique indexes say so), or the recording is over (the meeting has
+  -- its end time once its media is recorded or it is reported stopped).
   BEGIN
     UPDATE crove_meetings.capture_session s
        SET ended_at = NULL, ended_reason = NULL, last_seen_at = pg_catalog.now()
-     WHERE s.org_id = v_org AND s.meeting_id = p_meeting AND s.ended_reason = 'lost';
+     WHERE s.org_id = v_org AND s.meeting_id = p_meeting AND s.ended_reason = 'lost'
+       AND EXISTS (SELECT 1 FROM crove_meetings.meeting m WHERE m.org_id = v_org AND m.id = p_meeting AND m.ended_at IS NULL);
     RETURN FOUND;
   EXCEPTION WHEN unique_violation THEN
     RETURN false;

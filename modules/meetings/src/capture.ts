@@ -66,12 +66,15 @@ export async function openCapture(ctx: CommandContext, meetingId: string, start:
   return kind;
 }
 
-/** Ends the open capture of a meeting, if it has one. Called where a meeting's recording ends: its media is recorded, or it is reported stopped. A no-op for a meeting with no capture. */
+/**
+ * Ends the capture of a meeting, if it has one. Called where a meeting's recording ends: its media is recorded, or it is reported stopped. A capture already ended as lost is finished with the real reason, so
+ * a late heartbeat cannot take the call back for a recording that is over. A no-op for a meeting with no capture, or one that already ended for a real reason.
+ */
 export async function endCapture(ctx: CommandContext, meetingId: string, reason: CaptureEndedReason): Promise<void> {
   await sql`
     UPDATE crove_meetings.capture_session
-       SET ended_at = ${ctx.now}::timestamptz, ended_reason = ${reason}::text
-     WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid AND ended_at IS NULL`.execute(ctx.trx);
+       SET ended_at = COALESCE(ended_at, ${ctx.now}::timestamptz), ended_reason = ${reason}::text
+     WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid AND (ended_at IS NULL OR ended_reason = 'lost')`.execute(ctx.trx);
 }
 
 export const meetingCaptureHeartbeat = defineCommand({
