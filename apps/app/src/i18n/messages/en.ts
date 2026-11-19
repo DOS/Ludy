@@ -5538,6 +5538,14 @@ export const en = {
   },
   misaAmisConnections: {
     title: 'MISA AMIS Kế toán: send vouchers to your accountant',
+    titleBoth: 'MISA (AMIS Kế toán or ASP): connect with your accounting software',
+    introBoth: 'Connect the company\'s MISA accounting data (AMIS Kế toán or MISA ASP). You can test the connection (it only reads). Sending vouchers to MISA ASP is not available yet. A legal entity connects to one MISA product only.',
+    productLabel: 'MISA product',
+    product: { amis: 'MISA AMIS Kế toán', asp: 'MISA ASP' },
+    connectTitleAsp: 'Connect MISA ASP',
+    accessCodeAsp: 'Connection code from MISA ASP',
+    accessCodeNoteAsp: 'The connection code is made in MISA ASP by someone with rights over the connection data. What you type is encrypted when it is saved and is never shown again. A legal entity connects to one MISA product only.',
+    aspLater: 'The MISA ASP connection works and can be tested. Sending vouchers to MISA ASP is not available yet; it comes in a later step.',
     intro:
       'Connect the company\'s AMIS Kế toán data so that vouchers can later be sent to AMIS as requests to generate a voucher; your people in AMIS still make the voucher. You can test the connection (it only reads the company\'s information); no voucher is sent to AMIS yet.',
     off: 'The MISA AMIS connector is turned off in this system.',
@@ -5561,6 +5569,10 @@ export const en = {
       works: 'The connection works',
       wrong_credentials: 'AMIS refused the connection. Check the connection code and the accounting data connected in AMIS; if needed, make a new code, then disconnect and connect again',
       unreachable: 'The test could not be made (AMIS did not answer or reported an error). Try again later; if it stays, tell the Ludy administrator',
+    },
+    testStateAsp: {
+      wrong_credentials: 'MISA ASP refused the connection. Check the connection code and the accounting data connected in MISA ASP; if needed, make a new code, then disconnect and connect again',
+      unreachable: 'The test could not be made (MISA ASP did not answer or reported an error). Try again later; if it stays, tell the Ludy administrator',
     },
     status: {
       active: 'Connected',
@@ -13673,8 +13685,9 @@ export const en = {
       MARKETPLACE_CONNECTION_EXISTS: 'This legal entity already has a connection to this marketplace.',
       MARKETPLACE_CONNECTION_NOT_FOUND: 'That marketplace connection was not found.',
       MARKETPLACE_CONNECTION_LIVE: 'Disconnect from the marketplace before removing this row.',
-      MISA_AMIS_DISABLED: 'The MISA AMIS connector is not turned on in this system.',
-      MISA_AMIS_CONNECTION_EXISTS: 'This legal entity already has a MISA AMIS connection.',
+      MISA_AMIS_DISABLED: 'This MISA connector (AMIS Kế toán or ASP) is not turned on in this system.',
+      MISA_AMIS_CONNECTION_EXISTS: 'This legal entity already has a MISA connection (AMIS Kế toán or ASP); disconnect it before connecting again.',
+      MISA_ASP_PUSH_NOT_AVAILABLE: 'Sending vouchers to MISA ASP is not available yet; only a MISA AMIS Kế toán connection can send vouchers now.',
       MISA_AMIS_CONNECTION_LIVE: 'Disconnect MISA AMIS before removing this row.',
       MISA_AMIS_CONNECTION_NOT_FOUND: 'That MISA AMIS connection was not found.',
       MISA_AMIS_NOT_TESTED: 'Test the MISA AMIS connection successfully before sending vouchers.',

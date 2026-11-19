@@ -400,6 +400,9 @@ const schema = z.object({
   MISA_AMIS_CLIENT_ID: optional.pipe(z.string().regex(/^[0-9A-Za-z._-]{8,128}$/, 'MISA_AMIS_CLIENT_ID is not in the shape of a ClientID').optional()),
   // The push of vouchers to MISA AMIS (S3b, #3902) is OFF unless this is `on`, and it needs MISA_AMIS_CLIENT_ID. It stays off until the sandbox check (docs/runbooks/misa-amis-sandbox-check.md) has confirmed what the push assumes; only the coordinator runs that check and sets this.
   MISA_AMIS_PUSH: optional.pipe(z.enum(['on', 'off']).optional()),
+  // The integrator's ClientID for the MISA ASP API (#4111, S2 of #4103): one per product (the plan counts approved apps per product; where MISA issued one value for both it is set twice). A SECRET of the
+  // deployment like MISA_AMIS_CLIENT_ID, never logged, never in an error or an audit row. Unset, the ASP product is off: the connect dialog does not offer it and no route that uses it is reachable.
+  MISA_ASP_CLIENT_ID: optional.pipe(z.string().regex(/^[0-9A-Za-z._-]{8,128}$/, 'MISA_ASP_CLIENT_ID is not in the shape of a ClientID').optional()),
   // The offline sandbox bank feed (ADR-0039, #2044): off unless asked for, so a deployment shows no bank feed until it
   // has one.
   BANK_FEED_SANDBOX: z.enum(['true', 'false']).default('false'),

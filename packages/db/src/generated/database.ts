@@ -1439,6 +1439,7 @@ export interface FinanceMisaAmisConnectionTable {
   last_tested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  product: ColumnType<string, string | undefined, NotGranted>;
 }
 
 /** crove_finance.misa_amis_push */

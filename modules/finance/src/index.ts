@@ -45,7 +45,7 @@ import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoic
 import { marketplaceConnectionCommands, marketplaceConnectionQueries } from './marketplace-connections.ts';
 import { misaAmisConnectionCommands, misaAmisConnectionQueries } from './misa-amis-connections.ts';
 import { misaAmisPushCommands, misaAmisPushQueries } from './misa-amis-push.ts';
-export { MISA_AMIS_CHANNEL_PROVIDER } from './misa-amis-connections.ts';
+export { MISA_AMIS_CHANNEL_PROVIDER, MISA_ASP_CHANNEL_PROVIDER, misaChannelProvider } from './misa-amis-connections.ts';
 import { einvoiceCommands, einvoiceQueries } from './einvoice-drafts.ts';
 import { marketplaceBalanceQueries } from './marketplace-balance.ts';
 import { marketplaceFactsQueries } from './marketplace-facts.ts';

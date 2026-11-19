@@ -71,6 +71,9 @@ suite('MISA AMIS connections (#3875)', () => {
   let offApp: ReturnType<typeof createHttpApp>;
   // The deployment that also turned the push on (MISA_AMIS_PUSH=on), as against `app`, which holds the ClientID but not the switch.
   let pushApp: ReturnType<typeof createHttpApp>;
+  // The deployment that also holds the ClientID of MISA ASP (#4111), and one that holds only that one.
+  let aspApp: ReturnType<typeof createHttpApp>;
+  let aspOnlyApp: ReturnType<typeof createHttpApp>;
   const owner: Account = { subject: randomUUID(), email: 'owner@misa-amis-conn.test', session: randomUUID(), userId: '' };
   const adminUser: Account = { subject: randomUUID(), email: 'admin@misa-amis-conn.test', session: randomUUID(), userId: '' };
   const member: Account = { subject: randomUUID(), email: 'member@misa-amis-conn.test', session: randomUUID(), userId: '' };
@@ -150,6 +153,8 @@ suite('MISA AMIS connections (#3875)', () => {
     app = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAmis: true } });
     offApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false } });
     pushApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAmis: true, misaAmisPush: true } });
+    aspApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAmis: true, misaAsp: true } });
+    aspOnlyApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAsp: true } });
 
     for (const who of [owner, adminUser, member, viewer, outsider]) {
       const me = await rpc('me/get', await tokenFor(who), undefined, null);
@@ -176,9 +181,9 @@ suite('MISA AMIS connections (#3875)', () => {
   });
 
   it('is offered only where the deployment holds the integrator\'s ClientID, and refuses a connect anywhere else before anything is sealed', async () => {
-    expect((await call('status', member)).body).toEqual({ offered: true, pushOffered: false });
-    expect((await call('status', member, undefined, offApp)).body).toEqual({ offered: false, pushOffered: false });
-    expect((await call('status', member, undefined, pushApp)).body).toEqual({ offered: true, pushOffered: true });
+    expect((await call('status', member)).body).toEqual({ offered: true, pushOffered: false, aspOffered: false });
+    expect((await call('status', member, undefined, offApp)).body).toEqual({ offered: false, pushOffered: false, aspOffered: false });
+    expect((await call('status', member, undefined, pushApp)).body).toEqual({ offered: true, pushOffered: true, aspOffered: false });
     await expect(call('connections/connect', owner, connectInput(), offApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
     expect(await rows('SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([]);
     expect(await rows('SELECT 1 FROM crove_finance.misa_amis_connection WHERE org_id = $1', [orgId])).toEqual([]);
@@ -195,7 +200,7 @@ suite('MISA AMIS connections (#3875)', () => {
       const list = await call('connections/list', who);
       expect(list.status).toBe(200);
       expect(list.text).not.toContain(PLANTED);
-      expect(list.body).toEqual([expect.objectContaining({ id, status: 'active', legalEntityId: await defaultEntity(), displayName: 'MISA AMIS Kế toán', connectedAt: expect.any(String) })]);
+      expect(list.body).toEqual([expect.objectContaining({ id, product: 'amis', status: 'active', legalEntityId: await defaultEntity(), displayName: 'MISA AMIS Kế toán', connectedAt: expect.any(String) })]);
       // Neither the code nor the opaque code AMIS is told is in the answer.
       expect(JSON.stringify(list.body)).not.toMatch(/ludy-[0-9a-f]{32}/);
     }
@@ -441,4 +446,138 @@ suite('MISA AMIS connections (#3875)', () => {
     expect(reconnected.status).toBe(200);
     expect(reconnected.body.id).not.toBe(listed?.id);
   });
+  // MISA ASP (#4111, S2 of #4103): the same connection table with a product. The access code is sealed under ASP's own provider id, a legal entity is on one product, the database holds the
+  // provider to the product, and the worker's test and the push each take the connection's product into account.
+  const ASP_CODE = `planted-asp-code-${randomBytes(6).toString('hex')}`;
+  const newEntity = async (name: string) => {
+    const id = randomUUID();
+    await rows("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, $3, 'branch', $4)", [orgId, id, name, owner.userId]);
+    return id;
+  };
+
+  it('offers MISA ASP only where the deployment holds its own ClientID, and refuses a connect of a product the deployment does not hold before anything is sealed', async () => {
+    expect((await call('status', member, undefined, aspApp)).body).toEqual({ offered: true, pushOffered: false, aspOffered: true });
+    expect((await call('status', member, undefined, aspOnlyApp)).body).toEqual({ offered: false, pushOffered: false, aspOffered: true });
+    const entity = await newEntity('Chi nhánh chưa bật ASP');
+    await expect(call('connections/connect', owner, connectInput({ legalEntityId: entity, product: 'asp', accessCode: ASP_CODE }), app)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
+    await expect(call('connections/connect', owner, connectInput({ legalEntityId: entity, accessCode: ASP_CODE }), aspOnlyApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
+    expect(await rows('SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [orgId, entity])).toEqual([]);
+    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity])).toEqual([]);
+  });
+
+  it('connects an ASP entity: the code is sealed under accounting_misa_asp and opens for no other provider, the product is in the list, and an entity is on one product only', async () => {
+    const entity = await newEntity('Chi nhánh ASP');
+    const connected = await call('connections/connect', adminUser, connectInput({ legalEntityId: entity, product: 'asp', accessCode: ASP_CODE }), aspOnlyApp);
+    expect(connected.status).toBe(200);
+    expect(connected.text).not.toContain(ASP_CODE);
+    const id = String(connected.body.id);
+    const listed = ((await call('connections/list', member)).body as Array<Record<string, unknown>>).find((c) => c.id === id);
+    expect(listed).toMatchObject({ product: 'asp', displayName: 'MISA ASP', status: 'active', legalEntityId: entity });
+    expect(JSON.stringify(listed)).not.toContain(ASP_CODE);
+    const [channel] = await rows<{ id: string; provider: string }>('SELECT id, provider FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [orgId, entity]);
+    expect(channel?.provider).toBe('accounting_misa_asp');
+    const [credential] = await rows<{ key_id: string; envelope: Buffer }>('SELECT key_id, envelope FROM crove_kernel.credential WHERE org_id = $1 AND connection_id = $2', [orgId, channel?.id]);
+    expect(credential?.envelope.includes(Buffer.from(ASP_CODE))).toBe(false);
+    const envelope = { keyId: String(credential?.key_id), envelope: credential?.envelope as Buffer };
+    expect(vault.open(envelope, { orgId, provider: 'accounting_misa_asp', externalAccountId: entity })).toBe(ASP_CODE);
+    // Bound to its provider: the code of an ASP connection is never opened as an AMIS one.
+    expect(() => vault.open(envelope, { orgId, provider: 'accounting_misa_amis', externalAccountId: entity })).toThrow();
+    expect((await rows<{ product: string }>('SELECT product FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, id]))[0]?.product).toBe('asp');
+    // The same product again is the same connection; the other product on this entity is refused, and what it began (a channel connection) is rolled back with it.
+    const again = await call('connections/connect', owner, connectInput({ legalEntityId: entity, product: 'asp', accessCode: `${ASP_CODE}-2` }), aspOnlyApp);
+    expect(again.body.id).toBe(id);
+    await expect(call('connections/connect', owner, connectInput({ legalEntityId: entity, accessCode: PLANTED }), aspApp)).resolves.toMatchObject({ status: 409, body: { code: 'MISA_AMIS_CONNECTION_EXISTS' } });
+    expect((await rows<{ provider: string }>('SELECT provider FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [orgId, entity])).map((r) => r.provider)).toEqual(['accounting_misa_asp']);
+    for (const table of ['crove_kernel.audit_event', 'crove_kernel.outbox_event', 'crove_kernel.channel_connection', 'crove_finance.misa_amis_connection']) {
+      expect(await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text LIKE '%' || $2 || '%'`, [orgId, ASP_CODE]), table).toEqual([]);
+    }
+  });
+
+  it('holds the provider to the product in the database, fixes the product for the row\'s life, and keeps the AMIS rows already there as AMIS', async () => {
+    const entityA = await newEntity('Chi nhánh khóa A');
+    const entityB = await newEntity('Chi nhánh khóa B');
+    const amisChannel = randomUUID();
+    const aspChannel = randomUUID();
+    const insertChannel = (id: string, provider: string, entity: string) =>
+      rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, 'Thử', $5)", [orgId, id, provider, entity, owner.userId]);
+    await insertChannel(amisChannel, 'accounting_misa_amis', entityA);
+    await insertChannel(aspChannel, 'accounting_misa_asp', entityB);
+    const file = (entity: string, channel: string, product?: string) =>
+      product === undefined
+        ? rows('INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3)', [orgId, entity, channel])
+        : rows('INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id, product) VALUES ($1, $2, $3, $4)', [orgId, entity, channel, product]);
+    // An AMIS channel under an ASP row, an ASP channel under an AMIS row (the default) and under a row that says so, are all refused; a product outside the two is refused by its constraint.
+    await expect(file(entityA, amisChannel, 'asp')).rejects.toThrow(/MISA_AMIS_CONNECTION_PROVIDER/);
+    await expect(file(entityB, aspChannel)).rejects.toThrow(/MISA_AMIS_CONNECTION_PROVIDER/);
+    await expect(file(entityB, aspChannel, 'amis')).rejects.toThrow(/MISA_AMIS_CONNECTION_PROVIDER/);
+    // The guard runs before the constraint: a product outside the two reaches the constraint on a channel the guard lets through.
+    await expect(file(entityA, amisChannel, 'other')).rejects.toThrow(/misa_amis_connection_product_ck/);
+    await file(entityB, aspChannel, 'asp');
+    await file(entityA, amisChannel);
+    expect((await rows<{ product: string }>('SELECT product FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entityA]))[0]?.product).toBe('amis');
+    // A tenant role (the owner, through the sealed context) cannot change the product of a row.
+    const refused = await admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner.userId, orgId)]);
+        await c.query('SET LOCAL ROLE crove_tenant');
+        await c.query("UPDATE crove_finance.misa_amis_connection SET product = 'amis' WHERE org_id = $1 AND legal_entity_id = $2", [orgId, entityB]);
+        return null;
+      } catch (error) {
+        return String((error as Error).message);
+      } finally {
+        await c.query('ROLLBACK');
+      }
+    });
+    expect(refused).toMatch(/permission denied/);
+    // And not by anyone else either (a later grant, a definer function, the admin connection): the trigger refuses a re-bound product or channel connection, while the last test's state is still written.
+    await expect(rows("UPDATE crove_finance.misa_amis_connection SET product = 'amis' WHERE org_id = $1 AND legal_entity_id = $2", [orgId, entityB])).rejects.toThrow(/MISA_AMIS_CONNECTION_FIXED/);
+    await expect(rows('UPDATE crove_finance.misa_amis_connection SET channel_connection_id = $3 WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entityB, amisChannel])).rejects.toThrow(/MISA_AMIS_CONNECTION_FIXED/);
+    await rows("UPDATE crove_finance.misa_amis_connection SET last_test_state = 'works', last_tested_at = pg_catalog.now() WHERE org_id = $1 AND legal_entity_id = $2", [orgId, entityB]);
+    // The rows made before the column existed are AMIS ones: the existing connection of the default entity.
+    expect((await rows<{ product: string }>('SELECT product FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, await defaultEntity()]))[0]?.product).toBe('amis');
+  });
+
+  it('tests an ASP connection as the worker with the ASP client (a token, then one row of the organization-unit catalogue), and asks for a test only where the deployment holds that product', async () => {
+    const entity = await newEntity('Chi nhánh ASP thử');
+    const connected = await call('connections/connect', owner, connectInput({ legalEntityId: entity, product: 'asp', accessCode: ASP_CODE }), aspOnlyApp);
+    const id = String(connected.body.id);
+    // Asked on a deployment without the ASP ClientID: refused as AMIS's is. Where it holds it, queued with ids only.
+    await expect(call('connections/test', owner, { id }, app)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
+    expect((await call('connections/test', owner, { id }, aspOnlyApp)).body).toEqual({ queued: true });
+    // A connection that is not there is not found, on a deployment that holds only ASP's ClientID too (the product cannot be told, so it is not asked).
+    expect((await call('connections/test', owner, { id: randomUUID() }, aspOnlyApp)).body).toMatchObject({ code: 'MISA_AMIS_CONNECTION_NOT_FOUND' });
+    const [stored] = await rows<{ org_company_code: string }>('SELECT org_company_code FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, id]);
+    const company = String(stored?.org_company_code);
+    const seen: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const asp = createAmisClient({
+      clientId: CLIENT_ID,
+      product: 'asp',
+      transport: async (request: AmisRequest): Promise<AmisResponse> => {
+        const path = new URL(request.url).pathname.replace(/^\/apis/, '');
+        const body = JSON.parse(request.body) as Record<string, unknown>;
+        seen.push({ path, body });
+        const ok = (data: unknown): AmisResponse => ({ status: 200, body: JSON.stringify({ Success: true, ErrorMessage: '', Data: data }) });
+        if (path === '/asp/v1/token') return body.access_code === `${ASP_CODE}` && body.org_company_code === company ? ok({ access_token: 'tok-asp' }) : { status: 200, body: JSON.stringify({ Success: false, ErrorCode: 'InvalidAccessToken', ErrorMessage: '' }) };
+        return path === '/asp/v1/get_dictionary' && request.headers['X-MISA-AccessToken'] === 'tok-asp' ? ok([{ organization_unit_id: 'b1' }]) : { status: 200, body: JSON.stringify({ Success: false, ErrorCode: 'InvalidParam', ErrorMessage: '' }) };
+      },
+    });
+    expect(await runMisaAmisTest({ runtime: worker, broker: vault, client: null, aspClient: asp }, { orgId, connectionId: id })).toEqual({ state: 'works' });
+    expect(seen.map((s) => s.path)).toEqual(['/asp/v1/token', '/asp/v1/get_dictionary']);
+    expect(seen[1]?.body).toMatchObject({ data_type: 6, skip: 0, take: 1 });
+    const [listed] = ((await call('connections/list', member)).body as Array<{ id: string; lastTestState: string | null }>).filter((c) => c.id === id);
+    expect(listed?.lastTestState).toBe('works');
+    // The worker of a deployment without the ASP ClientID leaves the connection alone and records nothing new.
+    expect(await runMisaAmisTest({ runtime: worker, broker: vault, client: fakeAmis('x', 'y').client, aspClient: null }, { orgId, connectionId: id })).toEqual({ state: 'skipped', reason: 'product_off' });
+  });
+
+  it('never pushes vouchers to an ASP connection yet: the push is refused for it, and the worker is told to leave it alone', async () => {
+    const [asp] = await rows<{ id: string; legal_entity_id: string }>("SELECT id, legal_entity_id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND product = 'asp' ORDER BY created_at LIMIT 1", [orgId]);
+    const target = await worker.query('finance.misa_amis.push_target', { connectionId: String(asp?.id) }, { actor: system, orgId });
+    expect(target).toEqual({ action: 'none', reason: 'other_product' });
+    const begin = await worker.execute('finance.misa_amis.push_begin', { connectionId: String(asp?.id), branchKnown: false, checked: false }, { actor: system, orgId });
+    expect(begin).toMatchObject({ action: 'none', reason: 'other_product' });
+    await expect(api.execute('finance.misa_amis.push', { connectionId: String(asp?.id), kind: 'purchase_services', digest: 'a'.repeat(64), legalEntityId: String(asp?.legal_entity_id) }, { actor: asUser(owner), orgId })).rejects.toMatchObject({ code: 'MISA_ASP_PUSH_NOT_AVAILABLE' });
+  });
+
 });

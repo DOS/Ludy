@@ -623,7 +623,14 @@ export type MarketplacePollState = (typeof MARKETPLACE_POLL_STATES)[number];
 // A connection to MISA AMIS Kế toán (#3875): the result of its last test, as a state and never MISA's own text; a tenant updates only that (the entity, the channel connection and the code are fixed for the row's life).
 export const MISA_AMIS_TEST_STATES = ['works', 'wrong_credentials', 'unreachable'] as const;
 export type MisaAmisTestState = (typeof MISA_AMIS_TEST_STATES)[number];
-export type MisaAmisConnectionTable = Refine<G.FinanceMisaAmisConnectionTable, { last_test_state: MisaAmisTestState | null; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+// The MISA product a connection is for (#4111, S2 of #4103): AMIS Kế toán (the default) or MISA ASP. Fixed for the row's life; the channel connection's provider must be the product's (a guard).
+export const MISA_AMIS_PRODUCTS = ['amis', 'asp'] as const;
+export type MisaAmisProduct = (typeof MISA_AMIS_PRODUCTS)[number];
+export type MisaAmisConnectionTable = Refine<
+  G.FinanceMisaAmisConnectionTable,
+  { last_test_state: MisaAmisTestState | null; product: ColumnType<MisaAmisProduct, MisaAmisProduct | undefined, G.NotGranted>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
 // The vouchers pushed to MISA AMIS (#3902, S3b of #3854): one row per AMIS voucher part. queued -> sending -> sent -> accepted | refused; ambiguous after a lost answer; failed when ours could not send.
 export const MISA_AMIS_PUSH_STATES = ['queued', 'sending', 'sent', 'accepted', 'refused', 'ambiguous', 'failed'] as const;
 export type MisaAmisPushState = (typeof MISA_AMIS_PUSH_STATES)[number];
