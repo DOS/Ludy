@@ -75,6 +75,9 @@ const SIGNALS = [
   'crm.signals.open_deals:ludy.read',
   // The one query behind the `ludy_signals` tool (step S4): it runs the three rules above as the grant and returns their items.
   'kernel.mcp.signals:ludy.read',
+  // The Meetings read of the published decisions of the last 7, 14 or 30 days (#4016, company grants only, the Meetings PO's direction of 2026-11-19, inside the owner's decision of 2026-11-18). Optional here so
+  // the name can be accepted before the query lands (two steps); the next tests-only step moves it to REACHABLE, where its absence fails.
+  'meetings.mcp.decisions:ludy.read',
 ];
 
 // The finance reads of the connected coworker (#3849, plan docs/plan/vy.md section 5 C2 and C3, owner decision 2026-11-18): the overview figures, the open receivables and payables per party, and one payment

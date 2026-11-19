@@ -491,7 +491,7 @@ function S2cBook({ entityId }: { entityId: string }) {
 
 // S2e-HKD (#2517 slice 2e), the cash and bank book of a household that pays PIT on income. Read from the ledger: one section per account of 111 and 112 with the opening balance, each line (cash in, cash out, the
 // other account, the running balance) and the closing balance; the total equals the ledger. A negative balance is shown and flagged. While the layout row is unconfirmed (#2520) the figures and the Excel file carry
-// "Số liệu tạm, kế toán chưa xác nhận tỷ lệ"; the label goes when the row is confirmed, with no code change. Ludy files nothing.
+// "Số liệu tạm, kế toán chưa xác nhận bố cục sổ"; the label goes when the row is confirmed, with no code change. Ludy files nothing.
 function S2eBook({ entityId }: { entityId: string }) {
   const t = useTranslations('household');
   const f = useFormat();
@@ -656,7 +656,7 @@ function S2eBook({ entityId }: { entityId: string }) {
 }
 
 // S2d-HKD (#2517 slice 2d), the goods book of a household that pays PIT on income: per item the quantity and value in, out and on hand for ONE month, read from the stock data of #2513 (the same figures as the Nhập xuất
-// tồn report). A month that is not closed says the cost is provisional; while the layout row is unconfirmed (#2520) the figures and the Excel file carry "Số liệu tạm, kế toán chưa xác nhận tỷ lệ". Ludy files nothing.
+// tồn report). A month that is not closed says the cost is provisional; while the layout row is unconfirmed (#2520) the figures and the Excel file carry "Số liệu tạm, kế toán chưa xác nhận bố cục sổ". Ludy files nothing.
 function S2dBook({ entityId }: { entityId: string }) {
   const t = useTranslations('household');
   const ts = useTranslations('stock');
