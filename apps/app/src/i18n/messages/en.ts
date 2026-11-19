@@ -9102,6 +9102,7 @@ export const en = {
       finance_payment_reminder: 'Wording the opening and closing of a payment reminder',
       finance_stock_match: 'Suggesting items for unassigned invoice lines',
       finance_stock_reorder: 'Wording a reorder message to a supplier',
+      finance_stock_columns: 'Proposing which standard field each column of an unknown marketplace order report is',
       finance_einvoice_draft: 'Drafting the lines, VAT rate and buyer of a sales invoice draft',
       finance_einvoice_rate_explain: 'Explaining the VAT rate proposed for an adjusting or replacing invoice',
       finance_stock_surplus_explain: 'Explaining the surplus of a stock count',

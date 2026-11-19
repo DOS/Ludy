@@ -17,6 +17,7 @@ export * from './followup.ts';
 export * from './overview.ts';
 export * from './vat-late.ts';
 export * from './marketplace-line.ts';
+export * from './marketplace-columns.ts';
 export * from './marketplace-fee-note.ts';
 export * from './misa-check-line.ts';
 export * from './misa-amis-blocker-notes.ts';
