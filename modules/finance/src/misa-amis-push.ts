@@ -10,8 +10,9 @@
 //   the rows it took or whose answer was lost (`sent`, `ambiguous`, or `sending` for too long, which becomes `ambiguous`), once per run, then send the next batch of queued rows (at most AMIS_SAVE_BATCH_MAX, one
 //   voucher type and one set of choices). A batch whose call was begun before is never sent again.
 // - finance.misa_amis.push_record (system; R1): writes what came back into the rows and the call. Only moves the graph allows (the table's guard says the same).
-// - finance.misa_amis.push_resolve (owners and admins; R2 internal): after three days without MISA's answer a person who looked in AMIS says "it is in AMIS" (`sent`, no call) or "it is not in AMIS" (`failed`: only a new
-//   confirmed push sends it again).
+// - finance.misa_amis.push_resolve (owners and admins; R2 external, because "in AMIS" on an `ambiguous` row emits the event that starts the job reading MISA's result): a person who looked in AMIS settles a row MISA never
+//   answered for. An `ambiguous` row after three days: "in AMIS" makes it `sent` (its result is then read), "not in AMIS" makes it `failed`. A `sent` row after 24 hours (the worker's polling window): "in AMIS" makes it
+//   `accepted`, "not in AMIS" makes it `failed`; only a new confirmed push sends a failed row again. Ages are the database clock's; the guard stamps the move with it.
 // - finance.misa_amis.push_list (every member; query): the rows of a connection with their state and MISA's reason (untrusted text: the screen shows it escaped).
 // No voucher body is stored, and no row, audit fact, ledger row or error carries a credential, a party name or an amount: ids, codes, dates, counts and states. MISA's own text is only the `reason` of a refused row.
 import { createHash } from 'node:crypto';
@@ -482,36 +483,56 @@ export const PUSH_AMBIGUOUS_REVIEW_DAYS = 3;
 export const zMisaAmisPushResolve = z.strictObject({
   connectionId: zId,
   orgRefid: zOrgRefid,
-  // "It is in AMIS": the row is `sent` (no call is made; MISA's result is read as for any sent row). "It is not in AMIS": the row is `failed` and only a new confirmed push sends it again.
+  // "It is in AMIS": an `ambiguous` row becomes `sent` (no call is made; MISA's result is read as for any sent row), a `sent` row that MISA never answered for becomes `accepted`. "It is not in AMIS": the row is `failed`
+  // and only a new confirmed push sends it again.
   outcome: z.enum(['in_amis', 'not_in_amis']),
 });
 
 export const misaAmisPushResolve = defineCommand({
   name: 'finance.misa_amis.push_resolve',
   input: zMisaAmisPushResolve,
-  // A person records what they found in AMIS about a request whose answer was lost. Nothing is sent; a resend needs a new confirmed push (finance.misa_amis.push). "In AMIS" emits the event that starts the job
-  // reading MISA's result for the row, so the command is an external effect (R2), like the push itself.
+  // A person records what they found in AMIS about a request MISA never answered for. Nothing is sent; a resend needs a new confirmed push (finance.misa_amis.push). A row found "in AMIS" that is `sent` after
+  // an `ambiguous` one emits the event that starts the job reading MISA's result for it, so the command is an external effect (R2), like the push itself.
   risk: 'R2',
   sideEffect: 'external',
   access: MANAGERS,
   handler: async (ctx, input): Promise<{ resolved: boolean }> => {
-    const [state, reason] = input.outcome === 'in_amis' ? (['sent', 'CONFIRMED_IN_AMIS'] as const) : (['failed', 'NOT_IN_AMIS'] as const);
-    const moved = await ctx.trx
-      .updateTable('crove_finance.misa_amis_push')
+    // The age is the database's own clock, as the guard's: a row the command takes is a row the guard lets through (no second of skew between the two).
+    const table = 'crove_finance.misa_amis_push';
+    const reasonOf = input.outcome === 'in_amis' ? 'CONFIRMED_IN_AMIS' : 'NOT_IN_AMIS';
+    // 1. An `ambiguous` row (a call whose answer was lost) with no answer for more than three days. "In AMIS": `sent` (MISA's result is read as for any sent row); "not in AMIS": `failed`.
+    const ambiguous = await ctx.trx
+      .updateTable(table)
       // The send day stays (the row's own `sent_at`, else the time it was last changed): the result check asks MISA from that day, not from the day a person looked in AMIS. `updated_at` is renewed, so the row is in the result window.
-      .set({ state, reason, ...(state === 'sent' ? { sent_at: sql<Date>`coalesce(sent_at, updated_at)` } : {}), updated_at: ctx.now })
+      .set({ state: input.outcome === 'in_amis' ? 'sent' : 'failed', reason: reasonOf, ...(input.outcome === 'in_amis' ? { sent_at: sql<Date>`coalesce(sent_at, updated_at)` } : {}), updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
       .where('org_refid', '=', input.orgRefid)
       .where('state', '=', 'ambiguous')
-      .where('updated_at', '<', new Date(ctx.now.getTime() - PUSH_AMBIGUOUS_REVIEW_DAYS * 24 * 3600 * 1000))
+      .where('updated_at', '<', sql<Date>`pg_catalog.now() - ${`${PUSH_AMBIGUOUS_REVIEW_DAYS} days`}::interval`)
       .executeTakeFirst();
-    const resolved = Number(moved.numUpdatedRows) > 0;
-    if (!resolved) throw new DomainError('MISA_AMIS_PUSH_STATE', 409, 'Chứng từ này chưa thể xác nhận: chỉ chứng từ chưa có phản hồi từ MISA quá ba ngày mới xác nhận được');
-    // "It is in AMIS": the row is `sent`, so the job is asked to read MISA's result for it (its window runs from this change); no voucher is sent.
-    if (input.outcome === 'in_amis') await ctx.emit(MISA_AMIS_PUSH_REQUESTED, { connection_id: input.connectionId });
-    ctx.audit({ connectionId: input.connectionId, outcome: input.outcome });
-    return { resolved };
+    if (Number(ambiguous.numUpdatedRows) > 0) {
+      // The row is `sent` again, so the job is asked to read MISA's result for it (its window runs from this change); no voucher is sent.
+      if (input.outcome === 'in_amis') await ctx.emit(MISA_AMIS_PUSH_REQUESTED, { connection_id: input.connectionId });
+      ctx.audit({ connectionId: input.connectionId, outcome: input.outcome, from: 'ambiguous' });
+      return { resolved: true };
+    }
+    // 2. A `sent` row MISA took and never answered for in the 24 hours the worker asks (F6): the worker asks no more, so a person looks. "In AMIS": `accepted` (MISA's result is not awaited any more);
+    // "not in AMIS": `failed`.
+    const sent = await ctx.trx
+      .updateTable(table)
+      .set({ state: input.outcome === 'in_amis' ? 'accepted' : 'failed', reason: reasonOf, ...(input.outcome === 'in_amis' ? { answered_at: ctx.now } : {}), updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('connection_id', '=', input.connectionId)
+      .where('org_refid', '=', input.orgRefid)
+      .where('state', '=', 'sent')
+      .where('updated_at', '<', sql<Date>`pg_catalog.now() - ${`${PUSH_RESULT_WINDOW_HOURS} hours`}::interval`)
+      .executeTakeFirst();
+    if (Number(sent.numUpdatedRows) === 0) {
+      throw new DomainError('MISA_AMIS_PUSH_STATE', 409, 'Chứng từ này chưa thể xác nhận: chỉ chứng từ đã gửi mà MISA chưa phản hồi quá một ngày, hoặc chưa có phản hồi quá ba ngày, mới xác nhận được');
+    }
+    ctx.audit({ connectionId: input.connectionId, outcome: input.outcome, from: 'sent' });
+    return { resolved: true };
   },
 });
 
@@ -532,6 +553,8 @@ export interface MisaAmisPushRow {
   requestedAt: string;
   sentAt: string | null;
   answeredAt: string | null;
+  // The row's last change: what the screen needs to tell a row a person may resolve (a `sent` one older than 24 hours, an `ambiguous` one older than three days).
+  changedAt: string;
 }
 
 export const MISA_AMIS_PUSH_LIST_LIMIT = 200;
@@ -543,7 +566,7 @@ export const misaAmisPushList = defineQuery({
   handler: async (ctx, input): Promise<MisaAmisPushRow[]> => {
     let query = ctx.trx
       .selectFrom('crove_finance.misa_amis_push')
-      .select(['id', 'source_type', 'source_id', 'voucher_type', 'part', 'org_refno', 'state', 'reason', 'attempts', 'requested_at', 'sent_at', 'answered_at'])
+      .select(['id', 'source_type', 'source_id', 'voucher_type', 'part', 'org_refno', 'state', 'reason', 'attempts', 'requested_at', 'sent_at', 'answered_at', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId);
     if (input.state) query = query.where('state', '=', input.state);
@@ -565,6 +588,7 @@ export const misaAmisPushList = defineQuery({
       requestedAt: new Date(r.requested_at).toISOString(),
       sentAt: r.sent_at ? new Date(r.sent_at).toISOString() : null,
       answeredAt: r.answered_at ? new Date(r.answered_at).toISOString() : null,
+      changedAt: new Date(r.updated_at).toISOString(),
     }));
   },
 });
