@@ -30,7 +30,7 @@ import { NotificationPreferences } from './notifications-card.tsx';
 import { Offboarding } from './offboarding.tsx';
 import { SETTINGS_CARD } from './tabs.ts';
 
-// The ten tabs of Settings (ST-1, #3589), one screen each. A tab lists its cards in one column and stays under 1200 px at 1440 wide, which decides what sits together. The cards owned by another
+// The eleven tabs of Settings (ST-1, #3589; #3592), one screen each. A tab lists its cards in one column and stays under 1200 px at 1440 wide, which decides what sits together. The cards owned by another
 // app (the booking and quote cards of Engage, the minutes templates of the meetings) have tabs of their own or sit under "Ứng dụng" until a later issue moves them into their own app's settings.
 // A new card is one line in the page of its tab.
 
@@ -237,7 +237,16 @@ export function SettingsConnectionsPage() {
   );
 }
 
-// Bảo mật tài khoản: the person's own second factor, devices, notification preferences (NT-1, #3592) and meeting platform connections; the team's extension devices for owners and admins.
+// Thông báo của tôi (NT-1, #3592): which notices the member gets and the daily brief by email, theirs alone; moved from the bottom of the bell's screen.
+export function SettingsNotificationsPage() {
+  return (
+    <SettingsFrame>
+      {({ org }) => <NotificationPreferences key={`notification-preferences:${org.slug}`} />}
+    </SettingsFrame>
+  );
+}
+
+// Bảo mật tài khoản: the person's own second factor, devices and meeting platform connections; the team's extension devices for owners and admins.
 export function SettingsSecurityPage() {
   return (
     <SettingsFrame>
@@ -251,8 +260,6 @@ export function SettingsSecurityPage() {
               <MySessions userId={me.userId} />
             </Anchor>
           )}
-          {/* Which notices the member gets, and the daily brief by email (NT-1, #3592): theirs alone, moved from the bell's screen. */}
-          <NotificationPreferences />
           {/* The member's own meeting platform connections (C1, #3173): the recordings they hold are suggested on the Meetings tab. */}
           {modules.includes('meetings') && (
             <Anchor id={SETTINGS_CARD.meetingPlatforms}>

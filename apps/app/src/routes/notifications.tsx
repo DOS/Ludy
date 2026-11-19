@@ -10,7 +10,7 @@ import { cn } from '@crove/ui/lib/utils';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { groupNotifications, isKnownKind, notificationTarget, periodParts, unreadIdChunks, type GroupableKind, type NotificationTarget } from '../lib/notifications.ts';
+import { groupNotifications, isKnownKind, NOTIFICATION_LIST_LIMIT, notificationTarget, periodParts, unreadIdChunks, type GroupableKind, type NotificationTarget } from '../lib/notifications.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { SETTINGS_CARD } from './settings/tabs.ts';
 
@@ -125,12 +125,17 @@ export function NotificationsPage() {
   };
   // A group row opens the screen that lists all of its kind, and marks the ones it stood for read (the read command takes 100 ids at a time).
   const openGroup = (kind: GroupableKind, group: WorkNotification[]) => {
-    for (const ids of unreadIdChunks(group)) read.mutate({ ids });
+    // One chunk after the other: a failed chunk stops the rest and shows its error (the list is 30 long, so there is one chunk in practice).
+    void (async () => {
+      for (const ids of unreadIdChunks(group)) await read.mutateAsync({ ids });
+    })().catch(() => undefined);
     go(notificationTarget({ kind, subjectId: null, detail: {} }), {});
   };
   // A kind this version of the app does not know (a newer module) is left out rather than shown blank.
   const items = (list.data?.items ?? []).filter((n) => isKnownKind(n.kind));
   const rows = groupNotifications(items);
+  // The server answers with the newest 30: a group at the end of a full list may stand for more.
+  const capped = (list.data?.items.length ?? 0) >= NOTIFICATION_LIST_LIMIT;
   const rowClass = (unread: boolean) => cn('flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none', unread && 'bg-primary/5');
   return (
     <div className="space-y-4">
@@ -139,8 +144,8 @@ export function NotificationsPage() {
         subtitle={t('subtitle')}
         actions={
           <>
-            {/* The preferences are a card of Settings (NT-1, #3592), on the tab of the person's own settings. */}
-            <Link to="/o/$slug/settings/security" params={{ slug }} hash={NOTIFICATION_SETTINGS_ID} className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
+            {/* The preferences are a card of Settings (NT-1, #3592), the tab "Thông báo của tôi". */}
+            <Link to="/o/$slug/settings/notifications" params={{ slug }} hash={NOTIFICATION_SETTINGS_ID} className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
               {t('settingsLink')}
             </Link>
             <Button variant="outline" size="sm" disabled={!list.data?.unread || read.isPending} onClick={() => read.mutate({ all: true })}>
@@ -160,12 +165,12 @@ export function NotificationsPage() {
           {rows.map((row) =>
             row.type === 'group' ? (
               // A run of the same kind (NT-2, #3592): one row with the count, opening the screen that lists them all.
-              <button key={`group:${row.items[0]!.id}`} type="button" onClick={() => openGroup(row.kind, row.items)} className={rowClass(row.unread > 0)} data-testid="notification-group">
-                <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', row.unread > 0 ? 'bg-primary' : 'bg-transparent')} aria-hidden />
+              <button key={`group:${row.items[0]!.id}`} type="button" onClick={() => openGroup(row.kind, row.items)} className={rowClass(true)} data-testid="notification-group">
+                <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', 'bg-primary')} aria-hidden />
                 <span className="min-w-0 flex-1 space-y-0.5">
-                  <span className={cn('block text-sm', row.unread > 0 ? 'font-medium text-foreground' : 'text-muted-foreground')}>
-                    {t(`group.${row.kind.replace('kernel.', '') as 'approval_waiting'}`, { count: row.items.length })}
-                    {row.unread > 0 && <span className="sr-only"> ({t('unreadCount', { count: row.unread })})</span>}
+                  <span className={cn('block text-sm', 'font-medium text-foreground')}>
+                    {t(`group.${row.kind.replace('kernel.', '') as 'approval_waiting'}`, { count: row.items.length, more: capped && row === rows[rows.length - 1] ? 'yes' : 'no' })}
+                    <span className="sr-only"> ({t('unread')})</span>
                   </span>
                   <span className="block text-xs text-subtle-foreground">{f.dateTime(row.items[0]!.createdAt)}</span>
                 </span>

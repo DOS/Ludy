@@ -68,11 +68,21 @@ describe('periodParts', () => {
 // A run of the same kind is one row (NT-2, #3592); the rest keep a row per event.
 describe('groupNotifications', () => {
   const n = (id: string, kind: string, read = false) => ({ id, kind, read });
-  it('groups a run of two or more of a groupable kind, in the order of the list', () => {
-    const rows = groupNotifications([n('1', 'kernel.approval_waiting'), n('2', 'kernel.approval_waiting', true), n('3', 'kernel.approval_waiting'), n('4', 'finance.bank_attention'), n('5', 'kernel.file_unreadable')]);
+  it('groups a run of two or more unread of a groupable kind, in the order of the list', () => {
+    const rows = groupNotifications([n('1', 'kernel.approval_waiting'), n('2', 'kernel.approval_waiting'), n('3', 'kernel.approval_waiting'), n('4', 'finance.bank_attention'), n('5', 'kernel.file_unreadable')]);
     expect(rows.map((r) => r.type)).toEqual(['group', 'one', 'one']);
     const [first] = rows;
-    expect(first?.type === 'group' && { kind: first.kind, ids: first.items.map((i) => i.id), unread: first.unread }).toEqual({ kind: 'kernel.approval_waiting', ids: ['1', '2', '3'], unread: 2 });
+    expect(first?.type === 'group' && { kind: first.kind, ids: first.items.map((i) => i.id) }).toEqual({ kind: 'kernel.approval_waiting', ids: ['1', '2', '3'] });
+  });
+
+  it('never counts a read one: the server marks a decided proposal read, so it no longer waits', () => {
+    // 3 pending then 4 decided: the group says 3, and the 4 stay rows of their own.
+    const rows = groupNotifications([n('1', 'kernel.approval_waiting'), n('2', 'kernel.approval_waiting'), n('3', 'kernel.approval_waiting'), ...['4', '5', '6', '7'].map((id) => n(id, 'kernel.approval_waiting', true))]);
+    expect(rows.map((r) => r.type)).toEqual(['group', 'one', 'one', 'one', 'one']);
+    expect(rows[0]?.type === 'group' && rows[0].items.length).toBe(3);
+    expect(groupNotifications([n('1', 'kernel.approval_waiting', true), n('2', 'kernel.approval_waiting', true)]).map((r) => r.type)).toEqual(['one', 'one']);
+    // One unread between read ones is a row of its own, not a group of one.
+    expect(groupNotifications([n('1', 'kernel.task_assigned', true), n('2', 'kernel.task_assigned'), n('3', 'kernel.task_assigned', true)]).map((r) => r.type)).toEqual(['one', 'one', 'one']);
   });
 
   it('keeps a row per event for a single notice and for kinds that name different things', () => {

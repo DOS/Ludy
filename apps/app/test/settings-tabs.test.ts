@@ -34,15 +34,15 @@ beforeAll(async () => {
 const group = TAB_GROUPS.find((g) => g.menu === 'settings');
 
 describe('the tab strip of Settings', () => {
-  it('has the ten tabs, the first on the address Settings always had', () => {
+  it('has the eleven tabs, the first on the address Settings always had', () => {
     expect(group?.tabs.map((tab) => tab.path)).toEqual(SETTINGS_TABS.map((tab) => SETTINGS_TAB_PATH[tab]));
     expect(group?.tabs[0]?.path).toBe('settings');
-    expect(group?.tabs.map((tab) => tab.label)).toEqual(['org', 'settingsMembers', 'settingsApps', 'settingsBookings', 'settingsSales', 'settingsQuotes', 'settingsAccounting', 'settingsConnections', 'settingsSecurity', 'settingsData']);
+    expect(group?.tabs.map((tab) => tab.label)).toEqual(['org', 'settingsMembers', 'settingsApps', 'settingsBookings', 'settingsSales', 'settingsQuotes', 'settingsAccounting', 'settingsConnections', 'settingsNotifications', 'settingsSecurity', 'settingsData']);
   });
 
   it('names every tab in both languages, with the words of the issue', () => {
-    expect(group?.tabs.map((tab) => viMessages.nav[tab.label])).toEqual(['Tổ chức', 'Thành viên và quyền', 'Ứng dụng', 'Lịch hẹn', 'Bán hàng', 'Báo giá', 'Kế toán và thuế', 'Kết nối', 'Bảo mật tài khoản', 'Dữ liệu và xóa tổ chức']);
-    expect(group?.tabs.map((tab) => en.nav[tab.label])).toEqual(['Organization', 'Members and roles', 'Apps', 'Bookings', 'Sales', 'Quotes', 'Accounting and tax', 'Connections', 'Account security', 'Data and deleting the organization']);
+    expect(group?.tabs.map((tab) => viMessages.nav[tab.label])).toEqual(['Tổ chức', 'Thành viên và quyền', 'Ứng dụng', 'Lịch hẹn', 'Bán hàng', 'Báo giá', 'Kế toán và thuế', 'Kết nối', 'Thông báo của tôi', 'Bảo mật tài khoản', 'Dữ liệu và xóa tổ chức']);
+    expect(group?.tabs.map((tab) => en.nav[tab.label])).toEqual(['Organization', 'Members and roles', 'Apps', 'Bookings', 'Sales', 'Quotes', 'Accounting and tax', 'Connections', 'My notifications', 'Account security', 'Data and deleting the organization']);
   });
 
   it('gives each tab its own address, and Settings stays the one menu item lit on all of them', () => {
@@ -57,7 +57,7 @@ describe('the tab strip of Settings', () => {
 
   it('shows the accounting tab only where finance runs, the sales and quotes tabs where crm runs, and the connections tab where finance runs', () => {
     const tabsFor = (modules: string[]) => installedItems(modules, ALL_NAV).filter((item) => group?.tabs.some((tab) => `/o/$slug/${tab.path}` === item.to)).map((item) => item.to.replace('/o/$slug/', ''));
-    expect(tabsFor(['kernel'])).toEqual(['settings', 'settings/members', 'settings/apps', 'settings/bookings', 'settings/security', 'settings/data']);
+    expect(tabsFor(['kernel'])).toEqual(['settings', 'settings/members', 'settings/apps', 'settings/bookings', 'settings/notifications', 'settings/security', 'settings/data']);
     expect(tabsFor(['kernel', 'crm'])).toContain('settings/sales');
     expect(tabsFor(['kernel', 'crm'])).toContain('settings/quotes');
     expect(tabsFor(['kernel', 'finance'])).not.toContain('settings/sales');
@@ -121,12 +121,13 @@ describe('an old link to the single Settings page', () => {
   // The preferences left the bell's screen for a card of the security tab (#3592); the daily brief mail's turn-off link, written by the kernel, still opens `notifications?todayMail=off`.
   it('sends the daily brief mail link and the bell to where the preferences are', async () => {
     session.modules = ['kernel'];
-    expect(await lands('/o/acme/notifications?todayMail=off')).toBe('/o/acme/settings/security?todayMail=off#notification-settings');
+    expect(await lands('/o/acme/notifications?todayMail=off')).toBe('/o/acme/settings/notifications?todayMail=off#daily-brief-mail');
     expect(await lands('/o/acme/notifications')).toBe('/o/acme/notifications');
     // Only `off` is a link the mail writes: any other value stays on the bell's screen.
     expect(await lands('/o/acme/notifications?todayMail=on')).toBe('/o/acme/notifications?todayMail=on');
-    expect(await lands('/o/acme/settings#notification-settings')).toBe('/o/acme/settings/security#notification-settings');
-    expect(CARD_TAB[SETTINGS_CARD.notifications]).toBe('security');
+    expect(await lands('/o/acme/settings#notification-settings')).toBe('/o/acme/settings/notifications#notification-settings');
+    expect(CARD_TAB[SETTINGS_CARD.notifications]).toBe('notifications');
+    expect(CARD_TAB[SETTINGS_CARD.todayMail]).toBe('notifications');
   });
 
   it('opens the accounting, connections and sales tabs only where their apps run', async () => {

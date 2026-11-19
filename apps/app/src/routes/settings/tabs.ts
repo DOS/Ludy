@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The tabs of Settings (ST-1, #3589). Each tab is a screen with its own address, drawn as a strip by the shell (TAB_GROUPS in lib/apps.ts), so a card can be linked and a phone
+// The tabs of Settings (ST-1, #3589; the notifications tab, #3592). Each tab is a screen with its own address, drawn as a strip by the shell (TAB_GROUPS in lib/apps.ts), so a card can be linked and a phone
 // does not scroll a 10000 px page. The first tab keeps the address `settings`, which every old link names; the others are `settings/<tab>`.
 // A tab holds what fits a screen: at 1440 wide the title and the cards of each stay under 1200 px (e2e/tests/settings-tabs.spec.ts measures them), which is why the booking, quote and sales cards
-// of Engage have tabs of their own, the tax profile sits with the org and the meeting platforms with the person's own devices. Later issues drop their cards into a tab here (the wording of #3590, the notification preferences of #3592): a new card is one entry in that tab's page, nothing else.
-export const SETTINGS_TABS = ['org', 'members', 'apps', 'bookings', 'sales', 'quotes', 'accounting', 'connections', 'security', 'data'] as const;
+// of Engage have tabs of their own, the tax profile sits with the org and the meeting platforms with the person's own devices. Later issues drop their cards into a tab here (the wording of #3590); the notification preferences of #3592 are the tab "Thông báo của tôi", with the person's own checks: a new card is one entry in that tab's page, nothing else.
+export const SETTINGS_TABS = ['org', 'members', 'apps', 'bookings', 'sales', 'quotes', 'accounting', 'connections', 'notifications', 'security', 'data'] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 // The screen of a tab, under /o/<slug>/.
@@ -16,6 +16,7 @@ export const SETTINGS_TAB_PATH = {
   quotes: 'settings/quotes',
   accounting: 'settings/accounting',
   connections: 'settings/connections',
+  notifications: 'settings/notifications',
   security: 'settings/security',
   data: 'settings/data',
 } as const satisfies Record<SettingsTab, string>;
@@ -30,6 +31,7 @@ export const SETTINGS_TAB_TO = {
   quotes: '/o/$slug/settings/quotes',
   accounting: '/o/$slug/settings/accounting',
   connections: '/o/$slug/settings/connections',
+  notifications: '/o/$slug/settings/notifications',
   security: '/o/$slug/settings/security',
   data: '/o/$slug/settings/data',
 } as const satisfies Record<SettingsTab, string>;
@@ -53,6 +55,7 @@ export const SETTINGS_CARD = {
   quoteSettings: 'quote-settings',
   salesProcess: 'sales-process',
   notifications: 'notification-settings',
+  todayMail: 'daily-brief-mail',
 } as const;
 
 export const CARD_TAB: Readonly<Record<string, SettingsTab>> = {
@@ -72,7 +75,8 @@ export const CARD_TAB: Readonly<Record<string, SettingsTab>> = {
   [SETTINGS_CARD.bookingEventTypes]: 'bookings',
   [SETTINGS_CARD.quoteSettings]: 'quotes',
   [SETTINGS_CARD.salesProcess]: 'sales',
-  [SETTINGS_CARD.notifications]: 'security',
+  [SETTINGS_CARD.notifications]: 'notifications',
+  [SETTINGS_CARD.todayMail]: 'notifications',
 };
 
 // Where an old link to the single Settings page belongs now: the address `settings` with a card's #fragment (the booking cards, the quotes, the sales process, the members card, the integrations) or with

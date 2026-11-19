@@ -106,20 +106,24 @@ export const GROUPABLE_KINDS = ['kernel.approval_waiting', 'kernel.file_unreadab
 export type GroupableKind = (typeof GROUPABLE_KINDS)[number];
 const isGroupable = (kind: string): kind is GroupableKind => (GROUPABLE_KINDS as readonly string[]).includes(kind);
 
-export type NotificationRow<T> = { type: 'one'; item: T } | { type: 'group'; kind: GroupableKind; items: T[]; unread: number };
+// The list read returns the newest 30 (the kernel's NOTIFICATION_LIST_LIMIT): a group that runs to the end of a full list may stand for more than it holds, so its count reads "30+".
+export const NOTIFICATION_LIST_LIMIT = 30;
 
-// The list as rows, in the order it came (newest first): two or more notifications of a groupable kind that follow each other become one group row, so a different event between them
-// keeps the order the person read them in. A run of one stays a plain row.
+export type NotificationRow<T> = { type: 'one'; item: T } | { type: 'group'; kind: GroupableKind; items: T[] };
+
+// The list as rows, in the order it came (newest first): two or more UNREAD notifications of a groupable kind that follow each other become one group row, so a different event between them
+// keeps the order the person read them in. A read one stays a plain row: the server marks a proposal's notice read once it is decided, so a group of read ones would claim a need that is gone,
+// and the count of a group is then the count of what still waits. A run of one stays a plain row.
 export function groupNotifications<T extends { kind: string; read: boolean }>(items: readonly T[]): NotificationRow<T>[] {
   const rows: NotificationRow<T>[] = [];
   let i = 0;
   while (i < items.length) {
     const first = items[i]!;
     let end = i + 1;
-    if (isGroupable(first.kind)) while (end < items.length && items[end]!.kind === first.kind) end++;
-    if (isGroupable(first.kind) && end - i >= 2) {
-      const run = items.slice(i, end);
-      rows.push({ type: 'group', kind: first.kind, items: run, unread: run.filter((n) => !n.read).length });
+    const groupable = isGroupable(first.kind) && !first.read;
+    if (groupable) while (end < items.length && items[end]!.kind === first.kind && !items[end]!.read) end++;
+    if (groupable && end - i >= 2) {
+      rows.push({ type: 'group', kind: first.kind as GroupableKind, items: items.slice(i, end) });
     } else rows.push({ type: 'one', item: first });
     i = end;
   }

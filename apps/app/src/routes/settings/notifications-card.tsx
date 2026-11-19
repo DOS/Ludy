@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The member's notification preferences (NT-1, #3592), moved here from the bottom of the bell's screen: which kinds of notice they get, then the daily brief by email. Both are theirs alone
-// (a mute is per member and org), so the card sits in the tab of the person's own settings. The bell's screen keeps the list and a link here. No AI acts on this card: a person switches kinds.
+// (a mute is per member and org), so the card is the tab "Thông báo của tôi". The bell's screen keeps the list and a link here. No AI acts on this card: a person switches kinds.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
 import { MORNING_KIND } from '@crove/kernel-contract';
@@ -40,7 +40,7 @@ export function NotificationPreferences() {
             <h2 className="text-sm font-medium text-foreground">{t('prefsTitle')}</h2>
             <p className="text-xs text-subtle-foreground">{t('settingsHint')}</p>
           </div>
-          <fieldset className="space-y-2" disabled={list.isPending}>
+          <fieldset className="space-y-2" disabled={list.isPending || list.isError}>
             <legend className="mb-2 text-sm text-muted-foreground">{t('settings')}</legend>
             <div className="grid gap-2 sm:grid-cols-2">
               {kinds.map((kind) => {
@@ -57,8 +57,10 @@ export function NotificationPreferences() {
           {(list.error || mute.error) && <ErrorText>{errorMessage(list.error ?? mute.error)}</ErrorText>}
         </Card>
       </Anchor>
-      {/* The daily "Hôm nay cần bạn" brief by email: the member's own opt-in (#2406). The mail's turn-off link lands on this tab with ?todayMail=off. */}
-      <TodayMailSetting />
+      {/* The daily "Hôm nay cần bạn" brief by email: the member's own opt-in (#2406). The mail's turn-off link lands on this card with ?todayMail=off. */}
+      <Anchor id={SETTINGS_CARD.todayMail}>
+        <TodayMailSetting />
+      </Anchor>
     </>
   );
 }

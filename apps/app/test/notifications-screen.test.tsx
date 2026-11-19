@@ -76,8 +76,8 @@ describe('the list screen holds the list and "Mark all as read" only', () => {
     }
   });
 
-  it('links to the preferences card on the tab of the person\'s own settings', () => {
-    expect(page({ items: [] })).toContain('href="/o/hoa-mai/settings/security#notification-settings"');
+  it('links to the preferences, the Settings tab of the member\'s own notifications', () => {
+    expect(page({ items: [] })).toContain('href="/o/hoa-mai/settings/notifications#notification-settings"');
     expect(page({ items: [] })).toContain(catalog('en').notifications.settingsLink);
     expect(page({ items: [] }, 'vi')).toContain('Cài đặt thông báo');
   });
@@ -105,7 +105,7 @@ describe('a run of the same kind is one row', () => {
     expect(html).toContain('7 proposals wait for your approval');
     expect(html).not.toContain('C26TFA-1185');
     expect(html).toContain(catalog('en').notifications.groupOpen);
-    expect(html).toContain('(7 unread)');
+    expect(html).toContain('(Unread)');
   });
 
   it('says it in Vietnamese with the count', () => {
@@ -122,20 +122,34 @@ describe('a run of the same kind is one row', () => {
     expect(mixed.match(/The statement of account 1121 has 3 lines to look at/g)).toHaveLength(2);
   });
 
-  it('does not mark a group of read notices unread', () => {
-    const html = page({ items: approvals(3, true) });
+  it('counts what still waits: decided proposals (read) stay plain rows and are not in the count', () => {
+    const html = page({ items: [...approvals(3), ...approvals(4, true).map((n, i) => ({ ...n, id: `00000000-0000-4000-b000-00000000000${i}` }))] });
     expect(html).toContain('3 proposals wait for your approval');
-    expect(html).not.toContain('unread)');
+    expect(html).not.toContain('7 proposals');
+    expect(html.match(/Waiting for your approval: /g)).toHaveLength(4);
+  });
+
+  it('shows no group for read notices', () => {
+    const html = page({ items: approvals(3, true) });
+    expect(html).not.toContain('notification-group');
+    expect(html.match(/Waiting for your approval: /g)).toHaveLength(3);
+  });
+
+  it('reads "30+" where the list is full and the group runs to its end', () => {
+    expect(page({ items: approvals(30) })).toContain('30+ proposals wait for your approval');
+    expect(page({ items: approvals(29) })).toContain('29 proposals wait for your approval');
+    expect(page({ items: approvals(30) }, 'vi')).toContain('30+ đề xuất chờ bạn duyệt');
   });
 });
 
-describe('the preferences card of Settings', () => {
+describe('the notifications tab of Settings', () => {
   it('lists the kinds of the installed apps, each switched on unless the member muted it, with the daily brief card after it', () => {
     const html = render(<NotificationPreferences />, { muted: ['kernel.task_assigned'] });
     const kinds = notificationKinds(state.modules);
     expect(html.match(/role="checkbox"/g)?.length).toBe(kinds.length + 1); // one per kind, one for the daily brief
     expect(html.match(/aria-checked="false"/g)?.length).toBe(2); // the muted kind and the daily brief (off by default)
     expect(html).toContain('id="notification-settings"');
+    expect(html).toContain('id="daily-brief-mail"');
     expect(html).toContain(catalog('en').notifications.prefsTitle);
     expect(html).toContain(catalog('en').notifications.kinds.finance_bank_attention);
     expect(html).toContain(catalog('en').notifications.todayMail.title);
