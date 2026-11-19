@@ -1,0 +1,10 @@
+{
+  "value": [
+    {
+      "id": "7e31db25-bc6e-4fd8-96c7-e01264e9b6fc",
+      "createdDateTime": "2026-11-17T02:05:00Z",
+      "endDateTime": "2026-11-17T02:55:00Z",
+      "recordingContentUrl": "https://graph.microsoft.com/v1.0/$metadata#recording"
+    }
+  ]
+}

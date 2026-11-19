@@ -2760,6 +2760,8 @@ export const en = {
         not_claimed: 'The recording was downloaded but not received within 55 minutes, import it again.',
         claim_failed: 'The recording was downloaded but Ludy could not receive it. Import it again.',
         timeout: 'The import took too long and was stopped. Import it again.',
+        transcripts_disabled: 'Your Microsoft 365 administrator has not allowed apps to read Teams meeting transcripts. Ask them to turn on "Microsoft Graph access" under Transcript API access in the Teams admin center, then try again.',
+        speakers_disabled: 'Your Microsoft 365 administrator has not allowed speaker names in Teams transcripts. Ask them to turn on "Include speaker attribution" in the Teams meeting settings, then try again.',
         unknown: 'This recording could not be imported. Try again.',
       },
       dialog: {
