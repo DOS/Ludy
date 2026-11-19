@@ -30,3 +30,19 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+
+-- The product and the channel connection are fixed for the row's life. Today only the column grant keeps them so (a tenant role may update just the last test's state and time); this trigger keeps them
+-- so for anyone, a later grant or a definer function included: a re-bound row could pair an AMIS access code with ASP's paths or the other way round. The restore of a dump inserts and never updates.
+CREATE OR REPLACE FUNCTION crove_finance.misa_amis_connection_fixed() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NEW.product IS DISTINCT FROM OLD.product OR NEW.channel_connection_id IS DISTINCT FROM OLD.channel_connection_id THEN
+    RAISE EXCEPTION 'MISA_AMIS_CONNECTION_FIXED' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION crove_finance.misa_amis_connection_fixed() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+DROP TRIGGER IF EXISTS misa_amis_connection_fixed ON crove_finance.misa_amis_connection;
+CREATE TRIGGER misa_amis_connection_fixed BEFORE UPDATE OF product, channel_connection_id ON crove_finance.misa_amis_connection
+  FOR EACH ROW EXECUTE FUNCTION crove_finance.misa_amis_connection_fixed();
+ALTER TABLE crove_finance.misa_amis_connection ENABLE ALWAYS TRIGGER misa_amis_connection_fixed;

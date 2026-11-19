@@ -530,6 +530,10 @@ suite('MISA AMIS connections (#3875)', () => {
       }
     });
     expect(refused).toMatch(/permission denied/);
+    // And not by anyone else either (a later grant, a definer function, the admin connection): the trigger refuses a re-bound product or channel connection, while the last test's state is still written.
+    await expect(rows("UPDATE crove_finance.misa_amis_connection SET product = 'amis' WHERE org_id = $1 AND legal_entity_id = $2", [orgId, entityB])).rejects.toThrow(/MISA_AMIS_CONNECTION_FIXED/);
+    await expect(rows('UPDATE crove_finance.misa_amis_connection SET channel_connection_id = $3 WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entityB, amisChannel])).rejects.toThrow(/MISA_AMIS_CONNECTION_FIXED/);
+    await rows("UPDATE crove_finance.misa_amis_connection SET last_test_state = 'works', last_tested_at = pg_catalog.now() WHERE org_id = $1 AND legal_entity_id = $2", [orgId, entityB]);
     // The rows made before the column existed are AMIS ones: the existing connection of the default entity.
     expect((await rows<{ product: string }>('SELECT product FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, await defaultEntity()]))[0]?.product).toBe('amis');
   });
