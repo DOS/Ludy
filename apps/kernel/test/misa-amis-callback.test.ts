@@ -198,6 +198,13 @@ describe('the MISA AMIS callback route', () => {
     expect(otherType.executed).toEqual([]);
   });
 
+  it("records MISA's text without a NUL or other control character, so the stored reason is a valid text value and MISA is not made to retry for ever", async () => {
+    const on = fixture();
+    const response = await on.post(message([item({ success: false, error_message: `Loi\u0000 rieng\u0007 ${REASON_TEXT}` })]));
+    expect(response.status).toBe(200);
+    expect(on.executed.map((e) => e.input.rows.map((r) => r.reason))).toEqual([[`Loi rieng ${REASON_TEXT}`]]);
+  });
+
   it('does not record a refusal for a row that was sent again (an old refusal could be replayed against the second send), but still records an acceptance', async () => {
     const refusal = fixture([row({ attempts: 2 })]);
     expect((await refusal.post(message([item({ success: false, error_message: REASON_TEXT })]))).status).toBe(200);
