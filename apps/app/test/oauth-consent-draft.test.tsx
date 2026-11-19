@@ -94,6 +94,9 @@ describe('the consent page and the per-line write scopes (ADR-0051 decision 11, 
       expect(Object.keys(messages.scope).sort()).toEqual(Object.keys(en.oauthConsent.scope).sort());
     }
     expect(en.oauthConsent.scope.engage).toMatch(/proposal/);
+    // Asking to send a Social post to review and to schedule it (E4, #3863) is part of what this scope covers, and the text says so in both languages.
+    expect(en.oauthConsent.scope.engage).toMatch(/Social post to review and scheduling it for publication/);
+    expect(viMessages.oauthConsent.scope.engage).toMatch(/gửi bài Social đi duyệt và lên lịch đăng bài/);
     expect(en.oauthConsent.scope.ads).toMatch(/proposal/);
     expect(viMessages.oauthConsent.scope.engage).toMatch(/đề xuất/);
   });
