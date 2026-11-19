@@ -120,12 +120,12 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
     }
   }
   const q = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
-  async function insertGrant(org: string, who: string, scopes: string[], kind: 'company' | 'member' = 'company', host = 'client.example.com', extra = ''): Promise<string> {
+  async function insertGrant(org: string, who: string, scopes: string[], kind: 'company' | 'member' = 'company', host = 'client.example.com', extra = '', clientName = 'Dy'): Promise<string> {
     const id = randomUUID();
     await q(
       `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by, kind, member_id)
-       VALUES ($1, $2, $3, $4, 'Dy', $9, $5::text[], $6, now(), now() + interval '30 days', $3, $7, $8) ${extra}`,
-      [org, id, users[who], `client-${id}`, scopes, `oauth-${id}`, kind, kind === 'member' ? users[who] : null, host],
+       VALUES ($1, $2, $3, $4, $10, $9, $5::text[], $6, now(), now() + interval '30 days', $3, $7, $8) ${extra}`,
+      [org, id, users[who], `client-${id}`, scopes, `oauth-${id}`, kind, kind === 'member' ? users[who] : null, host, clientName],
     );
     return id;
   }
@@ -302,6 +302,34 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
     const rows = (await q(`SELECT target_type, target_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.cap.set' AND detail ->> 'mcpGrant' = $2`, [orgA, other])).rows;
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) expect([row.target_type, row.target_id]).toEqual([null, null]);
+  });
+
+  it('builds the title from a client name with every format character, direction mark and quote taken out, so it cannot close the quote early or reorder the text', async () => {
+    // A name that tries both: invisible and direction characters (U+061C, U+FEFF, U+2060 to U+2064, U+202E, U+2066), and a closing quote that would end ours and make the rest read as Ludy's own words.
+    const nasty = 'Dy\u202e”\u061c đã được duyệt bởi quản lý \ufeff“\u2060\u2064\u2066x\u00ad\n';
+    const grant = await insertGrant(orgA, 'owner', ['ludy.read', ENGAGE], 'company', 'client.example.com', '', nasty);
+    const made = await propose(grantActor('owner', grant, ['ludy.read', ENGAGE]));
+    const row = (await q<{ title: string }>(`SELECT title FROM crove_kernel.proposal WHERE id = $1`, [made.proposalId])).rows[0];
+    expect(row?.title).toBe('Ứng dụng AI “Dy đã được duyệt bởi quản lý x” đề xuất: ads.kind_ads_cap_set');
+    expect(row?.title.match(/[“”]/g)?.length).toBe(2);
+    expect(row?.title).not.toMatch(/[\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\u00ad]/);
+  });
+
+  it('refuses the insert when the database\'s own reading of the approvers is empty, whatever list the caller passes', async () => {
+    // An org whose only owner was demoted: nobody holds the approval roles, so the snapshot the database stamps is empty and the guard refuses the row (a context sealed before the demotion included).
+    const lone = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'mcp-proposals', subject: 'lone', email: 'lone@mcp-proposals.test', name: 'lone' });
+    users.lone = lone;
+    const orgC = (await createOrg(runtime, { type: 'user', userId: lone, aal: 'aal1' }, 'Org C')).orgId;
+    const grant = await insertGrant(orgC, 'lone', ['ludy.read', ENGAGE]);
+    const row = [orgC, 'ads.kind_ads_cap_set', 'ads.cap.set', 't', '{}', [lone], JSON.stringify([{ type: 'agent', id: grant, run: grant }, { type: 'user', id: lone }]), grant];
+    const text = `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors, tainted, requested_by_grant, mcp_client_name, mcp_client_host) VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, 'x', 'x')`;
+    await inContext(proposalCtx(orgC, grant, 'lone'), async (c) => expect(await attempt(c, text, row), 'with an approver').toBe('ok'));
+    // The last-owner guard refuses this demotion, so the test (a superuser) sets the role with triggers skipped: it makes the state, which no command could reach, in which the database reads no approver.
+    await admin(async (c) => {
+      await c.query(`SET session_replication_role = replica`);
+      await c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgC, lone]);
+    });
+    await inContext(proposalCtx(orgC, grant, 'lone'), async (c) => expect(await attempt(c, text, row), 'a caller list that names someone, an empty database list').toMatch(/AGENT_FORBIDDEN/));
   });
 
   it('refuses a person the proposer, the approval of an MCP actor, and any edit or rejection by one: nothing but a person decides', async () => {

@@ -80,7 +80,11 @@ BEGIN
   NEW.mcp_client_name := pg_catalog.left(v_name, 120);
   NEW.mcp_client_host := pg_catalog.left(v_host, 253);
   -- The title is the database's too: built from the grant's own client name (control and direction characters taken out) and the kind the catalog fixed, never from what the caller passed.
-  NEW.title := pg_catalog.left('Ứng dụng AI “' || pg_catalog.btrim(pg_catalog.regexp_replace(NEW.mcp_client_name, '[[:cntrl:]\u200b-\u200f\u202a-\u202e\u2066-\u2069]+', ' ', 'g')) || '” đề xuất: ' || NEW.kind, 300);
+  -- Every format character (Cf: the soft hyphen, the Arabic marks, the zero-width and direction marks and isolates, the word joiners and invisible operators, the byte order mark, the tag characters), every line and
+  -- paragraph separator and control character, and every quote character are taken out of the name first, so it can neither reorder the text around it nor close the quote early and read as Ludy's own words.
+  NEW.title := pg_catalog.left('Ứng dụng AI “' || pg_catalog.btrim(pg_catalog.regexp_replace(
+    pg_catalog.regexp_replace(NEW.mcp_client_name, '[\u00ad\u0600-\u0605\u061c\u06dd\u070f\u08e2\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb\U000e0001\U000e0020-\U000e007f"''`´“”„‟‘’‚‛«»‹›「」『』]+', '', 'g'),
+    '[[:cntrl:]]+', ' ', 'g')) || '” đề xuất: ' || NEW.kind, 300);
   -- Inserts of one org queue here (the per-grant cap and the org's both count under it), so two calls, of one grant or of two, never both see room for one more.
   PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('mcp_proposal:' || NEW.org_id::text, 3858));
   SELECT pg_catalog.count(*) FILTER (WHERE p.requested_by_grant = NEW.requested_by_grant), pg_catalog.count(*) INTO v_grant, v_org
