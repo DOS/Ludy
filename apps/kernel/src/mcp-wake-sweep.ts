@@ -68,9 +68,11 @@ export interface LineWakeFeed {
   types: readonly string[];
   read: (grant: WakeGrant, plan: McpWakeLinePlan) => Promise<LineWakeItem[]>;
 }
-// The most keys one pass checks, and the most events of one type it sends; the rest wait for the next look.
+// The most keys one pass checks, and the most events of one type it sends (WAKE_ITEMS_MAX, as a signal's event holds); the rest wait for the next look.
 const FEED_KEYS_MAX = 200;
-const FEED_PER_TYPE = 25;
+const FEED_PER_TYPE = WAKE_ITEMS_MAX;
+// How many candidates of one type are checked for newness in a pass: more than are sent, so a type whose newest items were all sent already cannot hide an older one that is new.
+const FEED_CANDIDATES_PER_TYPE = 40;
 
 export interface WakeSweepDeps {
   runtime: Runtime;
@@ -208,14 +210,14 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
     }
     return out;
   };
-  // The items that are new for the grant become events, each with its one key (stored with it). Up to FEED_PER_TYPE of a type are looked at in a pass, newest first as the feed gave them.
+  // The items that are new for the grant become events, each with its one key (stored with it). Up to FEED_CANDIDATES_PER_TYPE of a type are checked in a pass and at most FEED_PER_TYPE (WAKE_ITEMS_MAX) are sent, newest first as the feed gave them.
   const sendFeedItems = async (grant: WakeGrant, items: readonly LineWakeItem[]): Promise<number> => {
     if (items.length === 0) return 0;
     const seen = new Map<string, number>();
     const unique = new Map<string, LineWakeItem>();
     for (const it of items) {
       const n = seen.get(it.type) ?? 0;
-      if (n >= FEED_PER_TYPE || unique.has(it.key) || unique.size >= FEED_KEYS_MAX) continue;
+      if (n >= FEED_CANDIDATES_PER_TYPE || unique.has(it.key) || unique.size >= FEED_KEYS_MAX) continue;
       seen.set(it.type, n + 1);
       unique.set(it.key, it);
     }
@@ -223,9 +225,11 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
     const ctx = { actor: ACTOR, orgId: grant.orgId };
     const { fresh } = await deps.runtime.execute<{ fresh: string[] }>('kernel.mcp.wake.line_check', { grantId: grant.grantId, keys: [...unique.keys()] }, ctx);
     let sent = 0;
+    const sentOf = new Map<string, number>();
     for (const key of fresh) {
       const it = unique.get(key);
-      if (!it) continue;
+      if (!it || (sentOf.get(it.type) ?? 0) >= FEED_PER_TYPE) continue;
+      sentOf.set(it.type, (sentOf.get(it.type) ?? 0) + 1);
       try {
         if (await post(grant, it.type, it.data, [it.key])) sent += 1;
       } catch (error) {

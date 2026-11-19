@@ -101,6 +101,9 @@ export const wakeConversations = defineQuery({
     // A person's own session, or a grant's sealed context: nothing else (no agent, no system).
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const grant = ctx.actor.mcp !== undefined;
+    // A company grant's alone (the wake-up of a member-bound grant is for signals of its member, never a line's event): the sealed member context would give only what its member may read, but the rules are
+    // the org's, so a member-bound grant is refused rather than given a share the rule was not written for.
+    if (ctx.actor.mcp?.kind === 'member') throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP của công ty mới dùng được truy vấn này');
     if (!grant && ctx.role === 'viewer') return empty;
     const me = grant ? null : ctx.actor.userId;
     const now = input.now ? new Date(input.now) : new Date();
