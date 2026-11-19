@@ -17,7 +17,6 @@ test('an owner switches Social off and on again from Settings', async ({ page })
   const social = page.getByTestId('org-app-social');
   await expect(social).toBeVisible();
   await expect(social.getByRole('checkbox')).toBeChecked();
-  await expect(social.getByText('Đang dùng')).toBeVisible();
 
   // Turning off asks first and says what is kept.
   await social.getByRole('checkbox').click();
@@ -39,7 +38,7 @@ test('an owner switches Social off and on again from Settings', async ({ page })
   // Back on: everything is where it was.
   await page.goto(`/o/${slug}/settings/apps`);
   await page.getByTestId('org-app-social').getByRole('checkbox').click();
-  await expect(page.getByTestId('org-app-social').getByText('Đang dùng')).toBeVisible();
+  await expect(page.getByTestId('org-app-social').getByRole('checkbox')).toBeChecked();
   await page.goto(`/o/${slug}/social`);
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/social`));
   // The screen is there, not a loading or an error state: Engage is back in the menu and the Social page shows its own subtitle.

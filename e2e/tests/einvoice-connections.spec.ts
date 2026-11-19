@@ -19,7 +19,7 @@ test('connects the offline e-invoice provider from Settings, tests it, picks the
     await expect(page.getByText('Kết nối Ludy với ngân hàng và đơn vị phát hành hóa đơn của công ty.')).toBeVisible();
     await expect(card).toBeVisible();
     await expect(card.getByText('Chưa kết nối nhà cung cấp nào.')).toBeVisible();
-    await expect(card.getByText('Nhà cung cấp thử nghiệm chạy ngay trên máy chủ này')).toBeVisible();
+    await expect(card.getByText('Nhà cung cấp thử chạy ngay trong hệ thống này')).toBeVisible();
     await expect(card.getByLabel('Mã số thuế người bán')).toBeVisible();
   });
 
