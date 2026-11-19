@@ -31,7 +31,7 @@ async function copyTranscript(ctx: CommandContext, input: { meetingId: string; r
   } catch {
     throw new DomainError('TRANSLATION_RESULT_INVALID', 422, 'The translation result cannot be read');
   }
-  const read = await readTranscriptLines(ctx.trx, ctx.orgId, input.meetingId).catch((error: unknown) => {
+  const read = await readTranscriptLines(ctx.trx, ctx.orgId, input.meetingId, body.to).catch((error: unknown) => {
     if (error instanceof DomainError && error.code === 'MEETING_NOT_FOUND') throw stale();
     throw error;
   });
@@ -128,7 +128,7 @@ export const translationCopyResult = defineCommand({
     }
     // Held to what the member reads NOW: the same original (its hash), the language pair of the meeting and the same segments in the same order. A summary edited, replaced or
     // unpublished while the model worked makes the answer stale, and a stale answer is never kept as if it were of the text on screen.
-    const source = await readTranslationSource(ctx.trx, ctx.orgId, userId, input.meetingId, body.stage).catch((error: unknown) => {
+    const source = await readTranslationSource(ctx.trx, ctx.orgId, userId, input.meetingId, body.stage, body.to).catch((error: unknown) => {
       if (error instanceof DomainError && (error.code === 'TRANSLATION_NOT_FOUND' || error.code === 'TRANSLATION_NOTHING')) throw new DomainError('TRANSLATION_STALE', 409, 'The summary changed while it was being translated; translate again');
       throw error;
     });
