@@ -105,6 +105,19 @@ describe('IntegrationsSection', () => {
     expect(off).toBe('');
   });
 
+  it('draws the MISA card where the deployment holds only the ASP ClientID (#4111), and not where it holds neither', () => {
+    const qc = client.current;
+    const withMisa = (status: { offered: boolean; pushOffered: boolean; aspOffered: boolean }) => {
+      qc.setQueryData(['misaAmis', 'status'], status);
+      qc.setQueryData(['misaAmis', 'connections', 'list'], []);
+      return section({ bank: false, providers: false });
+    };
+    const aspOnly = withMisa({ offered: false, pushOffered: false, aspOffered: true });
+    expect(aspOnly).toContain(`>${en.integrations.title}<`);
+    expect(aspOnly).toContain(`aria-label="${en.misaAmisConnections.connectTitleAsp}"`);
+    expect(withMisa({ offered: false, pushOffered: false, aspOffered: false })).toBe('');
+  });
+
   it('keeps showing an org\'s e-invoice connection when the deployment no longer offers a provider', () => {
     const html = section({ bank: false, providers: false, connections: [connection] });
     expect(html).toContain(`>${en.integrations.title}<`);
