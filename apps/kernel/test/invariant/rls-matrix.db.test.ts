@@ -96,6 +96,8 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
+  'crove_finance.misa_amis_match',
+  'crove_finance.misa_amis_match_check',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -252,6 +254,8 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
   ['crove_finance.einvoice_series', ['update', 'delete']],
   ['crove_finance.marketplace_connection', ['update', 'delete']],
   ['crove_finance.misa_amis_connection', ['update', 'delete']],
+  ['crove_finance.misa_amis_match', ['delete']],
+  ['crove_finance.misa_amis_match_check', ['update']],
   ['crove_finance.misa_amis_push', ['update']],
   ['crove_finance.stock_alias', ['delete']],
   ['crove_finance.stock_count', ['update']],
@@ -1631,6 +1635,42 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_kernel.channel_connection', values: connection },
         ],
         row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, channel_connection_id: connection.id },
+      };
+    },
+  },
+  // #4112: what that check found per party (its tax code) or item (its code): matched with the entry's code and id, unknown or ambiguous; replaced whole by each check, never updated (no UPDATE grant). Each row takes
+  // a connection and an entity of its own.
+  'crove_finance.misa_amis_match': {
+    make: (o) => {
+      const entity = randomUUID();
+      const channel = { ...channelConnectionRow(o), provider: 'accounting_misa_amis' };
+      const connection = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: `RLS matrix AMIS match result entity ${tag()}`, kind: 'branch', created_by: o.owner } },
+          { table: 'crove_kernel.channel_connection', values: channel },
+          { table: 'crove_finance.misa_amis_connection', values: { org_id: o.id, id: connection, legal_entity_id: entity, channel_connection_id: channel.id } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, connection_id: connection, kind: 'party', match_key: '0101234564', state: 'unknown' },
+      };
+    },
+  },
+  // #4112 (S3a of #4103): the last check of a MISA AMIS connection's vouchers against the firm's catalogue (the batch asked about, waiting, done or failed, when), one row per connection. Owners and admins ask
+  // (or the system context), the worker's system context records the result; a tenant role updates only the request and result columns, through the state guard, and nothing deletes it but the disconnect
+  // that removes the connection. Each row takes a connection and an entity of its own. The update probes assign the failure to itself.
+  'crove_finance.misa_amis_match_check': {
+    update: { set: 'failure = failure' },
+    make: (o) => {
+      const entity = randomUUID();
+      const channel = { ...channelConnectionRow(o), provider: 'accounting_misa_amis' };
+      const connection = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: `RLS matrix AMIS match entity ${tag()}`, kind: 'branch', created_by: o.owner } },
+          { table: 'crove_kernel.channel_connection', values: channel },
+          { table: 'crove_finance.misa_amis_connection', values: { org_id: o.id, id: connection, legal_entity_id: entity, channel_connection_id: channel.id } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, connection_id: connection, state: 'requested', requested_by: o.owner },
       };
     },
   },
