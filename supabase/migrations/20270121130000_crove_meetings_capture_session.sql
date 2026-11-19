@@ -4,11 +4,12 @@
 -- crove_meetings.capture_session
 --                              The record that a call is being captured right now: by which kind of client (the browser extension or the app), since when and last heard from when. A client asks the
 --                              server to start before it sends any audio (meetings.meeting.create, with a `capture`), and the server refuses a second open capture of the same call. "The same call" is the
---                              member's own calendar event, else a meeting key (a sha256 of the org, the platform and the platform's meeting id, read from a join address; the address itself is
---                              never stored), else the recorder (one open capture each). Only the recorder reads the row; no other member, no owner, no agent and no system context does.
+--                              member's own calendar event, or a meeting key (a sha256 of the org, the platform and the platform's meeting id, read from a join address; the address itself is
+--                              never stored). A capture that names neither is recorded and conflicts with nothing: nothing is known of its call. Only the recorder reads the row; no other member, no
+--                              owner, no agent and no system context does.
 --                              Rows are written by capture_open alone; the recorder's own commands end a row (ended_at, ended_reason) and the heartbeat sets last_seen_at.
 -- crove_meetings.capture_open(meeting, kind, agenda, key)
---                              Ends the open captures of this identity that have not been heard from for 90 seconds (reason 'lost', so a crashed browser never locks the call; no job runs for it), then opens
+--                              Ends the open captures of this key or calendar event that have not been heard from for 90 seconds (reason 'lost', so a crashed browser never locks the call; no job runs for it), then opens
 --                              the capture of the recorder's meeting. When the call is already held it opens nothing and returns the one holder as (kind, since): never a person, a meeting id or a title.
 --                              The other members' rows are reached by this definer only, because the row security shows each recorder their own.
 -- crove_meetings.capture_beat(meeting)
@@ -37,10 +38,9 @@ CREATE TABLE IF NOT EXISTS crove_meetings.capture_session (
   -- An end has a reason and a reason has an end.
   CONSTRAINT capture_session_end_ck CHECK ((ended_at IS NULL) = (ended_reason IS NULL))
 );
--- At most one OPEN capture for each identity of a call: the same meeting key, the same calendar event, the same recorder.
+-- At most one OPEN capture for each identity of a call: the same meeting key, the same calendar event.
 CREATE UNIQUE INDEX IF NOT EXISTS capture_session_key_open_uq ON crove_meetings.capture_session (org_id, meeting_key) WHERE ended_at IS NULL AND meeting_key IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS capture_session_agenda_open_uq ON crove_meetings.capture_session (org_id, agenda_id) WHERE ended_at IS NULL AND agenda_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS capture_session_recorder_open_uq ON crove_meetings.capture_session (org_id, recorder_user_id) WHERE ended_at IS NULL;
 
 SELECT crove_kernel.apply_tenant_rls('crove_meetings.capture_session');
 -- Rows come from capture_open alone; the recorder's commands set the heartbeat and the end, and nothing else.
@@ -67,7 +67,7 @@ CREATE POLICY capture_session_delete ON crove_meetings.capture_session AS RESTRI
 -- ---------------------------------------------------------------------------
 -- Raises CAPTURE_NOT_RECORDER (42501) unless the caller is the recorder of p_meeting in a user context, and CAPTURE_INVALID (22023) for a kind that is not one or a key that is not a sha256 in hex.
 -- Returns no row when the capture was opened, and one row (kind, since) of the open capture that holds the call when it was not (the caller then refuses and rolls back). The holder is the oldest open
--- capture of the same key, calendar event or recorder.
+-- capture of the same key or calendar event.
 CREATE OR REPLACE FUNCTION crove_meetings.capture_open(p_meeting uuid, p_kind text, p_agenda uuid, p_key text)
 RETURNS TABLE (kind text, since timestamptz)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
@@ -85,7 +85,7 @@ BEGIN
      SET ended_at = pg_catalog.now(), ended_reason = 'lost'
    WHERE s.org_id = v_org AND s.ended_at IS NULL
      AND s.last_seen_at < pg_catalog.now() - interval '90 seconds'
-     AND (s.recorder_user_id = v_user OR (p_key IS NOT NULL AND s.meeting_key = p_key) OR (p_agenda IS NOT NULL AND s.agenda_id = p_agenda));
+     AND ((p_key IS NOT NULL AND s.meeting_key = p_key) OR (p_agenda IS NOT NULL AND s.agenda_id = p_agenda));
   BEGIN
     INSERT INTO crove_meetings.capture_session (org_id, meeting_id, recorder_user_id, kind, agenda_id, meeting_key)
     VALUES (v_org, p_meeting, v_user, p_kind, p_agenda, p_key);
@@ -94,7 +94,7 @@ BEGIN
       SELECT h.kind, h.started_at
         FROM crove_meetings.capture_session h
        WHERE h.org_id = v_org AND h.ended_at IS NULL
-         AND (h.recorder_user_id = v_user OR (p_key IS NOT NULL AND h.meeting_key = p_key) OR (p_agenda IS NOT NULL AND h.agenda_id = p_agenda))
+         AND ((p_key IS NOT NULL AND h.meeting_key = p_key) OR (p_agenda IS NOT NULL AND h.agenda_id = p_agenda))
        ORDER BY h.started_at, h.id
        LIMIT 1;
     IF NOT FOUND THEN

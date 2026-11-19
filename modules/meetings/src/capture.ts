@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // One meeting, one live capture (ADR-0055 slice 1, issue #4123). When a client starts to record a call (the browser extension, or the app's recorder), meetings.meeting.create opens a capture here, in the same
 // transaction as the meeting, and a second open capture of the same call is refused: 409 CAPTURE_ALREADY_RUNNING, saying which kind of client holds the call and since when, never a person and never the other
-// meeting, and the refusal rolls the meeting back, so a refused start leaves nothing. "The same call" is the member's own calendar event, else a meeting key (a hash of the org, the platform and the platform's
-// meeting id, read from a join address that is never stored), else the recorder (one open capture each). The rule lives in the database (crove_meetings.capture_open and its unique indexes over open rows): code
+// meeting, and the refusal rolls the meeting back, so a refused start leaves nothing. "The same call" is the member's own calendar event or a meeting key (a hash of the org, the platform and the platform's
+// meeting id, read from a join address that is never stored); a capture that names neither is recorded and conflicts with nothing. The rule lives in the database (crove_meetings.capture_open and its unique indexes over open rows): code
 // here reads what the client says of its call, asks the definer, and turns its answer into the refusal.
 //
 // A capture is kept alive by the client's heartbeat (meetings.capture.heartbeat, every 30 seconds) and is over when it has not been heard from for 90 seconds, which the next start of the same call reads: no job

@@ -19,7 +19,7 @@ export const zCaptureEndedReason = z.enum(['media', 'stopped', 'lost']);
 export type CaptureEndedReason = z.infer<typeof zCaptureEndedReason>;
 
 // What a client says about the call it records, when it knows: the member's own calendar event (the event's join address is read on the server) and/or the join address of the tab or the event. Both are
-// optional: with neither, only the recorder's own captures are told apart. The address is read into a key and never stored.
+// optional: with neither the call is unknown, and the capture is recorded but conflicts with nothing. The address is read into a key and never stored.
 export const zCaptureStart = z.strictObject({
   agendaId: zId.optional(),
   joinUrl: z.string().max(500).optional(),
