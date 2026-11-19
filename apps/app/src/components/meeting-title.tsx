@@ -32,19 +32,21 @@ export function MeetingTitleSuggest({ meetingId, isRecorder, hasTranscript }: { 
   // A pick or "none of these" removes the list and the button that held the focus: it goes back to the button that asked (WCAG 2.4.3).
   const runRef = useRef<HTMLButtonElement>(null);
   const hadAnswer = useRef(false);
+  const busy = suggest.isPending || rename.isPending;
   useEffect(() => {
     if (answer) hadAnswer.current = true;
-    else if (hadAnswer.current) {
+    // Only once the button can take the focus: a disabled button ignores it, and the chance would be spent.
+    else if (hadAnswer.current && !busy) {
       hadAnswer.current = false;
       runRef.current?.focus();
     }
-  }, [answer]);
+  }, [answer, busy]);
   // The recorder alone, with a transcript to read, and only when this system lets Vy work: otherwise no button and no word about it.
   if (!isRecorder || !hasTranscript || !status.data?.enabled) return null;
   return (
     <div className="mb-4 space-y-2" data-testid="title-suggest">
       <div className="flex flex-wrap items-center gap-2">
-        <Button ref={runRef} size="sm" variant="outline" loading={suggest.isPending} disabled={suggest.isPending || rename.isPending} onClick={() => suggest.mutate()} data-testid="title-suggest-run">
+        <Button ref={runRef} size="sm" variant="outline" loading={suggest.isPending} disabled={busy} onClick={() => suggest.mutate()} data-testid="title-suggest-run">
           {t('button')}
         </Button>
         <span className="text-xs text-muted-foreground">{t('note')}</span>

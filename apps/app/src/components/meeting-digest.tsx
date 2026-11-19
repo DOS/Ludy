@@ -63,7 +63,7 @@ export function MeetingDigest({ slug }: { slug: string }) {
       </CardHeader>
       <CardContent className="space-y-4">
         <p role="status" className="sr-only" data-testid="digest-window-status">
-          {picked && !facts.isPlaceholderData ? t('windowShown', { count: String(days) }) : ''}
+          {picked && !facts.isPlaceholderData && !facts.error ? t('windowShown', { count: String(days) }) : ''}
         </p>
         {!data ? (
           <ErrorText>{errorMessage(facts.error)}</ErrorText>
