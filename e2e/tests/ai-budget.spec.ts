@@ -49,8 +49,10 @@ test('the AI meter says AI is off, the Agents page shows the month by feature, a
   });
 
   await test.step('an owner sets the monthly budget with a fresh second factor, and it shows as spent', async () => {
-    await page.getByLabel('Hạn mức mỗi tháng').fill('0.004');
     await page.getByRole('button', { name: 'Đặt ngân sách' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Đặt ngân sách' });
+    await dialog.getByLabel('Hạn mức mỗi tháng').fill('0.004');
+    await dialog.getByRole('button', { name: 'Đặt ngân sách' }).click();
     await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);

@@ -31,6 +31,8 @@ const PUBLIC: Record<string, string> = {
   '/api/inbound/email': 'the inbound mail relay, checked by INBOUND_SECRET (constant-time)',
   '/api/bank-feed/:provider/webhook':
     "a bank feed provider's signed notice (ADR-0039, #2044): the adapter checks its signature and timestamp before anything else, it is rate limited per address, stores nothing of its body, and only asks the worker for a pull of a connection that lists an account it names",
+  '/api/webhooks/misa-amis':
+    "MISA AMIS's callback with the result of a save (#3903, S4 of #3854): the body is capped and the client address limited before it is read, the HMAC of its signed `data` (the ClientID as the key, constant time) is checked before anything else is read, a refusal is a fixed code with nothing stored or logged, the organisation is found only from our own stored push row by org_refid (never from the unsigned envelope), the company code must equal the located connection's, a refid found in two organisations is refused, and a verified message is always answered 200 and only moves a row forward through finance.misa_amis.push_record",
   '/api/ads/meta/data-deletion':
     "Meta's data deletion callback for the Ads connection (ads plan section 9, #2219), POST and GET: the POST is checked by Meta's signed_request (HMAC-SHA256 with the app secret, constant time, not expired) before anything else, has a body cap, is rate limited per address, stores no body, and only queues the keyed hash of the user id for the worker, which erases the ad accounts that user granted; the GET is the status page Meta shows the person, answered by the confirmation code (128 random bits) and showing no tenant data",
   '/api/channels/zalo/webhook':
@@ -122,6 +124,8 @@ function app(authenticate: HttpDeps['authenticate']) {
     mailer: { name: 'test', enabled: true, sendRetrySafety: 'unsafe', send: unused, parseWebhook: () => [] } as unknown as NonNullable<HttpDeps['mailer']>,
     // An adapter that takes signed notices, so the bank feed route is registered and listed (ADR-0039, #2044).
     bankFeedWebhooks: { bank_sandbox: { id: 'bank_sandbox', hosts: [], verifyWebhook: () => [] } } as unknown as NonNullable<HttpDeps['bankFeedWebhooks']>,
+    // The ClientID of MISA AMIS, so its callback is registered and listed (#3903).
+    misaAmisCallback: { clientId: 'misa-client-id-0001' },
     // The Meta app of Ads, so the data deletion callback is registered and listed (ads plan section 9, #2219).
     adsDeletion: { appSecret: 'z'.repeat(32) },
     // The Zalo app and its OA secret key, so the webhook of customers' messages is registered and listed (conversation core, #2304).

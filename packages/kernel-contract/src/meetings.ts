@@ -485,9 +485,16 @@ export const zTranscriptSegment = z.strictObject({
 export type TranscriptSegment = z.infer<typeof zTranscriptSegment>;
 
 // The input of the import of a platform's transcript (C2, #3174): the lines the job staged, read again and bounded here (tainted input). It is no RPC input: only the import route runs the command.
+// A line of a platform's transcript, read again here (defense in depth: the job's `stageTranscript` already clamps the times and drops NUL bytes, so a staged line holds neither fault; this refuses
+// them if the staged bytes ever come from another path). A line that ends before it starts is no span of speech, and a NUL byte is no text: Postgres refuses it in a text column, which would fail the
+// whole import with a 500 instead of this refusal. Only the platform import asks for this: the draft transcript of a recording (`zTranscriptDraftStore`) keeps its own rules.
+const zImportedSegment = zTranscriptSegmentInput
+  .refine((line) => line.endSeconds >= line.startSeconds, { message: 'a line ends before it starts', path: ['endSeconds'] })
+  .refine((line) => !line.text.includes('\u0000'), { message: 'a line holds a NUL byte', path: ['text'] })
+  .refine((line) => !line.speakerLabel.includes('\u0000'), { message: 'a line holds a NUL byte', path: ['speakerLabel'] });
 export const zMeetingTranscriptImport = z.strictObject({
   meetingId: zId,
-  segments: z.array(zTranscriptSegmentInput).min(1).max(TRANSCRIPT_SEGMENTS_MAX),
+  segments: z.array(zImportedSegment).min(1).max(TRANSCRIPT_SEGMENTS_MAX),
   // The platform's transcript was longer than the lines here (#3922): the staged file says so, the route passes it on, the meeting keeps it.
   platformCut: z.boolean().default(false),
 });

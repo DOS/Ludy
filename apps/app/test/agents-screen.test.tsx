@@ -1,6 +1,7 @@
 // The agents screen as each role sees it (ADR-0029 section 9, issue #339): an agent-held position carries the AI
 // label, and every control is shown only to the roles that may use it. Rendered on the server (no DOM needed), with
 // the queries answered from a seeded cache.
+import { readFileSync } from 'node:fs';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
@@ -33,6 +34,15 @@ vi.mock('../src/lib/api.ts', async () => {
     takeOrgLeftNotice: () => null,
   };
 });
+// The dialogs portal to the body, which the server does not render: this stand-in draws a dialog's form in place so its fields can be read.
+vi.mock('../src/components/form-dialog.tsx', async () => {
+  const React = await import('react');
+  return {
+    useLive: () => ({ current: true }),
+    FormDialog: (p: { title: string; submitLabel: string; children: unknown; outside?: unknown }) =>
+      React.createElement('form', { 'aria-label': p.title }, p.children as never, p.outside as never, React.createElement('button', { type: 'submit' }, p.submitLabel)),
+  };
+});
 vi.mock('../src/lib/auth.ts', () => ({
   getConfig: () => ({ modules: configMock.modules }),
   auth: {},
@@ -40,7 +50,7 @@ vi.mock('../src/lib/auth.ts', () => ({
   authFailure: () => ({}),
 }));
 
-const { AgentsPage } = await import('../src/routes/agents.tsx');
+const { AgentsPage, AddPositionDialog, BudgetDialog } = await import('../src/routes/agents.tsx');
 
 const member = { userId: 'u1', email: 'an@example.com', displayName: 'An' };
 const chart = {
@@ -70,6 +80,17 @@ function page(role: string | null, entities = oneEntity, tpls: typeof templates 
     <QueryClientProvider client={qc}>
       <IntlProvider locale="en" messages={catalog('en')}>
         <AgentsPage />
+      </IntlProvider>
+    </QueryClientProvider>,
+  );
+}
+
+// The add-position dialog on its own, as it stands when opened with its options shown.
+function addPositionDialog(entities = oneEntity, tpls: typeof templates = templates): string {
+  return renderToStaticMarkup(
+    <QueryClientProvider client={client.current}>
+      <IntlProvider locale="en" messages={catalog('en')}>
+        <AddPositionDialog positions={chart.positions as never} templates={tpls as never} entities={entities as never} entitiesReady defaultMore onClose={() => undefined} />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -142,7 +163,10 @@ describe('AgentsPage', () => {
     expect(html).not.toContain('finance.chief_accountant');
     expect(html).toContain('Chief accountant');
     expect(html).toContain('Booking coordinator');
-    expect(html).toContain('<details');
+    // #3608: adding a position is a button that opens a dialog, never a form left open under the chart.
+    expect(html).toContain(`>${en.agents.addPosition}<`);
+    expect(html).not.toContain('<details');
+    expect(html).not.toContain(`aria-label="${en.agents.addPosition}"`);
     expect(html).not.toContain('Role key');
 
     const viHtml = renderToStaticMarkup(
@@ -196,8 +220,8 @@ describe('AgentsPage', () => {
     expect(chief).toContain(en.agents.leScopeShown.replace('{names}', en.agents.leScopeEvery));
     expect(clerk).toContain(en.agents.leScopeShown.replace('{names}', 'Chi nhánh Hà Nội'));
     expect(chief).toContain(`>${en.agents.leScopeEdit}<`);
-    // The add-position form and the templates each offer the picker, starting on the default entity.
-    expect(html).toContain(`>${en.agents.leScope}<`);
+    // The add-position dialog and the templates each offer the picker, starting on the default entity.
+    expect(addPositionDialog(twoEntities)).toContain(`>${en.agents.leScope}<`);
     expect(html).toContain(`>${en.agents.leScopeInstall}<`);
     expect(html).toContain(`>${en.agents.leScopeSome}<`);
   });
@@ -233,8 +257,9 @@ describe('AgentsPage', () => {
       title: `Helper ${module}`,
     }));
     const html = page('owner', oneEntity, allTemplates);
+    const options = addPositionDialog(oneEntity, allTemplates);
     for (const id of MODULE_IDS) {
-      expect(html).toContain(`value="${id}"${id === 'kernel' ? ' selected=""' : ''}>${escapeHtml(en.modules[id])}<`);
+      expect(options).toContain(`value="${id}"${id === 'kernel' ? ' selected=""' : ''}>${escapeHtml(en.modules[id])}<`);
     }
     const cards = html.split('data-testid="template"').slice(1);
     expect(cards).toHaveLength(switchableModules.length);
@@ -274,9 +299,39 @@ describe('AgentsPage', () => {
     expect(vyCard).not.toContain(en.agents.coworkerStoppedBadge);
     expect(lyCard).toContain(en.agents.coworkerPartialStopBadge);
     expect(lyCard).not.toContain(en.agents.coworkerStoppedBadge);
-    expect(html).toContain(en.agents.positionRolePreset);
-    expect(html).toContain(en.agents.positionRoleAuto);
-    expect(html).toContain('value="0">Chief accountant<');
+    const dialog = addPositionDialog(oneEntity, [
+      { key: 'finance.chief_accountant', module: 'finance', title: 'Kế toán trưởng (AI)', roleKey: 'finance.chief_accountant', maxRisk: 'R1', dailyRunCap: 50, jobDescription: null, moduleEnabled: true },
+    ] as never);
+    expect(dialog).toContain(en.agents.positionRolePreset);
+    expect(dialog).toContain(en.agents.positionRoleAuto);
+    expect(dialog).toContain('value="0">Chief accountant<');
+    expect(dialog).not.toContain('finance.chief_accountant');
     expect(html).not.toContain('finance.chief_accountant');
+  });
+  // #3608 (F-6): the add dialog asks the name first and never a code; the role code is made from the name.
+  it('asks for the position name first, then the app, with the rest under more options', () => {
+    configMock.modules = ['kernel', 'finance'];
+    const dialog = addPositionDialog();
+    const order = [en.agents.positionTitle, en.agents.positionModule, en.agents.moreOptions, en.agents.reportsTo].map((label) => dialog.indexOf(label));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(dialog).not.toMatch(/role key|role code|mã vai trò/i);
+    expect(dialog).toContain(`aria-label="${en.agents.addPosition}"`);
+    // Without the options shown (the way it opens) the dialog holds the two fields only.
+    expect(readFileSync(new URL('../src/routes/agents.tsx', import.meta.url), 'utf8')).toContain('defaultMore = false');
+  });
+
+  it('asks for the budget amount first, and names a target only when the scope is not the whole org', () => {
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client.current}>
+        <IntlProvider locale="en" messages={catalog('en')}>
+          <BudgetDialog agents={chart.agents as never} onClose={() => undefined} />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(html.indexOf(en.agents.budgetLimit)).toBeLessThan(html.indexOf(en.agents.budgetScope));
+    expect(html).not.toContain(`>${en.agents.budgetTarget}<`);
+    expect(html).toContain(en.agents.hardStop);
+    expect(html).toContain(`aria-label="${en.agents.setBudget}"`);
   });
 });

@@ -71,14 +71,14 @@ export const MARKETPLACE_POSTING_MAPS: Readonly<Record<string, MarketplacePostin
   },
   // Circular 99/2025/TT-BTC (#3711 slice 4). The same shape as tt133, from the same research (docs/plan/accounting-rules-research-2026-11-18.md, A1, A5, C3): the platform's fees are a selling expense (641, sub-account 6417
   // "Chi phí dịch vụ mua ngoài", not 6421, which is staff cost in this chart), accrued to 335 at month end; a sale the platform refunded is a deduction from revenue on 521, not 511. Every row is `commentary`, so no path
-  // opens from this map until the accountant confirms it (#2520); every code below is in the TT99 2026.1 chart (pinned by finance-marketplace-map-chart.db.test.ts). The settlement posting nets a refund into the revenue line
-  // today (the TT133 rule), so a TT99 settlement that carries a refund is refused (MARKETPLACE_SETTLEMENT_NOT_POSTABLE, REFUND_ACCOUNT) until the 521 split is built.
+  // opens from this map until the accountant confirms it (#2520); every code below is in the TT99 2026.1 chart (pinned by finance-marketplace-map-chart.db.test.ts). The settlement posting books a refund as its own debit line on the map's
+  // salesReturn account when that differs from the revenue account (#4017): Dr 131 + Dr 521 / Cr 511; under TT133 it still nets the refund into 511.
   tt99: {
     regime: 'tt99',
     status: 'commentary',
     receivable: row('131', 'Same as tt133 (plan 8.4 Income reports): Dr 131, the platform as an organization party linked through crove_finance.marketplace_party.'),
     revenue: row('511', 'Same as tt133: Cr 511 for the sales the platform paid for net of the seller discounts; the recognition point is the successful delivery (research A5).'),
-    salesReturn: row('521', 'Research C3: under Circular 99 a refunded sale is a deduction from revenue on 521, where TT133 has none and reduces 511. Not posted yet: the settlement posting refuses a refund under this map until the split exists.'),
+    salesReturn: row('521', 'Research C3: under Circular 99 a refunded sale is a deduction from revenue on 521, where TT133 has none and reduces 511. The settlement posting books a refund as its own debit line here (#4017): Dr 131 (net) + Dr 521 (refund) / Cr 511 (sales less seller discounts).'),
     cash: row('112', 'Same as tt133: Dr 112 for the money received at the payout.'),
     feePayable: row('331', 'Research A1: the payout debits 331 of the platform for the fees it kept; the platform\'s fee invoice credits it (Dr 641 / Dr 1331 / Cr 331).'),
     feeAwaitingInvoice: row('1388', 'Retired with the fee clearing path (#3315): the fees wait on 331, never on 1388 (research A1). The row stays only while the retired code reads it.'),

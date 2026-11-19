@@ -250,12 +250,13 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     const nav = page.getByRole('navigation');
     await nav.getByRole('link', { name: 'Cài đặt' }).click();
     await openSettingsTab(page, 'accounting');
+    await page.getByRole('button', { name: 'Thêm tài khoản con' }).click();
     const add = page.getByRole('form', { name: 'Thêm tài khoản con' });
     await add.getByLabel('Tài khoản cha').selectOption('6422');
     await expect(add.getByLabel('Mã tài khoản con')).toHaveValue('6422');
     await add.getByLabel('Mã tài khoản con').fill('6422.vp');
     await add.getByLabel('Tên tài khoản con').fill('Văn phòng Hà Nội');
-    await add.getByRole('button', { name: 'Thêm' }).click();
+    await add.getByRole('button', { name: 'Thêm', exact: true }).click();
     await expect(page.getByText('6422.VP', { exact: true })).toBeVisible();
 
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();

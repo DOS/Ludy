@@ -15,7 +15,7 @@ import { errorMessage, orpc } from '../lib/api.ts';
 const RUN_CODES = ['AI_BUDGET_EXHAUSTED', 'AI_STOPPED', 'COMMITMENTS_TIMEOUT', 'COMMITMENTS_FAILED', 'COMMITMENTS_TOO_LONG', 'COMMITMENTS_NO_TRANSCRIPT', 'COMMITMENTS_BUSY'] as const;
 export const commitmentsRunCodeOf = (code: string | null): (typeof RUN_CODES)[number] | 'default' => RUN_CODES.find((c) => c === code) ?? 'default';
 
-export function MeetingCommitments({ meetingId, isRecorder, hasTranscript, onJump }: { meetingId: string; isRecorder: boolean; hasTranscript: boolean; onJump: (seconds: number) => void }) {
+export function MeetingCommitments({ meetingId, isRecorder, hasTranscript, onJump }: { meetingId: string; isRecorder: boolean; hasTranscript: boolean; onJump: (seconds: number, speaker?: string) => void }) {
   const t = useTranslations('meetings.commitments');
   const status = useQuery({ ...orpc.meetings.commitments.status.queryOptions({ input: { meetingId } }), enabled: isRecorder && hasTranscript });
   const run = useMutation({ mutationFn: () => orpc.meetings.commitments.list.call({ meetingId }) });
@@ -47,7 +47,7 @@ export function MeetingCommitments({ meetingId, isRecorder, hasTranscript, onJum
 }
 
 // What the one answer shows: the lines grouped by speaker, or "no suggestion", or the fixed words of a failure. Nothing here writes: a click on a time only moves the transcript.
-export function CommitmentsResult({ answer, onJump }: { answer: CommitmentsAnswer; onJump: (seconds: number) => void }) {
+export function CommitmentsResult({ answer, onJump }: { answer: CommitmentsAnswer; onJump: (seconds: number, speaker?: string) => void }) {
   const t = useTranslations('meetings.commitments');
   if (answer.state === 'none') {
     return (
@@ -79,7 +79,7 @@ export function CommitmentsResult({ answer, onJump }: { answer: CommitmentsAnswe
                   className="inline-flex min-h-6 items-center font-mono text-xs text-link underline max-md:min-h-11"
                   title={t('open', { time: clock(line.seconds) })}
                   aria-label={t('open', { time: clock(line.seconds) })}
-                  onClick={() => onJump(line.seconds)}
+                  onClick={() => onJump(line.seconds, speaker.label)}
                   data-testid="commitments-jump"
                 >
                   {clock(line.seconds)}

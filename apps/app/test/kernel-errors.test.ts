@@ -63,6 +63,8 @@ const NOT_SHOWN: Record<string, string> = {
   ADS_ONLY_APPROVED: 'ads manage',
   CHANNEL_NOT_ORPHAN: 'worker',
   // A bank feed's batch (ADR-0039, #2044): finance.bank.ingest is a system command the feed job runs.
+  // MISA AMIS's callback (#3903): answered to MISA's own sender on a public route, never to a screen.
+  CALLBACK_UNAVAILABLE: 'misa amis callback',
   BANK_FEED_INVALID: 'worker',
   // A late sync's page (#2044 part 2b): only the worker's record_pull raises it.
   BANK_FEED_CURSOR_MOVED: 'worker',

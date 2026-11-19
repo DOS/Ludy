@@ -387,7 +387,7 @@ export const mcpSearch = defineQuery({
         for (const text of texts) {
           const hit = matchLine(text, words);
           if (hit) {
-            found = { field, snippet: snippetAround(text, hit.start) };
+            found = { field, snippet: snippetAround(text, hit.start, hit.end) };
             break;
           }
         }

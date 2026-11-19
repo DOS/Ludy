@@ -58,9 +58,9 @@ const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[
 // oxlint-disable-next-line no-control-regex
 const NUL = /\u0000/g;
 
-/** A title as the model wrote it, one line, before any cut: the characters above removed (a line break becomes a space), lone surrogates and NUL dropped, spaces folded, trimmed. */
+/** A title as the model wrote it, one line, before any cut: the characters above removed (a line break, a tab, a vertical tab or a form feed becomes a space, as the rename's cleanTemplateText does), lone surrogates and NUL dropped, spaces folded, trimmed. */
 export function foldTitleText(raw: string): string {
-  const spaced = raw.replace(/[\r\n\u2028\u2029]+/g, ' ').replace(NUL, '').replace(LONE_SURROGATE, '').replace(STRIP, '');
+  const spaced = raw.replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ').replace(NUL, '').replace(LONE_SURROGATE, '').replace(STRIP, '');
   return spaced.replace(/\s+/g, ' ').trim();
 }
 
