@@ -54,8 +54,8 @@ describe('the Sàn screen (#2516)', () => {
   it('shows each platform with its sales, what it paid out, what it still owes and the fees awaiting an invoice', () => {
     const html = render({
       rows: [
-        { legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', salesPosted: '1500000', paidOut: '1000000', awaitingPayout: '500000', feesAwaitingInvoice: '100000' },
-        { legalEntityId: entity, platform: 'tiktok_shop', platformName: 'TikTok Shop', salesPosted: '250000', paidOut: '600000', awaitingPayout: '-350000', feesAwaitingInvoice: '0' },
+        { legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', salesPosted: '1500000', paidOut: '1000000', awaitingPayout: '500000', feesAwaitingInvoice: '100000', oldestFeeDate: '2026-08-01', feesAgeDays: 110, feesOverdue: true },
+        { legalEntityId: entity, platform: 'tiktok_shop', platformName: 'TikTok Shop', salesPosted: '250000', paidOut: '600000', awaitingPayout: '-350000', feesAwaitingInvoice: '0', oldestFeeDate: null, feesAgeDays: null, feesOverdue: false },
       ],
     });
     expect(html.match(/data-testid="marketplace-balance-row"/g)).toHaveLength(2);
@@ -66,6 +66,9 @@ describe('the Sàn screen (#2516)', () => {
     expect(html).toContain('Still owed by the platform');
     expect(html).toContain('Fees awaiting an invoice (331)');
     expect(html).toContain('data-testid="marketplace-balance-note"');
+    // Only the platform whose fees waited longer than a settlement cycle is flagged, with the days.
+    expect(html.match(/data-testid="marketplace-balance-fees-overdue"/g)).toHaveLength(1);
+    expect(html).toContain('fees have waited 110 days for an invoice');
     expect(html).not.toContain('<button');
     expect(cache.calls).toEqual([]);
   });
@@ -77,7 +80,7 @@ describe('the Sàn screen (#2516)', () => {
   });
 
   it('reads in Vietnamese', () => {
-    const html = render({ rows: [{ legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', salesPosted: '10', paidOut: '0', awaitingPayout: '10', feesAwaitingInvoice: '0' }] }, 'vi');
+    const html = render({ rows: [{ legalEntityId: entity, platform: 'shopee', platformName: 'Shopee', salesPosted: '10', paidOut: '0', awaitingPayout: '10', feesAwaitingInvoice: '0', oldestFeeDate: null, feesAgeDays: null, feesOverdue: false }] }, 'vi');
     expect(html).toContain('Còn chờ sàn trả');
     expect(html).toContain('Phí chờ hóa đơn (331)');
   });
