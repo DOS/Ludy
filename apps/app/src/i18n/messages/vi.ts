@@ -15427,6 +15427,9 @@ export const vi = {
         set_read_events: 'Bật hoặc tắt việc đọc tên và giờ cuộc họp trong lịch của bạn',
         suggest: 'Xem sự kiện lịch trùng giờ với một cuộc họp bạn đã ghi',
       },
+      capture: {
+        heartbeat: 'Báo cuộc ghi âm cuộc họp vẫn đang chạy, hoặc đã kết thúc',
+      },
       chat: {
         channel_remove: 'Xóa một kênh nhận biên bản (Slack hoặc Teams)',
         channel_save: 'Thêm kênh nhận biên bản (Slack hoặc Teams) hoặc dán địa chỉ mới cho kênh',

@@ -15427,6 +15427,9 @@ export const en = {
         set_read_events: 'Turn reading the names and times of meetings in your calendar on or off',
         suggest: 'See the calendar event that overlaps a meeting you recorded',
       },
+      capture: {
+        heartbeat: 'Tell Ludy a meeting recording is still running, or that it has ended',
+      },
       chat: {
         channel_remove: 'Removing a channel for minutes (Slack or Teams)',
         channel_save: 'Adding a channel for minutes (Slack or Teams) or pasting a new address for one',
