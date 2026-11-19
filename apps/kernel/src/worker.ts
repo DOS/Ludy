@@ -77,7 +77,7 @@ import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts
 import { runMarketplacePoll, type MarketplacePollJob } from './marketplace-poll-job.ts';
 import { runMisaAmisMatch, type MisaAmisMatchJob } from './misa-amis-match-job.ts';
 import { runMisaAmisTest, type MisaAmisTestJob } from './misa-amis-test-job.ts';
-import { pushFollowUp, pushGiveUp, runMisaAmisPush, type MisaAmisPushJob } from './misa-amis-push-job.ts';
+import { pushFollowUp, pushGiveUp, pushPressKeyTail, runMisaAmisPush, type MisaAmisPushJob } from './misa-amis-push-job.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
 import { runAdsActivate, type AdsActivateJob } from './ads-activate.ts';
 import { runAdsManage, type AdsManageJob } from './ads-manage.ts';
@@ -2881,7 +2881,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (finance && deps.channels?.misaAmis && deps.channels.misaAmisPush && deps.channels.broker && row.type === 'finance.misa_amis.push_requested') {
                 const connectionId = String(row.payload.connection_id);
                 await boss.send(QUEUES.misaAmisPush, { orgId: row.org_id, connectionId } satisfies MisaAmisPushJob, {
-                  singletonKey: jobKey(row.org_id, QUEUES.misaAmisPush, connectionId),
+                  // One job per press, never one per connection: a job dropped because another press's was active could leave this press's rows waiting (#4041, N1). The table's states keep two runs from sending a row twice.
+                  singletonKey: jobKey(row.org_id, QUEUES.misaAmisPush, pushPressKeyTail(connectionId, row.event_id)),
                   retryLimit: MISA_AMIS_PUSH_RETRY_LIMIT,
                   retryDelay: 30,
                   retryBackoff: true,

@@ -24,8 +24,10 @@ export interface MisaAmisPushJob {
   orgId: string;
   // The finance module's connection row id, not the channel connection's.
   connectionId: string;
-  // How many times this chain of runs came back (the worker's own count; it bounds a chain that waits on an unreachable AMIS).
+  // How many times this chain of runs came back (the worker's own count; it bounds a chain that waits for MISA's answer).
   round?: number;
+  // How many runs in a row found AMIS unreachable (the worker's own count; absent after a run that reached it). It bounds the retries for an unreachable AMIS, wherever the chain is in its day (#4041).
+  unreachable?: number;
 }
 
 export interface MisaAmisPushDeps {
@@ -256,8 +258,9 @@ async function readResults(client: AmisClient, connection: AmisConnection, from:
 
 // ---------------------------------------------------------------------------------------------------------------
 // When the job comes back. pg-boss's exclusive queue drops a send whose singleton key is queued or ACTIVE, so a run never queues itself under its own key: every follow-up has a key of its own round.
-// While rows wait for MISA's answer the job comes back every two minutes for the day MISA is asked about; for an unreachable AMIS with queued rows it tries ten more times; and a run that came from a press
-// (round 0) always asks once more a minute later, so a press whose own send was dropped because a run was active is found (the rows it queued are in the table either way).
+// While rows wait for MISA's answer the job comes back every two minutes for the day MISA is asked about; for an unreachable AMIS with queued rows it tries ten more times in a row (the count starts again after a
+// run that reached AMIS, so an unreachable answer late in a long waiting chain is not the end of it); and a run that came from a press (round 0) always asks once more a minute later (the rows it queued are in the
+// table either way). A press has a job of its own, never dropped for another press's or chain's job (pushPressKeyTail), so the rows of a press are always looked at by a run that began after they were committed.
 export const PUSH_RECHECK_SECONDS = 120;
 export const PUSH_PRESS_RECHECK_SECONDS = 60;
 export const PUSH_WAIT_ROUNDS = 720;
@@ -284,11 +287,24 @@ export function pushGiveUp(job: MisaAmisPushJob, outcome: MisaAmisPushOutcome): 
 
 export function pushFollowUp(job: MisaAmisPushJob, outcome: MisaAmisPushOutcome): PushFollowUp | null {
   const round = job.round ?? 0;
-  const next = (startAfterSeconds: number): PushFollowUp => ({ data: { orgId: job.orgId, connectionId: job.connectionId, round: round + 1 }, keyTail: `${job.connectionId}:r${round + 1}`, startAfterSeconds });
+  const next = (startAfterSeconds: number, unreachable = 0): PushFollowUp => ({
+    data: { orgId: job.orgId, connectionId: job.connectionId, round: round + 1, ...(unreachable > 0 ? { unreachable } : {}) },
+    keyTail: `${job.connectionId}:r${round + 1}`,
+    startAfterSeconds,
+  });
   if (outcome.state === 'done') {
     if (outcome.waiting && round < PUSH_WAIT_ROUNDS) return next(PUSH_RECHECK_SECONDS);
     return round === 0 ? next(PUSH_PRESS_RECHECK_SECONDS) : null;
   }
-  if (outcome.state === 'unreachable') return round < PUSH_UNREACHABLE_ROUNDS ? next(PUSH_RECHECK_SECONDS) : null;
+  if (outcome.state === 'unreachable') {
+    // The count is of runs in a row that found AMIS unreachable, this one included; the whole chain is still bounded by the day of waiting rounds.
+    const inARow = (job.unreachable ?? 0) + 1;
+    return inARow <= PUSH_UNREACHABLE_ROUNDS && round < PUSH_WAIT_ROUNDS ? next(PUSH_RECHECK_SECONDS, inARow) : null;
+  }
   return null;
 }
+
+// The singleton key's tail of the job a press queues: the connection and the press (the outbox event that confirmed the push). The queue is exclusive on the key, so a key shared by every press of a connection
+// let a press's job be dropped while another press's job was active, and the rows of that press then waited for a follow-up that a chain's own job could also drop (#4041, N1). Distinct from a follow-up's tail
+// (`<connection>:r<round>`); the same event queued twice (the relay is at least once) is one job.
+export const pushPressKeyTail = (connectionId: string, eventId: string): string => `${connectionId}:p${eventId}`;
