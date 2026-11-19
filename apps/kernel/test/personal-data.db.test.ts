@@ -1014,6 +1014,8 @@ suite('finding a person in the org (#923)', () => {
     const unrelated = await mine.row('refused', 'Thiếu mã hàng trong dòng 3', 'PC3');
     const ours = await mine.row('failed', 'NOT_IN_AMIS', 'PC4');
     const accepted = await mine.row('accepted', null, 'PC5');
+    // A row that is not refused is not touched even if its text quoted the person (the worker writes MISA's text only on a refusal, so this is what the `refused` filter of the definer guards).
+    const queuedQuoting = await mine.row('queued', `Texte ${email}`, 'PC8');
     const otherOrg = await theirs.row('refused', `Đối tượng ${email} chưa có trong danh mục`, 'PC6');
     const stored = async (id: string) =>
       (await admin((c) => c.query<{ state: string; reason: string | null; attempts: number; updated_at: Date }>('SELECT state, reason, attempts, updated_at FROM crove_finance.misa_amis_push WHERE org_refid = $1', [id]))).rows[0];
@@ -1039,9 +1041,10 @@ suite('finding a person in the org (#923)', () => {
     expect(await stored(unrelated)).toMatchObject({ state: 'refused', reason: 'Thiếu mã hàng trong dòng 3' });
     expect(await stored(ours)).toMatchObject({ state: 'failed', reason: 'NOT_IN_AMIS' });
     expect(await stored(accepted)).toMatchObject({ state: 'accepted', reason: null });
+    expect(await stored(queuedQuoting)).toMatchObject({ state: 'queued', reason: `Texte ${email}` });
     expect(await stored(otherOrg)).toMatchObject({ state: 'refused', reason: `Đối tượng ${email} chưa có trong danh mục` });
-    // Nothing quotes the person any more in the org's rows.
-    expect((await find(email)).matches.filter((m) => m.column === 'crove_finance.misa_amis_push.reason')).toHaveLength(0);
+    // Of the rows that quoted the person only the one that is not refused is left.
+    expect((await find(email)).matches.filter((m) => m.column === 'crove_finance.misa_amis_push.reason')).toHaveLength(1);
   });
 
   // Only the erase command reaches the clearing: an owner's own context, never an admin's, a member's or a raw tenant call.
