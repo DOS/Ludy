@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove meetings #4043 (step 2 of 4): the glossary an organization keeps, the terms (a product, an acronym, jargon) that Vy should spell the way the org does. Idempotent; applied files stay
--- untouched. The org_purge restatement that deletes the new table is its own file (20270121120000_crove_kernel_org_purge_glossary_term.sql).
+-- untouched. The org_purge restatement that deletes the new table is its own file (20270121130000_crove_kernel_org_purge_glossary_term.sql).
 --
 -- crove_meetings.glossary_term   one term of an org: 1 to 40 characters of plain text. Only an owner or admin of the org, in a user context, reads or writes it (a restrictive policy for every
 --                                command): a member has no glossary screen, the system context and an agent context read none of it. The recorder's own run reads it through a definer in step 3.
