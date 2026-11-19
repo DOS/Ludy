@@ -87,6 +87,9 @@ describe('Settings says nothing about the server or a sandbox to an owner (ST-4)
     // The API records no browser or system for a session, so only the current device is described (describeUserAgent); another is "Another device" with a short code to tell two apart.
     expect(vi.sessions.session).toBe('Thiết bị khác (mã {id})');
     expect(en.sessions.session).toBe('Another device (code {id})');
+    // An admin reading a member's sessions, and a revoked list, get a neutral name.
+    expect(vi.sessions.sessionNamed).toBe('Thiết bị (mã {id})');
+    expect(en.sessions.sessionNamed).toBe('Device (code {id})');
     expect(vi.sessions.thisDeviceNamed).toContain('{device}');
   });
 

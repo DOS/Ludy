@@ -8820,6 +8820,7 @@ export const vi = {
     thisDevice: 'Thiết bị này',
     thisDeviceNamed: 'Thiết bị này ({device})',
     session: 'Thiết bị khác (mã {id})',
+    sessionNamed: 'Thiết bị (mã {id})',
     device: '{browser} trên {os}',
     revoke: 'Thu hồi',
     noneActive: 'Không có phiên nào đang hoạt động.',

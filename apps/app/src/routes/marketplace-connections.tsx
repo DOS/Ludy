@@ -208,12 +208,17 @@ export function MarketplaceConnectionsCard({ role }: { role: Role }) {
       ) : (
         <>
           <ul className="mt-3 divide-y" aria-label={t('platformsTitle')}>
-            {platforms.map((p) => (
-              <li key={p.platform} data-testid="marketplace-platform" data-adapter={p.adapter ? 'true' : 'false'} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
-                <span className={p.adapter ? 'font-medium' : 'font-medium text-muted-foreground'}>{t(PLATFORM_KEYS[p.platform])}</span>
-                {p.adapter ? <span className="text-muted-foreground">{t(adapters.filter((a) => a.platforms.includes(p.platform)).every((a) => a.offline) ? 'adapterTest' : 'adapterOn')}</span> : <span className="text-subtle-foreground">{t('fileOnly')}</span>}
-              </li>
-            ))}
+            {platforms.map((p) => {
+              // Only the test adapter serves it: say there is a test version, not that the marketplace can be connected.
+              const serving = adapters.filter((a) => a.platforms.includes(p.platform));
+              const testOnly = serving.length > 0 && serving.every((a) => a.offline);
+              return (
+                <li key={p.platform} data-testid="marketplace-platform" data-adapter={p.adapter ? 'true' : 'false'} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
+                  <span className={p.adapter ? 'font-medium' : 'font-medium text-muted-foreground'}>{t(PLATFORM_KEYS[p.platform])}</span>
+                  {p.adapter ? <span className="text-muted-foreground">{t(testOnly ? 'adapterTest' : 'adapterOn')}</span> : <span className="text-subtle-foreground">{t('fileOnly')}</span>}
+                </li>
+              );
+            })}
           </ul>
           {list.length === 0 ? (
             <p className="mt-3 text-sm text-subtle-foreground">{t('noConnections')}</p>
