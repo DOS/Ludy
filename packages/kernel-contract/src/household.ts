@@ -6,7 +6,7 @@
 // accountant (#2520): the answers say so and nothing that files or computes a tax may rely on one.
 import { z } from 'zod';
 import { zId, zLedgerPeriod, zLocalDate, zMoney } from './schemas.ts';
-import { STOCK_TRADES } from './stock.ts';
+import { STOCK_MOVE_SOURCES, STOCK_TRADES, zStockMonth } from './stock.ts';
 
 // The fixed sets the database keeps as CHECK constraints (packages/db/src/schema.ts holds the same lists for its test).
 export const HOUSEHOLD_TRADES = STOCK_TRADES;
@@ -286,3 +286,51 @@ export const zHouseholdS2c = z.strictObject({
   commentary: z.boolean(),
 });
 export type HouseholdS2c = z.infer<typeof zHouseholdS2c>;
+
+// S2d-HKD, the goods book of a household that pays PIT on income (Circular 152/2025/TT-BTC; plan 8.5 and 12 row 5, #2517 slice 2d): per item the quantity and value in, out and on hand for ONE month, read from #2513's stock
+// data (the same moves, the same weighted average per month and the same stored close as finance.stock.report and the stock card), so the book cannot disagree with them. A BOOK: Ludy never files anything.
+// Per item: the opening quantity and value, one row per stock move of the month (the quantity in or out, the value a purchase line brought in, the document reference, the balance in quantity) and the month's
+// totals (in, out, closing, and the unit cost). What leaves is valued on the totals line only (quantity out x the month's unit cost), never per move: the cost is a month average, so per-move values would not add up
+// to the total after rounding. `monthClosed` is false until a person closes the month (the cost is then provisional); `commentary` is true while the S2d layout row is not confirmed by the accountant.
+// A quarter or a year is not offered: whether to chain the months or take a whole-period average is the accountant's question (#2520, B5).
+export const zHouseholdS2dGet = z.strictObject({ legalEntityId: zId, month: zStockMonth });
+export type HouseholdS2dGet = z.infer<typeof zHouseholdS2dGet>;
+export const zHouseholdS2dRow = z.strictObject({
+  moveId: zId,
+  date: zLocalDate,
+  source: z.enum(STOCK_MOVE_SOURCES),
+  reference: z.string().nullable(),
+  quantityIn: z.string(),
+  quantityOut: z.string(),
+  valueIn: z.string().nullable(),
+  balanceQuantity: z.string(),
+});
+export type HouseholdS2dRow = z.infer<typeof zHouseholdS2dRow>;
+export const zHouseholdS2dItem = z.strictObject({
+  itemId: zId,
+  code: z.string(),
+  name: z.string(),
+  unit: z.string(),
+  openingQuantity: z.string(),
+  openingValue: z.string(),
+  rows: z.array(zHouseholdS2dRow),
+  inQuantity: z.string(),
+  inValue: z.string(),
+  outQuantity: z.string(),
+  outValue: z.string(),
+  closingQuantity: z.string(),
+  closingValue: z.string(),
+  unitCost: z.string().nullable(),
+});
+export type HouseholdS2dItem = z.infer<typeof zHouseholdS2dItem>;
+export const zHouseholdS2d = z.strictObject({
+  period: z.strictObject({ month: zStockMonth, from: zLocalDate, to: zLocalDate }),
+  household: z.strictObject({ name: z.string(), taxCode: z.string().nullable(), representativeName: z.string().nullable(), openedOn: zLocalDate }),
+  form: zHouseholdBookRule,
+  items: z.array(zHouseholdS2dItem),
+  totals: z.strictObject({ openingValue: zMoney, inValue: zMoney, outValue: zMoney, closingValue: zMoney }),
+  monthClosed: z.boolean(),
+  unconfirmed: z.array(z.strictObject({ kind: z.enum(['form']), key: z.string(), effectiveFrom: zLocalDate })),
+  commentary: z.boolean(),
+});
+export type HouseholdS2d = z.infer<typeof zHouseholdS2d>;
