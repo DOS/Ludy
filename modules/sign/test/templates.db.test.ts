@@ -7,10 +7,13 @@
 //   - Cross-tenant RLS isolation, viewer read-only enforcement, machinery grant denial, and org purge
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { deflateSync } from 'node:zlib';
+import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import {
+  DEFAULT_MESSAGE_ID_DOMAIN,
   createOrg,
   kernelCommands,
   kernelManifest,
@@ -24,6 +27,8 @@ import {
   zSignEnvelopeDetail,
 } from '@crove/kernel-contract';
 import {
+  generateCertificateCode,
+  generateRawSigningToken,
   hashSigningToken,
   signCommands,
   signManifest,
@@ -35,6 +40,48 @@ type Pool = ReturnType<typeof createPool>;
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) {
+      c = (c & 1) !== 0 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function makePngBase64(width = 160, height = 60): string {
+  const chunk = (type: string, data: Uint8Array): Buffer => {
+    const out = Buffer.alloc(12 + data.length);
+    out.writeUInt32BE(data.length, 0);
+    out.write(type, 4, 4, 'ascii');
+    Buffer.from(data).copy(out, 8);
+    let crc = 0xffffffff;
+    for (const byte of out.subarray(4, 8 + data.length)) {
+      crc = CRC_TABLE[(crc ^ byte) & 0xff]! ^ (crc >>> 8);
+    }
+    out.writeUInt32BE((crc ^ 0xffffffff) >>> 0, 8 + data.length);
+    return out;
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  const rawBytes = width > 0 && height > 0 ? Buffer.alloc(height * (1 + width * 4), 0) : Buffer.from([0, 0, 0, 0, 255]);
+  const idat = chunk('IDAT', deflateSync(rawBytes));
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    idat,
+    chunk('IEND', Buffer.alloc(0)),
+  ]).toString('base64');
+}
+
+const VALID_PNG_BASE64 = makePngBase64();
 
 suite('eSign Slice 2a reusable templates, roles & direct signing links on PostgreSQL 17 (#3526)', () => {
   const dbName = `crove_test_sign_tpl_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -54,25 +101,32 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const asSystem = (component: string) => ({ type: 'system' as const, component });
 
-  async function ingestPdf(actorUserId: string, orgId: string, tag: string): Promise<{ fileId: string; sha256: string; storageKey: string; generation: string }> {
+  async function ingestPdf(
+    actorUserId: string,
+    orgId: string,
+    tag: string,
+    source: 'sign_document' | 'sign_sealed' | 'sign_certificate' = 'sign_document',
+  ): Promise<{ fileId: string; sha256: string; storageKey: string; generation: string }> {
     const bytes = Uint8Array.from(
       Buffer.from(`%PDF-1.4\n% sign-tpl-${tag}\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<<>>\n%%EOF\n`, 'utf8'),
     );
     const sha256 = sha256Hex(bytes);
     const storageKey = fileKey(orgId, sha256);
     const generation = contentGeneration(sha256);
-    const { fileId } = await runtime.execute<{ fileId: string }>(
+    const execRuntime = source === 'sign_document' ? runtime : workerRuntime;
+    const actor = source === 'sign_document' ? asUser(actorUserId) : asSystem('sign-worker');
+    const { fileId } = await execRuntime.execute<{ fileId: string }>(
       'kernel.file.ingest',
       {
         filename: `${tag}.pdf`,
-        contentType: 'application/pdf',
+        contentType: source === 'sign_certificate' ? 'application/json' : 'application/pdf',
         sizeBytes: bytes.byteLength,
         sha256,
         storageKey,
         generation,
-        source: 'sign_document',
+        source,
       },
-      { actor: asUser(actorUserId), orgId },
+      { actor, orgId },
     );
     return { fileId, sha256, storageKey, generation };
   }
@@ -295,6 +349,113 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
     // Swapping roleKeys preserves field links and prevents existing-field role from becoming CC.
     const r2Id = savedRoles.roles.find((r) => r.roleKey === 'r2')!.id;
     const r1Id = savedRoles.roles.find((r) => r.roleKey === 'r1')!.id;
+
+    // Explicit templateRoleId must resolve directly and never fall back to roleByKey (#3566).
+    await expect(
+      runtime.execute(
+        'sign.template.fields_set',
+        {
+          templateId: created.templateId,
+          fields: [
+            {
+              templateRoleId: randomUUID(),
+              roleKey: 'r2',
+              fieldType: 'signature',
+              pageNumber: 1,
+              xNorm: 0.2,
+              yNorm: 0.3,
+              wNorm: 0.24,
+              hNorm: 0.08,
+              required: true,
+            },
+          ],
+        },
+        { actor: asUser(ownerA), orgId: orgA },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_ROLE_NOT_FOUND', status: 422 });
+
+    // Conflicting templateRoleId and roleKey is rejected with 422 SIGN_INVALID_FIELD.
+    await expect(
+      runtime.execute(
+        'sign.template.fields_set',
+        {
+          templateId: created.templateId,
+          fields: [
+            {
+              templateRoleId: r1Id,
+              roleKey: 'r2',
+              fieldType: 'date',
+              pageNumber: 1,
+              xNorm: 0.1,
+              yNorm: 0.2,
+              wNorm: 0.18,
+              hNorm: 0.05,
+              required: false,
+            },
+          ],
+        },
+        { actor: asUser(ownerA), orgId: orgA },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_INVALID_FIELD', status: 422 });
+
+    // Unknown roleKey without templateRoleId is rejected with 422 SIGN_ROLE_NOT_FOUND.
+    await expect(
+      runtime.execute(
+        'sign.template.fields_set',
+        {
+          templateId: created.templateId,
+          fields: [
+            {
+              roleKey: 'r99',
+              fieldType: 'date',
+              pageNumber: 1,
+              xNorm: 0.1,
+              yNorm: 0.2,
+              wNorm: 0.18,
+              hNorm: 0.05,
+              required: false,
+            },
+          ],
+        },
+        { actor: asUser(ownerA), orgId: orgA },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_ROLE_NOT_FOUND', status: 422 });
+
+    // Matching templateRoleId + roleKey succeeds cleanly.
+    const matchedFieldsSet = await runtime.execute<{ fieldCount: number }>(
+      'sign.template.fields_set',
+      {
+        templateId: created.templateId,
+        fields: [
+          {
+            templateRoleId: r2Id,
+            roleKey: 'r2',
+            fieldType: 'signature',
+            pageNumber: 2,
+            xNorm: 0.55,
+            yNorm: 0.72,
+            wNorm: 0.24,
+            hNorm: 0.08,
+            label: 'Chu ky B',
+            required: true,
+          },
+          {
+            templateRoleId: r1Id,
+            roleKey: 'r1',
+            fieldType: 'date',
+            pageNumber: 1,
+            xNorm: 0.1,
+            yNorm: 0.2,
+            wNorm: 0.18,
+            hNorm: 0.05,
+            label: 'Ngay duyet',
+            required: false,
+          },
+        ],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    expect(matchedFieldsSet.fieldCount).toBe(2);
     await expect(
       runtime.execute(
         'sign.template.roles_set',
@@ -1082,6 +1243,335 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       await client.query('ROLLBACK').catch(() => {});
       client.release();
     }
+  });
+
+  it('sends sign.completed copies to CC and link-mode recipients on standard envelopes while blocking unverified direct-link relays even after link pruning (#3774)', async () => {
+    const ipHash = sha256Hex('198.51.100.77');
+    const sealEnvelope = async (envelopeId: string) => {
+      const sealedPdf = await ingestPdf(ownerA, orgA, `sealed-3774-${randomUUID()}`, 'sign_sealed');
+      const certPdf = await ingestPdf(ownerA, orgA, `cert-3774-${randomUUID()}`, 'sign_certificate');
+      await workerRuntime.execute(
+        'sign.envelope.seal_complete',
+        {
+          envelopeId,
+          outcome: 'sealed',
+          certificateCode: generateCertificateCode(envelopeId, new Date().toISOString(), sealedPdf.sha256),
+          sealedFileId: sealedPdf.fileId,
+          certificateFileId: certPdf.fileId,
+        },
+        { actor: asSystem('sign-worker'), orgId: orgA },
+      );
+    };
+
+    const completedRecipientsFor = async (envelopeId: string) => {
+      const { rows } = await adminPool!.query<{ to_address: string; signer_count: number }>(
+        `SELECT to_address, (payload->>'signerCount')::integer AS signer_count
+         FROM crove_kernel.mail_message
+         WHERE org_id = $1 AND template_key = 'sign.completed' AND source_id = $2
+         ORDER BY to_address ASC`,
+        [orgA, envelopeId],
+      );
+      return rows;
+    };
+
+    // 1. Standard standalone envelope (direct_link_id IS NULL): link-mode CC, email-mode CC, and link-mode signer with email all get completion copies.
+    const stdFile = await ingestPdf(ownerA, orgA, 'std-cc-completion-3774');
+    const stdEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Bien ban nghiem thu #3774', routingMode: 'parallel', sourceKind: 'standalone', sourceFileId: stdFile.fileId },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    await workerRuntime.execute(
+      'sign.envelope.inspect_complete',
+      {
+        envelopeId: stdEnv.envelopeId,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+      },
+      { actor: asSystem('sign-worker'), orgId: orgA },
+    );
+    const stdSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: stdEnv.envelopeId,
+        signerRole: 'signer',
+        name: 'Khach ky qua Zalo',
+        email: 'zalo-signer@sign-tpl.test',
+        deliveryMode: 'link',
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    await runtime.execute(
+      'sign.signer.add',
+      {
+        envelopeId: stdEnv.envelopeId,
+        signerRole: 'cc',
+        name: 'Ke toan luu ban sao (mac dinh link)',
+        email: 'cc-link@sign-tpl.test',
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    await runtime.execute(
+      'sign.signer.add',
+      {
+        envelopeId: stdEnv.envelopeId,
+        signerRole: 'cc',
+        name: 'Phap che luu ban sao (email)',
+        email: 'cc-email@sign-tpl.test',
+        deliveryMode: 'email',
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    await runtime.execute(
+      'sign.signer.add',
+      {
+        envelopeId: stdEnv.envelopeId,
+        signerRole: 'cc',
+        name: 'CC khong co email',
+        deliveryMode: 'link',
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    const stdFields = await runtime.execute<{ fieldIds: string[] }>(
+      'sign.field.set',
+      {
+        envelopeId: stdEnv.envelopeId,
+        fields: [
+          {
+            signerId: stdSigner.signerId,
+            fieldType: 'signature',
+            pageNumber: 1,
+            xNorm: 0.1,
+            yNorm: 0.7,
+            wNorm: 0.3,
+            hNorm: 0.08,
+            required: true,
+          },
+        ],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    const stdSent = await runtime.execute<{ links: Array<{ token: string }> }>(
+      'sign.envelope.send',
+      { envelopeId: stdEnv.envelopeId },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    await runtime.orgless(async (db) => {
+      await sql`
+        SELECT crove_sign.public_submit(
+          ${hashSigningToken(stdSent.links[0]!.token)},
+          true,
+          'draw',
+          NULL,
+          ${JSON.stringify([{ fieldId: stdFields.fieldIds[0]!, signaturePngBase64: VALID_PNG_BASE64 }])}::jsonb,
+          ${ipHash},
+          'CCCompletionTest/1.0',
+          ${DEFAULT_MESSAGE_ID_DOMAIN}
+        )
+      `.execute(db);
+    });
+    await sealEnvelope(stdEnv.envelopeId);
+
+    const { rows: stdEnvRow } = await adminPool!.query<{ direct_link_id: string | null }>(
+      'SELECT direct_link_id FROM crove_sign.envelope WHERE org_id = $1 AND id = $2',
+      [orgA, stdEnv.envelopeId],
+    );
+    expect(stdEnvRow[0]?.direct_link_id).toBeNull();
+
+    const stdMails = await completedRecipientsFor(stdEnv.envelopeId);
+    expect(stdMails.map((r) => r.to_address)).toEqual([
+      'cc-email@sign-tpl.test',
+      'cc-link@sign-tpl.test',
+      'ownera@sign-tpl.test',
+      'zalo-signer@sign-tpl.test',
+    ]);
+    expect(stdMails.every((r) => r.signer_count === 1)).toBe(true);
+
+    // 2. Template-instantiated envelope (direct_link_id IS NULL) vs direct-link envelopes on the same template.
+    const tplFile = await ingestPdf(ownerA, orgA, 'tpl-cc-completion-3774');
+    const tpl = await runtime.execute<{ templateId: string }>(
+      'sign.template.create',
+      { title: 'Mau NDA co CC #3774', routingMode: 'parallel', sourceFileId: tplFile.fileId },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    await workerRuntime.execute(
+      'sign.template.inspect_complete',
+      {
+        templateId: tpl.templateId,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+      },
+      { actor: asSystem('sign-worker'), orgId: orgA },
+    );
+    await runtime.execute(
+      'sign.template.roles_set',
+      {
+        templateId: tpl.templateId,
+        roles: [
+          { roleKey: 'r1', signerRole: 'signer', roleLabel: 'Doi tac', routingOrder: 1, deliveryMode: 'link', requireEmailOtp: false },
+          { roleKey: 'cc1', signerRole: 'cc', roleLabel: 'Hanh chinh', routingOrder: 2, deliveryMode: 'link', requireEmailOtp: false },
+        ],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    await runtime.execute(
+      'sign.template.fields_set',
+      {
+        templateId: tpl.templateId,
+        fields: [{ roleKey: 'r1', fieldType: 'signature', pageNumber: 1, xNorm: 0.15, yNorm: 0.72, wNorm: 0.3, hNorm: 0.08, required: true }],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    await runtime.execute(
+      'sign.template.update',
+      { templateId: tpl.templateId, status: 'active' },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+
+    const instSent = await runtime.execute<{ envelopeId: string; links: Array<{ token: string }> }>(
+      'sign.template.instantiate',
+      {
+        templateId: tpl.templateId,
+        autoSend: true,
+        recipients: [
+          { roleKey: 'r1', name: 'Doi tac A', email: 'inst-signer@sign-tpl.test' },
+          { roleKey: 'cc1', name: 'Phong Hanh chinh', email: 'inst-cc@sign-tpl.test' },
+        ],
+      },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    const instTokenHash = hashSigningToken(instSent.links[0]!.token);
+    const instView = await runtime.orgless(async (db) => {
+      const { rows } = await sql<{ v: { fields: Array<{ id: string }> } }>`
+        SELECT crove_sign.public_record_view(${instTokenHash}, ${ipHash}, 'InstTest/1.0') AS v
+      `.execute(db);
+      return rows[0]!.v;
+    });
+    await runtime.orgless(async (db) => {
+      await sql`
+        SELECT crove_sign.public_submit(
+          ${instTokenHash},
+          true,
+          'draw',
+          NULL,
+          ${JSON.stringify([{ fieldId: instView.fields[0]!.id, signaturePngBase64: VALID_PNG_BASE64 }])}::jsonb,
+          ${ipHash},
+          'InstTest/1.0',
+          ${DEFAULT_MESSAGE_ID_DOMAIN}
+        )
+      `.execute(db);
+    });
+    await sealEnvelope(instSent.envelopeId);
+
+    const instMails = await completedRecipientsFor(instSent.envelopeId);
+    expect(instMails.map((r) => r.to_address)).toEqual([
+      'inst-cc@sign-tpl.test',
+      'inst-signer@sign-tpl.test',
+      'ownera@sign-tpl.test',
+    ]);
+
+    // 3. Direct-link envelope (direct_link_id IS NOT NULL, requireEmailOtp = false): unverified typed email gets ZERO mail (N1(a)).
+    const directLink = await runtime.execute<{ token: string | null }>(
+      'sign.template.direct_link_set',
+      { templateId: tpl.templateId, enabled: true, requireEmailOtp: false },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+    const directTokenHash = hashSigningToken(directLink.token!);
+
+    const startAndCompleteUnverifiedDirect = async (victimEmail: string): Promise<string> => {
+      const signingTokenHash = hashSigningToken(generateRawSigningToken());
+      const started = await runtime.orgless(async (db) => {
+        const { rows } = await sql<{ v: { status: string; envelopeId: string } }>`
+          SELECT crove_sign.public_direct_start(
+            ${directTokenHash},
+            'Anonymous Caller',
+            ${victimEmail},
+            NULL,
+            ${signingTokenHash},
+            ${ipHash},
+            'RelayCheck/1.0'
+          ) AS v
+        `.execute(db);
+        return rows[0]!.v;
+      });
+      expect(started.status).toBe('ok');
+      const view = await runtime.orgless(async (db) => {
+        const { rows } = await sql<{ v: { fields: Array<{ id: string }> } }>`
+          SELECT crove_sign.public_record_view(${signingTokenHash}, ${ipHash}, 'RelayCheck/1.0') AS v
+        `.execute(db);
+        return rows[0]!.v;
+      });
+      await runtime.orgless(async (db) => {
+        await sql`
+          SELECT crove_sign.public_submit(
+            ${signingTokenHash},
+            true,
+            'draw',
+            NULL,
+            ${JSON.stringify([{ fieldId: view.fields[0]!.id, signaturePngBase64: VALID_PNG_BASE64 }])}::jsonb,
+            ${ipHash},
+            'RelayCheck/1.0',
+            ${DEFAULT_MESSAGE_ID_DOMAIN}
+          )
+        `.execute(db);
+      });
+      return started.envelopeId;
+    };
+
+    const directEnvId = await startAndCompleteUnverifiedDirect('unverified-victim@sign-tpl.test');
+    const { rows: directEnvBefore } = await adminPool!.query<{ direct_link_id: string | null }>(
+      'SELECT direct_link_id FROM crove_sign.envelope WHERE org_id = $1 AND id = $2',
+      [orgA, directEnvId],
+    );
+    expect(directEnvBefore[0]?.direct_link_id).not.toBeNull();
+
+    await sealEnvelope(directEnvId);
+    const directMails = await completedRecipientsFor(directEnvId);
+    expect(directMails.map((r) => r.to_address)).toEqual(['ownera@sign-tpl.test']);
+
+    // 4. Defense in depth: even if the revoked template_direct_link row is pruned (ON DELETE SET NULL on direct_link_id),
+    // sealing still recognizes the genesis direct-link event and sends ZERO mail to the unverified email.
+    const prunedDirectEnvId = await startAndCompleteUnverifiedDirect('pruned-victim@sign-tpl.test');
+    await runtime.execute(
+      'sign.template.direct_link_set',
+      { templateId: tpl.templateId, enabled: false },
+      { actor: asUser(ownerA), orgId: orgA },
+    );
+
+    const adminClient = await adminPool!.connect();
+    try {
+      await adminClient.query('BEGIN');
+      await adminClient.query('SET LOCAL session_replication_role = replica');
+      await adminClient.query(
+        `UPDATE crove_sign.template_direct_link
+         SET revoked_at = now() - interval '35 days'
+         WHERE org_id = $1 AND template_id = $2`,
+        [orgA, tpl.templateId],
+      );
+      await adminClient.query('COMMIT');
+    } finally {
+      await adminClient.query('ROLLBACK').catch(() => {});
+      adminClient.release();
+    }
+
+    const cleanupRes = await workerRuntime.execute<{ directLinks?: number }>(
+      'sign.org.cleanup',
+      {},
+      { actor: asSystem('sign-worker'), orgId: orgA },
+    );
+    expect(cleanupRes.directLinks).toBeGreaterThanOrEqual(1);
+
+    const { rows: prunedEnvRow } = await adminPool!.query<{ direct_link_id: string | null }>(
+      'SELECT direct_link_id FROM crove_sign.envelope WHERE org_id = $1 AND id = $2',
+      [orgA, prunedDirectEnvId],
+    );
+    expect(prunedEnvRow[0]?.direct_link_id).toBeNull();
+
+    await sealEnvelope(prunedDirectEnvId);
+    const prunedMails = await completedRecipientsFor(prunedDirectEnvId);
+    expect(prunedMails.map((r) => r.to_address)).toEqual(['ownera@sign-tpl.test']);
   });
 
   it('purges templates, roles, fields, and direct links on org_purge', async () => {

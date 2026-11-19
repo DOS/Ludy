@@ -197,7 +197,7 @@ import {
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
 import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisStatus } from './misa-amis-connections.ts';
 import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './misa-check.ts';
-import { zMisaAmisPreview, zMisaAmisPreviewAsk } from './misa-amis-preview.ts';
+import { zMisaAmisPreview, zMisaAmisBlockerNotes, zMisaAmisBlockerNotesAsk, zMisaAmisPreviewAsk } from './misa-amis-preview.ts';
 import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceFeeClearingRequest, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePayoutRequest, zMarketplacePreview, zMarketplaceSettlementRequest, zMarketplaceStaged, zMarketplaceSuggested, zMarketplaceSuggestInput, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseCheck, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
@@ -2395,6 +2395,8 @@ export const contract = {
     misaCheckLine: oc.input(zMisaCheckLineAsk).output(zMisaCheckLine),
     // What would be sent to MISA AMIS Kế toán for a period and a voucher kind (#3901): the vouchers as the push would write them, with the blockers that keep one from being sent. A read; nothing is sent.
     misaAmisPreview: oc.input(zMisaAmisPreviewAsk).output(zMisaAmisPreview),
+    // The accounting coworker's note on each kind of blocker on the AMIS preview (#3904): a read that runs the preview again on the server; the list decides, the notes only explain it.
+    misaAmisBlockerNotes: oc.input(zMisaAmisBlockerNotesAsk).output(zMisaAmisBlockerNotes),
   },
   // Opening balances from Excel (#320), owners and admins. preview checks a trial balance read from the template and
   // writes nothing; post checks it again and posts it as the org's one opening entry (R3: fresh MFA). A retry with the

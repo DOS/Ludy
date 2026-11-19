@@ -21,6 +21,11 @@ export const zMarketplaceBalanceRow = z.object({
   paidOut: zMoney,
   awaitingPayout: zMoney,
   feesAwaitingInvoice: zMoney,
+  // How old the fees waiting on 331 are (#3711 slice 2, research A3): the date of the oldest fee debit no invoice has cleared (invoices clear the oldest first), the days from it to today, and whether that is
+  // more than one settlement cycle (45 days, MARKETPLACE_FEE_CYCLE_DAYS), so the screen can flag a balance that should have been invoiced or paid. Null and false when no fee is waiting.
+  oldestFeeDate: zLocalDate.nullable(),
+  feesAgeDays: z.number().int().min(0).nullable(),
+  feesOverdue: z.boolean(),
 });
 export type MarketplaceBalanceRow = z.infer<typeof zMarketplaceBalanceRow>;
 
