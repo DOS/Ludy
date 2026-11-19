@@ -301,6 +301,19 @@ describe('the capture of a call', () => {
     expect(await startCapture(params(false), deps)).toEqual({ ok: false, reason: 'setup' });
   });
 
+  it('never waits for the end of the capture: a stalled network does not hold up the stop or the upload', async () => {
+    const { client, deps, calls } = setup();
+    client.captureHeartbeat.mockImplementation(() => new Promise<{ open: boolean }>(() => undefined));
+    const started = await startCapture(params(false), deps);
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+    FakeRecorder.instances[0]!.piece('five seconds');
+    const stopped = await started.running.stop();
+    expect(stopped.uploaded).toBe(true);
+    expect(calls).toEqual(['final upload']);
+    expect(client.captureHeartbeat).toHaveBeenLastCalledWith({ meetingId: 'm1', end: true });
+  });
+
   it('beats every 30 seconds while recording and ends the capture at once when the member stops, whatever the server answers', async () => {
     vi.useFakeTimers();
     try {

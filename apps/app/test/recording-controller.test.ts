@@ -322,6 +322,20 @@ describe('the capture of a call', () => {
     expect(api.heartbeat.mock.calls.filter((c) => (c[0] as { end?: boolean }).end).length).toBe(1);
   });
 
+  it('frees the call at once when the recorder never started after the meeting was made', async () => {
+    const store = memoryStore();
+    // The device store refuses the first write, after the meeting exists: the start fails, and the capture of the call is ended with it.
+    const failing: ChunkStore = { ...store, put: () => Promise.reject(new Error('store full')) };
+    await startRecording(input(failing));
+    expect(getRecorderSnapshot().phase).toBe('idle');
+    expect(api.create).toHaveBeenCalledTimes(1);
+    expect(api.heartbeat).toHaveBeenCalledTimes(1);
+    expect(api.heartbeat).toHaveBeenLastCalledWith({ meetingId: 'm1', end: true });
+    // Nothing beats afterwards.
+    vi.advanceTimersByTime(120_000);
+    expect(api.heartbeat).toHaveBeenCalledTimes(1);
+  });
+
   it('says in words which kind of client holds a call that is already recorded and since when, and starts nothing', async () => {
     const refusal = Object.assign(new Error('This meeting is already being recorded'), { code: 'CAPTURE_ALREADY_RUNNING', status: 409, data: { kind: 'extension', since: '2027-01-20T07:02:00.000Z' } });
     api.create.mockImplementationOnce(async () => Promise.reject(refusal));
