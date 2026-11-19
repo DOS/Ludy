@@ -2079,6 +2079,12 @@ suite('meetings module database integration tests (#2576)', () => {
     // By its id the query finds an old row, and only that one; an id that is not the member's own finds nothing.
     expect((await runtime.query<Array<{ id: string }>>('kernel.meeting_platform.recordings', { recordingId: audioId }, { actor: asUser('recorder'), orgId })).map((r) => r.id)).toEqual([audioId]);
     expect(await runtime.query<unknown[]>('kernel.meeting_platform.recordings', { recordingId: audioId }, { actor: asUser('otherMember'), orgId })).toEqual([]);
+    // #4102: another org does not find it either, though the caller is the very member who owns the row (the org filter alone holds).
+    const otherOrg = await rpc('org/create', 'recorder', { name: `Meetings Lookup Org ${randomUUID().slice(0, 6)}`, idempotencyKey: randomUUID() }, null);
+    expect(otherOrg.status).toBe(200);
+    expect(await runtime.query<unknown[]>('kernel.meeting_platform.recordings', { recordingId: audioId }, { actor: asUser('recorder'), orgId: String(otherOrg.body.orgId) })).toEqual([]);
+    // An id the import routes accept (any 8-4-4-4-12 hex text) but a strict RFC check would not: the lookup answers an empty list, so the claim answers "not found" rather than a plain 400.
+    expect(await runtime.query<unknown[]>('kernel.meeting_platform.recordings', { recordingId: '00000000-0000-0000-0000-000000000001' }, { actor: asUser('recorder'), orgId })).toEqual([]);
     // Each route still refuses the other kind before the claim moves the row, though neither row is among the 50 newest.
     expect(await postTranscript(audio.meetingId, audioId)).toBe(400);
     expect((await recordingRow(audioId)).status).toBe('staged');
