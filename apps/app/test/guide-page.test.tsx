@@ -37,7 +37,7 @@ const render = (locale: Locale): string => {
 };
 
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ');
-const headings = (html: string) => [...html.matchAll(/<h2[^>]*>(.*?)<\/h2>/g)].map((match) => match[1] ?? '');
+const headings = (html: string) => [...html.matchAll(/<h[23][^>]*>(.*?)<\/h[23]>/g)].map((match) => match[1] ?? '');
 const VIETNAMESE = /[ăâđêôơưàáạảãầấậẩẫằắặẳẵèéẹẻẽềếệểễìíịỉĩòóọỏõồốộổỗờớợởỡùúụủũừứựửữỳýỵỷỹ]/i;
 
 beforeEach(() => {

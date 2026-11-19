@@ -19,7 +19,7 @@ const QUICK_GUIDE: GuideTexts<QuickGuideStep['id']> = {
         `Mở ${q(m.nav.inbox)} trong menu (bên trái màn hình; trên điện thoại, bấm nút ☰ ở góc trên để mở menu).`,
         `Bấm ${q(m.inbox.upload)}, hoặc kéo thả tệp vào ô ${q(m.inbox.dropHere)}. Mỗi tệp tối đa 25 MB, chọn được nhiều tệp một lần (tối đa 500), hoặc một tệp ZIP tải về từ cổng thuế: {brand} mở ZIP và đọc từng hóa đơn.`,
         'Tệp XML hóa đơn điện tử luôn đọc được. Tệp PDF và ảnh chụp chỉ đọc được khi máy chủ đã cấu hình AI; nếu chưa, ô tải lên sẽ báo.',
-        `Nếu máy chủ bật nhận email, bạn có thể forward thư hóa đơn tới địa chỉ trong ô ${q(m.inbox.forwardTitle)} (bấm ${q(m.inbox.copyAddress)} để sao chép).`,
+        `Nếu máy chủ bật nhận email, bạn có thể chuyển tiếp thư hóa đơn tới địa chỉ trong ô ${q(m.inbox.forwardTitle)} (bấm ${q(m.inbox.copyAddress)} để sao chép).`,
         `Tệp vừa gửi hiện ở ${q(m.inbox.recentFiles)}: ${q(m.inbox.fileStatus.processing)}, rồi ${q(m.inbox.fileStatus.proposed)}. Nếu tệp ${q(m.inbox.fileStatus.failed)}, bấm ${q(m.inbox.reread)} khi có nút này.`,
         `Ở tab ${q(m.inbox.tabs.pending)}, bấm tên người bán để mở đề xuất. Đối chiếu số tiền, ${q(m.inboxDetail.checks)} và ${q(m.inboxDetail.journal)} với ${q(m.inboxDetail.original)}. Muốn đổi tài khoản, chọn lại ở cột ${q(m.inboxDetail.debitAccount)} rồi bấm ${q(m.inboxDetail.saveEdit)}.`,
         `Nút ${q(m.inboxDetail.approve)} bị mờ khi còn chỉnh sửa chưa lưu, hoặc khi có kiểm tra không đạt: đối chiếu chứng từ gốc rồi đánh dấu ô ${q(m.inboxDetail.acceptFailed)} nếu vẫn muốn ghi sổ.`,
@@ -36,7 +36,7 @@ const QUICK_GUIDE: GuideTexts<QuickGuideStep['id']> = {
         `Khi đã duyệt xong hóa đơn của kỳ, mở ${q(m.nav.vat)}, chọn kỳ, xem bảng kê và các chỉ tiêu 01/GTGT.`,
         `Bấm ${q(m.vat.export)} để gửi bảng kê cho kế toán, hoặc ${q(m.vat.exportXml)} để có tệp XML mở trong HTKK.`,
         'Tệp XML để 0 ở các chỉ tiêu {brand} chưa tính được, trong đó có [25] thuế được khấu trừ: kế toán bổ sung và kiểm tra trong HTKK hoặc trên eTax trước khi nộp.',
-        `Khi đã nộp tờ khai, mở ${q(m.nav.ledger)}, thẻ ${q(m.ledger.tabs.closing)}, và bấm ${q(fill(m.periodLock.lock, { month: 'MM/YYYY' }))} ở ô ${q(m.periodLock.title)}: không ai ghi, duyệt hay đảo bút toán vào tháng đó được nữa. Chủ sở hữu hoặc quản trị khóa sổ; chỉ chủ sở hữu mở khóa được, kèm lý do.`,
+        `Khi đã nộp tờ khai, mở ${q(m.nav.ledger)}, thẻ ${q(m.ledger.tabs.closing)}, và bấm nút khóa sổ của tháng cần khóa (${q(fill(m.periodLock.lock, { month: 'MM/YYYY' }))}, với MM/YYYY là tháng đó) ở ô ${q(m.periodLock.title)}: không ai ghi, duyệt hay đảo bút toán vào tháng đó được nữa. Chủ sở hữu hoặc quản trị khóa sổ; chỉ chủ sở hữu mở khóa được, kèm lý do.`,
       ],
     },
     {
@@ -74,7 +74,7 @@ const QUICK_GUIDE: GuideTexts<QuickGuideStep['id']> = {
         `Once the invoices of the period are approved, open ${q(m.nav.vat)}, pick the period, and look at the listing and the 01/GTGT lines.`,
         `Click ${q(m.vat.export)} to send the listing to your accountant, or ${q(m.vat.exportXml)} to get an XML file you open in HTKK.`,
         'The XML file leaves 0 on the lines {brand} cannot work out yet, including [25] deductible tax: your accountant adds them and checks the file in HTKK or on eTax before filing.',
-        `After you have filed, open ${q(m.nav.ledger)}, the ${q(m.ledger.tabs.closing)} tab, and click ${q(fill(m.periodLock.lock, { month: 'MM/YYYY' }))} in ${q(m.periodLock.title)}: nobody can post, approve or reverse an entry in that month any more. An owner or admin locks the period; only an owner can unlock it, with a reason.`,
+        `After you have filed, open ${q(m.nav.ledger)}, the ${q(m.ledger.tabs.closing)} tab, and click the lock button of the month you want to close (${q(fill(m.periodLock.lock, { month: 'MM/YYYY' }))}, with MM/YYYY being that month) in ${q(m.periodLock.title)}: nobody can post, approve or reverse an entry in that month any more. An owner or admin locks the period; only an owner can unlock it, with a reason.`,
       ],
     },
     {

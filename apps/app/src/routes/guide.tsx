@@ -14,13 +14,14 @@ import { quickGuide } from '../lib/quick-guide.ts';
 import { supportLink } from '../lib/support.ts';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
-// One card per step: its heading and its numbered lines. The headings are h2, so the page keeps one h1.
-function GuideCards({ steps }: { steps: readonly GuideStep[] }) {
+// One card per step: its heading and its numbered lines. The headings are h2 (h3 under another h2), so the page keeps one h1.
+function GuideCards({ steps, level = 2 }: { steps: readonly GuideStep[]; level?: 2 | 3 }) {
+  const Heading = level === 2 ? 'h2' : 'h3';
   return (
     <div className="grid max-w-3xl gap-4">
       {steps.map((step) => (
         <Card key={step.id} id={`guide-${step.id}`} className="block scroll-mt-20 p-5">
-          <h2 className="text-base font-semibold text-foreground">{step.title}</h2>
+          <Heading className="text-base font-semibold text-foreground">{step.title}</Heading>
           <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-muted-foreground">
             {step.items.map((item) => (
               <li key={item}>{item}</li>
@@ -92,7 +93,7 @@ export function GuidePage() {
             <span className="mt-1 block text-sm text-muted-foreground">{t('crmSubtitle')}</span>
           </summary>
           <div className="mt-4">
-            <GuideCards steps={crm} />
+            <GuideCards steps={crm} level={3} />
           </div>
         </details>
       )}
