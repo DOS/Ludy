@@ -16359,7 +16359,6 @@ export const vi = {
       pickFile: 'Chọn tệp PDF',
       selectedFile: 'Đã chọn: {name}',
       submitCreate: 'Tạo mẫu',
-      creating: 'Đang tạo mẫu...',
       searchLabel: 'Tìm mẫu',
       searchPlaceholder: 'Tìm theo tên mẫu...',
       tabAll: 'Tất cả',
@@ -16369,6 +16368,7 @@ export const vi = {
       emptyTitle: 'Chưa có mẫu tài liệu nào',
       emptyHint: 'Tải lên tệp PDF đầu tiên để tạo mẫu dùng lại cho cả đội.',
       selectPrompt: 'Chọn một mẫu ở danh sách bên trái để chỉnh vai trò, ô ký hoặc tạo hồ sơ ký.',
+      retryButton: 'Thử lại',
       status: {
         draft: 'Nháp',
         active: 'Đang hoạt động',
@@ -16392,7 +16392,6 @@ export const vi = {
       recipientPhoneLabel: 'Số điện thoại ({role})',
       recipientDeliveryLabel: 'Kênh gửi ({role})',
       submitInstantiate: 'Tạo hồ sơ ký',
-      instantiating: 'Đang tạo hồ sơ ký...',
       mintedLinksTitle: 'Hồ sơ ký đã được gửi',
       mintedLinksHint: 'Sao chép ngay liên kết ký bên dưới (hệ thống không lưu lại bản gốc sau khi đóng hộp thoại).',
       openEnvelopeButton: 'Mở hồ sơ ký',

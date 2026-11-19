@@ -8,7 +8,18 @@ import { describe, expect, it, vi } from 'vitest';
 import { catalog } from '../src/i18n/runtime.ts';
 import type { SignTemplateDetail } from '../src/lib/sign-api.ts';
 import { buildDirectSigningUrl } from '../src/lib/sign-hash.ts';
-import { DirectLinkCard, SignTemplatesPage, TemplateRolesCard, canAutoSendTemplate } from '../src/routes/sign-templates.tsx';
+import {
+  CreateTemplateForm,
+  DirectLinkCard,
+  InstantiateTemplateForm,
+  SignTemplatesPage,
+  TemplateRolesCard,
+  canAutoSendTemplate,
+  completeTemplateInstantiate,
+  createTemplateDraftRevisionTracker,
+  nextFiltersAfterTemplateCreate,
+  shouldApplySavedDraftRevision,
+} from '../src/routes/sign-templates.tsx';
 
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
@@ -26,6 +37,7 @@ vi.mock('../src/lib/api.ts', async () => {
     orpc: {},
     queryClient: new QC(),
     client: {},
+    getCurrentOrg: () => 'acme',
     errorMessage: (e: unknown) => String(e),
     isStepUpRequired: () => false,
   };
@@ -309,5 +321,362 @@ describe('eSign templates UI components (#3526)', () => {
       </QueryClientProvider>,
     );
     expect(enHtml).toContain('Apply 2 tag fields');
+  });
+
+  it('clears searchQuery alongside status tab reset after creating a template (#3566)', () => {
+    expect(nextFiltersAfterTemplateCreate('active')).toEqual({ tab: 'all', searchQuery: '' });
+    expect(nextFiltersAfterTemplateCreate('archived')).toEqual({ tab: 'all', searchQuery: '' });
+    expect(nextFiltersAfterTemplateCreate('draft')).toEqual({ tab: 'draft', searchQuery: '' });
+    expect(nextFiltersAfterTemplateCreate('all')).toEqual({ tab: 'all', searchQuery: '' });
+  });
+
+  it('guards rolesDraft and fieldsDraft save revisions across A -> B -> A switches and disables role controls while saving (#3566)', () => {
+    const tplA = '01900000-0000-7000-8000-000000000010';
+    const tplB = '01900000-0000-7000-8000-000000000099';
+    expect(
+      shouldApplySavedDraftRevision({
+        loadedTemplateId: tplA,
+        savedTemplateId: tplA,
+        currentRevision: 3,
+        submittedRevision: 3,
+      }),
+    ).toBe(true);
+    expect(
+      shouldApplySavedDraftRevision({
+        loadedTemplateId: tplA,
+        savedTemplateId: tplA,
+        currentRevision: 4,
+        submittedRevision: 3,
+      }),
+    ).toBe(false);
+    expect(
+      shouldApplySavedDraftRevision({
+        loadedTemplateId: tplB,
+        savedTemplateId: tplA,
+        currentRevision: 3,
+        submittedRevision: 3,
+      }),
+    ).toBe(false);
+
+    // Per-template tracker: switching A -> B -> A while save is in flight does NOT bump A's edit revision,
+    // so save completion or v2 detail refresh cleanly updates A without clobbering real concurrent edits.
+    const tracker = createTemplateDraftRevisionTracker();
+    expect(tracker.onDetailEffect(tplA, 1)).toEqual({ kind: 'switched', syncRoles: true, syncFields: true });
+    const submittedRev = tracker.markRolesEdited();
+    expect(submittedRev).toBe(1);
+
+    // User switches A -> B -> A (cached v1) before save completes:
+    expect(tracker.onDetailEffect(tplB, 1).kind).toBe('switched');
+    expect(tracker.onDetailEffect(tplA, 1)).toEqual({ kind: 'switched', syncRoles: true, syncFields: true });
+    expect(tracker.getRolesRevision(tplA)).toBe(1);
+    expect(tracker.acceptSavedRoles(tplA, submittedRev, 2)).toBe(true);
+    expect(tracker.onDetailEffect(tplA, 2)).toEqual({ kind: 'none', syncRoles: false, syncFields: false });
+
+    // If user makes another edit on A while a second save is in flight, neither acceptSavedRoles nor v3 refresh overwrites it:
+    const secondSubmitted = tracker.markRolesEdited();
+    tracker.markRolesEdited();
+    expect(tracker.acceptSavedRoles(tplA, secondSubmitted, 3)).toBe(false);
+    expect(tracker.onDetailEffect(tplA, 3)).toEqual({ kind: 'refreshed', syncRoles: false, syncFields: true });
+
+    const detail = makeTemplateDetail();
+    const savingHtml = renderToStaticMarkup(
+      <IntlProvider locale="en" timeZone="Asia/Ho_Chi_Minh" messages={catalog('en')}>
+        <TemplateRolesCard
+          roles={detail.roles.map((r) => ({ ...r, localId: r.id }))}
+          editable={true}
+          saving={true}
+          onChangeRoles={() => {}}
+          onSaveRoles={() => {}}
+        />
+      </IntlProvider>,
+    );
+    assertPairedLabels(savingHtml);
+    expect(savingHtml).toContain('Save roles');
+    expect(savingHtml).toContain('data-loading=""');
+    expect(savingHtml).toContain('aria-busy="true"');
+    expect(savingHtml).toMatch(/id="sign-tpl-role-key-0"[^>]*disabled=""/);
+    expect(savingHtml).toMatch(/id="sign-tpl-role-label-0"[^>]*disabled=""/);
+    expect(savingHtml).toMatch(/data-testid="sign-tpl-add-role-btn"[^>]*disabled=""|disabled=""[^>]*data-testid="sign-tpl-add-role-btn"/);
+  });
+
+  it('guards instantiateMutation completion against unmount and org switches across async steps (#3566)', async () => {
+    let activeSlug: string | undefined = 'acme';
+    let liveOrg: string | null = 'acme';
+    let mounted = true;
+    const completedCalls: unknown[] = [];
+    const navCalls: Array<{ slug: string; envelopeId: string }> = [];
+    let closedCount = 0;
+
+    // 1. Page unmounts (e.g. sidebar switchOrg to /o/beta/overview) while activeSlug ref stays 'acme' -> blocks navigation.
+    mounted = false;
+    liveOrg = 'beta';
+    const unmountedOutcome = await completeTemplateInstantiate({
+      res: {
+        envelopeId: '01900000-0000-7000-8000-000000000700',
+        links: [],
+      },
+      capturedSlug: 'acme',
+      isMounted: () => mounted,
+      getActiveOrg: () => liveOrg,
+      getCurrentSlug: () => activeSlug,
+      invalidateEnvelopes: async () => {},
+      getEnvelope: async () => null,
+      onCompletedLinks: (c) => completedCalls.push(c),
+      onCloseDialog: () => {
+        closedCount += 1;
+      },
+      navigateToEnvelope: async (slug, envelopeId) => {
+        navCalls.push({ slug, envelopeId });
+      },
+    });
+    expect(unmountedOutcome).toBe('stale');
+    expect(navCalls).toEqual([]);
+    expect(closedCount).toBe(0);
+
+    // 2. getActiveOrg() changes in router beforeLoad while getEnvelope is awaiting -> blocks one-time link disclosure.
+    mounted = true;
+    liveOrg = 'acme';
+    const staleLinksOutcome = await completeTemplateInstantiate({
+      res: {
+        envelopeId: '01900000-0000-7000-8000-000000000701',
+        links: [{ signerId: '01900000-0000-7000-8000-000000000702', token: 'T'.repeat(43) }],
+      },
+      capturedSlug: 'acme',
+      isMounted: () => mounted,
+      getActiveOrg: () => liveOrg,
+      getCurrentSlug: () => activeSlug,
+      invalidateEnvelopes: async () => {},
+      getEnvelope: async () => {
+        liveOrg = 'other-org';
+        return {
+          signers: [{ id: '01900000-0000-7000-8000-000000000702', name: 'Le Van B', roleLabel: 'Ben B' }],
+        };
+      },
+      onCompletedLinks: (c) => completedCalls.push(c),
+      onCloseDialog: () => {
+        closedCount += 1;
+      },
+      navigateToEnvelope: async (slug, envelopeId) => {
+        navCalls.push({ slug, envelopeId });
+      },
+    });
+    expect(staleLinksOutcome).toBe('stale');
+    expect(completedCalls).toEqual([]);
+    expect(navCalls).toEqual([]);
+    expect(closedCount).toBe(0);
+
+    // 3. Slug switches while invalidateEnvelopes is awaiting -> blocks navigation into the wrong org.
+    activeSlug = 'acme';
+    liveOrg = 'acme';
+    const staleNavOutcome = await completeTemplateInstantiate({
+      res: {
+        envelopeId: '01900000-0000-7000-8000-000000000703',
+        links: [],
+      },
+      capturedSlug: 'acme',
+      isMounted: () => mounted,
+      getActiveOrg: () => liveOrg,
+      getCurrentSlug: () => activeSlug,
+      invalidateEnvelopes: async () => {
+        activeSlug = 'other-org';
+      },
+      getEnvelope: async () => null,
+      onCompletedLinks: (c) => completedCalls.push(c),
+      onCloseDialog: () => {
+        closedCount += 1;
+      },
+      navigateToEnvelope: async (slug, envelopeId) => {
+        navCalls.push({ slug, envelopeId });
+      },
+    });
+    expect(staleNavOutcome).toBe('stale');
+    expect(closedCount).toBe(0);
+    expect(navCalls).toEqual([]);
+
+    // 4. Mounted and slug/org stay unchanged -> closes dialog and navigates cleanly.
+    activeSlug = 'acme';
+    liveOrg = 'acme';
+    const navOutcome = await completeTemplateInstantiate({
+      res: {
+        envelopeId: '01900000-0000-7000-8000-000000000704',
+        links: [],
+      },
+      capturedSlug: 'acme',
+      isMounted: () => mounted,
+      getActiveOrg: () => liveOrg,
+      getCurrentSlug: () => activeSlug,
+      invalidateEnvelopes: async () => {},
+      getEnvelope: async () => null,
+      onCompletedLinks: (c) => completedCalls.push(c),
+      onCloseDialog: () => {
+        closedCount += 1;
+      },
+      navigateToEnvelope: async (slug, envelopeId) => {
+        navCalls.push({ slug, envelopeId });
+      },
+    });
+    expect(navOutcome).toBe('navigated');
+    expect(closedCount).toBe(1);
+    expect(navCalls).toEqual([{ slug: 'acme', envelopeId: '01900000-0000-7000-8000-000000000704' }]);
+  });
+
+  it('renders detailQuery.error with a retry button before selectPrompt when loading a selected template fails (#3566)', async () => {
+    const detail = makeTemplateDetail();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false } } });
+    qc.setQueryData(['sign', 'templates', 'list', 'all', ''], {
+      items: [
+        {
+          id: detail.template.id,
+          title: detail.template.title,
+          description: detail.template.description,
+          routingMode: detail.template.routingMode,
+          subject: null,
+          message: null,
+          expiresInHours: 168,
+          status: 'active',
+          inspectStatus: 'passed',
+          inspectError: null,
+          pageCount: 1,
+          roleCount: 2,
+          nonCcRoleCount: 1,
+          fieldCount: 1,
+          directLink: null,
+          version: 1,
+          archivedAt: null,
+          createdAt: detail.template.createdAt,
+          updatedAt: detail.template.updatedAt,
+        },
+      ],
+    });
+    await qc
+      .fetchQuery({
+        queryKey: ['sign', 'templates', 'detail', detail.template.id],
+        queryFn: () => Promise.reject(new Error('Template fetch failed')),
+      })
+      .catch(() => {});
+
+    const viHtml = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
+          <SignTemplatesPage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    assertPairedLabels(viHtml);
+    expect(viHtml).toContain('data-testid="sign-tpl-detail-error"');
+    expect(viHtml).toContain('Template fetch failed');
+    expect(viHtml).toContain('data-testid="sign-tpl-detail-retry-btn"');
+    expect(viHtml).toContain('Thử lại');
+    expect(viHtml).not.toContain(catalog('vi').sign.templates.selectPrompt);
+
+    const enHtml = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="en" timeZone="Asia/Ho_Chi_Minh" messages={catalog('en')}>
+          <SignTemplatesPage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(enHtml).toContain('Try again');
+    expect(enHtml).not.toContain(catalog('en').sign.templates.selectPrompt);
+  });
+
+  it('uses <Button loading> with constant action labels across create, instantiate, and rotate buttons (#3566)', () => {
+    const detail = makeTemplateDetail();
+    const dummyFile = new File(['%PDF-1.4'], 'sample.pdf', { type: 'application/pdf' });
+
+    for (const [locale, expectedCreate, expectedInst, expectedRotate] of [
+      ['vi', 'Tạo mẫu', 'Tạo hồ sơ ký', 'Tạo lại liên kết mới'],
+      ['en', 'Create template', 'Create envelope', 'Rotate link'],
+    ] as const) {
+      const createIdle = renderToStaticMarkup(
+        <IntlProvider locale={locale} timeZone="Asia/Ho_Chi_Minh" messages={catalog(locale)}>
+          <CreateTemplateForm
+            title="Mau A"
+            description=""
+            routingMode="parallel"
+            subject=""
+            message=""
+            file={dummyFile}
+            error={null}
+            pending={false}
+            onChangeTitle={() => {}}
+            onChangeDescription={() => {}}
+            onChangeRoutingMode={() => {}}
+            onChangeSubject={() => {}}
+            onChangeMessage={() => {}}
+            onChangeFile={() => {}}
+            onSubmit={() => {}}
+          />
+        </IntlProvider>,
+      );
+      const createBusy = renderToStaticMarkup(
+        <IntlProvider locale={locale} timeZone="Asia/Ho_Chi_Minh" messages={catalog(locale)}>
+          <CreateTemplateForm
+            title="Mau A"
+            description=""
+            routingMode="parallel"
+            subject=""
+            message=""
+            file={dummyFile}
+            error={null}
+            pending={true}
+            onChangeTitle={() => {}}
+            onChangeDescription={() => {}}
+            onChangeRoutingMode={() => {}}
+            onChangeSubject={() => {}}
+            onChangeMessage={() => {}}
+            onChangeFile={() => {}}
+            onSubmit={() => {}}
+          />
+        </IntlProvider>,
+      );
+      assertPairedLabels(createIdle);
+      assertPairedLabels(createBusy);
+      expect(createIdle).toContain(expectedCreate);
+      expect(createBusy).toContain(expectedCreate);
+      expect(createBusy).toContain('data-loading=""');
+      expect(createBusy).toContain('aria-busy="true"');
+
+      const instBusy = renderToStaticMarkup(
+        <IntlProvider locale={locale} timeZone="Asia/Ho_Chi_Minh" messages={catalog(locale)}>
+          <InstantiateTemplateForm
+            roles={detail.roles}
+            title="Hop dong moi"
+            recipients={{}}
+            autoSend={false}
+            autoSendAllowed={true}
+            error={null}
+            pending={true}
+            onChangeTitle={() => {}}
+            onChangeRecipient={() => {}}
+            onChangeAutoSend={() => {}}
+            onSubmit={() => {}}
+          />
+        </IntlProvider>,
+      );
+      assertPairedLabels(instBusy);
+      expect(instBusy).toContain(expectedInst);
+      expect(instBusy).toContain('data-loading=""');
+      expect(instBusy).toContain('aria-busy="true"');
+
+      const rotateBusy = renderToStaticMarkup(
+        <IntlProvider locale={locale} timeZone="Asia/Ho_Chi_Minh" messages={catalog(locale)}>
+          <DirectLinkCard
+            detail={detail}
+            freshDirectUrl={null}
+            pending={true}
+            rotating={true}
+            onToggleEnabled={() => {}}
+            onToggleOtp={() => {}}
+            onRotate={() => {}}
+            onCopyUrl={() => {}}
+          />
+        </IntlProvider>,
+      );
+      assertPairedLabels(rotateBusy);
+      expect(rotateBusy).toContain(expectedRotate);
+      expect(rotateBusy).toContain('data-loading=""');
+      expect(rotateBusy).toContain('aria-busy="true"');
+    }
   });
 });
