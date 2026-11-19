@@ -516,6 +516,56 @@ suite('MISA AMIS push (#3902)', () => {
     expect(await tenant('outsider', otherOrgId, async (c) => (await c.query("UPDATE crove_finance.misa_amis_push SET reason = 'x' WHERE org_refid = $1", [queued])).rowCount)).toBe(0);
   });
 
+  it('a call the ledger already holds is never made again: rows queued under the key of a call begun or ended before fail as CALL_ENDED and nothing goes out (#4041)', async () => {
+    // Two queued rows with params of their own (so a batch holds nothing else) and the oldest request in the queue (so begin takes them first; six days old, inside the week after which a queued row expires), whose
+    // last change is a fixed time: the key of the call names the rows, their attempt and that time, so putting them back in the queue with the same time, as a worker that died after the begin would leave them,
+    // asks for the same call.
+    const FIXED = '2000-01-01T00:00:00.000Z';
+    const REQUESTED = new Date(Date.now() - 6 * 24 * 3600 * 1000).toISOString();
+    const queue = async (tag: string) => {
+      const refids = ids(2);
+      for (const [i, refid] of refids.entries()) {
+        await rows(
+          `INSERT INTO crove_finance.misa_amis_push (org_id, legal_entity_id, connection_id, source_type, source_id, voucher_type, org_refid, org_refno, payload_digest, params, requested_at, updated_at)
+           VALUES ($1, $2, $3, 'cash_voucher', $4, 4, $5, $6, $7, $8::jsonb, $9, $10)`,
+          [orgId, entityId, connectionId, randomUUID(), refid, `AGAIN${tag}${i}`, 'f'.repeat(64), JSON.stringify({ kind: 'cash_payment', tag }), REQUESTED, FIXED],
+        );
+      }
+      return refids.sort();
+    };
+    const requeue = (refids: string[]) => rows("UPDATE crove_finance.misa_amis_push SET state = 'queued', reason = NULL, updated_at = $2 WHERE org_refid = ANY($1::uuid[])", [refids, FIXED]);
+    const ledgerOf = async (key: string) => (await rows<{ state: string; calls: number }>('SELECT state, calls FROM crove_kernel.external_call WHERE org_id = $1 AND key = $2', [orgId, key]))[0];
+    const failedAsEnded = async (refids: string[]) => {
+      const now = await pushRows();
+      return refids.map((id) => now.find((r) => r.org_refid === id)).map((r) => ({ state: r?.state, reason: r?.reason }));
+    };
+
+    // A call still `started`: the worker died after the begin. It is asked about, never made again.
+    const started = await queue('A');
+    const first = await begin({ branchKnown: true, checked: true });
+    if (first.action !== 'send') throw new Error(`expected a send, got ${first.action}`);
+    expect(first.rows.map((r) => r.orgRefid).sort()).toEqual(started);
+    await requeue(started);
+    expect(await begin({ branchKnown: true, checked: true })).toEqual({ action: 'none', reason: 'nothing', waiting: true });
+    expect(await failedAsEnded(started)).toEqual([{ state: 'failed', reason: 'CALL_ENDED' }, { state: 'failed', reason: 'CALL_ENDED' }]);
+    expect(await ledgerOf(first.callKey)).toEqual({ state: 'started', calls: 2 });
+
+    // A call that ended (the rows went back to the queue because nothing left Ludy): it never changes, and the same rows under the same key are not sent.
+    const ended = await queue('B');
+    const second = await begin({ branchKnown: true, checked: true });
+    if (second.action !== 'send') throw new Error(`expected a send, got ${second.action}`);
+    expect(second.rows.map((r) => r.orgRefid).sort()).toEqual(ended);
+    await record({
+      rows: second.rows.map((r) => ({ orgRefid: r.orgRefid, attempts: r.attempts, from: 'sending', to: 'queued', reason: 'UNREACHABLE' })),
+      call: { key: second.callKey, end: { state: 'failed', kind: 'transient', code: 'UNREACHABLE' } },
+    });
+    expect(await ledgerOf(second.callKey)).toEqual({ state: 'failed', calls: 1 });
+    await requeue(ended);
+    expect(await begin({ branchKnown: true, checked: true })).toEqual({ action: 'none', reason: 'nothing', waiting: true });
+    expect(await failedAsEnded(ended)).toEqual([{ state: 'failed', reason: 'CALL_ENDED' }, { state: 'failed', reason: 'CALL_ENDED' }]);
+    expect(await ledgerOf(second.callKey)).toEqual({ state: 'failed', calls: 1 });
+  });
+
   it('a connection is not removed while vouchers MISA took have no result; once they have, the removal takes the rows with it (the audit trail and the ledger keep the history)', async () => {
     const before = (await pushRows()).length;
     expect(before).toBeGreaterThan(0);
