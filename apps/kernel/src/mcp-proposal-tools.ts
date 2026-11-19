@@ -33,7 +33,7 @@ interface ToolSpec {
 }
 
 // Eight of the fourteen twins have a tool. The other six need an id an AI app cannot read yet: a quote's `version` (the read of a quote leaves versions out, E1 #3860) and the id of a live ad launch (no read lists
-// launches). Their twins are declared and approved like the rest; each gets its tool with the read it needs (follow-up), so no tool is listed that a client cannot use.
+// launches). Their twins are declared and approved like the rest; each gets its tool with the read it needs (follow-up #4147), so no tool is listed that a client cannot use.
 const NO_TOOL_YET: readonly string[] = [
   'crm.quote.send_approved',
   'ads.launch.stop_approved',
