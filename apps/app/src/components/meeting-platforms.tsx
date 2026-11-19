@@ -116,6 +116,7 @@ export function MeetingPlatforms({ canConnect }: { canConnect: boolean }) {
     },
   });
   if (!on) return null;
+  const offeredGoogle = canConnect && (providers.data ?? []).includes('google_meet');
   const offeredZoom = canConnect && (providers.data ?? []).includes('zoom');
   const offeredTeams = canConnect && (providers.data ?? []).includes('microsoft_teams');
   // The offline test platform is offered only where the deployment turned its test channels on (the same switch as the channels screen).
@@ -153,6 +154,16 @@ export function MeetingPlatforms({ canConnect }: { canConnect: boolean }) {
         </div>
       )}
       {connectSandbox.error && <ErrorText>{errorMessage(connectSandbox.error)}</ErrorText>}
+      {offeredGoogle && (
+        <div className="space-y-2">
+          <Button type="button" variant="outline" size="sm" loading={start.isPending} disabled={start.isPending} onClick={() => start.mutate('google_meet')} data-testid="meeting-platform-connect-google">
+            {t('connectGoogle')}
+          </Button>
+          <p className="text-xs text-subtle-foreground" data-testid="meeting-platform-google-note">
+            {t('googleNote')}
+          </p>
+        </div>
+      )}
       {offeredZoom && (
         <div className="space-y-2">
           <Button type="button" variant="outline" size="sm" loading={start.isPending} disabled={start.isPending} onClick={() => start.mutate('zoom')} data-testid="meeting-platform-connect-zoom">
@@ -180,7 +191,7 @@ export function MeetingPlatforms({ canConnect }: { canConnect: boolean }) {
         </div>
       )}
       {start.error && <ErrorText>{errorMessage(start.error)}</ErrorText>}
-      <p className="text-xs text-subtle-foreground">{t('moreLater')}</p>
+      {!offeredGoogle && <p className="text-xs text-subtle-foreground">{t('moreLater')}</p>}
     </Card>
   );
 }

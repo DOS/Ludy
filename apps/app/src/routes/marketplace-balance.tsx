@@ -6,7 +6,7 @@
 // posts nothing, and with AI off, busy, out of budget or refused the facts stand alone.
 import { useQuery } from '@tanstack/react-query';
 import { useLocale, useTranslations } from 'use-intl';
-import type { MarketplaceFacts } from '@crove/kernel-contract';
+import type { MarketplaceBalanceRow, MarketplaceFacts } from '@crove/kernel-contract';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
@@ -73,6 +73,50 @@ function CoworkerLine({ legalEntityId, ready }: { legalEntityId: string | undefi
   );
 }
 
+// The coworker's notes under the table (#3711 slice 7): for each platform whose fees still wait on its 331, one checked sentence on what that means and what to do. Asked only when a row has fees waiting and an age,
+// after the table is on screen; display only, so with AI off, busy, out of budget or every note dropped the table stands alone. A note is shown beside a platform that has fees waiting in the table on screen.
+function FeeNotes({ legalEntityId, rows }: { legalEntityId: string | undefined; rows: readonly MarketplaceBalanceRow[] }) {
+  const t = useTranslations('marketplaceBalance');
+  const lang = useLocale() === 'en' ? 'en' : 'vi';
+  const waiting = rows.filter((r) => !ZERO.test(r.feesAwaitingInvoice) && r.feesAgeDays !== null);
+  // Not refetched on window focus: a model call costs, and the answer is kept on the server for a while by its facts.
+  const notes = useQuery({
+    ...orpc.marketplace.feeNotes.queryOptions({ input: { ...(legalEntityId === undefined ? {} : { legalEntityId }), lang } }),
+    enabled: waiting.length > 0,
+    retry: false,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const shown = notes.data?.ai === 'used' ? notes.data.notes.flatMap((n) => {
+    const row = waiting.find((r) => r.legalEntityId === n.legalEntityId && r.platform === n.platform);
+    return row ? [{ key: `${n.legalEntityId}-${n.platform}`, platformName: row.platformName, text: n.text }] : [];
+  }) : [];
+  const ai = notes.data?.ai;
+  if (shown.length === 0 && ai !== 'busy' && ai !== 'budget' && ai !== 'failed') return null;
+  return (
+    <section className="mt-3 rounded-md border border-border p-3 text-sm" data-testid="marketplace-fee-notes">
+      {shown.length > 0 && (
+        <>
+          <p className="mb-1 text-xs font-medium text-muted-foreground">{t('lineFeeNotesTitle')}</p>
+          <ul className="space-y-1">
+            {shown.map((n) => (
+              <li key={n.key} className="text-muted-foreground" data-testid="marketplace-fee-note">
+                <span className="mr-2 font-medium text-foreground">{n.platformName}</span>
+                {n.text}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {(ai === 'busy' || ai === 'budget' || ai === 'failed') && (
+        <p className="text-subtle-foreground" data-testid="marketplace-fee-notes-ai-state">
+          {t(`lineFeeNotesAi.${ai}`)}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function MarketplaceBalancePage() {
   const t = useTranslations('marketplaceBalance');
   const f = useFormat();
@@ -112,6 +156,7 @@ export function MarketplaceBalancePage() {
               </TableRow>
             ))}
           </DataTable>
+          <FeeNotes legalEntityId={entity.legalEntityId} rows={rows} />
           <p className="mt-3 text-sm text-subtle-foreground" data-testid="marketplace-balance-note">
             {t('note')}
           </p>

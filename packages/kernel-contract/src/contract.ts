@@ -198,7 +198,7 @@ import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTest
 import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisStatus } from './misa-amis-connections.ts';
 import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './misa-check.ts';
 import { zMisaAmisPreview, zMisaAmisBlockerNotes, zMisaAmisBlockerNotesAsk, zMisaAmisPreviewAsk } from './misa-amis-preview.ts';
-import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
+import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceFeeNotes, zMarketplaceFeeNotesAsk, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceFeeClearingRequest, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePayoutRequest, zMarketplacePreview, zMarketplaceSettlementRequest, zMarketplaceStaged, zMarketplaceSuggested, zMarketplaceSuggestInput, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseCheck, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
@@ -2639,6 +2639,8 @@ export const contract = {
     worklist: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceWorklist),
     // The finance coworker's one line on the Sàn screen: the facts always, and one checked sentence when a model is on, within the AI budget. Read only: it stores nothing and posts nothing.
     line: oc.input(zMarketplaceLineAsk).output(zMarketplaceLine),
+    // The finance coworker's note under the Sàn table for each platform with fees waiting on its 331 (#3711 slice 7): how old they are and what to do, from the books read again on the server. Read only: it posts nothing and changes no figure.
+    feeNotes: oc.input(zMarketplaceFeeNotesAsk).output(zMarketplaceFeeNotes),
   },
   // An entity's connection to MISA AMIS Kế toán (#3875, S2 of #3854). `status` says whether this deployment offers the connector (it does only when it holds the integrator's ClientID; the value is
   // never in any answer). The customer's access code is sealed in the kernel at the edge and never in an answer, a log or an audit row: the screen shows only "connected since". Every role reads the
