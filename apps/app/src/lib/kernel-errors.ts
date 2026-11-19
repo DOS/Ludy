@@ -441,6 +441,10 @@ export const KERNEL_ERROR_CODES = [
   'MINUTES_TEMPLATE_NAME_TAKEN',
   'MINUTES_TEMPLATE_SECTIONS_INVALID',
   'MINUTES_TEMPLATES_MAX',
+  // The glossary an org keeps (Meetings #4043).
+  'GLOSSARY_TERM_NOT_FOUND',
+  'GLOSSARY_TERM_TAKEN',
+  'GLOSSARY_MAX',
   // A series of meetings (Meetings #3542).
   'SERIES_CONFLICT',
   'SERIES_ORDER',
