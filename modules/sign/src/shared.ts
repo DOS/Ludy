@@ -15,7 +15,6 @@ import {
 } from '@crove/kernel-contract';
 import { DomainError, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
-import { isHrPrivilegedRole } from './hr-visibility.ts';
 import { signManifest } from './manifest.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
 import { SIGN_INVITE_MAIL_SOURCE, SIGN_INVITE_MAIL_TEMPLATE, queueSignInviteEmail } from './sign-mail.ts';
@@ -167,8 +166,7 @@ export async function requireSignSourceFile(ctx: CommandContext, sourceFileId: s
   if (!file) throw new DomainError('SIGN_FILE_NOT_FOUND', 404, 'Source file not found');
   if (
     (file.source === 'sign_document' || file.source === 'sign_sealed' || file.source === 'sign_certificate') &&
-    ctx.actor.type !== 'system' &&
-    !isHrPrivilegedRole(ctx.role)
+    ctx.actor.type !== 'system'
   ) {
     const { rows } = await sql<{ allowed: boolean }>`
       SELECT crove_sign.can_read_sign_file(${file.id}::uuid) AS allowed

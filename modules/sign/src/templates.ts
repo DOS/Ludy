@@ -23,6 +23,10 @@ import { tableWrite } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
+import {
+  assertCanAccessMeetingMinutesEnvelopeRow,
+  assertCanCreateMeetingMinutesEnvelope,
+} from './meeting-visibility.ts';
 import { signManifest } from './manifest.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
 import {
@@ -521,6 +525,7 @@ export const templateCreate = defineCommand({
         .select([
           'id',
           'source_kind',
+          'source_id',
           'created_by',
           'routing_mode',
           'subject',
@@ -540,11 +545,12 @@ export const templateCreate = defineCommand({
         .executeTakeFirst();
       if (!env) throw new DomainError('SIGN_ENVELOPE_NOT_FOUND', 404, 'Source envelope not found');
       assertCanAccessEnvelopeRow(ctx, env, 'Source envelope not found');
-      if (env.source_kind === 'hr_contract') {
+      await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Source envelope not found');
+      if (env.source_kind === 'hr_contract' || env.source_kind === 'meeting_minutes') {
         throw new DomainError(
           'SIGN_FORBIDDEN',
           403,
-          'Confidential HR contract envelopes cannot be converted into organization-wide templates',
+          'Confidential HR contract or meeting minutes envelopes cannot be converted into organization-wide templates',
         );
       }
       if (env.inspect_status === 'failed') {
@@ -579,19 +585,19 @@ export const templateCreate = defineCommand({
       };
     } else {
       const file = await requireSignSourceFile(ctx, input.sourceFileId!);
-      const existingHrEnv = await ctx.trx
+      const existingConfidentialEnv = await ctx.trx
         .selectFrom('crove_sign.envelope')
         .select('id')
         .where('org_id', '=', ctx.orgId)
-        .where('source_kind', '=', 'hr_contract')
+        .where('source_kind', 'in', ['hr_contract', 'meeting_minutes'])
         .where('source_file_id', '=', file.id)
         .limit(1)
         .executeTakeFirst();
-      if (existingHrEnv) {
+      if (existingConfidentialEnv) {
         throw new DomainError(
           'SIGN_FORBIDDEN',
           403,
-          'Confidential HR contract documents cannot be converted into organization-wide templates',
+          'Confidential HR contract or meeting minutes documents cannot be converted into organization-wide templates',
         );
       }
       const reused = await findPassedInspectForFile(ctx, file);
@@ -1550,6 +1556,7 @@ export const templateInstantiate = defineCommand({
       throw new DomainError('SIGN_INVALID_SOURCE', 422, 'Linked envelopes require sourceId');
     }
     assertCanCreateEnvelopeForSource(ctx, sourceKind);
+    await assertCanCreateMeetingMinutesEnvelope(ctx, sourceKind, sourceId);
 
     const tpl = await ctx.trx
       .selectFrom('crove_sign.template')
