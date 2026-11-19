@@ -223,6 +223,7 @@ export const vi = {
     subtitle: 'Việc cần bạn xem trong các ứng dụng, cảnh báo xếp trước.',
     empty: 'Hôm nay chưa có việc nào cần bạn',
     emptyHint: 'Cảnh báo, đề xuất chờ duyệt, tin nhắn chưa trả lời và hạn sắp đến sẽ hiện ở đây khi có.',
+    guideLink: 'Xem hướng dẫn nhanh',
     kinds: { flag: 'Cảnh báo', proposal: 'Chờ bạn duyệt', message: 'Tin nhắn chưa trả lời', deadline: 'Sắp đến hạn' },
     severity: { block: 'Đang chặn', warn: 'Cần xem', info: 'Lưu ý' },
     // On the proposals' heading: how many of them carry a failed check or a warning (#3591).
@@ -7845,7 +7846,7 @@ export const vi = {
     emptyPendingHint: 'Tải hóa đơn lên để bắt đầu.',
     hiddenApps: '{count} việc đang chờ ở ứng dụng đã tắt',
     emptyOther: 'Chưa có mục nào',
-    guideLink: 'Xem hướng dẫn nhanh: tải lên, duyệt, xuất Excel',
+    guideLink: 'Xem hướng dẫn nhanh: tải lên, duyệt, khai thuế, xuất Excel',
     columns: {
       document: 'Chứng từ',
       issueDate: 'Ngày HĐ',
@@ -8200,11 +8201,9 @@ export const vi = {
   guide: {
     contents: 'Trên trang này',
     title: 'Hướng dẫn nhanh',
-    subtitle: 'Ba bước để ghi sổ hóa đơn đầu vào: tải lên, duyệt và xuất Excel.',
+    subtitle: 'Ba việc của mỗi tháng: tải hóa đơn lên và duyệt, khai thuế GTGT, xuất Excel cho kế toán.',
     crmTitle: 'Hướng dẫn CRM',
     crmSubtitle: 'Liên hệ, nhập liên hệ từ tệp, theo dõi cơ hội trên bảng, rồi báo giá, đơn hàng và hóa đơn.',
-    firmTitle: 'Hướng dẫn cho công ty dịch vụ kế toán',
-    firmSubtitle: 'Một tháng của một doanh nghiệp khách hàng trong {brand}: thêm khách hàng, nhận và duyệt hóa đơn, ngân hàng, khóa sổ, tờ khai GTGT và chuyển số liệu sang phần mềm kế toán.',
     supportHint: 'Gặp lỗi hoặc cần hỗ trợ? Gửi cho chúng tôi qua',
     statusHint: 'Ứng dụng chạy chậm hoặc báo lỗi? Xem tình trạng các chức năng ở trang',
   },

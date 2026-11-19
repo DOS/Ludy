@@ -23,7 +23,6 @@ vi.mock('../src/lib/api.ts', () => {
 });
 
 const { OrgMenu, switchOrg } = await import('../src/components/app-nav.tsx');
-const { firmGuide } = await import('../src/lib/firm-guide.ts');
 
 const ORGS = [
   { orgId: '00000000-0000-4000-8000-000000000001', slug: 'dos', name: 'DOS' },
@@ -83,13 +82,5 @@ describe('the add item\'s label', () => {
   it('has no leading "+" now that it is a menu item with an icon', () => {
     expect(viMessages.nav.addOrg).toBe('Thêm tổ chức');
     expect(en.nav.addOrg).toBe('Add organization');
-  });
-
-  it('is where the firm guide sends a firm to add its next client', () => {
-    const step = firmGuide().find((s) => s.id === 'client');
-    const text = step?.items[0] ?? '';
-    expect(text).toContain(`"${viMessages.nav.addOrg}"`);
-    expect(text).toContain('danh sách tổ chức');
-    expect(text).not.toContain('dưới ô chọn tổ chức');
   });
 });
