@@ -12845,6 +12845,7 @@ export const en = {
       NOT_EDITABLE: 'This proposal cannot be edited.',
       NOT_ELIGIBLE: 'You are not allowed to approve this proposal.',
       FOUR_EYES_REQUIRED: 'Someone else must approve this (you uploaded or edited this proposal).',
+      MCP_PROPOSAL_CAP: 'This AI app already has too many proposals waiting for approval. Approve or reject some, then try again.',
       CONTENT_CHANGED: 'You changed accounts without saving. Save your edits before approving.',
       EXTRACTION_PENDING: 'The file is still being read. Wait for the result, then try again.',
       READ_FROM_ORIGINAL: 'This proposal was updated from the original XML invoice, so reading the PDF again would change nothing. Read the XML file again instead.',
@@ -15206,6 +15207,7 @@ export const en = {
           set: 'Turn member-owned AI app connections on or off',
         },
         parties: 'Show an AI app the list of customers, suppliers and contacts',
+        propose: 'Record what an AI app asked for as a proposal that waits for a person’s approval',
         signals: 'Show an AI app what needs attention across apps (won deals with no invoice, overdue receivables with an open deal)',
         wake: {
           clear: 'Remove the wake-up receiver of an AI app',

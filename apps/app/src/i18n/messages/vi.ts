@@ -12845,6 +12845,7 @@ export const vi = {
       NOT_EDITABLE: 'Đề xuất này không chỉnh sửa được',
       NOT_ELIGIBLE: 'Bạn không có quyền duyệt đề xuất này',
       FOUR_EYES_REQUIRED: 'Cần một người khác duyệt (bạn đã tải lên hoặc chỉnh sửa đề xuất này)',
+      MCP_PROPOSAL_CAP: 'Ứng dụng AI này đã có quá nhiều đề xuất đang chờ duyệt. Hãy duyệt hoặc từ chối bớt rồi thử lại.',
       CONTENT_CHANGED: 'Bạn đã đổi tài khoản nhưng chưa lưu; hãy lưu chỉnh sửa trước khi duyệt',
       EXTRACTION_PENDING: 'Tệp đang được đọc; hãy chờ kết quả rồi thử lại',
       READ_FROM_ORIGINAL: 'Đề xuất này đã được cập nhật từ hóa đơn gốc XML nên đọc lại tệp PDF sẽ không đổi gì; hãy đọc lại tệp XML',
@@ -15206,6 +15207,7 @@ export const vi = {
           set: 'Bật hoặc tắt việc cho thành viên tự kết nối ứng dụng AI',
         },
         parties: 'Cho ứng dụng AI xem danh sách khách hàng, nhà cung cấp và liên hệ',
+        propose: 'Ghi lại điều một ứng dụng AI yêu cầu thành đề xuất chờ một người duyệt',
         signals: 'Cho ứng dụng AI xem các việc cần chú ý giữa các ứng dụng (deal thắng chưa có hóa đơn, công nợ quá hạn còn deal mở)',
         wake: {
           clear: 'Gỡ địa chỉ nhận báo thức của một ứng dụng AI',

@@ -73,7 +73,7 @@ export const kernelManifest = defineModule({
       mail_suppression: columns(['org_id', 'id', 'to_hash', 'scope', 'reason', 'source_message_id', 'created_by', 'created_at', 'lifted_at', 'lifted_by', 'lift_reason']),
       // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to.
       mcp_member_table: columns(['table_name', 'mode', 'adr']),
-      mcp_proposal_command: columns(['command', 'scope', 'adr']),
+      mcp_proposal_command: columns(['command', 'scope', 'kind', 'adr']),
       // Meeting platforms a member connects (meetings integrations C1, #3173): the account is contact data, the sealed tokens sensitive, the recording's title is the platform's words (pii) and the
       // staging key is the random address of the bytes waiting for the member's own request (sensitive).
       meeting_platform_connection: columns(['org_id', 'id', 'user_id', 'provider', 'scopes', 'status', 'status_reason', 'expires_at', 'last_synced_at', 'connected_at', 'updated_at'], { external_account: 'contact', display_name: 'contact' }),
