@@ -18,7 +18,8 @@ jobs:
   static:
     name: Lint, typecheck, unit tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 25 minutes (#3995): successful runs take 8 to 14 minutes, and the 15-minute limit cancelled unrelated PRs mid-typecheck.
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
