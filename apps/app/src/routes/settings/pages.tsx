@@ -128,7 +128,7 @@ export function SettingsAppsPage() {
           {/* How long Engage's conversations are kept (CV6, #2305; moved here from the Inbox, #3582), with the social module; owners and admins. */}
           {modules.includes('social') && canManage && <ConversationRetentionCard key={`conversation-retention:${org.slug}`} />}
           {/* When the inbox and the CRM raise work (Engage's wake rules, #3862): the hours and days after which Home and an AI coworker are told; owners and admins. */}
-          {modules.includes('social') && canManage && <EngageWakeRulesCard key={`engage-wake-rules:${org.slug}`} />}
+          {(modules.includes('social') || modules.includes('crm')) && canManage && <EngageWakeRulesCard key={`engage-wake-rules:${org.slug}`} />}
           {/* The minutes templates the org writes (#3578): owners and admins write them, every member picks one in a meeting. */}
           {modules.includes('meetings') && canManage && <MinutesTemplatesCard key={`minutes-templates:${org.slug}`} />}
         </>

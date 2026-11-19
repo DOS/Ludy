@@ -25,7 +25,8 @@ export function EngageWakeRulesCard() {
   const current = useQuery(orpc.conversations.wakeRules.queryOptions({ input: {} }));
   const set = useMutation({
     mutationFn: (rules: EngageWakeRules) => client.conversations.setWakeRules(rules),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.wakeRules.key() }),
+    // The answer is the new truth: put it in the cache at once, so a second change made before a reload starts from it and never undoes the first.
+    onSuccess: (saved) => queryClient.setQueryData(orpc.conversations.wakeRules.queryKey({ input: {} }), saved),
   });
   const heading = <h2 className="text-sm font-medium text-muted-foreground">{t('wake.title')}</h2>;
   if (current.isError) {

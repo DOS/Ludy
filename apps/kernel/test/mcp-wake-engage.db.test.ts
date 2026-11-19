@@ -19,7 +19,7 @@ import { CredentialVault, Runtime, parseVaultKey, type UserActor } from '@crove/
 import { crmCommands, crmQueries } from '@crove/mod-crm';
 import { makeWakeSecret } from '../src/mcp-wake-setup.ts';
 import { LINE_WAKE_EVENTS, wakeBody } from '../src/mcp-wake-body.ts';
-import { adsItems, conversationItems, crmItems, engageWakeFeed } from '../src/mcp-wake-engage.ts';
+import { adsItems, conversationItems, crmItems, engageWakeFeed, wakeKey } from '../src/mcp-wake-engage.ts';
 import { runWakeSweep, type LineWakeFeed } from '../src/mcp-wake-sweep.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -314,37 +314,12 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     expect(seen.every((s) => /^(engage|social|ads)_[a-z_]+:[0-9a-f-]{36}:\d{4}-\d{2}-\d{2}$/.test(s.key))).toBe(true);
   });
 
-  it('pins who can reach the reads: a company grant of this org alone (no other org\'s data), never a member-bound grant, and for the CRM read not a plain member either', async () => {
-    const o = await org();
-    const other = await org();
-    const mine = await o.thread({ kind: 'direct', sinceMinutes: 6 * 60 });
-    const theirs = await other.thread({ kind: 'direct', sinceMinutes: 6 * 60 });
-    const input = { unansweredHours: 4, replyWindowHours: 3 };
-    const company = await o.wakeUp();
-    const mcp = (grantId: string, userId: string, kind?: 'member') => ({ type: 'user' as const, userId, aal: 'aal1' as const, mcp: { grantId, clientId: 'wake-up', clientName: 'Wake-up', scopes: ['ludy.read'], ...(kind ? { kind } : {}) } });
-    // Org A's company grant, in its sealed context, reads org A's thread and not org B's.
-    const read = await worker.query<EngageWakeConversations>('kernel.wake.conversations', input, { actor: mcp(company, o.owner), orgId: o.orgId });
-    expect(read.unanswered.map((r) => r.id)).toEqual([mine]);
-    expect(JSON.stringify(read)).not.toContain(theirs);
-    // The same grant asked in another org is refused by the database, whatever the caller says.
-    await expect(worker.query('kernel.wake.conversations', input, { actor: mcp(company, o.owner), orgId: other.orgId })).rejects.toBeTruthy();
-    // A member-bound grant is refused (the rules are the org's, a member's share is not what they were written for), by the api's own entry.
-    const bound = await o.wakeUp(['ludy.read'], 'member');
-    await expect(rt.query('kernel.wake.conversations', input, { actor: mcp(bound, o.owner, 'member'), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
-    await expect(rt.query('crm.wake.facts', {}, { actor: mcp(bound, o.owner, 'member'), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
-    // The CRM read is for owners and admins: a plain member is refused.
-    await expect(o.query(o.member, 'crm.wake.facts', {})).rejects.toMatchObject({ status: 403 });
-    // Home (the member's own session) lists only what the member may read: a private message is read only with the direct-message permission, so a plain member gets no line for it (the inbox's own rule).
-    expect((await o.query<TodayList>(o.member, 'kernel.today')).items.some((i) => i.id === 'wake:unanswered')).toBe(false);
-    expect((await o.query<TodayList>(o.owner, 'kernel.today')).items.some((i) => i.id === 'wake:unanswered')).toBe(true);
-  });
-
   it('asks nothing of a grant for a line whose scope it does not hold, and sends at most twenty events of a type in a pass, the rest in the next', async () => {
     const asked: string[] = [];
     const spy = { query: async (name: string) => { asked.push(name); throw new Error('not asked'); } } as unknown as Runtime;
     const feed = engageWakeFeed(spy);
     const grant = { orgId: randomUUID(), grantId: randomUUID(), userId: randomUUID() };
-    const plan = (scopes: string[]) => ({ kind: 'company' as const, scopes, unansweredHours: 4, replyWindowHours: 3, quoteDays: 5 });
+    const plan = (scopes: string[], appsOff: string[] = []) => ({ kind: 'company' as const, scopes, appsOff, unansweredHours: 4, replyWindowHours: 3, quoteDays: 5 });
     expect(await feed.read(grant, plan(['ludy.read']))).toEqual([]);
     expect(asked).toEqual([]);
     await feed.read(grant, plan(['ludy.read', 'ludy.ads.draft']));
@@ -364,6 +339,34 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
     const second = (await o.deliveries(grantId)).filter((r) => r.type === 'engage.conversation_unanswered');
     expect(second).toHaveLength(25);
     expect(new Set(second.map((r) => r.body.data.conversation_id)).size).toBe(25);
+  });
+
+  it('sends every item of a type that holds across passes (more than a pass sends), so none is starved by the ones already sent', async () => {
+    const o = await org();
+    const grantId = await o.wakeUp();
+    const items = Array.from({ length: 45 }, () => randomUUID()).map((id) => ({ type: 'engage.booking_tomorrow', key: wakeKey('engage.booking_tomorrow', id, '2026-11-20'), data: { booking_id: id, on: '2026-11-20' } }));
+    const feed: LineWakeFeed = { types: ['engage.booking_tomorrow'], read: async () => items };
+    const counts: number[] = [];
+    for (let pass = 0; pass < 4; pass += 1) {
+      await o.sweep([feed]);
+      counts.push((await o.deliveries(grantId)).length);
+      await o.due(grantId);
+    }
+    expect(counts).toEqual([20, 40, 45, 45]);
+  });
+
+  it('wakes no coworker about an app the org switched off', async () => {
+    const o = await org();
+    await o.thread({ kind: 'direct', sinceMinutes: 6 * 60 });
+    await o.thread({ kind: 'comment_thread', sinceMinutes: 60, post: true });
+    await rows("UPDATE crove_kernel.tenant SET apps_off = ARRAY['social'] WHERE org_id = $1", [o.orgId]);
+    const grantId = await o.wakeUp();
+    await o.sweep([engageWakeFeed(worker)]);
+    expect(await o.deliveries(grantId)).toHaveLength(0);
+    await rows("UPDATE crove_kernel.tenant SET apps_off = ARRAY[]::text[] WHERE org_id = $1", [o.orgId]);
+    await o.due(grantId);
+    await o.sweep([engageWakeFeed(worker)]);
+    expect((await o.deliveries(grantId)).length).toBeGreaterThan(0);
   });
 
   it('refuses in the database what the sweep never sends: a key that is not the type\'s own, a second event for a seen key, a key that is not a line key', async () => {

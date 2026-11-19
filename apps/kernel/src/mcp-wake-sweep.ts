@@ -68,11 +68,9 @@ export interface LineWakeFeed {
   types: readonly string[];
   read: (grant: WakeGrant, plan: McpWakeLinePlan) => Promise<LineWakeItem[]>;
 }
-// The most keys one pass checks, and the most events of one type it sends (WAKE_ITEMS_MAX, as a signal's event holds); the rest wait for the next look.
+// The most keys of one type a pass checks (a read gives at most 100 of a rule), and the most events of one type it sends (WAKE_ITEMS_MAX, as a signal's event holds); the rest wait for the next look.
 const FEED_KEYS_MAX = 200;
 const FEED_PER_TYPE = WAKE_ITEMS_MAX;
-// How many candidates of one type are checked for newness in a pass: more than are sent, so a type whose newest items were all sent already cannot hide an older one that is new.
-const FEED_CANDIDATES_PER_TYPE = 40;
 
 export interface WakeSweepDeps {
   runtime: Runtime;
@@ -210,32 +208,30 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
     }
     return out;
   };
-  // The items that are new for the grant become events, each with its one key (stored with it). Up to FEED_CANDIDATES_PER_TYPE of a type are checked in a pass and at most FEED_PER_TYPE (WAKE_ITEMS_MAX) are sent, newest first as the feed gave them.
+  // The items that are new for the grant become events, each with its one key (stored with it). Every candidate of a type is checked for newness (a read gives at most 100 of a rule, so a type's keys fit one check), and at
+  // most FEED_PER_TYPE (WAKE_ITEMS_MAX) of the new ones are sent in a pass, so a type whose newest items were all sent already never hides an older one that is new; the rest go in the next pass.
   const sendFeedItems = async (grant: WakeGrant, items: readonly LineWakeItem[]): Promise<number> => {
     if (items.length === 0) return 0;
-    const seen = new Map<string, number>();
-    const unique = new Map<string, LineWakeItem>();
+    const byType = new Map<string, Map<string, LineWakeItem>>();
     for (const it of items) {
-      const n = seen.get(it.type) ?? 0;
-      if (n >= FEED_CANDIDATES_PER_TYPE || unique.has(it.key) || unique.size >= FEED_KEYS_MAX) continue;
-      seen.set(it.type, n + 1);
-      unique.set(it.key, it);
+      const own = byType.get(it.type) ?? new Map<string, LineWakeItem>();
+      if (own.size < FEED_KEYS_MAX && !own.has(it.key)) own.set(it.key, it);
+      byType.set(it.type, own);
     }
-    if (unique.size === 0) return 0;
     const ctx = { actor: ACTOR, orgId: grant.orgId };
-    const { fresh } = await deps.runtime.execute<{ fresh: string[] }>('kernel.mcp.wake.line_check', { grantId: grant.grantId, keys: [...unique.keys()] }, ctx);
     let sent = 0;
-    const sentOf = new Map<string, number>();
-    for (const key of fresh) {
-      const it = unique.get(key);
-      if (!it || (sentOf.get(it.type) ?? 0) >= FEED_PER_TYPE) continue;
-      sentOf.set(it.type, (sentOf.get(it.type) ?? 0) + 1);
-      try {
-        if (await post(grant, it.type, it.data, [it.key])) sent += 1;
-      } catch (error) {
-        // The grant does not hold the type's scope (the database says so), or the data does not fit: this item is left, the rest still go.
-        done.failures += 1;
-        console.warn(`[mcp-wake-sweep] ${it.type} for ${grant.grantId.slice(0, 8)}`, codeOf(error));
+    for (const own of byType.values()) {
+      const { fresh } = await deps.runtime.execute<{ fresh: string[] }>('kernel.mcp.wake.line_check', { grantId: grant.grantId, keys: [...own.keys()] }, ctx);
+      for (const key of fresh.slice(0, FEED_PER_TYPE)) {
+        const it = own.get(key);
+        if (!it) continue;
+        try {
+          if (await post(grant, it.type, it.data, [it.key])) sent += 1;
+        } catch (error) {
+          // The grant does not hold the type's scope (the database says so), or the data does not fit: this item is left, the rest still go.
+          done.failures += 1;
+          console.warn(`[mcp-wake-sweep] ${it.type} for ${grant.grantId.slice(0, 8)}`, codeOf(error));
+        }
       }
     }
     return sent;

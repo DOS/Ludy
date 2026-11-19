@@ -213,6 +213,8 @@ export const zMcpWakeLineCheck = z.strictObject({ grantId: zMcpWakeGrantRef.shap
 export const zMcpWakeLinePlan = z.strictObject({
   kind: z.enum(['company', 'member']),
   scopes: z.array(z.string().max(60)).max(20),
+  // The apps the org switched off (ADR-0053): a line's source leaves them out.
+  appsOff: z.array(z.string().max(60)).max(40),
   unansweredHours: z.number().int(),
   replyWindowHours: z.number().int(),
   quoteDays: z.number().int(),

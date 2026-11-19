@@ -113,7 +113,9 @@ export function engageWakeFeed(runtime: Runtime, now: () => Date = () => new Dat
       const engage = scopes.includes(ENGAGE_SCOPE);
       const social = scopes.includes(SOCIAL_SCOPE);
       const ads = scopes.includes(ADS_SCOPE);
-      if (engage || social) {
+      // An app the org switched off wakes no coworker (ADR-0053): the inbox's rules and the comments are the Social app's, and the CRM's and Ads' own reads are refused by the runtime when their app is off.
+      const inboxOn = !plan.appsOff.includes('social');
+      if ((engage || social) && inboxOn) {
         // The inbox's rules: one read for the four (and so one scan of the threads).
         const raw = await readOrNull<unknown>(runtime, 'kernel.wake.conversations', { unansweredHours: plan.unansweredHours, replyWindowHours: plan.replyWindowHours }, grant, plan);
         const parsed = raw === null ? null : zEngageWakeConversations.safeParse(raw);

@@ -52,7 +52,7 @@ ALTER TABLE crove_kernel.agent_wake_signal_seen VALIDATE CONSTRAINT agent_wake_s
 -- ---------------------------------------------------------------------------
 -- 3. What a line's source needs before it reads, and which of its keys are new
 -- ---------------------------------------------------------------------------
--- The grant's kind and scopes and the org's N, for a grant whose wake-up is on and in good standing. A source reads only for a company grant that holds its line's write scope and the read scope (the database
+-- The grant's kind and scopes, the apps the org switched off (ADR-0053: an app that is off wakes no coworker) and the org's N, for a grant whose wake-up is on and in good standing. A source reads only for a company grant that holds its line's write scope and the read scope (the database
 -- refuses the event of any other, but the read in that grant's own sealed context would already have happened). Nothing a person typed is in the answer.
 CREATE OR REPLACE FUNCTION crove_kernel.mcp_wake_line_plan(p_grant_id uuid)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
@@ -65,6 +65,7 @@ DECLARE
   v_unanswered smallint;
   v_window smallint;
   v_quote smallint;
+  v_off text[];
 BEGIN
   SELECT g.user_id, g.kind, g.scopes INTO v_user, v_kind, v_scopes
   FROM crove_kernel.agent_grant_wake w JOIN crove_kernel.agent_grant g ON g.org_id = w.org_id AND g.id = w.grant_id
@@ -74,8 +75,10 @@ BEGIN
   END IF;
   SELECT s.wake_unanswered_hours, s.wake_reply_window_hours, s.wake_quote_days INTO v_unanswered, v_window, v_quote
   FROM crove_kernel.conversation_setting s WHERE s.org_id = v_org;
+  SELECT t.apps_off INTO v_off FROM crove_kernel.tenant t WHERE t.org_id = v_org;
   RETURN pg_catalog.jsonb_build_object(
     'kind', v_kind,
+    'appsOff', pg_catalog.to_jsonb(COALESCE(v_off, ARRAY[]::text[])),
     'scopes', pg_catalog.to_jsonb(v_scopes),
     'unansweredHours', COALESCE(v_unanswered, 4),
     'replyWindowHours', COALESCE(v_window, 3),

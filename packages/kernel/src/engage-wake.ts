@@ -122,10 +122,23 @@ export const wakeConversations = defineQuery({
                                 WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out'), 0)
       ) w
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.status = 'new' AND w.since IS NOT NULL
-        AND (w.since >= ${lookback}::timestamptz OR (c.reply_window_until > ${now}::timestamptz AND c.reply_window_until <= ${windowEnd}::timestamptz))
+        -- Cheap cut before the lateral look at messages is paid for: a wait that began after the lookback means the last customer message is after it too (a day of slack for the platform's clock).
+        AND (c.last_inbound_at IS NULL OR c.last_inbound_at >= ${new Date(lookback.getTime() - DAY_MS)}::timestamptz)
+        AND w.since >= ${lookback}::timestamptz
         ${me === null ? sql`` : sql`AND (c.assignee_user_id IS NULL OR c.assignee_user_id = ${me}::uuid)`}
       ORDER BY w.since DESC, c.id
       LIMIT ${THREADS_MAX}`.execute(ctx.trx);
+
+    // The reply windows are chosen on their own, soonest first, before any list is cut: a thread with a few minutes left is never hidden behind a longer inbox.
+    const closing = await sql<{ id: string; reply_window_until: Date }>`
+      SELECT c.id, c.reply_window_until
+      FROM crove_kernel.conversation c
+      WHERE c.org_id = ${ctx.orgId}::uuid AND c.status = 'new' AND c.reply_window_until > ${now}::timestamptz AND c.reply_window_until <= ${windowEnd}::timestamptz
+        AND EXISTS (SELECT 1 FROM crove_kernel.conversation_message m WHERE m.org_id = c.org_id AND m.conversation_id = c.id AND m.direction = 'in' AND m.platform_removed_at IS NULL AND m.hidden_at IS NULL
+                    AND m.seq > COALESCE((SELECT pg_catalog.max(o.seq) FROM crove_kernel.conversation_message o WHERE o.org_id = c.org_id AND o.conversation_id = c.id AND o.direction = 'out'), 0))
+        ${me === null ? sql`` : sql`AND (c.assignee_user_id IS NULL OR c.assignee_user_id = ${me}::uuid)`}
+      ORDER BY c.reply_window_until, c.id
+      LIMIT ${ENGAGE_WAKE_ROWS_MAX}`.execute(ctx.trx);
 
     const freshFrom = new Date(now.getTime() - ENGAGE_WAKE_FRESH_HOURS * HOUR_MS).getTime();
     const waitedUntil = now.getTime() - input.unansweredHours * HOUR_MS;
@@ -140,12 +153,10 @@ export const wakeConversations = defineQuery({
       if (direct && !r.answered_before && since.getTime() >= freshFrom) push(out.newInbound, { id: r.id, kind: r.kind, since: since.toISOString() });
       // A customer who waited past N hours (less than the lookback: the query already cut older ones).
       if (direct && since.getTime() <= waitedUntil && since >= lookback) push(out.unanswered, { id: r.id, kind: r.kind, since: since.toISOString() });
-      // The platform's reply window closes within N hours and the customer still waits.
-      if (r.reply_window_until && r.reply_window_until.getTime() > now.getTime() && r.reply_window_until.getTime() <= windowEnd.getTime()) push(out.replyWindow, { id: r.id, closesAt: r.reply_window_until.toISOString() });
       // A comment under a published post nobody has answered, in the last day.
       if (r.kind === 'comment_thread' && r.external_post_id !== null && since.getTime() >= freshFrom) push(out.comments, { id: r.id, since: since.toISOString() });
     }
-    out.replyWindow.sort((a, b) => (a.closesAt < b.closesAt ? -1 : a.closesAt > b.closesAt ? 1 : a.id < b.id ? -1 : 1));
+    out.replyWindow = closing.rows.map((r) => ({ id: r.id, closesAt: r.reply_window_until.toISOString() }));
     // The answer is held to the contract before it leaves: ids, a kind and instants, and nothing else.
     return zEngageWakeConversations.parse(out);
   },
