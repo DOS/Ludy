@@ -94,7 +94,7 @@ export const QUEUES = {
   einvoiceIssue: 'finance-einvoice-issue',
   // Created by the marketplace poll migration (crove_finance_marketplace_poll): one marketplace connection's pull of orders (#2519).
   marketplacePoll: 'finance-marketplace-poll',
-  // Created by the MISA AMIS test queue migration (20270119110000): one MISA AMIS connection's test, a token and the company's information (#3885, S2b of #3854).
+  // Created by the MISA AMIS test queue migration (20270119130000): one MISA AMIS connection's test, a token and the company's information (#3885, S2b of #3854).
   misaAmisTest: 'finance-misa-amis-test',
   // Created by the ads core migration (20261115120000): an ad account's sync (ADR-0040, #2217).
   adsSync: 'ads-sync',
