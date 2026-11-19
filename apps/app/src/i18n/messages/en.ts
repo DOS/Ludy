@@ -15353,6 +15353,7 @@ export const en = {
         minutes: 'Let an AI app read the published minutes of a meeting shared with the whole company',
         open_actions: 'Let an AI app list the open action items from the published minutes of meetings shared with the whole company',
         series_open_items: 'Let an AI app list the open action items across the recurring series of a published meeting shared with the whole company',
+        decisions: 'Let an AI app list the decisions from the published minutes of recent meetings shared with the whole company',
       },
       hook: {
         clear: 'Remove your address for minutes',
