@@ -254,4 +254,40 @@ suite('Vy checking whether a meeting covered its agenda (#3959)', () => {
     ]);
     expect(logged.join('\n')).not.toMatch(/báo giá|bảo trì|giao hàng/iu);
   });
+
+  it('reads the whole of one stage: the draft when a draft exists beside a published transcript, the published lines when there is no draft, never a mix cut by the limit', async () => {
+    const both = await meeting('Họp có bản nháp và bản đã công bố', -30, null);
+    // 400 published lines, then the recorder's re-transcription as 400 draft lines: a limit applied before the stage would read about half of each.
+    await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', 'Bản đã công bố ' || g, 'published' FROM generate_series(0, 399) g`, [orgId, both]);
+    await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', 'Bản nháp ' || g, 'draft' FROM generate_series(0, 399) g`, [orgId, both]);
+    expect(await agendaOf('rec', both)).toMatchObject({ transcriptLines: 400, transcriptFits: true });
+    await check('rec', both, ['Chốt giá']);
+    expect(lastData?.transcript).toHaveLength(400);
+    expect(lastData?.transcript.every((l) => l.text.startsWith('Bản nháp'))).toBe(true);
+    const published = await meeting('Họp chỉ có bản đã công bố', -30, null);
+    await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', 'Bản đã công bố ' || g, 'published' FROM generate_series(0, 699) g`, [orgId, published]);
+    expect(await agendaOf('rec', published)).toMatchObject({ transcriptLines: 700, transcriptFits: true });
+    await check('rec', published, ['Chốt giá']);
+    expect(lastData?.transcript).toHaveLength(700);
+    expect(lastData?.transcript.every((l) => l.text.startsWith('Bản đã công bố'))).toBe(true);
+  });
+
+  it('counts what the model would be given: a transcript whose text is under the limit but whose framing is over it is refused before any run, with the reason', async () => {
+    const wide = await meeting('Họp nhiều chữ', -30, null);
+    // 330 lines of 355 ASCII characters: 117 KB of text, over the limit once each line carries its number and time.
+    await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', repeat('x', 355), 'draft' FROM generate_series(0, 329) g`, [orgId, wide]);
+    const runs = (await resultRows()).length;
+    expect(await check('rec', wide, ['Chốt giá'])).toMatchObject({ state: 'none', reason: 'too_long' });
+    expect(modelCalls).toBe(0);
+    expect((await resultRows()).length).toBe(runs);
+  });
+
+  it('refuses a second check in the same minute with a busy answer before any read, and a list the model leaves half answered fails with a fixed code', async () => {
+    const s = await seeded();
+    const budget = new DraftBudget({ perUserPerMinute: 1, perOrgPerMinute: 50 });
+    expect(await check('rec', s.current, ['Chốt giá gói bảo trì'], { budget })).toMatchObject({ state: 'checked' });
+    expect(await refuses(check('rec', s.current, ['Chốt giá gói bảo trì'], { budget }))).toBe('ADHERENCE_BUSY');
+    const half = await check('rec', s.current, ['Chốt giá gói bảo trì'], { model: saying((agenda) => ({ items: [{ n: agenda[0]?.n, covered: false, lines: [] }] })) });
+    expect(half).toMatchObject({ state: 'failed', errorCode: 'ADHERENCE_UNPARSABLE', items: [] });
+  });
 });

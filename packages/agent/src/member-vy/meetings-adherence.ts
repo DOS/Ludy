@@ -17,7 +17,7 @@ export const ADHERENCE_LIMITS = {
   agendaChars: 200,
   // The transcript the model reads: refused before any call when longer, never cut (a cut transcript would make "not heard" false).
   transcriptLines: 700,
-  transcriptLineChars: 400,
+  transcriptLineChars: 600,
   sourceBytes: 120_000,
   // The most transcript lines one claim may cite.
   cites: 3,
@@ -41,7 +41,7 @@ export interface CheckedAdherenceItem {
   lines: number[];
 }
 export interface CheckedAdherence {
-  // One entry per agenda line, in agenda order. A line the model did not mention is "not heard" and is not counted as dropped (no claim was made).
+  // One entry per agenda line, in agenda order.
   items: CheckedAdherenceItem[];
   // The "covered" claims turned into "not heard" for want of a valid cited line.
   dropped: number;
@@ -51,7 +51,7 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 
 /**
  * The model's answer checked against the lists it was given. Anything but exactly {"items":[...]} with entries holding only n, covered and (optionally) lines throws ADHERENCE_UNPARSABLE; so does an agenda number
- * off the list or given twice, and a `covered` that is not a boolean. A covered claim that cites no line, a line off the list, a non-integer, a repeat only, or more than three lines is no claim:
+ * off the list or given twice, an agenda line left out, and a `covered` that is not a boolean. A covered claim that cites no line, a line off the list, a non-integer, a repeat only, or more than three lines is no claim:
  * the agenda line is "not heard" and the drop is counted. Repeated citations of one line count once.
  */
 export function checkAdherence(raw: string, agendaCount: number, lineCount: number): CheckedAdherence {
@@ -87,7 +87,9 @@ export function checkAdherence(raw: string, agendaCount: number, lineCount: numb
       found.set(n, { n, covered: false, lines: [] });
     }
   }
-  const items = Array.from({ length: agendaCount }, (_, index) => found.get(index + 1) ?? { n: index + 1, covered: false, lines: [] });
+  // One entry for every agenda line: a list that leaves some out (an empty list, a cut one) is not a check, and "nothing covered" must never be shown for a list the model did not answer.
+  if (found.size !== agendaCount) throw new AdherenceError('ADHERENCE_UNPARSABLE');
+  const items = Array.from({ length: agendaCount }, (_, index) => found.get(index + 1) as CheckedAdherenceItem);
   return { items, dropped };
 }
 

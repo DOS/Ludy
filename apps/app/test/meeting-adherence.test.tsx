@@ -25,7 +25,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), queryClient: client.current, errorMessage: String };
 });
 
-const { MeetingAdherence, AdherenceResult, adherenceFailureKey, typedLines } = await import('../src/components/meeting-adherence.tsx');
+const { MeetingAdherence, AdherenceResult, adherenceFailureKey, typedLines, typedOverflow } = await import('../src/components/meeting-adherence.tsx');
 
 const M = '00000000-0000-4000-8000-000000000001';
 const agenda = (over: Partial<AdherenceAgenda> = {}): AdherenceAgenda => ({
@@ -135,5 +135,8 @@ describe('typedLines', () => {
     expect(typedLines('a'.repeat(300))[0]).toHaveLength(200);
     expect(typedLines(Array.from({ length: 12 }, (_, i) => `Mục ${i + 1}`).join('\n'))).toHaveLength(8);
     expect(typedLines('')).toEqual([]);
+    // The ninth line and the rest are left out, and the box says so.
+    expect(typedOverflow(Array.from({ length: 9 }, (_, i) => `Mục ${i + 1}`).join('\n'))).toBe(true);
+    expect(typedOverflow(Array.from({ length: 8 }, (_, i) => `Mục ${i + 1}`).join('\n') + '\n\n')).toBe(false);
   });
 });

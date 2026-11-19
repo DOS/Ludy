@@ -56,18 +56,17 @@ async function openItemLines(trx: Trx, orgId: string, meetingId: string): Promis
 }
 
 // The lines the recorder reads as the transcript: while a draft exists it is the draft, else the published lines (the two never both, so a line is not counted twice).
-async function transcriptOf(trx: Trx, orgId: string, meetingId: string, limit: number): Promise<{ startSeconds: number; text: string; stage: string }[]> {
-  const rows = await trx
-    .selectFrom('crove_meetings.transcript_segment')
-    .select([sql<string>`start_seconds::text`.as('start_seconds'), 'text', 'stage'])
-    .where('org_id', '=', orgId)
-    .where('meeting_id', '=', meetingId)
-    .orderBy('start_seconds')
-    .orderBy('id')
-    .limit(limit)
-    .execute();
-  const stage = rows.some((r) => r.stage === 'draft') ? 'draft' : 'published';
-  return rows.filter((r) => r.stage === stage).map((r) => ({ startSeconds: Number(r.start_seconds), text: r.text, stage: r.stage }));
+// The stage is chosen in the database before the limit, so the lines read are the whole of one stage (or one more than the limit, which says it is too long) and never a mix cut by the limit.
+async function transcriptOf(trx: Trx, orgId: string, meetingId: string, limit: number): Promise<{ startSeconds: number; text: string }[]> {
+  const { rows } = await sql<{ start_seconds: string; text: string }>`
+    WITH s AS (
+      SELECT id, start_seconds, text, stage FROM crove_meetings.transcript_segment WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid
+    )
+    SELECT start_seconds::text AS start_seconds, text FROM s
+    WHERE stage = CASE WHEN EXISTS (SELECT 1 FROM s WHERE stage = 'draft') THEN 'draft' ELSE 'published' END
+    ORDER BY start_seconds, id
+    LIMIT ${limit}`.execute(trx);
+  return rows.map((r) => ({ startSeconds: Number(r.start_seconds), text: r.text }));
 }
 
 export const adherenceAgenda = defineQuery({
@@ -75,6 +74,7 @@ export const adherenceAgenda = defineQuery({
   input: zAdherenceRef,
   access: ROLES,
   sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input): Promise<AdherenceAgenda> => {
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
@@ -96,7 +96,8 @@ export const adherenceAgenda = defineQuery({
       previous: previous ? { meetingId: previous.id, title: previous.title, startedAt: previous.at.toISOString() } : null,
       items: lines.slice(0, ADHERENCE_AGENDA_MAX).map((text) => ({ text })),
       transcriptLines: n,
-      transcriptFits: n > 0 && n <= ADHERENCE_TRANSCRIPT_LINES_MAX && bytes <= ADHERENCE_TRANSCRIPT_BYTES_MAX,
+      // An estimate for the button (the text, the framing of each line and room for the agenda); the exact count is made when the check is asked, and a transcript that passes here but not there is told so and no run starts.
+      transcriptFits: n > 0 && n <= ADHERENCE_TRANSCRIPT_LINES_MAX && bytes + 48 * n + 3_000 <= ADHERENCE_TRANSCRIPT_BYTES_MAX,
     });
   },
 });
@@ -106,6 +107,7 @@ export const adherenceFacts = defineQuery({
   input: zAdherenceAsk,
   access: ROLES,
   sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input): Promise<AdherenceFacts> => {
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
@@ -127,7 +129,9 @@ export const adherenceFacts = defineQuery({
     if (rows.length === 0) return none('no_transcript');
     if (rows.length > ADHERENCE_TRANSCRIPT_LINES_MAX) return none('too_long');
     const transcript = rows.map((r, index) => ({ n: index + 1, startSeconds: r.startSeconds, text: oneLine(r.text, ADHERENCE_TRANSCRIPT_LINE_CHARS) }));
-    if (transcript.reduce((sum, line) => sum + Buffer.byteLength(line.text, 'utf8'), 0) > ADHERENCE_TRANSCRIPT_BYTES_MAX) return none('too_long');
+    // The size of what the model is given, counted the way the agent counts it (the clock of a line is at most 7 characters), so a check that passes here is never refused after its run has started.
+    const sent = JSON.stringify({ agenda: agenda.map((a) => ({ n: a.n, text: a.text })), transcript: transcript.map((l) => ({ n: l.n, t: '0:00:00', text: l.text })) });
+    if (Buffer.byteLength(sent, 'utf8') > ADHERENCE_TRANSCRIPT_BYTES_MAX) return none('too_long');
     return zAdherenceFacts.parse({ eligible: true, reason: null, agenda, transcript });
   },
 });

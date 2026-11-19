@@ -26,14 +26,19 @@ export function adherenceFailureKey(code: string | null): (typeof KNOWN_FAILURES
   return (KNOWN_FAILURES as readonly string[]).includes(code ?? '') ? (code as (typeof KNOWN_FAILURES)[number]) : 'default';
 }
 
-/** The lines the recorder typed, as they are sent: one per line, trimmed, empty ones dropped, each cut at the limit, at most eight. */
-export function typedLines(text: string): string[] {
-  return text
+const nonEmptyLines = (text: string): string[] =>
+  text
     .split(/\r?\n/u)
     .map((line) => Array.from(line.trim()).slice(0, ADHERENCE_LINE_CHARS).join(''))
-    .filter((line) => line !== '')
-    .slice(0, ADHERENCE_TYPED_MAX);
+    .filter((line) => line !== '');
+
+/** The lines the recorder typed, as they are sent: one per line, trimmed, empty ones dropped, each cut at the limit, at most eight. */
+export function typedLines(text: string): string[] {
+  return nonEmptyLines(text).slice(0, ADHERENCE_TYPED_MAX);
 }
+
+/** Whether more lines were typed than are sent (the ninth and the rest are left out), so the box can say so. */
+export const typedOverflow = (text: string): boolean => nonEmptyLines(text).length > ADHERENCE_TYPED_MAX;
 
 // The server's reason with the recorder's own one folded into "off" (only the recorder is shown this card), in the shape the shared blocked text knows.
 const asAsk = (status: AdherenceStatus) => ({ enabled: status.enabled, reason: status.reason === 'not_recorder' ? ('off' as const) : status.reason });
@@ -70,10 +75,16 @@ export function MeetingAdherence({ meetingId, isRecorder, onJump }: { meetingId:
           </label>
           <Textarea id="adherence-typed" value={text} onChange={(event) => setText(event.target.value)} rows={3} placeholder={t('typedPlaceholder')} data-testid="adherence-typed" />
           <p className="text-xs text-muted-foreground">{t('typedHint', { chars: String(ADHERENCE_LINE_CHARS) })}</p>
+          {typedOverflow(text) && (
+            <p className="text-xs text-muted-foreground" role="status" data-testid="adherence-typed-overflow">
+              {t('typedOverflow', { max: String(ADHERENCE_TYPED_MAX) })}
+            </p>
+          )}
         </div>
         {lines === 0 && <p className="text-xs text-muted-foreground" data-testid="adherence-no-agenda">{t('noAgenda')}</p>}
         {!data.transcriptFits && <p className="text-xs text-muted-foreground" data-testid="adherence-too-long">{t('transcriptTooLong')}</p>}
-        <Vy meetingId={meetingId} typed={typed} ready={lines > 0 && data.transcriptFits} onJump={onJump} />
+        {/* Keyed by the typed lines: an answer to other lines is gone as soon as they change, so the page never shows an answer beside a box it does not match. */}
+        <Vy key={typed.join('\n')} meetingId={meetingId} typed={typed} ready={lines > 0 && data.transcriptFits} onJump={onJump} />
       </CardContent>
     </Card>
   );

@@ -26,16 +26,14 @@ describe('checkAdherence', () => {
     });
   });
 
-  it('treats an agenda line the model did not mention as not heard, without counting a drop (no claim was made)', () => {
-    const out = checkAdherence('{"items":[{"n":2,"covered":true,"lines":[4]}]}', 3, 4);
-    expect(out.items.map((i) => i.covered)).toEqual([false, true, false]);
-    expect(out.dropped).toBe(0);
+  it('refuses a list that leaves an agenda line out, an empty one included: "nothing covered" is never shown for a list the model did not answer', () => {
+    for (const raw of ['{"items":[]}', '{"items":[{"n":2,"covered":true,"lines":[4]}]}', '{"items":[{"n":1,"covered":false},{"n":2,"covered":false}]}']) expect(() => checkAdherence(raw, 3, 4), raw).toThrow(AdherenceError);
   });
 
   it('drops a covered claim with no citation, an empty one, a line off the list, a non-integer, or more than three lines, and counts each', () => {
     const cases = ['{"n":1,"covered":true}', '{"n":1,"covered":true,"lines":[]}', '{"n":1,"covered":true,"lines":[0]}', '{"n":1,"covered":true,"lines":[5]}', '{"n":1,"covered":true,"lines":[1.5]}', '{"n":1,"covered":true,"lines":["2"]}', '{"n":1,"covered":true,"lines":[1,2,3,4]}', '{"n":1,"covered":true,"lines":null}'];
     for (const entry of cases) {
-      const out = checkAdherence(`{"items":[${entry}]}`, 3, 4);
+      const out = checkAdherence(`{"items":[${entry},{"n":2,"covered":false},{"n":3,"covered":false}]}`, 3, 4);
       expect(out.items[0], entry).toEqual({ n: 1, covered: false, lines: [] });
       expect(out.dropped, entry).toBe(1);
     }
@@ -63,7 +61,7 @@ describe('checkAdherence', () => {
       '{"items":[{"n":1,"covered":true,"lines":[2],"why":"x"}]}',
       '{"items":[{"n":0,"covered":false}]}',
       '{"items":[{"n":4,"covered":false}]}',
-      '{"items":[{"n":1,"covered":false},{"n":1,"covered":false}]}',
+      '{"items":[{"n":1,"covered":false},{"n":1,"covered":false},{"n":2,"covered":false}]}',
       '{"items":[{"n":"1","covered":false}]}',
       '{"items":[{"n":1,"covered":"yes","lines":[2]}]}',
       '{"items":[{"covered":false}]}',
@@ -76,7 +74,7 @@ describe('checkAdherence', () => {
   });
 
   it('carries no score, percentage or per-person figure: the result holds only item numbers, a boolean and line numbers', () => {
-    const out = checkAdherence('{"items":[{"n":1,"covered":true,"lines":[2]}]}', 3, 4);
+    const out = checkAdherence('{"items":[{"n":1,"covered":true,"lines":[2]},{"n":2,"covered":false},{"n":3,"covered":false}]}', 3, 4);
     expect(Object.keys(out).sort()).toEqual(['dropped', 'items']);
     for (const item of out.items) expect(Object.keys(item).sort()).toEqual(['covered', 'lines', 'n']);
   });

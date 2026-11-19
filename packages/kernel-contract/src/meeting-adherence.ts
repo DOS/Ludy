@@ -16,7 +16,7 @@ export const ADHERENCE_LINE_CHARS = 200;
 // What the model reads of the transcript: a longer one is refused before any call, never cut (a cut transcript would make "not heard" false).
 export const ADHERENCE_TRANSCRIPT_LINES_MAX = 700;
 export const ADHERENCE_TRANSCRIPT_BYTES_MAX = 120_000;
-export const ADHERENCE_TRANSCRIPT_LINE_CHARS = 400;
+export const ADHERENCE_TRANSCRIPT_LINE_CHARS = 600;
 // The most transcript lines one agenda line may cite.
 export const ADHERENCE_CITES_MAX = 3;
 // What one check is expected to use (the instruction, up to 12 short agenda lines and up to 120 KB of transcript, a short JSON answer), for the cost shown before the click. An estimate, not a promise.
