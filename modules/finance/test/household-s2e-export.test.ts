@@ -76,7 +76,7 @@ describe('the S2e-HKD workbook', () => {
 
   it('keeps text as text, never a formula', async () => {
     const rows = await rowsOf(book());
-    const evil = rows.find((r) => r[DESC].includes('HYPERLINK'))!;
+    const evil = rows.find((r) => r[DESC]?.includes('HYPERLINK'))!;
     expect(evil[DESC]).toBe('=HYPERLINK("http://evil")');
   });
 
