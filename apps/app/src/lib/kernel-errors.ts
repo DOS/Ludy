@@ -28,8 +28,12 @@ export const KERNEL_ERROR_CODES = [
   'EXTENSION_TOKEN_INVALID',
   'EXTENSION_TOKEN_NOT_FOUND',
   'MCP_GRANT_NOT_FOUND',
+  // An AI app connected over MCP has too many proposals waiting for approval (ADR-0051 decision 10).
+  'MCP_PROPOSAL_CAP',
   'MCP_GRANT_TOO_MANY',
   'MCP_WAKE_GRANT_NOT_FOUND',
+  // A line's wake-up event for a connection that does not hold that line's permission (ADR-0051 decision 13).
+  'MCP_WAKE_SCOPE',
   'MCP_WAKE_NOT_FOUND',
   'MCP_WAKE_TOO_SOON',
   // A member's minutes webhook (Meetings A6, #3164).
@@ -343,6 +347,7 @@ export const KERNEL_ERROR_CODES = [
   'HOUSEHOLD_PROFILE_LOCKED',
   'HOUSEHOLD_BOOK_NOT_REQUIRED',
   'HOUSEHOLD_TRADES_CHANGED',
+  'HOUSEHOLD_S2D_MONTH_ONLY',
   'HOUSEHOLD_VAT_CUT_CHANGED',
   // The 01/CNKD quarterly return worksheet (#2518).
   'HOUSEHOLD_RETURN_NOT_REQUIRED',

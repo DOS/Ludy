@@ -10,6 +10,8 @@ import { zMarketplaceBalanceInput, type MarketplaceBalance } from '@crove/kernel
 import type { MemberRole } from '@crove/db';
 import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { money } from '@crove/l10n-vn';
+import { feeAge, type FeeLine } from './domain/marketplace-fee-age.ts';
+import { databaseToday } from './period-lock.ts';
 import { MARKETPLACE_POSTING_MAPS } from './marketplace-posting-map.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -41,6 +43,16 @@ export async function loadMarketplaceBalance(ctx: QueryContext, legalEntityId: s
     .where((eb) => eb.or([eb('l.account_code', 'like', `${RECEIVABLE}%`), eb('l.account_code', 'like', `${FEES_AWAITING}%`)]))
     .groupBy(sql`1, 2, 3, 4`)
     .execute();
+  // The platforms' lines on 331 with their dates, for the age of the fees nobody has invoiced yet (a reversal counts like any line: it takes back what it reverses, on its own date).
+  const feeLines = await ctx.trx
+    .selectFrom('crove_finance.journal_line as l')
+    .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .select(['l.legal_entity_id', 'l.party_id', 'j.entry_date as date', 'l.debit', 'l.credit'])
+    .where('l.org_id', '=', ctx.orgId)
+    .where('l.party_id', 'in', linked.map((l) => l.party_id))
+    .where('l.account_code', 'like', `${FEES_AWAITING}%`)
+    .execute();
+  const today = await databaseToday(ctx.trx);
   const rows = linked.map((link) => {
     let sales = money('0');
     let paid = money('0');
@@ -60,6 +72,10 @@ export async function loadMarketplaceBalance(ctx: QueryContext, legalEntityId: s
         paid = paid.plus(credit);
       }
     }
+    const mine: FeeLine[] = feeLines
+      .filter((l) => l.legal_entity_id === link.legal_entity_id && l.party_id === link.party_id)
+      .map((l) => ({ date: String(l.date).slice(0, 10), debit: String(l.debit), credit: String(l.credit) }));
+    const age = feeAge(mine, today);
     return {
       legalEntityId: link.legal_entity_id,
       platform: link.platform,
@@ -68,6 +84,9 @@ export async function loadMarketplaceBalance(ctx: QueryContext, legalEntityId: s
       paidOut: paid.toFixed(),
       awaitingPayout: sales.minus(paid).toFixed(),
       feesAwaitingInvoice: fees.toFixed(),
+      oldestFeeDate: age.oldestFeeDate,
+      feesAgeDays: age.feesAgeDays,
+      feesOverdue: age.feesOverdue,
     };
   });
   return { rows };

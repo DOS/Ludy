@@ -2,6 +2,8 @@
 // The account map of a marketplace's money (#2516, ADR-0045 point 6, plan docs/plan/stock-and-marketplaces.md section 8.4), keyed by the books regime like PAYROLL_POSTING_MAPS.
 // Every row is `commentary`: from the plan's text, not yet confirmed by the accountant (#2520). Until a person flips a map to `confirmed` (a reviewed change of this file), nothing is
 // posted from it: requireConfirmedMarketplaceMap refuses with MARKETPLACE_POSTING_MAP_UNCONFIRMED, as hr and finance do for the pay accounts (HR_POSTING_MAP_UNCONFIRMED).
+// The gate is per path (#3711 slice 1): each posting asks only for the rows it uses, so a path opens when ITS rows are confirmed and the household tax path (whose debit account is still the
+// accountant's choice) stays closed without holding the rest.
 import { DomainError } from '@crove/kernel-runtime';
 
 export type MarketplaceMapStatus = 'commentary' | 'confirmed';
@@ -31,10 +33,11 @@ export interface MarketplacePostingMap {
   taxWithheld: MarketplaceAccount;
   // The VAT the platform withheld for a household seller, credited at the settlement posting (#2516 slice C2; the payout debits it, so it nets to zero): Dr 511 / Cr 3331.
   vatPayable: MarketplaceAccount;
-  // The PIT the platform withheld for a household seller, credited at the settlement posting: Dr pitExpense / Cr 3335.
+  // The PIT the platform withheld for a household seller, credited at the settlement posting: Dr pitOwnerEquity / Cr 3335.
   pitPayable: MarketplaceAccount;
-  // The debit side of that PIT. A choice for the accountant (#2520): 6422 here, 811 or the owner's drawing account 4212 are the alternatives.
-  pitExpense: MarketplaceAccount;
+  // The debit side of that PIT. The PIT of a household is NEVER an expense of the business: the owner's equity in the internal ledger bears it (research A4 and D2, docs/plan/accounting-rules-research-2026-11-18.md).
+  // Which account is the accountant's call (#2520); the row is a proposal and stays `commentary`, so the household tax path stays closed until it is named.
+  pitOwnerEquity: MarketplaceAccount;
   // The platform fees accrued at month end for an invoice that has not come (#2516 slice F), a general journal voucher a person approves: Dr feeExpense / Cr accruedExpense. 6421 under TT133 (641 under
   // TT99, for which no marketplace map exists yet).
   feeExpense: MarketplaceAccount;
@@ -64,17 +67,37 @@ export const MARKETPLACE_POSTING_MAPS: Readonly<Record<string, MarketplacePostin
     pitPayable: row('3335', 'AI consensus 2026-11-15 (A4): a household seller credits 3335 for the PIT the platform withheld at the settlement posting, so the payout debit nets it to zero.'),
     feeExpense: row('6421', 'AI consensus 2026-11-15 (A1, A2): the platform fees accrued at month end for an invoice that has not come are expensed Dr 6421 under TT133 (641 under TT99), the invoice later nets itself against 331.'),
     accruedExpense: row('335', 'AI consensus 2026-11-15 (A1): Cr 335 for that accrual; it is reversed on the first day of the next month so the invoice\'s own expense is not counted twice.'),
-    pitExpense: row('6422', 'Accounting PO proposal 2026-11-15: the PIT a platform withheld on a household\'s revenue is booked Dr 6422 (taxes and fees of the business), Cr 3335; the accountant decides between 6422, 811 and the owner\'s drawing account 4212 (#2520).'),
+    pitOwnerEquity: row('4212', 'Research 2026-11-18 (A4, D2): the PIT a platform withheld on a household\'s revenue is never an expense; it is booked against the owner\'s equity in the internal ledger, Dr this account / Cr 3335. 4212 is a proposal: the accountant names the account (#2520, #3711), and until then this row stays commentary and the household tax path is closed. It replaces the earlier proposal of 6422 (an expense), which no posting ever used because the gate was closed.'),
   },
 });
 
-// The gate: a regime with no map is refused as unknown, one whose map is not `confirmed` as waiting for the accountant. Returns the map so the caller builds from what it checked.
-export function requireConfirmedMarketplaceMap(regime: string, maps: Readonly<Record<string, MarketplacePostingMap>> = MARKETPLACE_POSTING_MAPS): MarketplacePostingMap {
+// The postings a map gates, each with the rows it posts to (#3711 slice 1). `sales`: the settlement voucher without household tax (131 against 511, a refund reducing 511). `payout`: the money received
+// (cash, fees against the platform's 331, 131 cleared). `fee_accrual`: the month-end accrual of fees not yet invoiced (expense against 335). `household_tax`: the VAT and PIT a platform withheld for a
+// household seller, in the settlement voucher and again in the payout; its debit side is the owner's equity (pitOwnerEquity), not an expense. 333 and the retired 1388 row belong to no path.
+export type MarketplacePath = 'sales' | 'payout' | 'fee_accrual' | 'household_tax';
+type MarketplaceRow = 'receivable' | 'revenue' | 'salesReturn' | 'cash' | 'feePayable' | 'feeAwaitingInvoice' | 'taxWithheld' | 'vatPayable' | 'pitPayable' | 'pitOwnerEquity' | 'feeExpense' | 'accruedExpense';
+
+export const MARKETPLACE_PATH_ROWS: Readonly<Record<MarketplacePath, readonly MarketplaceRow[]>> = Object.freeze({
+  sales: Object.freeze<MarketplaceRow[]>(['receivable', 'revenue', 'salesReturn']),
+  payout: Object.freeze<MarketplaceRow[]>(['receivable', 'cash', 'feePayable']),
+  fee_accrual: Object.freeze<MarketplaceRow[]>(['feeExpense', 'accruedExpense']),
+  household_tax: Object.freeze<MarketplaceRow[]>(['vatPayable', 'pitPayable', 'pitOwnerEquity']),
+});
+
+const ALL_ROWS: readonly MarketplaceRow[] = ['receivable', 'revenue', 'salesReturn', 'cash', 'feePayable', 'feeAwaitingInvoice', 'taxWithheld', 'vatPayable', 'pitPayable', 'pitOwnerEquity', 'feeExpense', 'accruedExpense'];
+
+// The gate: a regime with no map is refused as unknown, one whose map or the rows of the asked paths are not `confirmed` as waiting for the accountant. Returns the map so the caller builds from what it
+// checked. Without `paths` every row is asked (the retired fee clearing still does); a path asks only for its own rows, and the map's own status must be confirmed for any of them.
+export function requireConfirmedMarketplaceMap(
+  regime: string,
+  maps: Readonly<Record<string, MarketplacePostingMap>> = MARKETPLACE_POSTING_MAPS,
+  paths?: readonly MarketplacePath[],
+): MarketplacePostingMap {
   const map = Object.hasOwn(maps, regime) ? maps[regime] : undefined;
   if (!map) throw new DomainError('MARKETPLACE_POSTING_REGIME_UNKNOWN', 422, 'Chế độ kế toán này chưa có bảng tài khoản hạch toán tiền của sàn', { regime });
   // The map and the accounts a proposal posts to must all be confirmed, so flipping only the top flag does not open the gate.
-  const rows = [map.receivable, map.revenue, map.salesReturn, map.cash, map.feePayable, map.feeAwaitingInvoice, map.taxWithheld, map.vatPayable, map.pitPayable, map.pitExpense, map.feeExpense, map.accruedExpense];
-  if (map.status !== 'confirmed' || rows.some((r) => r.status !== 'confirmed')) {
+  const names = paths ? [...new Set(paths.flatMap((path) => MARKETPLACE_PATH_ROWS[path]))] : ALL_ROWS;
+  if (map.status !== 'confirmed' || names.some((name) => map[name].status !== 'confirmed')) {
     throw new DomainError('MARKETPLACE_POSTING_MAP_UNCONFIRMED', 409, 'Bảng tài khoản hạch toán tiền của sàn chưa được kế toán xác nhận: chờ kế toán xác nhận', { regime });
   }
   return map;
