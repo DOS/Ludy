@@ -511,6 +511,7 @@ import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } fr
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
+import { zAdherenceAgenda, zAdherenceAnswer, zAdherenceAsk, zAdherenceRef, zAdherenceStatus } from './meeting-adherence.ts';
 import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import {
   zMeetingHookCleared,
@@ -1338,6 +1339,14 @@ export const contract = {
     assignee: {
       status: oc.input(zBriefEmpty).output(zAssigneeStatus),
       suggest: oc.input(zAssigneeAsk).output(zAssigneeAnswer),
+    },
+    // Agenda adherence (#3959): after a meeting with a transcript the recorder may click once and have their own Vy compare the agenda (the series' open items and up to eight typed lines) with the transcript. `agenda` is the
+    // list the recorder sees before clicking (with AI off too), `status` the button (may Vy be used now), `check` the click. Per agenda line: covered with the transcript lines it cites, or not heard; no score, nothing per
+    // person, nothing stored.
+    adherence: {
+      agenda: oc.input(zAdherenceRef).output(zAdherenceAgenda),
+      status: oc.input(zAdherenceRef).output(zAdherenceStatus),
+      check: oc.input(zAdherenceAsk).output(zAdherenceAnswer),
     },
     // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): no model; code matches by time and a person confirms. `list` is today's meetings, `suggest` the event
     // a recording overlaps, `setReadEvents` the member's switch (the cache is deleted when it goes off), `link` the click that attaches a recorded meeting to its event.
