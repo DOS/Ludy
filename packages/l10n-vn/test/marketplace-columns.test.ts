@@ -61,6 +61,20 @@ describe('what a model may see', () => {
     for (const secret of ['Nguyễn', 'Mua', '0900000001', 'Khách', 'điện thoại']) expect(wire).not.toContain(secret);
   });
 
+  it('shows only shapes for a column whose header is not flagged, so a phone or an email planted there never reaches the model', () => {
+    const planted = grid([
+      ['Mã đơn', 'Ghi chú', 'Liên hệ', 'Số lượng'],
+      ['A1', 'gọi 0900000001', 'mua@example.com', '2'],
+      ['A2', 'Nguyễn Văn Mua', '0900000002', '1'],
+    ]);
+    const sheet = columnSheet(planted);
+    expect(sheet?.columns.map((c) => c.buyer)).toEqual([false, false, false, false]);
+    const wire = JSON.stringify(sheet);
+    for (const secret of ['0900000001', '0900000002', 'mua@example.com', 'example', 'Nguyễn', 'Mua', 'gọi']) expect(wire).not.toContain(secret);
+    expect(sheet?.columns[1]?.samples).toEqual(['aaa 99999999', 'aaaaaa aaa a']);
+    expect(sheet?.columns[2]?.samples).toEqual(['aaa@aaaaaaa.', '9999999999']);
+  });
+
   it('gives nothing for a sheet with no header-like row, a header with no data under it, or too many columns', () => {
     expect(columnSheet(grid([['a', 'b'], ['c', 'd']]))).toBeNull();
     expect(columnSheet(grid([HEAD]))).toBeNull();
