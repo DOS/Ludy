@@ -87,8 +87,21 @@ suite('finance.mcp.open_balances on PostgreSQL (#3849)', () => {
       });
       return doc;
     }
+    // A balance on 131 that no sale invoice covers (a manual entry), for the part allocateReceivable cannot lay under an invoice.
+    async function manualReceivable(partyId: string, date: string, total: string): Promise<void> {
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        const entry = randomUUID();
+        await c.query(`INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'manual', 'finance.test', $4, $5)`, [orgId, entry, date, randomUUID(), entity]);
+        await c.query(
+          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, $4, $5)`,
+          [orgId, entry, total, partyId, entity],
+        );
+        await c.query('COMMIT');
+      });
+    }
     const read = async (userId: string, input: unknown) => rt.query<Record<string, unknown>>('finance.mcp.open_balances', input, { actor: mcp(userId, await grant(userId)), orgId });
-    return { orgId, owner, member, branchAdmin, grant, party, invoice, read };
+    return { orgId, owner, member, branchAdmin, grant, party, invoice, manualReceivable, read };
   }
 
   beforeAll(async () => {
@@ -134,6 +147,17 @@ suite('finance.mcp.open_balances on PostgreSQL (#3849)', () => {
     expect(Object.keys(parties[0]?.buckets ?? {}).sort()).toEqual(BUCKET_KEYS);
     expect(parties[0]?.buckets).toMatchObject({ d61to90: '1000000', notYet: '500000', over90: '0' });
     expect(parties[1]).toMatchObject({ open: '300000', invoiceCount: 1 });
+  });
+
+  it('counts a 131 balance no invoice covers as open and not yet due', async () => {
+    const o = await org();
+    const p = await o.party('Khách số dư đầu kỳ');
+    await o.manualReceivable(p, daysAgo(200), '400000');
+    const out = await o.read(o.owner, { side: 'receivable' });
+    const parties = out.parties as Array<{ partyId: string; open: string; buckets: Record<string, string>; invoiceCount: number }>;
+    expect(parties).toHaveLength(1);
+    expect(parties[0]).toMatchObject({ partyId: p, open: '400000', invoiceCount: 0 });
+    expect(parties[0]?.buckets).toMatchObject({ notYet: '400000', over90: '0' });
   });
 
   it('lists payables per supplier aged by invoice date, capped and flagged as truncated', async () => {
