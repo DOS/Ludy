@@ -160,6 +160,15 @@ describe('the notifications tab of Settings', () => {
     expect(html).toContain(catalog('en').notifications.todayMail.title);
   });
 
+  it('holds the morning notice of the meetings too, where the meetings app runs (#3955 moved here with the other preferences)', () => {
+    state.modules = ['kernel', 'meetings'];
+    const withMeetings = render(<NotificationPreferences />, {});
+    expect(withMeetings).toContain('data-testid="morning-notice-setting"');
+    expect(render(<NotificationsPage />, {})).not.toContain('morning-notice-setting');
+    state.modules = ['kernel'];
+    expect(render(<NotificationPreferences />, {})).not.toContain('morning-notice-setting');
+  });
+
   it('leaves out the kinds of an app the org does not run', () => {
     state.modules = ['kernel'];
     expect(render(<NotificationPreferences />, {})).not.toContain(catalog('en').notifications.kinds.finance_bank_attention);

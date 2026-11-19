@@ -115,7 +115,6 @@ export function NotificationsPage() {
     else if (target?.to === 'conversations') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { status: 'new' } });
     else if (target?.to === 'meeting') void navigate({ to: '/o/$slug/meetings/$id', params: { slug, id: target.id } });
     else if (target?.to === 'meetings') void navigate({ to: '/o/$slug/meetings', params: { slug } });
-    else if (target?.to === 'meetings') void navigate({ to: '/o/$slug/meetings', params: { slug } });
     else if (target?.to === 'ads') void navigate({ to: '/o/$slug/ads', params: { slug } });
     else if (target?.to === 'agents') void navigate({ to: '/o/$slug/agents', params: { slug } });
   };

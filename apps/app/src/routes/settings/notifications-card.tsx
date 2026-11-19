@@ -61,6 +61,8 @@ export function NotificationPreferences() {
       <Anchor id={SETTINGS_CARD.todayMail}>
         <TodayMailSetting />
       </Anchor>
+      {/* The opt-in morning notice of the day's meetings (#3955): the member's own, with the meetings app. */}
+      {meetingsInstalled() && <MorningNoticeSetting muted={muted.includes(MORNING_KIND)} />}
     </>
   );
 }
