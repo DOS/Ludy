@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { AiBudgetExhaustedError } from '@crove/agent';
-import type { ProjectWeeklyStatusSource } from '@crove/mod-projects';
+import { AiBudgetExhaustedError } from '@ludy/agent';
+import type { ProjectWeeklyStatusSource } from '@ludy/mod-projects';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from '../src/project-weekly-status-ai.ts';
 

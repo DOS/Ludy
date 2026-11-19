@@ -3,7 +3,7 @@
 // and the kernel's own overview query is built with them. That kernel.org.overview runs them in each org, as the
 // member, is in clients-social.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { socialOverviewContributions } from '@crove/mod-social';
+import { socialOverviewContributions } from '@ludy/mod-social';
 import { loadConfig } from '../src/config.ts';
 import { moduleDefinitions, overviewContributions } from '../src/kernel.ts';
 

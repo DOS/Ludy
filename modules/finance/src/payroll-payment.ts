@@ -12,10 +12,10 @@
 // No finance code reads a payroll table, and Ludy never initiates a payment: the voucher records one the business made.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { PAYROLL_PAYMENT_COMMAND, PAYROLL_PAYMENT_KINDS, PAYROLL_REGIMES, VOUCHER_KIND, zCashVoucherRequest, zId, zPayrollPaymentProposal } from '@crove/kernel-contract';
-import { money, payrollPaymentReason } from '@crove/l10n-vn';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
+import { PAYROLL_PAYMENT_COMMAND, PAYROLL_PAYMENT_KINDS, PAYROLL_REGIMES, VOUCHER_KIND, zCashVoucherRequest, zId, zPayrollPaymentProposal } from '@ludy/kernel-contract';
+import { money, payrollPaymentReason } from '@ludy/l10n-vn';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 import { buildVoucherProposal, recordVoucherPayload } from './cash-voucher.ts';
 import { payrollCashCheck } from './domain/anomaly.ts';
 import { VOUCHER_SOURCE, voucherTitle } from './domain/cash-voucher.ts';

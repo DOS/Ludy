@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { randomUUID } from 'node:crypto';
-import { consentMethodAllowed, type ConsentMethod, type MeetingLanguage, type MeetingSummaryTemplate, type MeetingVisibility } from '@crove/kernel-contract';
-import { DomainError, type CommandContext } from '@crove/kernel-runtime';
+import { consentMethodAllowed, type ConsentMethod, type MeetingLanguage, type MeetingSummaryTemplate, type MeetingVisibility } from '@ludy/kernel-contract';
+import { DomainError, type CommandContext } from '@ludy/kernel-runtime';
 import { readConsentPolicy, readRetentionSettings, retentionDates } from './retention.ts';
 
 // The one place a meeting row, its consent record and its readers are written. meetings.meeting.create (a recording, an upload, the extension) and meetings.import.start (a recording a

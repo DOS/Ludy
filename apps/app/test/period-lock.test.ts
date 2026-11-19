@@ -1,5 +1,5 @@
 // Period lock on the ledger screen (issue #329): who may lock and unlock, and month and day steps. Today and this month
-// in Vietnam are @crove/kernel-contract vietnamToday and vietnamMonth (#560), tested there.
+// in Vietnam are @ludy/kernel-contract vietnamToday and vietnamMonth (#560), tested there.
 import { describe, expect, it } from 'vitest';
 import { canLockPeriods, monthLabel, nextDay, postingDateAllowed, previousMonth } from '../src/lib/period-lock.ts';
 

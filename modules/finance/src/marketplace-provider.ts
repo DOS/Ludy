@@ -9,9 +9,9 @@
 //
 // Each provider declares static capability data (page size, window and rate per platform), its hosts and the fields the org types to connect. The offline provider reaches no host,
 // asks for no field and serves a small recorded set of orders for each platform: made-up SKUs and names, no buyer data of any kind, amounts as decimal strings, dates as ISO days.
-// A real adapter (a later issue, one per platform with its own review) reaches its platform only through guardedRequest of @crove/kernel-runtime (egress.ts), never with a bare fetch.
-import { MARKETPLACE_PLATFORM_KEYS } from '@crove/kernel-contract';
-import { money, toMoney } from '@crove/l10n-vn';
+// A real adapter (a later issue, one per platform with its own review) reaches its platform only through guardedRequest of @ludy/kernel-runtime (egress.ts), never with a bare fetch.
+import { MARKETPLACE_PLATFORM_KEYS } from '@ludy/kernel-contract';
+import { money, toMoney } from '@ludy/l10n-vn';
 
 export type MarketplacePlatformKey = (typeof MARKETPLACE_PLATFORM_KEYS)[number];
 
@@ -243,7 +243,7 @@ export function createSandboxMarketplaceProvider(options: SandboxMarketplaceOpti
 // A page of orders as the platform's own report
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-// The header and status words of each platform's profile (@crove/l10n-vn, marketplace-orders.ts) that the writer below uses, so the file reads through the same profile as one a seller
+// The header and status words of each platform's profile (@ludy/l10n-vn, marketplace-orders.ts) that the writer below uses, so the file reads through the same profile as one a seller
 // downloads. There is NO buyer column in any layout: a provider's page never carried one into this process, and the report has none to read.
 interface Layout {
   head: readonly string[];

@@ -11,8 +11,8 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { BLOCKING_CHECK_IDS, isRevenueAccount, zAccountCode, zExchangeRate, zId, zLocalDate, zPurchaseProposal, type DocumentDirection, type PurchaseProposal, type RelatedInvoiceRef } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { BLOCKING_CHECK_IDS, isRevenueAccount, zAccountCode, zExchangeRate, zId, zLocalDate, zPurchaseProposal, type DocumentDirection, type PurchaseProposal, type RelatedInvoiceRef } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import {
   PAYABLE_ACCOUNT,
   RECEIVABLE_ACCOUNT,
@@ -25,7 +25,7 @@ import {
   parseTaxCode,
   type JournalLineDraft,
   type ProposedLine,
-} from '@crove/l10n-vn';
+} from '@ludy/l10n-vn';
 import { assertUsableAccounts, isInactiveDefaultRefusal } from './accounts.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';

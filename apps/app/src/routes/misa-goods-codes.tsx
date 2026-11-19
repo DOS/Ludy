@@ -6,11 +6,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { accountParents, isStockAccount, resolveMisaGoodsCodes, type AccountParents, type MisaGoodsCode } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
+import { accountParents, isStockAccount, resolveMisaGoodsCodes, type AccountParents, type MisaGoodsCode } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { accountLabel, type ChartAccount } from '../lib/accounts.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';

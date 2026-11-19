@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What the Ads screen says about a flag (#2378): the numbers each flag is based on, in the reader's language and in the flag's own currency.
 import { describe, expect, it } from 'vitest';
-import type { AdsFlag } from '@crove/kernel-contract';
+import type { AdsFlag } from '@ludy/kernel-contract';
 import { flagKey, flagText, type FlagFormat } from '../src/lib/ads-flags.ts';
 import { translatorFor } from '../src/i18n/runtime.ts';
 

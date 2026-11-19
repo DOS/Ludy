@@ -4,9 +4,9 @@
 // are the statements' own lines (domain/overview.ts builds them with buildB01 and buildB02), read from the same summed balances finance.statements.period
 // reads, in ONE statement (#365) so every card and chart sees the same entries even in the query's READ COMMITTED transaction.
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { zFinanceOverviewInput, type FinanceOverview } from '@crove/kernel-contract';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zFinanceOverviewInput, type FinanceOverview } from '@ludy/kernel-contract';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
 import { buildOverview, overviewMonths, overviewPeriods } from './domain/overview.ts';

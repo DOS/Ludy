@@ -2,8 +2,8 @@
 // first, then its variants), effective content and its hash, state steps, and the post status refresh. Internal to the
 // module; posts.ts and publishing.ts use it.
 import type { Transaction } from 'kysely';
-import type { Database, SocialVariantStatus } from '@crove/db';
-import { DomainError, type CommandContext } from '@crove/kernel-runtime';
+import type { Database, SocialVariantStatus } from '@ludy/db';
+import { DomainError, type CommandContext } from '@ludy/kernel-runtime';
 import { contentHash, effectiveContent, effectiveMedia, inheritedContent, type BaseContent, type PostMedia } from './domain/approval.ts';
 import { REMOVE_AT_MIN_GAP_MS, isProvider, mediaKindOf, removeAtFit, type MediaKind } from './domain/channels.ts';
 import type { QueueSpec } from './domain/queue.ts';

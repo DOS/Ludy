@@ -3,7 +3,7 @@
 // has no HTML sink, apps/app/test/trusted-types.test.ts). Links open only http, https and mailto addresses, in a new
 // tab with rel="noopener noreferrer nofollow"; images are not rendered (no remote image, so no tracking pixel).
 import type { ReactNode } from 'react';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import { INLINE_MARKDOWN, cleanNoteLineText } from './notes.ts';
 
 const SAFE_URL = /^(https?:\/\/|mailto:)/i;

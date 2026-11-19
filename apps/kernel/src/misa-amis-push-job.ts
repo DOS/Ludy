@@ -7,10 +7,10 @@
 // One run: read the AMIS branch (once, when something is queued), ask MISA for the results of the rows it took or whose answer was lost, then send queued batches of at most AMIS_SAVE_BATCH_MAX
 // until none is left. Results come by polling in this slice (the callback route is S4, #3903): the run reports `waiting` while rows wait for MISA's answer, and the worker asks again later.
 // Nothing here logs or stores a credential, a party's name, an amount or MISA's own text other than the capped `reason` of a refused voucher: ids, codes and counts.
-import { AMIS_DICTIONARIES, AmisError, amisErrorText, isOrgRefId, type AmisCallbackResult, type AmisClient, type AmisConnection } from '@crove/misa-amis';
-import { MISA_AMIS_PREVIEW_LIMIT, type MisaAmisPreviewAsk } from '@crove/kernel-contract';
-import { amisContextOf, amisPartRows, loadAmisEntries, MISA_AMIS_CHANNEL_PROVIDER, type AmisPartRow, type MisaAmisPushBegin, type MisaAmisPushRecord, type MisaAmisPushTarget } from '@crove/mod-finance';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { AMIS_DICTIONARIES, AmisError, amisErrorText, isOrgRefId, type AmisCallbackResult, type AmisClient, type AmisConnection } from '@ludy/misa-amis';
+import { MISA_AMIS_PREVIEW_LIMIT, type MisaAmisPreviewAsk } from '@ludy/kernel-contract';
+import { amisContextOf, amisPartRows, loadAmisEntries, MISA_AMIS_CHANNEL_PROVIDER, type AmisPartRow, type MisaAmisPushBegin, type MisaAmisPushRecord, type MisaAmisPushTarget } from '@ludy/mod-finance';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.misa_amis' };
 

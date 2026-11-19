@@ -6,8 +6,8 @@
 // and nothing it takes or returns is a token: ids, states, counts and error codes.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, type AdsTokenRevokeView } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zId, type AdsTokenRevokeView } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { settleAttempt, type RevokeOutcome } from './token-revoke.ts';
 
 const zOutcome = z.discriminatedUnion('kind', [

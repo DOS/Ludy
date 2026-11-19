@@ -125,11 +125,11 @@ import {
   type SavedReplyListed,
   type SavedReplyView,
   hasNamePlaceholder,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { z } from 'zod';
-import { zId, zTodayItems, type TodayItem } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, conversationKey, defineCommand, defineQuery, newConversationBlobId, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { zId, zTodayItems, type TodayItem } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, conversationKey, defineCommand, defineQuery, newConversationBlobId, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { parseBusinessAccounts } from './channels.ts';
 import { createMailMessage } from './mail.ts';
 import { notifyMembers, ownersAndAdmins } from './notifications.ts';

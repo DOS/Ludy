@@ -6,7 +6,7 @@
 // A quote leaves `draft` in one place only, crm.quote.send (Q2, #2694): it takes the number, writes the buyer snapshot and the issuing entity, and, for a revision,
 // replaces the older quote. Accepting and declining are Q4. The database holds the line (a guard trigger lets a tenant role make exactly those transitions, and
 // freezes a quote and its lines once it is sent). The totals are computed here by the rule of
-// @crove/l10n-vn (the one an e-invoice draft uses), never taken from the caller. The audit rows and the timeline hold ids and counts, never a customer
+// @ludy/l10n-vn (the one an e-invoice draft uses), never taken from the caller. The audit rows and the timeline hold ids and counts, never a customer
 // value, a price or a line text.
 import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
@@ -48,11 +48,11 @@ import {
   type QuoteSetting,
   type QuoteStatus,
   type QuoteSummary,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { createMailMessage } from '@crove/kernel';
-import { computeLineTotals, money, normalizeVatRate, sumLineTotals } from '@crove/l10n-vn';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { createMailMessage } from '@ludy/kernel';
+import { computeLineTotals, money, normalizeVatRate, sumLineTotals } from '@ludy/l10n-vn';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { QUOTE_MAIL_SOURCE, QUOTE_MAIL_TEMPLATE, zQuoteMail } from './quote-mail.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

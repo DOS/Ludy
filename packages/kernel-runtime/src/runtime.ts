@@ -6,7 +6,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { SubjectKeyError, SubjectVault, parseSealed } from './subject-vault.ts';
 import { keyedHash } from './keyed-hash.ts';
 import type { z } from 'zod';
-import { contextTaint, singleCell, type CellResolver, type Database, type Db, type MemberRole } from '@crove/db';
+import { contextTaint, singleCell, type CellResolver, type Database, type Db, type MemberRole } from '@ludy/db';
 import { DomainError, toDomainError } from './errors.ts';
 import { eventPayloadProblem, normalizeEventPayload } from './event-payload.ts';
 import { sha256Hex } from './storage.ts';
@@ -317,7 +317,7 @@ export interface CommandDef<I = unknown, O = unknown> {
   // definer it calls or a trigger they fire, with the columns they set (database defaults and the columns triggers
   // derive aside). The rows the runtime writes for it (ctx.emit, ctx.activity, ctx.audit, ctx.numbering, its audit row)
   // are not listed, and a nested command declares its own. Each entry carries the classes of its table from the
-  // module's manifest (tableWrite() in @crove/kernel-contract builds it); register() refuses a column the classes do
+  // module's manifest (tableWrite() in @ludy/kernel-contract builds it); register() refuses a column the classes do
   // not have, an unknown class, a table listed twice or an empty column list, and, on a runtime given the manifests
   // (RuntimeOptions.manifests), a table no manifest has or classes that are not its manifest's (#1710). An empty list
   // says the command writes no table (only the runtime's rows for it). An agent's proposal of the command is
@@ -354,7 +354,7 @@ export interface AgentApprovers {
   roles: readonly string[];
 }
 
-// One table a command writes (CommandDef.writes): the shape of TableWrite in @crove/kernel-contract.
+// One table a command writes (CommandDef.writes): the shape of TableWrite in @ludy/kernel-contract.
 export interface CommandWrite {
   // `<schema>.<table>`.
   readonly table: string;
@@ -364,7 +364,7 @@ export interface CommandWrite {
   readonly columns: readonly string[];
 }
 
-// The data classes of the manifests (DATA_CLASSES in @crove/kernel-contract, which this package does not import;
+// The data classes of the manifests (DATA_CLASSES in @ludy/kernel-contract, which this package does not import;
 // apps/kernel/test/invariant/command-writes.test.ts checks the two lists are the same).
 export const WRITE_DATA_CLASSES = Object.freeze(['internal', 'pii', 'contact', 'payment', 'national_id', 'national_id_if_individual', 'sensitive'] as const);
 // The classes whose write is policy P04 (plan §4.7: changing a payee, bank account or contact point).

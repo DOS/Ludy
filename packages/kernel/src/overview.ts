@@ -17,9 +17,9 @@
 // read (an error, the statement timeout) is one error row, not a failed screen (#495).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { nextVatDeadline, vietnamToday, type TaxDueView, type VatDeadline, type VatFilingPeriod } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type Runtime, type UserActor } from '@crove/kernel-runtime';
+import { nextVatDeadline, vietnamToday, type TaxDueView, type VatDeadline, type VatFilingPeriod } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { fileStatuses } from './file-status.ts';
 import { offAppsOf, proposalOfApp } from './org-apps.ts';
 import { sessionOrgs } from './commands.ts';

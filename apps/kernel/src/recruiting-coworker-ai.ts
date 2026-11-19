@@ -15,10 +15,10 @@ import {
   type InboxReader,
   type RecruitingBriefAiReason,
   type RecruitingBriefResult,
-} from '@crove/agent';
-import type { HrRecruitingBriefAsk, HrRecruitingBriefResult } from '@crove/kernel-contract';
-import { DomainError } from '@crove/kernel-runtime';
-import type { HrRecruitingBriefSnapshot } from '@crove/mod-hr';
+} from '@ludy/agent';
+import type { HrRecruitingBriefAsk, HrRecruitingBriefResult } from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
+import type { HrRecruitingBriefSnapshot } from '@ludy/mod-hr';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface RecruitingBriefAi {

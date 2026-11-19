@@ -3,7 +3,7 @@
 // character references are decoded afterwards, by hand, in text only. What comes back is the feed's title and its
 // newest items (key, title, link, date, a plain-text summary and an image), each capped; the worker checks them again.
 import { XMLParser } from 'fast-xml-parser';
-import { EXTRACT_LIMITS, type ExtractedFeed } from '@crove/extract-contract';
+import { EXTRACT_LIMITS, type ExtractedFeed } from '@ludy/extract-contract';
 
 export class FeedError extends Error {}
 

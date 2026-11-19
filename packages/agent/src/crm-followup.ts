@@ -11,7 +11,7 @@
 // - the whole draft, after it is composed: it must be exactly what the composition makes of the facts and the words, hold no figure the facts do not hold, no link but the facts' own link,
 //   and hold the exact total and the link when the facts have a quote. A draft that fails is refused, and the person gets the fixed words with the same facts.
 // So even a model that tried to state a price or to point at another address cannot put a figure or a link in front of a customer that the books do not hold. Nothing is sent here.
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import { reminderTextProblem } from './reminder.ts';
 

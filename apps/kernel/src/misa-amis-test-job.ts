@@ -4,11 +4,11 @@
 // What is recorded is a state (works, wrong_credentials, unreachable) and a time, never AMIS's own text, a token, a header or the code; the log carries ids and a state too.
 // The three states: "works", "AMIS refused the connection (the access code, or no accounting data connected in AMIS): check it or make a new code and connect again", and "no test could be made (AMIS did not
 // answer, answered with an error of its own, or does not know this deployment's app): try again later, and tell the Ludy administrator if it stays".
-import { AmisError, type AmisClient } from '@crove/misa-amis';
-import type { MisaAmisTestState } from '@crove/kernel-contract';
-import type { MisaAmisTestTarget } from '@crove/mod-finance';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { MISA_AMIS_CHANNEL_PROVIDER } from '@crove/mod-finance';
+import { AmisError, type AmisClient } from '@ludy/misa-amis';
+import type { MisaAmisTestState } from '@ludy/kernel-contract';
+import type { MisaAmisTestTarget } from '@ludy/mod-finance';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
+import { MISA_AMIS_CHANNEL_PROVIDER } from '@ludy/mod-finance';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.misa_amis' };
 

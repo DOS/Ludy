@@ -4,7 +4,7 @@
 // apps/kernel/test/manifest.db.test.ts checks it against the catalog. A column is internal unless the second argument of
 // columns() classifies it. The module stores no personal data (plan section 9): the figures are aggregates, and the names
 // of accounts and campaigns are text the owner typed on the platform, so internal.
-import { MODULE_SCREENS, columns, defineModule } from '@crove/kernel-contract';
+import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const adsManifest = defineModule({
   id: 'ads',
@@ -96,6 +96,6 @@ export const adsManifest = defineModule({
     // The change of a running ad, which the manage job's two commands name as their audit target (W4).
     { type: 'ads.ad_manage_change', table: 'ad_manage_change', legalEntityScoped: true, audit: 'command' },
   ],
-  // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
+  // Its screens in the app and its menu items (#1652), kept with the other modules' in @ludy/kernel-contract.
   ...MODULE_SCREENS.ads,
 });

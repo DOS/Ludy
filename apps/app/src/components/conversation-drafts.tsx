@@ -15,13 +15,13 @@ import {
   type ConversationDetail,
   type ConversationDraftView,
   type SavedReplyView,
-} from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { Textarea } from '@crove/ui/components/textarea';
+} from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { ErrorText, Spinner } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';

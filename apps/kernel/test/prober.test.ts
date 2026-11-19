@@ -4,7 +4,7 @@ import { createServer, type Server } from 'node:http';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryAlertGate } from '../src/alert-gate.ts';
 import { alertPayload, deliverAlert } from '../src/alert.ts';
-import { createS3Client } from '@crove/kernel-runtime';
+import { createS3Client } from '@ludy/kernel-runtime';
 import {
   EXIT,
   checkAuth,
@@ -27,8 +27,8 @@ import type { AlertGate } from '../src/alert-gate.ts';
 import { archiveKey, type ArchiveS3Sender, type ArchiveStore } from '../src/worm.ts';
 
 // The real client, with its calls recorded: the prober's wiring of timeouts is checked on what it hands the factory.
-vi.mock('@crove/kernel-runtime', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@crove/kernel-runtime')>();
+vi.mock('@ludy/kernel-runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@ludy/kernel-runtime')>();
   return { ...actual, createS3Client: vi.fn(actual.createS3Client) };
 });
 

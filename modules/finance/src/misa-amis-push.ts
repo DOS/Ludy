@@ -18,10 +18,10 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MISA_AMIS_PREVIEW_LIMIT, zId, zMisaAmisPreviewAsk, type MisaAmisPreviewAsk } from '@crove/kernel-contract';
-import type { MemberRole, MisaAmisPushSource, MisaAmisPushState } from '@crove/db';
-import { AMIS_SAVE_BATCH_MAX } from '@crove/misa-amis';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { MISA_AMIS_PREVIEW_LIMIT, zId, zMisaAmisPreviewAsk, type MisaAmisPreviewAsk } from '@ludy/kernel-contract';
+import type { MemberRole, MisaAmisPushSource, MisaAmisPushState } from '@ludy/db';
+import { AMIS_SAVE_BATCH_MAX } from '@ludy/misa-amis';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { amisBatchDigest, amisContextOf, amisPartRows, loadAmisEntries, type AmisQuery } from './misa-amis-build.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

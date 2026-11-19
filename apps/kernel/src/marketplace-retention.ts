@@ -9,9 +9,9 @@
 // between the two steps repeats the delete (a delete of a missing object is a no-op) and never leaves a file row marked deleted whose object still exists. Safe to run twice.
 // A failing file is left for the next run and never holds the others behind it. Nothing here logs a filename, an order or an amount: ids and counts.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import type { BlobStore, Runtime, SystemActor } from '@crove/kernel-runtime';
-import { MARKETPLACE_ORIGINAL_RETENTION_DAYS } from '@crove/kernel-contract';
+import type { Db } from '@ludy/db';
+import type { BlobStore, Runtime, SystemActor } from '@ludy/kernel-runtime';
+import { MARKETPLACE_ORIGINAL_RETENTION_DAYS } from '@ludy/kernel-contract';
 import { opsAlert } from './ops-alert.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'finance.marketplace_retention' };

@@ -4,7 +4,7 @@
 // call the adapter makes is a GET to graph.facebook.com, and its source names no write.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { GraphError, type Fetch } from '@crove/channel';
+import { GraphError, type Fetch } from '@ludy/channel';
 import { AdPlatformError, MetaAdsConnector, MetaAdsPlatform, META_ADS_SCOPES, adPlatforms, graphHostOnly, isAdPlatformProvider, metaAdsError, platformUserHash } from '../src/index.ts';
 
 const SECRET = JSON.stringify({ accessToken: 'EAAB-token-not-in-urls' });

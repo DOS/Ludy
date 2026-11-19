@@ -14,8 +14,8 @@
 // with TRANSCRIBE_OFF. A kill switch or a spent budget refuses with the kernel's AI_BUDGET_EXHAUSTED, as for every use of Vy. The audit rows and the
 // event carry ids and counts, never text.
 import { sql } from 'kysely';
-import { zTranscribeCancel, zTranscribeRunRef, zTranscribeStart, type TranscribeStatus } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { zTranscribeCancel, zTranscribeRunRef, zTranscribeStart, type TranscribeStatus } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { lockMeetingMedia, markAudioUsed } from './media-record.ts';
 import { vnDay } from './retention.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';

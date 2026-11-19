@@ -9,8 +9,8 @@
 // own capped text for a refusal is the one thing stored, in the machinery table, until the relay is done with it). A verified message is answered 200 whatever its results are, so the answer never tells a caller
 // whether an org_refid exists; the API reads no tenant row at all. `batchError` and every other unsigned field are not passed on.
 import { sql } from 'kysely';
-import { readCallback } from '@crove/misa-amis';
-import type { Runtime } from '@crove/kernel-runtime';
+import { readCallback } from '@ludy/misa-amis';
+import type { Runtime } from '@ludy/kernel-runtime';
 
 // 1000 results of about 300 bytes each, with the envelope and MISA's error texts (each cut at 500 characters): well inside this.
 export const MAX_MISA_AMIS_CALLBACK_BYTES = 1024 * 1024;

@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactNode } from 'react';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_TIME_ZONE, TODO_TITLE_MAX, type MyWork, type Note, type TodoSummary } from '@crove/kernel-contract';
+import { DEFAULT_TIME_ZONE, TODO_TITLE_MAX, type MyWork, type Note, type TodoSummary } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 import { Markdown } from '../src/lib/markdown.tsx';
 import { cleanNoteLineText, extractNoteTodoTitle } from '../src/lib/notes.ts';

@@ -8,10 +8,10 @@
 //   locked yet. The owners and admins, once per period, from an hourly sweep (sweepPeriodClosing).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { nextVatDeadline, zId, zLocalDate, type PortalReconciliation, type VatFilingPeriod } from '@crove/kernel-contract';
-import type { Db } from '@crove/db';
-import { notifyMembers, outboxEvent, ownersAndAdmins } from '@crove/kernel';
-import { DomainError, defineCommand, type Runtime } from '@crove/kernel-runtime';
+import { nextVatDeadline, zId, zLocalDate, type PortalReconciliation, type VatFilingPeriod } from '@ludy/kernel-contract';
+import type { Db } from '@ludy/db';
+import { notifyMembers, outboxEvent, ownersAndAdmins } from '@ludy/kernel';
+import { DomainError, defineCommand, type Runtime } from '@ludy/kernel-runtime';
 
 export const BANK_ATTENTION = 'finance.bank_attention';
 export const PORTAL_ATTENTION = 'finance.portal_attention';

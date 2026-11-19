@@ -2,8 +2,8 @@
 // What a customer's mail carries besides its text (#2758): images are told by their bytes alone (never the name or the MIME type the sender gave),
 // held to the size cap and a count, and every other file is a line of name, size and type with no bytes. No database needed.
 import { describe, expect, it } from 'vitest';
-import { CONVERSATION_ATTACHMENTS_MAX, CONVERSATION_IMAGE_MAX_BYTES } from '@crove/kernel-contract';
-import type { ExtractedEmail } from '@crove/extract-contract';
+import { CONVERSATION_ATTACHMENTS_MAX, CONVERSATION_IMAGE_MAX_BYTES } from '@ludy/kernel-contract';
+import type { ExtractedEmail } from '@ludy/extract-contract';
 import { cleanFileName, mailFilesNote, readMailFiles } from '../src/conversation-mail-files.ts';
 
 import { conversationEventOf } from '../src/inbound.ts';

@@ -24,9 +24,9 @@ import {
   money,
   sum,
   type DecimalValue,
-} from '@crove/l10n-vn';
-import { isStockAccount, resolveMisaGoodsCodes, type AccountParents, type MisaGoodsCode, type ResolvedMisaGoodsCodes, type VoucherType } from '@crove/kernel-contract';
-import { DomainError } from '@crove/kernel-runtime';
+} from '@ludy/l10n-vn';
+import { isStockAccount, resolveMisaGoodsCodes, type AccountParents, type MisaGoodsCode, type ResolvedMisaGoodsCodes, type VoucherType } from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
 import { canonical, roundToCurrency } from './domain/money.ts';
 import { decimalCell, textCell } from './export.ts';
 import { pace, streamWorkbook, type StreamedWorkbook } from './xlsx-stream.ts';

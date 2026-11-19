@@ -8,12 +8,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { todoDueInstant, type NoteSummary, type NoteWritten, type Todo, type TodoSummary, type TodoWritten } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { notesCommands, notesQueries } from '@crove/mod-notes';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { todoDueInstant, type NoteSummary, type NoteWritten, type Todo, type TodoSummary, type TodoWritten } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { sweepNotesReminders } from '../src/notes-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 

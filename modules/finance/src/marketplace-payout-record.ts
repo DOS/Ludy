@@ -13,10 +13,10 @@
 // test registers a set with a confirmed map; the shipped set uses MARKETPLACE_POSTING_MAPS, every row `commentary`, so it refuses. No model call is made: everything here is deterministic over stored facts.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { JOURNAL_VOUCHER_KIND, MARKETPLACE_PAYOUT_COMMAND, zMarketplacePayoutProposal, zMarketplacePayoutRequest, type JournalVoucherProposal, type MarketplacePayoutProposal } from '@crove/kernel-contract';
-import { Decimal, money } from '@crove/l10n-vn';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
+import { JOURNAL_VOUCHER_KIND, MARKETPLACE_PAYOUT_COMMAND, zMarketplacePayoutProposal, zMarketplacePayoutRequest, type JournalVoucherProposal, type MarketplacePayoutProposal } from '@ludy/kernel-contract';
+import { Decimal, money } from '@ludy/l10n-vn';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 import { assertUsableAccounts } from './accounts.ts';
 import { bankLineStates, findBankLine, lockBankLine, type StoredBankLine } from './bank-match.ts';
 import { journalVoucherTitle } from './domain/journal-voucher.ts';

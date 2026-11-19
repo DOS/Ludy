@@ -14,9 +14,9 @@
 // and turn kinds off (kernel.notification.mute); a restrictive policy keeps each member to their own rows.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { isAdProviderId, zId, zNotificationKind } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { isAdProviderId, zId, zNotificationKind } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { eligibleApprovers } from './approval.ts';
 import { uploaderEntity } from './extraction.ts';
 import { offAppsOf } from './org-apps.ts';

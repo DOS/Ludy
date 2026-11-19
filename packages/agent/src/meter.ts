@@ -13,7 +13,7 @@
 // document or a model's answer.
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { NoObjectGeneratedError } from 'ai';
-import { Decimal } from '@crove/l10n-vn';
+import { Decimal } from '@ludy/l10n-vn';
 
 // Every use of a model, by feature key ('<module>.<what>'), with the module whose budget it counts against. A new use
 // (Marketing's campaign drafts, Vy's reply drafts, the daily brief) is added here first.

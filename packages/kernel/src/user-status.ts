@@ -5,8 +5,8 @@
 // and the why is a code (#1949, ADR-0017): the operator's own words are about a person and an audit row outlives every
 // erasure, so they stay on the account (user_account.status_reason, mutable).
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { defineCommand } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { defineCommand } from '@ludy/kernel-runtime';
 
 // Why an account was blocked or unblocked, as the audit row keeps it.
 export const USER_STATUS_CODES = ['security', 'abuse', 'request', 'offboarding', 'other'] as const;

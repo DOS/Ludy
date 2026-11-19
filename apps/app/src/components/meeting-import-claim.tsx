@@ -5,7 +5,7 @@
 // "not_claimed" and is imported again. Nothing here calls a model or starts a recording.
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import { ErrorText } from './ui.tsx';
 import { claimImportedMedia, claimImportedTranscript, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isBenignClaimRefusal, rowsToClaim } from '../lib/meeting-platform.ts';

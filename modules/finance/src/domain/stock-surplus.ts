@@ -3,8 +3,8 @@
 // Cr 3381 (domain/stock-count.ts); a person then decides where the 3381 balance of that count goes, and the resolution is ONE general journal voucher: Dr 3381 / Cr 711 (the default), 3388
 // or 331 (the goods were a supplier's, so the line names the supplier). Money is decimal.js and whole dong. The amount is never typed: it is the sum of the positive adjustments the count made,
 // worked out again from the books at the request and at the approval.
-import type { JournalVoucherProposal, SurplusAccount } from '@crove/kernel-contract';
-import { money } from '@crove/l10n-vn';
+import type { JournalVoucherProposal, SurplusAccount } from '@ludy/kernel-contract';
+import { money } from '@ludy/l10n-vn';
 import { SURPLUS_ACCOUNT } from './stock-count.ts';
 
 const SURPLUS_ACCOUNT_SET: readonly SurplusAccount[] = ['711', '3388', '331'];

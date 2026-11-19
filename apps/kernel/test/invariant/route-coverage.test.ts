@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { Hono } from 'hono';
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
-import { DomainError, EXTENSION_SCOPES, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { DomainError, EXTENSION_SCOPES, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import type { AuthUser } from '../../src/auth.ts';
 import { EXTENSION_ROUTES } from '../../src/auth-extension.ts';
 import { loadConfig } from '../../src/config.ts';

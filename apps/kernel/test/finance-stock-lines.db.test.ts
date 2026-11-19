@@ -8,12 +8,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 

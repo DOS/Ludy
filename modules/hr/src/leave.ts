@@ -11,8 +11,8 @@ import {
   type LeaveBalanceResult,
   type LeaveEntry,
   type PayrollRule,
-} from '@crove/l10n-vn';
-import type { MemberRole } from '@crove/db';
+} from '@ludy/l10n-vn';
+import type { MemberRole } from '@ludy/db';
 import {
   tableWrite,
   zHrLeaveBalanceAsk,
@@ -23,8 +23,8 @@ import {
   type HrLeaveEntryView,
   type HrLeaveWorkweek,
   type HrLeaveWritten,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso, monthStart } from './payroll-dates.ts';
 

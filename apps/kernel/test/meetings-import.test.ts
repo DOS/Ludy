@@ -3,9 +3,9 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { MeetingPlatformError, SandboxMeetingPlatform, ZoomMeetingPlatform, type MeetingPlatformAdapter, type MeetingPlatformDownload } from '@crove/channel';
-import { MEETING_PLATFORM_IMPORT_MAX_BYTES } from '@crove/kernel-contract';
-import { DomainError, EgressError, type EgressStream } from '@crove/kernel-runtime';
+import { MeetingPlatformError, SandboxMeetingPlatform, ZoomMeetingPlatform, type MeetingPlatformAdapter, type MeetingPlatformDownload } from '@ludy/channel';
+import { MEETING_PLATFORM_IMPORT_MAX_BYTES } from '@ludy/kernel-contract';
+import { DomainError, EgressError, type EgressStream } from '@ludy/kernel-runtime';
 import { MEETINGS_IMPORT_CONCURRENCY, runMeetingsImport, type MeetingsImportDeps, type MeetingsImportJob } from '../src/meetings-import.ts';
 
 const KEY = `staging/${'a'.repeat(64)}`;

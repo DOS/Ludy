@@ -2,7 +2,7 @@
 // written before #677 (no code) or with a code this SPA does not know keeps its stored sentence, and so does a known
 // code whose parameters are missing.
 import { describe, expect, it } from 'vitest';
-import { INVOICE_CHECK_CODES, type Check } from '@crove/kernel-contract';
+import { INVOICE_CHECK_CODES, type Check } from '@ludy/kernel-contract';
 import { translatorFor } from '../src/i18n/runtime.ts';
 import { invoiceCheckMessage } from '../src/lib/invoice-checks.ts';
 

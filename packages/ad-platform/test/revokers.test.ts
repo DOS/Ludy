@@ -4,7 +4,7 @@
 // other call of a writer. The worker opens a sealed copy of a closed connection's token for those two calls alone.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import type { Fetch } from '@crove/channel';
+import type { Fetch } from '@ludy/channel';
 import { AdPlatformError, MetaAdWriter, adRevokers, revokerOf, sandboxAdWriter, sandboxWriteLogin, type AdWriter } from '../src/index.ts';
 
 const SANDBOX_SECRET = sandboxWriteLogin({ externalAccountId: 'sbxads-0123456789abcdef', currency: 'VND' }).secret;

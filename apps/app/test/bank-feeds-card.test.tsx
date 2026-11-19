@@ -6,7 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BankFeedAccountView, LegalEntity } from '@crove/kernel-contract';
+import type { BankFeedAccountView, LegalEntity } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';

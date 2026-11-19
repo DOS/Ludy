@@ -18,11 +18,11 @@
 // worker logs it as an error; nothing stops, since a lost key is a runbook path (reconnect), not an outage.
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, unwrapMediaKeyWithSubkey, wrapMediaKeyWithSubkey, type CredentialBroker, type MediaKind, type Runtime, type SystemActor } from '@crove/kernel-runtime';
-import { SUBJECT_KEY_RESEAL_BATCH, type SealedChannelCredential } from '@crove/kernel';
-import { MEETING_CHAT_PROVIDER, type ChatTarget } from '@crove/kernel-contract';
-import { CHAT_ALERT_PROVIDER, type SealedChatAlert } from '@crove/mod-social';
+import type { Db } from '@ludy/db';
+import { DomainError, unwrapMediaKeyWithSubkey, wrapMediaKeyWithSubkey, type CredentialBroker, type MediaKind, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
+import { SUBJECT_KEY_RESEAL_BATCH, type SealedChannelCredential } from '@ludy/kernel';
+import { MEETING_CHAT_PROVIDER, type ChatTarget } from '@ludy/kernel-contract';
+import { CHAT_ALERT_PROVIDER, type SealedChatAlert } from '@ludy/mod-social';
 import type { SubjectKeyResealDeps, SubjectKeyResealOutcome } from './subject-key-reseal.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.channel.reseal' };

@@ -10,11 +10,11 @@
 //
 // The honesty rule: a party that is not listed has nothing overdue, so the read REFUSES a caller who cannot see every book. A caller whose legal-entity scope is narrower than the
 // org gets a DomainError with the code SIGNAL_PARTIAL_VIEW, never the part they can see; a caller that is not a user gets FORBIDDEN.
-import { Decimal } from '@crove/l10n-vn';
-import { SIGNAL_PARTIAL_VIEW_CODE, zFinanceOverdueReceivableSignals, zFinanceSalesSignalsInput, type FinanceOverdueReceivableSignal } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+import { Decimal } from '@ludy/l10n-vn';
+import { SIGNAL_PARTIAL_VIEW_CODE, zFinanceOverdueReceivableSignals, zFinanceSalesSignalsInput, type FinanceOverdueReceivableSignal } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { sql } from 'kysely';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { loadCustomers } from './payment-reminders.ts';
 import { databaseToday } from './period-lock.ts';
 

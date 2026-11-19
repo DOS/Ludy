@@ -3,7 +3,7 @@
 // client must stop at (rate limit, block page, outage, oversized or malformed answers), without the portal's words,
 // the password or the token in any error.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { EgressError, type EgressOptions, type EgressResponse, type GuardedRequest } from '@crove/kernel-runtime';
+import { EgressError, type EgressOptions, type EgressResponse, type GuardedRequest } from '@ludy/kernel-runtime';
 import { FAKE_CAPTCHA_ANSWER, FAKE_PORTAL_PASSWORD, startFakeTaxPortal, type FakePortal } from '../../../e2e/fake-tax-portal/server.ts';
 import { TAX_PORTAL_DEFAULT_URL, TaxPortalError, createTaxPortalClient, isOfficialPortal, monthRanges, parsePortalJson, portalBase, testPortalAllowed } from '../src/tax-portal.ts';
 

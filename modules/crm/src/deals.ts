@@ -35,11 +35,11 @@ import {
   type FilterAst,
   type PartyChoice,
   type PipelineStage,
-} from '@crove/kernel-contract';
-import { filterCondition, sortTerms } from '@crove/kernel';
-import type { MemberRole } from '@crove/db';
+} from '@ludy/kernel-contract';
+import { filterCondition, sortTerms } from '@ludy/kernel';
+import type { MemberRole } from '@ludy/db';
 import { z } from 'zod';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { DEAL_DEFAULT_SORT, dealFields, dealSortColumns, dealSortText, dealsAfter } from './deal-filter.ts';
 import { closeNextSteps } from './next-steps.ts';
 import { dealHasQuotes } from './quotes.ts';

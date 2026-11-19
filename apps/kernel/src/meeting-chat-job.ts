@@ -9,9 +9,9 @@
 //   answer that may have been delivered (a timeout, a dropped connection, a server error) is `ambiguous` and is NEVER sent again by the job. A repeat is the recorder's own click, with their tick.
 // - No model is called anywhere on this path: what leaves is what the recorder read and approved.
 // - A failure never touches the meeting or its minutes: it changes this post's row, nothing else. A channel that no longer stands drops the post.
-import { postMinutes, minutesHostAllowed, type MinutesFetch, type MinutesPostResult } from '@crove/channel';
-import { MEETING_CHAT_PROVIDER, zChatBody, type ChatBody, type ChatDeliveryRow, type ChatTarget } from '@crove/kernel-contract';
-import { DomainError, egressFetch, type CredentialBroker, type EgressOptions, type Runtime } from '@crove/kernel-runtime';
+import { postMinutes, minutesHostAllowed, type MinutesFetch, type MinutesPostResult } from '@ludy/channel';
+import { MEETING_CHAT_PROVIDER, zChatBody, type ChatBody, type ChatDeliveryRow, type ChatTarget } from '@ludy/kernel-contract';
+import { DomainError, egressFetch, type CredentialBroker, type EgressOptions, type Runtime } from '@ludy/kernel-runtime';
 
 const ACTOR = { type: 'system' as const, component: 'meetings.chat' };
 const codeOf = (error: unknown) => (error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error');

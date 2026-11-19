@@ -13,7 +13,7 @@
 // No query, audit fact or error carries a credential, a buyer's data or a platform's own text: only ids, counts and states.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zChannelConnect } from '@crove/kernel';
+import { zChannelConnect } from '@ludy/kernel';
 import {
   zId,
   zMarketplaceConnectionRecordPoll,
@@ -21,9 +21,9 @@ import {
   zMarketplacePlatform,
   type MarketplaceConnection,
   type MarketplaceConnectionTested,
-} from '@crove/kernel-contract';
-import type { Db, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { Db, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { MARKETPLACE_ADAPTER_PLATFORMS, isMarketplaceAdapter, type MarketplaceAdapterId, type MarketplacePlatformKey } from './marketplace-provider.ts';
 

@@ -15,7 +15,7 @@
 // - hashed: a keyed hash, not the value; kept so a suppression still holds after the address itself is gone.
 // - not_personal: the name matches the pattern but the column holds no data about a person.
 import { sql, type RawBuilder } from 'kysely';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   FOLLOWUP_MAIL_SOURCE,
   NOTE_BODY_MAX,
@@ -29,8 +29,8 @@ import {
   type PersonalDataErasure,
   type PersonalDataNotice,
   type PersonalDataResult,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const OWNERS: readonly MemberRole[] = ['owner'];

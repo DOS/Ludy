@@ -9,10 +9,10 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@ludy/kernel-runtime';
 import { resealSubjectKeys, unopenableSubjectKeysLog } from '../src/subject-key-reseal.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 

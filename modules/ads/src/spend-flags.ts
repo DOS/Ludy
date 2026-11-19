@@ -5,9 +5,9 @@
 // nothing and calls no model: a flag moves no money and changes no campaign, and the same figures always give the same flags.
 import { z } from 'zod';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import type { AdsFlag } from '@crove/kernel-contract';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import type { AdsFlag } from '@ludy/kernel-contract';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { addDays, todayIn } from './domain.ts';
 import { flagSettingOf } from './flag-settings.ts';
 import { CPR_HISTORY_DAYS, CPR_RECENT_DAYS, accountDaysFrom, evaluateFlags, thresholdsFrom, type FlagCap } from './flags.ts';

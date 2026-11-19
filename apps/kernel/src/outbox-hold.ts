@@ -5,7 +5,7 @@
 // (the choice and the entitlement, asked here in TypeScript). A parked event lives no longer than the outbox retention window: the day's purge deletes it with its day, and the
 // retention job logs how many per app (crove_kernel.outbox_held_expire); the app recovers that work through its own sweeps on switch-on (ADR-0053 section 4).
 import { sql, type Kysely, type Transaction } from 'kysely';
-import type { Database } from '@crove/db';
+import type { Database } from '@ludy/db';
 
 type Db = Transaction<Database> | Kysely<Database>;
 

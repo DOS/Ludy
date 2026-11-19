@@ -8,7 +8,7 @@ import { zTaxDueView } from './tax-calendar.ts';
 export const zId = z.uuid();
 // At most 16 integer digits, the size of the numeric(20,4) money columns.
 export const zMoney = z.string().regex(/^-?\d{1,16}(\.\d{1,8})?$/, 'decimal string');
-// VND per unit of a foreign currency (#918): positive, up to 10 decimals (FX_RATE_SCALE in @crove/mod-finance).
+// VND per unit of a foreign currency (#918): positive, up to 10 decimals (FX_RATE_SCALE in @ludy/mod-finance).
 export const zExchangeRate = z
   .string()
   .regex(/^\d{1,13}(\.\d{1,10})?$/, 'decimal string')
@@ -21,7 +21,7 @@ export function isCalendarDate(value: string): boolean {
   const date = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
 }
-// Same rule as isCalendarDate in @crove/l10n-vn, which does not depend on this package.
+// Same rule as isCalendarDate in @ludy/l10n-vn, which does not depend on this package.
 export const zLocalDate = z.string().refine(isCalendarDate, 'YYYY-MM-DD calendar date');
 // Failed checks that make an invoice impossible to post as-is; confirming them does not help.
 // amount_scale: a VND invoice with an amount below one dong that cannot be rounded (#1282, rounding rule #1308, #2235).
@@ -31,7 +31,7 @@ export const zAccountCode = z.string().regex(ACCOUNT_CODE_PATTERN);
 export const zRole = z.enum(['owner', 'admin', 'member', 'viewer']);
 export const zSlug = z.string().regex(/^[a-z0-9][a-z0-9-]{1,46}[a-z0-9]$/);
 
-// The outcomes of the deterministic invoice checks (@crove/l10n-vn checkInvoice, issue #677), one code per wording.
+// The outcomes of the deterministic invoice checks (@ludy/l10n-vn checkInvoice, issue #677), one code per wording.
 // A check stores its code and parameters, and the SPA renders the sentence in the reader's language from them. The
 // Vietnamese `message` is kept: it is what payloads written before #677 carry, and what the SPA falls back to for a
 // code it does not know.
@@ -62,7 +62,7 @@ export const INVOICE_CHECK_CODES = [
   'signature.unverified',
   'signature.missing',
   // The signature verification in crove-extract (#674): verified (params.signer when a certificate names one), or the
-  // reason it is unverified or not applicable (SIGNATURE_REASONS in @crove/l10n-vn; missing is signature.missing).
+  // reason it is unverified or not applicable (SIGNATURE_REASONS in @ludy/l10n-vn; missing is signature.missing).
   'signature.verified',
   'signature.malformed',
   'signature.ambiguous',
@@ -127,7 +127,7 @@ export const zPartyRef = z.object({
 });
 
 // 'unclassified' (#2091): no rule matched the line, so it has no account yet and cannot be approved as it is.
-// The placeholder account of such a line, in no chart; the same value as UNCLASSIFIED_ACCOUNT in @crove/l10n-vn, which
+// The placeholder account of such a line, in no chart; the same value as UNCLASSIFIED_ACCOUNT in @ludy/l10n-vn, which
 // does not depend on this package (modules/finance/test checks they stay equal).
 export const UNCLASSIFIED_ACCOUNT_CODE = '000';
 export const ACCOUNT_RULE_SOURCES = ['learned', 'vendor_default', 'builtin', 'user', 'unclassified'] as const;
@@ -215,7 +215,7 @@ export type RelatedInvoiceRef = z.infer<typeof zRelatedInvoiceRef>;
 
 // Where the seller's original XML can be looked up (#2267, plan docs/plan/einvoice-lookup.md): the provider, an https link on
 // one of its lookup hosts and the lookup code, as read from the invoice's PDF text. Each part may be absent (a code
-// with no link, a link with no code). The list of providers is LOOKUP_PROVIDERS in @crove/l10n-vn, which this package
+// with no link, a link with no code). The list of providers is LOOKUP_PROVIDERS in @ludy/l10n-vn, which this package
 // does not depend on; a finance test compares them. The code is invoice data (class pii): kept with the proposal, never
 // in a log, an audit row or an error text.
 export const LOOKUP_PROVIDER_IDS = ['misa', 'viettel', 'vnpt', 'bkav', 'easyinvoice', 'fpt'] as const;
@@ -1084,7 +1084,7 @@ export const zAccount = z.object({
 });
 
 // VAT working for a month ("2026-09") or a quarter ("2026-Q3") (issue #316): the period's input and output invoices
-// by VAT rate and the form 01/GTGT indicators they feed. The rules are in @crove/mod-finance (domain/vat-return.ts).
+// by VAT rate and the form 01/GTGT indicators they feed. The rules are in @ludy/mod-finance (domain/vat-return.ts).
 // The year is bounded (2000 to 2100) here, at the edge, so an out-of-range period is a 4xx, never a server error.
 export const VAT_PERIOD_PATTERN = /^(20\d{2}|2100)-(0[1-9]|1[0-2]|Q[1-4])$/;
 export const zVatPeriod = z.string().regex(VAT_PERIOD_PATTERN, 'YYYY-MM or YYYY-Qn');
@@ -1248,7 +1248,7 @@ export const zVatReturnMark = z.strictObject({
 
 // Ledger reports for a month ("2026-09"), a quarter ("2026-Q3") or a year ("2026") (issue #321): the trial balance,
 // the general ledger of one account, and the receivables (131) and payables (331) per party. The rules are in
-// @crove/mod-finance (domain/ledger-reports.ts). Balances of the general ledger are signed: debit minus credit.
+// @ludy/mod-finance (domain/ledger-reports.ts). Balances of the general ledger are signed: debit minus credit.
 export const LEDGER_PERIOD_PATTERN = /^(20\d{2})(?:-(0[1-9]|1[0-2]|Q[1-4]))?$/;
 export const zLedgerPeriod = z.string().regex(LEDGER_PERIOD_PATTERN, 'YYYY-MM, YYYY-Qn or YYYY');
 const zLedgerPeriodRange = z.object({ period: zLedgerPeriod, kind: z.enum(['month', 'quarter', 'year']), from: zLocalDate, to: zLocalDate });
@@ -1560,7 +1560,7 @@ export const zTaskDetail = z.object({
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Crove Social (Social plan §3.3). The commands in @crove/mod-social check every input again, strictly: time zones
+// Crove Social (Social plan §3.3). The commands in @ludy/mod-social check every input again, strictly: time zones
 // (IANA names), channel rules and the choice of a time or the queue are checked there, not here.
 // ---------------------------------------------------------------------------------------------------------------------
 

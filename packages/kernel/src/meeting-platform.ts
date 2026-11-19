@@ -23,9 +23,9 @@ import {
   zMeetingPlatformRecordingRef,
   type MeetingPlatformConnectionView,
   type MeetingPlatformRecordingView,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 // A member demoted to viewer after connecting still sees and removes their own connection, as for calendars.

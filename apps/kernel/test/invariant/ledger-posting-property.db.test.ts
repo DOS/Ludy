@@ -12,11 +12,11 @@ import { fileURLToPath } from 'node:url';
 import fc from 'fast-check';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 

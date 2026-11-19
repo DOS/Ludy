@@ -3,8 +3,8 @@
 // and nothing else (no count, voucher or item), an answer is kept, and every state with no notes (no model, a spent budget, too many calls, a failed call or every note dropped) is named and never quoted. The
 // kinds the agent names are the kinds the preview can name, and the notes never touch the preview itself.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, MISA_AMIS_BLOCKER_KINDS, type MisaAmisBlockerNotesFacts, type MisaAmisBlockerNotesResult } from '@crove/agent';
-import { MISA_AMIS_BLOCKERS, type MisaAmisPreview, type MisaAmisPreviewItem } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, MISA_AMIS_BLOCKER_KINDS, type MisaAmisBlockerNotesFacts, type MisaAmisBlockerNotesResult } from '@ludy/agent';
+import { MISA_AMIS_BLOCKERS, type MisaAmisPreview, type MisaAmisPreviewItem } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { MISA_AMIS_BLOCKER_NOTES_KEEP_MS, MISA_AMIS_BLOCKER_NOTES_REFUSED_KEEP_MS, explainMisaAmisBlockers, misaAmisBlockerKinds, misaAmisBlockerNotesAi } from '../src/finance-misa-amis-blocker-notes-ai.ts';
 

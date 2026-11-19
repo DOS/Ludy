@@ -11,7 +11,7 @@ import {
   MediaClientError,
   type MediaMeasureClient,
   type MediaProbeResult,
-} from '@crove/media-contract/measure';
+} from '@ludy/media-contract/measure';
 import {
   DomainError,
   decryptBlobChunks,
@@ -19,7 +19,7 @@ import {
   plaintextLengthFromCiphertextLength,
   type BlobMediaBinding,
   type BlobStore,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 
 // One window of plaintext at a time (the same size the playback route reads).
 export const MEASURE_WINDOW_BYTES = 4 * 1024 * 1024;

@@ -7,9 +7,9 @@
 // le_scope policy, #1716).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, type TimelineEntry } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { zId, type TimelineEntry } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 // The most entries one timeline shows, and the most records it follows.

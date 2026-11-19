@@ -4,9 +4,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Button, buttonVariants } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { cn } from '@crove/ui/lib/utils';
+import { Button, buttonVariants } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { cn } from '@ludy/ui/lib/utils';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';

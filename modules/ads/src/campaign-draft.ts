@@ -10,7 +10,7 @@
 // inside the execution of the approved proposal that names it.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   ADS_CAMPAIGN_LAUNCH_COMMAND,
   ADS_CAMPAIGN_LAUNCH_KIND,
@@ -21,8 +21,8 @@ import {
   type AdsCampaignDraftView,
   type AdsCampaignPlanDraft,
   type AdsLaunchView,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { canonicalJson, completePlan, flightDays, maxSpendOf, planHash, validatePlan, type PlanContext } from './campaign-plan.ts';
 import { todayIn } from './domain.ts';
 import { manageStatesOf } from './manage-state.ts';

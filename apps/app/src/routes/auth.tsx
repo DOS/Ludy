@@ -1,9 +1,9 @@
 import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
 import { PasswordInput } from '../components/password-input.tsx';
 import { ErrorText, Field, Logo, Notice, ScreenTitle, focusFirstInvalid, isEmailAddress, useFieldErrors } from '../components/ui.tsx';
 import { LocaleSwitcher } from '../i18n/provider.tsx';

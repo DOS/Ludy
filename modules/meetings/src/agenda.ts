@@ -30,8 +30,8 @@ import {
   type AgendaList,
   type AgendaNext,
   type AgendaSuggestion,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { vnDay, vnDayStart } from './retention.ts';
 import { ROLES, userOf } from './transcript.ts';
 

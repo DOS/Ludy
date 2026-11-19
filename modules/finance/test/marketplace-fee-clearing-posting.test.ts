@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { DomainError } from '@crove/kernel-runtime';
-import type { MarketplaceFeeClearingProposal } from '@crove/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
+import type { MarketplaceFeeClearingProposal } from '@ludy/kernel-contract';
 import { MARKETPLACE_POSTING_MAPS, type MarketplacePostingMap } from '../src/marketplace-posting-map.ts';
 import { feeClearingProposal, type FeeClearingInput } from '../src/marketplace-fee-clearing-posting.ts';
 import { createMarketplaceFeeClearingCommands, feeClearingProposalMismatch } from '../src/marketplace-fee-clearing-record.ts';

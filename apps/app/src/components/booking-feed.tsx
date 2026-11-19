@@ -3,8 +3,8 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';

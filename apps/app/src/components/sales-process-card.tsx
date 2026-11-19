@@ -4,7 +4,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { useTranslations } from 'use-intl';
-import { Card } from '@crove/ui/components/card';
+import { Card } from '@ludy/ui/components/card';
 import { DealStaleSetting } from './deal-stale-setting.tsx';
 import { refreshDeals } from './deal-form.tsx';
 import { PipelineSettings } from './pipeline-settings.tsx';

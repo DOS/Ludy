@@ -3,10 +3,10 @@
 // is decoded, checked against its declared size, sniffed by content and stored under the org's content address before
 // kernel.file.archive.record files it, in one transaction, as a document of its own. Each document is then read by
 // the ordinary extraction job, one sandbox call per file, so a batch of 200 never runs as one long request.
-import { EXTRACT_LIMITS, EXTRACT_LIMIT_RETRIES, type ExtractClient, type ExtractFailure, type ExtractedArchive } from '@crove/extract-contract';
-import { ACCEPTED_UPLOAD_TYPES, MAX_EMAIL_ARCHIVE_DOCUMENTS, MAX_UPLOAD_BYTES, type ArchiveEntryReason } from '@crove/kernel-contract';
-import type { ArchiveEntryInput } from '@crove/kernel';
-import { fileKey, putFile, readVerified, sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { EXTRACT_LIMITS, EXTRACT_LIMIT_RETRIES, type ExtractClient, type ExtractFailure, type ExtractedArchive } from '@ludy/extract-contract';
+import { ACCEPTED_UPLOAD_TYPES, MAX_EMAIL_ARCHIVE_DOCUMENTS, MAX_UPLOAD_BYTES, type ArchiveEntryReason } from '@ludy/kernel-contract';
+import type { ArchiveEntryInput } from '@ludy/kernel';
+import { fileKey, putFile, readVerified, sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import { isCsvName, safeFilename, sniffType } from './sniff.ts';
 
 export const ARCHIVE_ACTOR = { type: 'system' as const, component: 'kernel.archive' };

@@ -21,9 +21,9 @@
 // security and the `org_id` filters keep other orgs out.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { DEAL_STAGE_KINDS, QUOTE_STATUSES, plainLine, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { DEAL_STAGE_KINDS, QUOTE_STATUSES, plainLine, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { base as dealBase, view as dealView } from './deals.ts';
 import { loadQuote, quoteBase, quoteSummaryView } from './quotes.ts';
 

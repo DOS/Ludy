@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Who may import the member-Vy modules of packages/agent (ADR-0049 decision 9, issue #2783): "@crove/agent/member-vy" exports the raw ports,
+// Who may import the member-Vy modules of packages/agent (ADR-0049 decision 9, issue #2783): "@ludy/agent/member-vy" exports the raw ports,
 // privateText and revealPrivateText, so any workspace package could otherwise unwrap a private text or plug in a provider. Outside test
 // directories only the kernel's member-Vy wiring may import it; the main entry of the package does not re-export it.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -23,14 +23,12 @@ function sources(dir: string): string[] {
 }
 
 // An import, export-from, dynamic import or require that names the member-Vy entry, by its package path or by a relative path into the folder.
-const NAMES_IT = /['"`](?:@(?:crove|ludy)\/agent\/member-vy|(?:\.\.?\/)+(?:packages\/agent\/)?(?:src\/)?member-vy(?:\/[^'"`]*)?|[^'"`]*packages\/agent\/src\/(?:member-vy|private-text)[^'"`]*)['"`]/;
+const NAMES_IT = /['"`](?:@ludy\/agent\/member-vy|(?:\.\.?\/)+(?:packages\/agent\/)?(?:src\/)?member-vy(?:\/[^'"`]*)?|[^'"`]*packages\/agent\/src\/(?:member-vy|private-text)[^'"`]*)['"`]/;
 
 describe('who imports the member-Vy modules', () => {
   it('flags an import of the entry (the scan is not vacuous)', () => {
-    expect(NAMES_IT.test(`import { revealPrivateText } from '@crove/agent/member-vy';`)).toBe(true);
     expect(NAMES_IT.test(`import { revealPrivateText } from '@ludy/agent/member-vy';`)).toBe(true);
     expect(NAMES_IT.test(`const m = await import('../../../packages/agent/src/member-vy/index.ts');`)).toBe(true);
-    expect(NAMES_IT.test(`import { x } from '@crove/agent';`)).toBe(false);
     expect(NAMES_IT.test(`import { x } from '@ludy/agent';`)).toBe(false);
   });
 

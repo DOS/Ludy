@@ -33,9 +33,9 @@ import {
   type NoteSummary,
   type NoteVisibility,
   type NoteWritten,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { insertRecordLink, loadEnrichedLinks, NOTE_TARGET_QUERIES } from './links.ts';
 import { notesManifest } from './manifest.ts';
 import { TODO_SUMMARY_COLUMNS, loadSourceNotes, todoSummaryRow } from './todos.ts';

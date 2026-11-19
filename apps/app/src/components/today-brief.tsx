@@ -5,9 +5,9 @@
 // sends nothing. A brief that fails to load is simply not shown: the list is what matters.
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import type { TodayItem } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Card } from '@crove/ui/components/card';
+import type { TodayItem } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Card } from '@ludy/ui/components/card';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { client } from '../lib/api.ts';
 import { briefDay, briefStorageKey, listFingerprint, readStoredBrief, storeBrief } from '../lib/today-brief.ts';

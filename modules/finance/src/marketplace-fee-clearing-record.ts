@@ -13,10 +13,10 @@
 // either order of arrival: the clearing is asked for once the payout (1388 up) and the invoice (331 up) both stand. No model call is made: everything here is deterministic over posted facts.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { JOURNAL_VOUCHER_KIND, MARKETPLACE_FEE_CLEARING_COMMAND, zMarketplaceFeeClearingProposal, zMarketplaceFeeClearingRequest, type JournalVoucherProposal, type MarketplaceFeeClearingProposal } from '@crove/kernel-contract';
-import { money } from '@crove/l10n-vn';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
+import { JOURNAL_VOUCHER_KIND, MARKETPLACE_FEE_CLEARING_COMMAND, zMarketplaceFeeClearingProposal, zMarketplaceFeeClearingRequest, type JournalVoucherProposal, type MarketplaceFeeClearingProposal } from '@ludy/kernel-contract';
+import { money } from '@ludy/l10n-vn';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 import { assertUsableAccounts } from './accounts.ts';
 import { JOURNAL_VOUCHER_SOURCE, journalVoucherTitle } from './domain/journal-voucher.ts';
 import { checkJournalVoucherLines, postJournalVoucher } from './journal-voucher.ts';

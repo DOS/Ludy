@@ -5,8 +5,8 @@
 // The mail table lets a payload only be dropped (never changed): the guard trigger refuses any other change, and the tenant role holds UPDATE on the column for exactly this.
 // A mail still queued then fails to render (the queue records TEMPLATE_DATA) rather than send the text of a meeting that no longer exists.
 import { sql } from 'kysely';
-import { FOLLOWUP_MAIL_SOURCE } from '@crove/kernel-contract';
-import type { QueryContext } from '@crove/kernel-runtime';
+import { FOLLOWUP_MAIL_SOURCE } from '@ludy/kernel-contract';
+import type { QueryContext } from '@ludy/kernel-runtime';
 
 type Ctx = { trx: QueryContext['trx']; orgId: string };
 

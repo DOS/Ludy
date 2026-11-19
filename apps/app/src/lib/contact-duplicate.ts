@@ -3,7 +3,7 @@
 // search (the same read the list calls) is asked for it, and the contact that already carries exactly that email or tax code is shown
 // under the field. The search is loose (a part of a word matches), so the answer is checked here against the whole value, the way
 // the server compares: an email without regard to case, a tax code by its digits (`normalizeTaxCode`).
-import { normalizeTaxCode, type Contact, type FilterAst } from '@crove/kernel-contract';
+import { normalizeTaxCode, type Contact, type FilterAst } from '@ludy/kernel-contract';
 
 // What the check reads of a contact.
 export type DuplicateHit = Pick<Contact, 'id' | 'kind' | 'name' | 'email' | 'taxCode'>;

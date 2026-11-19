@@ -10,8 +10,8 @@
 // 64 KB; the table's CHECK says the same again. An accent must be #rrggbb with at least 3:1 contrast against the page.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { accentReadable, BRAND_ACCENT_INPUT_MAX, BRAND_LOGO_INPUT_MAX, BRAND_LOGO_MAX_BYTES, BRAND_NAME_MAX, checkLogoDataUrl, normalizeAccent, type ReportBrand } from './domain/report-branding.ts';
 import type { Trx } from './variants.ts';
 

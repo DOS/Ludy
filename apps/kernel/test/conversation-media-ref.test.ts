@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // An image given only by a reference (WhatsApp's media id, #3131): the adapter turns it into bytes with the connection's token, and every byte of that call goes
-// through the egress guard of @crove/kernel-runtime: the provider's media hosts only, https only on the real path, no redirect followed (the token is never
+// through the egress guard of @ludy/kernel-runtime: the provider's media hosts only, https only on the real path, no redirect followed (the token is never
 // sent to a second host), a byte cap, and the bytes are an image only if their first bytes say so. The guard's own options (a local server, any port, http)
 // are the tests' alone.
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TELEGRAM_PHOTO_MAX_BYTES, type ConversationAdapter, type ConversationMediaInput } from '@crove/channel';
-import { CONVERSATION_IMAGE_MAX_BYTES } from '@crove/kernel-contract';
+import { TELEGRAM_PHOTO_MAX_BYTES, type ConversationAdapter, type ConversationMediaInput } from '@ludy/channel';
+import { CONVERSATION_IMAGE_MAX_BYTES } from '@ludy/kernel-contract';
 import { fetchConversationMedia, mediaHostsOf } from '../src/conversation-media.ts';
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 2, 0, 0, 0, 3, 8, 6, 0, 0, 0, 0, 0, 0, 0]);

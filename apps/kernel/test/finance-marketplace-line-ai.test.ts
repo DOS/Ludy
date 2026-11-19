@@ -2,8 +2,8 @@
 // The coworker's one line on the Sàn screen, on the API side (#2516 slice E): nothing waiting asks no model, the model is asked once with the three numbers, an answer is kept, and every state with no
 // text (no model, a spent budget, too many calls, a failed or refused call) is named and never quoted. The facts always come back, so the screen never shows less than the books hold.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type MarketplaceLineFacts, type MarketplaceLineResult } from '@crove/agent';
-import type { MarketplaceFacts } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type MarketplaceLineFacts, type MarketplaceLineResult } from '@ludy/agent';
+import type { MarketplaceFacts } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { MARKETPLACE_LINE_KEEP_MS, MARKETPLACE_LINE_REFUSED_KEEP_MS, explainMarketplaceLine, marketplaceLineAi, marketplaceLineFacts } from '../src/finance-marketplace-line-ai.ts';
 

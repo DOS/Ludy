@@ -5,10 +5,10 @@
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useId, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import type { MisaCheck, MisaCheckCounts, MisaCheckFormat, MisaCheckLine } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import type { MisaCheck, MisaCheckCounts, MisaCheckFormat, MisaCheckLine } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { client, errorMessage } from '../lib/api.ts';
 import { ErrorText } from './ui.tsx';
 

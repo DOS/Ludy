@@ -2,7 +2,7 @@
 // Google Calendar or Outlook subscribes to. It runs the migration's definer on the control plane as the API login role;
 // the token is the only credential, and only what goes out (time, channel, status, a short title) comes back.
 import { sql } from 'kysely';
-import type { Runtime } from '@crove/kernel-runtime';
+import type { Runtime } from '@ludy/kernel-runtime';
 import { DEFAULT_BRAND_NAME } from './config.ts';
 
 // Calendar apps fetch from shared provider addresses, so one client address may stand for many subscribers.

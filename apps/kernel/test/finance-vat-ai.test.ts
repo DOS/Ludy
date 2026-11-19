@@ -2,8 +2,8 @@
 // The finance coworker's sentence naming the late sales invoices of a VAT working, on the API side (#3540), with a stand-in for the reader: every state of `ai` is an answer with no text
 // (the screen then shows the template sentence), never an error, the model is told invoice numbers and periods only, and an answer is kept by its facts so a second ask costs no call.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, VAT_LATE_ASK_MAX, type VatLateFacts, type VatLateSentenceResult } from '@crove/agent';
-import type { VatLateSource } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, VAT_LATE_ASK_MAX, type VatLateFacts, type VatLateSentenceResult } from '@ludy/agent';
+import type { VatLateSource } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { VAT_LATE_KEEP_MS, VAT_LATE_REFUSED_KEEP_MS, explainVatLate, vatLateAgentFacts, vatLateAi, type VatLateAi } from '../src/finance-vat-ai.ts';
 

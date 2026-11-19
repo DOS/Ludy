@@ -4,7 +4,7 @@
 // operator or uuid.
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { FilterCondition } from '@crove/kernel-contract';
+import type { FilterCondition } from '@ludy/kernel-contract';
 import { ConditionChips } from '../src/components/condition-chips.tsx';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { setActiveLocale, translatorFor } from '../src/i18n/runtime.ts';

@@ -4,7 +4,7 @@
 // SECURITY DEFINER resolution (returning an identical opaque 404 across invalid/disabled/revoked/expired/max_uses/MODULE_OFF),
 // and enforces per-IP + per-token/email rate limits without third-party CAPTCHA (#203).
 import { sql } from 'kysely';
-import { DEFAULT_MESSAGE_ID_DOMAIN } from '@crove/kernel';
+import { DEFAULT_MESSAGE_ID_DOMAIN } from '@ludy/kernel';
 import {
   zSignDirectOtpRequestInput,
   zSignDirectOtpVerifyInput,
@@ -16,14 +16,14 @@ import {
   type SignDirectOtpVerifyResult,
   type SignDirectStartResult,
   type SignDirectView,
-} from '@crove/kernel-contract';
-import { DomainError, entitledTo, sha256Hex, type ErrorStatus, type Runtime } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, entitledTo, sha256Hex, type ErrorStatus, type Runtime } from '@ludy/kernel-runtime';
 import {
   generateRawSigningToken,
   hashSigningToken,
   normalizeSignPageDimensions,
   sanitizeSignUserAgent,
-} from '@crove/mod-sign';
+} from '@ludy/mod-sign';
 import {
   signIpHash,
   type SignBilling,

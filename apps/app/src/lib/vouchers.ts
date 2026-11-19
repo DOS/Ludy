@@ -11,14 +11,14 @@ import {
   type CashVoucherPage,
   type VoucherCursor,
   type VoucherType,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import { z } from 'zod';
 import type { ChartAccount } from './accounts.ts';
 import { toUnits } from './decimal.ts';
 import { readSearch, type Defined } from './search.ts';
 import type { Translate } from '../i18n/runtime.ts';
 
-export { VOUCHER_KIND } from '@crove/kernel-contract';
+export { VOUCHER_KIND } from '@ludy/kernel-contract';
 
 // The roles that may enter a voucher (kernel.proposal.request); approving needs owner or admin.
 const REQUESTERS = ['owner', 'admin', 'member'];
@@ -109,7 +109,7 @@ export interface VoucherJournalLine {
   memo?: string;
 }
 
-// Mirrors buildVoucherJournal in @crove/mod-finance: money in debits the cash or bank account for the total and credits
+// Mirrors buildVoucherJournal in @ludy/mod-finance: money in debits the cash or bank account for the total and credits
 // each line; money out debits each line and credits the cash or bank account.
 export function previewVoucherJournal(voucher: {
   type: VoucherType;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Pure rules of the MISA AMIS push screen (#3902, S3b-2b of #3854): when the screen offers to send a previewed batch, and which rows a person may settle. The server enforces every rule (the 404 gate, the roles,
 // the digest, the age of a row by the database clock); the screen offers only what can succeed, so a row never shows a button that is bound to be refused.
-import type { MisaAmisPreview, MisaAmisPushConfirmed, MisaAmisPushRow } from '@crove/kernel-contract';
+import type { MisaAmisPreview, MisaAmisPushConfirmed, MisaAmisPushRow } from '@ludy/kernel-contract';
 
 /** How long MISA has to answer a sent request before a person may settle it (the polling window of the worker, 24 hours). */
 export const PUSH_RESULT_WINDOW_MS = 24 * 60 * 60 * 1000;

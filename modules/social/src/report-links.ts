@@ -8,9 +8,9 @@
 // A link may choose its sections and their order (#1259): report_link_view returns only those, the rest as null.
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { zId, zSocialReportSections, zSocialReportTopCount, type SocialReportSection } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId, zSocialReportSections, zSocialReportTopCount, type SocialReportSection } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];

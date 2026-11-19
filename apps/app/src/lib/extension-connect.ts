@@ -4,7 +4,7 @@
 // in as usual, chooses the org and approves; the app asks the kernel for a one-time code and sends the window back to the
 // extension's redirect address with it. The extension then trades the code and its verifier for a token. The member's
 // password and browser session never reach the extension.
-import { EXTENSION_SCOPE_IDS, type ExtensionScopeId } from '@crove/kernel-contract';
+import { EXTENSION_SCOPE_IDS, type ExtensionScopeId } from '@ludy/kernel-contract';
 
 export const CONNECT_PATH = '/-/extension/connect';
 // Chrome and Edge give an extension this redirect address: https://<32 letters a to p>.chromiumapp.org/<path>. Nothing

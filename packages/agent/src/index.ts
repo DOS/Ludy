@@ -1,10 +1,10 @@
 // AI invoice extraction through any OpenAI-compatible endpoint (OpenAI, Ollama, vLLM, DOS.AI, ...).
 // The model only structures what is printed on the document; every number is re-checked
-// deterministically by @crove/l10n-vn before anything reaches the Inbox. Output is always tainted.
+// deterministically by @ludy/l10n-vn before anything reaches the Inbox. Output is always tainted.
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
-import { bankAccountRuns, normalizeNumber, normalizeSeries, type ParsedInvoice } from '@crove/l10n-vn';
+import { bankAccountRuns, normalizeNumber, normalizeSeries, type ParsedInvoice } from '@ludy/l10n-vn';
 import { metered, type AiUsageSink } from './meter.ts';
 
 export * from './ads-campaign.ts';

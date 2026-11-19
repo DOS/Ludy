@@ -8,7 +8,7 @@ import type {
   ProjectTaskCard,
   ProjectTaskProjectEntry,
   ProjectTaskRef,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import type { TaskStatus } from './agents.ts';
 import { installedModules } from './org-modules.ts';
 

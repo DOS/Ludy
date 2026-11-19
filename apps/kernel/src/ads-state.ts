@@ -10,9 +10,9 @@
 // to `ads.object.sync_state`. A platform that is down, a token that was refused, a rate limit or an object that is gone leaves the last known state and is recorded as a failed read
 // of the launch: the sync of the account, and the launch, are never failed by it, and the run itself never throws. The secret lives in one function's scope and is never logged,
 // never put in an error, never sent to a command.
-import type { AdStateReader, StateReadResult, StateTarget } from '@crove/ad-platform';
-import type { ObjectSynced, StateSyncTarget } from '@crove/mod-ads';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import type { AdStateReader, StateReadResult, StateTarget } from '@ludy/ad-platform';
+import type { ObjectSynced, StateSyncTarget } from '@ludy/mod-ads';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 
 const SYSTEM = { type: 'system' as const, component: 'ads.state' };
 // A launch's objects are a handful of one-object reads; the whole read is given up on after this long, and the launch keeps its last known state.

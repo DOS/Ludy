@@ -4,7 +4,7 @@
 // shows what its own screen already reads (components/report-panels.tsx); nothing is written here. ?area= keeps the tab.
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { AdsPanel, ConversationsPanel, PostsPanel, QuotesPanel, SalesPanel } from '../components/report-panels.tsx';
 import { Empty, PageHeader } from '../components/ui.tsx';
 import { reportTabs, shownTab, type ReportsSearch, type ReportTab } from '../lib/reports.ts';

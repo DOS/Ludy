@@ -12,9 +12,9 @@
 // An unclear answer goes to a person, who checks the platform and asks again: nothing asks again by itself.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_REVIEW_CHECKS_MAX, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_REVIEW_CHECKS_MAX, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { effectiveContent } from './domain/approval.ts';
 import { editRefusal } from './domain/channels.ts';
 import { callRevision, publishCallKey } from './domain/publish.ts';

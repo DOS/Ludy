@@ -18,21 +18,21 @@ import {
   type SignAiReader,
   type SignClauseSummaryResult,
   type SignFieldProposeResult,
-} from '@crove/agent';
+} from '@ludy/agent';
 import {
   DomainError,
   type Actor,
   type Runtime,
   type SystemActor,
   type UserActor,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import type {
   SignAiAnalysisRecord,
   SignAiExtractedPage,
   SignAiProposedField,
   SignAiRiskClause,
   SignAiSource,
-} from '@crove/mod-sign';
+} from '@ludy/mod-sign';
 import type { DraftBudget } from './ai-draft-limit.ts';
 import { memberMeter, systemMeter, type MeterOptions } from './ai-meter.ts';
 

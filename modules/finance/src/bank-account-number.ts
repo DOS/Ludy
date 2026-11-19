@@ -12,9 +12,9 @@
 // mapping does. Nothing here moves money or posts a line.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { auditValue, zBankAccountNumberSet, zId, type BankAccountNumberView } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { auditValue, zBankAccountNumberSet, zId, type BankAccountNumberView } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { accountNumberDigits } from './account-number.ts';
 import { bankAccount } from './bank.ts';
 import { resolveLegalEntity } from './legal-entity.ts';

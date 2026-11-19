@@ -2,8 +2,8 @@
 // MailTemplate adapters for Crove eSign Slice 1b outbound mail (ADR-0034, #3324).
 // Hydrates short-lived signing links and 6-digit email OTPs in memory at dispatch time via system commands,
 // so raw tokens and OTP codes never sit in crove_kernel.mail_message.payload.
-import { BlobIntegrityError, BlobTooLargeError, readVerified } from '@crove/kernel-runtime';
-import type { MailAttachment } from '@crove/mail';
+import { BlobIntegrityError, BlobTooLargeError, readVerified } from '@ludy/kernel-runtime';
+import type { MailAttachment } from '@ludy/mail';
 import {
   SIGN_COMPLETED_MAIL_TEMPLATE,
   SIGN_DIRECT_OTP_MAIL_TEMPLATE,
@@ -18,7 +18,7 @@ import {
   zSignDirectOtpMailPayload,
   zSignInviteMailPayload,
   zSignOtpMailPayload,
-} from '@crove/mod-sign';
+} from '@ludy/mod-sign';
 import type { MailTemplate, MailTemplates } from './mail-queue.ts';
 import { opsAlert } from './ops-alert.ts';
 

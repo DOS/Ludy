@@ -2,7 +2,7 @@
 // permissions it owns. A migration that adds or drops a table or column of these schemas, or a role_permission row,
 // changes this list in the same PR; apps/kernel/test/manifest.db.test.ts checks it against the catalog. A column is
 // internal unless the second argument of columns() classifies it.
-import { MODULE_SCREENS, columns, defineModule } from '@crove/kernel-contract';
+import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const financeManifest = defineModule({
   id: 'finance',
@@ -111,6 +111,6 @@ export const financeManifest = defineModule({
     { type: 'finance.supplier_bank_account_change', table: 'supplier_bank_account_change', legalEntityScoped: false, audit: 'command' },
     { type: 'finance.supplier_payment', table: 'supplier_payment', legalEntityScoped: true, audit: 'command' },
   ],
-  // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
+  // Its screens in the app and its menu items (#1652), kept with the other modules' in @ludy/kernel-contract.
   ...MODULE_SCREENS.finance,
 });

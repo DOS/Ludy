@@ -7,12 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import type { MarketplaceBalance } from '@crove/kernel-contract';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import type { MarketplaceBalance } from '@ludy/kernel-contract';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;

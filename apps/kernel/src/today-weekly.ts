@@ -2,8 +2,8 @@
 // Vy's "Tuần này" answer (#3257, Vy plan C5): the figures of the last 7 days (kernel.today_weekly.figures, computed in the member's own context) and the sentences over them. The
 // figures are the card's own numbers; the sentences are Vy's, checked against them sentence by sentence (packages/agent weekly.ts), or the template built from the same figures.
 // Nothing is stored.
-import { templateWeekly, weeklyEmpty, AiBudgetExhaustedError, type WeeklyFacts, type WeeklyResult } from '@crove/agent';
-import type { TodayWeekly, WeeklyFigures } from '@crove/kernel-contract';
+import { templateWeekly, weeklyEmpty, AiBudgetExhaustedError, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
+import type { TodayWeekly, WeeklyFigures } from '@ludy/kernel-contract';
 import { type DraftTicket } from './ai-draft-limit.ts';
 
 /** What the sentences are written from: the figures and the language, nothing else. */

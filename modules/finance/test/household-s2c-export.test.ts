@@ -4,8 +4,8 @@
 // `commentary` the file says so on top, lists the rows, and puts the provisional label in a note column on the expense and income figures; once confirmed there is none. Text is never read as a formula.
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import type { HouseholdS2c } from '@crove/kernel-contract';
-import { HOUSEHOLD_PROVISIONAL_LABEL } from '@crove/kernel-contract';
+import type { HouseholdS2c } from '@ludy/kernel-contract';
+import { HOUSEHOLD_PROVISIONAL_LABEL } from '@ludy/kernel-contract';
 import { buildS2cWorkbook } from '../src/household-export.ts';
 
 const E = (n: number) => `00000000-0000-4000-8000-00000000000${n}`;

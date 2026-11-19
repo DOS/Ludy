@@ -15,9 +15,9 @@ import {
   type AuditFilter,
   type AuditOutcome,
   type AuditPage,
-} from '@crove/kernel-contract';
-import type { Database, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { Database, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const TZ = 'Asia/Ho_Chi_Minh';

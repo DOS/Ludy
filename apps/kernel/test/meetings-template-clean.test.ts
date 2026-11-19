@@ -2,8 +2,8 @@
 // The cleaning of a template's title and hint exists twice on purpose: in the contract (cleanTemplateText, applied when an admin writes it) and in the agent (orgText, applied again when the
 // instruction is built, #3578). This test pins them to each other, so the copy in the agent cannot drift from the one the database check and the editor share.
 import { describe, expect, it } from 'vitest';
-import { sectionData, sectionLines } from '@crove/agent/member-vy';
-import { cleanTemplateText } from '@crove/kernel-contract';
+import { sectionData, sectionLines } from '@ludy/agent/member-vy';
+import { cleanTemplateText } from '@ludy/kernel-contract';
 
 const SAMPLES = [
   'Họp dự án',

@@ -23,9 +23,9 @@ import {
   type JournalVoucherProposal,
   type PurchaseProposal,
   type SignatureStatus,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { EDITOR_ROLES, decideApproval, proposalEditable } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, executedButVoided, latestExtraction, voidedProposals } from './extraction.ts';
 import { archiveQueries } from './archives.ts';

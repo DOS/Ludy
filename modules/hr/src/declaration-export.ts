@@ -11,10 +11,10 @@
 //
 // Never a silently cut file: more people than HR_DECLARATION_MAX_PEOPLE is refused with a message. Nothing is sent and nothing is filed.
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { HR_DECLARATION_MAX_PEOPLE, zHrDeclarationExport, zHrDeclarationQuery, zHrLaborCheckAsk, zHrLaborCheckAudit, type HrDeclarationDocument, type HrDeclarationExport, type HrDeclarationQuery, type HrLaborCheckAsk, type HrLaborCheckAudit, type HrLaborCheckKind } from '@crove/kernel-contract';
-import { deriveFixedTermEndDate, formatIsoCalendarDate, money, parseIsoCalendarDate, type LaborContractKind, type ProbationRoleTier } from '@crove/l10n-vn';
-import { DomainError, defineCommand, defineQuery, hasFreshMfa, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { HR_DECLARATION_MAX_PEOPLE, zHrDeclarationExport, zHrDeclarationQuery, zHrLaborCheckAsk, zHrLaborCheckAudit, type HrDeclarationDocument, type HrDeclarationExport, type HrDeclarationQuery, type HrLaborCheckAsk, type HrLaborCheckAudit, type HrLaborCheckKind } from '@ludy/kernel-contract';
+import { deriveFixedTermEndDate, formatIsoCalendarDate, money, parseIsoCalendarDate, type LaborContractKind, type ProbationRoleTier } from '@ludy/l10n-vn';
+import { DomainError, defineCommand, defineQuery, hasFreshMfa, type QueryContext } from '@ludy/kernel-runtime';
 import { buildAnnual, buildAnnualListing, buildCertificates, buildCertificatesListing, buildD02Lt, buildD02LtListing, buildQuarterly, buildQuarterlyListing, quarterMonths, type DeclarationBreakdown, type DeclarationContractTerm, type DeclarationContractType, type DeclarationLine, type DeclarationPerson } from './declarations.ts';
 import { build01PliReport, buildLaborRegister, parse01PliPeriod, type LaborRegisterPerson } from './labor-register.ts';
 import { IDENTITY_PLACE, INSURANCE_PLACE, TAX_CODE_PLACE, subjectOf } from './employees.ts';

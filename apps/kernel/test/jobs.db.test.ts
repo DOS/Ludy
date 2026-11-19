@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { PgBoss } from 'pg-boss';
 import { afterAll, describe, expect, it } from 'vitest';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { JOB_SCHEMA, MAIL_QUEUES, QUEUES, SOCIAL_PUBLISH_QUEUES, pgBossSchemaVersion } from '../src/jobs-schema.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;

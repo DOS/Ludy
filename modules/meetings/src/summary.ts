@@ -5,8 +5,8 @@
 // what each item says about who and when: the "who" is matched to an attendee only when exactly one attendee answers to that name, the "when" is parsed
 // against the meeting's own date, and a link, email address or phone number in a title is flagged. Nothing is shared by this; the recorder's publish does that.
 import { sql } from 'kysely';
-import { CHAPTERS_MAX, chapterTitleProblem, zChaptersCopied, zChaptersCopy, zChaptersResult, zSummaryCopy, zSummaryCopied, zSummaryResult, zSummaryRef, zNotesPreview, zNotesPreviewInput, zSpeakerSuggestions, zSpeakerSuggestionsInput, ITEMS_PER_MEETING_MAX, parseStoredSections, sectionsToText, templateSections, type Enhanced, type MeetingSummaryTemplate, type NotesPreview, type SpeakerSuggestions, type SummaryResult, type TemplateSection } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { CHAPTERS_MAX, chapterTitleProblem, zChaptersCopied, zChaptersCopy, zChaptersResult, zSummaryCopy, zSummaryCopied, zSummaryResult, zSummaryRef, zNotesPreview, zNotesPreviewInput, zSpeakerSuggestions, zSpeakerSuggestionsInput, ITEMS_PER_MEETING_MAX, parseStoredSections, sectionsToText, templateSections, type Enhanced, type MeetingSummaryTemplate, type NotesPreview, type SpeakerSuggestions, type SummaryResult, type TemplateSection } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { itemFlags } from './results.ts';
 import { plainName } from './plain-name.ts';
 import { attendeeNames, draftLabels } from './speaker.ts';

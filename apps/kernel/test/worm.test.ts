@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { GetObjectCommand, GetObjectLockConfigurationCommand, ListObjectVersionsCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler, type CompiledQuery, type DatabaseConnection, type QueryResult } from 'kysely';
 import { describe, expect, it } from 'vitest';
-import type { Db } from '@crove/db';
+import type { Db } from '@ludy/db';
 import {
   ArchiveObjectExistsError,
   GENESIS_SHA256,

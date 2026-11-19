@@ -4,10 +4,10 @@
 // Jobs carry ids only; the commands run in the org's system context and reach private notes through definers that
 // answer counts, never text.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { NOTE_MEMBER_PURGE_DAYS } from '@crove/kernel-contract';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
-import { trashCutoff } from '@crove/mod-notes';
+import type { Db } from '@ludy/db';
+import { NOTE_MEMBER_PURGE_DAYS } from '@ludy/kernel-contract';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
+import { trashCutoff } from '@ludy/mod-notes';
 import { jobKey } from './job-keys.ts';
 import { QUEUES } from './jobs-schema.ts';
 import type { JobSender } from './worker.ts';

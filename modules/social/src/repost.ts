@@ -5,9 +5,9 @@
 // before the call. An unclear or failed repost is not tried again by itself: the post's activity shows it.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { Publisher } from '@crove/channel';
-import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { Publisher } from '@ludy/channel';
+import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { REPOST_PROVIDERS, isProvider, repostRuleOf } from './domain/channels.ts';
 import { callRevision, publishCallKey } from './domain/publish.ts';
 import { COMMENT_STALE_MS, type CommentCall } from './comments.ts';

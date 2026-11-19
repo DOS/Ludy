@@ -5,10 +5,10 @@
 // the mail from its template and merge data, sends it once, and records the outcome with kernel.mail.queue.record.
 // Logs carry codes only: never an address, a subject or a provider's message.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import type { QueuedMailBegin } from '@crove/kernel';
-import type { BlobStore, Runtime } from '@crove/kernel-runtime';
-import type { MailAttachment, MailErrorKind, MailProvider, OutboundMail, SendResult } from '@crove/mail';
+import type { Db } from '@ludy/db';
+import type { QueuedMailBegin } from '@ludy/kernel';
+import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
+import type { MailAttachment, MailErrorKind, MailProvider, OutboundMail, SendResult } from '@ludy/mail';
 import { bounceAddress } from './invite-mail.ts';
 import { DEFAULT_BRAND_NAME } from './config.ts';
 import { jobKey } from './job-keys.ts';

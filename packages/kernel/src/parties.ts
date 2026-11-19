@@ -8,8 +8,8 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { auditValue, normalizeTaxCode, zId, zPartyCreate, zPartyKind } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { auditValue, normalizeTaxCode, zId, zPartyCreate, zPartyKind } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
 import { seesEveryEntity } from './file-status.ts';
 import { normalizeAddress } from './org-address.ts';

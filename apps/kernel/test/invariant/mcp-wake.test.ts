@@ -21,8 +21,8 @@ import type { AddressInfo } from 'node:net';
 import { join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { EgressError, egressFetch, guardedRequest, type EgressOptions } from '@crove/kernel-runtime';
-import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ, kernelCommands } from '@crove/kernel';
+import { EgressError, egressFetch, guardedRequest, type EgressOptions } from '@ludy/kernel-runtime';
+import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ, kernelCommands } from '@ludy/kernel';
 import { QUEUES, queueEgress } from '../../src/jobs-schema.ts';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));

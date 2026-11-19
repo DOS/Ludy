@@ -3,7 +3,7 @@
 // ADR-0031, ADR-0053), and an item of an inactive Module is omitted. The org's own screens (Overview, Notifications,
 // Settings) belong to no App and sit on the shell rail. Modules declare screens and menu items through MODULE_SCREENS
 // (#1652); the shell keeps presentation details (icons, group headings, item order), pinned by module-screens.test.ts.
-import { APP_IDS, MODULE_SCREENS, type AppId as ContractAppId, type ModuleScreens } from '@crove/kernel-contract';
+import { APP_IDS, MODULE_SCREENS, type AppId as ContractAppId, type ModuleScreens } from '@ludy/kernel-contract';
 import type { Messages } from '../i18n/messages/vi.ts';
 import { installedItems } from './modules.ts';
 

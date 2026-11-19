@@ -10,8 +10,8 @@
 //   failed attempt. At most 4 KB of the answer is read and it is never looked at: it is not an instruction (ADR-0051 decision 8), only its status is.
 // - A failure never touches Home: it changes this delivery and the wake-up's counters, nothing else. A grant that can no longer be woken drops the delivery.
 import { createHmac } from 'node:crypto';
-import { MCP_WAKE_PROVIDER, type McpWakeDeliveryRow, type McpWakeTargetRow } from '@crove/kernel';
-import { DomainError, egressFetch, type CredentialBroker, type EgressOptions, type Runtime } from '@crove/kernel-runtime';
+import { MCP_WAKE_PROVIDER, type McpWakeDeliveryRow, type McpWakeTargetRow } from '@ludy/kernel';
+import { DomainError, egressFetch, type CredentialBroker, type EgressOptions, type Runtime } from '@ludy/kernel-runtime';
 import { wakeBody } from './mcp-wake-body.ts';
 
 // One attempt takes at most 10 seconds, and reads at most 4 KB of the answer.

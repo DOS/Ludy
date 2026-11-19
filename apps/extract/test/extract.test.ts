@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { EXTRACT_CLIENT_TIMEOUT_MS, EXTRACT_KINDS, EXTRACT_LIMITS, EXTRACT_TIMING, worstCaseCallMs, zExtractResponse, type ExtractResponse } from '@crove/extract-contract';
+import { EXTRACT_CLIENT_TIMEOUT_MS, EXTRACT_KINDS, EXTRACT_LIMITS, EXTRACT_TIMING, worstCaseCallMs, zExtractResponse, type ExtractResponse } from '@ludy/extract-contract';
 import { IMAGE_MARKER, credentialVariables, enforcesAllowlist, loadExtractConfig, unexpectedVariables } from '../src/main.ts';
 import { DEFAULT_SANDBOX, PARSER_ENV, classifyExit, parserFlags, runSandboxed } from '../src/sandbox.ts';
 import { createExtractApp, createLimiter, type Runner } from '../src/server.ts';

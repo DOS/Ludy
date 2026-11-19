@@ -5,7 +5,7 @@
 // member sees it; it shows percentages only, never amounts.
 import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { cn } from '@crove/ui/lib/utils';
+import { cn } from '@ludy/ui/lib/utils';
 import { useFormat } from '../i18n/provider.tsx';
 import { orpc } from '../lib/api.ts';
 

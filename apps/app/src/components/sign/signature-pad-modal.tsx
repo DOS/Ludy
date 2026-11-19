@@ -2,11 +2,11 @@
 // Mobile-friendly signature pad dialog with Draw canvas and Be Vietnam Pro typed signature tabs (#3325).
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
+import { Button } from '@ludy/ui/components/button';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import {
   hasSubstantiveSignatureStrokes,
   renderStrokesToCanvas,

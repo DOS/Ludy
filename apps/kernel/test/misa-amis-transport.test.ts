@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The MISA AMIS transport (#3885, S2b of #3854): https and developer.misa.vn only, through the egress guard, and only the adapter's own error kinds come out of a failure.
 import { describe, expect, it } from 'vitest';
-import { AMIS_BASE_URL, AmisError, type AmisRequest } from '@crove/misa-amis';
-import { EGRESS_ERROR_CODES, EgressError, type guardedRequest } from '@crove/kernel-runtime';
+import { AMIS_BASE_URL, AmisError, type AmisRequest } from '@ludy/misa-amis';
+import { EGRESS_ERROR_CODES, EgressError, type guardedRequest } from '@ludy/kernel-runtime';
 import { amisTransport } from '../src/misa-amis-transport.ts';
 
 const call = (over: Partial<AmisRequest> = {}): AmisRequest => ({ method: 'POST', url: `${AMIS_BASE_URL}/amiskt/v1/token`, headers: { ClientID: 'client-id-1234', 'Content-Type': 'application/json' }, body: '{"a":1}', ...over });

@@ -7,8 +7,8 @@
 // The audit trail carries the file id and counts only: nothing of the file.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MARKETPLACE_ORIGINAL_RETENTION_DAYS, zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { MARKETPLACE_ORIGINAL_RETENTION_DAYS, zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 function requireSystem(ctx: CommandContext | QueryContext): void {
   if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Only a system actor may do this');

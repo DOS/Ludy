@@ -4,7 +4,7 @@
 // shown as text and never as an anchor, the characters that reorder text are made visible, and a long text is cut with a native expander (no script needed).
 import { useMemo } from 'react';
 import { useTranslations } from 'use-intl';
-import type { AdsChange } from '@crove/kernel-contract';
+import type { AdsChange } from '@ludy/kernel-contract';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { adsChangePlan, type AdsPlanView, type ClampedText } from '../lib/ads-change.ts';
 

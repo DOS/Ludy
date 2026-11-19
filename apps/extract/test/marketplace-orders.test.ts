@@ -3,9 +3,9 @@
 // only, a file that is none answered as such, and the same file through the parser and the sandboxed process. The files are made in code, with made-up buyers: no real seller's file exists
 // yet (#2521), and every mapping says so.
 import { describe, expect, it } from 'vitest';
-import { EXTRACT_KINDS, EXTRACT_LIMITS, MARKETPLACE_PLATFORMS, zExtractResponse } from '@crove/extract-contract';
-import { MARKETPLACE_PLATFORMS as PROFILE_PLATFORMS, MARKETPLACE_PROFILES, ORDER_FIELDS, ORDER_SKIP_REASONS, ORDER_STAGES } from '@crove/l10n-vn';
-import { MARKETPLACE_ORDER_FIELDS, MARKETPLACE_ORDER_STAGES, MARKETPLACE_SKIP_REASONS } from '@crove/extract-contract';
+import { EXTRACT_KINDS, EXTRACT_LIMITS, MARKETPLACE_PLATFORMS, zExtractResponse } from '@ludy/extract-contract';
+import { MARKETPLACE_PLATFORMS as PROFILE_PLATFORMS, MARKETPLACE_PROFILES, ORDER_FIELDS, ORDER_SKIP_REASONS, ORDER_STAGES } from '@ludy/l10n-vn';
+import { MARKETPLACE_ORDER_FIELDS, MARKETPLACE_ORDER_STAGES, MARKETPLACE_SKIP_REASONS } from '@ludy/extract-contract';
 import { readMarketplaceOrders } from '../src/marketplace-orders.ts';
 import { parse } from '../src/parse.ts';
 import { runSandboxed } from '../src/sandbox.ts';

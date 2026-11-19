@@ -5,9 +5,9 @@
 // the worker's claim (crove_notes.todo_reminders_claim) and writes a notification that holds none of the to-do's text.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { notifyMembers, uploaderEntity } from '@crove/kernel';
-import { NOTE_TRASH_DAYS, zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { notifyMembers, uploaderEntity } from '@ludy/kernel';
+import { NOTE_TRASH_DAYS, zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 
 function assertSystem(ctx: CommandContext): void {
   if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');

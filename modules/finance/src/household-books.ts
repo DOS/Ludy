@@ -7,10 +7,10 @@
 // - finance.household.export: the audit row of an Excel download of a book (R0; the period, the book and the number of rows, never the rows).
 // Amounts are decimal strings added with decimal.js, never JS numbers.
 import { z } from 'zod';
-import { zHouseholdBook, zHouseholdReturnForm, zId, zLedgerPeriod, zHouseholdS1aGet, type HouseholdBookRule, type HouseholdProfile, type HouseholdS1a } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { sum, toMoney } from '@crove/l10n-vn';
+import { zHouseholdBook, zHouseholdReturnForm, zId, zLedgerPeriod, zHouseholdS1aGet, type HouseholdBookRule, type HouseholdProfile, type HouseholdS1a } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { sum, toMoney } from '@ludy/l10n-vn';
 import { householdProfileView } from './household.ts';
 import { accountLedgerOf } from './ledger-reports.ts';
 import { resolveLegalEntity } from './legal-entity.ts';

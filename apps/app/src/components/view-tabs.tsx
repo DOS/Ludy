@@ -8,12 +8,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { SAVED_VIEW_LIMIT, type FilterAst, type SavedViewSort } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
+import { SAVED_VIEW_LIMIT, type FilterAst, type SavedViewSort } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { sameFilter, sameSort } from '../lib/view-filter.ts';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';

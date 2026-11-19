@@ -7,13 +7,13 @@ import { SignJWT } from 'jose';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { decodePdfSealInput, type ExtractClient, type PdfSealInput } from '@crove/extract-contract';
-import { buildKernelCommands, kernelQueries } from '@crove/kernel';
-import type { PersonalDataErasure, PersonalDataResult } from '@crove/kernel-contract';
-import { Runtime, fileKey, sha256Hex, type AgentActor, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { decodePdfSealInput, type ExtractClient, type PdfSealInput } from '@ludy/extract-contract';
+import { buildKernelCommands, kernelQueries } from '@ludy/kernel';
+import type { PersonalDataErasure, PersonalDataResult } from '@ludy/kernel-contract';
+import { Runtime, fileKey, sha256Hex, type AgentActor, type BlobStore } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import {
   SIGN_COMPLETED_MAIL_TEMPLATE,
   SIGN_INVITE_MAIL_TEMPLATE,
@@ -21,7 +21,7 @@ import {
   signCommands,
   signManifest,
   signQueries,
-} from '@crove/mod-sign';
+} from '@ludy/mod-sign';
 import { createAuthenticator } from '../src/auth.ts';
 import { AVAILABLE_MODULES, loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';

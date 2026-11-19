@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { Deal } from '@crove/kernel-contract';
+import type { Deal } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 vi.mock('@tanstack/react-router', () => ({

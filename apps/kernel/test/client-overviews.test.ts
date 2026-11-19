@@ -3,8 +3,8 @@
 // is left out; any other failure of one org is an error row (#495), and a refusal of the user fails the answer. The
 // database side is in clients.db.test.ts and clients-social.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { MAX_CLIENT_ORGS, OVERVIEW_FAIL_FAST, clientOverviews, type OrgOverview } from '@crove/kernel';
-import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
+import { MAX_CLIENT_ORGS, OVERVIEW_FAIL_FAST, clientOverviews, type OrgOverview } from '@ludy/kernel';
+import { DomainError, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 
 const USER = '0198a3a0-0000-7000-8000-000000000001';
 const actor: UserActor = { type: 'user', userId: USER, aal: 'aal1', sessionId: '0198a3a0-0000-7000-8000-0000000000aa', mfaAt: null };

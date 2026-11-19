@@ -7,7 +7,7 @@ import { consentBlocker, type ConsentMethod } from './consent.ts';
 import { loadState, activeAccount } from './state.ts';
 import { isOwnSender, LOST_KEY, parseLost, parseStartRequest, parseTick, RECORDING_KEY, type CaptureStart, type LostState, type RecordingState, type StartReply, type StartRequest, type StopReply } from './messages.ts';
 import { createClient } from './api.ts';
-import { formatClock } from '@crove/meeting-recorder';
+import { formatClock } from '@ludy/meeting-recorder';
 import { T } from './strings.ts';
 
 const OFFSCREEN_PATH = 'offscreen.html';

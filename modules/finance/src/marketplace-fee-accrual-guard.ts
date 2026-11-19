@@ -7,8 +7,8 @@
 // - another accrual of the same platform and month waiting for approval refuses a second request (MARKETPLACE_FEE_ACCRUAL_PENDING).
 // A description with no key is none of this module's business. Facts only, no model.
 import { sql } from 'kysely';
-import { JOURNAL_VOUCHER_KIND } from '@crove/kernel-contract';
-import { DomainError, type QueryContext } from '@crove/kernel-runtime';
+import { JOURNAL_VOUCHER_KIND } from '@ludy/kernel-contract';
+import { DomainError, type QueryContext } from '@ludy/kernel-runtime';
 
 type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
 

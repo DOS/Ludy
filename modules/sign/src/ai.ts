@@ -8,15 +8,15 @@ import {
   type MemberRole,
   type SignAiAnalysisStatus,
   type SignFieldType,
-} from '@crove/db';
-import { tableWrite } from '@crove/kernel-contract';
+} from '@ludy/db';
+import { tableWrite } from '@ludy/kernel-contract';
 import {
   defineCommand,
   defineQuery,
   DomainError,
   type CommandContext,
   type QueryContext,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { assertCanAccessEnvelopeRow } from './hr-visibility.ts';

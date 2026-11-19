@@ -3,7 +3,7 @@
 // must be the same number, or the flag the preparer raises and the flag finance rebuilds at record time would disagree.
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { CASH_PAYMENT_LIMIT } from '@crove/l10n-vn';
+import { CASH_PAYMENT_LIMIT } from '@ludy/l10n-vn';
 import { describe, expect, it } from 'vitest';
 
 describe('the cash limit of the totals function', () => {

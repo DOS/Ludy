@@ -2,8 +2,8 @@
 // The sales coworker's company suggestion on the API side (#2438) with a stand-in for the reader: the tax code and domain companies come first whatever the
 // model does, the model orders only the names (and is not asked for fewer than two), and every state of `ai` is an answer with the companies in hand, not an error.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError } from '@crove/agent';
-import { COMPANY_SUGGESTIONS_MAX, type CompanyCandidates } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError } from '@ludy/agent';
+import { COMPANY_SUGGESTIONS_MAX, type CompanyCandidates } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { suggestCompanies, type CompanyAi } from '../src/contact-company-ai.ts';
 

@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import { Decimal, type DecimalValue } from '@crove/l10n-vn';
+import { Decimal, type DecimalValue } from '@ludy/l10n-vn';
 import { buildJournalWorkbook, csvSafeText, moneyCell } from '../src/export.ts';
 import type { JournalEntryView } from '../src/queries.ts';
 import { expectExcelSheetNames } from './sheet-names.ts';

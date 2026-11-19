@@ -2,8 +2,8 @@
 // kernel.inbox.get reports the same decision, so the Inbox shows Approve only to users the server accepts.
 import { sql, type Transaction } from 'kysely';
 import { z } from 'zod';
-import type { Database, MemberRole } from '@crove/db';
-import { DomainError, type Actor, type CommandInfo, type QueryContext, type Risk } from '@crove/kernel-runtime';
+import type { Database, MemberRole } from '@ludy/db';
+import { DomainError, type Actor, type CommandInfo, type QueryContext, type Risk } from '@ludy/kernel-runtime';
 
 // Who produced (part of) a revision's content. Only user entries are humans; system and agent entries never count
 // as approvers or for four-eyes (ADR-0029 §6).

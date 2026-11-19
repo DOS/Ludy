@@ -5,7 +5,7 @@
 // names, no developer-token header and no query that changes anything. The live check records what Google really answers (docs/runbooks/ads-live-check.md).
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { ConnectorError, type Fetch } from '@crove/channel';
+import { ConnectorError, type Fetch } from '@ludy/channel';
 import {
   AD_PLATFORM_PROVIDERS,
   AdPlatformError,

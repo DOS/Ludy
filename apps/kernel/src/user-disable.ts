@@ -12,8 +12,8 @@
 // repeated run changes nothing and is noted as unchanged.
 // Exit codes: 0 done, 2 the command could not run (arguments, unknown or ambiguous account, database).
 import { sql } from 'kysely';
-import { USER_STATUS_CODES } from '@crove/kernel';
-import type { Actor, Runtime } from '@crove/kernel-runtime';
+import { USER_STATUS_CODES } from '@ludy/kernel';
+import type { Actor, Runtime } from '@ludy/kernel-runtime';
 
 export const USER_DISABLE_EXIT = { ok: 0, failed: 2 } as const;
 

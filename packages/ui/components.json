@@ -13,11 +13,11 @@
   "iconLibrary": "lucide",
   "rtl": false,
   "aliases": {
-    "components": "@crove/ui/components",
-    "utils": "@crove/ui/lib/utils",
-    "hooks": "@crove/ui/hooks",
-    "lib": "@crove/ui/lib",
-    "ui": "@crove/ui/components"
+    "components": "@ludy/ui/components",
+    "utils": "@ludy/ui/lib/utils",
+    "hooks": "@ludy/ui/hooks",
+    "lib": "@ludy/ui/lib",
+    "ui": "@ludy/ui/components"
   },
   "menuColor": "default",
   "menuAccent": "subtle",

@@ -5,7 +5,7 @@
 // kernel.org.set_app refuses (APP_BUSY) until then. A call row of a launch that is over (wound down, failed, cancelled) is history, not work: some paths leave one
 // unsettled for good, and it must not keep the app on. Read in the same transaction as the switch, which holds the tenant row; the begin commands take it too.
 import { sql, type Transaction } from 'kysely';
-import type { Database } from '@crove/db';
+import type { Database } from '@ludy/db';
 
 /** The reasons Ads is busy for the org, as short codes (none: it can be switched off). */
 export async function adsBusy(trx: Transaction<Database>, orgId: string): Promise<string[]> {

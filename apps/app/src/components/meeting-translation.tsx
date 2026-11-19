@@ -6,11 +6,11 @@
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { AiMeter, Translated, TranslationSegment, TranslationStatus, TranslationTarget, Translations } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import type { AiMeter, Translated, TranslationSegment, TranslationStatus, TranslationTarget, Translations } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { ErrorText } from './ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';

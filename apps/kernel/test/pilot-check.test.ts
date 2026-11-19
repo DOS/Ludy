@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
-import { vaultKeyId, type S3Sender } from '@crove/kernel-runtime';
+import { vaultKeyId, type S3Sender } from '@ludy/kernel-runtime';
 import { KNOWN_DEFAULTS, PILOT_EXIT, REQUIRED_SECRETS, checkEnv, parsePilotArgs, probeBuildChecks, probeCors, probeDeployment, objectLockProbe, probeEvidenceHolds, runPilotCheck, type CheckResult, type Env, type Fetch } from '../src/pilot-check.ts';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));

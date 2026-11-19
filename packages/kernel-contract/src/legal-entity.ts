@@ -6,7 +6,7 @@ import { zId } from './schemas.ts';
 //   company    an enterprise or other organization (10-digit tax code);
 //   branch     a branch or other dependent unit (the company's code with a 3-digit suffix);
 //   household  a household or individual business (12-digit code).
-// The same list as the database's CHECK constraint (LEGAL_ENTITY_KINDS in @crove/db, which the kernel keeps in step).
+// The same list as the database's CHECK constraint (LEGAL_ENTITY_KINDS in @ludy/db, which the kernel keeps in step).
 export const LEGAL_ENTITY_KINDS = ['company', 'branch', 'household'] as const;
 export type LegalEntityKind = (typeof LEGAL_ENTITY_KINDS)[number];
 export const zLegalEntityKind = z.enum(LEGAL_ENTITY_KINDS);

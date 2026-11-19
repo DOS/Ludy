@@ -9,12 +9,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { MeetingPlatformError, type MeetingPlatformAdapter, type MeetingPlatformCredential } from '@crove/channel';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { meetingPlatformBinding } from '@crove/kernel-contract';
-import { Runtime, type CredentialBroker } from '@crove/kernel-runtime';
+import { MeetingPlatformError, type MeetingPlatformAdapter, type MeetingPlatformCredential } from '@ludy/channel';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { meetingPlatformBinding } from '@ludy/kernel-contract';
+import { Runtime, type CredentialBroker } from '@ludy/kernel-runtime';
 import { meetingPlatformRefreshCommand, parseCredential, type RefreshOutcome } from '../src/meeting-platform-credential.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
