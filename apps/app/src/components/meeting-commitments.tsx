@@ -35,6 +35,9 @@ export function MeetingCommitments({ meetingId, isRecorder, hasTranscript, onJum
         {/* One live region that is always in the page, so the changes are announced. */}
         <div role="status" aria-live="polite" className="space-y-2 empty:hidden">
           {run.isPending && <p className="text-xs">{t('running')}</p>}
+          {/* What the answer is, said once when it arrives; the list below it is not read out, the member moves to it (WCAG 4.1.3). */}
+          {answer?.state === 'listed' && !run.isPending && <p className="sr-only">{t('found', { lines: answer.speakers.reduce((n, speaker) => n + speaker.lines.length, 0), speakers: answer.speakers.length })}</p>}
+          {answer?.state === 'none' && !run.isPending && <p className="sr-only">{t('none')}</p>}
         </div>
         {run.error && <ErrorText>{errorMessage(run.error)}</ErrorText>}
         {answer && !run.isPending && <CommitmentsResult answer={answer} onJump={onJump} />}
@@ -73,8 +76,9 @@ export function CommitmentsResult({ answer, onJump }: { answer: CommitmentsAnswe
                 <span>{line.text}</span>
                 <button
                   type="button"
-                  className="font-mono text-xs text-link underline"
+                  className="inline-flex min-h-6 items-center font-mono text-xs text-link underline max-md:min-h-11"
                   title={t('open', { time: clock(line.seconds) })}
+                  aria-label={t('open', { time: clock(line.seconds) })}
                   onClick={() => onJump(line.seconds)}
                   data-testid="commitments-jump"
                 >
