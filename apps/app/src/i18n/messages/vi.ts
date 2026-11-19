@@ -270,6 +270,7 @@ export const vi = {
         nextStepsMore: '{count, plural, other {# deal khác}} cần được theo dõi',
         dealClosesToday: 'Deal này dự kiến chốt hôm nay',
         booking: 'Lịch hẹn lúc {time}',
+        bookingTomorrow: 'Lịch hẹn ngày mai lúc {time}',
       },
       social: {
         review: '{count, plural, other {# bài}} đang chờ bạn duyệt',
@@ -280,6 +281,11 @@ export const vi = {
         dueOverdue: 'Một bài đã đến giờ đăng mà vẫn chưa được duyệt',
         dueOverdueTitled: '“{title}” đã đến giờ đăng mà vẫn chưa được duyệt',
         dueMore: '{count, plural, other {# bài khác}} lên lịch trong 24 giờ tới, hoặc đã quá giờ, mà vẫn chưa được duyệt',
+      },
+      wake: {
+        unanswered: '{count, plural, other {# hội thoại}} đã chờ quá {hours, plural, other {# giờ}} mà chưa được trả lời',
+        replyWindow: '{count, plural, other {# hội thoại}} sắp hết thời hạn trả lời của nền tảng (trong {hours, plural, other {# giờ}})',
+        postComments: '{count, plural, other {# bình luận mới}} dưới bài đã đăng chưa được trả lời',
       },
       conversations: {
         unanswered: '{count, plural, other {# tin nhắn của khách}} đang chờ bạn trả lời',
@@ -4454,6 +4460,15 @@ export const vi = {
       next: 'Lần đọc tiếp theo: {when}',
       last: 'Lần đọc gần nhất: {when}',
       reset: 'Hạn mức đặt lại lúc: {when}',
+    },
+    wake: {
+      title: 'Khi nào nhắc việc',
+      hint: 'Các mốc này quyết định lúc nào mục “Hôm nay cần bạn” nhắc bạn, và lúc nào đồng nghiệp AI (Dy, Uy) mà bạn đã kết nối được gọi vào việc. Chỉ chủ sở hữu và quản trị viên đổi được.',
+      unansweredHours: 'Khách nhắn mà chưa được trả lời sau',
+      replyWindowHours: 'Nhắc khi thời hạn trả lời của nền tảng còn dưới',
+      quoteDays: 'Báo giá đã gửi mà chưa có trả lời sau',
+      hours: '{n, plural, other {# giờ}}',
+      days: '{n, plural, other {# ngày}}',
     },
     retention: {
       title: 'Thời gian lưu hội thoại',
@@ -14383,6 +14398,7 @@ export const vi = {
         won_deals: 'Xem các deal đã thắng, để đối chiếu với hóa đơn bán hàng',
       },
       today: 'Xem việc CRM cần bạn trong hôm nay',
+      wake: { facts: 'Xem các việc theo dõi báo giá và lịch hẹn ngày mai để gọi đồng nghiệp AI vào việc' },
       mcp: {
         bookings: 'Cho ứng dụng AI xem danh sách lịch hẹn',
         deal: 'Cho ứng dụng AI xem một cơ hội bán hàng',
@@ -15048,6 +15064,8 @@ export const vi = {
         signals_unanswered: 'Xem khách nào nhắn lâu chưa được trả lời, theo mã và thời điểm (không có nội dung tin nhắn)',
         intent_source: 'Đọc lời khách để gợi ý ý định',
         contact_candidates: 'Tìm liên hệ có thể là khách này',
+        wake_rules: 'Xem khi nào hộp thư và CRM nhắc việc (số giờ, số ngày của các mốc nhắc)',
+        wake_rules_set: 'Đặt khi nào hộp thư và CRM nhắc việc (số giờ, số ngày của các mốc nhắc)',
         today: 'Xem các hội thoại đang chờ bạn trả lời hôm nay',
         auto_draft: 'Xem {sales} có soạn nháp khi có hội thoại mới hay không',
         auto_draft_set: 'Bật hoặc tắt việc {sales} tự soạn nháp khi có hội thoại mới',
@@ -15332,6 +15350,10 @@ export const vi = {
         save: 'Lưu chế độ xem của một danh sách',
         set_shared: 'Chia sẻ hoặc thôi chia sẻ chế độ xem đã lưu',
       },
+      wake: {
+        conversations: 'Cho ứng dụng AI và Hôm nay xem hội thoại nào đang chờ, theo mã và từ lúc nào (không có nội dung tin nhắn)',
+        today: 'Xem các mốc nhắc việc của hộp thư cần bạn hôm nay',
+      },
       mcp: {
         conversation: 'Cho ứng dụng AI xem một cuộc trò chuyện trong Hộp thư cùng các tin nhắn',
         conversations: 'Cho ứng dụng AI xem danh sách cuộc trò chuyện trong Hộp thư',
@@ -15353,6 +15375,8 @@ export const vi = {
           delivery: 'Đọc một lần báo thức đang chờ gửi',
           enqueue: 'Xếp hàng một lần báo thức cho ứng dụng AI',
           get: 'Xem địa chỉ nhận báo thức của các ứng dụng AI',
+          line_check: 'Kiểm tra các sự kiện của từng ứng dụng đã gửi báo thức',
+          line_plan: 'Đọc những gì một báo thức cần trước khi các ứng dụng đọc cho nó',
           queued: 'Ghi nhận một lần báo thức đã chuyển vào hàng đợi',
           record: 'Ghi kết quả một lần gửi báo thức',
           rotate_secret: 'Đổi khóa bí mật báo thức của một ứng dụng AI',

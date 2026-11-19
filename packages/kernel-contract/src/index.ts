@@ -43,6 +43,7 @@ export * from './finance-orders.ts';
 export * from './contact-company.ts';
 export * from './contact-import.ts';
 export * from './conversations.ts';
+export * from './engage-wake.ts';
 export * from './mail-address.ts';
 export * from './signals.ts';
 export * from './today.ts';

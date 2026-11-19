@@ -9,12 +9,16 @@
 //      answers nothing and the wake-up stays quiet (the signal reads declare `mcp` when their line has reviewed what leaves). A signal fires when its key first appears and again
 //      only after it went away; up to 20 items go in one event, stored in one transaction with the keys it carries, so a failure fires it again and never loses it.
 //      A key is forgotten only when its rule answered in full; a rule that failed or answered in part leaves its keys as they were.
+//   4. The lines' own events (Engage's wake rules, #3862: mcp-wake-engage.ts). The feeds are read for a company grant that holds the line's scope, AS the grant, BEFORE the signals are looked at (the worker's entry
+//      into a company grant's sealed context closes once the signals were checked: its `signals_checked_at`), and each item is sent only if its own "seen" key (an item and the day of its window) is new for
+//      the grant; the key is noted in the transaction that stores the event, so two sweeps never both send it.
 // A failure for one grant never stops the others, and a failure of the queue leaves the delivery stored, to be handed over again.
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ, kernelQueries } from '@crove/kernel';
 import type { TodayItem } from '@crove/kernel-contract';
+import type { McpWakeLinePlan } from '@crove/kernel';
 import { LINE_WAKE_EVENTS, WAKE_ITEMS_MAX, WAKE_RULES, wakeEvent, type LineWakeRegistry, type WakeItem } from './mcp-wake-body.ts';
 import type { WakeJob } from './mcp-wake.ts';
 
@@ -51,6 +55,23 @@ export interface LineWakeSource {
   events: (grant: WakeGrant) => Promise<Array<Record<string, string>>>;
 }
 
+// One event a line's feed wants sent: the registered type, its data (ids, days, amounts, enum words) and the item's own key (`<type>:<id>:<day of the window>`, see mcp-wake-engage.ts wakeKey), which is what makes it fire once per
+// item per window.
+export interface LineWakeItem {
+  type: string;
+  data: Record<string, string>;
+  key: string;
+}
+// A line's feed (#3862): all its rules in one pass over one grant. `read` runs AS THE GRANT, in its sealed context (the plan says what the grant is and holds), before the signals are looked at; it returns the items that
+// hold now, newest first within each type. The sweep sends only the registered types the grant's scopes allow, and only the keys that are new.
+export interface LineWakeFeed {
+  types: readonly string[];
+  read: (grant: WakeGrant, plan: McpWakeLinePlan) => Promise<LineWakeItem[]>;
+}
+// The most keys one pass checks, and the most events of one type it sends; the rest wait for the next look.
+const FEED_KEYS_MAX = 200;
+const FEED_PER_TYPE = 25;
+
 export interface WakeSweepDeps {
   runtime: Runtime;
   workerDb: Db;
@@ -59,6 +80,8 @@ export interface WakeSweepDeps {
   evaluate?: SignalEvaluator;
   // The lines' sources of events; none until a line ships one.
   lines?: readonly LineWakeSource[];
+  // The lines' feeds with their own "seen" rules (Engage's wake rules, #3862); none by default.
+  feeds?: readonly LineWakeFeed[];
   // The registry the sources' types are checked against and bodies built with (the lines' own, by default; a test gives its own).
   lineRegistry?: LineWakeRegistry;
   now?: () => Date;
@@ -141,11 +164,11 @@ export function runtimeEvaluator(runtime: Runtime, rules: readonly (typeof WAKE_
 }
 
 // One pass. Returns what it did, for the log and the tests.
-export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: number; expired: number; schedules: number; signals: number; failures: number }> {
+export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: number; expired: number; schedules: number; signals: number; lines: number; failures: number }> {
   const now = deps.now ?? (() => new Date());
   const newId = deps.newId ?? (() => crypto.randomUUID());
   const evaluate = deps.evaluate ?? runtimeEvaluator(deps.runtime, declaredRules(kernelQueries({ inboundDomain: null }) as readonly { name: string; mcp?: unknown }[]));
-  const done = { handedOver: 0, expired: 0, schedules: 0, signals: 0, failures: 0 };
+  const done = { handedOver: 0, expired: 0, schedules: 0, signals: 0, lines: 0, failures: 0 };
 
   // Stores one event for a grant (with the keys it carries, or moving a due schedule on, in the same transaction) and hands it over; a replay of the id, or a schedule
   // another pass already took, stores nothing.
@@ -155,6 +178,63 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
     const stored = await deps.runtime.execute<{ stored: boolean }>('kernel.mcp.wake.enqueue', { id, grantId: grant.grantId, type, body, ...(keys ? { keys } : {}) }, { actor: ACTOR, orgId: grant.orgId });
     if (stored.stored) await deps.send({ orgId: grant.orgId, id }).catch((error: unknown) => console.warn(`[mcp-wake-sweep] ${id.slice(0, 8)} not handed over, will be again`, codeOf(error)));
     return stored.stored;
+  };
+
+  const registry = deps.lineRegistry ?? LINE_WAKE_EVENTS;
+  // What the feeds say for a grant: nothing for a member-bound grant (it reads only what its member may, and has no line events), or one without the read scope. A feed that fails costs its own items, not the signals.
+  const readFeeds = async (grant: WakeGrant): Promise<LineWakeItem[]> => {
+    if (!deps.feeds || deps.feeds.length === 0) return [];
+    let plan: McpWakeLinePlan;
+    try {
+      plan = await deps.runtime.query<McpWakeLinePlan>('kernel.mcp.wake.line_plan', { grantId: grant.grantId }, { actor: ACTOR, orgId: grant.orgId });
+    } catch (error) {
+      console.warn(`[mcp-wake-sweep] plan for ${grant.grantId.slice(0, 8)}`, codeOf(error));
+      return [];
+    }
+    if (plan.kind !== 'company' || !plan.scopes.includes('ludy.read')) return [];
+    const out: LineWakeItem[] = [];
+    for (const feed of deps.feeds) {
+      // A feed is read only if the grant holds the scope of one of its types.
+      if (!feed.types.some((t) => Object.hasOwn(registry, t) && plan.scopes.includes((registry[t] as { scope: string }).scope))) continue;
+      try {
+        for (const it of await feed.read(grant, plan)) {
+          // Defense in depth: only a registered type, only a scope the grant holds, only the type the feed declares.
+          const entry = Object.hasOwn(registry, it.type) ? registry[it.type] : undefined;
+          if (entry && feed.types.includes(it.type) && plan.scopes.includes(entry.scope)) out.push(it);
+        }
+      } catch (error) {
+        console.warn(`[mcp-wake-sweep] feed for ${grant.grantId.slice(0, 8)}`, codeOf(error));
+      }
+    }
+    return out;
+  };
+  // The items that are new for the grant become events, each with its one key (stored with it). Up to FEED_PER_TYPE of a type are looked at in a pass, newest first as the feed gave them.
+  const sendFeedItems = async (grant: WakeGrant, items: readonly LineWakeItem[]): Promise<number> => {
+    if (items.length === 0) return 0;
+    const seen = new Map<string, number>();
+    const unique = new Map<string, LineWakeItem>();
+    for (const it of items) {
+      const n = seen.get(it.type) ?? 0;
+      if (n >= FEED_PER_TYPE || unique.has(it.key) || unique.size >= FEED_KEYS_MAX) continue;
+      seen.set(it.type, n + 1);
+      unique.set(it.key, it);
+    }
+    if (unique.size === 0) return 0;
+    const ctx = { actor: ACTOR, orgId: grant.orgId };
+    const { fresh } = await deps.runtime.execute<{ fresh: string[] }>('kernel.mcp.wake.line_check', { grantId: grant.grantId, keys: [...unique.keys()] }, ctx);
+    let sent = 0;
+    for (const key of fresh) {
+      const it = unique.get(key);
+      if (!it) continue;
+      try {
+        if (await post(grant, it.type, it.data, [it.key])) sent += 1;
+      } catch (error) {
+        // The grant does not hold the type's scope (the database says so), or the data does not fit: this item is left, the rest still go.
+        done.failures += 1;
+        console.warn(`[mcp-wake-sweep] ${it.type} for ${grant.grantId.slice(0, 8)}`, codeOf(error));
+      }
+    }
+    return sent;
   };
 
   // 1. Deliveries that need the queue again, or have waited too long.
@@ -186,6 +266,8 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
       if (row.schedule_due && row.due_day && (await post(grant, 'schedule.due', { date: row.due_day }))) done.schedules += 1;
       if (row.signals_due) {
         const { items, complete } = await evaluate(grant);
+        // The feeds read now, as the grant, while its sealed context can still be entered (signals_check below moves `signals_checked_at`).
+        const feedItems = await readFeeds(grant);
         const unique = [...new Map(items.map((i) => [i.key, i])).values()].slice(0, 200);
         const { fresh } = await deps.runtime.execute<{ fresh: string[] }>('kernel.mcp.wake.signals_check', { grantId: grant.grantId, keys: unique.map((i) => i.key), complete }, ctx);
         const news = unique.filter((i) => fresh.includes(i.key));
@@ -193,6 +275,7 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
           const chunk = news.slice(at, at + WAKE_ITEMS_MAX);
           if (await post(grant, 'signal.fired', { items: chunk }, chunk.map((i) => i.key))) done.signals += 1;
         }
+        done.lines += await sendFeedItems(grant, feedItems);
         // The lines' own events (inside the signal look, so never for a member-bound grant, which has none, and every five minutes at most): a source of a type the registry does not list is never asked, and a grant that does not hold the type's scope is refused by the database (MCP_WAKE_SCOPE) and left alone.
         for (const source of deps.lines ?? []) {
           if (!Object.hasOwn(deps.lineRegistry ?? LINE_WAKE_EVENTS, source.type)) continue;

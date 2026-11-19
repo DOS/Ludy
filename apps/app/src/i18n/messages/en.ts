@@ -272,6 +272,7 @@ export const en = {
         nextStepsMore: '{count, plural, one {# more deal needs} other {# more deals need}} a follow-up',
         dealClosesToday: 'This deal is due to close today',
         booking: 'Appointment at {time}',
+        bookingTomorrow: 'Appointment tomorrow at {time}',
       },
       social: {
         review: '{count, plural, one {# post is} other {# posts are}} waiting for your approval',
@@ -282,6 +283,11 @@ export const en = {
         dueOverdue: 'A post meant to go out is still waiting for approval',
         dueOverdueTitled: '“{title}” was meant to go out and is still waiting for approval',
         dueMore: '{count, plural, one {# more post is} other {# more posts are}} scheduled for the next 24 hours, or overdue, and still waiting for approval',
+      },
+      wake: {
+        unanswered: '{count, plural, one {# conversation has} other {# conversations have}} waited over {hours, plural, one {# hour} other {# hours}} without an answer',
+        replyWindow: '{count, plural, one {# conversation} other {# conversations}} about to pass the platform reply window (within {hours, plural, one {# hour} other {# hours}})',
+        postComments: '{count, plural, one {# new comment} other {# new comments}} under a published post without an answer',
       },
       conversations: {
         unanswered: '{count, plural, one {# customer message is} other {# customer messages are}} waiting for a reply',
@@ -4457,6 +4463,15 @@ export const en = {
       next: 'Next reading: {when}',
       last: 'Last reading: {when}',
       reset: 'The quota resets: {when}',
+    },
+    wake: {
+      title: 'When work is raised',
+      hint: 'These marks decide when “Today needs you” reminds you, and when the AI coworkers (Dy, Uy) you connected are called in. Only the owner and admins can change them.',
+      unansweredHours: 'A customer message with no answer after',
+      replyWindowHours: 'Remind when the platform reply window has less than',
+      quoteDays: 'A sent quote with no answer after',
+      hours: '{n, plural, one {# hour} other {# hours}}',
+      days: '{n, plural, one {# day} other {# days}}',
     },
     retention: {
       title: 'How long conversations are kept',
@@ -14384,6 +14399,7 @@ export const en = {
         won_deals: 'Read the won deals, to check them against sales invoices',
       },
       today: 'Read the CRM items that need you today',
+      wake: { facts: 'Read the quote follow-ups and bookings tomorrow that call an AI coworker in' },
       mcp: {
         bookings: 'Let an AI app list the bookings',
         deal: 'Let an AI app read one deal',
@@ -15050,6 +15066,8 @@ export const en = {
         intent_source: 'Read the customer’s words to suggest an intent',
         contact_candidates: 'Find contacts this customer may be',
         today: 'Read the conversations waiting for you today',
+        wake_rules: 'See when the inbox and the CRM raise work (the hours and days of the wake rules)',
+        wake_rules_set: 'Set when the inbox and the CRM raise work (the hours and days of the wake rules)',
         auto_draft: 'See whether {sales} drafts when a new conversation arrives',
         auto_draft_set: 'Turn on or off {sales} drafting when a new conversation arrives',
         youtube_comments: 'See which YouTube channels read comments and the day’s quota',
@@ -15333,6 +15351,10 @@ export const en = {
         save: 'Save a view of a list',
         set_shared: 'Share or unshare a saved view',
       },
+      wake: {
+        conversations: 'Let an AI app and Home read which conversations wait, by id and since when (no message text)',
+        today: 'Read the inbox rules that need you today',
+      },
       mcp: {
         conversation: 'Let an AI app read one inbox conversation with its messages',
         conversations: 'Let an AI app list the inbox conversations',
@@ -15354,6 +15376,8 @@ export const en = {
           delivery: 'Read a wake-up waiting to be sent',
           enqueue: 'Queue a wake-up for an AI app',
           get: 'See the wake-up receivers of the AI apps',
+          line_check: 'Check which line events a wake-up already sent',
+          line_plan: 'Read what a wake-up needs before the lines read for it',
           queued: 'Note a wake-up was handed to the queue',
           record: 'Record the result of sending a wake-up',
           rotate_secret: 'Rotate the wake-up secret of an AI app',
