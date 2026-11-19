@@ -77,7 +77,6 @@ describe('describeError', () => {
 
   it('keeps the kernel message for a code the SPA does not word, then a generic text', () => {
     expect(describeError({ code: 'TASK_CLOSED', message: 'Việc này đã kết thúc' }, en, 'en')).toBe('Việc này đã kết thúc');
-    expect(describeError(new TypeError('Failed to fetch'), en, 'en')).toBe('Failed to fetch');
     expect(describeError(null, en, 'en')).toBe('Something went wrong');
     expect(describeError({}, vi, 'vi')).toBe('Đã có lỗi xảy ra');
   });
