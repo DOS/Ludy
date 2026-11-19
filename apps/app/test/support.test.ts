@@ -1,11 +1,9 @@
-// The feedback and support link and the quick guide (issue #310).
+// The feedback and support link and the quick guide (issues #310, #3596).
 import { describe, expect, it } from 'vitest';
-import { vi } from '../src/i18n/messages/vi.ts';
-import { firmGuide, fill } from '../src/lib/firm-guide.ts';
+import { LOCALES } from '../src/i18n/locale.ts';
+import { SOURCE_CATALOGS } from '../src/i18n/runtime.ts';
+import { fill } from '../src/lib/guide-text.ts';
 import { quickGuide } from '../src/lib/quick-guide.ts';
-
-const QUICK_GUIDE = quickGuide();
-const FIRM_GUIDE = firmGuide();
 import { supportLink } from '../src/lib/support.ts';
 
 describe('support link', () => {
@@ -27,97 +25,85 @@ describe('support link', () => {
   });
 });
 
-describe('quick guide', () => {
-  it('covers upload, approve and export, in that order', () => {
-    expect(QUICK_GUIDE.map((step) => step.id)).toEqual(['upload', 'approve', 'export']);
-    for (const step of QUICK_GUIDE) expect(step.items.length, step.id).toBeGreaterThan(0);
-  });
+// Accented Vietnamese letters: what must not show in the English guide.
+const VIETNAMESE = /[ăâđêôơưàáạảãầấậẩẫằắặẳẵèéẹẻẽềếệểễìíịỉĩòóọỏõồốộổỗờớợởỡùúụủũừứựửữỳýỵỷỹ]/i;
 
-  it('names the buttons the screens show', () => {
-    const text = QUICK_GUIDE.flatMap((step) => [step.title, ...step.items]).join('\n');
-    for (const label of [vi.inbox.upload, vi.inboxDetail.approve, vi.inboxDetail.reject, vi.journal.export, vi.nav.inbox, vi.nav.journal]) {
-      expect(text).toContain(`"${label}"`);
+const lines = (locale: 'vi' | 'en', brand = 'Ludy') => quickGuide(brand, locale).flatMap((step) => [step.title, ...step.items]);
+
+describe('quick guide (#310, #3596)', () => {
+  it('covers upload and approve, the VAT month and the export, in that order, in both languages', () => {
+    for (const locale of LOCALES) {
+      const steps = quickGuide('Ludy', locale);
+      expect(steps.map((step) => step.id), locale).toEqual(['upload', 'vat', 'export']);
+      for (const step of steps) expect(step.items.length, `${locale} ${step.id}`).toBeGreaterThan(0);
     }
+    // The same steps, with the same number of lines, whatever the language.
+    expect(quickGuide('Ludy', 'en').map((step) => step.items.length)).toEqual(quickGuide('Ludy', 'vi').map((step) => step.items.length));
   });
 
-  it('is Vietnamese with diacritics and has no em dashes or en dashes', () => {
-    for (const line of QUICK_GUIDE.flatMap((step) => [step.title, ...step.items])) {
-      expect(line.trim(), line).not.toBe('');
-      expect(line, line).not.toMatch(/[–—]/);
+  it('has a full title in each language', () => {
+    expect(quickGuide('Ludy', 'vi').map((step) => step.title)).toEqual(['Bước 1. Tải hóa đơn lên và duyệt', 'Bước 2. Khai thuế GTGT của tháng', 'Bước 3. Xuất Excel cho kế toán']);
+    expect(quickGuide('Ludy', 'en').map((step) => step.title)).toEqual(['Step 1. Upload invoices and approve them', 'Step 2. The VAT return of the month', 'Step 3. Export to Excel for your accountant']);
+  });
+
+  it('names the buttons the screens show, by the labels of the language it is written in', () => {
+    for (const locale of LOCALES) {
+      const m = SOURCE_CATALOGS[locale];
+      const text = lines(locale).join('\n');
+      for (const label of [m.inbox.upload, m.inboxDetail.approve, m.inboxDetail.reject, m.vat.export, m.vat.exportXml, fill(m.periodLock.lock, { month: 'MM/YYYY' }), m.journal.export, m.nav.inbox, m.nav.vat, m.nav.journal]) {
+        expect(text, `${locale} ${label}`).toContain(`"${label}"`);
+      }
     }
-    expect(QUICK_GUIDE.map((step) => step.title)).toEqual(['Bước 1. Tải hóa đơn lên', 'Bước 2. Kiểm tra và duyệt', 'Bước 3. Xuất Excel cho kế toán']);
-  });
-});
-
-describe('firm guide (#661)', () => {
-  const lines = FIRM_GUIDE.flatMap((step) => [step.title, ...step.items]);
-  const text = lines.join('\n');
-
-  it("walks one client's month in order, from adding the client to the hand-over", () => {
-    expect(FIRM_GUIDE.map((step) => step.id)).toEqual(['client', 'setup', 'intake', 'review', 'bank', 'close', 'handover']);
-    expect(FIRM_GUIDE.map((step) => step.title)).toEqual([
-      'Bước 1. Thêm doanh nghiệp khách hàng',
-      'Bước 2. Cài đặt một lần cho mỗi khách hàng',
-      'Bước 3. Nhận hóa đơn mua vào và bán ra của tháng',
-      'Bước 4. Kiểm tra và duyệt',
-      'Bước 5. Ngân hàng và tiền mặt',
-      'Bước 6. Khóa sổ và tờ khai GTGT',
-      'Bước 7. Đưa số liệu sang phần mềm kế toán của hãng',
-    ]);
-    for (const step of FIRM_GUIDE) expect(step.items.length, step.id).toBeGreaterThan(0);
-  });
-
-  it('names the screens and buttons the app shows, placeholders filled in', () => {
-    for (const label of [
-      vi.nav.addOrg,
-      vi.onboarding.lookUp,
-      vi.nav.allClients,
-      vi.settings.vatFilingPeriod,
-      vi.openingBalance.open,
-      vi.inbox.upload,
-      vi.portalList.upload,
-      fill(vi.inbox.bulk.approve, { count: 'N' }),
-      vi.inboxDetail.approve,
-      vi.bank.makeVoucher,
-      vi.vouchers.new,
-      vi.vat.exportXml,
-      fill(vi.periodLock.lock, { month: 'MM/YYYY' }),
-      vi.journal.exportMisa,
-      vi.journal.exportMisaGoods,
-      vi.journal.exportMisaSales,
-      vi.misaGoods.title,
-      vi.vouchers.exportReceipts,
-      vi.vouchers.exportPayments,
-      vi.vouchers.exportBankCredits,
-      vi.vouchers.exportBankDebits,
-      vi.journal.export,
-    ]) {
-      expect(text).toContain(`"${label}"`);
-    }
-    // Every quoted label is filled: no ICU placeholder is left for the reader.
-    expect(text).not.toMatch(/[{}]/);
   });
 
   it('quotes only labels the catalog has, so no quote can drift from its screen', () => {
-    // Every string of the vi catalog, with its placeholders filled as the guide fills them.
-    const catalog = new Set<string>();
-    const walk = (node: unknown) => {
-      if (typeof node === 'string') catalog.add(fill(node, { count: 'N', month: 'MM/YYYY', brand: 'Ludy' }));
-      else if (node && typeof node === 'object') Object.values(node).forEach(walk);
-    };
-    walk(vi);
-    const quoted = [...text.matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? '');
-    expect(quoted.length).toBeGreaterThan(40);
-    expect(quoted.filter((label) => !catalog.has(label))).toEqual([]);
+    for (const locale of LOCALES) {
+      // Every string of the catalog, with its placeholders filled as the guide fills them.
+      const catalog = new Set<string>();
+      const walk = (node: unknown) => {
+        if (typeof node === 'string') catalog.add(fill(node, { count: 'N', month: 'MM/YYYY', brand: 'Ludy' }));
+        else if (node && typeof node === 'object') Object.values(node).forEach(walk);
+      };
+      walk(SOURCE_CATALOGS[locale]);
+      const quoted = [...lines(locale).join('\n').matchAll(/"([^"]+)"/g)].map((match) => match[1] ?? '');
+      expect(quoted.length, locale).toBeGreaterThan(20);
+      expect(quoted.filter((label) => !catalog.has(label)), locale).toEqual([]);
+    }
   });
 
-  // #1040: both guides name the product by BRAND_NAME, in their own text and in the labels they quote.
+  // #3596: the English interface shows no Vietnamese in the guide.
+  it('has no Vietnamese in English', () => {
+    expect(lines('en').filter((line) => VIETNAMESE.test(line))).toEqual([]);
+  });
+
+  it('is Vietnamese with diacritics, and neither language has em dashes, en dashes or an unfilled placeholder', () => {
+    expect(lines('vi').filter((line) => !VIETNAMESE.test(line))).toEqual([]);
+    for (const locale of LOCALES) {
+      for (const line of lines(locale)) {
+        expect(line.trim(), line).not.toBe('');
+        expect(line, line).not.toMatch(/[–—]/);
+        expect(line, line).not.toMatch(/\{[a-zA-Z]+\}/);
+      }
+    }
+  });
+
+  // #1040: the guide names the product by BRAND_NAME, in its own text and in the labels it quotes.
   it('names the product by the brand it is given', () => {
-    const renamed = [...quickGuide('Tên Mới'), ...firmGuide('Tên Mới')].flatMap((step) => [step.title, ...step.items]).join('\n');
-    expect(renamed).toContain('Tên Mới');
-    expect(renamed).not.toContain('Crove');
-    expect(renamed).not.toMatch(/[{}]/);
-    expect(text).toContain('trong Ludy');
+    for (const locale of LOCALES) {
+      const renamed = lines(locale, 'Tên Mới').join('\n');
+      expect(renamed, locale).toContain('Tên Mới');
+      expect(renamed, locale).not.toContain('Crove');
+      expect(renamed, locale).not.toMatch(/[{}]/);
+    }
+  });
+
+  // #3596: docs/product/scope.md sends the accounting firm with many client companies to the Icebox.
+  it('has no flow for an accounting firm with client companies', () => {
+    for (const locale of LOCALES) {
+      const text = lines(locale).join('\n');
+      expect(text, locale).not.toMatch(/khách hàng của hãng|doanh nghiệp khách hàng|công ty dịch vụ kế toán|client compan|accounting firm|MISA/i);
+      for (const [key] of Object.entries(SOURCE_CATALOGS[locale].guide)) expect(key, locale).not.toMatch(/^firm/);
+    }
   });
 
   it('fills ICU placeholders and leaves unknown ones', () => {
@@ -126,12 +112,5 @@ describe('firm guide (#661)', () => {
     expect(fill('{a} và {b}', { a: 'x' })).toBe('x và {b}');
     // A placeholder named like an Object.prototype member is not filled from the prototype.
     expect(fill('{toString}', {})).toBe('{toString}');
-  });
-
-  it('is Vietnamese with diacritics and has no em dashes or en dashes', () => {
-    for (const line of lines) {
-      expect(line.trim(), line).not.toBe('');
-      expect(line, line).not.toMatch(/[–—]/);
-    }
   });
 });

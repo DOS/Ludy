@@ -18,6 +18,7 @@ export interface CroveAdsSchema {
   'crove_ads.ad_campaign_request': AdsAdCampaignRequestTable;
   'crove_ads.ad_flag_setting': AdsAdFlagSettingTable;
   'crove_ads.ad_launch': AdsAdLaunchTable;
+  'crove_ads.ad_manage_change': AdsAdManageChangeTable;
   'crove_ads.ad_object': AdsAdObjectTable;
   'crove_ads.ad_org_setting': AdsAdOrgSettingTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
@@ -417,6 +418,33 @@ export interface AdsAdLaunchTable {
   wind_down_code: ColumnType<string | null, string | null, NotGranted>;
   retry_requested_at: ColumnType<Date | null, Date | string | null, NotGranted>;
   retry_requested_by: ColumnType<string | null, string | null, NotGranted>;
+}
+
+/** crove_ads.ad_manage_change */
+export interface AdsAdManageChangeTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  seq: ColumnType<string, never, NotGranted>;
+  ad_account_id: ColumnType<string, string, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  launch_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  slot: ColumnType<string, string, NotGranted>;
+  level: ColumnType<string, string, NotGranted>;
+  object_id: ColumnType<string, string, NotGranted>;
+  family: ColumnType<string | null, never, NotGranted>;
+  state: Generated<string>;
+  from_budget: ColumnType<string | null, string | null, NotGranted>;
+  to_budget: ColumnType<string | null, string | null, NotGranted>;
+  from_end_on: ColumnType<string | null, string | null, NotGranted>;
+  to_end_on: ColumnType<string | null, string | null, NotGranted>;
+  proposal_id: ColumnType<string | null, string | null, NotGranted>;
+  code: string | null;
+  settled_on: string | null;
+  requested_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  settled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_ads.ad_object */

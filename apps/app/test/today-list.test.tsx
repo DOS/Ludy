@@ -27,7 +27,17 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), client: {}, queryClient: client.current, errorMessage: (e: unknown) => String(e) };
 });
 vi.mock('../src/lib/stream-hook.ts', () => ({ useStreamLive: () => false, pollEvery: () => false, SAFETY_POLL_MS: 300_000 }));
-vi.mock('@tanstack/react-router', () => ({ useRouter: () => ({ history: { push: () => undefined } }) }));
+vi.mock('@tanstack/react-router', () => ({
+  useRouter: () => ({ history: { push: () => undefined } }),
+  Link: ({ to, params, children, className }: { to: string; params: { slug: string }; children?: unknown; className?: string }) => (
+    <a href={to.replace('$slug', params.slug)} className={className}>
+      {children as never}
+    </a>
+  ),
+}));
+// The apps the org has: the accounting app by default; a test switches it off.
+const modules = vi.hoisted(() => ({ installed: ['finance'] as string[] }));
+vi.mock('../src/lib/org-modules.ts', () => ({ installedModules: () => modules.installed, useModulesVersion: () => 0 }));
 
 const { TodayList } = await import('../src/components/today-list.tsx');
 const { briefDay, briefStorageKey, listFingerprint } = await import('../src/lib/today-brief.ts');
@@ -75,7 +85,10 @@ function render(opts: { data?: unknown; error?: boolean; locale?: 'en' | 'vi'; b
   );
 }
 
-beforeEach(() => client.current.clear());
+beforeEach(() => {
+  client.current.clear();
+  modules.installed = ['finance'];
+});
 
 describe('TodayList', () => {
   it('groups by kind with flags first, one link per item to the screen that handles it', () => {
@@ -232,6 +245,19 @@ describe('TodayList', () => {
     const loading = render();
     expect(loading).toContain('aria-busy="true"');
     expect(loading).not.toContain(en.today.empty);
+  });
+
+  // #3596: a new owner with nothing waiting is pointed to the quick guide, in either language, where the accounting app is on.
+  it('links the quick guide from the empty state when the accounting app is on', () => {
+    const empty = { data: { items: [], coworkers: NAMES, dropped: 0 } };
+    expect(render(empty)).toContain(`<a href="/o/acme/guide" class="text-sm text-link hover:underline">${en.today.guideLink}</a>`);
+    expect(render({ ...empty, locale: 'vi' })).toContain(`href="/o/acme/guide"`);
+    expect(render({ ...empty, locale: 'vi' })).toContain(viMessages.today.guideLink);
+    modules.installed = ['notes'];
+    expect(render(empty)).not.toContain('/guide');
+    // A list with something in it has no empty state, so no guide link.
+    modules.installed = ['finance'];
+    expect(render({ data: { items: ITEMS, coworkers: NAMES, dropped: 0 } })).not.toContain('/guide');
   });
 
   it('keeps its heading as the label of the section', () => {

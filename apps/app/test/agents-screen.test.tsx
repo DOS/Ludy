@@ -102,6 +102,79 @@ describe('AgentsPage', () => {
     expect(cards[2]).not.toContain('Default name');
   });
 
+  it('shows active AI coworkers first, hides role keys, localizes seeded roles in English, and nests add-position', () => {
+    configMock.modules = ['kernel', 'finance', 'hr', 'crm', 'social'];
+    const qc = client.current;
+    qc.clear();
+    qc.setQueryData(['legalEntities', 'list'], oneEntity);
+    qc.setQueryData(['org', 'get'], { role: 'owner', members: [member] });
+    qc.setQueryData(['chart', 'get'], {
+      root: [member],
+      positions: [
+        { id: 'p-seeded', title: 'Kế toán trưởng (AI)', module: 'finance', roleKey: 'finance.chief_accountant', reportsTo: null, status: 'active', jobDescription: null, holder: { type: 'agent', agentId: 'a-fin', name: 'Ly', ai: true }, leScope: ['*'] },
+      ],
+      agents: [{ id: 'a-fin', templateKey: 'finance.chief_accountant', displayName: 'Ly', status: 'active', maxRisk: 'R1', dailyRunCap: 50 }],
+      killSwitches: [],
+    });
+    qc.setQueryData(['chart', 'templates'], [
+      { key: 'finance.chief_accountant', module: 'finance', title: 'Kế toán trưởng (AI)', roleKey: 'finance.chief_accountant', maxRisk: 'R1', dailyRunCap: 50, jobDescription: null, moduleEnabled: true },
+      { key: 'crm.scheduler', module: 'crm', title: 'Điều phối lịch hẹn (AI)', roleKey: 'crm.scheduler', maxRisk: 'R1', dailyRunCap: 100, jobDescription: null, moduleEnabled: true },
+    ]);
+    qc.setQueryData(['agents', 'budgets'], [{ id: 'b1', scope: 'org', target: '*', monthlyLimit: '500000', spent: '100000', warnPercent: 80, hardStop: true }]);
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="en" messages={catalog('en')}>
+          <AgentsPage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(html.indexOf('data-testid="coworkers-section"')).toBeLessThan(html.indexOf(`>${en.agents.chart}<`));
+    expect(html).toContain('>Vy<');
+    expect(html).toContain('>Ly<');
+    expect(html).toContain('>Dy<');
+    expect(html).toContain('>Uy<');
+    expect(html).not.toContain('>Hy<');
+    expect(html).toContain(en.agents.stopHint);
+    expect(html).not.toContain(`role="alertdialog" aria-label="${en.agents.stopTitle}"`);
+    expect(html).not.toContain('Kế toán trưởng');
+    expect(html).not.toContain('Điều phối lịch hẹn');
+    expect(html).not.toContain('finance.chief_accountant');
+    expect(html).toContain('Chief accountant');
+    expect(html).toContain('Booking coordinator');
+    expect(html).toContain('<details');
+    expect(html).not.toContain('Role key');
+
+    const viHtml = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="vi" messages={catalog('vi')}>
+          <AgentsPage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(viHtml).not.toMatch(/tác tử|trợ lý|assistant/i);
+  });
+
+  it('hides coworker budget amounts from members and viewers', () => {
+    configMock.modules = ['kernel', 'finance'];
+    const qc = client.current;
+    qc.clear();
+    qc.setQueryData(['org', 'get'], { role: 'member', members: [member] });
+    qc.setQueryData(['chart', 'get'], chart);
+    qc.setQueryData(['chart', 'templates'], templates);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="en" messages={catalog('en')}>
+          <AgentsPage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(html).toContain('>Vy<');
+    expect(html).toContain('>Ly<');
+    expect(html).not.toContain('500,000');
+    expect(html).not.toContain(en.agents.coworkerBudgetNone);
+  });
+
   it('gives owners every control', () => {
     const html = page('owner');
     for (const shown of [en.agents.stop, en.agents.addPosition, en.agents.holder, en.agents.save, en.agents.install]) expect(html).toContain(`>${shown}<`);
@@ -170,5 +243,40 @@ describe('AgentsPage', () => {
       expect(card).toContain(`Module ${escapeHtml(en.modules[id])},`);
       expect(card).not.toContain(`Module ${id},`);
     }
+  });
+
+  it('shows partial-stop badge and localized AI role presets in add-position without raw role keys', () => {
+    configMock.modules = ['finance', 'hr'];
+    const qc = client.current;
+    qc.clear();
+    qc.setQueryData(['legalEntities', 'list'], oneEntity);
+    qc.setQueryData(['org', 'get'], { role: 'owner', members: [member] });
+    qc.setQueryData(['chart', 'get'], {
+      root: [member],
+      positions: [],
+      agents: [{ id: 'a-fin', templateKey: 'finance.chief_accountant', displayName: 'Ly', status: 'paused', maxRisk: 'R1', dailyRunCap: 50 }],
+      killSwitches: [{ id: 'ks1', scope: 'module', target: 'hr', reason: 'pause hr', engagedAt: '2026-10-01T00:00:00Z' }],
+    });
+    qc.setQueryData(['chart', 'templates'], [
+      { key: 'finance.chief_accountant', module: 'finance', title: 'Kế toán trưởng (AI)', roleKey: 'finance.chief_accountant', maxRisk: 'R1', dailyRunCap: 50, jobDescription: null, moduleEnabled: true },
+    ]);
+    qc.setQueryData(['agents', 'budgets'], []);
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="en" messages={catalog('en')}>
+          <AgentsPage />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    const [vyCard, lyCard] = html.split('data-testid="coworker-card"').slice(1);
+    expect(vyCard).not.toContain(en.agents.coworkerPartialStopBadge);
+    expect(vyCard).not.toContain(en.agents.coworkerStoppedBadge);
+    expect(lyCard).toContain(en.agents.coworkerPartialStopBadge);
+    expect(lyCard).not.toContain(en.agents.coworkerStoppedBadge);
+    expect(html).toContain(en.agents.positionRolePreset);
+    expect(html).toContain(en.agents.positionRoleAuto);
+    expect(html).toContain('value="0">Chief accountant<');
+    expect(html).not.toContain('finance.chief_accountant');
   });
 });
