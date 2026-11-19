@@ -11,6 +11,7 @@ import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { MisaAmisPreviewPanel } from '../components/misa-amis-preview-panel.tsx';
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -56,6 +57,7 @@ function ConnectionItem({ connection, entities, canManage }: { connection: MisaA
         </div>
       )}
       {disconnect.error && <ErrorText>{errorMessage(disconnect.error)}</ErrorText>}
+      {connection.status === 'active' && <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} />}
     </li>
   );
 }
