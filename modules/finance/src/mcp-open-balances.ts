@@ -2,8 +2,8 @@
 // `finance.mcp.open_balances` (#3849, tool 2): who owes the org money and whom the org owes, per party, as an AI app the owner connected may read it. Privacy review: per party its
 // id, its name as the books hold it, the open amount, the amount per age bucket and the count of open invoices, all in the book currency as decimal strings; never an email, phone,
 // address, bank account, invoice line, invoice number or any free text. Receivables are the screen's own (loadCustomers: the 131 balance of each customer laid under its sales invoices,
-// aged by the customer's or the org's payment terms, so the buckets are DAYS PAST DUE). Payables are the received invoices not voided and with no approved or paid payment (the list
-// behind "Ask to pay"), aged by INVOICE DATE because the books hold no due date for a received invoice (#3701): a caller must not read them as days overdue; `basis` says which. Not the
+// aged by the customer's or the org's payment terms, so the buckets are DAYS PAST DUE). Payables are the received invoices not voided, with no approved or paid payment and no request waiting for approval (the list
+// behind "Ask to pay", so an invoice already asked for is left out), aged by INVOICE DATE because the books hold no due date for a received invoice (#3701): a caller must not read them as days overdue; `basis` says which. Not the
 // 331 balance by party. The figures are the whole org's or nothing (wholeOrgEntity). Oldest first, at most MCP_BALANCES_MAX parties.
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
