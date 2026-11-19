@@ -3,7 +3,19 @@
 `packages/misa-amis` (`@crove/misa-amis`) is the adapter for the AMISKT v1.0.0 API, documented at
 [developer.misa.vn](https://developer.misa.vn/products-openapi/AMISKT). It is slice S1 of
 [#3854](https://github.com/DOS/Ludy/issues/3854); the plan is [accounting-software-sync.md](../plan/accounting-software-sync.md).
-Nothing uses it yet: the connection (S2), the push (S3), the callback route (S4) and the AI check (S5) come next.
+The connection (S2, [#3875](https://github.com/DOS/Ludy/issues/3875)) is built on it; the push (S3), the callback route (S4) and the AI check (S5) come next.
+
+## The connection (S2)
+
+- **On only with the deployment's ClientID.** `MISA_AMIS_CLIENT_ID` is the one deployment value (a secret; the API has no second one). Unset, the Tích hợp card says the connector is off and `misaAmis.connections.connect` answers
+  `MISA_AMIS_DISABLED`. Crove Cloud sets DOS's own; a self-hoster sets the one MISA issued to their own app.
+- **One connection per legal entity** (`crove_finance.misa_amis_connection`), shaped like the marketplace and e-invoice connections: owners and admins connect and disconnect, every member reads it.
+- **The access code** the customer makes in AMIS is sealed at the API's edge through the channel-credential path (provider `accounting_misa_amis`, per org, ADR-0025), never in an answer, an audit row or a stored
+  readable row; the screen says only "connected since". Disconnecting revokes the channel connection (which drops the credential) and deletes the row; the org purge deletes the row, and the sealed code is
+  in `crove_kernel.credential`, which the org export never carries.
+- **`org_company_code`** is the opaque code (`ludy-` and 32 hex characters, unique across the deployment) that AMIS is told for this connection and that the callback of S4 compares with the connection of the organisation it found from its own stored push row by `org_refid` (the code is unsigned, so it is a hint to compare, never the authority). It is in no answer
+  and not in the org export; a reconnect makes a new one.
+- **Not in S2:** the connection test (a worker job that asks for a token and reads the company information; the table already holds its result), the push, the callback.
 
 ## What it does
 

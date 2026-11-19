@@ -618,6 +618,10 @@ export const MARKETPLACE_TEST_STATES = ['works', 'wrong_credentials', 'api_not_e
 export type MarketplaceTestState = (typeof MARKETPLACE_TEST_STATES)[number];
 export const MARKETPLACE_POLL_STATES = ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const;
 export type MarketplacePollState = (typeof MARKETPLACE_POLL_STATES)[number];
+// A connection to MISA AMIS Kế toán (#3875): the result of its last test, as a state and never MISA's own text; a tenant updates only that (the entity, the channel connection and the code are fixed for the row's life).
+export const MISA_AMIS_TEST_STATES = ['works', 'wrong_credentials', 'unreachable'] as const;
+export type MisaAmisTestState = (typeof MISA_AMIS_TEST_STATES)[number];
+export type MisaAmisConnectionTable = Refine<G.FinanceMisaAmisConnectionTable, { last_test_state: MisaAmisTestState | null; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type MarketplaceConnectionTable = Refine<
   G.FinanceMarketplaceConnectionTable,
   { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; legal_entity_id: LegalEntityColumn },
@@ -1445,6 +1449,7 @@ type Refined = Tables<{
   'crove_finance.einvoice_connection': EInvoiceConnectionTable;
   'crove_finance.einvoice_notice': EInvoiceNoticeTable;
   'crove_finance.marketplace_connection': MarketplaceConnectionTable;
+  'crove_finance.misa_amis_connection': MisaAmisConnectionTable;
   'crove_finance.stock_item': StockItemTable;
   'crove_finance.channel_order': ChannelOrderTable;
   'crove_finance.channel_order_line': ChannelOrderLineTable;
