@@ -150,6 +150,17 @@ describe('checkCommitments', () => {
     expect(out.dropped).toBe(1);
   });
 
+  it('drops only a run of 8 digits, not a date with 8 digits in all, and a second past a day, and never reports more than the contract counts', () => {
+    const said = [seg(0, 5, 'Lan', 'Gửi báo cáo trước 20/11/2026 nhé.')];
+    const dated = { speakers: [{ label: 'Lan', lines: [{ kind: 'commitment', text: 'Gửi báo cáo trước 20/11/2026.', second: 0 }, { kind: 'commitment', text: 'Mã 20112026', second: 0 }] }] };
+    expect(checkCommitments(json(dated), said)).toEqual({ speakers: [{ label: 'Lan', lines: [{ kind: 'commitment', text: 'Gửi báo cáo trước 20/11/2026.', seconds: 0 }] }], dropped: 1 });
+    const late = [seg(0, 5, 'Lan', 'Một.'), seg(90_000, 90_005, 'Lan', 'Hai.')];
+    expect(checkCommitments(json({ speakers: [{ label: 'Lan', lines: [{ kind: 'decision', text: 'Một việc.', second: 0 }, { kind: 'decision', text: 'Việc muộn.', second: 90_000 }] }] }), late).dropped).toBe(1);
+    // A degenerate answer: thousands of lines that are not lines.
+    const junk = { speakers: [{ label: 'Lan', lines: [{ kind: 'decision', text: 'Một việc.', second: 0 }, ...Array.from({ length: 3000 }, () => 1)] }] };
+    expect(checkCommitments(json(junk), late).dropped).toBe(1000);
+  });
+
   it('drops a repeat of an earlier line of the same speaker, and caps a speaker at five lines and the answer at twenty speakers', () => {
     const many = Array.from({ length: 8 }, (_, i) => ({ kind: 'commitment', text: `Việc số ${String.fromCharCode(97 + i)}`, second: 0 }));
     const dup = { kind: 'decision', text: 'VIỆC SỐ A', second: 0 };

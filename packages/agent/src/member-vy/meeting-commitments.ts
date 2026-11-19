@@ -23,6 +23,10 @@ export const COMMITMENT_LIMITS = {
 } as const;
 
 export const COMMITMENT_KINDS = ['commitment', 'decision'] as const;
+// Equal to CHAPTER_SECOND_MAX of the contract: a second past a day is no line of a meeting, and the contract would refuse it.
+const COMMITMENT_SECOND_MAX = 86_400;
+// The most `dropped` counts, equal to the contract's cap: a degenerate answer cannot push the count past what the contract accepts.
+const DROPPED_MAX = 1000;
 export type CommitmentKind = (typeof COMMITMENT_KINDS)[number];
 
 export type CommitmentsErrorCode = 'COMMITMENTS_UNPARSABLE' | 'COMMITMENTS_EMPTY' | 'COMMITMENTS_TOO_LONG' | 'COMMITMENTS_NO_TRANSCRIPT';
@@ -117,17 +121,17 @@ export function checkCommitments(raw: string, segments: readonly SummarySegment[
       const kind = (COMMITMENT_KINDS as readonly string[]).includes(line.kind) ? (line.kind as CommitmentKind) : null;
       const text = foldTitleText(line.text);
       const key = text.normalize('NFKC').toLowerCase();
-      const digits = text.normalize('NFKC').replace(/[^\p{Nd}]/gu, '').length;
       const into = kept.get(label) ?? { lines: [], seen: new Set<string>() };
       if (
         kind === null ||
         !Number.isInteger(line.second) ||
+        line.second > COMMITMENT_SECOND_MAX ||
         !bySecond.has(line.second) ||
         text.length < COMMITMENT_LIMITS.minChars ||
         text.length > COMMITMENT_LIMITS.textChars ||
         hasContact(text) ||
         text.includes('@') ||
-        digits >= 8 ||
+        /\p{Nd}{8}/u.test(text.normalize('NFKC')) ||
         numbersIn(text).some((n) => !bySecond.get(line.second as number)?.has(n)) ||
         into.seen.has(key) ||
         into.lines.length >= COMMITMENT_LIMITS.linesPerSpeaker
@@ -151,7 +155,7 @@ export function checkCommitments(raw: string, segments: readonly SummarySegment[
     speakers.push({ label, lines: [...into.lines].sort((a, b) => a.seconds - b.seconds) });
   }
   if (speakers.length === 0) throw new CommitmentsError('COMMITMENTS_EMPTY');
-  return { speakers, dropped };
+  return { speakers, dropped: Math.min(dropped, DROPPED_MAX) };
 }
 
 const INSTRUCTION = (language: 'vi' | 'en'): string =>
