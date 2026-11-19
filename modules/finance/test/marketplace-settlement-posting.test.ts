@@ -197,6 +197,18 @@ describe('the TT99 map (#3711 slice 4)', () => {
     expect(rows(p)).toEqual([['521', '50000', '0'], ['511', '0', '50000']]);
     expect(code(() => settlementProposal(input([{ sales: '0', sellerDiscount: '0', refund: '0' }], { regime: 'tt99' }), confirmedTt99()))).toEqual({ code: 'MARKETPLACE_SETTLEMENT_NOT_POSTABLE', status: 422 });
   });
+  it('runs 131 and 511 the other way when the seller discounts exceed the sales, and keeps a refund on 521 beside them', () => {
+    const discounts = settlementProposal(input([{ sales: '10000', sellerDiscount: '25000', refund: '0' }], { regime: 'tt99' }), confirmedTt99());
+    expect(rows(discounts)).toEqual([['511', '15000', '0'], ['131', '0', '15000']]);
+    const both = settlementProposal(input([{ sales: '10000', sellerDiscount: '25000', refund: '5000' }], { regime: 'tt99' }), confirmedTt99());
+    expect(rows(both)).toEqual([['521', '5000', '0'], ['511', '15000', '0'], ['131', '0', '20000']]);
+    expect(balanced(discounts) && balanced(both)).toBe(true);
+  });
+  it('adds the household tax lines after the refund lines of a TT99 settlement', () => {
+    const p = settlementProposal(input([{ sales: '10000000', sellerDiscount: '0', refund: '1000000', taxWithheld: '135000' }], { regime: 'tt99', tax: { vatPercent: '1', pitPercent: '0.5' } }), confirmedTt99());
+    expect(rows(p)).toEqual([['131', '9000000', '0'], ['521', '1000000', '0'], ['511', '0', '10000000'], ['511', '90000', '0'], ['3331', '0', '90000'], ['4212', '45000', '0'], ['3335', '0', '45000']]);
+    expect(balanced(p)).toBe(true);
+  });
   it('leaves the party on the 131 line and posts the same 131 amount the payout clears (sales - discounts - refunds)', () => {
     const p = settlementProposal({ ...input([{ sales: '200000', sellerDiscount: '20000', refund: '30000' }], { regime: 'tt99' }), partyId: 'party-1' }, confirmedTt99());
     expect(p.lines.filter((l) => l.partyId === 'party-1').map((l) => [l.account, l.debit])).toEqual([['131', '150000']]);
