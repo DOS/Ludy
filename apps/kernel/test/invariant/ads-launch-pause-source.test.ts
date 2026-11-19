@@ -33,10 +33,13 @@ if (adPlatformPkg !== '@crove/ad-platform' && adPlatformPkg !== '@ludy/ad-platfo
 const otherAdPlatformPkg = adPlatformPkg === '@crove/ad-platform' ? '@ludy/ad-platform' : '@crove/ad-platform';
 const adPlatformImportCount = (src: string, pkgName = adPlatformPkg): number =>
   [...src.matchAll(new RegExp(`${pkgName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`, 'g'))].length;
-const pauseNamedImports = (src: string, pkgName = adPlatformPkg): string[] =>
-  [...src.matchAll(new RegExp(`import (?:type )?\\{([^}]*)\\} from '${pkgName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`, 'g'))].flatMap((m) =>
+const singleActiveAdPlatformImport = (src: string): boolean => !src.includes(otherAdPlatformPkg) && adPlatformImportCount(src) === 1;
+const pauseNamedImports = (src: string, pkgName = adPlatformPkg): string[] => {
+  if (src.includes(otherAdPlatformPkg)) throw new Error(`Unexpected mixed ad-platform import from ${otherAdPlatformPkg}`);
+  return [...src.matchAll(new RegExp(`import (?:type )?\\{([^}]*)\\} from '${pkgName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`, 'g'))].flatMap((m) =>
     (m[1] ?? '').split(',').map((s) => s.replace(/\btype\b/, '').trim()),
   );
+};
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
 const code = (path: string) => read(path).split('\n').filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*')).join('\n');
@@ -67,12 +70,11 @@ describe('what the pause job may reach of the platform\'s writer (#2296, W2-4a)'
     expect(step).not.toMatch(/console\./);
     expect(step).not.toMatch(/runtime\.|\.execute\(|\.query\(/);
     expect(step).not.toMatch(/error\.message|String\(error\)/);
-    expect(step).not.toContain(otherAdPlatformPkg);
-    expect(adPlatformImportCount(step)).toBe(1);
-    // Tripwire: mixing both scopes in pause source fails even when one uses the active package name.
+    expect(singleActiveAdPlatformImport(step)).toBe(true);
+    // Tripwire: mixing both scopes in pause source fails the same predicate even when one import uses the active name.
     const mixed = `import type { AdPauser } from '${adPlatformPkg}';\nimport type { AdWriter } from '${otherAdPlatformPkg}';`;
-    expect(mixed).toContain(otherAdPlatformPkg);
-    expect(adPlatformImportCount(mixed) + adPlatformImportCount(mixed, otherAdPlatformPkg)).toBe(2);
+    expect(singleActiveAdPlatformImport(mixed)).toBe(false);
+    expect(() => pauseNamedImports(mixed)).toThrow(/Unexpected mixed ad-platform import/);
   });
 
   it('gives the pause job the narrowed pausers and the broker alone, opens the token once from the connection and never touches a platform call but the pause', () => {
@@ -82,9 +84,7 @@ describe('what the pause job may reach of the platform\'s writer (#2296, W2-4a)'
     expect(job).not.toMatch(/\.(verify|accounts|read\w*|create\w*|setStatus|findByTag|resolveTargeting|revokeToken)\(/);
     expect(job).not.toMatch(/\b(ACTIVE|PAUSED|ARCHIVED)\b/);
     expect(job).not.toMatch(/\b(activate|unpause|resume)\w*\s*\(/i);
-    const rawJob = read('apps/kernel/src/ads-pause.ts');
-    expect(rawJob).not.toContain(otherAdPlatformPkg);
-    expect(pauseNamedImports(rawJob).sort()).toEqual(['AdPauser']);
+    expect(pauseNamedImports(read('apps/kernel/src/ads-pause.ts')).sort()).toEqual(['AdPauser']);
     // Nothing it logs or records carries the secret.
     for (const line of read('apps/kernel/src/ads-pause.ts').split('\n').filter((l) => /console\.(log|warn|error|info|debug)/.test(l))) expect(line, line).not.toMatch(/secret|envelope|token|sealed/i);
     const worker = read('apps/kernel/src/worker.ts');

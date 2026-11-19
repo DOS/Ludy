@@ -124,9 +124,9 @@ describe('legacyCroveInvariantBridge (#3965 step 1 of 2)', () => {
       },
     });
     mkdirSync(join(dbDir, 'src'), { recursive: true });
-    writeFileSync(join(dbDir, 'src/index.ts'), "export const DB_TOKEN = 'db-esm';\n");
-    writeFileSync(join(dbDir, 'src/fallback.ts'), "export const DB_TOKEN = 'db-fallback';\n");
-    writeFileSync(join(dbDir, 'src/migrate.ts'), "export const MIGRATE_TOKEN = 'migrate-ok';\n");
+    writeFileSync(join(dbDir, 'src/index.ts'), "export const DB_TOKEN = 'db-esm';\nexport const SHARED_STATE = { status: 'commentary' };\n");
+    writeFileSync(join(dbDir, 'src/fallback.ts'), "export const DB_TOKEN = 'db-fallback';\nexport const SHARED_STATE = { status: 'commentary' };\n");
+    writeFileSync(join(dbDir, 'src/migrate.ts'), "export const MIGRATE_TOKEN = 'migrate-ok';\nexport const MIGRATE_OBJ = { kind: 'migrate' };\n");
 
     const elsewhere = join(root, 'outside.ts');
     writeFileSync(elsewhere, 'export {};\n');
@@ -160,16 +160,24 @@ describe('legacyCroveInvariantBridge (#3965 step 1 of 2)', () => {
     writeFileSync(
       join(root, 'apps/kernel/test/invariant/rename-success.test.ts'),
       [
-        "import { expect, it } from 'vitest';",
-        "import { DB_TOKEN } from '@crove/db';",
-        "import { DB_TOKEN as LUDY_TOKEN } from '@ludy/db';",
-        "import { MIGRATE_TOKEN } from '@crove/db/migrate';",
-        "import { MIGRATE_TOKEN as LUDY_MIGRATE } from '@ludy/db/migrate';",
-        "it('resolves @crove/* root and subpath imports to the renamed @ludy/* exports', () => {",
+        "import { expect, it, vi } from 'vitest';",
+        "import { DB_TOKEN, SHARED_STATE } from '@crove/db';",
+        "import { DB_TOKEN as LUDY_TOKEN, SHARED_STATE as LUDY_STATE } from '@ludy/db';",
+        "import { MIGRATE_TOKEN, MIGRATE_OBJ } from '@crove/db/migrate';",
+        "import { MIGRATE_TOKEN as LUDY_MIGRATE, MIGRATE_OBJ as LUDY_MIGRATE_OBJ } from '@ludy/db/migrate';",
+        "vi.mock('@crove/db', async (importOriginal) => {",
+        "  const real = await importOriginal();",
+        "  return { ...real, SHARED_STATE: { status: real.SHARED_STATE.status } };",
+        "});",
+        "it('resolves @crove/* root and subpath imports to the exact same mocked @ludy/* module instances', () => {",
         "  expect(DB_TOKEN).toBe('db-esm');",
         '  expect(DB_TOKEN).toBe(LUDY_TOKEN);',
+        '  expect(SHARED_STATE).toBe(LUDY_STATE);',
+        "  SHARED_STATE.status = 'confirmed';",
+        "  expect(LUDY_STATE.status).toBe('confirmed');",
         "  expect(MIGRATE_TOKEN).toBe('migrate-ok');",
         '  expect(MIGRATE_TOKEN).toBe(LUDY_MIGRATE);',
+        '  expect(MIGRATE_OBJ).toBe(LUDY_MIGRATE_OBJ);',
         '});',
       ].join('\n'),
     );
