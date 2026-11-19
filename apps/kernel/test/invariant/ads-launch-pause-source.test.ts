@@ -30,7 +30,12 @@ const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
 const { activePkg: adPlatformPkg, inactivePkg: otherAdPlatformPkg } = resolveAdPlatformPackages(ROOT);
 const singleActiveAdPlatformImport = (src: string): boolean => {
   const records = collectModuleImports(src);
-  return pkgImportMatches(src, otherAdPlatformPkg, records).length === 0 && pkgImportMatches(src, adPlatformPkg, records).length === 1;
+  const activeMatches = pkgImportMatches(src, adPlatformPkg, records);
+  return (
+    pkgImportMatches(src, otherAdPlatformPkg, records).length === 0 &&
+    activeMatches.length === 1 &&
+    activeMatches[0]?.specifier === adPlatformPkg
+  );
 };
 const pauseNamedImports = (src: string): string[] => activeAdPlatformNamedImports(src, adPlatformPkg, otherAdPlatformPkg).names;
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
@@ -68,10 +73,13 @@ describe('what the pause job may reach of the platform\'s writer (#2296, W2-4a)'
     const commentOrStringOnly = `// migrating ${adPlatformPkg} -> ${otherAdPlatformPkg}\n/* from '${otherAdPlatformPkg}' */\nconst note = "Use imports from '${otherAdPlatformPkg}' after the rename";\nimport type { AdPauser } from '${adPlatformPkg}';`;
     expect(singleActiveAdPlatformImport(commentOrStringOnly)).toBe(true);
     expect(pauseNamedImports(commentOrStringOnly)).toEqual(['AdPauser']);
-    // Tripwire: mixing both scopes in pause source fails the same predicate even when one import uses the active name.
+    // Tripwire: mixing both scopes or importing a subpath in pause source fails the same predicate even when one import uses the active name.
     const mixed = `import type { AdPauser } from '${adPlatformPkg}';\nimport type { AdWriter } from '${otherAdPlatformPkg}';`;
     expect(singleActiveAdPlatformImport(mixed)).toBe(false);
     expect(() => pauseNamedImports(mixed)).toThrow(/Unexpected mixed ad-platform import/);
+    const subpath = `import type { AdPauser } from '${adPlatformPkg}/writers';`;
+    expect(singleActiveAdPlatformImport(subpath)).toBe(false);
+    expect(() => pauseNamedImports(subpath)).toThrow(/Unexpected ad-platform subpath import/);
   });
 
   it('gives the pause job the narrowed pausers and the broker alone, opens the token once from the connection and never touches a platform call but the pause', () => {

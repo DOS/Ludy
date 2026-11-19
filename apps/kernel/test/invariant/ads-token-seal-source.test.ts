@@ -56,6 +56,7 @@ describe('what may open or name the sealed copy of a closed ads connection token
     expect(revokeNamedImports(commentOrStringOnly).sort()).toEqual(['AdPlatformError', 'AdRevoker']);
     const mixed = `import { AdRevoker } from '${adPlatformPkg}';\nimport { AdWriter } from '${otherAdPlatformPkg}';`;
     expect(() => revokeNamedImports(mixed)).toThrow(/Unexpected mixed ad-platform import/);
+    expect(() => revokeNamedImports(`import { AdRevoker } from '${adPlatformPkg}/writers';`)).toThrow(/Unexpected ad-platform subpath import/);
   });
 
   it('never logs, returns or records the secret: the file that opens it writes only codes and counts', () => {

@@ -187,17 +187,21 @@ describe('legacyCroveInvariantBridge (#3965 step 1 of 2)', () => {
       "import { expect, it } from 'vitest';\nimport { OK } from '@crove/stale';\nit('never loads stale @crove/*', () => { expect(OK).toBe(true); });\n",
     );
 
+    const childEnv = { ...process.env };
+    delete childEnv.GITHUB_ACTIONS;
+    delete childEnv.GITHUB_STEP_SUMMARY;
+
     const okRun = spawnSync(
       process.execPath,
-      [VITEST_BIN, 'run', '--config', 'vitest.invariant.config.ts', 'apps/kernel/test/invariant/rename-success.test.ts'],
-      { cwd: root, encoding: 'utf8' },
+      [VITEST_BIN, 'run', '--config', 'vitest.invariant.config.ts', '--reporter=default', 'apps/kernel/test/invariant/rename-success.test.ts'],
+      { cwd: root, encoding: 'utf8', env: childEnv },
     );
     expect(okRun.status, `${okRun.stdout}\n${okRun.stderr}`).toBe(0);
 
     const staleRun = spawnSync(
       process.execPath,
-      [VITEST_BIN, 'run', '--config', 'vitest.invariant.config.ts', 'apps/kernel/test/invariant/stale-fallback.test.ts'],
-      { cwd: root, encoding: 'utf8' },
+      [VITEST_BIN, 'run', '--config', 'vitest.invariant.config.ts', '--reporter=default', 'apps/kernel/test/invariant/stale-fallback.test.ts'],
+      { cwd: root, encoding: 'utf8', env: childEnv },
     );
     expect(staleRun.status).not.toBe(0);
     expect(`${staleRun.stdout}\n${staleRun.stderr}`).toMatch(/missing workspace package @ludy\/stale/);

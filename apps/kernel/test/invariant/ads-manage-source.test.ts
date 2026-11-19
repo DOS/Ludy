@@ -101,6 +101,9 @@ describe('what may change a running ad at the platform (#3835, W4)', () => {
     expect(checkedCommentOrString.valueNames).toEqual(['AdPlatformError']);
     const mixed = `import { AdPlatformError } from '${adPlatformPkg}';\nimport { AdWriter } from '${otherAdPlatformPkg}';`;
     expect(() => activeAdPlatformNamedImports(mixed, adPlatformPkg, otherAdPlatformPkg)).toThrow(/Unexpected mixed ad-platform import/);
+    expect(() => activeAdPlatformNamedImports(`import { AdPlatformError } from '${adPlatformPkg}/writers';`, adPlatformPkg, otherAdPlatformPkg)).toThrow(
+      /Unexpected ad-platform subpath import/,
+    );
   });
 
   it('bounds the time between begin and the platform call, inside the wait of the wind-down: a begin that waited too long is never called', () => {

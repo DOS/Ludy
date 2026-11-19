@@ -133,12 +133,12 @@ export function resolveAdPlatformPackages(root: string): { activePkg: string; in
   };
 }
 
-/** Returns AST-verified import records matching a workspace package or subpath. */
+/** Returns AST-verified import records matching a workspace package root or any subpath. */
 export function pkgImportMatches(src: string, pkgName: string, records = collectModuleImports(src)): ModuleImportRecord[] {
   return records.filter((record) => matchesPackage(record.specifier, pkgName));
 }
 
-/** Extracts named imports from the active ad-platform package using the same AST parse, rejecting mixed-scope imports. */
+/** Extracts named imports from the exact active ad-platform package root, rejecting inactive-scope or subpath imports. */
 export function activeAdPlatformNamedImports(
   src: string,
   activePkg: string,
@@ -149,6 +149,10 @@ export function activeAdPlatformNamedImports(
     throw new Error(`Unexpected mixed ad-platform import from ${inactivePkg}`);
   }
   const matched = pkgImportMatches(src, activePkg, records);
+  const subpath = matched.find((record) => record.specifier !== activePkg);
+  if (subpath) {
+    throw new Error(`Unexpected ad-platform subpath import: ${subpath.specifier}`);
+  }
   return {
     names: matched.flatMap((record) => record.names),
     valueNames: matched.flatMap((record) => record.valueNames),
