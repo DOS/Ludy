@@ -282,6 +282,13 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'keep_legal',
     reason: 'The reason written on a journal voucher is part of the accounting voucher, append-only and kept by law (Accounting Law 88/2015, Art. 41)',
   },
+  // MISA AMIS's own text for a voucher it refused (#4015): untrusted, at most 500 characters, and it may quote a party's name, tax code or an invoice number. An erasure clears the whole text of a refused row that
+  // mentions the value and keeps the row and its state (crove_finance.personal_data_clear_misa_amis_push_reason); a short number is left and listed, as in the activity lines.
+  'crove_finance.misa_amis_push.reason': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "MISA AMIS's own words for a voucher it refused, which may quote a party or an invoice; an erasure clears the text of a refused row that mentions the value and keeps the row's state",
+  },
   // More free text (#1961): a task's title and description, which members and agents write, are replaced where they
   // quote the value; a bank statement line and a journal line's memo are kept.
   'crove_kernel.task.title': {
@@ -937,6 +944,9 @@ const SHORT_NUMBER_MEETING_COLUMNS = new Set([
   'crove_meetings.meeting_note.body',
   'crove_meetings.meeting_chapter.title',
 ]);
+// The same for MISA AMIS's refusal text on a pushed voucher (#4015): a short number there may be an amount or an invoice number MISA quoted.
+export const MISA_PUSH_REASON_SHORT_NUMBER_REASON =
+  "A number of fewer than 10 digits may also be an amount or an invoice number in MISA AMIS's refusal text, so the erasure does not clear it there; check these rows and tell the person, or ask for a longer value";
 export const ACTIVITY_SHORT_NUMBER_REASON =
   'A number of fewer than 10 digits may also be an amount or a voucher number in a timeline line or a task, so the erasure does not replace it there; check these rows and tell the person, or ask for a longer value';
 
@@ -1426,6 +1436,12 @@ export const personalDataErase = defineCommand({
         SELECT crove_kernel.personal_data_redact_activity(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
       add('crove_kernel.activity.summary', Number(redacted[0]?.rows ?? 0));
 
+      // MISA AMIS's refusal text on a pushed voucher (#4015): cleared on the refused rows that quote the value, through the owner-only definer (the table's guard lets a tenant role move a row only along its graph);
+      // the row and its state stay.
+      const { rows: misaReasons } = await sql<{ rows: number }>`
+        SELECT crove_finance.personal_data_clear_misa_amis_push_reason(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+      add('crove_finance.misa_amis_push.reason', Number(misaReasons[0]?.rows ?? 0));
+
       // Tasks that quote the person (#1961): the value is replaced in the title and the description, as the owner (an
       // owner's update passes the task guards, which hold agents; taint, lease, status and entity stay as they are, and
       // updated_at moves to now). Through the command's own transaction: the tenant role may update tasks, so no definer
@@ -1546,13 +1562,15 @@ export const personalDataErase = defineCommand({
     for (const m of after.matches) {
       const reason = !shortNumber
         ? m.reason
-        : SHORT_NUMBER_COLUMNS.has(m.column)
-          ? ACTIVITY_SHORT_NUMBER_REASON
-          : SHORT_NUMBER_MEETING_COLUMNS.has(m.column)
-            ? MEETING_TEXT_SHORT_NUMBER_REASON
-            : m.column === 'crove_kernel.mail_message.payload'
-              ? PROJECT_WEEKLY_MAIL_SHORT_NUMBER_REASON
-              : m.reason;
+        : m.column === 'crove_finance.misa_amis_push.reason'
+          ? MISA_PUSH_REASON_SHORT_NUMBER_REASON
+          : SHORT_NUMBER_COLUMNS.has(m.column)
+            ? ACTIVITY_SHORT_NUMBER_REASON
+            : SHORT_NUMBER_MEETING_COLUMNS.has(m.column)
+              ? MEETING_TEXT_SHORT_NUMBER_REASON
+              : m.column === 'crove_kernel.mail_message.payload'
+                ? PROJECT_WEEKLY_MAIL_SHORT_NUMBER_REASON
+                : m.reason;
       const group = `${m.column}\n${reason}`;
       const k = kept.get(group) ?? { column: m.column, rows: 0, reason };
       k.rows += 1;

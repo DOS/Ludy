@@ -981,4 +981,180 @@ suite('finding a person in the org (#923)', () => {
       { role: 'crove_worker', allowed: false },
     ]);
   });
+
+  // MISA AMIS's own refusal text on a pushed voucher (#4015): the registry lists the column, an erasure clears the whole text of a refused row that quotes the value and keeps the row and its state, leaves the
+  // codes of our own and the rows of other states and orgs alone, and lists a short number instead of clearing it.
+  it("clears MISA AMIS's refusal text that quotes the person and keeps the row's state (#4015)", async () => {
+    const email = 'Chi.Mai@Example.vn';
+    const seed = async (orgId: string, owner: string) => {
+      const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id);
+      const channel = randomUUID();
+      const connection = randomUUID();
+      await admin(async (c) => {
+        await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, entity, owner]);
+        await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [orgId, connection, entity, channel]);
+      });
+      const row = async (state: string, reason: string | null, no: string) => {
+        const id = randomUUID();
+        await admin((c) =>
+          c.query(
+            `INSERT INTO crove_finance.misa_amis_push (org_id, legal_entity_id, connection_id, source_type, source_id, voucher_type, org_refid, org_refno, payload_digest, state, reason)
+             VALUES ($1, $2, $3, 'cash_voucher', $4, 4, $5, $6, $7, $8, $9)`,
+            [orgId, entity, connection, randomUUID(), id, no, 'a'.repeat(64), state, reason],
+          ),
+        );
+        return id;
+      };
+      return { row };
+    };
+    const mine = await seed(org.orgId, org.owner);
+    const theirs = await seed(other.orgId, other.owner);
+    const quoted = await mine.row('refused', `Đối tượng ${email} chưa có trong danh mục`, 'PC1');
+    const quotedLower = await mine.row('refused', 'Không tìm thấy khách chi.mai@example.vn', 'PC2');
+    const unrelated = await mine.row('refused', 'Thiếu mã hàng trong dòng 3', 'PC3');
+    const ours = await mine.row('failed', 'NOT_IN_AMIS', 'PC4');
+    const accepted = await mine.row('accepted', null, 'PC5');
+    // A row that is not refused is not touched even if its text quoted the person (the worker writes MISA's text only on a refusal, so this is what the `refused` filter of the definer guards).
+    const queuedQuoting = await mine.row('queued', `Texte ${email}`, 'PC8');
+    const otherOrg = await theirs.row('refused', `Đối tượng ${email} chưa có trong danh mục`, 'PC6');
+    const stored = async (id: string) =>
+      (await admin((c) => c.query<{ state: string; reason: string | null; attempts: number; updated_at: Date }>('SELECT state, reason, attempts, updated_at FROM crove_finance.misa_amis_push WHERE org_refid = $1', [id]))).rows[0];
+    const before = await stored(quoted);
+
+    // The finder reports the column, with what an erasure does to it.
+    const found = await find(email);
+    // The finder lists the text in every state: the two refused rows and the queued one (an erasure clears only the refused ones).
+    expect(found.matches.filter((m) => m.column === 'crove_finance.misa_amis_push.reason')).toHaveLength(3);
+    expect(found.matches.find((m) => m.column === 'crove_finance.misa_amis_push.reason')).toMatchObject({ handling: 'erase' });
+
+    // A short number is listed, not cleared.
+    await mine.row('refused', 'Số tiền 12345678 không hợp lệ', 'PC7');
+    const shortNumber = await erase('12345678');
+    expect(shortNumber.erased.find((e) => e.column === 'crove_finance.misa_amis_push.reason')?.rows ?? 0).toBe(0);
+    expect(shortNumber.kept.find((k) => k.column === 'crove_finance.misa_amis_push.reason')?.reason).toMatch(/fewer than 10 digits/);
+
+    const erased = await erase(email);
+    expect(erased.erased.find((e) => e.column === 'crove_finance.misa_amis_push.reason')?.rows).toBe(2);
+    // The text goes, the row and its state stay (and nothing else about it moves).
+    for (const id of [quoted, quotedLower]) expect(await stored(id)).toMatchObject({ state: 'refused', reason: null, attempts: 1 });
+    expect((await stored(quoted))?.updated_at).toEqual(before?.updated_at);
+    // What does not quote the person, our own codes, other states and another org are as they were.
+    expect(await stored(unrelated)).toMatchObject({ state: 'refused', reason: 'Thiếu mã hàng trong dòng 3' });
+    expect(await stored(ours)).toMatchObject({ state: 'failed', reason: 'NOT_IN_AMIS' });
+    expect(await stored(accepted)).toMatchObject({ state: 'accepted', reason: null });
+    expect(await stored(queuedQuoting)).toMatchObject({ state: 'queued', reason: `Texte ${email}` });
+    expect(await stored(otherOrg)).toMatchObject({ state: 'refused', reason: `Đối tượng ${email} chưa có trong danh mục` });
+    // Of the rows that quoted the person only the one that is not refused is left.
+    expect((await find(email)).matches.filter((m) => m.column === 'crove_finance.misa_amis_push.reason')).toHaveLength(1);
+  });
+
+  // Only the erase command reaches the clearing: an owner's own context, never an admin's, a member's or a raw tenant call.
+  it("clears MISA AMIS's refusal text only in an owner context (#4015)", async () => {
+    const app = new URL(adminUrl);
+    app.username = 'crove_app';
+    app.password = 'test-app-pw';
+    const call = async (user: string) => {
+      const c = new pg.Client({ connectionString: app.toString() });
+      await c.connect();
+      try {
+        await c.query('BEGIN');
+        await enterUser(c, user, org.orgId);
+        await c.query(`SELECT crove_finance.personal_data_clear_misa_amis_push_reason('email', 'nobody@example.vn')`);
+        return 'answered';
+      } catch (error) {
+        return (error as Error).message;
+      } finally {
+        await c.query('ROLLBACK').catch(() => {});
+        await c.end();
+      }
+    };
+    expect(await call(org.owner)).toBe('answered');
+    expect(await call(org.admin)).toBe('PERSONAL_DATA_OWNER_ONLY');
+    expect(await call(org.member)).toBe('PERSONAL_DATA_OWNER_ONLY');
+    const grants = await admin(
+      async (c) =>
+        (
+          await c.query<{ role: string; allowed: boolean }>(
+            `SELECT r AS role, pg_catalog.has_function_privilege(r, 'crove_finance.personal_data_clear_misa_amis_push_reason(text, text)', 'EXECUTE') AS allowed
+               FROM pg_catalog.unnest(ARRAY['crove_app', 'crove_tenant', 'crove_worker']) AS r`,
+          )
+        ).rows,
+    );
+    expect(grants).toEqual([
+      { role: 'crove_app', allowed: true },
+      { role: 'crove_tenant', allowed: false },
+      { role: 'crove_worker', allowed: false },
+    ]);
+  });
+
+  // On a shared database the migration login that owns the definer is a MEMBER of crove_tenant (non-superuser, ADMIN OPTION, docs/runbooks/shared-database.md), so the push guard treats it as a tenant (the finding
+  // B1 of the security review of #4015). The suite runs as a superuser, which the guard exempts, so this test gives the definer such an owner for one transaction (rolled back) and runs the erasure through it.
+  it("clears MISA AMIS's refusal text when the definer's owner is a non-superuser member of crove_tenant, as on a shared database (#4015)", async () => {
+    const email = 'Shared.Db@Example.vn';
+    const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId]))).rows[0]?.id);
+    // The org has one live MISA connection per entity (channel_connection_live_uq): reuse the one an earlier test made, or make it.
+    const existing = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [org.orgId, entity]))).rows[0]?.id;
+    const connection = existing ?? randomUUID();
+    if (!existing) {
+      const channel = randomUUID();
+      await admin(async (c) => {
+        await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [org.orgId, channel, entity, org.owner]);
+        await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [org.orgId, connection, entity, channel]);
+      });
+    }
+    const row = async (state: string, reason: string | null, no: string) => {
+      const id = randomUUID();
+      await admin((c) =>
+        c.query(
+          `INSERT INTO crove_finance.misa_amis_push (org_id, legal_entity_id, connection_id, source_type, source_id, voucher_type, org_refid, org_refno, payload_digest, state, reason)
+           VALUES ($1, $2, $3, 'cash_voucher', $4, 4, $5, $6, $7, $8, $9)`,
+          [org.orgId, entity, connection, randomUUID(), id, no, 'a'.repeat(64), state, reason],
+        ),
+      );
+      return id;
+    };
+    const quoted = await row('refused', `Đối tượng ${email} chưa có trong danh mục`, 'SD1');
+    const unrelated = await row('refused', 'Thiếu mã hàng trong dòng 3', 'SD2');
+    const queuedQuoting = await row('queued', `Texte ${email}`, 'SD3');
+    const migrationLogin = `pdpl_migration_login_${Math.floor(Math.random() * 1e9)}`;
+    const c = new pg.Client({ connectionString: adminUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      // The shared-database role set-up: a login that is no superuser, created the crove_* roles and so holds ADMIN OPTION on them, and owns what it creates.
+      await c.query(`CREATE ROLE ${migrationLogin} NOLOGIN`);
+      await c.query(`GRANT crove_tenant TO ${migrationLogin} WITH ADMIN OPTION`);
+      await c.query(`GRANT CREATE ON SCHEMA crove_finance TO ${migrationLogin}`);
+      await c.query(`ALTER FUNCTION crove_finance.personal_data_clear_misa_amis_push_reason(text, text) OWNER TO ${migrationLogin}`);
+      // ... and, as on that database, it owns the table too (what the migration login creates it owns).
+      await c.query(`ALTER TABLE crove_finance.misa_amis_push OWNER TO ${migrationLogin}`);
+      const owner = (
+        await c.query<{ owner: string; member: boolean; superuser: boolean }>(
+          `SELECT pg_catalog.pg_get_userbyid(p.proowner) AS owner, pg_catalog.pg_has_role(p.proowner, 'crove_tenant', 'MEMBER') AS member, r.rolsuper AS superuser
+             FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_roles r ON r.oid = p.proowner
+            WHERE p.oid = 'crove_finance.personal_data_clear_misa_amis_push_reason(text, text)'::regprocedure`,
+        )
+      ).rows[0];
+      expect(owner).toEqual({ owner: migrationLogin, member: true, superuser: false });
+      await c.query('SET LOCAL ROLE crove_app');
+      await enterUser(c, org.owner, org.orgId);
+      const cleared = await c.query<{ rows: number }>(`SELECT crove_finance.personal_data_clear_misa_amis_push_reason('email', $1) AS rows`, [email.toLowerCase()]);
+      expect(cleared.rows[0]?.rows).toBe(1);
+      await c.query('RESET ROLE');
+      const states = (
+        await c.query<{ org_refid: string; state: string; reason: string | null; attempts: number }>(
+          'SELECT org_refid, state, reason, attempts FROM crove_finance.misa_amis_push WHERE org_refid = ANY($1) ORDER BY org_refno',
+          [[quoted, unrelated, queuedQuoting]],
+        )
+      ).rows;
+      expect(states).toEqual([
+        { org_refid: quoted, state: 'refused', reason: null, attempts: 1 },
+        { org_refid: unrelated, state: 'refused', reason: 'Thiếu mã hàng trong dòng 3', attempts: 1 },
+        { org_refid: queuedQuoting, state: 'queued', reason: `Texte ${email}`, attempts: 1 },
+      ]);
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      await c.end();
+    }
+  });
 });
