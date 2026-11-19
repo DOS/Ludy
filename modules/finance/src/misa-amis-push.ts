@@ -127,11 +127,13 @@ export const misaAmisPush = defineCommand({
     const connection = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.legal_entity_id', 'c.last_test_state', 'ch.status'])
+      .select(['c.id', 'c.product', 'c.legal_entity_id', 'c.last_test_state', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.connectionId)
       .executeTakeFirst();
     if (!connection) throw notFound();
+    // The push to MISA ASP is a later slice (S4 of #4103: its own switch, no polling of results): a connection of that product is connected and tested, never pushed to yet.
+    if (connection.product !== 'amis') throw new DomainError('MISA_ASP_PUSH_NOT_AVAILABLE', 409, 'Việc gửi chứng từ sang MISA ASP chưa có; hiện chỉ kết nối MISA AMIS Kế toán gửi được chứng từ');
     if (connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối này không còn hoạt động, hãy kết nối lại');
     // Only a connection whose last test worked (S2b): a wrong code or an unreachable AMIS is found by the test, not by a half-sent batch.
     if (connection.last_test_state !== 'works') throw new DomainError('MISA_AMIS_NOT_TESTED', 409, 'Hãy kiểm tra kết nối MISA AMIS thành công trước khi gửi');
@@ -218,7 +220,7 @@ export const misaAmisPush = defineCommand({
 // ---------------------------------------------------------------------------------------------------------------
 // What the worker needs
 
-export type MisaAmisPushTarget = { action: 'none'; reason: 'not_found' | 'not_active' } | { action: 'push'; id: string; channelConnectionId: string; orgCompanyCode: string; legalEntityId: string };
+export type MisaAmisPushTarget = { action: 'none'; reason: 'not_found' | 'not_active' | 'other_product' } | { action: 'push'; id: string; channelConnectionId: string; orgCompanyCode: string; legalEntityId: string };
 
 export const misaAmisPushTarget = defineQuery({
   name: 'finance.misa_amis.push_target',
@@ -228,11 +230,13 @@ export const misaAmisPushTarget = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'ch.status'])
+      .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.connectionId)
       .executeTakeFirst();
     if (!row) return { action: 'none', reason: 'not_found' };
+    // A MISA ASP connection is never pushed with the AMIS client (S4 of #4103 brings its own): the worker leaves it alone.
+    if (row.product !== 'amis') return { action: 'none', reason: 'other_product' };
     if (row.status !== 'active') return { action: 'none', reason: 'not_active' };
     return { action: 'push', id: row.id, channelConnectionId: row.channel_connection_id, orgCompanyCode: row.org_company_code, legalEntityId: row.legal_entity_id };
   },
@@ -249,7 +253,7 @@ export interface PushRowRef {
 
 export type MisaAmisPushBegin =
   // `waiting`: rows MISA took (or may have) still await their result inside the window, so the job comes back later.
-  | { action: 'none'; reason: 'not_found' | 'not_active' | 'nothing' | 'busy'; waiting: boolean }
+  | { action: 'none'; reason: 'not_found' | 'not_active' | 'other_product' | 'nothing' | 'busy'; waiting: boolean }
   // The AMIS branch is read from AMIS's dictionary by the worker; the batch is not begun without it.
   | { action: 'need_branch' }
   | { action: 'send'; callKey: string; voucherType: number; params: PushParams; rows: PushRowRef[]; sourceType: MisaAmisPushSource }
@@ -270,12 +274,13 @@ export const misaAmisPushBegin = defineCommand({
     const connection = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'ch.status'])
+      .select(['c.id', 'c.product', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.connectionId)
       .forUpdate('c')
       .executeTakeFirst();
     if (!connection) return { action: 'none', reason: 'not_found', waiting: false };
+    if (connection.product !== 'amis') return { action: 'none', reason: 'other_product', waiting: false };
     if (connection.status !== 'active') return { action: 'none', reason: 'not_active', waiting: false };
 
     const table = 'crove_finance.misa_amis_push';
