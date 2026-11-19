@@ -2837,8 +2837,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // #4123 (ADR-0055 slice 1): the record that a meeting is being captured right now, by which kind of client, since when and last heard from when. Read, written and updated (the heartbeat and the end)
-  // by the recorder alone, like a live piece; tenant roles update only the three columns of the heartbeat (a column grant), so the update probes assign one to itself. Its factory lands before the table (step 1),
+  // #4123 (ADR-0055 slice 1): the record that a meeting is being captured right now, by which kind of client, since when and last heard from when. Read and updated (the heartbeat and the end)
+  // by the recorder alone, like a live piece; its rows are written by one definer only (insert is refused to the tenant roles); tenant roles update only the three columns of the heartbeat (a column grant), so the update probes assign one to itself. Its factory lands before the table (step 1),
   // so PENDING_TABLES holds it until the migration of the next step.
   'crove_meetings.capture_session': {
     update: { set: 'last_seen_at = last_seen_at' },
