@@ -9,7 +9,7 @@
 // Nothing here logs or stores a credential, a party's name, an amount or MISA's own text other than the capped `reason` of a refused voucher: ids, codes and counts.
 import { AMIS_DICTIONARIES, AmisError, amisErrorText, isOrgRefId, type AmisCallbackResult, type AmisClient, type AmisConnection } from '@crove/misa-amis';
 import { MISA_AMIS_PREVIEW_LIMIT, type MisaAmisPreviewAsk } from '@crove/kernel-contract';
-import { amisContextOf, amisPartRows, loadAmisEntries, MISA_AMIS_CHANNEL_PROVIDER, type AmisPartRow, type MisaAmisPushBegin, type MisaAmisPushRecord, type MisaAmisPushTarget } from '@crove/mod-finance';
+import { amisContextOf, amisPartRows, loadAmisEntries, MISA_AMIS_CHANNEL_PROVIDER, type AmisPartRow, type MisaAmisMatchResults, type MisaAmisPushBegin, type MisaAmisPushRecord, type MisaAmisPushTarget } from '@crove/mod-finance';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.misa_amis' };
@@ -170,7 +170,9 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
       // part that is gone, blocked or different from what the person approved is `failed` and never sent.
       let parts: Map<string, AmisPartRow>;
       try {
-        const { entries } = await loadAmisEntries(query, ask, amisContextOf(ask, branchId), MISA_AMIS_PREVIEW_LIMIT + 1);
+        // The same matches the person's confirmation was made on (the stored result of the last check against the catalogue): a check made since changes the part, and the part is then `STALE`, never sent.
+        const matches = await query<MisaAmisMatchResults>('finance.misa_amis_match.results', { legalEntityId: target.legalEntityId, ask });
+        const { entries } = await loadAmisEntries(query, ask, amisContextOf(ask, branchId, matches), MISA_AMIS_PREVIEW_LIMIT + 1);
         parts = new Map(amisPartRows(entries).map((p) => [p.orgRefid, p]));
       } catch (error) {
         // The batch could not be built: nothing was sent, so the rows go back to the queue and the run asks to be tried again.

@@ -645,6 +645,33 @@ export type MisaAmisPushTable = Refine<
   },
   'legal_entity_id'
 >;
+// The check of a connection's vouchers against the firm's MISA catalogue (#4112, S3a of #4103): the last request, and what the worker found for each party (by tax code) and item (by code).
+export const MISA_AMIS_MATCH_CHECK_STATES = ['requested', 'done', 'failed'] as const;
+export type MisaAmisMatchCheckState = (typeof MISA_AMIS_MATCH_CHECK_STATES)[number];
+export const MISA_AMIS_MATCH_FAILURES = ['credentials', 'unreachable', 'invalid_response', 'catalogue_too_large'] as const;
+export type MisaAmisMatchFailure = (typeof MISA_AMIS_MATCH_FAILURES)[number];
+export type MisaAmisMatchCheckTable = Refine<
+  G.FinanceMisaAmisMatchCheckTable,
+  {
+    state: Generated<MisaAmisMatchCheckState>;
+    failure: MisaAmisMatchFailure | null;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const MISA_AMIS_MATCH_KINDS = ['party', 'item'] as const;
+export type MisaAmisMatchKind = (typeof MISA_AMIS_MATCH_KINDS)[number];
+export const MISA_AMIS_MATCH_STATES = ['matched', 'unknown', 'ambiguous'] as const;
+export type MisaAmisMatchState = (typeof MISA_AMIS_MATCH_STATES)[number];
+export type MisaAmisMatchTable = Refine<
+  G.FinanceMisaAmisMatchTable,
+  {
+    kind: ColumnType<MisaAmisMatchKind, MisaAmisMatchKind, G.NotGranted>;
+    state: ColumnType<MisaAmisMatchState, MisaAmisMatchState, G.NotGranted>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
 export type MarketplaceConnectionTable = Refine<
   G.FinanceMarketplaceConnectionTable,
   { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; legal_entity_id: LegalEntityColumn },
@@ -1495,6 +1522,8 @@ type Refined = Tables<{
   'crove_finance.einvoice_notice': EInvoiceNoticeTable;
   'crove_finance.marketplace_connection': MarketplaceConnectionTable;
   'crove_finance.misa_amis_connection': MisaAmisConnectionTable;
+  'crove_finance.misa_amis_match': MisaAmisMatchTable;
+  'crove_finance.misa_amis_match_check': MisaAmisMatchCheckTable;
   'crove_finance.misa_amis_push': MisaAmisPushTable;
   'crove_finance.stock_item': StockItemTable;
   'crove_finance.channel_order': ChannelOrderTable;
