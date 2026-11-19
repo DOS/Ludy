@@ -3,6 +3,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
+import { MORNING_KIND } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Checkbox } from '@crove/ui/components/checkbox';
@@ -10,6 +11,8 @@ import { cn } from '@crove/ui/lib/utils';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { TodayMailSetting } from '../components/today-mail-setting.tsx';
+import { MorningNoticeSetting } from '../components/morning-notice-setting.tsx';
+import { meetingsInstalled } from '../components/linked-meetings.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isKnownKind, kindKey, notificationKinds, notificationTarget, periodParts, type KnownNotificationKind } from '../lib/notifications.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
@@ -67,6 +70,8 @@ function useLine() {
         return t('text.series_open_items', { count: Number(n.detail.count ?? 0) });
       case 'meetings.summary_ready':
         return t('text.summary_ready');
+      case 'meetings.morning':
+        return t('text.morning', { count: Number(n.detail.count ?? 0) });
       case 'kernel.channel_expired':
         return t('text.channel_expired');
       case 'kernel.ai_budget':
@@ -142,6 +147,7 @@ export function NotificationsPage() {
     else if (target?.to === 'conversation') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { c: target.id } });
     else if (target?.to === 'conversations') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { status: 'new' } });
     else if (target?.to === 'meeting') void navigate({ to: '/o/$slug/meetings/$id', params: { slug, id: target.id } });
+    else if (target?.to === 'meetings') void navigate({ to: '/o/$slug/meetings', params: { slug } });
     else if (target?.to === 'ads') void navigate({ to: '/o/$slug/ads', params: { slug } });
     else if (target?.to === 'agents') void navigate({ to: '/o/$slug/agents', params: { slug } });
   };
@@ -189,6 +195,7 @@ export function NotificationsPage() {
       {list.data && <Settings muted={list.data.muted} />}
       {/* The daily "Hôm nay cần bạn" brief by email: the member's own opt-in (#2406). */}
       <TodayMailSetting />
+      {meetingsInstalled() && <MorningNoticeSetting muted={list.data?.muted.includes(MORNING_KIND) ?? false} />}
     </div>
   );
 }
