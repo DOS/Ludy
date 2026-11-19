@@ -195,7 +195,8 @@ const zWakeKey = z.string().max(300);
 export const zMcpWakeEnqueue = z.strictObject({
   id: zWakeEventId,
   grantId: zMcpWakeGrantRef.shape.grantId,
-  type: z.enum(['signal.fired', 'schedule.due', 'ping']),
+  // The three fixed types, or a line's (`engage.conversation_unanswered`): the body check of the database says which are registered.
+  type: z.union([z.enum(['signal.fired', 'schedule.due', 'ping']), z.string().regex(/^(social|engage|ads)(\.[a-z_]+){1,3}$/)]),
   body: z.record(z.string(), z.unknown()),
   // The signal keys this event carries: noted as seen in the same transaction that stores it.
   keys: z.array(zWakeKey).max(20).optional(),
@@ -210,6 +211,8 @@ function wakeSystemError(error: unknown): never {
   const message = (error as { message?: unknown; code?: unknown } | null)?.message;
   const code = (error as { code?: unknown } | null)?.code;
   if (message === 'MCP_WAKE_GRANT') throw new DomainError('MCP_WAKE_GRANT_NOT_FOUND', 404, 'Không tìm thấy quyền kết nối này, hoặc đã hết hiệu lực');
+  // An event of a line's type for a grant that does not hold the type's scope (or is not a company grant): not for this grant.
+  if (message === 'MCP_WAKE_SCOPE') throw new DomainError('MCP_WAKE_SCOPE', 403, 'Quyền kết nối này không nhận loại báo thức này');
   if (message === 'MCP_WAKE_INVALID' || code === '23514') throw new DomainError('INVALID', 422, 'Nội dung báo thức không hợp lệ');
   throw error;
 }
@@ -288,7 +291,7 @@ export const mcpWakeSignalsCheck = defineCommand({
 export interface McpWakeDeliveryRow {
   id: string;
   grantId: string;
-  type: 'signal.fired' | 'schedule.due' | 'ping';
+  type: string;
   body: Record<string, unknown>;
   status: 'queued' | 'sent' | 'failed' | 'dropped';
   attempts: number;

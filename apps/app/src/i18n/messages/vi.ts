@@ -12800,6 +12800,7 @@ export const vi = {
       EXTENSION_TOKEN_NOT_FOUND: 'Không tìm thấy thiết bị này, hoặc đã được ngắt kết nối',
       MCP_GRANT_NOT_FOUND: 'Không tìm thấy quyền kết nối này, hoặc đã được thu hồi',
       MCP_WAKE_GRANT_NOT_FOUND: 'Không tìm thấy quyền kết nối này, hoặc đã hết hiệu lực',
+      MCP_WAKE_SCOPE: 'Kết nối của ứng dụng AI này không nhận loại báo thức này.',
       MCP_WAKE_NOT_FOUND: 'Quyền kết nối này chưa có địa chỉ nhận',
       MCP_GRANT_TOO_MANY: 'Bạn đã có đủ 5 quyền kết nối của riêng mình, hãy ngắt bớt một quyền rồi thử lại',
       MCP_WAKE_TOO_SOON: 'Mỗi kết nối chỉ gửi thử được một lần mỗi phút, hãy thử lại sau ít giây',

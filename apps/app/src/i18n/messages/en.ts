@@ -12800,6 +12800,7 @@ export const en = {
       EXTENSION_TOKEN_NOT_FOUND: 'This device was not found, or it is already disconnected.',
       MCP_GRANT_NOT_FOUND: 'This connection was not found, or it is already disconnected.',
       MCP_WAKE_GRANT_NOT_FOUND: 'This connection was not found, or it is no longer valid.',
+      MCP_WAKE_SCOPE: 'This AI app’s connection does not receive this kind of wake-up.',
       MCP_WAKE_NOT_FOUND: 'This connection has no wake-up receiver yet.',
       MCP_GRANT_TOO_MANY: 'You already have 5 connections of your own. Disconnect one and try again.',
       MCP_WAKE_TOO_SOON: 'A test can be sent once a minute per connection. Try again in a few seconds.',
