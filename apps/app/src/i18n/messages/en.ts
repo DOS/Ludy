@@ -14013,6 +14013,7 @@ export const en = {
       },
       mcp: {
         invoices: 'Show an AI app the list of recorded invoices',
+        overview: 'Let an AI app read the cash, profit, receivables and payables overview of a period',
       },
       misa_goods_code: {
         remove: 'Remove a MISA item code',
