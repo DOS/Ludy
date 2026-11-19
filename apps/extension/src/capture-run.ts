@@ -21,6 +21,11 @@ import {
 import { capturePlan } from './capture-plan.ts';
 import { createClient, LudyError, type Client } from './api.ts';
 import { consentBlocker, type ConsentMethod } from './consent.ts';
+import type { CaptureHeld } from './messages.ts';
+
+// How often a running capture tells the server it is alive (ADR-0055 slice 1, #4123; the server ends one it has not heard from for 90 seconds). The same 30 seconds as CAPTURE_HEARTBEAT_SECONDS of the contract, which
+// the extension does not import.
+const HEARTBEAT_MS = 30_000;
 
 export interface CaptureParams {
   address: string;
@@ -34,6 +39,8 @@ export interface CaptureParams {
   // Live notes (ADR-0052 L4a): a second, audio-only recorder sends pieces while recording; the final upload stays as it is.
   liveNotes: boolean;
   streamId: string;
+  // The tab's address, when the browser gave it: the server reads which call it names (nothing of it is stored).
+  joinUrl?: string;
 }
 
 export interface CaptureDeps {
@@ -55,7 +62,15 @@ export const browserDeps = (): CaptureDeps => ({
 });
 
 // 'consentPolicy': the org is strict and refused the method (A2, #3160).
-export type Failure = 'title' | 'consentMethod' | 'consentAgreed' | 'consentPolicy' | 'device' | 'store' | 'setup';
+// 'captureRunning': the server already has a capture of this call (CAPTURE_ALREADY_RUNNING), held by the kind of client in `held` since its time.
+export type Failure = 'title' | 'consentMethod' | 'consentAgreed' | 'consentPolicy' | 'device' | 'store' | 'setup' | 'captureRunning';
+
+// What the refusal says of the capture that holds the call: a kind and a time, or null when it says something else.
+export function heldOf(details: unknown): CaptureHeld | null {
+  if (typeof details !== 'object' || details === null) return null;
+  const { kind, since } = details as { kind?: unknown; since?: unknown };
+  return (kind === 'extension' || kind === 'app') && typeof since === 'string' && since !== '' ? { kind, since } : null;
+}
 
 export interface Running {
   meetingId: string;
@@ -70,7 +85,7 @@ export interface Running {
   onLost(listener: (reason: RecordingStopReason) => void): void;
 }
 
-export async function startCapture(params: CaptureParams, deps: CaptureDeps = browserDeps()): Promise<{ ok: true; running: Running } | { ok: false; reason: Failure }> {
+export async function startCapture(params: CaptureParams, deps: CaptureDeps = browserDeps()): Promise<{ ok: true; running: Running } | { ok: false; reason: Failure; held?: CaptureHeld }> {
   const blocker = consentBlocker({ title: params.title, consentMethod: params.consentMethod, consentAgreed: params.consentAgreed });
   if (blocker) return { ok: false, reason: blocker };
   const plan = capturePlan({ streamId: params.streamId, keepVideo: params.keepVideo, isTypeSupported: (t) => MediaRecorder.isTypeSupported(t) });
@@ -114,7 +129,7 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
       return new MediaStream([...mix.stream.getAudioTracks(), ...(plan.kind === 'video' ? tab.getVideoTracks() : [])]);
     },
     createMeeting: async () => {
-      createdMeetingId = (await client.createMeeting({ title: params.title, keepVideo: params.keepVideo, consentMethod: params.consentMethod, consentNoticeVersion: RECORDING_NOTICE.version, liveNotes: params.liveNotes })).meetingId;
+      createdMeetingId = (await client.createMeeting({ title: params.title, keepVideo: params.keepVideo, consentMethod: params.consentMethod, consentNoticeVersion: RECORDING_NOTICE.version, liveNotes: params.liveNotes, ...(params.joinUrl ? { joinUrl: params.joinUrl } : {}) })).meetingId;
       return createdMeetingId;
     },
     makeRecorder: (stream) => new MediaRecorder(stream, plan.mimeType ? { mimeType: plan.mimeType } : undefined),
@@ -137,6 +152,11 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
     // The meeting was made but the recorder never started: its recording ended (best effort, so the app's chip never waits for it).
     if (createdMeetingId !== null) await client.recordingStopped({ meetingId: createdMeetingId, reason: 'unknown', lengthSeconds: 0 }).catch(() => undefined);
     if (prepared.status === 'failed' && prepared.reason === 'setup' && prepared.error instanceof LudyError && prepared.error.code === 'CONSENT_METHOD_NOT_ALLOWED') return { ok: false, reason: 'consentPolicy' };
+    // Another capture of this call exists (ADR-0055 slice 1, #4123): no meeting was made, and the person is told which kind of client holds it and since when.
+    if (prepared.status === 'failed' && prepared.reason === 'setup' && prepared.error instanceof LudyError && prepared.error.code === 'CAPTURE_ALREADY_RUNNING') {
+      const held = heldOf(prepared.error.details);
+      return { ok: false, reason: 'captureRunning', ...(held ? { held } : {}) };
+    }
     return { ok: false, reason: prepared.status === 'aborted' ? 'setup' : prepared.reason };
   }
   const { recorder, writer, stream } = prepared;
@@ -157,6 +177,8 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
   );
   recorder.addEventListener('error', () => fireLost('unknown'));
   recorder.start(5000);
+  // The capture tells the server it is alive; an answer of "not open" (another capture took the call over after a long silence) never stops this recording, and a failed beat is only missed.
+  const heartbeat = setInterval(() => void client.captureHeartbeat({ meetingId }).catch(() => undefined), HEARTBEAT_MS);
   // Live notes: never fails the recording; null when not ticked or when the live recorder cannot start.
   const live = startLiveCapture({
     enabled: params.liveNotes,
@@ -177,6 +199,9 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
       },
       async stop(stopReason) {
         stopRequested = true;
+        // The capture is over now, not 90 seconds from now, so a new recording of the call is not refused by this one (best effort).
+        clearInterval(heartbeat);
+        await client.captureHeartbeat({ meetingId, end: true }).catch(() => undefined);
         // How it ended is saved with the recording, so even a retry from the popup later carries the right code.
         await writer.markStopped(stopReason ?? 'user');
         clock.pause(deps.now());

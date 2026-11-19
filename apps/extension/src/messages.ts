@@ -15,6 +15,8 @@ export interface StartRequest {
   liveNotes: boolean;
   // From chrome.tabCapture.getMediaStreamId in the popup, after the member's click on the tab.
   streamId: string;
+  // The address of that tab when the browser gave it (ADR-0055 slice 1, #4123): the server reads which call it names and stores nothing of the address.
+  joinUrl?: string;
 }
 
 export interface CaptureStart {
@@ -30,6 +32,7 @@ export interface CaptureStart {
   keepVideo: boolean;
   liveNotes: boolean;
   streamId: string;
+  joinUrl?: string;
 }
 
 export type OffscreenMessage = CaptureStart | { target: 'offscreen'; type: 'capture-stop' };
@@ -47,8 +50,14 @@ export function parseTick(raw: unknown): Tick | null {
   return typeof elapsedMs === 'number' && Number.isFinite(elapsedMs) && elapsedMs >= 0 ? { type: 'tick', elapsedMs } : null;
 }
 
-export type StartFailure = 'invalid' | 'title' | 'consentMethod' | 'consentAgreed' | 'consentPolicy' | 'permission' | 'busy' | 'signedOut' | 'device' | 'store' | 'setup';
-export type StartReply = { ok: true; meetingId: string; startedAt: number; micMissing: boolean } | { ok: false; reason: StartFailure };
+// 'captureRunning': the server already has a capture of this call (ADR-0055 slice 1, #4123); the reply says which kind of client holds it and since when.
+export type StartFailure = 'invalid' | 'title' | 'consentMethod' | 'consentAgreed' | 'consentPolicy' | 'permission' | 'busy' | 'signedOut' | 'device' | 'store' | 'setup' | 'captureRunning';
+export interface CaptureHeld {
+  kind: 'extension' | 'app';
+  // An ISO time.
+  since: string;
+}
+export type StartReply = { ok: true; meetingId: string; startedAt: number; micMissing: boolean } | { ok: false; reason: StartFailure; held?: CaptureHeld };
 export type StopReply = { ok: true; uploaded: boolean; meetingId: string; message?: string } | { ok: false; reason: 'idle' };
 
 export interface RecordingState {
@@ -105,17 +114,18 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 // values: a string "false" must not count as consent, nor as a video or live notes that were not asked for.
 export function parseStartRequest(raw: unknown): StartRequest | null {
   if (!isObject(raw)) return null;
-  const { title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId } = raw;
+  const { title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId, joinUrl } = raw;
   if (typeof title !== 'string' || typeof consentMethod !== 'string' || typeof streamId !== 'string' || streamId === '') return null;
   if (typeof consentAgreed !== 'boolean' || typeof keepVideo !== 'boolean' || typeof liveNotes !== 'boolean') return null;
-  return { title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId };
+  // The tab's address is a hint: anything that is not a short string is left out, never a reason to refuse the start.
+  return { title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId, ...(typeof joinUrl === 'string' && joinUrl !== '' && joinUrl.length <= 500 ? { joinUrl } : {}) };
 }
 
 // The worker's capture command for the offscreen document, or null when it is malformed.
 export function parseCaptureStart(raw: unknown): CaptureStart | null {
   if (!isObject(raw) || raw.target !== 'offscreen' || raw.type !== 'capture-start') return null;
-  const { address, token, orgId, uploads, title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId } = raw;
-  const request = parseStartRequest({ title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId });
+  const { address, token, orgId, uploads, title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId, joinUrl } = raw;
+  const request = parseStartRequest({ title, consentMethod, consentAgreed, keepVideo, liveNotes, streamId, joinUrl });
   if (!request || typeof address !== 'string' || typeof token !== 'string' || typeof orgId !== 'string') return null;
   if (uploads !== 'presigned' && uploads !== 'direct') return null;
   if (!(CONSENT_METHODS as readonly string[]).includes(request.consentMethod)) return null;
