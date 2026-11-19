@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// The "it already exists" checks of the add dialogs in Settings (#3608): while a person types, the dialog shows the record that
+// the new one would repeat (HubSpot, Attio). They only warn: the server still decides, so a rule that differs in a way these
+// helpers do not see is refused there with its own reason. Each takes the rows the card already read, so no request is made.
+import { normalizeAccountCode } from '@crove/kernel-contract';
+
+// What a bank prints between the digit groups is dropped; the module keeps the digits (zBankAccountNumberSet).
+export const digitsOf = (input: string): string => input.replace(/\D/g, '');
+
+// The recorded number that the typed one repeats, in any bank account of the org (one number belongs to one bank account).
+export function duplicateBankNumber<T extends { accountNumber: string }>(rows: readonly T[], typed: string): T | null {
+  const digits = digitsOf(typed);
+  if (digits === '') return null;
+  return rows.find((row) => digitsOf(row.accountNumber) === digits) ?? null;
+}
+
+// The account whose code the typed one repeats (a code is stored trimmed with its tag in upper case).
+export function duplicateAccountCode<T extends { code: string }>(accounts: readonly T[], typed: string): T | null {
+  const code = normalizeAccountCode(typed);
+  if (code === '') return null;
+  return accounts.find((account) => account.code === code) ?? null;
+}
+
+// A keyword matches without regard to accents or case (the card's hint says so), so "Cước Internet" repeats "cuoc internet".
+export function keywordKey(input: string): string {
+  return input
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function duplicateKeywordRule<T extends { matchKind: string; matchText: string }>(rules: readonly T[], typed: string): T | null {
+  const key = keywordKey(typed);
+  if (key === '') return null;
+  return rules.find((rule) => rule.matchKind === 'keyword' && keywordKey(rule.matchText) === key) ?? null;
+}
+
+// An invited address that already belongs to a member, or that already has an invitation waiting.
+export function invitedEmailState(email: string, members: readonly { email: string }[], invites: readonly { email: string; status?: string }[]): 'member' | 'invited' | null {
+  const key = email.trim().toLowerCase();
+  if (key === '') return null;
+  if (members.some((m) => m.email.trim().toLowerCase() === key)) return 'member';
+  if (invites.some((i) => i.email.trim().toLowerCase() === key && i.status !== 'expired')) return 'invited';
+  return null;
+}

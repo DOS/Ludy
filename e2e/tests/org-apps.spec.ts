@@ -74,6 +74,7 @@ test('the Settings of another open tab drops the cards of an app that was switch
   await other.goto(`/o/${slug}/settings/members`);
   await expect(other.getByText('Nhắc duyệt đề xuất').first()).toBeVisible();
   // Typed into a field the screen itself owns (the invite form's email), not sent.
+  await other.getByRole('button', { name: 'Mời thành viên' }).click();
   await other.getByPlaceholder('email@congty.vn').fill('dang-go-do@example.test');
   await up;
 

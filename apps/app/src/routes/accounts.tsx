@@ -11,16 +11,19 @@ import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
+import { FormDialog } from '../components/form-dialog.tsx';
+import { DuplicateHint } from '../components/form-panel.tsx';
+import { ErrorText, Field, RowsSkeleton } from '../components/ui.tsx';
 import { accountLabel, parentChoices, subAccounts, type ChartAccount } from '../lib/accounts.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { duplicateAccountCode } from '../lib/duplicates.ts';
 
 const refresh = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.accounts.list.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.parties.list.key() });
 };
 
-function AddSubAccount({ accounts }: { accounts: readonly ChartAccount[] }) {
+export function AddSubAccountDialog({ accounts, onClose }: { accounts: readonly ChartAccount[]; onClose: () => void }) {
   const t = useTranslations('accounts');
   const parents = parentChoices(accounts);
   const [parentCode, setParentCode] = useState('');
@@ -29,12 +32,13 @@ function AddSubAccount({ accounts }: { accounts: readonly ChartAccount[] }) {
   const create = useMutation(
     orpc.accounts.create.mutationOptions({
       onSuccess: () => {
-        setCode('');
-        setName('');
         refresh();
+        onClose();
       },
     }),
   );
+  // A code that exists is flagged while it is typed (the server refuses it too).
+  const repeated = duplicateAccountCode(accounts, code);
   const pickParent = (value: string) => {
     setParentCode(value);
     // Start the code with the parent's, the part every sub-account code shares.
@@ -42,28 +46,42 @@ function AddSubAccount({ accounts }: { accounts: readonly ChartAccount[] }) {
   };
   function submit(event: FormEvent) {
     event.preventDefault();
+    if (!parentCode || !name.trim() || !code.trim() || repeated) return;
     create.mutate({ parentCode, code: normalizeAccountCode(code), name: name.trim() });
   }
   return (
-    <form className="mt-4 space-y-2" onSubmit={submit} aria-label={t('addTitle')}>
-      <p className="text-xs text-subtle-foreground">{t('addHint')}</p>
-      <NativeSelect className="w-full" value={parentCode} required onChange={(e) => pickParent(e.target.value)} aria-label={t('parent')}>
-        <NativeSelectOption value="">{t('pickParent')}</NativeSelectOption>
-        {parents.map((a) => (
-          <NativeSelectOption key={a.code} value={a.code}>
-            {accountLabel(a)}
-          </NativeSelectOption>
-        ))}
-      </NativeSelect>
-      <div className="flex gap-2">
-        <Input className="w-40 font-mono" required maxLength={31} placeholder={t('codePlaceholder')} aria-label={t('code')} value={code} onChange={(e) => setCode(e.target.value)} />
-        <Input required maxLength={200} placeholder={t('namePlaceholder')} aria-label={t('name')} value={name} onChange={(e) => setName(e.target.value)} />
-        <Button type="submit" variant="outline" disabled={create.isPending || !parentCode}>
-          {t('add')}
-        </Button>
-      </div>
+    <FormDialog
+      title={t('addTitle')}
+      description={t('addHint')}
+      busy={create.isPending}
+      dirty={name.trim() !== '' || parentCode !== ''}
+      submitLabel={t('add')}
+      submitDisabled={!parentCode || !name.trim() || !code.trim() || repeated !== null}
+      onClose={onClose}
+      onSubmit={submit}
+    >
+      {/* The name first: it is what the owner knows ("Vietcombank"); the parent and the code follow from it. */}
+      <Field label={t('name')}>
+        {(control) => <Input {...control} required maxLength={200} placeholder={t('namePlaceholder')} value={name} onChange={(e) => setName(e.target.value)} />}
+      </Field>
+      <Field label={t('parent')}>
+        {(control) => (
+          <NativeSelect {...control} value={parentCode} required onChange={(e) => pickParent(e.target.value)}>
+            <NativeSelectOption value="">{t('pickParent')}</NativeSelectOption>
+            {parents.map((a) => (
+              <NativeSelectOption key={a.code} value={a.code}>
+                {accountLabel(a)}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        )}
+      </Field>
+      <Field label={t('code')}>
+        {(control) => <Input {...control} className="font-mono" required maxLength={31} placeholder={t('codePlaceholder')} value={code} onChange={(e) => setCode(e.target.value)} />}
+      </Field>
+      <DuplicateHint testId="account-code-duplicate">{repeated ? t('duplicate', { code: repeated.code, name: repeated.name }) : null}</DuplicateHint>
       {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
-    </form>
+    </FormDialog>
   );
 }
 
@@ -140,6 +158,7 @@ export function ChartOfAccountsCard({ canManage }: { canManage: boolean }) {
   const t = useTranslations('accounts');
   const accounts = useQuery(orpc.accounts.list.queryOptions());
   const own = subAccounts(accounts.data ?? []);
+  const [adding, setAdding] = useState(false);
   return (
     <Card className="block p-4" aria-label={t('title')}>
       <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
@@ -159,7 +178,14 @@ export function ChartOfAccountsCard({ canManage }: { canManage: boolean }) {
               ))}
             </ul>
           )}
-          {canManage && <AddSubAccount accounts={accounts.data ?? []} />}
+          {canManage && (
+            <div className="mt-4">
+              <Button type="button" variant="outline" size="sm" onClick={() => setAdding(true)}>
+                {t('addTitle')}
+              </Button>
+            </div>
+          )}
+          {adding && <AddSubAccountDialog accounts={accounts.data ?? []} onClose={() => setAdding(false)} />}
         </>
       )}
     </Card>

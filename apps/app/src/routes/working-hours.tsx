@@ -13,11 +13,13 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { DateInput } from '../components/date-input.tsx';
 import { TimeInput } from '../components/time-input.tsx';
 import { ExternalCalendars } from './calendar-connections.tsx';
-import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
+import { FormDialog } from '../components/form-dialog.tsx';
+import { DuplicateHint } from '../components/form-panel.tsx';
+import { ErrorText, Field, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { BOOKING_SETTINGS_ID } from '../lib/booking.ts';
-import { WEEKDAY_KEYS, dayOffRange, daysOf, datesOf, hoursOf, timeZones, zoneLabel, type DayHours } from '../lib/calendar.ts';
+import { WEEKDAY_KEYS, dayOffRange, daysOf, datesOf, hoursOf, overlappingDayOff, timeZones, zoneLabel, type DayHours } from '../lib/calendar.ts';
 import { toast } from '../lib/toast.ts';
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.calendar.get.key() });
@@ -103,28 +105,48 @@ function HoursForm({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boole
   );
 }
 
-function DaysOff({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boolean }) {
+// The dates of a day off, asked in a dialog (#3608); a range that overlaps one already listed is flagged while it is picked.
+export function AddDayOffDialog({ tz, off, onClose }: { tz: string; off: ReadonlyArray<{ timeZone: string; startsAt: string; endsAt: string }>; onClose: () => void }) {
   const t = useTranslations('workingHours');
   const f = useFormat();
-  const tz = calendar.hours.timeZone;
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const add = useMutation(
     orpc.calendar.addEvent.mutationOptions({
       onSuccess: async () => {
-        setFrom('');
-        setTo('');
         await refresh();
+        onClose();
       },
     }),
   );
+  const overlap = from ? overlappingDayOff(off, from, to || from) : null;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!from) return;
+    add.mutate({ ...dayOffRange(tz, from, to || from), timeZone: tz, kind: 'time_off', title: null });
+  };
+  return (
+    <FormDialog title={t('addDayOff')} busy={add.isPending} dirty={from !== ''} submitLabel={t('addDayOff')} submitDisabled={!from} onClose={onClose} onSubmit={submit}>
+      <Field label={t('from')}>{(control) => <DateInput {...control} required value={from} onChange={setFrom} />}</Field>
+      <Field label={t('to')} hint={t('toHint')}>
+        {(control) => <DateInput {...control} min={from || undefined} value={to} onChange={setTo} />}
+      </Field>
+      <DuplicateHint testId="day-off-duplicate">
+        {overlap ? t('dayOffOverlap', { from: f.date(overlap.from), to: f.date(overlap.to) }) : null}
+      </DuplicateHint>
+      {add.error && <ErrorText>{errorMessage(add.error)}</ErrorText>}
+    </FormDialog>
+  );
+}
+
+function DaysOff({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boolean }) {
+  const t = useTranslations('workingHours');
+  const f = useFormat();
+  const tz = calendar.hours.timeZone;
+  const [adding, setAdding] = useState(false);
   const cancel = useMutation(orpc.calendar.cancelEvent.mutationOptions({ onSuccess: refresh }));
   const off = calendar.events.filter((e) => e.kind === 'time_off');
   const day = (date: string) => f.date(date);
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    add.mutate({ ...dayOffRange(tz, from, to || from), timeZone: tz, kind: 'time_off', title: null });
-  };
   return (
     <div className="mt-4">
       <p className="text-xs font-medium text-muted-foreground">{t('daysOff')}</p>
@@ -150,16 +172,14 @@ function DaysOff({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boolean
         </ul>
       )}
       {canEdit && (
-        <form className="mt-2 flex flex-wrap items-center gap-2" onSubmit={submit} aria-label={t('addDayOff')}>
-          <DateInput required className="w-44" value={from} onChange={setFrom} aria-label={t('from')} />
-          <span className="text-subtle-foreground">-</span>
-          <DateInput className="w-44" min={from || undefined} value={to} onChange={setTo} aria-label={t('to')} />
-          <Button loading={add.isPending} type="submit" variant="outline" size="sm" disabled={add.isPending || !from}>
+        <div className="mt-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => setAdding(true)}>
             {t('addDayOff')}
           </Button>
-        </form>
+        </div>
       )}
-      {(add.error ?? cancel.error) && <ErrorText>{errorMessage(add.error ?? cancel.error)}</ErrorText>}
+      {adding && <AddDayOffDialog tz={tz} off={off} onClose={() => setAdding(false)} />}
+      {cancel.error && <ErrorText>{errorMessage(cancel.error)}</ErrorText>}
     </div>
   );
 }

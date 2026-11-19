@@ -63,6 +63,20 @@ export function datesOf(timeZone: string, startsAt: string, endsAt: string): { f
   return { from: zonedDate(timeZone, Date.parse(startsAt)), to: zonedDate(timeZone, Date.parse(endsAt) - 1) };
 }
 
+/** The day off already listed that the dates picked would repeat (they share at least one day), for the warning in the add dialog; null when none does. */
+export function overlappingDayOff(
+  off: ReadonlyArray<{ timeZone: string; startsAt: string; endsAt: string }>,
+  from: string,
+  to: string,
+): { from: string; to: string } | null {
+  const last = to < from ? from : to;
+  for (const e of off) {
+    const range = datesOf(e.timeZone, e.startsAt, e.endsAt);
+    if (range.from <= last && from <= range.to) return range;
+  }
+  return null;
+}
+
 /** The IANA zones this browser knows, the member's own first when it is missing from the list. */
 export function timeZones(current: string): string[] {
   const all = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];

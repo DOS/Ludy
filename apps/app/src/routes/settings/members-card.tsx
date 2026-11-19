@@ -5,6 +5,7 @@ import { useTranslations } from 'use-intl';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
 import { Checkbox } from '@crove/ui/components/checkbox';
 import type { LegalEntity, MemberRoles } from '@crove/kernel-contract';
 import { Input } from '@crove/ui/components/input';
@@ -13,11 +14,14 @@ import { StepUpPrompt } from '../../components/two-factor.tsx';
 import { MemberRolesRow } from '../member-roles.tsx';
 import { MemberPrivateNotes, usePrivateNotes } from '../../components/notes-panel.tsx';
 import { MemberSessions } from '../../components/sessions.tsx';
-import { ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, isEmailAddress, RowsSkeleton, useFieldErrors } from '../../components/ui.tsx';
+import { FormDialog } from '../../components/form-dialog.tsx';
+import { DuplicateHint } from '../../components/form-panel.tsx';
+import { ErrorText, Field, focusFirstInvalid, isEmailAddress, RowsSkeleton, useFieldErrors } from '../../components/ui.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../../lib/api.ts';
 import { getConfig } from '../../lib/auth.ts';
 import { useFormat } from '../../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../../lib/members.ts';
+import { invitedEmailState } from '../../lib/duplicates.ts';
 import { asRoleKey, inviteRoleChoices } from '../../lib/member-roles.ts';
 import { MEMBERS_CARD_ID } from '../approval-preset.tsx';
 
@@ -192,15 +196,22 @@ export function InviteMember({
   initialEmail,
   entities,
   catalog,
+  members = [],
 }: {
   isOwner: boolean;
   initialEmail?: string | undefined;
   entities: LegalEntity[];
   catalog: MemberRoles['roles'];
+  // The members, for the warning when the address typed already belongs to one (#3608).
+  members?: readonly { email: string }[];
 }) {
   const root = useTranslations();
   const t = useTranslations('settings');
   const [email, setEmail] = useState(initialEmail ?? '');
+  // The form is a dialog opened by "Mời thành viên" (#3608); onboarding's ?invite= opens it at once with the address filled.
+  const [open, setOpen] = useState(Boolean(initialEmail));
+  const pendingInvites = useQuery(orpc.org.listInvites.queryOptions());
+  const known = invitedEmailState(email, members, pendingInvites.data ?? []);
   const [role, setRole] = useState<InviteRole>('member');
   const [scoped, setScoped] = useState(false);
   const [departmentKey, setDepartmentKey] = useState('');
@@ -217,10 +228,6 @@ export function InviteMember({
   const invite = useMutation(
     orpc.org.invite.mutationOptions({
       onSuccess: () => {
-        setEmail('');
-        setScoped(false);
-        setDepartmentKey('');
-        setEntityIds([]);
         void queryClient.invalidateQueries({ queryKey: orpc.org.listInvites.key() });
       },
     }),
@@ -235,6 +242,7 @@ export function InviteMember({
       focusFirstInvalid(event.currentTarget);
       return;
     }
+    if (known) return;
     invite.mutate(scoped ? { email, role, legalEntityIds: entityIds } : department ? { email, role, roleKey: department.key } : { email, role });
   }
   const toggleEntity = (id: string, checked: boolean) => {
@@ -242,36 +250,91 @@ export function InviteMember({
     setEntityIds((ids) => (checked ? [...ids, id] : ids.filter((x) => x !== id)));
   };
 
+  const reset = () => {
+    invite.reset();
+    setOpen(false);
+    setEmail('');
+    setScoped(false);
+    setDepartmentKey('');
+    setEntityIds([]);
+    setNoEntity(false);
+    fields.reset();
+  };
+  const stepUp = isStepUpRequired(invite.error);
   return (
     <>
-      <form className="mt-4 space-y-2" noValidate onSubmit={submit}>
-        <p id={fieldHintId(emailId)} className="text-xs text-subtle-foreground">
-          {t('inviteHint')}
-        </p>
-        <div className="flex gap-2">
-          <Input
-            {...fieldControl(emailId, { hint: true, error: Boolean(fields.of('email')) })}
-            type="email"
-            required
-            maxLength={320}
-            placeholder={t('emailPlaceholder')}
-            value={email}
-            onChange={(e) => {
-              setEmail(e.target.value);
-              fields.edit('email');
-            }}
-            onBlur={(e) => fields.blur('email', e.target.value)}
-          />
-          <NativeSelect className="shrink-0" value={role} onChange={(e) => setRole(e.target.value as InviteRole)} aria-label={t('role')}>
-            {isOwner && !scoped && <NativeSelectOption value="admin">{root('roles.admin')}</NativeSelectOption>}
-            <NativeSelectOption value="member">{root('roles.member')}</NativeSelectOption>
-            <NativeSelectOption value="viewer">{root('roles.viewer')}</NativeSelectOption>
-          </NativeSelect>
-          <Button type="submit" variant="outline" disabled={invite.isPending}>
-            {t('invite')}
-          </Button>
-        </div>
-        <FieldError id={emailId}>{fields.of('email')}</FieldError>
+      <div className="mt-4">
+        <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+          {t('inviteTitle')}
+        </Button>
+      </div>
+      {/* The accept link is shown once, so the result stays on screen until it is closed. */}
+      {open && invite.data && (
+        <Dialog open onOpenChange={(next) => !next && reset()}>
+          <DialogContent closeLabel={root('common.close')}>
+            <DialogHeader>
+              <DialogTitle>{t('inviteTitle')}</DialogTitle>
+            </DialogHeader>
+            <CreatedInvite invite={invite.data} onDone={reset} />
+          </DialogContent>
+        </Dialog>
+      )}
+      {open && !invite.data && (
+        <FormDialog
+          title={t('inviteTitle')}
+          label={t('inviteTitle')}
+          busy={invite.isPending}
+          dirty={email.trim() !== '' && email !== (initialEmail ?? '')}
+          submitLabel={t('invite')}
+          submitDisabled={known !== null || stepUp}
+          onClose={reset}
+          onSubmit={submit}
+          outside={
+            stepUp ? (
+              // Inviting is R3. Outside the form above: the prompt has a form of its own.
+              <StepUpPrompt
+                action={
+                  invite.variables?.roleKey
+                    ? t('stepUpInviteRole', {
+                        email: invite.variables.email,
+                        role: root(`roles.${invite.variables.role}`),
+                        department: root(`memberRoles.roles.${invite.variables.roleKey}`),
+                      })
+                    : t('stepUpInvite', { email: invite.variables?.email ?? email, role: root(`roles.${invite.variables?.role ?? role}`) })
+                }
+                onVerified={() => invite.variables && invite.mutate(invite.variables)}
+                onCancel={() => invite.reset()}
+              />
+            ) : null
+          }
+        >
+        <Field id={emailId} label={t('inviteEmail')} hint={t('inviteHint')} error={fields.of('email')}>
+          {(control) => (
+            <Input
+              {...control}
+              type="email"
+              required
+              maxLength={320}
+              placeholder={t('emailPlaceholder')}
+              value={email}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                fields.edit('email');
+              }}
+              onBlur={(e) => fields.blur('email', e.target.value)}
+            />
+          )}
+        </Field>
+        <DuplicateHint testId="invite-duplicate">{known ? t(known === 'member' ? 'inviteAlreadyMember' : 'inviteAlreadyInvited', { email: email.trim() }) : null}</DuplicateHint>
+        <Field label={t('role')}>
+          {(control) => (
+            <NativeSelect {...control} value={role} onChange={(e) => setRole(e.target.value as InviteRole)}>
+              {isOwner && !scoped && <NativeSelectOption value="admin">{root('roles.admin')}</NativeSelectOption>}
+              <NativeSelectOption value="member">{root('roles.member')}</NativeSelectOption>
+              <NativeSelectOption value="viewer">{root('roles.viewer')}</NativeSelectOption>
+            </NativeSelect>
+          )}
+        </Field>
         {catalog.length > 0 &&
           (isOwner ? (
             <div className="space-y-1">
@@ -328,27 +391,9 @@ export function InviteMember({
             )}
           </div>
         )}
-        {invite.error && !isStepUpRequired(invite.error) && <ErrorText>{errorMessage(invite.error)}</ErrorText>}
-      </form>
-      {isStepUpRequired(invite.error) && (
-        // Inviting is R3. Outside the form above: the prompt has a form of its own.
-        <div className="mt-4">
-          <StepUpPrompt
-            action={
-              invite.variables?.roleKey
-                ? t('stepUpInviteRole', {
-                    email: invite.variables.email,
-                    role: root(`roles.${invite.variables.role}`),
-                    department: root(`memberRoles.roles.${invite.variables.roleKey}`),
-                  })
-                : t('stepUpInvite', { email: invite.variables?.email ?? email, role: root(`roles.${invite.variables?.role ?? role}`) })
-            }
-            onVerified={() => invite.variables && invite.mutate(invite.variables)}
-            onCancel={() => invite.reset()}
-          />
-        </div>
+          {invite.error && !stepUp && <ErrorText>{errorMessage(invite.error)}</ErrorText>}
+        </FormDialog>
       )}
-      {invite.data && <CreatedInvite invite={invite.data} onDone={() => invite.reset()} />}
     </>
   );
 }
@@ -453,7 +498,7 @@ export function MembersCard({ members, me, isOwner, canManage, inviteEmail }: { 
       )}
       {canManage && (
         <>
-          <InviteMember isOwner={isOwner} initialEmail={inviteEmail} entities={entities.data ?? []} catalog={memberRoles.data?.roles ?? []} />
+          <InviteMember isOwner={isOwner} initialEmail={inviteEmail} entities={entities.data ?? []} catalog={memberRoles.data?.roles ?? []} members={members} />
           <PendingInvites entities={entities.data ?? []} entitiesLoading={entities.isLoading} />
         </>
       )}

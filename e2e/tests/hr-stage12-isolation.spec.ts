@@ -375,6 +375,7 @@ test('Phase 7 non-admin salary isolation blocks a chief accountant member across
   // Invite a second user as org `member` and assign the built-in `Kế toán trưởng` role (`finance.chief_accountant`).
   const memberEmail = newEmail('hr-iso-member');
   await page.goto(`/o/${slug}/settings/members`);
+  await page.getByRole('button', { name: 'Mời thành viên' }).click();
   await page.getByPlaceholder(/^email@/).fill(memberEmail);
   await page.getByLabel('Vai trò', { exact: true }).selectOption('member');
   await page.getByRole('button', { name: 'Mời', exact: true }).click();
