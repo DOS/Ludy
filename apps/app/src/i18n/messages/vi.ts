@@ -15354,6 +15354,7 @@ export const vi = {
         open_actions: 'Cho ứng dụng AI xem các việc còn mở từ biên bản đã công bố của những cuộc họp chia sẻ cho cả công ty',
         series_open_items: 'Cho ứng dụng AI xem các việc còn mở trong chuỗi các cuộc họp lặp lại của một cuộc họp đã công bố và chia sẻ cho cả công ty',
         decisions: 'Cho ứng dụng AI xem các quyết định trong biên bản đã công bố của những cuộc họp gần đây được chia sẻ cho cả công ty',
+        search: 'Cho ứng dụng AI tìm trong biên bản đã công bố của những cuộc họp được chia sẻ cho cả công ty',
       },
       hook: {
         clear: 'Gỡ địa chỉ nhận biên bản của bạn',
