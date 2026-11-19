@@ -30,6 +30,8 @@ export const MEMBER_VY_FEATURE_TABLE = {
   // The recorder's Vy suggesting up to three titles for one meeting from its transcript in the foreground (#3947): one model call, the member waiting for it, the candidates shown and never stored. Its own key, so it
   // never cuts off a transcription, a summary, a translation, a question, a brief or chapters (#3029).
   'meetings.title': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy listing what each speaker of one meeting committed to or decided, from the transcript, in the foreground (#3954): one model call, the member waiting for it, the lines shown and never stored. Its own key, so it never cuts off a transcription, a summary, a translation, a question, a brief, chapters or a title (#3029).
+  'meetings.commitments': { module: 'meetings', expiryMinutes: 30 },
   // The member's Vy naming who an action item belongs to from the name said in the meeting, when code found nobody (#3921): one model call over a name and at most 100 names, the member waiting for it. Its own key,
   // so it never cuts off a transcription, a summary, a translation, a question, a brief or live notes (#3029); the run's result row holds counts only.
   'meetings.assignee': { module: 'meetings', expiryMinutes: 30 },

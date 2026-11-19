@@ -509,6 +509,7 @@ import {
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
+import { zCommitmentsAnswer } from './meeting-commitments.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
 import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import {
@@ -1323,6 +1324,12 @@ export const contract = {
     title: {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       suggest: oc.input(zSummaryRef).output(zTitleAnswer),
+    },
+    // What each speaker committed to or decided (#3954): `status` is the button (the same answer as the chapters'), `list` the click that has the recorder's own Vy list, from the transcript, each speaker's commitments
+    // and decisions with the second of the line each rests on. The lines go back to the browser and are stored nowhere; nothing is published or made a task from here.
+    commitments: {
+      status: oc.input(zSummaryRef).output(zSummaryStatus),
+      list: oc.input(zSummaryRef).output(zCommitmentsAnswer),
     },
     // Who an action item belongs to, by Vy, when code found nobody (#3921, step 2): `status` is the button (may Vy be used now), `suggest` the click that has the member's own Vy pick one of the people they may give
     // the work to from the name said in the meeting, or nobody. The model sees names only; the answer is a number the route maps to a person; nothing is stored, and a person still picks the seat and makes the task.

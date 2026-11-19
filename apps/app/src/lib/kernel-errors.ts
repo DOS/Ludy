@@ -462,6 +462,7 @@ export const KERNEL_ERROR_CODES = [
   'BRIEF_BUSY',
   // The recorder's Vy suggesting a meeting title and the rename (#3947).
   'TITLE_BUSY',
+  'COMMITMENTS_BUSY',
   'MEETING_TITLE_EMPTY',
   'MEETING_TITLE_TOO_LONG',
   // Vy naming who an action item belongs to (#3921).

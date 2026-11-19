@@ -72,7 +72,7 @@ import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
-import { assigneeStatusOf, runMeetingAssignee, briefStatusOf, runMeetingBrief, runMeetingTitle, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
+import { assigneeStatusOf, runMeetingAssignee, briefStatusOf, runMeetingBrief, runMeetingTitle, runMeetingCommitments, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MISA_AMIS_CHANNEL_PROVIDER, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -1390,6 +1390,14 @@ export function createRpcHandler(
         status: os.meetings.title.status.handler(meetingsQuery('meetings.title.status')),
         suggest: os.meetings.title.suggest.handler(({ context, input }) =>
           inMeetings(context, (orgId, actor) => runMeetingTitle({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
+      },
+      // What each speaker committed to or decided (#3954): `status` feeds the button, `list` runs the recorder's own Vy once and returns the checked lines, grouped by speaker, to the browser; nothing is stored,
+      // published or made a task. See member-vy-ports.ts.
+      commitments: {
+        status: os.meetings.commitments.status.handler(meetingsQuery('meetings.commitments.status')),
+        list: os.meetings.commitments.list.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingCommitments({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
         ),
       },
       // Who an action item belongs to, by Vy, when code found nobody (#3921, step 2): the click has the member's own Vy pick one of the people the member may give the work to from the said name, or nobody; the model

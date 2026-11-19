@@ -49,6 +49,8 @@ export const MEMBER_VY_FEATURES = {
   'meetings.assignee': { module: 'meetings', expiryMinutes: 30 },
   'meetings.chapters': { module: 'meetings', expiryMinutes: 30 },
   'meetings.title': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy listing what each speaker of one meeting committed to or decided, from the transcript, in the foreground (#3954): one model call, the member waiting for it, the lines shown and never stored. Its own key, so it never cuts off a transcription, a summary, a translation, a question, a brief, chapters or a title (#3029).
+  'meetings.commitments': { module: 'meetings', expiryMinutes: 30 },
   'projects.tasks_from_note': { module: 'projects', expiryMinutes: 30 },
   'projects.tasks_from_source': { module: 'projects', expiryMinutes: 30 },
 } as const;
