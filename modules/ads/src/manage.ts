@@ -208,17 +208,6 @@ async function insertChange(ctx: Db & Pick<CommandContext, 'actor'>, control: Co
   return row.id;
 }
 
-// What every audit row of a change says: ids, amounts and states, never text.
-const auditOf = (control: Control, changeId: string, kind: AdsManageKind, slot: AdsManageSlot, extra: Record<string, unknown> = {}) => ({
-  changeId,
-  launchId: control.launch.id,
-  adAccountId: control.launch.ad_account_id,
-  kind,
-  slot,
-  currency: control.launch.currency,
-  ...extra,
-});
-
 const targetOf = (input: { launchId: string }) => ({ type: 'ads.ad_launch', id: input.launchId.toLowerCase() });
 export interface AdsManageChangedResult {
   changeId: string;
@@ -249,7 +238,7 @@ export const adsObjectPause = defineCommand({
     if (problem) throw refuse('ADS_OBJECT_STATE', 409, problem === 'archived' ? 'Đối tượng này đã được lưu trữ' : 'Đối tượng này đã tạm dừng', { problem });
     const changeId = await insertChange(ctx, control, { slot: input.slot, kind: 'pause' });
     await ctx.emit('ads.manage.queued', { changeId, launchId: control.launch.id, adAccountId: control.launch.ad_account_id });
-    ctx.audit(auditOf(control, changeId, 'pause', input.slot));
+    ctx.audit({ changeId: changeId, launchId: control.launch.id, adAccountId: control.launch.ad_account_id, kind: 'pause', slot: input.slot, currency: control.launch.currency });
     return { changeId, launchId: control.launch.id, kind: 'pause', state: 'queued' };
   },
 });
@@ -270,7 +259,7 @@ export const adsObjectArchive = defineCommand({
     if (problem) throw refuse('ADS_OBJECT_STATE', 409, 'Đối tượng này đã được lưu trữ', { problem });
     const changeId = await insertChange(ctx, control, { slot: input.slot, kind: 'archive' });
     await ctx.emit('ads.manage.queued', { changeId, launchId: control.launch.id, adAccountId: control.launch.ad_account_id });
-    ctx.audit(auditOf(control, changeId, 'archive', input.slot));
+    ctx.audit({ changeId: changeId, launchId: control.launch.id, adAccountId: control.launch.ad_account_id, kind: 'archive', slot: input.slot, currency: control.launch.currency });
     return { changeId, launchId: control.launch.id, kind: 'archive', state: 'queued' };
   },
 });
@@ -292,7 +281,7 @@ export const adsBudgetLower = defineCommand({
     const toBudget = new Decimal(input.dailyBudget).toFixed();
     const changeId = await insertChange(ctx, control, { slot: 'ad_set', kind: 'budget_lower', fromBudget: control.held.dailyBudget, toBudget });
     await ctx.emit('ads.manage.queued', { changeId, launchId: control.launch.id, adAccountId: control.launch.ad_account_id });
-    ctx.audit(auditOf(control, changeId, 'budget_lower', 'ad_set', { fromBudget: control.held.dailyBudget, toBudget }));
+    ctx.audit({ changeId: changeId, launchId: control.launch.id, adAccountId: control.launch.ad_account_id, kind: 'budget_lower', slot: 'ad_set', currency: control.launch.currency, fromBudget: control.held.dailyBudget, toBudget });
     return { changeId, launchId: control.launch.id, kind: 'budget_lower', state: 'queued' };
   },
 });
@@ -314,7 +303,7 @@ export const adsScheduleShorten = defineCommand({
     if (problem) throw refuse('ADS_SCHEDULE_INVALID', 422, problem === 'not_earlier' ? 'Ngày kết thúc mới phải sớm hơn ngày đang giữ chỗ; muốn kéo dài thì cần đề xuất được duyệt' : 'Ngày kết thúc mới không hợp lệ', { problem });
     const changeId = await insertChange(ctx, control, { slot: 'ad_set', kind: 'schedule_shorten', fromEndOn: control.held.endOn, toEndOn: input.endOn });
     await ctx.emit('ads.manage.queued', { changeId, launchId: control.launch.id, adAccountId: control.launch.ad_account_id });
-    ctx.audit(auditOf(control, changeId, 'schedule_shorten', 'ad_set', { fromEndOn: control.held.endOn, toEndOn: input.endOn }));
+    ctx.audit({ changeId: changeId, launchId: control.launch.id, adAccountId: control.launch.ad_account_id, kind: 'schedule_shorten', slot: 'ad_set', currency: control.launch.currency, fromEndOn: control.held.endOn, toEndOn: input.endOn });
     return { changeId, launchId: control.launch.id, kind: 'schedule_shorten', state: 'queued' };
   },
 });
@@ -507,7 +496,7 @@ export const adsObjectResume = defineCommand({
   handler: async (ctx, { payload }) => {
     const done = await approvedHandler('resume')(ctx, payload);
     await ctx.emit('ads.manage.queued', { changeId: done.changeId, launchId: done.control.launch.id, adAccountId: done.control.launch.ad_account_id });
-    ctx.audit(auditOf(done.control, done.changeId, 'resume', payload.slot, { amount: done.amount, dailyBudget: done.budget, endOn: done.endOn }));
+    ctx.audit({ changeId: done.changeId, launchId: done.control.launch.id, adAccountId: done.control.launch.ad_account_id, kind: 'resume', slot: payload.slot, currency: done.control.launch.currency, amount: done.amount, dailyBudget: done.budget, endOn: done.endOn });
     return { changeId: done.changeId, launchId: done.control.launch.id, kind: 'resume' as const, state: 'queued' as const };
   },
 });
@@ -524,7 +513,7 @@ export const adsBudgetRaise = defineCommand({
   handler: async (ctx, { payload }) => {
     const done = await approvedHandler('budget_raise')(ctx, payload);
     await ctx.emit('ads.manage.queued', { changeId: done.changeId, launchId: done.control.launch.id, adAccountId: done.control.launch.ad_account_id });
-    ctx.audit(auditOf(done.control, done.changeId, 'budget_raise', 'ad_set', { amount: done.amount, fromBudget: payload.fromBudget, toBudget: payload.toBudget }));
+    ctx.audit({ changeId: done.changeId, launchId: done.control.launch.id, adAccountId: done.control.launch.ad_account_id, kind: 'budget_raise', slot: 'ad_set', currency: done.control.launch.currency, amount: done.amount, fromBudget: payload.fromBudget, toBudget: payload.toBudget });
     return { changeId: done.changeId, launchId: done.control.launch.id, kind: 'budget_raise' as const, state: 'queued' as const };
   },
 });
@@ -541,7 +530,7 @@ export const adsScheduleExtend = defineCommand({
   handler: async (ctx, { payload }) => {
     const done = await approvedHandler('schedule_extend')(ctx, payload);
     await ctx.emit('ads.manage.queued', { changeId: done.changeId, launchId: done.control.launch.id, adAccountId: done.control.launch.ad_account_id });
-    ctx.audit(auditOf(done.control, done.changeId, 'schedule_extend', 'ad_set', { amount: done.amount, fromEndOn: payload.fromEndOn, toEndOn: payload.toEndOn }));
+    ctx.audit({ changeId: done.changeId, launchId: done.control.launch.id, adAccountId: done.control.launch.ad_account_id, kind: 'schedule_extend', slot: 'ad_set', currency: done.control.launch.currency, amount: done.amount, fromEndOn: payload.fromEndOn, toEndOn: payload.toEndOn });
     return { changeId: done.changeId, launchId: done.control.launch.id, kind: 'schedule_extend' as const, state: 'queued' as const };
   },
 });
@@ -641,9 +630,9 @@ export const adsManageBegin = defineCommand({
     const callKey = manageCallKey(change.id);
     const begunRow = await ctx.trx.selectFrom('crove_kernel.external_call').select('id').where('org_id', '=', ctx.orgId).where('key', '=', callKey).executeTakeFirst();
     const begun = begunRow !== undefined;
-    const settle = async (state: 'cancelled' | 'failed', code: string, extra: Record<string, unknown> = {}) => {
+    const settle = async (state: 'cancelled' | 'failed', code: string) => {
       await ctx.trx.updateTable('crove_ads.ad_manage_change').set({ state, code }).where('org_id', '=', ctx.orgId).where('id', '=', change.id).execute();
-      ctx.audit({ changeId: change.id, launchId: launch.id, adAccountId: launch.ad_account_id, kind: change.kind, slot: change.slot, state, code, phase: 'begin', ...extra });
+      ctx.audit({ changeId: change.id, launchId: launch.id, adAccountId: launch.ad_account_id, kind: change.kind, slot: change.slot, state, code, phase: 'begin' });
       return none(code);
     };
     // A change of a launch that is no longer running is never made (the stops win): cancelled, its held amount released. A launch that needs attention keeps a pause.
@@ -668,7 +657,9 @@ export const adsManageBegin = defineCommand({
       if (currencyProblem) return settle('cancelled', currencyProblem);
       const problems = await manageCapsProblems(ctx, { launch: lockedLaunchRow, account }, held.dailyBudget, held.endOn);
       if (problems.length > 0) {
-        return settle('cancelled', 'cap_lowered', { problems: problems.slice(0, 5).map((p) => `${p.scope}:${p.period}:${p.day ?? p.month ?? ''}:${p.cap}:${p.committed}:${p.plan}`) });
+        // The numbers the person is told (the first caps passed: scope, period, the day or month, the cap, what is committed, what the change adds).
+        ctx.audit({ changeId: change.id, launchId: launch.id, adAccountId: launch.ad_account_id, kind: change.kind, slot: change.slot, code: 'cap_lowered', phase: 'begin', problems: problems.slice(0, 5).map((p) => `${p.scope}:${p.period}:${p.day ?? p.month ?? ''}:${p.cap}:${p.committed}:${p.plan}`) });
+        return settle('cancelled', 'cap_lowered');
       }
     }
 
@@ -735,13 +726,12 @@ export const adsManageRecord = defineCommand({
     const settleRow = (values: { state: 'started' | 'succeeded' | 'failed' | 'ambiguous'; calls?: number; error_kind?: 'token_expired' | 'permission' | 'bad_request' | 'rate_limited' | 'transient' | 'unknown'; error_code?: string; finished_at?: Date }) =>
       ctx.trx.updateTable('crove_kernel.external_call').set({ updated_at: ctx.now, ...values }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
     const setChange = (state: 'applied' | 'failed', code: string | null) => ctx.trx.updateTable('crove_ads.ad_manage_change').set({ state, code }).where('org_id', '=', ctx.orgId).where('id', '=', change.id).execute();
-    const audit = (outcome: string, code?: string) => ctx.audit({ changeId: change.id, launchId: change.launch_id, adAccountId: change.ad_account_id, kind: change.kind, slot: change.slot, phase: input.phase, outcome, ...(code ? { code } : {}) });
 
     if (result.kind === 'accepted' || result.kind === 'found') {
       // The change is made at the platform: a fact whatever became of the launch meanwhile, so it is recorded as applied (what it released or raised is the hold's business).
       await settleRow({ state: 'succeeded', finished_at: ctx.now });
       await setChange('applied', null);
-      audit(result.kind);
+      ctx.audit({ changeId: change.id, launchId: change.launch_id, adAccountId: change.ad_account_id, kind: change.kind, slot: change.slot, phase: input.phase, outcome: result.kind });
       return { recorded: true, state: 'applied', next: 'stop' };
     }
     if (result.kind === 'missing') {
@@ -765,18 +755,18 @@ export const adsManageRecord = defineCommand({
         await settleRow({ state: 'failed', error_kind: 'unknown', error_code: why.toUpperCase(), finished_at: ctx.now });
         // The read showed the object as it was, so nothing changed at the platform: the change fails (a call was begun, so it cannot be cancelled) and what it held is released.
         await setChange('failed', why);
-        audit('missing', why);
+        ctx.audit({ changeId: change.id, launchId: change.launch_id, adAccountId: change.ad_account_id, kind: change.kind, slot: change.slot, phase: input.phase, outcome: 'missing', code: why });
         return { recorded: true, state: 'failed', next: 'stop' };
       }
       await settleRow({ state: 'started', calls: row.calls + 1 });
-      audit('missing');
+      ctx.audit({ changeId: change.id, launchId: change.launch_id, adAccountId: change.ad_account_id, kind: change.kind, slot: change.slot, phase: input.phase, outcome: 'missing' });
       return { recorded: true, state: 'queued', next: 'call' };
     }
     if (result.kind === 'unknown' || result.kind === 'unknowable') {
       // An answer that cannot be told: the change may have landed, so the row is unclear until a read shows it. The sweep asks again.
       const code = result.code ?? 'UNKNOWN';
       await settleRow({ state: 'ambiguous', error_kind: result.kind === 'unknown' ? result.error : 'unknown', error_code: code });
-      audit(result.kind, code);
+      ctx.audit({ changeId: change.id, launchId: change.launch_id, adAccountId: change.ad_account_id, kind: change.kind, slot: change.slot, phase: input.phase, outcome: result.kind, code });
       return { recorded: true, state: 'queued', next: 'stop' };
     }
     // The rest ends the change: the platform refused it, the token is refused, or the call was not made. Nothing changed at the platform, so what it would have raised is released.
@@ -790,7 +780,7 @@ export const adsManageRecord = defineCommand({
       await settleRow({ state: 'failed', error_kind: /token|expired/.test(result.code.toLowerCase()) ? 'token_expired' : 'permission', error_code: result.code, finished_at: ctx.now });
       await setChange('failed', result.code);
     }
-    audit(result.kind);
+    ctx.audit({ changeId: change.id, launchId: change.launch_id, adAccountId: change.ad_account_id, kind: change.kind, slot: change.slot, phase: input.phase, outcome: result.kind });
     return { recorded: true, state: 'failed', next: 'stop' };
   },
 });

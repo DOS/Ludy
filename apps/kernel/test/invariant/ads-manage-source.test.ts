@@ -194,7 +194,8 @@ describe('what can raise spend of a running ad (#3835, W4)', () => {
     // The kinds that can raise spend are named as a change to make in approvedHandler only, whose three callers are the three R3 commands.
     const handler = between(commands, 'function approvedHandler', 'export const adsObjectResume');
     expect([...handler.matchAll(/kind: '(\w+)'/g)].map((m) => m[1]).sort()).toEqual(['budget_raise', 'resume', 'schedule_extend']);
-    const outside = commands.replace(handler, '');
+    // (The audit rows of the three approved commands name their own kind: a record of what ran, never a write.)
+    const outside = commands.replace(handler, '').replace(/ctx\.audit\(\{[^\n]*\}\);/g, '');
     expect(outside).not.toMatch(/kind: '(resume|budget_raise|schedule_extend)'(?! as const)/);
     expect(handler).toMatch(/if \(!ctx\.proposalId \|\| ctx\.actor\.type !== 'user'\) throw onlyApproved\(\);/);
     expect(commands.match(/approvedHandler\('(resume|budget_raise|schedule_extend)'\)\(ctx, payload\)/g)).toHaveLength(3);

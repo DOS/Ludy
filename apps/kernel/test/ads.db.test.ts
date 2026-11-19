@@ -2880,6 +2880,19 @@ suite('ads on PostgreSQL (#2217)', () => {
               return id;
             };
             const dropCap = (id: string) => row(`DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND id = $2`, [orgId, id]);
+            // The org's daily cap is the newest row of its key, and the rows earlier tests of this file left are not this test's to depend on (one of them was sent with an id from the far
+            // future): the test sets the org's daily caps to exactly the ones it names, and puts the others back afterwards, whatever happens in between.
+            const withOrgDailyCaps = async (caps: ReadonlyArray<{ amount: string; currency: string }>, body: () => Promise<void>) => {
+              const saved = await row<{ id: string; amount: string; currency: string; set_by: string; set_at: Date }>(`SELECT id, amount::text, currency, set_by, set_at FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]);
+              await row(`DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]);
+              try {
+                for (const c of caps) await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by) VALUES ($1, crove_kernel.uuid_v7(), 'org', 'daily', $2, $3, $4)`, [orgId, c.amount, c.currency, owner.userId]);
+                await body();
+              } finally {
+                await row(`DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]);
+                for (const c of saved) await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by, set_at) VALUES ($1, $2, 'org', 'daily', $3, $4, $5, $6)`, [orgId, c.id, c.amount, c.currency, c.set_by, c.set_at]);
+              }
+            };
             const stopLaunchAs = (who: Account, launchId: string) => callAs(who, 'ads/stopLaunch', { launchId, idempotencyKey: key() });
             it('reads, never cancels, a change whose call was begun when the launch is stopped meanwhile: it lands (applied) or it did not (failed as stopped, nothing called again), and it is never stuck queued', async () => {
               const w = new SandboxAdWriter();
@@ -2919,28 +2932,27 @@ suite('ads on PostgreSQL (#2217)', () => {
               const a = await liveOn(accountA, w);
               const b = await liveOn(accountB, w, { dailyBudget: '50000', startOn: inDays(0), endOn: inDays(0) });
               // An org cap of 150 000 a day: A at 100 000 and B at 50 000 fit it exactly today.
-              // (The cap in force is the newest id of its key, so the row takes a time-ordered id, as the database stamps them: a random one could sort before the cap already there.)
-              const capId = (await row<{ id: string }>(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by) VALUES ($1, crove_kernel.uuid_v7(), 'org', 'daily', '150000', 'VND', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id as string;
-              // A lower budget confirmed today: its new budget starts tomorrow in the commitments, today is still counted at 100 000.
-              expect((await manage(rig, changeId(await lower(owner, a.launch.id, '60000')))).ended).toBe('applied');
-              // A raise to 140 000 is judged from the day before today: today 140 000 + 50 000 of B is over 150 000, so it is refused (at the request and at the approval), where
-              // judging it only from tomorrow would pass it while the raise could already run today.
-              expect(await askRaise(a.launch.id, '140000')).toMatchObject({ status: 409, body: { code: 'ADS_SPEND_CAP' } });
-              // A raise back to 100 000 fits today (100 000 + 50 000 = 150 000) and is accepted.
-              expect((await askRaise(a.launch.id, '100000')).status).toBe(200);
-              void b;
-              await row(`DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND id = $2`, [orgId, capId]);
+              await withOrgDailyCaps([{ amount: '150000', currency: 'VND' }], async () => {
+                // A lower budget confirmed today: its new budget starts tomorrow in the commitments, today is still counted at 100 000.
+                expect((await manage(rig, changeId(await lower(owner, a.launch.id, '60000')))).ended).toBe('applied');
+                // A raise to 140 000 is judged from the day before today: today 140 000 + 50 000 of B is over 150 000, so it is refused, where judging it only from tomorrow would pass it
+                // while the raise could already run today.
+                expect(await askRaise(a.launch.id, '140000')).toMatchObject({ status: 409, body: { code: 'ADS_SPEND_CAP' } });
+                // A raise back to 100 000 fits today (100 000 + 50 000 = 150 000) and is accepted.
+                expect((await askRaise(a.launch.id, '100000')).status).toBe(200);
+                void b;
+              });
             });
 
             it('refuses a raise while a cap in another currency applies: nothing is converted, and "no compatible cap" never reads as within the cap (ADS_CAP_CURRENCY)', async () => {
               const w = new SandboxAdWriter();
               const { launch } = await live('Hạn mức khác đơn vị tiền', w);
-              const usd = (await row<{ id: string }>(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by) VALUES ($1, crove_kernel.uuid_v7(), 'org', 'daily', '9000', 'USD', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id as string;
-              expect(await askRaise(launch.id, '150000')).toMatchObject({ status: 409, body: { code: 'ADS_CAP_CURRENCY' } });
-              expect(await askExtend(launch.id, inDays(8))).toMatchObject({ status: 409, body: { code: 'ADS_CAP_CURRENCY' } });
-              // What only reduces spend is still allowed.
-              expect((await lower(owner, launch.id, '90000')).status).toBe(200);
-              await row(`DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND id = $2`, [orgId, usd]);
+              await withOrgDailyCaps([{ amount: '9000', currency: 'USD' }], async () => {
+                expect(await askRaise(launch.id, '150000')).toMatchObject({ status: 409, body: { code: 'ADS_CAP_CURRENCY' } });
+                expect(await askExtend(launch.id, inDays(8))).toMatchObject({ status: 409, body: { code: 'ADS_CAP_CURRENCY' } });
+                // What only reduces spend is still allowed.
+                expect((await lower(owner, launch.id, '90000')).status).toBe(200);
+              });
             });
 
             it('judges a raise again before it is called once more after a lost answer: a cap lowered meanwhile fails it as cap_lowered, the platform is not asked again and nothing stays held', async () => {
