@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A fake MISA AMIS server for the tests (#3854): the transport the client is given, with MISA's documented behaviour as far as the adapter depends on it. It checks the ClientID header, issues tokens that
 // can be expired, queues saved vouchers as requests, answers IsCreatedVoucher for a voucher a person already turned into a voucher, keeps the results a callback would carry, signs a callback the way MISA does
-// and answers the polling call. It records every request so a test can read the exact body that went out.
+// and answers the polling call. It records every request so a test can read the exact body that went out. With `product: 'asp'` it serves only what ASP's document lists (token, get_dictionary for six
+// catalogues, save, delete) under `/asp/v1`; any other path, the company information, the catalogue writes and the polling call included, is a 404, as MISA would answer a path that does not exist.
 import { signCallbackData, type AmisRequest, type AmisResponse, type AmisTransport } from '../src/index.ts';
 
 export interface FakeCall {
@@ -42,7 +43,10 @@ export interface FakeMisa {
 const ok = (data: unknown): AmisResponse => ({ status: 200, body: JSON.stringify({ Success: true, ErrorMessage: '', Data: data }) });
 const fail = (code: string): AmisResponse => ({ status: 200, body: JSON.stringify({ Success: false, ErrorCode: code, ErrorMessage: 'lỗi' }) });
 
-export function createFakeMisa(options: { clientId: string; accessCodes: Record<string, string>; dictionary?: Record<number, Record<string, unknown>[]> }): FakeMisa {
+export function createFakeMisa(options: { clientId: string; accessCodes: Record<string, string>; dictionary?: Record<number, Record<string, unknown>[]>; product?: 'amis' | 'asp' }): FakeMisa {
+  const product = options.product ?? 'amis';
+  const P = product === 'asp' ? '/asp/v1' : '/amiskt/v1';
+  const aspMissing = new Set(['get_company_info', 'save_dictionary', 'get_call_back_detail_error']);
   const calls: FakeCall[] = [];
   const requests: FakeMisa['requests'] = new Map();
   const results: FakeResult[] = [];
@@ -61,9 +65,11 @@ export function createFakeMisa(options: { clientId: string; accessCodes: Record<
       if ('code' in forced) return fail(forced.code);
       return forced;
     }
+    // A path outside the product's own prefix, or one ASP's document does not have, is not found.
+    if (!path.startsWith(`${P}/`) || (product === 'asp' && aspMissing.has(path.slice(P.length + 1)))) return { status: 404, body: 'Not Found' };
     if (request.headers.ClientID !== options.clientId) return fail('InvalidAPPID');
     const body = JSON.parse(request.body) as Record<string, unknown>;
-    if (path === '/amiskt/v1/token') {
+    if (path === `${P}/token`) {
       const orgCompanyCode = options.accessCodes[String(body.access_code)];
       if (orgCompanyCode === undefined || orgCompanyCode !== body.org_company_code) return fail('InvalidAccessToken');
       const token = `token-${++issued}`;
@@ -73,13 +79,15 @@ export function createFakeMisa(options: { clientId: string; accessCodes: Record<
     const session = tokens.get(request.headers['X-MISA-AccessToken'] ?? '');
     if (!session) return fail('InvalidToken');
     if (!session.live) return fail('ExpiredToken');
-    if (path === '/amiskt/v1/get_company_info') return ok({ company_name: 'Công ty thử', branch_id: body.branch_id });
-    if (path === '/amiskt/v1/get_dictionary') {
+    if (path === `${P}/get_company_info`) return ok({ company_name: 'Công ty thử', branch_id: body.branch_id });
+    if (path === `${P}/get_dictionary`) {
+      // ASP's document lists six catalogues (data_type 1 to 6).
+      if (product === 'asp' && (Number(body.data_type) < 1 || Number(body.data_type) > 6)) return fail('InvalidParam');
       const rows = options.dictionary?.[Number(body.data_type)] ?? [];
       return ok(rows.slice(Number(body.skip), Number(body.skip) + Number(body.take)));
     }
     if (body.org_company_code !== undefined && body.org_company_code !== session.orgCompanyCode) return fail('InvalidParam');
-    if (path === '/amiskt/v1/save') {
+    if (path === `${P}/save`) {
       for (const voucher of body.voucher as Array<Record<string, unknown>>) {
         const orgRefId = String(voucher.org_refid);
         const voucherType = Number(voucher.voucher_type);
@@ -96,7 +104,7 @@ export function createFakeMisa(options: { clientId: string; accessCodes: Record<
       }
       return ok('Hệ thống đã ghi nhận yêu cầu đồng bộ vào hàng đợi. Kết quả xử lý trả về qua callback.');
     }
-    if (path === '/amiskt/v1/delete') {
+    if (path === `${P}/delete`) {
       for (const v of body.voucher as Array<Record<string, unknown>>) {
         const orgRefId = String(v.org_refid);
         const found = requests.has(orgRefId) && !created.has(orgRefId);
@@ -105,10 +113,10 @@ export function createFakeMisa(options: { clientId: string; accessCodes: Record<
       }
       return ok('Đã ghi nhận yêu cầu xóa.');
     }
-    if (path === '/amiskt/v1/get_call_back_detail_error') {
+    if (path === `${P}/get_call_back_detail_error`) {
       return ok(JSON.stringify(results.slice(Number(body.skip), Number(body.skip) + Number(body.take))));
     }
-    if (path === '/amiskt/v1/save_dictionary') return ok('Đã ghi nhận.');
+    if (path === `${P}/save_dictionary`) return ok('Đã ghi nhận.');
     return fail('InvalidParam');
   };
 
