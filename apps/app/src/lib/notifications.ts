@@ -100,6 +100,50 @@ export function notificationTarget(item: { kind: string; subjectId: string | nul
   }
 }
 
+// The kinds a run of which shows as one row (NT-2, #3592): each has a list screen that holds all of them (the Inbox for proposals and unreadable files, the task list, the Inbox's New tab),
+// so one row with a count and a link says what seven rows said. Every other kind keeps a row per event: they name different things (a bank account, a period, a meeting).
+export const GROUPABLE_KINDS = ['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.conversation_new'] as const;
+export type GroupableKind = (typeof GROUPABLE_KINDS)[number];
+const isGroupable = (kind: string): kind is GroupableKind => (GROUPABLE_KINDS as readonly string[]).includes(kind);
+
+// The list read returns the newest 30 (the kernel's NOTIFICATION_LIST_LIMIT): a group that runs to the end of a full list may stand for more than it holds, so its count reads "30+".
+export const NOTIFICATION_LIST_LIMIT = 30;
+
+export type NotificationRow<T> = { type: 'one'; item: T } | { type: 'group'; kind: GroupableKind; items: T[] };
+
+// The list as rows, in the order it came (newest first): two or more UNREAD notifications of a groupable kind that follow each other become one group row, so a different event between them
+// keeps the order the person read them in. A read one stays a plain row: the server marks a proposal's notice read once it is decided, so a group of read ones would claim a need that is gone,
+// and the count of a group is then the count of what still waits. A run of one stays a plain row.
+export function groupNotifications<T extends { kind: string; read: boolean }>(items: readonly T[]): NotificationRow<T>[] {
+  const rows: NotificationRow<T>[] = [];
+  let i = 0;
+  while (i < items.length) {
+    const first = items[i]!;
+    let end = i + 1;
+    const groupable = isGroupable(first.kind) && !first.read;
+    if (groupable) while (end < items.length && items[end]!.kind === first.kind && !items[end]!.read) end++;
+    if (groupable && end - i >= 2) {
+      rows.push({ type: 'group', kind: first.kind as GroupableKind, items: items.slice(i, end) });
+    } else rows.push({ type: 'one', item: first });
+    i = end;
+  }
+  return rows;
+}
+
+// How many things a group stands for: a file that failed to read in two versions, or a task given to me twice, is two notices of one thing, so the count is of subjects (a notice without
+// one counts for itself).
+export function groupSubjectCount(items: readonly { id: string; subjectId: string | null }[]): number {
+  return new Set(items.map((n) => n.subjectId ?? n.id)).size;
+}
+
+// The ids of a group's unread items, in chunks the read command takes (100 at most).
+export function unreadIdChunks(items: readonly { id: string; read: boolean }[], size = 100): string[][] {
+  const ids = items.filter((n) => !n.read).map((n) => n.id);
+  const chunks: string[][] = [];
+  for (let at = 0; at < ids.length; at += size) chunks.push(ids.slice(at, at + size));
+  return chunks;
+}
+
 // A VAT period key as people write it: '2026-09' is 09/2026, '2026-Q3' is Q3/2026 (the caller puts the word for quarter).
 export function periodParts(period: string): { kind: 'month' | 'quarter'; label: string } | null {
   const month = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(period);

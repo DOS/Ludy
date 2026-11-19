@@ -119,6 +119,10 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // (guardedRequest, https and that host only). Only the connection-test job reaches the field (a later slice's push job adds itself). Classified before the field exists (step 0, the base copy of
   // this suite must know it when the field lands).
   'channels.misaAmis': ['provider:misa_amis'],
+  // The MISA ASP client (the same adapter on ASP's paths, #4103 S2, #4111): built from the deployment's own ClientID for that product over the same transport, so the same host (developer.misa.vn) and the
+  // same guard. Only the connection-test job reaches the field so far (a later slice's push job adds itself). Classified before the field exists (step 0, as for `channels.misaAmis`: the base copy of
+  // this suite must know it when the field lands).
+  'channels.misaAsp': ['provider:misa_amis'],
   // The outside calendar adapters (#2123): Google's OAuth and Calendar hosts, through @crove/channel.
   'channels.calendars': ['provider:channel'],
   // The meeting platform adapters (meetings integrations C1, #3173): the offline sandbox reaches nothing, and a real adapter (Google Meet, Zoom, Teams: C2 to C4) its platform's own API hosts, each bound to them by its allowlisted

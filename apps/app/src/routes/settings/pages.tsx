@@ -27,10 +27,11 @@ import { WorkingHoursCard } from '../working-hours.tsx';
 import { AddressField, ContactEmailField, ProposalRemindersField, RotateInboundAddress, TaxCalendarField, TaxCodeField, VatFilingPeriodField } from './fields.tsx';
 import { Anchor, SettingsFrame } from './frame.tsx';
 import { MembersCard } from './members-card.tsx';
+import { NotificationPreferences } from './notifications-card.tsx';
 import { Offboarding } from './offboarding.tsx';
 import { SETTINGS_CARD } from './tabs.ts';
 
-// The ten tabs of Settings (ST-1, #3589), one screen each. A tab lists its cards in one column and stays under 1200 px at 1440 wide, which decides what sits together. The cards owned by another
+// The eleven tabs of Settings (ST-1, #3589; #3592), one screen each. A tab lists its cards in one column and stays under 1200 px at 1440 wide, which decides what sits together. The cards owned by another
 // app (the booking and quote cards of Engage, the minutes templates of the meetings) have tabs of their own or sit under "Ứng dụng" until a later issue moves them into their own app's settings.
 // A new card is one line in the page of its tab.
 
@@ -235,6 +236,15 @@ export function SettingsConnectionsPage() {
           )}
         </>
       )}
+    </SettingsFrame>
+  );
+}
+
+// Thông báo của tôi (NT-1, #3592): which notices the member gets and the daily brief by email, theirs alone; moved from the bottom of the bell's screen.
+export function SettingsNotificationsPage() {
+  return (
+    <SettingsFrame>
+      {({ org }) => <NotificationPreferences key={`notification-preferences:${org.slug}`} />}
     </SettingsFrame>
   );
 }

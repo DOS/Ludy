@@ -191,7 +191,6 @@ export function MeetingPlatforms({ canConnect }: { canConnect: boolean }) {
         </div>
       )}
       {start.error && <ErrorText>{errorMessage(start.error)}</ErrorText>}
-      {!offeredGoogle && <p className="text-xs text-subtle-foreground">{t('moreLater')}</p>}
     </Card>
   );
 }
