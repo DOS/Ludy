@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The four Meetings reads an MCP grant may run (#3731, #3804, #3837, owner decision 2026-11-18, ADR-0051): `ludy_meetings_list` (meetings.mcp.list), `ludy_meeting_minutes` (meetings.mcp.minutes), `ludy_meetings_open_actions` (meetings.mcp.open_actions) and `ludy_meetings_series_open_items` (meetings.mcp.series_open_items). All are R0 reads
+// The five Meetings reads an MCP grant may run (#3731, #3804, #3837, #4016, owner decision 2026-11-18, ADR-0051): `ludy_meetings_list` (meetings.mcp.list), `ludy_meeting_minutes` (meetings.mcp.minutes), `ludy_meetings_open_actions` (meetings.mcp.open_actions), `ludy_meetings_series_open_items` (meetings.mcp.series_open_items) and `ludy_meetings_decisions` (meetings.mcp.decisions). All are R0 reads
 // for a COMPANY grant (an owner's or admin's); the scope is `ludy.read`. A member grant reads nothing of Meetings (the hold of 2026-11-13 on member-private tools stays): the tools are not listed for it,
 // the queries refuse it, and the database gives its sealed context no row of the module.
 //
@@ -15,7 +15,7 @@
 //
 // A meeting that is unknown, of another org, of attendees only, not published, or whose text period ended answers one and the same MEETING_NOT_FOUND, so a client learns nothing about meetings it may not read.
 import { sql } from 'kysely';
-import { MCP_ACTIONS_MAX, MCP_DECISIONS_MAX, MCP_LINE_MAX, MCP_SUMMARY_LINES_MAX, plainLine, zMcpMeetingsInput, zMcpMinutesInput, zMcpOpenActionsInput, zMcpSeriesOpenItemsInput } from '@crove/kernel-contract';
+import { MCP_ACTIONS_MAX, MCP_DECISIONS_MAX, MCP_LINE_MAX, MCP_SUMMARY_LINES_MAX, plainLine, zMcpDecisionsInput, zMcpMeetingsInput, zMcpMinutesInput, zMcpOpenActionsInput, zMcpSeriesOpenItemsInput } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { vnDay } from './retention.ts';
@@ -53,6 +53,16 @@ export interface McpOpenActions {
 }
 export interface McpSeriesOpenItems extends McpOpenActions {
   series: boolean;
+}
+export interface McpDecision {
+  meetingId: string;
+  meetingTitle: string;
+  meetingStartedAt: string;
+  decision: string;
+}
+export interface McpDecisions {
+  items: McpDecision[];
+  truncated: boolean;
 }
 export interface McpMinutes extends McpMeetingRow {
   summaryLines: string[];
@@ -142,6 +152,14 @@ function linesOf(text: string, max: number): { lines: string[]; truncated: boole
   return { lines: all.slice(0, max), truncated: cut || all.length > max };
 }
 
+// The decisions of a published result as plain lines (shared by the minutes and the decisions read, #4016): only the text entries of the stored list, each one plain line cut at MCP_LINE_MAX, the ones
+// that are empty once cleaned dropped. `cut` says that something was left out: a decision dropped for being empty once cleaned, or a line cut at the limit (the caller adds its own count limit).
+function decisionLinesOf(stored: unknown): { lines: string[]; cut: boolean } {
+  const raw = (Array.isArray(stored) ? (stored as unknown[]) : []).filter((d): d is string => typeof d === 'string');
+  const lines = raw.map((d) => plainLine(d, MCP_LINE_MAX)).filter((d) => d !== '');
+  return { lines, cut: lines.length < raw.length || raw.some((d) => [...plainLine(d, Number.MAX_SAFE_INTEGER)].length > MCP_LINE_MAX) };
+}
+
 // `ludy_meeting_minutes`: the published minutes of one org-visible meeting.
 export const mcpMinutes = defineQuery({
   name: 'meetings.mcp.minutes',
@@ -169,16 +187,13 @@ export const mcpMinutes = defineQuery({
       .limit(MCP_ACTIONS_MAX + 1)
       .execute();
     const summary = linesOf(row.summary, MCP_SUMMARY_LINES_MAX);
-    const rawDecisions = (Array.isArray(row.decisions) ? (row.decisions as unknown[]) : []).filter((d): d is string => typeof d === 'string');
-    const decisionText = rawDecisions.map((d) => plainLine(d, MCP_LINE_MAX)).filter((d) => d !== '');
-    // Something was left out when a decision was dropped (empty once cleaned), cut at the line limit, or beyond the count.
-    const decisionsCut = decisionText.length < rawDecisions.length || rawDecisions.some((d) => [...plainLine(d, Number.MAX_SAFE_INTEGER)].length > MCP_LINE_MAX);
+    const decisions = decisionLinesOf(row.decisions);
     return {
       ...rowOf(row as MeetingRowSql),
       summaryLines: summary.lines,
       summaryTruncated: summary.truncated,
-      decisions: decisionText.slice(0, MCP_DECISIONS_MAX),
-      decisionsTruncated: decisionsCut || decisionText.length > MCP_DECISIONS_MAX,
+      decisions: decisions.lines.slice(0, MCP_DECISIONS_MAX),
+      decisionsTruncated: decisions.cut || decisions.lines.length > MCP_DECISIONS_MAX,
       actions: items.slice(0, MCP_ACTIONS_MAX).map((i) => {
         const who = plainLine(i.who_drafted, WHO_MAX);
         return { title: plainLine(i.title, TITLE_MAX), who: who === '' ? null : who, dueDate: i.when_parsed, status: i.task_id !== null ? ('task_made' as const) : ('open' as const) };
@@ -265,4 +280,45 @@ export const mcpSeriesOpenItems = defineQuery({
   },
 });
 
-export const mcpMeetingsQueries = [mcpMeetings, mcpMinutes, mcpOpenActions, mcpSeriesOpenItems];
+// How many meetings `ludy_meetings_decisions` reads at most (one more is asked for, to know that there were more). A window of 30 days holds far fewer meetings with decisions in a small company; a larger one
+// is told it was cut (`truncated`), never silently short.
+const DECISIONS_MEETINGS_MAX = 100;
+
+// `ludy_meetings_decisions` (#4016): the published decisions of the meetings `visibleMeetings` admits that started in the last 7, 14 or 30 days, the newest meeting first, each meeting's decisions in their stored
+// order (at most MCP_DECISIONS_MAX of a meeting, as in the minutes), the first `limit` overall. Per decision exactly: the meeting's id, title and start, and the decision as one plain line. Never the minutes' other
+// text, the actions, a user id, the transcript or a draft. `truncated` is true when anything was left out: over `limit`, over a meeting's MCP_DECISIONS_MAX, a line cut or dropped, or more meetings than were
+// read. There is no total: an exact one would mean reading every meeting of the window.
+export const mcpDecisions = defineQuery({
+  name: 'meetings.mcp.decisions',
+  input: zMcpDecisionsInput,
+  access: GRANTORS,
+  mcp: { scope: 'ludy.read' },
+  handler: async (ctx, input): Promise<McpDecisions> => {
+    requireCompanyGrant(ctx);
+    const since = new Date(Date.now() - input.days * 86_400_000);
+    const rows = await visibleMeetings(ctx)
+      .where(sql<boolean>`coalesce(m.started_at, m.created_at) >= ${since}`)
+      .where(sql<boolean>`(jsonb_typeof(r.decisions) = 'array' AND jsonb_array_length(r.decisions) > 0)`)
+      .select(['m.id', 'm.title', startOf.as('at'), 'r.decisions'])
+      .orderBy(startOf, 'desc')
+      .orderBy('m.id', 'desc')
+      .limit(DECISIONS_MEETINGS_MAX + 1)
+      .execute();
+    let truncated = rows.length > DECISIONS_MEETINGS_MAX;
+    const items: McpDecision[] = [];
+    for (const row of rows.slice(0, DECISIONS_MEETINGS_MAX)) {
+      const { lines, cut } = decisionLinesOf(row.decisions);
+      if (cut || lines.length > MCP_DECISIONS_MAX) truncated = true;
+      for (const decision of lines.slice(0, MCP_DECISIONS_MAX)) {
+        if (items.length >= input.limit) {
+          truncated = true;
+          break;
+        }
+        items.push({ meetingId: row.id, meetingTitle: plainLine(row.title, TITLE_MAX), meetingStartedAt: (row.at as Date).toISOString(), decision });
+      }
+    }
+    return { items, truncated };
+  },
+});
+
+export const mcpMeetingsQueries = [mcpMeetings, mcpMinutes, mcpOpenActions, mcpSeriesOpenItems, mcpDecisions];
