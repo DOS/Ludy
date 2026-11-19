@@ -48,6 +48,7 @@ const zEvent = z.discriminatedUnion('type', [
 // message or free text, whatever a field is called. The registry is code the line ships (a test pins it equal to the database's crove_kernel.mcp_wake_event_type, which holds the same list and the scope), a grant
 // cannot register a type, and a body with an unregistered type or an unlisted field is not built, so it is not stored (the delivery table's CHECK) and not sent. Empty here: Engage's types come with its wake rules (#3862).
 // ---------------------------------------------------------------------------------------------------------------------------------------------
+// An `amount` field is a bare decimal string with no unit: a line that needs one registers an enum field for it (a currency code as a word, for example `vnd`, `usd`).
 export type LineFieldKind = 'id' | 'date' | 'amount' | readonly string[];
 export const LINE_WAKE_SCOPES = ['ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft'] as const;
 export interface LineWakeEventType {

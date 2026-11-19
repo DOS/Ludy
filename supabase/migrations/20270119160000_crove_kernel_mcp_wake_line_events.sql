@@ -91,7 +91,7 @@ ALTER TABLE crove_kernel.agent_wake_delivery VALIDATE CONSTRAINT agent_wake_deli
 CREATE OR REPLACE FUNCTION crove_kernel.agent_wake_delivery_line_body() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
-  IF NEW.type NOT IN ('signal.fired', 'schedule.due', 'ping') AND NOT crove_kernel.mcp_wake_body_ok(NEW.body, NEW.id, NEW.org_id, NEW.grant_id, NEW.type) THEN
+  IF NEW.type NOT IN ('signal.fired', 'schedule.due', 'ping') AND crove_kernel.mcp_wake_body_ok(NEW.body, NEW.id, NEW.org_id, NEW.grant_id, NEW.type) IS NOT TRUE THEN
     RAISE EXCEPTION 'agent_wake_delivery: the body does not fit the registered type' USING ERRCODE = '23514';
   END IF;
   RETURN NEW;
