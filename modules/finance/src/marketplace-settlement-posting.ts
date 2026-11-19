@@ -42,6 +42,13 @@ export interface SettlementProposalInput {
   tax?: HouseholdTaxRate | null;
 }
 
+export interface TaxEstimate {
+  withheld: string;
+  expected: string;
+  // withheld - expected, whole dong, negative when the platform withheld less than the rate pair would.
+  difference: string;
+}
+
 export interface ProposedJournalLine {
   account: string;
   debit: string;
@@ -60,6 +67,9 @@ export interface SettlementProposal {
   refund: string;
   // The tax the platform withheld that the entry credits to 3331 and 3335, whole dong; '0' for a seller that is no household.
   taxWithheld: string;
+  // A household's withheld tax is ONE amount the platform gave, split into VAT and PIT only as an estimate by the household's rate pair (research D1): what the platform withheld, what the rate pair
+  // would have taken from the revenue (sales - seller discounts - refunds), and the difference, a fact shown beside the estimate and never posted. Null for a seller with no withheld tax.
+  taxEstimate: TaxEstimate | null;
   lines: ProposedJournalLine[];
   total: string;
 }
@@ -88,7 +98,7 @@ function settlementProposalLines(input: SettlementProposalInput, map: Pick<Marke
         { account: owed ? map.revenue.code : map.receivable.code, debit: '0', credit: amount, partyId: owed ? null : input.partyId, memo },
       ];
   if (tax) {
-    const taxMemo = `${memo}, thuế sàn đã khấu trừ`;
+    const taxMemo = `${memo}, thuế sàn đã khấu trừ, tách thuế GTGT và TNCN ước tính theo tỷ lệ ngành nghề`;
     if (!money(tax.vat).isZero()) lines.push({ account: map.revenue.code, debit: tax.vat, credit: '0', partyId: null, memo: taxMemo }, { account: map.vatPayable.code, debit: '0', credit: tax.vat, partyId: null, memo: taxMemo });
     if (!money(tax.pit).isZero()) lines.push({ account: map.pitOwnerEquity.code, debit: tax.pit, credit: '0', partyId: null, memo: taxMemo }, { account: map.pitPayable.code, debit: '0', credit: tax.pit, partyId: null, memo: taxMemo });
   }
@@ -107,6 +117,18 @@ export function withheldSplit(input: Pick<SettlementProposalInput, 'lines' | 'ta
   if (!rates.greaterThan(0)) throw new DomainError('MARKETPLACE_SETTLEMENT_NOT_POSTABLE', 422, 'Tỷ lệ thuế của ngành nghề không hợp lệ để tách thuế sàn đã khấu trừ', { vatPercent: input.tax.vatPercent, pitPercent: input.tax.pitPercent });
   const vat = total.times(vatPercent).div(rates).toDecimalPlaces(0, 4);
   return { total: toMoney(total), vat: toMoney(vat), pit: toMoney(total.minus(vat)) };
+}
+
+// The reconciliation fact of an estimated split (research D1): the rate pair's total percentage of the revenue (sales - seller discounts - refunds, never below zero) rounded to whole dong, against what the
+// platform withheld. A platform may apply another rate for the category and period (the ratio is not fixed in 2026), so the difference is information for the annual certificate, not an entry. Null when
+// the seller is no household or nothing was withheld.
+export function taxEstimate(input: Pick<SettlementProposalInput, 'lines' | 'tax'>): TaxEstimate | null {
+  const split = withheldSplit(input);
+  if (!split || !input.tax) return null;
+  const revenue = money(toMoney(sum(input.lines.map((l) => l.sales)))).minus(money(toMoney(sum(input.lines.map((l) => l.sellerDiscount))))).minus(money(toMoney(sum(input.lines.map((l) => l.refund)))));
+  const base = revenue.greaterThan(0) ? revenue : money('0');
+  const expected = base.times(money(input.tax.vatPercent).plus(money(input.tax.pitPercent))).div(100).toDecimalPlaces(0, 4);
+  return { withheld: split.total, expected: toMoney(expected), difference: toMoney(money(split.total).minus(expected)) };
 }
 
 // The paths a settlement posts through (#3711 slice 1): the sales, and the household tax lines only when this settlement carries withheld tax for a household seller. Read from the amounts alone, so a
@@ -131,6 +153,7 @@ export function settlementProposal(input: SettlementProposalInput, maps?: Readon
     sellerDiscount: toMoney(sum(input.lines.map((l) => l.sellerDiscount))),
     refund: toMoney(sum(input.lines.map((l) => l.refund))),
     taxWithheld: withheldSplit(input)?.total ?? '0',
+    taxEstimate: taxEstimate(input),
     lines, total: journalVoucherTotal(lines),
   };
 }
