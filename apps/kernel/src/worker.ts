@@ -75,6 +75,7 @@ import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
 import { runMarketplacePoll, type MarketplacePollJob } from './marketplace-poll-job.ts';
+import { runMisaAmisTest, type MisaAmisTestJob } from './misa-amis-test-job.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
 import { runAdsActivate, type AdsActivateJob } from './ads-activate.ts';
 import { runAdsManage, type AdsManageJob } from './ads-manage.ts';
@@ -91,6 +92,7 @@ import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhoo
 import { runAdsDeletions } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import type { EInvoiceProvider } from '@crove/einvoice';
+import type { AmisClient } from '@crove/misa-amis';
 import type { AdActivator, AdManager, AdPauser, AdPlatform, AdRevoker, AdStateReader, LaunchWriter } from '@crove/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
@@ -449,6 +451,8 @@ const EINVOICE_ISSUE_RETRY_LIMIT = 3;
 // or admin asks for it. What a poll reads is only staged for a member.
 const MARKETPLACE_POLL_CRON = '*/15 * * * *';
 const MARKETPLACE_POLL_RETRY_LIMIT = 3;
+// A MISA AMIS connection's test (#3885): queued by the relay when an owner or admin asks, nothing else queues it. The job records its own outcomes, so a retry is for a database failure only.
+const MISA_AMIS_TEST_RETRY_LIMIT = 2;
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
 // The hourly sweep of every ad account (ADR-0040, #2217), at ten past; a sync retries a few times, then dead-letters. The
 // sweep also prunes the old sync runs (an indexed delete of what is past 90 days, nothing most hours).
@@ -531,6 +535,9 @@ export interface WorkerDeps {
     einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
     // The marketplace providers this deployment offers (ADR-0045 point 7, #2519), by adapter id; the worker alone uses them, with the credentials it opens.
     marketplaceProviders?: Readonly<Record<string, MarketplaceProvider>>;
+    // The MISA AMIS Kế toán client (#3854, S2b): built only where the deployment holds the integrator's ClientID, over a transport bound to developer.misa.vn by the egress guard. The test job alone
+    // uses it, with the access code it opens.
+    misaAmis?: AmisClient;
     // The ad platform adapters this deployment offers (ADR-0040, #2217), by provider id: read-only, the worker alone uses
     // them, with the credentials it opens.
     adPlatforms?: Readonly<Record<string, AdPlatform>>;
@@ -1604,6 +1611,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.marketplacePoll, MARKETPLACE_POLL_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
   } else {
     await dropCron(QUEUES.marketplacePoll);
+  }
+
+  // MISA AMIS Kế toán (#3854, S2b, #3885): a connection's test, queued by the relay below when an owner or admin asks. It reads a token and the company's information and records a state.
+  const misaAmisClient = deps.channels?.misaAmis;
+  if (finance && misaAmisClient && marketplaceBroker) {
+    await boss.work<MisaAmisTestJob>(QUEUES.misaAmisTest, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const done = await runMisaAmisTest({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient }, job.data);
+      console.log(`[misa-amis] ${job.data.connectionId.slice(0, 8)}: ${done.state}`);
+    });
   }
 
   // Ads (ADR-0040, #2217): an ad account's sync, queued by the relay below when an account is linked or a refresh is asked
@@ -2785,6 +2802,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 await boss.send(QUEUES.marketplacePoll, { orgId: row.org_id, connectionId } satisfies MarketplacePollJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.marketplacePoll, connectionId),
                   retryLimit: MARKETPLACE_POLL_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // An owner or admin asked for a MISA AMIS connection's test (#3885): its job asks AMIS for a token and the company's information. Ids only in the job.
+              if (finance && deps.channels?.misaAmis && deps.channels.broker && row.type === 'finance.misa_amis_connection.test_requested') {
+                const connectionId = String(row.payload.connection_id);
+                await boss.send(QUEUES.misaAmisTest, { orgId: row.org_id, connectionId } satisfies MisaAmisTestJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.misaAmisTest, connectionId),
+                  retryLimit: MISA_AMIS_TEST_RETRY_LIMIT,
                   retryDelay: 30,
                   retryBackoff: true,
                 });

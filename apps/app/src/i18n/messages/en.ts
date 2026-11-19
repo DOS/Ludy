@@ -2688,6 +2688,10 @@ export const en = {
     },
     agenda: {
       title: "Today's meetings in your calendar",
+      summary: '{count} meeting(s) today, {duration} in all.',
+      durationM: '{minutes} min',
+      durationH: '{hours} h',
+      durationHM: '{hours} h {minutes} min',
       none: 'Your calendar has no meetings today. If you just turned the switch on, the first read can take up to 15 minutes.',
       untitled: '(no title)',
       invitees: '{count} invited',
@@ -5251,6 +5255,19 @@ export const en = {
     s2cExpenseTotal: 'Total expenses',
     s2cIncome: 'Income (revenue less expenses)',
     s2cUnmapped: '{amount} of expenses have no group yet (the account has no expense-group rule), so the income is held back. The accountant adds a group rule for that account.',
+    s2eTitle: 'S2e-HKD: cash and bank book',
+    s2eHint: 'Cash on hand (111) and bank deposits (112) by account: the opening balance, each receipt and payment, the closing balance; the total equals the ledger. Download as Excel to print and sign.',
+    s2eNotice: 'This is the household\'s book. {brand} files no return and sends nothing to the tax authority.',
+    s2eDraft: 'The layout of this book is still waiting for the accountant to check it, so the figures below are provisional. You can still view and download the Excel file; every figure and the file say they are provisional.',
+    s2eFile: 'so-s2e-hkd-{period}-{org}.xlsx',
+    s2eAccount: 'Account {code}',
+    s2eOpening: 'Opening balance',
+    s2eClosing: 'Closing balance',
+    s2eColumns: { counter: 'Other account', in: 'In', out: 'Out', balance: 'Balance' },
+    s2eTotals: 'Totals',
+    s2eAllAccounts: 'All cash accounts',
+    s2eNegative: 'Negative balance: check receipts and payments not yet recorded.',
+    s2eNoAccounts: 'No cash or bank balance or movement in this period.',
     unmappedGroupName: 'No group yet',
     groupNames: { materials_goods: 'Materials and goods', wages_insurance: 'Wages and insurance', depreciation: 'Depreciation', outside_services: 'Outside services', interest: 'Interest', other: 'Other expenses' },
 
@@ -5438,7 +5455,7 @@ export const en = {
   misaAmisConnections: {
     title: 'MISA AMIS Kế toán: send vouchers to your accountant',
     intro:
-      'Connect the company\'s AMIS Kế toán data so that vouchers can later be sent to AMIS as requests to generate a voucher; your people in AMIS still make the voucher. This step only saves the connection and sends nothing to AMIS.',
+      'Connect the company\'s AMIS Kế toán data so that vouchers can later be sent to AMIS as requests to generate a voucher; your people in AMIS still make the voucher. You can test the connection (it only reads the company\'s information); no voucher is sent to AMIS yet.',
     off: 'The MISA AMIS connector is turned off in this system.',
     noConnections: 'No AMIS connected yet.',
     connectTitle: 'Connect AMIS',
@@ -5451,6 +5468,16 @@ export const en = {
     disconnectConfirm: 'Disconnect this? The saved connection code will be deleted; vouchers already in AMIS are not affected.',
     disconnectYes: 'Disconnect',
     keep: 'Keep',
+    test: 'Test connection',
+    testing: 'Testing...',
+    testSlow: 'No result after half a minute. Reload the page in a few minutes to see it.',
+    neverTested: 'Not tested yet',
+    testedAt: 'Last tested {when}',
+    testState: {
+      works: 'The connection works',
+      wrong_credentials: 'AMIS refused the connection. Check the connection code and the accounting data connected in AMIS; if needed, make a new code, then disconnect and connect again',
+      unreachable: 'The test could not be made (AMIS did not answer or reported an error). Try again later; if it stays, tell the Ludy administrator',
+    },
     status: {
       active: 'Connected',
       expired: 'Expired, disconnect, then connect again',
@@ -13505,6 +13532,7 @@ export const en = {
       MISA_AMIS_DISABLED: 'The MISA AMIS connector is not turned on in this system.',
       MISA_AMIS_CONNECTION_EXISTS: 'This legal entity already has a MISA AMIS connection.',
       MISA_AMIS_CONNECTION_LIVE: 'Disconnect MISA AMIS before removing this row.',
+      MISA_AMIS_CONNECTION_NOT_FOUND: 'That MISA AMIS connection was not found.',
       MARKETPLACE_PROVIDER_NOT_READY: 'This connector cannot be tested or pulled from the screen yet; it can once its connector is finished.',
       MARKETPLACE_NOT_STAGED: 'This report was already handled or was read again; reload the list.',
       MARKETPLACE_BUSY: 'Another report is being imported at the same moment; try again in a few minutes.',
@@ -14304,6 +14332,7 @@ export const en = {
         s2a: 'View the household revenue book S2a by business line for a period, with VAT and PIT per line',
         s2b: 'View the household revenue book S2b by business line for a period, with VAT per line',
         s2c: 'View the household revenue and expense detail S2c for a period, expenses by group',
+        s2e: 'View the household cash and bank book S2e for a period, one section per cash and bank account',
         export: 'Download a household book as an Excel file',
       },
       collection_setting: {
@@ -14512,7 +14541,10 @@ export const en = {
       misa_amis_connection: {
         connect: 'Connect MISA AMIS Kế toán',
         list: 'View the MISA AMIS connections',
+        record_test: 'Record the result of a MISA AMIS connection test',
+        request_test: 'Ask for a test of a MISA AMIS connection',
         target: 'Check the legal entity of a MISA AMIS connection',
+        test_target: 'Read a MISA AMIS connection to test it',
         unlink: 'Disconnect MISA AMIS',
       },
       misa_goods_code: {
@@ -15270,6 +15302,9 @@ export const en = {
         facts: 'See the name said for an action item and the people it may be given to',
         start: 'Ask Vy who an action item belongs to, from the name said in the meeting',
         status: 'See whether Vy can say who an action item belongs to',
+      },
+      today: {
+        facts: "See today's meetings in your calendar with what was decided last time, what is still open and the customer's open deals for each",
       },
       morning: {
         get: "See your own setting for the morning notice of the day's meetings",
