@@ -50,6 +50,9 @@ export const meetingsManifest = defineModule({
       chat_post: columns(['org_id', 'id', 'meeting_id', 'channel_id', 'user_id', 'facts_key', 'text_hash', 'state', 'attempts', 'http_status', 'code', 'created_at', 'handed_at', 'sending_at', 'settled_at']),
       // The message of a queued post (B4, #3168): definer-only, deleted when the post settles. The body is the meeting's text, personal data.
       chat_post_body: columns(['org_id', 'id', 'post_id', 'created_at'], { body: 'pii' }),
+      // The glossary an org's owner or admin keeps (#4043): terms (a product, an acronym, jargon) Vy spells the org's way. Plain text the org wrote; the settings screen asks for no people's names
+      // or personal details, and the command refuses an email or web address and a number. Nothing here is a meeting's own text.
+      glossary_term: columns(['org_id', 'id', 'term', 'created_by', 'created_at', 'updated_at']),
       // One event of a member's minutes webhook (member_hook, A6, #3164): the body holds the text the recorder approved and is set to NULL the moment the delivery settles, so afterwards the row is ids, a status and times.
       hook_delivery: columns(['org_id', 'id', 'hook_id', 'meeting_id', 'type', 'status', 'attempts', 'last_code', 'created_at', 'handed_at', 'sent_at'], { body: 'pii' }),
       // The pieces of about 15 seconds a recorder sends while a live-notes meeting runs (ADR-0052 L4a, #3109): order, the ciphertext's file row, size and the recorder's own length. No key, no text.
@@ -135,6 +138,8 @@ export const meetingsManifest = defineModule({
   },
   permissions: [],
   entities: [
+    // A term of the org's glossary (#4043): the target of its update and remove commands.
+    { type: 'meetings.glossary_term', table: 'glossary_term', legalEntityScoped: false, audit: 'command' },
     { type: 'meetings.meeting', table: 'meeting', legalEntityScoped: false, audit: 'command' },
     // A minutes template the org wrote (#3578): the target of its update and archive commands.
     { type: 'meetings.minutes_template', table: 'minutes_template', legalEntityScoped: false, audit: 'command' },
