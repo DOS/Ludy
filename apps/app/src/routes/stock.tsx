@@ -301,6 +301,15 @@ function CardPanel({ item, month, legalEntityId, onClose }: { item: { id: string
 // is kept as it is: its report reads what the close stored and the stock takes no more moves dated in it.
 function CloseMonthCard({ month, legalEntityId, slug }: { month: string; legalEntityId: string | undefined; slug: string }) {
   const t = useTranslations('stock');
+  const f = useFormat();
+  // Circular 99 asks a balance on 1381 (goods waiting to be resolved) without evidence of its cause to be expensed at the reporting date (#3712 slice 3). The code reads the balance and says
+  // so in fixed words; it is a warning only and never blocks the close. Nothing here needs AI.
+  const check = useQuery(orpc.stock.closeCheck.queryOptions({ input: { month, legalEntityId } }));
+  const warning = check.data?.applies ? (
+    <Alert className="mb-4" data-testid="stock-close-1381">
+      <AlertDescription>{t('close1381Warning', { amount: f.money(check.data.balance1381, 'VND') })}</AlertDescription>
+    </Alert>
+  ) : null;
   const [confirming, setConfirming] = useState(false);
   // A month with no cost has no entry to approve: after asking, the person is told so and confirms the direct close on its own.
   const [direct, setDirect] = useState(false);
@@ -350,7 +359,7 @@ function CloseMonthCard({ month, legalEntityId, slug }: { month: string; legalEn
   ) : (
     close.error && <ErrorText>{errorMessage(close.error)}</ErrorText>
   );
-  return direct ? (
+  const card = direct ? (
     <Card className="mb-4 block p-4" data-testid="stock-close-direct">
       <p className="max-w-3xl text-sm text-foreground">{t('closeDirectWarning', { month })}</p>
       {error}
@@ -382,6 +391,12 @@ function CloseMonthCard({ month, legalEntityId, slug }: { month: string; legalEn
         {t('closeMonth', { month })}
       </Button>
     </div>
+  );
+  return (
+    <>
+      {warning}
+      {card}
+    </>
   );
 }
 
