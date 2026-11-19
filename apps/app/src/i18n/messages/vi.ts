@@ -3775,7 +3775,6 @@ export const vi = {
       noMedia: 'Cuộc họp này chưa có bản ghi âm hoặc video.',
       notFound: 'Không tìm thấy cuộc họp.',
       stoppedAt: 'Ghi âm đã dừng lúc {time}',
-      // Bản chép lời của nền tảng dài hơn mức Ludy nhập được (#3922).
       consentMethodLabel: 'Hình thức',
       consentNoticeVersion: 'Phiên bản thông báo',
       consentConfirmedAt: 'Xác nhận lúc',
