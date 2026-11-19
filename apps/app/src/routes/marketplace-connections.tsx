@@ -211,7 +211,7 @@ export function MarketplaceConnectionsCard({ role }: { role: Role }) {
             {platforms.map((p) => (
               <li key={p.platform} data-testid="marketplace-platform" data-adapter={p.adapter ? 'true' : 'false'} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
                 <span className={p.adapter ? 'font-medium' : 'font-medium text-muted-foreground'}>{t(PLATFORM_KEYS[p.platform])}</span>
-                {p.adapter ? <span className="text-muted-foreground">{t('adapterOn')}</span> : <span className="text-subtle-foreground">{t('fileOnly')}</span>}
+                {p.adapter ? <span className="text-muted-foreground">{t(adapters.filter((a) => a.platforms.includes(p.platform)).every((a) => a.offline) ? 'adapterTest' : 'adapterOn')}</span> : <span className="text-subtle-foreground">{t('fileOnly')}</span>}
               </li>
             ))}
           </ul>
