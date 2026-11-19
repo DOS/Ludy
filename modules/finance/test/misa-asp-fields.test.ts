@@ -18,7 +18,7 @@ const ASP = (JSON.parse(readFileSync(new URL('./fixtures/asp-voucher-fields.json
 
 const SOURCE_ID = '0192F0A1-2B3C-7D4E-8F50-6172839A4B5D';
 const ENTRY_ID = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5c';
-const ctx: AmisContext = { branchId: 'b8868580-c5d7-49c2-993d-15824b3083f6', purchasePurpose: '1', serviceItemCode: 'DV_CHUNG', salesItemCode: 'BH_CHUNG', defaultUnitName: 'Lần', partyCodes: null };
+const ctx: AmisContext = { branchId: 'b8868580-c5d7-49c2-993d-15824b3083f6', purchasePurpose: '1', serviceItemCode: 'DV_CHUNG', salesItemCode: 'BH_CHUNG', defaultUnitName: 'Lần', partyCodes: null, itemCodes: null };
 
 const cash = (type: CashVoucher['type']): CashVoucher => ({
   sourceId: SOURCE_ID,

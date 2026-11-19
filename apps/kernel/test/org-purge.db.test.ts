@@ -132,6 +132,8 @@ suite('org purge on PostgreSQL (#1024)', () => {
       await c.query(`INSERT INTO crove_kernel.task_comment (org_id, task_id, body, author_type) VALUES ($1, $2, 'Đã xem', 'system')`, [org.orgId, pinned]);
       // A minutes template the org wrote (#3578): a working row, deleted with the org's others.
       await c.query(`INSERT INTO crove_meetings.minutes_template (org_id, name, sections, created_by) VALUES ($1, 'Mẫu họp dự án', '[{"key":"s1","title":"Nội dung","hint":""}]'::jsonb, $2)`, [org.orgId, owner]);
+      // A term of the org's glossary (#4043): a working row, deleted with the org's others.
+      await c.query(`INSERT INTO crove_meetings.glossary_term (org_id, term, created_by) VALUES ($1, 'Crove', $2)`, [org.orgId, owner]);
       // A bank feed account (#2044) and its connection: the account is deleted before the connection it references.
       const feedConnection = randomUUID();
       await c.query(
@@ -512,6 +514,10 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(before['crove_meetings.minutes_template']).toBe(1);
     expect(after['crove_meetings.minutes_template'] ?? 0).toBe(0);
     expect(otherBefore['crove_meetings.minutes_template']).toBe(1);
+    // The org's glossary goes with the org, and the other org's stays (#4043).
+    expect(before['crove_meetings.glossary_term']).toBe(1);
+    expect(after['crove_meetings.glossary_term'] ?? 0).toBe(0);
+    expect(otherBefore['crove_meetings.glossary_term']).toBe(1);
     // A customer's images (CV5c): both rows and the stored one's blob go in the same command; the pending image's key waits in the queue of
     // doomed blobs for the worker (nothing was written under it), and the other org's image and blob stay.
     expect(before['crove_kernel.conversation_attachment']).toBe(2);

@@ -15,7 +15,7 @@ import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
 import { Runtime, defineQuery, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { amisBatchDigest, amisContextOf, financeCommands, financeQueries, loadAmisEntries, type CashVoucher, type MisaAmisPushBegin, type MisaAmisPushResult, type MisaAmisPushRow } from '@crove/mod-finance';
+import { amisBatchDigest, amisContextOf, financeCommands, financeQueries, loadAmisEntries, type CashVoucher, type MisaAmisMatchResults, type MisaAmisPushBegin, type MisaAmisPushResult, type MisaAmisPushRow } from '@crove/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -100,14 +100,33 @@ suite('MISA AMIS push (#3902)', () => {
   const SYSTEM = (org = orgId) => ({ actor: { type: 'system' as const, component: 'finance.misa_amis' }, orgId: org });
 
   const ids = (n: number) => Array.from({ length: n }, () => randomUUID());
-  // What the person saw in the preview for the vouchers held now.
-  async function previewDigest(): Promise<string> {
-    const ask = { ...ASK, legalEntityId: entityId };
-    const { entries } = await loadAmisEntries(async () => vouchers as never, ask, amisContextOf(ask), 501);
+  type Ask = { kind: 'cash_payment'; from: string; to: string };
+  const askOf = (extra: Record<string, unknown> = {}): Ask => ({ ...ASK, ...(extra as Partial<Ask>) });
+  // A check of the batch that matched the party every voucher here has (S3b, #4124: a confirmation needs one no older than 15 minutes), made the way a person and the worker make it: a request, then the worker's record.
+  // The helper remembers the batch it last checked, so a push for the same batch does not file another request.
+  let checkedFor = '';
+  async function freshCheck(ask: Ask = ASK): Promise<void> {
+    await api.execute('finance.misa_amis_match.request_check', { id: connectionId, ask }, asUser('owner'));
+    const [stored] = await rows<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE connection_id = $1', [connectionId]);
+    await worker.execute(
+      'finance.misa_amis_match.record_check',
+      { connectionId, requestedAt: new Date(stored?.requested_at as Date).toISOString(), state: 'done', failure: null, results: [{ kind: 'party', ref: '0101234564', state: 'matched', code: 'NCC_ABC', entryId: null }] },
+      SYSTEM(),
+    );
+    checkedFor = JSON.stringify(ask);
+  }
+  // What the person saw in the preview for the vouchers held now: written with what the last check of that batch matched, as the preview is.
+  async function previewDigest(ask: Ask = ASK): Promise<string> {
+    const full = { ...ask, legalEntityId: entityId };
+    const matches = await api.query<MisaAmisMatchResults>('finance.misa_amis_match.results', { legalEntityId: entityId, ask: full }, asUser('owner'));
+    const { entries } = await loadAmisEntries(async () => vouchers as never, full, amisContextOf(full, undefined, matches), 501);
     return amisBatchDigest(entries);
   }
   async function push(who: keyof typeof users, extra: Record<string, unknown> = {}, digest?: string) {
-    return api.execute<MisaAmisPushResult>('finance.misa_amis.push', { connectionId, ...ASK, digest: digest ?? (await previewDigest()), ...extra }, asUser(who));
+    const { legalEntityId: _entity, ...rest } = extra;
+    const ask = askOf(rest);
+    if (checkedFor !== JSON.stringify(ask)) await freshCheck(ask);
+    return api.execute<MisaAmisPushResult>('finance.misa_amis.push', { connectionId, ...ASK, digest: digest ?? (await previewDigest(ask)), ...extra }, asUser(who));
   }
   const pushRows = (conn = connectionId) => rows<{ org_refid: string; state: string; attempts: number; reason: string | null; payload_digest: string; sent_at: Date | null; answered_at: Date | null }>(
     'SELECT org_refid, state, attempts, reason, payload_digest, sent_at, answered_at FROM crove_finance.misa_amis_push WHERE connection_id = $1 ORDER BY org_refid',
@@ -220,6 +239,36 @@ suite('MISA AMIS push (#3902)', () => {
     expect(await pushRows()).toEqual([]);
   });
 
+  it('refuses a confirmation with no check of this batch against the catalogue in the last 15 minutes, and takes one just inside the window (#4124)', async () => {
+    vouchers = [cash(first[0] as string, 'PC00012')];
+    // The gate is read before the digest, so a digest that is wrong tells which gate was passed: STALE means the check was young enough.
+    const confirm = (ask: Ask = ASK) => api.execute('finance.misa_amis.push', { connectionId, ...ask, digest: 'a'.repeat(64) }, asUser('owner'));
+    const age = (minutes: number) => rows("UPDATE crove_finance.misa_amis_match_check SET finished_at = pg_catalog.clock_timestamp() - pg_catalog.make_interval(mins => $2::int) WHERE connection_id = $1", [connectionId, minutes]);
+    // No check at all.
+    await rows('DELETE FROM crove_finance.misa_amis_match_check WHERE connection_id = $1', [connectionId]);
+    await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_CHECK_REQUIRED', status: 409 });
+    // A check of another batch, and one that never finished (a failed one).
+    await freshCheck(askOf({ to: '2026-10-15' }));
+    await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_CHECK_REQUIRED' });
+    await rows('DELETE FROM crove_finance.misa_amis_match_check WHERE connection_id = $1', [connectionId]);
+    await api.execute('finance.misa_amis_match.request_check', { id: connectionId, ask: ASK }, asUser('owner'));
+    const [waiting] = await rows<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE connection_id = $1', [connectionId]);
+    await worker.execute('finance.misa_amis_match.record_check', { connectionId, requestedAt: new Date(waiting?.requested_at as Date).toISOString(), state: 'failed', failure: 'unreachable', results: [] }, SYSTEM());
+    await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_CHECK_REQUIRED' });
+    // A check of this batch: old by a minute, refused; inside the window by a minute, past the gate.
+    await freshCheck();
+    await age(16);
+    await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_CHECK_REQUIRED' });
+    await age(14);
+    await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_PUSH_STALE' });
+    // A re-check that waits (or failed) has no finished check to stand on: the person waits for it, whatever the age of the one before. The earlier results still stand for the blockers, but nothing is confirmed on them.
+    await api.execute('finance.misa_amis_match.request_check', { id: connectionId, ask: ASK }, asUser('owner'));
+    await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_CHECK_REQUIRED' });
+    expect(await pushRows()).toEqual([]);
+    // Back to a fresh one for the tests that follow.
+    checkedFor = '';
+  });
+
   it('refuses what changed since the person looked, what is blocked, what is empty and what names another entity', async () => {
     const seen = await previewDigest();
     // The data changed after the preview: a different amount.
@@ -265,6 +314,7 @@ suite('MISA AMIS push (#3902)', () => {
     vouchers = [...vouchers, ...fresh.map((id, i) => cash(id, `PC0010${i}`))];
     base = vouchers;
     // A second set of choices (another end of the period), so the worker takes these rows as a batch of their own.
+    await freshCheck(askOf({ to: '2026-10-30' }));
     const [a, b] = await Promise.all([push('owner', { to: '2026-10-30' }), push('admin', { to: '2026-10-30' })]);
     expect(a.queued + b.queued).toBe(4);
     // Each press sees six parts (the two queued before and the four new): twelve in all, four of them queued by one press and the rest found.

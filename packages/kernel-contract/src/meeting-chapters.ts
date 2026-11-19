@@ -3,6 +3,7 @@
 // in a later step), shown to the meeting's readers once published. A title is plain text of one line: at most 80 characters, and no email address or run of eight or more digits (a chapter names a part of the
 // meeting, not a person's contact). The personal-data finder and erasure reach a title anyway, as they reach the title of a meeting: nothing there rests on this rule.
 import { z } from 'zod';
+import { INVISIBLE_PATTERN } from './invisible-chars.ts';
 import { zId } from './schemas.ts';
 
 export const CHAPTERS_MAX = 20;
@@ -11,11 +12,9 @@ export const CHAPTER_TITLE_MAX = 80;
 export const CHAPTER_SECOND_MAX = 86_400;
 
 // Why a title is refused, a fixed word, or null when it is fine: it is trimmed by the caller first.
-// The characters a title never holds: the class of the minutes templates' CHECK (and of the database's CHECK on this table), beside the line breaks that 'multiline' names: controls, the soft hyphen, the
-// invisible fillers, zero-width and directional marks, bidi isolates, the Braille blank, the byte order mark, interlinear annotation and tag characters, and a lone surrogate.
-// The combining grapheme joiner is outside the class: a combining mark inside one is a lint warning (no-misleading-character-class).
-// oxlint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\u2800\u3164\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]|\u034f|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u;
+// The characters a title never holds: the invisible-character class of ./invisible-chars.ts (the class of the minutes templates' CHECK and of the database's CHECK on this table), beside the line
+// breaks that 'multiline' names, and a lone surrogate.
+const CONTROL = new RegExp(`${INVISIBLE_PATTERN}|[\\ud800-\\udbff](?![\\udc00-\\udfff])|(?<![\\ud800-\\udbff])[\\udc00-\\udfff]`, 'u');
 export type ChapterTitleProblem = 'empty' | 'too_long' | 'multiline' | 'control' | 'contact';
 export function chapterTitleProblem(title: string): ChapterTitleProblem | null {
   if (title.length === 0) return 'empty';

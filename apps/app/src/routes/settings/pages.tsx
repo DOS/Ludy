@@ -7,6 +7,7 @@ import { ConversationRetentionCard } from '../../components/conversation-retenti
 import { EngageWakeRulesCard } from '../../components/engage-wake-rules.tsx';
 import { ExtensionDevices } from '../../components/extension-devices.tsx';
 import { MeetingPlatforms } from '../../components/meeting-platforms.tsx';
+import { GlossaryCard } from '../../components/glossary-card.tsx';
 import { MinutesTemplatesCard } from '../../components/minutes-templates.tsx';
 import { OrgAppsCard } from '../../components/org-apps.tsx';
 import { OrgExtensionDevices } from '../../components/org-extension-devices.tsx';
@@ -131,6 +132,8 @@ export function SettingsAppsPage() {
           {(modules.includes('social') || modules.includes('crm')) && canManage && <EngageWakeRulesCard key={`engage-wake-rules:${org.slug}`} />}
           {/* The minutes templates the org writes (#3578): owners and admins write them, every member picks one in a meeting. */}
           {modules.includes('meetings') && canManage && <MinutesTemplatesCard key={`minutes-templates:${org.slug}`} />}
+          {/* The org's own terms (#4043): owners and admins keep them; nobody else reads the list. */}
+          {modules.includes('meetings') && canManage && <GlossaryCard key={`glossary:${org.slug}`} />}
         </>
       )}
     </SettingsFrame>

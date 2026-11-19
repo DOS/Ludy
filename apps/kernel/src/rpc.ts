@@ -1275,6 +1275,12 @@ export function createRpcHandler(
         update: os.meetings.template.update.handler(meetingsCommand('meetings.template.update')),
         archive: os.meetings.template.archive.handler(meetingsCommand('meetings.template.archive')),
       },
+      glossary: {
+        list: os.meetings.glossary.list.handler(meetingsQuery('meetings.glossary.list')),
+        add: os.meetings.glossary.add.handler(meetingsCommand('meetings.glossary.add')),
+        update: os.meetings.glossary.update.handler(meetingsCommand('meetings.glossary.update')),
+        remove: os.meetings.glossary.remove.handler(meetingsCommand('meetings.glossary.remove')),
+      },
       settings: {
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
         set: os.meetings.settings.set.handler(meetingsCommand('meetings.settings.set')),
@@ -3586,6 +3592,16 @@ export function createRpcHandler(
             const product = rows.find((r) => r.id === input.id)?.product;
             if (product !== undefined && !(product === 'asp' ? channels?.misaAsp : channels?.misaAmis)) throw new DomainError('MISA_AMIS_DISABLED', 404, product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
             return runtime.execute<{ queued: boolean }>('finance.misa_amis_connection.request_test', { id: input.id }, { actor, orgId });
+          }),
+        ),
+      },
+      // The check of a connection's vouchers against the firm's own catalogue is the worker's too (S3a, #4112): the command files the request and queues the job; the preview shows the result when it lands.
+      matches: {
+        check: os.misaAmis.matches.check.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được chứng từ với danh mục MISA AMIS');
+            if (!channels?.misaAmis) throw new DomainError('MISA_AMIS_DISABLED', 404, 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+            return runtime.execute<{ queued: boolean; running: boolean }>('finance.misa_amis_match.request_check', input, { actor, orgId });
           }),
         ),
       },

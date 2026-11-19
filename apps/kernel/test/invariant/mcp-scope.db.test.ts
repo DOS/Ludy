@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What an MCP grant can reach once it is past the HTTP edge (ADR-0051 decision 2, ADR-0032, issue #2975), through the runtime every command and query runs on:
-// - only the commands WRITES names carry `mcp` (one: the Social draft command of #3227, owner decision 2026-11-14), each pinned to its scope and to the narrow shape the sealed write context runs
+// - only the commands WRITES and ENGAGE_WRITES name carry `mcp` (the Social draft command of #3227, owner decision 2026-11-14, and the Engage R1 twins of #3861), each pinned to its scope and to the narrow shape the sealed write context runs
 //   (R1, internal, owners and admins, no permission, extension, agent or member-mode declaration), and a grant runs no other command, whatever the command declares;
 // - a grant reaches a query only if that query declares the scope (`mcp`), the set of queries that do is pinned here (a new one is a change to this protected
 //   file), and none of them is sensitive, open to member mode or an extension token, or holds data private to one member (member-bound grants are a later step);
@@ -109,19 +109,50 @@ const SIGNALS = [
 const FINANCE_READS: readonly string[] = [
 ];
 
+// The wake rules of Engage (#3862, E3 of epic #3857; ADR-0051 decision 13): the two reads the wake sweep runs as a company grant, in its sealed context, to tell an AI coworker there is work, and that Home runs as the member
+// (kernel.wake.conversations: ids, a kind and instants of the threads that wait; crm.wake.facts: ids, a day and an amount of a quote follow-up and a booking tomorrow). They may join the set when that PR lands, each pinned
+// by its tests (nothing a person typed leaves in either answer); this list lets the names in and does not require them, as the lists above. A name outside the lists still fails, and so do the checks
+// below on every query that carries `mcp`.
+const ENGAGE_WAKE_READS: readonly string[] = ['kernel.wake.conversations:ludy.read', 'crm.wake.facts:ludy.read'];
+
 // The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Exactly this one,
 // with exactly this scope: a second command that carries `mcp`, or this one with another scope, fails, and so does its absence.
 const WRITES = ['social.mcp.draft_create:ludy.social.draft'];
+// The R1 write twins of the Engage coworkers (epic #3857, E2, issue #3861; ADR-0051 decisions 10 and 11, owner decision 2026-11-19): each runs the same steps a person's click runs for the app's own
+// command (assign, resolve, reopen, note, link a contact, follow up, new contact, new deal, move a deal, save or revise a draft quote, mark a next step done or snoozed, save an ads draft), under
+// `ludy.engage.write` (the ads draft under `ludy.ads.draft`). Like the finance reads above, this list lets a name in and does not require it (step 1 of 2, a tests-only landing: the commands
+// arrive with their sealed write context in the next change, which then pins the list exactly). A name outside it, or one of these with another scope, still fails.
+const ENGAGE_WRITES: readonly string[] = [
+  'kernel.mcp.conversation_assign:ludy.engage.write',
+  'kernel.mcp.conversation_resolve:ludy.engage.write',
+  'kernel.mcp.conversation_reopen:ludy.engage.write',
+  'kernel.mcp.conversation_note:ludy.engage.write',
+  'kernel.mcp.conversation_link_contact:ludy.engage.write',
+  'kernel.mcp.conversation_follow_up:ludy.engage.write',
+  'kernel.mcp.party_create:ludy.engage.write',
+  'crm.mcp.deal_create:ludy.engage.write',
+  'crm.mcp.deal_move:ludy.engage.write',
+  'crm.mcp.quote_save:ludy.engage.write',
+  'crm.mcp.quote_revise:ludy.engage.write',
+  'crm.mcp.next_step_done:ludy.engage.write',
+  'crm.mcp.next_step_snooze:ludy.engage.write',
+  'ads.mcp.campaign_draft_save:ludy.ads.draft',
+];
 const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
 const queries = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...socialQueries, ...adsQueries, ...crmQueries, ...hrQueries, ...notesQueries];
 
 describe('which definitions an MCP grant can reach (#2975)', () => {
-  it('has exactly one command that carries `mcp`, the one WRITES names, with its scope, and it is R1, internal and for owners and admins', () => {
+  it('has no command that carries `mcp` but the Social draft command and the Engage twins the lists name, with their scope, and each is R1, internal and for owners and admins', () => {
     const carrying = commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined);
-    expect(carrying.map((c) => `${c.name}:${(c as { mcp: { scope: string } }).mcp.scope}`).sort()).toEqual([...WRITES].sort());
+    const named = carrying.map((c) => `${c.name}:${(c as { mcp: { scope: string } }).mcp.scope}`).sort();
+    // The Social draft command is always there; an Engage twin may be (step 1 of 2 of E2: the list lets the names in, the next change adds the commands and then requires them).
+    expect(named.filter((n) => !ENGAGE_WRITES.includes(n))).toEqual([...WRITES].sort());
     for (const c of carrying) {
       expect([c.risk, c.sideEffect, c.access], c.name).toEqual(['R1', 'internal', ['owner', 'admin']]);
-      expect((c as { mcp: { scope: string } }).mcp, c.name).toEqual({ scope: 'ludy.social.draft' });
+      const scope = (c as { mcp: { scope: string } }).mcp.scope;
+      // Only the scope, in the mode that runs the command (a command of mode 'proposal' is R2 or R3, and is pinned in mcp-proposals.db.test.ts).
+      expect((c as { mcp: unknown }).mcp, c.name).toEqual({ scope });
+      expect(WRITES.concat(ENGAGE_WRITES), c.name).toContain(`${c.name}:${scope}`);
       expect(c.permission, c.name).toBeUndefined();
       expect(c.extension, c.name).toBeUndefined();
       expect(c.agent, c.name).toBeUndefined();
@@ -135,7 +166,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
   it('pins the queries that carry `mcp`, and none is sensitive, streamed, role-less or open to member mode or an extension token', () => {
     const carrying = queries.filter((q) => (q as { mcp?: unknown }).mcp !== undefined);
     const names = carrying.map((q) => `${q.name}:${(q as { mcp: { scope: string } }).mcp.scope}`).sort();
-    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n))).toEqual([...REACHABLE].sort());
+    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n) && !ENGAGE_WAKE_READS.includes(n))).toEqual([...REACHABLE].sort());
     for (const q of carrying) {
       expect(Array.isArray(q.access), q.name).toBe(true);
       expect(q.sensitive === true, q.name).toBe(false);

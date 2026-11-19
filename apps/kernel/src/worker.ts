@@ -76,6 +76,7 @@ import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
 import { runMarketplacePoll, type MarketplacePollJob } from './marketplace-poll-job.ts';
+import { runMisaAmisMatch, type MisaAmisMatchJob } from './misa-amis-match-job.ts';
 import { runMisaAmisTest, type MisaAmisTestJob } from './misa-amis-test-job.ts';
 import { pushFollowUp, pushGiveUp, pushPressKeyTail, runMisaAmisPush, type MisaAmisPushJob } from './misa-amis-push-job.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
@@ -1635,6 +1636,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     });
   }
 
+  // MISA AMIS Kế toán (#4112, S3a of #4103): the check of a connection's vouchers against the firm's catalogue, queued by the relay below when an owner or admin asks. It reads catalogue pages in memory and
+  // records only what it matched.
+  if (finance && misaAmisClient && marketplaceBroker) {
+    await boss.work<MisaAmisMatchJob>(QUEUES.misaAmisMatch, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const done = await runMisaAmisMatch({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient }, job.data);
+      console.log(`[misa-amis] match ${job.data.connectionId.slice(0, 8)}: ${done.state}`);
+    });
+  }
+
   // MISA AMIS Kế toán (#3854, S3b, #3902): the push of the vouchers a person confirmed, queued by the relay below. One run sends the queued batches and asks MISA for the results of the rows it took; while
   // rows wait for MISA's answer it queues itself again a little later (a separate key, so it may be queued while this run is active; the table's states keep two runs from sending a row twice).
   if (finance && misaAmisClient && marketplaceBroker && deps.channels?.misaAmisPush) {
@@ -2857,6 +2868,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 const connectionId = String(row.payload.connection_id);
                 await boss.send(QUEUES.misaAmisTest, { orgId: row.org_id, connectionId } satisfies MisaAmisTestJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.misaAmisTest, connectionId),
+                  retryLimit: MISA_AMIS_TEST_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // An owner or admin asked for the check of a MISA AMIS connection's vouchers against the firm's catalogue (#4112): its job reads the catalogue in memory and records what it matched. Ids only in the job.
+              if (finance && deps.channels?.misaAmis && deps.channels.broker && row.type === 'finance.misa_amis_match.check_requested') {
+                const connectionId = String(row.payload.connection_id);
+                await boss.send(QUEUES.misaAmisMatch, { orgId: row.org_id, connectionId } satisfies MisaAmisMatchJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.misaAmisMatch, connectionId),
                   retryLimit: MISA_AMIS_TEST_RETRY_LIMIT,
                   retryDelay: 30,
                   retryBackoff: true,
