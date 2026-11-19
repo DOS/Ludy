@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Settings in tabs (ST-1, ST-8, #3589): ten tabs, each with its own address and under 1200 px at 1440 wide, one kind of setting each; an old link to the single page still lands on its
+// Settings in tabs (ST-1, ST-8, #3589): eleven tabs, each with its own address and under 1200 px at 1440 wide, one kind of setting each; an old link to the single page still lands on its
 // card; and a phone gets a strip that scrolls sideways, not a 10000 px page. The AI coworker here: none acts, this is a layout of settings a person changes.
 import { expect, test } from '@playwright/test';
 import { openSettingsTab, SETTINGS_TAB } from '../lib/settings.ts';
 import { createOrg, newEmail, signUp } from '../lib/session.ts';
 
-const TAB_PATHS = { org: '', members: '/members', apps: '/apps', bookings: '/bookings', sales: '/sales', quotes: '/quotes', accounting: '/accounting', connections: '/connections', security: '/security', data: '/data' } as const;
+const TAB_PATHS = { org: '', members: '/members', apps: '/apps', bookings: '/bookings', sales: '/sales', quotes: '/quotes', accounting: '/accounting', connections: '/connections', notifications: '/notifications', security: '/security', data: '/data' } as const;
 
 test('every tab of Settings has its own address, shows one kind of setting and stays under 1200 px at 1440', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });

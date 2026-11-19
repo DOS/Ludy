@@ -33,6 +33,7 @@ const KERNEL_SCREENS = {
     { path: 'settings/quotes', find: 'settingsQuotes', modules: ['crm'] },
     { path: 'settings/accounting', find: 'settingsAccounting', modules: ['finance'] },
     { path: 'settings/connections', find: 'settingsConnections', modules: ['finance'] },
+    { path: 'settings/notifications', find: 'settingsNotifications' },
     { path: 'settings/security', find: 'settingsSecurity' },
     { path: 'settings/data', find: 'settingsData' },
     // The audit log (#672): owners and admins only, which the page checks and the server enforces.
