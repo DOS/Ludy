@@ -46,7 +46,7 @@ async function overviewRows(ctx: QueryContext, entity: string, periods: ReturnTy
   return split;
 }
 
-async function financeOverview(ctx: QueryContext, input: { range: FinanceOverview['range']; asOf?: string | undefined; legalEntityId?: string | undefined }): Promise<FinanceOverview> {
+export async function financeOverview(ctx: QueryContext, input: { range: FinanceOverview['range']; asOf?: string | undefined; legalEntityId?: string | undefined }): Promise<FinanceOverview> {
   const entity = await resolveLegalEntity(ctx, input.legalEntityId);
   const today = input.asOf ?? (await databaseToday(ctx.trx));
   const periods = overviewPeriods(input.range, today);

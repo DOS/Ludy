@@ -14053,6 +14053,7 @@ export const vi = {
       },
       mcp: {
         invoices: 'Cho ứng dụng AI xem danh sách hóa đơn đã ghi sổ',
+        overview: 'Cho ứng dụng AI xem tổng quan tiền, lãi lỗ, công nợ phải thu và phải trả của một kỳ',
       },
       misa_amis_connection: {
         connect: 'Kết nối MISA AMIS Kế toán',
