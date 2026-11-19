@@ -40,6 +40,8 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
 
 const { MeetingPlatforms } = await import('../src/components/meeting-platforms.tsx');
 const { PlatformRecordings, ImportForm } = await import('../src/components/meeting-recordings.tsx');
+const { MEETINGS_TEAMS_GUIDE } = await import('../src/lib/meeting-platform.ts');
+const { AdminConsent } = await import('../src/routes/meeting-platform-oauth.tsx');
 const { ImportAutoClaim } = await import('../src/components/meeting-import-claim.tsx');
 
 const connection = (over: Partial<MeetingPlatformConnectionView> = {}): MeetingPlatformConnectionView => ({
@@ -168,6 +170,50 @@ describe('MeetingPlatforms (Settings)', () => {
     const connected = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
     expect(connected).toContain(esc(`${en.meetings.platform.provider.zoom}: linh@example.test`));
     expect(connected).toContain('meeting-platform-connect-zoom');
+  });
+
+  it('offers "Connect Microsoft Teams" only where the deployment has the Teams app: the note says the administrator acts, the cost line says nothing is charged by Microsoft, and the guide link is the runbook, in both languages', () => {
+    reset();
+    client.current.setQueryData(KEYS.connections, []);
+    client.current.setQueryData(KEYS.providers, ['zoom']);
+    expect(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />))).not.toContain('meeting-platform-connect-teams');
+    client.current.setQueryData(KEYS.providers, ['zoom', 'microsoft_teams']);
+    const html = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
+    expect(html).toContain('data-testid="meeting-platform-connect-teams"');
+    expect(html).toContain(en.meetings.platform.settings.connectTeams);
+    expect(html).toContain(esc(en.meetings.platform.settings.teamsNote));
+    // The cost line is on the screen before any import, and the guide is the public runbook of the repository.
+    expect(html).toContain('data-testid="meeting-platform-teams-cost"');
+    expect(html).toContain(esc(en.meetings.platform.settings.teamsCost));
+    expect(html).toContain(`href="${MEETINGS_TEAMS_GUIDE}"`);
+    expect(MEETINGS_TEAMS_GUIDE).toBe('https://github.com/DOS/Ludy/blob/main/docs/runbooks/meetings-teams.md');
+    // Plain words, no setting names; and it says the administrator has to act and Ludy cannot.
+    expect(en.meetings.platform.settings.teamsNote).toContain('administrator');
+    expect(en.meetings.platform.settings.teamsNote).not.toMatch(/MEDIA_URL|TEAMS_OAUTH|[A-Z]{3,}_[A-Z_]+/);
+    const vn = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />, 'vi'));
+    expect(vn).toContain(viMessages.meetings.platform.settings.connectTeams);
+    expect(vn).toContain(esc(viMessages.meetings.platform.settings.teamsCost));
+    // A viewer connects nothing.
+    expect(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect={false} />))).not.toContain('meeting-platform-connect-teams');
+  });
+
+  it('tells a member whose Microsoft 365 administrator has not allowed the app that only the administrator can, with the address and the guide when the address is known', () => {
+    reset();
+    const link = 'https://login.microsoftonline.com/organizations/adminconsent?client_id=11111111-2222-4333-8444-555555555555&redirect_uri=https%3A%2F%2Fapp.example.test%2Fmeetings%2Foauth%2Fmicrosoft_teams%2Fcallback';
+    const html = renderToStaticMarkup(wrap(<AdminConsent link={link} />));
+    expect(html).toContain('data-testid="meeting-platform-admin-consent"');
+    expect(html).toContain(esc(en.meetings.platform.oauth.adminConsent));
+    expect(html).toContain('data-testid="meeting-platform-admin-link"');
+    expect(html).toContain(esc(link));
+    expect(html).toContain(`href="${MEETINGS_TEAMS_GUIDE}"`);
+    // Plain words: Ludy cannot do it, and nothing about retrying.
+    expect(en.meetings.platform.oauth.adminConsent).toContain('Only they can do it');
+    // Without a known address the same message and the guide, no address.
+    const bare = renderToStaticMarkup(wrap(<AdminConsent link={null} />));
+    expect(bare).toContain(esc(en.meetings.platform.oauth.adminConsent));
+    expect(bare).not.toContain('meeting-platform-admin-link');
+    expect(bare).toContain(`href="${MEETINGS_TEAMS_GUIDE}"`);
+    expect(renderToStaticMarkup(wrap(<AdminConsent link={link} />, 'vi'))).toContain(esc(viMessages.meetings.platform.oauth.adminConsent));
   });
 
   it('shows a loading state, an error, and nothing at all without the meetings module', () => {
@@ -325,6 +371,18 @@ describe('PlatformRecordings (Meetings tab)', () => {
 
 describe('ImportForm (the "Nhập" dialog)', () => {
   const form = (locale: 'en' | 'vi' = 'en') => renderToStaticMarkup(wrap(<ImportForm recording={recording()} onDone={() => undefined} onCancel={() => undefined} />, locale));
+
+  it('shows the cost line and the video wording of a Teams recording before the first import, and neither for another platform', () => {
+    reset();
+    const teams = (locale: 'en' | 'vi' = 'en') => renderToStaticMarkup(wrap(<ImportForm recording={recording({ provider: 'microsoft_teams', hasAudio: false, hasVideo: true })} onDone={() => undefined} onCancel={() => undefined} />, locale));
+    const html = teams();
+    expect(html).toContain('data-testid="meeting-import-cost"');
+    expect(html).toContain(esc(en.meetings.platform.dialog.teamsCost));
+    expect(html).toContain(esc(en.meetings.platform.dialog.teamsVideo));
+    expect(html).not.toContain(esc(en.meetings.platform.dialog.copyAudio));
+    expect(teams('vi')).toContain(esc(viMessages.meetings.platform.dialog.teamsCost));
+    expect(form()).not.toContain('meeting-import-cost');
+  });
 
   it('shows the import notice of the active language, what Ludy does and does not copy, the one consent box, and a submit that waits for the tick', () => {
     reset();

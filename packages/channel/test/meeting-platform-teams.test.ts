@@ -5,6 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  MeetingPlatformConsentError,
   MeetingPlatformError,
   TEAMS_DOWNLOAD_SUFFIX,
   TEAMS_GRAPH_HOST,
@@ -405,6 +406,20 @@ describe('TeamsMeetingPlatform OAuth', () => {
     expect(form.get('code')).toBe('the-code');
     expect(form.get('code_verifier')).toBe('verifier-0001');
     expect(form.get('client_secret')).toBe(APP.clientSecret);
+  });
+
+  it('tells a tenant that needs its administrator apart from any other refusal at the token step, with no Microsoft words in the error', async () => {
+    const input = { code: 'c', redirectUri: 'https://app.example/cb', codeVerifier: null };
+    for (const description of ['AADSTS65001: The user or administrator has not consented to use the application with ID x. secret-words', 'AADSTS90094: Administrator consent is required. secret-words', 'AADSTS90095: AdminConsentRequiredRequestAccess secret-words']) {
+      const consent = await teams(() => ({ status: 400, json: { error: 'invalid_grant', error_description: description } })).adapter.exchange(input).catch((error: unknown) => error);
+      expect(consent).toBeInstanceOf(MeetingPlatformConsentError);
+      expect((consent as MeetingPlatformConsentError).code).toBe('platform_refused');
+      expect((consent as MeetingPlatformConsentError).message).not.toContain('secret-words');
+    }
+    // Any other refusal is the general one, not the administrator's.
+    const other = await teams(() => ({ status: 400, json: { error: 'invalid_grant', error_description: 'AADSTS70000: not consent' } })).adapter.exchange(input).catch((error: unknown) => error);
+    expect(other).toBeInstanceOf(MeetingPlatformError);
+    expect(other).not.toBeInstanceOf(MeetingPlatformConsentError);
   });
 
   it('refuses a code Microsoft refuses, a grant with no refresh token, and an id_token that names no account', async () => {
