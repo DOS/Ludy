@@ -7598,6 +7598,12 @@ export const en = {
     andMore: 'and {count} more vouchers',
     moreBlockers: 'and {count} more',
     nothingSent: 'Nothing has been sent to MISA.',
+    notes: {
+      title: "{finance}'s notes on each kind of problem (the list below is what counts)",
+      busy: '{finance} is busy, the list below stands alone for now.',
+      budget: "{finance} has used this month's AI budget: the list below stands alone.",
+      failed: '{finance} could not word this one: the list below stands alone.',
+    },
     blocker: {
       branch_missing: 'AMIS branch missing',
       party_code_unknown: 'Party not in AMIS',
@@ -9086,6 +9092,7 @@ export const en = {
       finance_bank_match_explain: 'Explaining why a bank transaction may be a payroll payment',
       finance_marketplace_line: 'Wording what is waiting on the marketplace screen',
       finance_misa_check_line: 'Wording what a MISA export check found',
+      finance_misa_amis_blocker_notes: 'Wording each problem that keeps a voucher from MISA AMIS',
       finance_supplier_payable_line: 'Wording the received invoices waiting to be paid',
       meetings_transcribe: 'Turning meeting audio into text',
       meetings_summary: 'Summarizing a meeting, its decisions and action items',

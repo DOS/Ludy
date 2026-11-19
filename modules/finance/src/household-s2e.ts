@@ -4,7 +4,7 @@
 // - finance.household.s2e (every role that reads the ledger): per account that is 111 or 112 or a sub-account of them, the opening balance, one row per journal line on that account (cash in, cash out, the accounts
 //   on the other side, the running balance) and the closing balance. The sections add up to the ledger's balance of 111 and 112 (a DB test checks it). A negative balance is flagged, never hidden.
 // - While the S2e layout row is `commentary` (the accountant has not confirmed it, #2520) the book is still given, with `commentary` and the unconfirmed row, so the screen and the Excel file carry
-//   "Số liệu tạm, kế toán chưa xác nhận tỷ lệ"; the label goes by itself when a later dated `confirmed` row exists (owner's direction of 2026-11-17). No rate is involved.
+//   "Số liệu tạm, kế toán chưa xác nhận bố cục sổ" (no rate stands behind it); the label goes by itself when a later dated `confirmed` row exists (owner's direction of 2026-11-17). No rate is involved.
 // - Nothing in it is AI: every figure is a bank or cash fact from the ledger; matching bank lines is #2514.
 // Amounts are decimal strings through decimal.js, never JS numbers.
 import { zHouseholdS2e, zHouseholdS2eGet, type HouseholdS2e } from '@crove/kernel-contract';
