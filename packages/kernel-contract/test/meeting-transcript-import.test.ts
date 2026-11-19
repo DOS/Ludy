@@ -21,8 +21,12 @@ describe('zMeetingTranscriptImport', () => {
   });
 
   it('refuses a NUL byte in the text or the speaker, even among other characters', () => {
-    expect(parse([line({ text: 'ab\u0000cd' })]).success).toBe(false);
-    expect(parse([line({ speakerLabel: 'La\u0000n' })]).success).toBe(false);
+    const paths = (segments: unknown[]) => {
+      const result = parse(segments);
+      return result.success ? [] : result.error.issues.map((issue) => issue.path.join('.'));
+    };
+    expect(paths([line({ text: 'ab\u0000cd' })])).toEqual(['segments.0.text']);
+    expect(paths([line({ speakerLabel: 'La\u0000n' })])).toEqual(['segments.0.speakerLabel']);
     // Other control characters and plain Vietnamese text are not this check's business.
     expect(parse([line({ text: 'Dòng một\tvà dòng hai', speakerLabel: 'Người nói 1' })]).success).toBe(true);
   });

@@ -554,6 +554,7 @@ export const meetingPlatformRecordings = defineQuery({
   access: OWN,
   handler: async (ctx, input): Promise<MeetingPlatformRecordingView[]> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được bản ghi từ nền tảng họp');
+    const only = input.recordingId;
     const rows = await ctx.trx
       .selectFrom('crove_kernel.meeting_platform_recording as r')
       .innerJoin('crove_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
@@ -561,7 +562,7 @@ export const meetingPlatformRecordings = defineQuery({
       .where('r.org_id', '=', ctx.orgId)
       .where('r.user_id', '=', ctx.actor.userId)
       .where('r.status', '<>', 'dismissed')
-      .$if(input.recordingId !== undefined, (q) => q.where('r.id', '=', input.recordingId as string))
+      .$if(only !== undefined, (q) => q.where('r.id', '=', only as string))
       .orderBy('r.started_at', 'desc')
       .orderBy('r.id', 'desc')
       .limit(RECORDINGS_LIMIT)

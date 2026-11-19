@@ -488,7 +488,8 @@ export type TranscriptSegment = z.infer<typeof zTranscriptSegment>;
 // whole import with a 500 instead of this refusal. Only the platform import asks for this: the draft transcript of a recording (`zTranscriptDraftStore`) keeps its own rules.
 const zImportedSegment = zTranscriptSegmentInput
   .refine((line) => line.endSeconds >= line.startSeconds, { message: 'a line ends before it starts', path: ['endSeconds'] })
-  .refine((line) => !line.text.includes('\u0000') && !line.speakerLabel.includes('\u0000'), { message: 'a line holds a NUL byte', path: ['text'] });
+  .refine((line) => !line.text.includes('\u0000'), { message: 'a line holds a NUL byte', path: ['text'] })
+  .refine((line) => !line.speakerLabel.includes('\u0000'), { message: 'a line holds a NUL byte', path: ['speakerLabel'] });
 export const zMeetingTranscriptImport = z.strictObject({
   meetingId: zId,
   segments: z.array(zImportedSegment).min(1).max(TRANSCRIPT_SEGMENTS_MAX),
