@@ -3005,6 +3005,17 @@ export function createHttpApp(deps: HttpDeps) {
   };
   const mediaBodyLimit: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number; videoSlotHeld: boolean } }> = (c, next) =>
     bodyLimit({ maxSize: c.get('mediaBodyCap') })(c, next);
+  // Which import route a platform recording belongs to (C2, #3174 follow-up #3923): one with neither an audio nor a video file is the transcript's (POST /api/meetings/:id/transcript-import), every other is the
+  // media route's. A request that names the wrong route is refused BEFORE the claim moves the row, so the row stays staged with its bytes for the right request (the app routes by the same rule). A row that is
+  // not in the member's own list is left to the claim, which answers "not found".
+  const refuseWrongImportRoute = async (user: AuthUser, orgId: string, recordingId: string, route: 'media' | 'transcript'): Promise<void> => {
+    const rows = await runtime.query<Array<{ id: string; hasAudio: boolean; hasVideo: boolean }>>('kernel.meeting_platform.recordings', {}, { actor: actorOf(user), orgId });
+    const row = rows.find((r) => r.id === recordingId);
+    if (!row) return;
+    const transcriptOnly = !row.hasAudio && !row.hasVideo;
+    if (route === 'media' && transcriptOnly) throw new DomainError('BAD_REQUEST', 400, 'Bản ghi này chỉ có bản chép lời, hãy nhập nó bằng bản chép lời');
+    if (route === 'transcript' && !transcriptOnly) throw new DomainError('BAD_REQUEST', 400, 'Bản ghi này có âm thanh hoặc video, không nhập được bằng bản chép lời');
+  };
   app.post('/api/meetings/:id/media', mediaGate, mediaBodyLimit, async (c) => {
     try {
       if (!runtime.installed('meetings')) {
@@ -3112,6 +3123,7 @@ export function createHttpApp(deps: HttpDeps) {
 
           let claim: { stagingKey: string; cap: number };
           if (typeof body.importId === 'string') {
+            await refuseWrongImportRoute(user, orgId, body.importId, 'media');
             // The worker staged the bytes; this request takes them, then seals and records them like an upload (the row is the member's own: another's is answered as absent).
             // The claim names this route's meeting, so a recording begun for another meeting is refused before the row moves (it never ends up claimed by a request it cannot serve).
             const imported = await runtime.execute<{ stagingKey: string; meetingId: string }>(
@@ -3349,6 +3361,7 @@ export function createHttpApp(deps: HttpDeps) {
       try {
         const meeting = await meetingFacts(user, orgId, meetingId);
         if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may import a transcript');
+        await refuseWrongImportRoute(user, orgId, importId, 'transcript');
         // The claim names this route's meeting, so a recording begun for another meeting is refused before the row moves.
         const imported = await runtime.execute<{ stagingKey: string; meetingId: string }>(
           'kernel.meeting_platform.import.claim',

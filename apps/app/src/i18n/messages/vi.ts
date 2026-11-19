@@ -3050,6 +3050,8 @@ export const vi = {
       draftTitle: 'Bản ghi lời (nháp)',
       draftNote: 'Chỉ bạn thấy bản nháp này. Hãy đọc lại và sửa dòng nào nghe sai; từ đây chưa chia sẻ gì cho người dự họp.',
       publishedNote: 'Bản ghi lời mà người ghi đã chia sẻ cho cuộc họp.',
+      platformSource: 'Bản chép lời của {platform}: do nền tảng viết, không phải của Ludy.',
+      platformCut: 'Bản chép lời của {platform} có đúng {max, number} dòng, mức nhiều nhất Ludy nhập được. Nếu cuộc họp dài hơn, phần sau không có ở đây.',
       emptyRecorder: 'Chưa có bản ghi lời. Ghi âm và nghe lại vẫn dùng được khi không có.',
       vy: {
         title: 'Nhờ Vy ghi lời cuộc họp này',
