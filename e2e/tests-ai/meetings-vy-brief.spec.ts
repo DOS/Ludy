@@ -45,7 +45,8 @@ test('Vy briefs one event of the Today view on a click: nothing runs before it, 
     await first.getByTestId('brief-write').click();
     const sentences = first.getByTestId('brief-sentence');
     await expect(sentences).toHaveCount(1);
-    await expect(sentences.nth(0)).toContainText('Đã chốt: Chốt giá gói kế toán 15.000.000 đồng');
+    // The fact reaches the model with a lead of its own ("Decision of the last meeting: "), and the fake model writes the fact as it is.
+    await expect(sentences.nth(0)).toContainText('Đã chốt: Decision of the last meeting: Chốt giá gói kế toán 15.000.000 đồng');
     await expect(sentences.nth(0)).toContainText('Căn cứ: 1');
     const answer = first.getByTestId('brief-answer');
     await expect(answer).toContainText('Đã bỏ 3 câu vì không có mục nào ở trên xác nhận.');

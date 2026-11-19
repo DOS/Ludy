@@ -55,6 +55,8 @@ test('Vy checks the typed agenda against the transcript on a click: nothing runs
   await test.step('a cited line opens the transcript at its time and runs nothing', async () => {
     await page.getByTestId('adherence-item').nth(0).getByRole('button', { name: 'Chúng ta chốt giá cũ cho khách A.' }).click();
     await expect(page.locator('[data-testid="transcript-line"][aria-current="location"]')).toContainText('Chúng ta chốt giá cũ cho khách A.');
+    // The page keeps its one box for the typed lines.
+    await expect(typed).toHaveCount(1);
     expect(runsOf(slug, 'meetings.adherence')).toBe(1);
   });
 
