@@ -130,8 +130,8 @@ describe('Lịch hẹn: the booking link', () => {
     expect(count(html, `>${en.bookings.link.copy}<`)).toBe(1);
     expect(html).toContain(`href="/-/b/acme/tu-van-thue"`);
     expect(html).toContain(`>${en.bookings.link.open}<`);
-    expect(html).toContain(`href="/o/acme/settings#booking-settings">${en.bookings.emptyLink.settings}<`);
-    expect(html).toContain(`href="/o/acme/settings#booking-settings">${en.bookings.settingsLink}<`);
+    expect(html).toContain(`href="/o/acme/settings/bookings#booking-settings">${en.bookings.emptyLink.settings}<`);
+    expect(html).toContain(`href="/o/acme/settings/bookings#booking-settings">${en.bookings.settingsLink}<`);
     // The archived type is not offered.
     expect(html).not.toContain('Loại cũ');
     expect(html).not.toContain('<select');
@@ -141,7 +141,7 @@ describe('Lịch hẹn: the booking link', () => {
     const html = page('owner', [archived], []);
     expect(html).toContain(en.bookings.emptyNoType.title);
     // Creating the first type goes to the event types card; the hours link goes to the card above it.
-    expect(html).toContain(`href="/o/acme/settings#booking-event-types">${en.bookings.emptyNoType.action}<`);
+    expect(html).toContain(`href="/o/acme/settings/bookings#booking-event-types">${en.bookings.emptyNoType.action}<`);
     expect(html).not.toContain(`>${en.bookings.link.copy}<`);
   });
 

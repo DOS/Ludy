@@ -22,6 +22,8 @@ function google(routes: Record<string, Answer[]>) {
     calls.push({ route, url, body: typeof raw === 'string' ? JSON.parse(raw) : undefined, auth: new Headers(init?.headers).get('authorization') });
     const answer = routes[route]?.shift() ?? { status: 500, body: { error: { message: `no answer for ${route}`, errors: [{ reason: 'backendError' }] } } };
     if (answer.network) throw new TypeError('fetch failed');
+    // A 204 has no body (a Response refuses one), as Google answers a moderation call.
+    if (answer.status === 204) return new Response(null, { status: 204 });
     return new Response(JSON.stringify(answer.body ?? {}), { status: answer.status ?? 200, headers: { 'content-type': 'application/json' } });
   };
   return { calls, fetchImpl };
@@ -211,6 +213,73 @@ describe('YouTubeConversations.reply (#3134)', () => {
     for (const answer of [{ network: true } as Answer, refusal(503, 'backendError'), { body: {} } as Answer]) {
       const { fetchImpl, calls } = google({ 'POST /youtube/v3/comments': [answer] });
       expect((await adapter(fetchImpl).reply(input())).kind).toBe('unknown');
+      expect(calls).toHaveLength(1);
+    }
+  });
+});
+
+// Hide and show (#3808): `comments.setModerationStatus`, read from the official page on 2026-11-19: POST with query parameters and no body, scope
+// youtube.force-ssl, 50 units, HTTP 204. `rejected` cannot be undone ("You can't change a rejected comment to published"), so Hide is `heldForReview`.
+describe('YouTubeConversations.hide (#3808)', () => {
+  const MODERATE = 'POST /youtube/v3/comments/setModerationStatus';
+  const input = (over: Record<string, unknown> = {}) => ({ externalAccountId: CHANNEL, secret: SECRET, externalMessageId: THREAD, hidden: true, callKey: 'hide-1', ...over });
+  const noContent = (): Answer => ({ status: 204 });
+
+  it('holds a comment for review to hide it and publishes it to show it again, each one call with no body', async () => {
+    const { fetchImpl, calls } = google({ [MODERATE]: [noContent(), noContent()] });
+    const a = adapter(fetchImpl);
+    expect(await a.hide(input())).toEqual({ kind: 'done' });
+    expect(await a.hide(input({ hidden: false }))).toEqual({ kind: 'done' });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.url.searchParams.get('id')).toBe(THREAD);
+    expect(calls[0]?.url.searchParams.get('moderationStatus')).toBe('heldForReview');
+    expect(calls[1]?.url.searchParams.get('moderationStatus')).toBe('published');
+    // Never `rejected` (it cannot be undone) and never a ban of the author; nothing in the body, the bearer token in the header.
+    for (const call of calls) {
+      expect(call.url.searchParams.has('banAuthor')).toBe(false);
+      expect(call.body).toBeUndefined();
+      expect(call.auth).toBe('Bearer ya29.token-1');
+    }
+  });
+
+  it('answers a reply of a thread by its own comment id', async () => {
+    const { fetchImpl, calls } = google({ [MODERATE]: [noContent()] });
+    expect(await adapter(fetchImpl).hide(input({ externalMessageId: `${THREAD}.9aBcDeFgHiJ` }))).toEqual({ kind: 'done' });
+    expect(calls[0]?.url.searchParams.get('id')).toBe(`${THREAD}.9aBcDeFgHiJ`);
+  });
+
+  it('refuses a bad input before any call', async () => {
+    const none = google({});
+    const a = adapter(none.fetchImpl);
+    expect(await a.hide(input({ externalMessageId: '../x' }))).toMatchObject({ kind: 'rejected', code: 'BAD_COMMENT_ID' });
+    expect(await a.hide(input({ externalMessageId: `${THREAD}&moderationStatus=rejected` }))).toMatchObject({ kind: 'rejected', code: 'BAD_COMMENT_ID' });
+    expect(await a.hide(input({ externalAccountId: 'x' }))).toMatchObject({ kind: 'rejected', code: 'BAD_ACCOUNT_ID' });
+    expect(await a.hide(input({ secret: '{}' }))).toMatchObject({ kind: 'rejected', error: 'token_expired', code: 'NO_TOKEN' });
+    expect(none.calls).toHaveLength(0);
+  });
+
+  it('names the platform refusals for a person', async () => {
+    const cases: [Answer, string, string][] = [
+      [refusal(403, 'quotaExceeded'), 'rate_limited', 'YOUTUBE_QUOTA'],
+      [refusal(403, 'insufficientPermissions'), 'permission', 'YOUTUBE_RECONNECT'],
+      [refusal(403, 'forbidden'), 'permission', 'YOUTUBE_FORBIDDEN'],
+      [refusal(404, 'commentNotFound'), 'bad_request', 'YOUTUBE_COMMENT_GONE'],
+      [refusal(400, 'processingFailure'), 'bad_request', 'YOUTUBE_BAD_REQUEST'],
+      [refusal(401, 'authError'), 'token_expired', 'YOUTUBE_TOKEN'],
+    ];
+    for (const [answer, error, code] of cases) {
+      const { fetchImpl } = google({ [MODERATE]: [answer] });
+      expect(await adapter(fetchImpl).hide(input())).toMatchObject({ kind: 'rejected', error, code });
+    }
+    // A spent quota says when it may be tried again.
+    const quota = await adapter(google({ [MODERATE]: [refusal(403, 'quotaExceeded')] }).fetchImpl).hide(input());
+    expect(quota.kind === 'rejected' && quota.retryAt instanceof Date && quota.retryAt.getTime() > Date.now()).toBe(true);
+  });
+
+  it('leaves an unclear answer unclear, for the job to ask again (the same status twice is one state)', async () => {
+    for (const answer of [{ network: true } as Answer, refusal(503, 'backendError')]) {
+      const { fetchImpl, calls } = google({ [MODERATE]: [answer] });
+      expect((await adapter(fetchImpl).hide(input())).kind).toBe('unknown');
       expect(calls).toHaveLength(1);
     }
   });

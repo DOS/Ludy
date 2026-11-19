@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "Forbidden",
+    "message": "Speaker attribution is not allowed.",
+    "innerError": {
+      "code": "SpeakerAttributionNotAllowed"
+    }
+  }
+}

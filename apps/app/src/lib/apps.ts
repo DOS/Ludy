@@ -109,6 +109,22 @@ export const TAB_GROUPS: readonly TabGroup[] = [
   { menu: 'vat', tabs: [{ path: 'vat', label: 'vat' }, { path: 'portal-invoices', label: 'portalList' }] },
   { menu: 'hr/payroll', tabs: [{ path: 'hr/payroll', label: 'payroll' }, { path: 'hr/bank-templates', label: 'bankTemplates' }] },
   { menu: 'ads', tabs: [{ path: 'ads', label: 'adsFigures' }, { path: 'ads/campaigns', label: 'adsCampaigns' }] },
+  // Settings (#3589): one tab for each kind of setting, each with its own address; the tabs of an app that is off (accounting, connections, sales, quotes) are left out.
+  {
+    menu: 'settings',
+    tabs: [
+      { path: 'settings', label: 'org' },
+      { path: 'settings/members', label: 'settingsMembers' },
+      { path: 'settings/apps', label: 'settingsApps' },
+      { path: 'settings/bookings', label: 'settingsBookings' },
+      { path: 'settings/sales', label: 'settingsSales' },
+      { path: 'settings/quotes', label: 'settingsQuotes' },
+      { path: 'settings/accounting', label: 'settingsAccounting' },
+      { path: 'settings/connections', label: 'settingsConnections' },
+      { path: 'settings/security', label: 'settingsSecurity' },
+      { path: 'settings/data', label: 'settingsData' },
+    ],
+  },
 ];
 
 // The tab group a screen is a tab of: the path after /o/<slug>/, exactly (a screen under a tab, a post or an invoice, is not one).
@@ -150,6 +166,13 @@ export type HeadedGroupId = 'inbox' | 'crm' | 'marketing' | 'sell' | 'buy' | 'le
 export function isHeadedGroup(id: AppGroupId): id is HeadedGroupId {
   return id === 'inbox' || id === 'crm' || id === 'marketing' || id === 'sell' || id === 'buy' || id === 'ledger';
 }
+
+// Words that find a menu item in Ctrl K without being shown (#3588): what an owner types for the thing, not the screen's name. Folded like the label, so
+// "hoa don" finds Chứng từ (the screen that holds the purchase invoices) and "invoice" finds it in English. A label not listed has none.
+export const NAV_KEYWORDS: Partial<Record<NavLabel, string>> = {
+  documents: 'hoa don hóa đơn mua vao invoice bill',
+  tax: 'thue vat gtgt tax to khai',
+};
 
 // Every screen of the menus, apps first, for the command palette (Ctrl K searches all of them, whatever the app): the overview, the apps' items, the bell, Settings, and the tabs and inner
 // screens that name a `find` label (Sàn, Hộ kinh doanh, Nhắc thu nợ...).

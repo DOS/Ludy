@@ -36,6 +36,8 @@ const REACHABLE = [
   'kernel.mcp.about:ludy.read',
   'kernel.mcp.parties:ludy.read',
   'finance.mcp.invoices:ludy.read',
+  // Tool 1 of #3849 (`ludy_finance_overview`): four money figures of a period; pinned in test/invariant/mcp-overview-projection.db.test.ts.
+  'finance.mcp.overview:ludy.read',
   // The two Social reads (#3227, plan section 3.8: `ludy_social_posts_list` and `ludy_social_review_queue`). Their privacy review is the comment at the top of modules/social/src/mcp.ts; neither is
   // sensitive, and the checks below apply to them as to every query.
   'social.mcp.posts:ludy.read',
@@ -47,6 +49,9 @@ const REACHABLE = [
   // The Meetings read of the open action items across those same meetings (#3804, step 3 of the two-step landing): published, unflagged items no task was made from, of org-visible meetings inside their
   // text period, for a company grant only. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
   'meetings.mcp.open_actions:ludy.read',
+  // The Meetings read of the open action items of one series of meetings (#3837, step 3 of the two-step landing): keyed on a meeting, never on a series id, over the same readable meetings as the two reads
+  // above, for a company grant only. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
+  'meetings.mcp.series_open_items:ludy.read',
 ];
 // The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the kernel rules and the line reads they
 // call (a query run inside a query keeps the caller's identity, so a rule over MCP needs every read it calls to declare the scope as well). They are optional here so each can land
@@ -66,9 +71,15 @@ const SIGNALS = [
   'crm.signals.open_deals:ludy.read',
   // The one query behind the `ludy_signals` tool (step S4): it runs the three rules above as the grant and returns their items.
   'kernel.mcp.signals:ludy.read',
-  // The Meetings read of the open action items of one series of meetings (#3837, company grants only, the Meetings PO's direction of 2026-11-18). Optional here so the name can be accepted before the
-  // query lands (two steps); the next tests-only step moves it to REACHABLE, where its absence fails.
-  'meetings.mcp.series_open_items:ludy.read',
+];
+
+// The finance reads of the connected coworker (#3849, plan docs/plan/vy.md section 5 C2 and C3, owner decision 2026-11-18): the overview figures, the open receivables and payables per party, and one payment
+// reminder draft. They may join the set one at a time, each when its line and the PO's security review have read what it returns (step 1 of the landing, like the signals above: this list lets a name in, it
+// does not require it). A name outside this list still fails, and so do the checks below on every query that carries `mcp`: never sensitive, streamed, role-less or open to member mode or an extension token.
+// Must never be returned by any of them (each tool PR pins it under test/invariant/): a customer's email or phone, the org's bank account numbers or holders (the reminder read leaves out `payTo`), the lines of an invoice, anything from a query that is `sensitive`.
+const FINANCE_READS = [
+  'finance.mcp.open_balances:ludy.read',
+  'finance.mcp.payment_reminder:ludy.read',
 ];
 
 // The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Exactly this one,
@@ -97,7 +108,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
   it('pins the queries that carry `mcp`, and none is sensitive, streamed, role-less or open to member mode or an extension token', () => {
     const carrying = queries.filter((q) => (q as { mcp?: unknown }).mcp !== undefined);
     const names = carrying.map((q) => `${q.name}:${(q as { mcp: { scope: string } }).mcp.scope}`).sort();
-    expect(names.filter((n) => !SIGNALS.includes(n))).toEqual([...REACHABLE].sort());
+    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n))).toEqual([...REACHABLE].sort());
     for (const q of carrying) {
       expect(Array.isArray(q.access), q.name).toBe(true);
       expect(q.sensitive === true, q.name).toBe(false);

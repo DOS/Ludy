@@ -62,7 +62,7 @@ export function CalendarOAuthCallbackPage() {
   // Waiting for the first read or for the server.
   const busy = !callback || (callback.kind === 'finish' && (finish.isPending || finish.isIdle));
   const back = slug ? (
-    <Link to="/o/$slug/settings" params={{ slug }} className="text-sm font-medium text-primary hover:underline">
+    <Link to="/o/$slug/settings/bookings" params={{ slug }} hash="booking-settings" className="text-sm font-medium text-primary hover:underline">
       {t('oauthBack')}
     </Link>
   ) : (
