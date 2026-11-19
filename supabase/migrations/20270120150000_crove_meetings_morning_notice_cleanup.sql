@@ -5,7 +5,7 @@
 --      member's own); it covers every path that deletes a membership, not only the remove command.
 --   2. The count the sweep returns is capped at 1000, the most the mail's merge data accepts (zMorningMail.count), so a calendar with more events in one day cannot make a member's notice fail to build.
 --   3. The definer filtered by org and user twice (in `known` and again in `local`); the second copy is dropped.
--- crove_meetings.morning_notices_due is restated whole (CREATE OR REPLACE, same signature, owner and grants); only the two marked lines differ from 20270120110000.
+-- crove_meetings.morning_notices_due is restated whole (CREATE OR REPLACE, same signature, owner and grants); only two things differ from 20270120110000: the `local` CTE no longer repeats the org and user filter, and the count is `LEAST(count(*), 1000)`.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_meetings.morning_notice_member_removed()
@@ -16,9 +16,9 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION crove_meetings.morning_notice_member_removed() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
--- migration-lint: cross-module the trigger fires on the kernel's membership delete and removes the Meetings row of that member (the way the extension-token and chief-accountant triggers react to it)
+-- migration-lint: cross-module the trigger fires on the kernel's membership delete and removes the Meetings row of that member (the cross-module precedent is the Ads token hold trigger on a kernel table)
 DROP TRIGGER IF EXISTS tenant_member_drops_morning_notice ON crove_kernel.tenant_member;
--- migration-lint: cross-module the trigger fires on the kernel's membership delete and removes the Meetings row of that member (the way the extension-token and chief-accountant triggers react to it)
+-- migration-lint: cross-module the trigger fires on the kernel's membership delete and removes the Meetings row of that member (the cross-module precedent is the Ads token hold trigger on a kernel table)
 CREATE TRIGGER tenant_member_drops_morning_notice AFTER DELETE ON crove_kernel.tenant_member
   FOR EACH ROW EXECUTE FUNCTION crove_meetings.morning_notice_member_removed();
 
