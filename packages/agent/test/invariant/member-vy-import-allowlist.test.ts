@@ -23,13 +23,15 @@ function sources(dir: string): string[] {
 }
 
 // An import, export-from, dynamic import or require that names the member-Vy entry, by its package path or by a relative path into the folder.
-const NAMES_IT = /['"`](?:@crove\/agent\/member-vy|(?:\.\.?\/)+(?:packages\/agent\/)?(?:src\/)?member-vy(?:\/[^'"`]*)?|[^'"`]*packages\/agent\/src\/(?:member-vy|private-text)[^'"`]*)['"`]/;
+const NAMES_IT = /['"`](?:@(?:crove|ludy)\/agent\/member-vy|(?:\.\.?\/)+(?:packages\/agent\/)?(?:src\/)?member-vy(?:\/[^'"`]*)?|[^'"`]*packages\/agent\/src\/(?:member-vy|private-text)[^'"`]*)['"`]/;
 
 describe('who imports the member-Vy modules', () => {
   it('flags an import of the entry (the scan is not vacuous)', () => {
     expect(NAMES_IT.test(`import { revealPrivateText } from '@crove/agent/member-vy';`)).toBe(true);
+    expect(NAMES_IT.test(`import { revealPrivateText } from '@ludy/agent/member-vy';`)).toBe(true);
     expect(NAMES_IT.test(`const m = await import('../../../packages/agent/src/member-vy/index.ts');`)).toBe(true);
     expect(NAMES_IT.test(`import { x } from '@crove/agent';`)).toBe(false);
+    expect(NAMES_IT.test(`import { x } from '@ludy/agent';`)).toBe(false);
   });
 
   it('lets only the kernel wiring (and tests) import them', () => {
