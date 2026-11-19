@@ -59,6 +59,9 @@ const REACHABLE = [
   // The Meetings read of the published decisions of the last 7, 14 or 30 days (#4016, step 3 of the three-step landing): the decisions of the same readable meetings as the reads above, started inside the
   // window, for a company grant only. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
   'meetings.mcp.decisions:ludy.read',
+  // The Meetings read that searches the published minutes (#4030, step 3 of the three-step landing): it matches only the views the minutes tool can return, of the same readable meetings as the reads above,
+  // for a company grant only; the typed words never reach SQL. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
+  'meetings.mcp.search:ludy.read',
 ];
 // The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the kernel rules and the line reads they
 // call (a query run inside a query keeps the caller's identity, so a rule over MCP needs every read it calls to declare the scope as well). They are optional here so each can land
@@ -76,9 +79,6 @@ const SIGNALS = [
   'finance.signals.supplier_payments_waiting:ludy.read',
   'crm.signals.won_deals:ludy.read',
   'crm.signals.open_deals:ludy.read',
-  // The Meetings read that searches the published minutes (#4030, company grants only, the Meetings PO's direction of 2026-11-19, inside the owner's decision of 2026-11-18). Optional here so the name can
-  // be accepted before the query lands (two steps); the next tests-only step moves it to REACHABLE, where its absence fails.
-  'meetings.mcp.search:ludy.read',
   // The Engage reads of epic #3857, E1 (#3860, owner decision 2026-11-19: Dy and Uy work Engage through MCP): the results of Social and Ads (company grants), the CRM records (deals, quotes, bookings) and the
   // Hộp thư conversations (read over the sealed grant contexts of #3858 slice b, within the grant's role and member binding). Optional here so the names can be accepted before the queries land (two steps);
   // the next tests-only step moves them to REACHABLE. The conversation reads are named `kernel.mcp.*` on purpose: the check below keeps every `kernel.conversation.*` and `kernel.inbox*` name out.
