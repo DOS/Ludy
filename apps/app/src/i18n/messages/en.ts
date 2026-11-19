@@ -14582,6 +14582,7 @@ export const en = {
         payment_reminder: 'Let an AI app read the payment reminder draft of one overdue customer',
       },
       misa_amis_connection: {
+        can_disconnect: 'Check whether a MISA AMIS connection can be disconnected',
         connect: 'Connect MISA AMIS Kế toán',
         list: 'View the MISA AMIS connections',
         record_test: 'Record the result of a MISA AMIS connection test',

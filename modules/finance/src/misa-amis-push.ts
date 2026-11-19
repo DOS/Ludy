@@ -489,9 +489,10 @@ export const zMisaAmisPushResolve = z.strictObject({
 export const misaAmisPushResolve = defineCommand({
   name: 'finance.misa_amis.push_resolve',
   input: zMisaAmisPushResolve,
-  // A person records what they found in AMIS about a request whose answer was lost. Nothing is sent; a resend needs a new confirmed push (finance.misa_amis.push).
+  // A person records what they found in AMIS about a request whose answer was lost. Nothing is sent; a resend needs a new confirmed push (finance.misa_amis.push). "In AMIS" emits the event that starts the job
+  // reading MISA's result for the row, so the command is an external effect (R2), like the push itself.
   risk: 'R2',
-  sideEffect: 'internal',
+  sideEffect: 'external',
   access: MANAGERS,
   handler: async (ctx, input): Promise<{ resolved: boolean }> => {
     const [state, reason] = input.outcome === 'in_amis' ? (['sent', 'CONFIRMED_IN_AMIS'] as const) : (['failed', 'NOT_IN_AMIS'] as const);

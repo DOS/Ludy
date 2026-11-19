@@ -14582,6 +14582,7 @@ export const vi = {
         payment_reminder: 'Cho ứng dụng AI xem bản nháp nhắc nợ của một khách hàng quá hạn',
       },
       misa_amis_connection: {
+        can_disconnect: 'Kiểm tra xem có ngắt được kết nối MISA AMIS không',
         connect: 'Kết nối MISA AMIS Kế toán',
         list: 'Xem các kết nối MISA AMIS',
         record_test: 'Ghi kết quả kiểm tra kết nối MISA AMIS',
