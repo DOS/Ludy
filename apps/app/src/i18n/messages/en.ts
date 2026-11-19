@@ -3157,6 +3157,8 @@ export const en = {
       draftTitle: 'Draft transcript',
       draftNote: 'Only you see this draft. Check it and correct a line where the speech was misheard; nothing is shared with the other attendees from here.',
       publishedNote: 'The transcript the recorder shared with the meeting.',
+      platformSource: 'The {platform} transcript: written by the platform, not by Ludy.',
+      platformCut: 'The {platform} transcript has exactly {max, number} lines, the most Ludy imports. If the meeting ran longer, the rest is not here.',
       emptyRecorder: 'No transcript yet. The recording and its playback work without one.',
       vy: {
         title: 'Vy transcribes this meeting',

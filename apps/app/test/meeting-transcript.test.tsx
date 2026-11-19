@@ -6,7 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import type { Transcript } from '@crove/kernel-contract';
+import { TRANSCRIPT_SEGMENTS_MAX, type Transcript } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
@@ -89,6 +89,23 @@ describe('MeetingTranscript', () => {
     expect(html).toContain(en.meetings.transcript.title);
     expect(html).not.toContain(en.meetings.transcript.draftTitle);
     expect(html).not.toContain('Correct the line');
+  });
+
+  it('says in words, with the platform\'s name, that imported lines are the platform\'s and not Ludy\'s, and when there are as many as a draft holds that the rest may be missing (C2, #3174; #3922)', () => {
+    for (const locale of ['en', 'vi'] as const) {
+      const messages = locale === 'en' ? en : viMessages;
+      const from = (n: number, source: 'ludy' | 'google_meet') => Array.from({ length: n }, (_, i) => segment(`s${i}`, i, `dòng ${i}`, { source }));
+      const some = render({ meetingId: 'm1', isRecorder: true, stage: 'draft', segments: from(3, 'google_meet') }, locale);
+      expect(some, locale).toContain(messages.meetings.transcript.platformSource.replace('{platform}', 'Google Meet'));
+      expect(some, locale).not.toContain('data-testid="transcript-cut"');
+      const full = render({ meetingId: 'm1', isRecorder: true, stage: 'draft', segments: from(TRANSCRIPT_SEGMENTS_MAX, 'google_meet') }, locale);
+      expect(full, locale).toContain('data-testid="transcript-cut"');
+      expect(full, locale).toContain('data-testid="transcript-platform"');
+      // Ludy's own transcription carries neither line, however long.
+      const own = render({ meetingId: 'm1', isRecorder: true, stage: 'draft', segments: from(TRANSCRIPT_SEGMENTS_MAX, 'ludy') }, locale);
+      expect(own, locale).not.toContain('data-testid="transcript-platform"');
+      expect(own, locale).not.toContain('data-testid="transcript-cut"');
+    }
   });
 
   it('says nothing to a reader when no transcript is shared, and tells the recorder the meeting works without one', () => {
