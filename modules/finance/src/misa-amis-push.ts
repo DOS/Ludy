@@ -496,6 +496,7 @@ export const misaAmisPushResolve = defineCommand({
   sideEffect: 'external',
   access: MANAGERS,
   handler: async (ctx, input): Promise<{ resolved: boolean }> => {
+    // The age is the database's own clock, as the guard's: a row the command takes is a row the guard lets through (no second of skew between the two).
     const table = 'crove_finance.misa_amis_push';
     const reasonOf = input.outcome === 'in_amis' ? 'CONFIRMED_IN_AMIS' : 'NOT_IN_AMIS';
     // 1. An `ambiguous` row (a call whose answer was lost) with no answer for more than three days. "In AMIS": `sent` (MISA's result is read as for any sent row); "not in AMIS": `failed`.
@@ -507,7 +508,7 @@ export const misaAmisPushResolve = defineCommand({
       .where('connection_id', '=', input.connectionId)
       .where('org_refid', '=', input.orgRefid)
       .where('state', '=', 'ambiguous')
-      .where('updated_at', '<', new Date(ctx.now.getTime() - PUSH_AMBIGUOUS_REVIEW_DAYS * 24 * 3600 * 1000))
+      .where('updated_at', '<', sql<Date>`pg_catalog.now() - ${`${PUSH_AMBIGUOUS_REVIEW_DAYS} days`}::interval`)
       .executeTakeFirst();
     if (Number(ambiguous.numUpdatedRows) > 0) {
       // The row is `sent` again, so the job is asked to read MISA's result for it (its window runs from this change); no voucher is sent.
@@ -524,7 +525,7 @@ export const misaAmisPushResolve = defineCommand({
       .where('connection_id', '=', input.connectionId)
       .where('org_refid', '=', input.orgRefid)
       .where('state', '=', 'sent')
-      .where('updated_at', '<', new Date(ctx.now.getTime() - PUSH_RESULT_WINDOW_HOURS * 3600 * 1000))
+      .where('updated_at', '<', sql<Date>`pg_catalog.now() - ${`${PUSH_RESULT_WINDOW_HOURS} hours`}::interval`)
       .executeTakeFirst();
     if (Number(sent.numUpdatedRows) === 0) {
       throw new DomainError('MISA_AMIS_PUSH_STATE', 409, 'Chứng từ này chưa thể xác nhận: chỉ chứng từ đã gửi mà MISA chưa phản hồi quá một ngày, hoặc chưa có phản hồi quá ba ngày, mới xác nhận được');
