@@ -7,7 +7,7 @@ import {
   encodePdfSealInput,
   zPdfDetectedTag,
   type PdfSealInput,
-} from '@crove/extract-contract';
+} from '@ludy/extract-contract';
 import { PDFDocument, StandardFonts, degrees } from 'pdf-lib';
 import {
   extractPageDeterministicTags,

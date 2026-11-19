@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { filterIssues } from '@crove/kernel-contract';
+import { filterIssues } from '@ludy/kernel-contract';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider, createTranslator } from 'use-intl';

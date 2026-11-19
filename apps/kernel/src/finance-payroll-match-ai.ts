@@ -7,8 +7,8 @@
 // The line is read, never written: nothing here stores a text or changes the books, and it is not a command. When there is no model, the AI budget is spent, the member's calls are too frequent, the
 // call fails or its text is refused, the answer names the state (`ai`) with no words and the screen shows the reason code alone. An answer is kept for a while by its facts, so reopening the screen does
 // not pay for the same line twice. A failure is named, never quoted: neither the facts nor the model's answer is logged.
-import { AiBudgetExhaustedError, payrollMatchFactsText, type InboxReader, type PayrollMatchFacts } from '@crove/agent';
-import type { BankPayrollCandidate, BankPayrollExplanation } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, payrollMatchFactsText, type InboxReader, type PayrollMatchFacts } from '@ludy/agent';
+import type { BankPayrollCandidate, BankPayrollExplanation } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface PayrollMatchAi {

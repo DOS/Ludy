@@ -19,7 +19,7 @@
 //   the feed and again in a file is one line. A system command: people import files; only feed jobs send lines.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   BANK_PLATFORM_LINES_LIMIT,
   zBankFeedIngest,
@@ -33,10 +33,10 @@ import {
   type BankLines,
   type BankPlatformLines,
   type BankStatementImport,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
-import { Decimal } from '@crove/l10n-vn';
+import { Decimal } from '@ludy/l10n-vn';
 import { chartAccounts } from './accounts.ts';
 import { bankLineStates } from './bank-match.ts';
 import { checkLines, checkStatement, readFeedLines, readStatement, type StatementCheck, type StoredChainLine, type StoredDateAmount, type StoredFacts } from './domain/bank-statement.ts';

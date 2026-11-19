@@ -7,13 +7,13 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { FOLLOWUP_CLOSING_MAX, FOLLOWUP_GREETING_MAX, FOLLOWUP_HINT_MAX, FOLLOWUP_LEAD_MAX, FOLLOWUP_RECIPIENTS_MAX, FOLLOWUP_SUBJECT_MAX, followupAddress, type FollowupDraft, type FollowupWording } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@crove/ui/components/dialog';
-import { Input } from '@crove/ui/components/input';
-import { Textarea } from '@crove/ui/components/textarea';
+import { FOLLOWUP_CLOSING_MAX, FOLLOWUP_GREETING_MAX, FOLLOWUP_HINT_MAX, FOLLOWUP_LEAD_MAX, FOLLOWUP_RECIPIENTS_MAX, FOLLOWUP_SUBJECT_MAX, followupAddress, type FollowupDraft, type FollowupWording } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@ludy/ui/components/dialog';
+import { Input } from '@ludy/ui/components/input';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { ErrorText } from './ui.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 

@@ -1,7 +1,7 @@
 import type { ReactElement, ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@crove/ui/components/dialog';
+import { Button } from '@ludy/ui/components/button';
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@ludy/ui/components/dialog';
 
 // A question asked before an action (#1512), in place of window.confirm: `render` is the button that opens it, Cancel,
 // Escape or the close button leave things as they were, and the confirm button, named for the action, runs `onConfirm`.

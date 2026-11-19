@@ -6,9 +6,9 @@
 // The digest binds an approval to what was shown: SHA-256 over every voucher part's own digest, which is the hash of the part as canonical JSON WITHOUT the AMIS branch (only the worker reads the branch from
 // AMIS, so the preview and the push write the part with a placeholder and the worker with the real one; the rest of the part must be the same).
 import { createHash } from 'node:crypto';
-import { AmisNumber, type AmisVoucher } from '@crove/misa-amis';
-import { accountParents, type MisaAmisKind, type MisaAmisPreviewAsk, type MisaGoodsCode } from '@crove/kernel-contract';
-import type { MisaAmisPushSource } from '@crove/db';
+import { AmisNumber, type AmisVoucher } from '@ludy/misa-amis';
+import { accountParents, type MisaAmisKind, type MisaAmisPreviewAsk, type MisaGoodsCode } from '@ludy/kernel-contract';
+import type { MisaAmisPushSource } from '@ludy/db';
 import {
   cashAmisVouchers,
   purchaseGoodsAmisVouchers,

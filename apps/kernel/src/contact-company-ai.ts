@@ -7,8 +7,8 @@
 // A suggestion is read, never written: nothing here links a person, and it is not a command. When the model is off, the AI budget is spent, the member's calls are
 // too frequent or the call fails, the names keep their own order and the state is named (`ai`), with no error: the panel works as it did. A failure is named, never
 // quoted: neither a name nor the model's answer is logged.
-import { AiBudgetExhaustedError, type InboxReader } from '@crove/agent';
-import { COMPANY_SUGGESTIONS_MAX, type CompanyCandidates, type CompanySuggested } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type InboxReader } from '@ludy/agent';
+import { COMPANY_SUGGESTIONS_MAX, type CompanyCandidates, type CompanySuggested } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface CompanyAi {

@@ -4,7 +4,7 @@ import { createServer, type AddressInfo, type Server, type Socket } from 'node:n
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';
 import { acceptUrl, createInviteMailSender, inviteMail, type InviteMailInput } from '../src/invite-mail.ts';
-import { classifySmtpError, createLogProvider, createSmtpProvider, type MailProvider, type OutboundMail, type SendResult } from '@crove/mail';
+import { classifySmtpError, createLogProvider, createSmtpProvider, type MailProvider, type OutboundMail, type SendResult } from '@ludy/mail';
 import { createMailer, deliver, describeMailError } from '../src/mail.ts';
 
 const TOKEN = 'T0kenT0kenT0kenT0kenT0kenT0kenT0kenT0kenT0k';

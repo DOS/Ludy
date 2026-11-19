@@ -3,8 +3,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useId, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Textarea } from '@crove/ui/components/textarea';
-import { commentParts, mentionLabels, mentionQuery } from '@crove/mod-social/contract';
+import { Textarea } from '@ludy/ui/components/textarea';
+import { commentParts, mentionLabels, mentionQuery } from '@ludy/mod-social/contract';
 import { orpc } from '../lib/api.ts';
 import { fold } from '../lib/palette.ts';
 

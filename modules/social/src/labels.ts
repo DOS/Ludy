@@ -6,9 +6,9 @@
 // its posts' links should carry. Labels without them behave as before.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_LABEL_COLORS, zId } from '@crove/kernel-contract';
-import type { MemberRole, SocialLabelColor } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_LABEL_COLORS, zId } from '@ludy/kernel-contract';
+import type { MemberRole, SocialLabelColor } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import type { Trx } from './variants.ts';
 import { refusePostOutside } from './channel-access.ts';
 import { isCalendarDay, labelUtmTag, type Campaign } from './domain/campaign.ts';

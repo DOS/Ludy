@@ -2,7 +2,7 @@
 // a proposal. The server decides every approval; these only shape the requests and the keys.
 
 import { z } from 'zod';
-import { ADS_PROPOSAL_KIND_PREFIX, EINVOICE_ISSUE_KIND, PROPOSAL_APPROVE_PERMISSION } from '@crove/kernel-contract';
+import { ADS_PROPOSAL_KIND_PREFIX, EINVOICE_ISSUE_KIND, PROPOSAL_APPROVE_PERMISSION } from '@ludy/kernel-contract';
 import { readSearch, type Defined } from './search.ts';
 
 // A request to open the way to spend on an ad platform (ADR-0043 point 1, #2294): the org switch, an account's flag, a cap set

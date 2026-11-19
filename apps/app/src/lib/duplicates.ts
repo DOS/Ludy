@@ -2,8 +2,8 @@
 // The "it already exists" checks of the add dialogs in Settings (#3608): while a person types, the dialog shows the record that
 // the new one would repeat (HubSpot, Attio). The dialog keeps its save button off while one stands (the server refuses the same
 // cases); the server still decides, so a repeat that differs in a way these helpers do not see is refused there with its own reason. Each takes the rows the card already read, so no request is made.
-import { normalizeAccountCode } from '@crove/kernel-contract';
-import { keywordRuleText } from '@crove/l10n-vn';
+import { normalizeAccountCode } from '@ludy/kernel-contract';
+import { keywordRuleText } from '@ludy/l10n-vn';
 
 // What a bank prints between the digit groups is dropped; the module keeps the digits (zBankAccountNumberSet).
 export const digitsOf = (input: string): string => input.replace(/\D/g, '');

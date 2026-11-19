@@ -26,11 +26,11 @@ const tracked = git('ls-files').split('\n').filter(Boolean);
 function registries() {
   const modules = readdirSync(join(ROOT, 'modules'), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
   const script = `
-    import { buildKernelCommands, kernelQueries } from '@crove/kernel';
+    import { buildKernelCommands, kernelQueries } from '@ludy/kernel';
     const modules = ${JSON.stringify(modules)};
     const rows = [['kernel', buildKernelCommands({ inboundDomain: null }).length, kernelQueries({ inboundDomain: null }).length]];
     for (const m of modules) {
-      const pkg = await import('@crove/mod-' + m);
+      const pkg = await import('@ludy/mod-' + m);
       rows.push([m, pkg[m + 'Commands'].length, pkg[m + 'Queries'].length]);
     }
     console.log(JSON.stringify(rows));`;

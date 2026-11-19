@@ -77,7 +77,7 @@ const PLACEHOLDERS: ReadonlyArray<readonly [string, string]> = [
 // largest one that fits the cap is the image, named by its `file_id` (a reference, not an address and not the bot's token). The bytes are fetched by the media job
 // through `getFile` and `https://api.telegram.org/file/bot<token>/<file_path>` [O], a host that is the Bot API's own: the job's guard lists it and nothing else.
 export const TELEGRAM_MEDIA_HOSTS: readonly string[] = Object.freeze([...TELEGRAM_HOSTS]);
-// The cap of a stored image (`CONVERSATION_IMAGE_MAX_BYTES` of @crove/kernel-contract, which the kernel's media test holds this to: this package does not
+// The cap of a stored image (`CONVERSATION_IMAGE_MAX_BYTES` of @ludy/kernel-contract, which the kernel's media test holds this to: this package does not
 // import the contract).
 export const TELEGRAM_PHOTO_MAX_BYTES = 5 * 1024 * 1024;
 // A `file_id` is a base64url string of the bot's own [O: opaque]; the core's reference pattern takes `[A-Za-z0-9._:=-]{1,300}`, of which these are the ones a file id uses.

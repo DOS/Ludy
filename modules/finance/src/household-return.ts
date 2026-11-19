@@ -13,11 +13,11 @@
 // - The Decree 174 VAT cut is not applied to all revenue (#3710): the profile's answer decides. `vatCut` carries the cut by line, `totals.vat` stays the VAT before the cut, and `due` and `overpaid` follow the VAT
 //   payable (VAT less the cut) plus the PIT.
 // Amounts are decimal strings through decimal.js, never JS numbers.
-import type { HouseholdCnkd, HouseholdCnkdLine } from '@crove/kernel-contract';
-import { HOUSEHOLD_TRADES, zHouseholdCnkd, zHouseholdCnkdGet } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import type { HouseholdCnkd, HouseholdCnkdLine } from '@ludy/kernel-contract';
+import { HOUSEHOLD_TRADES, zHouseholdCnkd, zHouseholdCnkdGet } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { pickInForce } from './domain/household-rules.ts';
 import { taxOn } from './domain/household-tax.ts';
 import { householdProfileView } from './household.ts';

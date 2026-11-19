@@ -8,7 +8,7 @@
 // LLM. DOCTYPE and ENTITY declarations are rejected before parsing, so no entity can be declared; the predefined
 // XML entities and character references are decoded, and HTML entity names with them (the parser options say why).
 // It runs only inside a crove-extract parser process (plan §7.6, External-tenant gate T12). The invoice types,
-// money helpers and checks it shares with the worker stay in @crove/l10n-vn, which holds no parser.
+// money helpers and checks it shares with the worker stay in @ludy/l10n-vn, which holds no parser.
 import { XMLParser } from 'fast-xml-parser';
 import {
   lineContribution,
@@ -23,7 +23,7 @@ import {
   type ParsedInvoice,
   type RelatedInvoice,
   type TaxBreakdown,
-} from '@crove/l10n-vn';
+} from '@ludy/l10n-vn';
 import { verifyEInvoiceSignatures } from './einvoice-signature.ts';
 import { shippedTrustStore, type TrustStore } from './einvoice-trust.ts';
 

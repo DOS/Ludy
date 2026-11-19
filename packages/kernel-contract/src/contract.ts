@@ -657,7 +657,7 @@ export const zProposalPolicy = z.object({
 });
 
 // An AI draft from the post's photos (#1191): 1 to AI_DRAFT_IMAGES_MAX of the org's Social images (SOCIAL_PHOTO_TYPES), each
-// of at most AI_IMAGE_MAX_BYTES, as the writer in @crove/agent takes them (DRAFT_IMAGES_MAX, ALT_TEXT_IMAGE_MAX_BYTES).
+// of at most AI_IMAGE_MAX_BYTES, as the writer in @ludy/agent takes them (DRAFT_IMAGES_MAX, ALT_TEXT_IMAGE_MAX_BYTES).
 export const AI_DRAFT_IMAGES_MAX = 4;
 export const AI_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 

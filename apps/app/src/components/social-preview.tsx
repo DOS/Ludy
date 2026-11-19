@@ -2,9 +2,9 @@
 // text cut where the platform cuts it, images in its frame and a link card where it makes one.
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { isProvider, LINK_CARD_PROVIDERS, LINK_PLACEMENT, sentText, type Cover, type LinkCard } from '@crove/mod-social/contract';
+import { isProvider, LINK_CARD_PROVIDERS, LINK_PLACEMENT, sentText, type Cover, type LinkCard } from '@ludy/mod-social/contract';
 import { useFormatter, useTranslations } from 'use-intl';
-import { cn } from '@crove/ui/lib/utils';
+import { cn } from '@ludy/ui/lib/utils';
 import { Thumb, type MediaItem } from './social-media.tsx';
 import { client } from '../lib/api.ts';
 import { previewRule, previewText } from '../lib/social-preview.ts';

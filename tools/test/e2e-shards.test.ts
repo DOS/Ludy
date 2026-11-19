@@ -53,8 +53,8 @@ describe('Playwright shards', () => {
 
   it('runs the specs of tests-ai only in the AI job, on a stack with the fake model, and never in a shard', () => {
     const workflow = readFileSync(`${ROOT}.github/workflows/e2e.yml`, 'utf8');
-    expect(workflow).toContain('pnpm --filter @crove/e2e stack:up:ai');
-    expect(workflow).toContain('pnpm --filter @crove/e2e test:ai');
+    expect(workflow).toContain('pnpm --filter @ludy/e2e stack:up:ai');
+    expect(workflow).toContain('pnpm --filter @ludy/e2e test:ai');
     // The shards' files come from e2e/tests (the default Playwright project's testDir), and the AI specs sit in another directory with a config of their own, so no shard can list them:
     // pinned by the two directories, not by a negative on a list that could never hold them.
     expect(readFileSync(`${ROOT}e2e/playwright.config.ts`, 'utf8')).toContain("testDir: './tests'");

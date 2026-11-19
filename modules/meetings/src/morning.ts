@@ -9,9 +9,9 @@
 //                           keyed by the day ('morning:<day>'), then one mail. The mail is queued only when the in-app notice was written, so the one switch (the notification settings: the kind's mute)
 //                           covers both, and a second dispatch for the same day writes and sends nothing. On a day with no meeting the definer returns nothing: no notice and no mail.
 import { sql } from 'kysely';
-import { createMailMessage, notifyMembers, uploaderEntity } from '@crove/kernel';
-import { MORNING_COUNT_MAX, MORNING_DEFAULT_MINUTE, MORNING_KIND, MORNING_MAIL_SOURCE, MORNING_MAIL_TEMPLATE, zMorningEmpty, zMorningMail, zMorningNotice, zMorningSet, zMorningState, type MorningState } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { createMailMessage, notifyMembers, uploaderEntity } from '@ludy/kernel';
+import { MORNING_COUNT_MAX, MORNING_DEFAULT_MINUTE, MORNING_KIND, MORNING_MAIL_SOURCE, MORNING_MAIL_TEMPLATE, zMorningEmpty, zMorningMail, zMorningNotice, zMorningSet, zMorningState, type MorningState } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { ROLES, userOf } from './transcript.ts';
 
 // The mail's subject, one line, fixed: no title and no count.

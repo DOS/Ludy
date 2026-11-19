@@ -2,8 +2,8 @@
 // What would be sent to MISA AMIS Kế toán, on the API side (#3901, S3a of #3854). It loads the vouchers the MISA SME export of the same kind loads (finance.vouchers.purchases, .sales or .cash, the same range), writes each as
 // the AMIS voucher the push would send (modules/finance misa-amis-build.ts, the push's own path) and lists them with their blockers and the digest a confirmation carries. A read: it writes nothing, calls nothing outside the database, and never sends. The AMIS-side
 // references (the branch, the party codes of get_dictionary) are not read yet (#3885), so a placeholder branch stands in, party codes are not checked, and `checkedAgainstAmis` is false.
-import { amisBatchDigest, amisContextOf, amisTotals, loadAmisEntries, type AmisEntry, type AmisQuery } from '@crove/mod-finance';
-import { MISA_AMIS_PREVIEW_BLOCKERS, MISA_AMIS_PREVIEW_LIMIT, type MisaAmisPreview, type MisaAmisPreviewAsk, type MisaAmisPreviewItem } from '@crove/kernel-contract';
+import { amisBatchDigest, amisContextOf, amisTotals, loadAmisEntries, type AmisEntry, type AmisQuery } from '@ludy/mod-finance';
+import { MISA_AMIS_PREVIEW_BLOCKERS, MISA_AMIS_PREVIEW_LIMIT, type MisaAmisPreview, type MisaAmisPreviewAsk, type MisaAmisPreviewItem } from '@ludy/kernel-contract';
 
 export type MisaAmisPreviewQuery = AmisQuery;
 

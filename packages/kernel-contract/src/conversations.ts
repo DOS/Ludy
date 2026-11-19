@@ -3,7 +3,7 @@
 // connected channel, a comment under a post or a private message, and how the org answers. The kernel owns the store;
 // Social shows the comment threads under its posts and in its comment inbox, Service will show the private messages.
 //
-// A platform's notice is turned by its adapter (@crove/channel) into the events below, which are the only thing the intake
+// A platform's notice is turned by its adapter (@ludy/channel) into the events below, which are the only thing the intake
 // command takes: the org comes from the stored connection, never from an event. Text in an event is tainted external text.
 import { z } from 'zod';
 import { zId, zTaskStatus } from './schemas.ts';
@@ -83,7 +83,7 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
   // reason: Ludy sends no template and no business-initiated message (a paid message the business did not mean to buy).
   whatsapp: { kinds: ['direct'], replyMax: CONVERSATION_WHATSAPP_REPLY_MAX, canHide: false, windowHours: 24 },
   // Telegram bot chats (#3132, plan section 4.2): private chats only (a group is out of v1), up to 4096 characters (TELEGRAM_TEXT_MAX of
-  // @crove/channel) and no reply window: a bot may answer a user who wrote to it at any time. A blocked bot is refused as `permission`.
+  // @ludy/channel) and no reply window: a bot may answer a user who wrote to it at any time. A blocked bot is refused as `permission`.
   telegram: { kinds: ['direct'], replyMax: 4096, canHide: false, windowHours: null },
   // YouTube comments on the business's own channel (#3134, plan docs/plan/conversations-channels.md section 4.5): public comment threads, one per
   // top-level comment, no reply window. YouTube's own comment limit is 10,000 characters [U] and the core's reply is at most CONVERSATION_REPLY_MAX,

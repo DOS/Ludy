@@ -3,7 +3,7 @@
 // or on NOT_EXPORTED with the reason (#3201). EXPORT_TABLES is a hand-kept list, so a table a migration adds would
 // otherwise be left out of the owner's copy of their data without anyone noticing. offboarding.db.test.ts reads the catalog of its
 // migrated database and fails on such a table; org-export-coverage.test.ts checks the reading and the messages on planted catalogs.
-import { EXPORT_TABLES, OWNER_RUN_EXPORT_TABLES } from '@crove/kernel';
+import { EXPORT_TABLES, OWNER_RUN_EXPORT_TABLES } from '@ludy/kernel';
 
 // The schemas the check covers: every crove_* schema with org_id tables. A new schema is a failure until its tables are decided (exported or named below).
 export const COVERED_SCHEMAS: readonly string[] = ['crove_finance', 'crove_kernel', 'crove_crm', 'crove_hr', 'crove_meetings', 'crove_notes', 'crove_social', 'crove_ads', 'crove_projects', 'crove_sign'];

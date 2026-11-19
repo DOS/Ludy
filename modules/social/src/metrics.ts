@@ -4,11 +4,11 @@
 // does not report is absent, never zero.
 import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { AVERAGE_METRIC_NAMES, METRIC_NAMES, POST_METRIC_NAMES, REEL_METRIC_NAMES, STORY_METRIC_NAMES, postTypeOf, type PostType, type Publisher } from '@crove/channel';
-import type { Db } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { AVERAGE_METRIC_NAMES, METRIC_NAMES, POST_METRIC_NAMES, REEL_METRIC_NAMES, STORY_METRIC_NAMES, postTypeOf, type PostType, type Publisher } from '@ludy/channel';
+import type { Db } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CredentialBroker, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import type { Trx } from './variants.ts';
 import { labelsOfPosts } from './labels.ts';
 import { formatOf, whatWorks, type ChannelInsights, type InsightSample } from './domain/insights.ts';

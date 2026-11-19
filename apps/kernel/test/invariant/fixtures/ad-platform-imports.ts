@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { parseAst } from 'vitest/node';
 
 interface AstNode {
@@ -121,37 +119,21 @@ export function collectModuleImports(src: string): ModuleImportRecord[] {
   return records;
 }
 
-/** Resolves the active `@crove/ad-platform` or `@ludy/ad-platform` package name from the workspace manifest. */
-export function resolveAdPlatformPackages(root: string): { activePkg: string; inactivePkg: string } {
-  const pkg = (JSON.parse(readFileSync(join(root, 'packages/ad-platform/package.json'), 'utf8')) as { name: string }).name;
-  if (pkg !== '@crove/ad-platform' && pkg !== '@ludy/ad-platform') {
-    throw new Error(`Unexpected ad-platform package name: ${pkg}`);
-  }
-  return {
-    activePkg: pkg,
-    inactivePkg: pkg === '@crove/ad-platform' ? '@ludy/ad-platform' : '@crove/ad-platform',
-  };
-}
-
 /** Returns AST-verified import records matching a workspace package root or any subpath. */
 export function pkgImportMatches(src: string, pkgName: string, records = collectModuleImports(src)): ModuleImportRecord[] {
   return records.filter((record) => matchesPackage(record.specifier, pkgName));
 }
 
-/** Extracts named imports from the exact active ad-platform package root, rejecting inactive-scope or subpath imports. */
-export function activeAdPlatformNamedImports(
+/** Extracts named imports from an exact package root, rejecting any subpath import. */
+export function exactPkgNamedImports(
   src: string,
-  activePkg: string,
-  inactivePkg: string,
+  pkgName: string,
 ): { names: string[]; valueNames: string[] } {
   const records = collectModuleImports(src);
-  if (pkgImportMatches(src, inactivePkg, records).length > 0) {
-    throw new Error(`Unexpected mixed ad-platform import from ${inactivePkg}`);
-  }
-  const matched = pkgImportMatches(src, activePkg, records);
-  const subpath = matched.find((record) => record.specifier !== activePkg);
+  const matched = pkgImportMatches(src, pkgName, records);
+  const subpath = matched.find((record) => record.specifier !== pkgName);
   if (subpath) {
-    throw new Error(`Unexpected ad-platform subpath import: ${subpath.specifier}`);
+    throw new Error(`Unexpected subpath import from ${subpath.specifier}`);
   }
   return {
     names: matched.flatMap((record) => record.names),

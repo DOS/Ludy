@@ -2,7 +2,7 @@
 // Unit tests for modules/projects/src/today.ts (#2596): deterministic projection rules, deduplication,
 // Vietnam calendar day boundaries, vacant vs unassigned seat semantics, and TODAY_ITEMS_MAX capping.
 import { describe, expect, it } from 'vitest';
-import { TODAY_ITEMS_MAX, todayCoworkerKey, zTodayItems } from '@crove/kernel-contract';
+import { TODAY_ITEMS_MAX, todayCoworkerKey, zTodayItems } from '@ludy/kernel-contract';
 import { projectsTodayItemsOf, STUCK_WAITING_DAYS, type ProjectTodayRow } from '../src/today.ts';
 
 const ME = '0190c4a1-0000-7000-8000-000000000001';

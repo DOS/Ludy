@@ -5,7 +5,7 @@
 import { useQuery } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { DataTable, ErrorText } from './ui.tsx';

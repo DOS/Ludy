@@ -390,19 +390,19 @@ importers:
 
   apps/app:
     dependencies:
-      '@crove/kernel-contract':
+      '@ludy/kernel-contract':
         specifier: workspace:*
         version: link:../../packages/kernel-contract
-      '@crove/l10n-vn':
+      '@ludy/l10n-vn':
         specifier: workspace:*
         version: link:../../packages/l10n-vn
-      '@crove/meeting-recorder':
+      '@ludy/meeting-recorder':
         specifier: workspace:*
         version: link:../../packages/meeting-recorder
-      '@crove/mod-social':
+      '@ludy/mod-social':
         specifier: workspace:*
         version: link:../../modules/social
-      '@crove/ui':
+      '@ludy/ui':
         specifier: workspace:*
         version: link:../../packages/ui
       '@orpc/client':
@@ -460,11 +460,11 @@ importers:
 
   apps/extension:
     dependencies:
-      '@crove/meeting-recorder':
+      '@ludy/meeting-recorder':
         specifier: workspace:*
         version: link:../../packages/meeting-recorder
     devDependencies:
-      '@crove/kernel-contract':
+      '@ludy/kernel-contract':
         specifier: workspace:*
         version: link:../../packages/kernel-contract
       '@playwright/test':
@@ -473,15 +473,15 @@ importers:
 
   apps/extract:
     dependencies:
-      '@crove/extract-contract':
-        specifier: workspace:*
-        version: link:../../packages/extract-contract
-      '@crove/l10n-vn':
-        specifier: workspace:*
-        version: link:../../packages/l10n-vn
       '@hono/node-server':
         specifier: 'catalog:'
         version: 2.1.5(hono@4.13.13)
+      '@ludy/extract-contract':
+        specifier: workspace:*
+        version: link:../../packages/extract-contract
+      '@ludy/l10n-vn':
+        specifier: workspace:*
+        version: link:../../packages/l10n-vn
       '@pdf-lib/fontkit':
         specifier: 'catalog:'
         version: 1.1.1
@@ -515,78 +515,78 @@ importers:
       '@aws-sdk/client-s3':
         specifier: 'catalog:'
         version: 3.1151.0
-      '@crove/ad-platform':
-        specifier: workspace:*
-        version: link:../../packages/ad-platform
-      '@crove/agent':
-        specifier: workspace:*
-        version: link:../../packages/agent
-      '@crove/bank-feed':
-        specifier: workspace:*
-        version: link:../../packages/bank-feed
-      '@crove/channel':
-        specifier: workspace:*
-        version: link:../../packages/channel
-      '@crove/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@crove/einvoice':
-        specifier: workspace:*
-        version: link:../../packages/einvoice
-      '@crove/extract-contract':
-        specifier: workspace:*
-        version: link:../../packages/extract-contract
-      '@crove/kernel':
-        specifier: workspace:*
-        version: link:../../packages/kernel
-      '@crove/kernel-contract':
-        specifier: workspace:*
-        version: link:../../packages/kernel-contract
-      '@crove/kernel-runtime':
-        specifier: workspace:*
-        version: link:../../packages/kernel-runtime
-      '@crove/l10n-vn':
-        specifier: workspace:*
-        version: link:../../packages/l10n-vn
-      '@crove/mail':
-        specifier: workspace:*
-        version: link:../../packages/mail
-      '@crove/media-contract':
-        specifier: workspace:*
-        version: link:../../packages/media-contract
-      '@crove/misa-amis':
-        specifier: workspace:*
-        version: link:../../packages/misa-amis
-      '@crove/mod-ads':
-        specifier: workspace:*
-        version: link:../../modules/ads
-      '@crove/mod-crm':
-        specifier: workspace:*
-        version: link:../../modules/crm
-      '@crove/mod-finance':
-        specifier: workspace:*
-        version: link:../../modules/finance
-      '@crove/mod-hr':
-        specifier: workspace:*
-        version: link:../../modules/hr
-      '@crove/mod-meetings':
-        specifier: workspace:*
-        version: link:../../modules/meetings
-      '@crove/mod-notes':
-        specifier: workspace:*
-        version: link:../../modules/notes
-      '@crove/mod-projects':
-        specifier: workspace:*
-        version: link:../../modules/projects
-      '@crove/mod-sign':
-        specifier: workspace:*
-        version: link:../../modules/sign
-      '@crove/mod-social':
-        specifier: workspace:*
-        version: link:../../modules/social
       '@hono/node-server':
         specifier: 'catalog:'
         version: 2.1.5(hono@4.13.13)
+      '@ludy/ad-platform':
+        specifier: workspace:*
+        version: link:../../packages/ad-platform
+      '@ludy/agent':
+        specifier: workspace:*
+        version: link:../../packages/agent
+      '@ludy/bank-feed':
+        specifier: workspace:*
+        version: link:../../packages/bank-feed
+      '@ludy/channel':
+        specifier: workspace:*
+        version: link:../../packages/channel
+      '@ludy/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@ludy/einvoice':
+        specifier: workspace:*
+        version: link:../../packages/einvoice
+      '@ludy/extract-contract':
+        specifier: workspace:*
+        version: link:../../packages/extract-contract
+      '@ludy/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel
+      '@ludy/kernel-contract':
+        specifier: workspace:*
+        version: link:../../packages/kernel-contract
+      '@ludy/kernel-runtime':
+        specifier: workspace:*
+        version: link:../../packages/kernel-runtime
+      '@ludy/l10n-vn':
+        specifier: workspace:*
+        version: link:../../packages/l10n-vn
+      '@ludy/mail':
+        specifier: workspace:*
+        version: link:../../packages/mail
+      '@ludy/media-contract':
+        specifier: workspace:*
+        version: link:../../packages/media-contract
+      '@ludy/misa-amis':
+        specifier: workspace:*
+        version: link:../../packages/misa-amis
+      '@ludy/mod-ads':
+        specifier: workspace:*
+        version: link:../../modules/ads
+      '@ludy/mod-crm':
+        specifier: workspace:*
+        version: link:../../modules/crm
+      '@ludy/mod-finance':
+        specifier: workspace:*
+        version: link:../../modules/finance
+      '@ludy/mod-hr':
+        specifier: workspace:*
+        version: link:../../modules/hr
+      '@ludy/mod-meetings':
+        specifier: workspace:*
+        version: link:../../modules/meetings
+      '@ludy/mod-notes':
+        specifier: workspace:*
+        version: link:../../modules/notes
+      '@ludy/mod-projects':
+        specifier: workspace:*
+        version: link:../../modules/projects
+      '@ludy/mod-sign':
+        specifier: workspace:*
+        version: link:../../modules/sign
+      '@ludy/mod-social':
+        specifier: workspace:*
+        version: link:../../modules/social
       '@orpc/server':
         specifier: 'catalog:'
         version: 1.15.6(@opentelemetry/api@1.9.1)
@@ -612,7 +612,7 @@ importers:
         specifier: 'catalog:'
         version: 4.6.7
     devDependencies:
-      '@crove/extract':
+      '@ludy/extract':
         specifier: workspace:*
         version: link:../extract
       '@modelcontextprotocol/sdk':
@@ -630,12 +630,12 @@ importers:
 
   apps/media:
     dependencies:
-      '@crove/media-contract':
-        specifier: workspace:*
-        version: link:../../packages/media-contract
       '@hono/node-server':
         specifier: 'catalog:'
         version: 2.1.5(hono@4.13.13)
+      '@ludy/media-contract':
+        specifier: workspace:*
+        version: link:../../packages/media-contract
       hono:
         specifier: 'catalog:'
         version: 4.13.13
@@ -706,13 +706,13 @@ importers:
 
   modules/ads:
     dependencies:
-      '@crove/db':
+      '@ludy/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@crove/kernel-contract':
+      '@ludy/kernel-contract':
         specifier: workspace:*
         version: link:../../packages/kernel-contract
-      '@crove/kernel-runtime':
+      '@ludy/kernel-runtime':
         specifier: workspace:*
         version: link:../../packages/kernel-runtime
       decimal.js:
@@ -727,19 +727,19 @@ importers:
 
   modules/crm:
     dependencies:
-      '@crove/db':
+      '@ludy/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@crove/kernel':
+      '@ludy/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
-      '@crove/kernel-contract':
+      '@ludy/kernel-contract':
         specifier: workspace:*
         version: link:../../packages/kernel-contract
-      '@crove/kernel-runtime':
+      '@ludy/kernel-runtime':
         specifier: workspace:*
         version: link:../../packages/kernel-runtime
-      '@crove/l10n-vn':
+      '@ludy/l10n-vn':
         specifier: workspace:*
         version: link:../../packages/l10n-vn
       kysely:
@@ -751,31 +751,31 @@ importers:
 
   modules/finance:
     dependencies:
-      '@crove/agent':
+      '@ludy/agent':
         specifier: workspace:*
         version: link:../../packages/agent
-      '@crove/db':
+      '@ludy/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@crove/einvoice':
+      '@ludy/einvoice':
         specifier: workspace:*
         version: link:../../packages/einvoice
-      '@crove/extract-contract':
+      '@ludy/extract-contract':
         specifier: workspace:*
         version: link:../../packages/extract-contract
-      '@crove/kernel':
+      '@ludy/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
-      '@crove/kernel-contract':
+      '@ludy/kernel-contract':
         specifier: workspace:*
         version: link:../../packages/kernel-contract
-      '@crove/kernel-runtime':
+      '@ludy/kernel-runtime':
         specifier: workspace:*
         version: link:../../packages/kernel-runtime
-      '@crove/l10n-vn':
+      '@ludy/l10n-vn':
         specifier: workspace:*
         version: link:../../packages/l10n-vn
-      '@crove/misa-amis':
+      '@ludy/misa-amis':
         specifier: workspace:*
         version: link:../../packages/misa-amis
       exceljs:
@@ -794,19 +794,19 @@ importers:
 
   modules/hr:
     dependencies:
-      '@crove/db':
+      '@ludy/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@crove/kernel':
+      '@ludy/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
-      '@crove/kernel-contract':
+      '@ludy/kernel-contract':
         specifier: workspace:*
         version: link:../../packages/kernel-contract
-      '@crove/kernel-runtime':
+      '@ludy/kernel-runtime':
         specifier: workspace:*
         version: link:../../packages/kernel-runtime
-      '@crove/l10n-vn':
+      '@ludy/l10n-vn':
         specifier: workspace:*
         version: link:../../packages/l10n-vn
       exceljs:
@@ -818,16 +818,16 @@ importers:
 
   modules/meetings:
     dependencies:
-      '@crove/db':
+      '@ludy/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@crove/kernel':
+      '@ludy/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
-      '@crove/kernel-contract':
+      '@ludy/kernel-contract':
         specifier: workspace:*
         version: link:../../packages/kernel-contract
-      '@crove/kernel-runtime':
+      '@ludy/kernel-runtime':
         specifier: workspace:*
         version: link:../../packages/kernel-runtime
       kysely:
@@ -836,16 +836,16 @@ importers:
 
   modules/notes:
     dependencies:
-      '@crove/db':
+      '@ludy/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@crove/kernel':
+      '@ludy/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
-      '@crove/kernel-contract':
+      '@ludy/kernel-contract':
         specifier: workspace:*
         version: link:../../packages/kernel-contract
-      '@crove/kernel-runtime':
+      '@ludy/kernel-runtime':
         specifier: workspace:*
         version: link:../../packages/kernel-runtime
       kysely:
@@ -857,16 +857,16 @@ importers:
 
   modules/projects:
     dependencies:
-      '@crove/db':
+      '@ludy/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@crove/kernel':
+      '@ludy/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
-      '@crove/kernel-contract':
+      '@ludy/kernel-contract':
         specifier: workspace:*
         version: link:../../packages/kernel-contract
-      '@crove/kernel-runtime':
+      '@ludy/kernel-runtime':
         specifier: workspace:*
         version: link:../../packages/kernel-runtime
       kysely:
@@ -878,19 +878,19 @@ importers:
 
   modules/sign:
     dependencies:
-      '@crove/db':
+      '@ludy/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@crove/extract-contract':
+      '@ludy/extract-contract':
         specifier: workspace:*
         version: link:../../packages/extract-contract
-      '@crove/kernel':
+      '@ludy/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
-      '@crove/kernel-contract':
+      '@ludy/kernel-contract':
         specifier: workspace:*
         version: link:../../packages/kernel-contract
-      '@crove/kernel-runtime':
+      '@ludy/kernel-runtime':
         specifier: workspace:*
         version: link:../../packages/kernel-runtime
       kysely:
@@ -902,19 +902,19 @@ importers:
 
   modules/social:
     dependencies:
-      '@crove/channel':
+      '@ludy/channel':
         specifier: workspace:*
         version: link:../../packages/channel
-      '@crove/db':
+      '@ludy/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@crove/kernel':
+      '@ludy/kernel':
         specifier: workspace:*
         version: link:../../packages/kernel
-      '@crove/kernel-contract':
+      '@ludy/kernel-contract':
         specifier: workspace:*
         version: link:../../packages/kernel-contract
-      '@crove/kernel-runtime':
+      '@ludy/kernel-runtime':
         specifier: workspace:*
         version: link:../../packages/kernel-runtime
       kysely:
@@ -930,7 +930,7 @@ importers:
 
   packages/ad-platform:
     dependencies:
-      '@crove/channel':
+      '@ludy/channel':
         specifier: workspace:*
         version: link:../channel
 
@@ -939,7 +939,7 @@ importers:
       '@ai-sdk/openai-compatible':
         specifier: 'catalog:'
         version: 3.0.68(zod@4.6.7)
-      '@crove/l10n-vn':
+      '@ludy/l10n-vn':
         specifier: workspace:*
         version: link:../l10n-vn
       ai:
@@ -949,13 +949,13 @@ importers:
         specifier: 'catalog:'
         version: 4.6.7
     devDependencies:
-      '@crove/extract':
+      '@ludy/extract':
         specifier: workspace:*
         version: link:../../apps/extract
-      '@crove/extract-contract':
+      '@ludy/extract-contract':
         specifier: workspace:*
         version: link:../extract-contract
-      '@crove/media':
+      '@ludy/media':
         specifier: workspace:*
         version: link:../../apps/media
 
@@ -986,13 +986,13 @@ importers:
 
   packages/kernel:
     dependencies:
-      '@crove/db':
+      '@ludy/db':
         specifier: workspace:*
         version: link:../db
-      '@crove/kernel-contract':
+      '@ludy/kernel-contract':
         specifier: workspace:*
         version: link:../kernel-contract
-      '@crove/kernel-runtime':
+      '@ludy/kernel-runtime':
         specifier: workspace:*
         version: link:../kernel-runtime
       kysely:
@@ -1022,7 +1022,7 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: 'catalog:'
         version: 3.1151.0
-      '@crove/db':
+      '@ludy/db':
         specifier: workspace:*
         version: link:../db
       kysely:

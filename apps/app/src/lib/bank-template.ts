@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The form of a saved bank bulk-salary template (#2893): the six columns in the bank's order with their headers, and the payment's content text. No browser or API imports, so it is unit tested.
 // The rules equal the contract's (zHrBankLayout) and the table's check: each column once, a header of 1 to 60 characters, a content of 1 to 140 characters whose only brace form is {month}.
-import { HR_BANK_CONTENT_MAX, HR_BANK_HEADER_MAX, HR_BANK_NAME_MAX, zHrBankLayout, type HrBankColumn, type HrBankLayout } from '@crove/kernel-contract';
+import { HR_BANK_CONTENT_MAX, HR_BANK_HEADER_MAX, HR_BANK_NAME_MAX, zHrBankLayout, type HrBankColumn, type HrBankLayout } from '@ludy/kernel-contract';
 
 export interface TemplateForm {
   name: string;

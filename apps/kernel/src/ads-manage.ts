@@ -15,9 +15,9 @@
 // family has overtaken the change and its last call is old enough, the job reads it through the same view and the same token, and record settles it as applied (the object shows the
 // change) or failed (it is as it was), or leaves it unclear when the read cannot be made. No call is made and no ledger row is begun: it never changes what the platform runs.
 // The secret lives in one function's scope and is never logged, never put in an error, never sent to a command.
-import { AdPlatformError, type AdManager, type ManagedRead } from '@crove/ad-platform';
-import { sameAmount, sameInstant, type ManageBegin, type ManageRecorded, type ManageResult } from '@crove/mod-ads';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { AdPlatformError, type AdManager, type ManagedRead } from '@ludy/ad-platform';
+import { sameAmount, sameInstant, type ManageBegin, type ManageRecorded, type ManageResult } from '@ludy/mod-ads';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { recordAfterCall } from './record-after-call.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'ads.manage' };

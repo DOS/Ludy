@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The pure part of the Meetings MCP search (#4030): folding, bounding the typed words, matching a line, and cutting the snippet.
 import { describe, expect, it } from 'vitest';
-import { MCP_SEARCH_WORDS_MAX, MCP_SNIPPET_MAX } from '@crove/kernel-contract';
+import { MCP_SEARCH_WORDS_MAX, MCP_SNIPPET_MAX } from '@ludy/kernel-contract';
 import { foldQuery, matchLine, snippetAround, tokenize } from '../src/mcp-search.ts';
 
 describe('tokenize', () => {

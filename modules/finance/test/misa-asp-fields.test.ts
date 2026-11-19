@@ -5,8 +5,8 @@
 // names only, read from the first-party document V1.0.0 on 2026-11-19 (fixtures/asp-voucher-fields.json).
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { AMIS_VOUCHER_TYPES, toJsonText } from '@crove/misa-amis';
-import { accountParents } from '@crove/kernel-contract';
+import { AMIS_VOUCHER_TYPES, toJsonText } from '@ludy/misa-amis';
+import { accountParents } from '@ludy/kernel-contract';
 import { cashAmisVouchers, purchaseGoodsAmisVouchers, purchaseServiceAmisVouchers, salesAmisVouchers, type AmisContext, type AmisMapping } from '../src/misa-amis-vouchers.ts';
 import type { CashVoucher, PurchaseVoucher, SalesVoucher } from '../src/misa.ts';
 

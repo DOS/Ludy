@@ -5,7 +5,7 @@
 // has the same number, offers that contact instead of creating a second. This is a pre-check over a read query on the client: it
 // adds no command, and two people adding the same number at once can still make two contacts, which the existing duplicate
 // hints then flag. No browser or API imports, so it is unit tested.
-import { phoneKey, type Contact, type FilterAst } from '@crove/kernel-contract';
+import { phoneKey, type Contact, type FilterAst } from '@ludy/kernel-contract';
 
 // What the pre-check needs of a contact.
 export type PhoneHit = Pick<Contact, 'id' | 'name' | 'kind' | 'taxCode' | 'phone'>;

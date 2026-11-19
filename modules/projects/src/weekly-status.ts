@@ -4,7 +4,7 @@
 // crove_kernel.task_comment. Never reads crove_notes and never writes or persists anything.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   PROJECT_WEEKLY_STATUS_BUCKET_LIMIT,
   PROJECT_WEEKLY_STATUS_MAIL_SOURCE,
@@ -20,8 +20,8 @@ import {
   type ProjectWeeklyStatusSendMailResult,
   type ProjectWeeklyStatusTask,
   type ProjectWeeklyStatusTasks,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { z } from 'zod';
 import { READERS, loadProject, userOf } from './projects.ts';
 

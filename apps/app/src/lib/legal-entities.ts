@@ -1,6 +1,6 @@
 // Helpers for the legal entities card in Settings (issue #1278). The server enforces every rule; these only keep the
 // form from offering what cannot succeed.
-import type { LegalEntity } from '@crove/kernel-contract';
+import type { LegalEntity } from '@ludy/kernel-contract';
 
 // The entities `self` may be placed under: every entity but itself and those below it (a parent there would form a
 // cycle, which the server refuses). For a new entity (self null), every entity.

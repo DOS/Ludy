@@ -1,8 +1,8 @@
 // Team chat alerts (#863): which outbox events alert and as which kind, and the lists the database, the module and
 // the API contract share.
 import { describe, expect, it } from 'vitest';
-import { SOCIAL_CHAT_ALERT_KINDS as STORED_KINDS, SOCIAL_CHAT_ALERT_TARGETS as STORED_TARGETS } from '@crove/db';
-import { SOCIAL_CHAT_ALERT_KINDS as SENT_KINDS, SOCIAL_CHAT_ALERT_TARGETS as SENT_TARGETS } from '@crove/kernel-contract';
+import { SOCIAL_CHAT_ALERT_KINDS as STORED_KINDS, SOCIAL_CHAT_ALERT_TARGETS as STORED_TARGETS } from '@ludy/db';
+import { SOCIAL_CHAT_ALERT_KINDS as SENT_KINDS, SOCIAL_CHAT_ALERT_TARGETS as SENT_TARGETS } from '@ludy/kernel-contract';
 import { CHAT_ALERT_EVENTS, CHAT_ALERT_KINDS, CHAT_ALERT_TEST_CODES, CHAT_ALERTING_EVENTS, chatAlertKindOf, NOTIFYING_EVENTS, zChatAlertKinds } from '../src/index.ts';
 
 describe('team chat alert kinds (#863)', () => {

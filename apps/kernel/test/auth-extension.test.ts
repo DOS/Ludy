@@ -2,7 +2,7 @@
 // The extension token's credential format, its route list and the edge's scope check (#2582, ADR-0047 point 10).
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { DomainError } from '@crove/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 import {
   EXTENSION_ROUTES,
   EXTENSION_TOKEN_PREFIX,

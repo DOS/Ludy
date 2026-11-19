@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Token helpers, canonical certificate.json builder, and @crove/extract-contract pdf_seal payload encoder (#3323).
+// Token helpers, canonical certificate.json builder, and @ludy/extract-contract pdf_seal payload encoder (#3323).
 // Never imports a PDF parser directly; all PDF parsing and sealing happens in crove-extract.
 import { randomBytes } from 'node:crypto';
-import type { SignDeliveryMode, SignFieldType, SignSignatureKind } from '@crove/db';
+import type { SignDeliveryMode, SignFieldType, SignSignatureKind } from '@ludy/db';
 import {
   EXTRACT_LIMITS,
   encodePdfSealInput,
@@ -10,7 +10,7 @@ import {
   type PdfSealCertificateSigner,
   type PdfSealField,
   type PdfSealOtpStatus,
-} from '@crove/extract-contract';
+} from '@ludy/extract-contract';
 import { canonicalJson, sha256Hex } from './events.ts';
 
 export interface SignFieldForSeal {
@@ -140,7 +140,7 @@ export function buildPdfSealFields(pageCount: number, rows: readonly SignFieldFo
         if (!f.signature_png_base64 && f.value_text === null) {
           throw new Error(`Initials field ${f.id} requires image or text before sealing`);
         }
-        // crove_sign stores 'initials'; @crove/extract-contract names the pdf_seal variant 'initial'.
+        // crove_sign stores 'initials'; @ludy/extract-contract names the pdf_seal variant 'initial'.
         out.push({
           type: 'initial',
           page: f.page_number,

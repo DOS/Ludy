@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { zMarketplacePlatform } from './marketplace.ts';
 import { zId } from './schemas.ts';
 
-// What a connection test answers and how a poll ended: states, never the platform's own text. The same lists the port, the database's CHECKs and @crove/db keep.
+// What a connection test answers and how a poll ended: states, never the platform's own text. The same lists the port, the database's CHECKs and @ludy/db keep.
 export const MARKETPLACE_CONNECTION_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable'] as const;
 export const MARKETPLACE_POLL_STATE_KEYS = ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const;
 export const zMarketplaceConnectionState = z.enum(MARKETPLACE_CONNECTION_STATES);

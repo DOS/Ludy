@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The MISA adapter's transport (#2503, ADR-0044 point 6): every call goes through the egress guard (public addresses only, the connection pinned to the checked address, one
 // deadline, a byte limit, no redirect followed), to https and to the adapter's declared hosts only. A call to anything else is refused before a socket is opened.
-import { EInvoiceProviderError, MISA_HOSTS, type MisaRequest, type MisaResponse, type MisaTransport } from '@crove/einvoice';
-import { EgressError, guardedRequest } from '@crove/kernel-runtime';
+import { EInvoiceProviderError, MISA_HOSTS, type MisaRequest, type MisaResponse, type MisaTransport } from '@ludy/einvoice';
+import { EgressError, guardedRequest } from '@ludy/kernel-runtime';
 
 // Publishing signs on the provider's HSM, so it may take a while; the answers (an XML, a PDF in base64) stay small.
 const TIMEOUT_MS = 30_000;

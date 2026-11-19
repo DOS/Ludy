@@ -10,9 +10,9 @@
 import { Decimal } from 'decimal.js';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { zAdsCampaignDraftRecord, zAdsCampaignRequest, zId, type AdsCampaignDraftSource, type AdsCampaignPlanDraft, type AdsCampaignRequestAsked, type AdsCampaignRequestView } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zAdsCampaignDraftRecord, zAdsCampaignRequest, zId, type AdsCampaignDraftSource, type AdsCampaignPlanDraft, type AdsCampaignRequestAsked, type AdsCampaignRequestView } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { accountOf, columnsOf, contextBase } from './campaign-draft.ts';
 import { flightDays, maxSpendOf } from './campaign-plan.ts';
 import { addDays, currencyDecimals, todayIn } from './domain.ts';

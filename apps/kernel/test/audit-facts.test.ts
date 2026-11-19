@@ -25,13 +25,13 @@
 // bulk-edit `audit(ctx, result, facts)`, where a call whose facts are not written out is a finding) or as a fact's value
 // (`done(reason)`); a helper with no call in its file is a finding. Any other destructured name is checked by its name
 // only, and the db tests (audit-facts.db.test.ts and each command's own) check what the rows hold.
-// auditValue (@crove/kernel-contract) replaces a classified value with a marker naming its class. Facts whose key or value
+// auditValue (@ludy/kernel-contract) replaces a classified value with a marker naming its class. Facts whose key or value
 // names a classified column but hold internal data (an account's name, a command's name) are listed below per file,
 // each as the exact fact key and value it covers, with its reason; an entry covers nothing else in its file (#1632).
 import { readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { auditValue, columns, type DataClass } from '@crove/kernel-contract';
+import { auditValue, columns, type DataClass } from '@ludy/kernel-contract';
 import {
   BUILT,
   COPY_OF,

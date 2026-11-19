@@ -1,6 +1,6 @@
 import { Outlet, createRootRoute, createRoute, createRouter, notFound, redirect, type ErrorComponentProps } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import { ScreenTitle } from './components/ui.tsx';
 import { errorMessage, getCurrentOrg, isUnauthenticated, orpc, queryClient, setCurrentOrg } from './lib/api.ts';
 import { accessToken, auth, getConfig, needsSecondFactor, needsSecondFactorNow } from './lib/auth.ts';

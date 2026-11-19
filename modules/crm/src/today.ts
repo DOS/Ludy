@@ -9,10 +9,10 @@
 // Nothing a person typed goes into an item: no deal title, no contact's name, no event type's title, no visitor's words. A title is a message key with
 // numbers (days, a clock time), and the screen where the item is acted on is `href`, an in-app path relative to the org's screens (MODULE_SCREENS.crm).
 // The amount is the deal's, a decimal string in VND.
-import { vietnamToday, zTodayItems, type TodayItem } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+import { vietnamToday, zTodayItems, type TodayItem } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { z } from 'zod';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { bookingsOfDay } from './bookings.ts';
 import { countNextSteps, loadNextSteps } from './next-steps.ts';
 

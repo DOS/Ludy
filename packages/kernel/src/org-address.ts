@@ -5,8 +5,8 @@
 // one line: runs of whitespace (line breaks included) become one space; other control characters are refused, as the
 // column's CHECK constraint refuses them.
 import { z } from 'zod';
-import { auditValue } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { auditValue } from '@ludy/kernel-contract';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
 
 const TENANT = kernelManifest.tables.crove_kernel.tenant;

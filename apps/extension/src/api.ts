@@ -7,7 +7,7 @@ import { isLocalhost, ludyUrl } from './ludy-address.ts';
 import type { Me } from './features.ts';
 import { readAgendaNext, type AgendaNext } from './agenda.ts';
 import type { ConsentMethod } from './consent.ts';
-import type { RecordingStopReason } from '@crove/meeting-recorder';
+import type { RecordingStopReason } from '@ludy/meeting-recorder';
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 

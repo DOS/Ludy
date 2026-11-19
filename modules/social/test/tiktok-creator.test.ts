@@ -1,7 +1,7 @@
 // A TikTok account's creator options (#1497) as the composer reads them from the channel option cache: the adapter's
 // list (tiktokCreatorOptions) read back by the contract's tiktokCreatorOf.
 import { describe, expect, it } from 'vitest';
-import { tiktokCreatorOptions } from '@crove/channel';
+import { tiktokCreatorOptions } from '@ludy/channel';
 import { tiktokCreatorOf } from '../src/contract.ts';
 
 describe('tiktokCreatorOf', () => {

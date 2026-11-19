@@ -1,9 +1,9 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { voucherCode, zId, zLocalDate, type DocumentDirection, type VoucherType } from '@crove/kernel-contract';
-import type { CorrectionKind, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { RECEIVABLE_ACCOUNT, VAT_OUTPUT, money } from '@crove/l10n-vn';
+import { voucherCode, zId, zLocalDate, type DocumentDirection, type VoucherType } from '@ludy/kernel-contract';
+import type { CorrectionKind, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { RECEIVABLE_ACCOUNT, VAT_OUTPUT, money } from '@ludy/l10n-vn';
 import { chartAccounts, type OrgChartAccount } from './accounts.ts';
 import { OPEN_REVERSAL_STATUSES, REVERSAL_KIND } from './reversal.ts';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';

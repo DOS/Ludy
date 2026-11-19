@@ -8,11 +8,11 @@
 // kernel.channel.credential refuses once the member who connected the account may no longer use it, or the connection
 // is no longer active: the sync then marks the connection expired, so the daily sweep skips it and an owner or admin
 // connects it again, rather than failing every day.
-import type { BankFeedProvider } from '@crove/bank-feed';
-import { BANK_FEED_MAX_ACCOUNTS } from '@crove/kernel-contract';
+import type { BankFeedProvider } from '@ludy/bank-feed';
+import { BANK_FEED_MAX_ACCOUNTS } from '@ludy/kernel-contract';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.bank_feed' };
 // Pages one sync pulls per account at most; the next sync goes on from the cursor.

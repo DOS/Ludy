@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The facts the Meetings screens read from a platform recording (C1, #3173): what blocks an import, how often to look again, the words of a failure, what is claimed and when the dialog may submit.
 import { describe, expect, it } from 'vitest';
-import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_VIDEO_MAX_BYTES, TRANSCRIPT_SEGMENTS_MAX, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
-import { IMPORT_NOTICE } from '@crove/meeting-recorder';
+import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_VIDEO_MAX_BYTES, TRANSCRIPT_SEGMENTS_MAX, type MeetingPlatformRecordingView } from '@ludy/kernel-contract';
+import { IMPORT_NOTICE } from '@ludy/meeting-recorder';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { IMPORT_MAX_SECONDS, POLL_BUSY_MS, POLL_IDLE_MS, canRetry, canSubmitImport, errorKey, importBlock, isBenignClaimRefusal, isInFlight, isTranscriptImport, lengthParts, platformTranscript, pollMs, rowsToClaim } from '../src/lib/meeting-platform.ts';

@@ -12,9 +12,9 @@
 // the targeting, the landing pages, who in the org runs the campaign, the boosts' and campaign requests' drafts, the caps' history, anything an ad account's connection holds, or a customer's data.
 // The reads write nothing, call no model and move no money; Row-level security and the `org_id` filters keep other orgs out.
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { plainLine, zId, zLocalDate, type AdsFlag, type AdsSummary, type TodayItem } from '@crove/kernel-contract';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { plainLine, zId, zLocalDate, type AdsFlag, type AdsSummary, type TodayItem } from '@ludy/kernel-contract';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { loadSpendSummary } from './summary.ts';
 import { loadFlags } from './spend-flags.ts';
 import { todayItemsOf } from './today.ts';

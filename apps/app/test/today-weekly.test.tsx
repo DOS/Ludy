@@ -7,7 +7,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TodayWeekly as Weekly } from '@crove/kernel-contract';
+import type { TodayWeekly as Weekly } from '@ludy/kernel-contract';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { catalog, setActiveLocale } from '../src/i18n/runtime.ts';
 

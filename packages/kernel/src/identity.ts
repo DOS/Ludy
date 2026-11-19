@@ -1,8 +1,8 @@
 // Org-less identity operations: sign-in bookkeeping, listing orgs, creating an org.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { Db, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type Runtime, type UserActor } from '@crove/kernel-runtime';
+import type { Db, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 
 export interface VerifiedIdentity {
   issuer: string;

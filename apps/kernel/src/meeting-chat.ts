@@ -6,9 +6,9 @@
 //   postMinutesFromClick the recorder's "Gửi": the key of what they read is checked against the message the module builds from the published result (STALE_CHAT), and the command meetings.chat.post queues
 //                       the post (its row and its message, in the recorder's own transaction). Nothing leaves in this request: the sweep hands the post to the queue and the job sends it.
 import { randomUUID } from 'node:crypto';
-import { parseMinutesUrl } from '@crove/channel';
-import { MEETING_CHAT_PROVIDER, type ChatChannelSaveCall, type ChatChannelSaved, type ChatPostCall, type ChatPosted, type ChatPreview } from '@crove/kernel-contract';
-import { DomainError, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
+import { parseMinutesUrl } from '@ludy/channel';
+import { MEETING_CHAT_PROVIDER, type ChatChannelSaveCall, type ChatChannelSaved, type ChatPostCall, type ChatPosted, type ChatPreview } from '@ludy/kernel-contract';
+import { DomainError, type CredentialBroker, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { RateLimiter } from './rate-limit.ts';
 
 export interface MinutesChatDeps {

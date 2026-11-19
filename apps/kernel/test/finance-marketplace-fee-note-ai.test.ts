@@ -3,8 +3,8 @@
 // the row facts and no platform, an answer is kept and mapped back to the platform of THIS balance, and every state with no notes (no model, a spent budget, too many calls, a failed call or every note dropped) is
 // named and never quoted.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type MarketplaceFeeNoteFacts, type MarketplaceFeeNotesResult } from '@crove/agent';
-import type { MarketplaceBalance } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type MarketplaceFeeNoteFacts, type MarketplaceFeeNotesResult } from '@ludy/agent';
+import type { MarketplaceBalance } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { MARKETPLACE_FEE_NOTE_KEEP_MS, MARKETPLACE_FEE_NOTE_REFUSED_KEEP_MS, explainMarketplaceFees, feeNoteRows, marketplaceFeeNoteAi } from '../src/finance-marketplace-fee-note-ai.ts';
 

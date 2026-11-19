@@ -1,5 +1,5 @@
 {
-  "name": "@crove/mod-crm",
+  "name": "@ludy/mod-crm",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,11 +12,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@crove/db": "workspace:*",
-    "@crove/kernel": "workspace:*",
-    "@crove/kernel-contract": "workspace:*",
-    "@crove/kernel-runtime": "workspace:*",
-    "@crove/l10n-vn": "workspace:*",
+    "@ludy/db": "workspace:*",
+    "@ludy/kernel": "workspace:*",
+    "@ludy/kernel-contract": "workspace:*",
+    "@ludy/kernel-runtime": "workspace:*",
+    "@ludy/l10n-vn": "workspace:*",
     "kysely": "catalog:",
     "zod": "catalog:"
   }

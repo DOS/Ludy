@@ -21,8 +21,8 @@ import {
   type BookingStatus,
   type EventTypeAssignment,
   type WorkingHours,
-} from '@crove/kernel-contract';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 
 export const BOOKING_VIEWS_PER_MINUTE = 60;
 export const BOOKING_REQUESTS_PER_MINUTE = 5;

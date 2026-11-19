@@ -78,7 +78,7 @@ export function isChannelProvider(value: string): value is ChannelProviderId {
   return (CHANNEL_PROVIDERS as readonly string[]).includes(value);
 }
 
-// The provider of an account an OAuth connector connects: a channel provider, or an ad platform of @crove/ad-platform
+// The provider of an account an OAuth connector connects: a channel provider, or an ad platform of @ludy/ad-platform
 // (ADR-0040), whose ids end in `_ads` and whose connections the Social screens leave out.
 export type ConnectorProviderId = ChannelProviderId | `${string}_ads`;
 
@@ -93,7 +93,7 @@ export interface ConnectedAccount {
   expiresAt: Date | null;
   secret: string;
   // A keyed hash of the platform user who granted the connection, for a platform whose data deletion request names the user
-  // (Meta's, for Ads: @crove/ad-platform platformUserHash). Never the platform's id of the person.
+  // (Meta's, for Ads: @ludy/ad-platform platformUserHash). Never the platform's id of the person.
   grantedByHash?: string;
 }
 

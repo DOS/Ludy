@@ -3,7 +3,7 @@
 // owner switches it, R3 (a second factor, P11), audited with the old and the new preset and the new version. The
 // tenant_approval_policy_guard and tenant_approval_policy_requires_audit triggers refuse any other write of it.
 import { z } from 'zod';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { ledgerApproverCount, orgApprovalPolicy } from './approval.ts';
 
 export const setApprovalPreset = defineCommand({

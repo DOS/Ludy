@@ -10,9 +10,9 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate } from '@crove/db/migrate';
-import { PERSONAL_DATA_COLUMNS, type PersonalDataColumn, type PersonalDataHandling, type PersonalDataKind } from '@crove/kernel';
-import { DATA_CLASSES, columns, type DataClass, type ModuleManifest } from '@crove/kernel-contract';
+import { migrate } from '@ludy/db/migrate';
+import { PERSONAL_DATA_COLUMNS, type PersonalDataColumn, type PersonalDataHandling, type PersonalDataKind } from '@ludy/kernel';
+import { DATA_CLASSES, columns, type DataClass, type ModuleManifest } from '@ludy/kernel-contract';
 import { commandTargetTypes, entityProblems, numberingCalls, type NumberingCall } from './manifest-entities.ts';
 import { MODULE_MANIFESTS, permissionProblems, sqlPermissionUses, staticPermissionUses, type Grant, type Manifests, type PermissionUse } from './manifest-permissions.ts';
 

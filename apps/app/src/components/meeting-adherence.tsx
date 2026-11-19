@@ -6,11 +6,11 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { ADHERENCE_LINE_CHARS, ADHERENCE_TYPED_MAX, type AdherenceAnswer, type AdherenceStatus } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Textarea } from '@crove/ui/components/textarea';
+import { ADHERENCE_LINE_CHARS, ADHERENCE_TYPED_MAX, type AdherenceAnswer, type AdherenceStatus } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { ErrorText } from './ui.tsx';
 import { askBlocked } from './meeting-ask.tsx';
 import { clock } from './meeting-transcript.tsx';

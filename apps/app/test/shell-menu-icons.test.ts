@@ -3,7 +3,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
-import { NavIcon } from '@crove/ui/components/nav-icon';
+import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { ADMIN_ITEMS, APPS, BELL_ITEM, TOP_ITEMS, type NavItem } from '../src/lib/apps.ts';
 import { APP_ICON, menuIcon } from '../src/lib/menu-icons.ts';
 

@@ -17,11 +17,11 @@
 //   message and nothing stored.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, zExtractedMarketplaceIncome, type ExtractClient } from '@crove/extract-contract';
-import type { MemberRole } from '@crove/db';
-import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceIncomeSummary, type MarketplaceIncomeConfirmResult, type MarketplaceIncomePreview, type MarketplaceIncomeStaged, type MarketplaceIncomeSummary } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, zExtractedMarketplaceIncome, type ExtractClient } from '@ludy/extract-contract';
+import type { MemberRole } from '@ludy/db';
+import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceIncomeSummary, type MarketplaceIncomeConfirmResult, type MarketplaceIncomePreview, type MarketplaceIncomeStaged, type MarketplaceIncomeSummary } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@ludy/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { resolveLegalEntity } from './legal-entity.ts';
 
 export const MARKETPLACE_INCOME_ACTOR = { type: 'system' as const, component: 'finance.marketplace_income' };

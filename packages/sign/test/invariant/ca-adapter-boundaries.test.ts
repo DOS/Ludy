@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Security invariants for @crove/sign Vietnam CA adapters (self-contained suite for Decision 7).
+// Security invariants for @ludy/sign Vietnam CA adapters (self-contained suite for Decision 7).
 // Locks SSRF allowlisting, HTTP/redirect refusal, secret redaction, reconcile_only, and USB-token refusal.
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';

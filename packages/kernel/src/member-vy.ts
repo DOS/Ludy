@@ -11,8 +11,8 @@
 // Audit rows, activity and events carry ids, an enum and numbers, never text (decision 4): no body, title or subject text reaches them.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { tableWrite, zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { tableWrite, zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
 
 const MEMBER_ROLES = ['owner', 'admin', 'member', 'viewer'] as const;

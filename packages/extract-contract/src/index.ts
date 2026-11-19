@@ -147,7 +147,7 @@ const zLine = z.strictObject({
   vatRate: zText.nullable(),
 });
 
-// The invoice a replacement or an adjustment corrects (RelatedInvoice in @crove/l10n-vn, #916).
+// The invoice a replacement or an adjustment corrects (RelatedInvoice in @ludy/l10n-vn, #916).
 const zRelatedInvoice = z.strictObject({
   kind: z.enum(['replacement', 'adjustment']),
   template: zText.nullable(),
@@ -158,7 +158,7 @@ const zRelatedInvoice = z.strictObject({
 });
 
 // The signature verification of an e-invoice XML (#674). The same lists as SIGNATURE_STATUSES and SIGNATURE_REASONS
-// in @crove/l10n-vn (apps/extract tests compare them); this package does not depend on it.
+// in @ludy/l10n-vn (apps/extract tests compare them); this package does not depend on it.
 export const SIGNATURE_STATUSES = ['verified', 'unverified', 'not_applicable'] as const;
 export const SIGNATURE_REASONS = [
   'missing',
@@ -188,7 +188,7 @@ export const zInvoiceSignature = z
   })
   .refine((s) => (s.status === 'verified') === (s.reason === null), 'reason is null exactly when the signature is verified');
 
-// The shape of ParsedInvoice in @crove/l10n-vn for an e-invoice XML.
+// The shape of ParsedInvoice in @ludy/l10n-vn for an e-invoice XML.
 export const zExtractedInvoice = z.strictObject({
   source: z.literal('einvoice_xml'),
   invoiceType: zText.nullable(),

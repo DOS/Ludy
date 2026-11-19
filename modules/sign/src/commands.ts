@@ -11,10 +11,10 @@ import {
   SIGN_SIGNER_ROLES,
   SIGN_SOURCE_KINDS,
   type MemberRole,
-} from '@crove/db';
-import { EXTRACT_LIMITS } from '@crove/extract-contract';
-import { tableWrite, zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+} from '@ludy/db';
+import { EXTRACT_LIMITS } from '@ludy/extract-contract';
+import { tableWrite, zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { signDirectPublicCommands } from './direct-public.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';

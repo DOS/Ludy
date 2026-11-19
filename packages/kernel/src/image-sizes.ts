@@ -3,8 +3,8 @@
 // context; every other change of a file row stays refused.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { defineCommand } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { defineCommand } from '@ludy/kernel-runtime';
 
 export const recordImageSize = defineCommand({
   name: 'kernel.file.image_size.record',

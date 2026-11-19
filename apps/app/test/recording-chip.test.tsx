@@ -6,8 +6,8 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { CONSENT_NOTICE_VERSION } from '@crove/kernel-contract';
-import { RECORDING_NOTICE } from '@crove/meeting-recorder';
+import { CONSENT_NOTICE_VERSION } from '@ludy/kernel-contract';
+import { RECORDING_NOTICE } from '@ludy/meeting-recorder';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const remote = vi.hoisted(() => ({ recording: null as null | { meetingId: string; startedAt: string } }));

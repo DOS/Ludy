@@ -8,7 +8,7 @@
 //
 // The layout is described, not drawn: a document is sheets of typed columns and rows (text, money, count), so the xlsx file and the print view are two renderings of the same data and
 // cannot disagree. Text is always text: a renderer must write every `text` cell as a string cell, never a formula (see the kernel's export route).
-import { money, type DecimalValue as Decimal } from '@crove/l10n-vn';
+import { money, type DecimalValue as Decimal } from '@ludy/l10n-vn';
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // Names, layout versions and the draft banner

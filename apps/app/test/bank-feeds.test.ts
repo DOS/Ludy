@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What the bank feed card works out from the API's answers (issue #2099).
 import { describe, expect, it } from 'vitest';
-import type { BankFeedAccountView } from '@crove/kernel-contract';
+import type { BankFeedAccountView } from '@ludy/kernel-contract';
 import type { ChartAccount } from '../src/lib/accounts.ts';
 import { bankAccountChoices, bankFeedOffered, feedAccountRows, mappedOf, showsBankFeeds } from '../src/lib/bank-feeds.ts';
 

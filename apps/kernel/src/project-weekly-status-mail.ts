@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Renders the manual weekly status email for a project (#2609) into escaped plain text and HTML.
-import { zProjectWeeklyStatusMailPayload, type ProjectWeeklyStatusMailPayload } from '@crove/kernel-contract';
+import { zProjectWeeklyStatusMailPayload, type ProjectWeeklyStatusMailPayload } from '@ludy/kernel-contract';
 import type { MailTemplate, MailTemplateInput } from './mail-queue.ts';
 
 const escapeHtml = (value: string): string =>

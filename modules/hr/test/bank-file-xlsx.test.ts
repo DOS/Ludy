@@ -3,7 +3,7 @@
 // stays inert; no apostrophe is added to the data (the bank reads the cell text); the columns come in the order asked for; nothing is a number, a formula or a rich value.
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
-import { HR_BANK_FILE_COLUMNS, HR_BANK_FILE_HEADERS, type HrBankFile } from '@crove/kernel-contract';
+import { HR_BANK_FILE_COLUMNS, HR_BANK_FILE_HEADERS, type HrBankFile } from '@ludy/kernel-contract';
 import { buildBankFileWorkbook } from '../src/bank-file-xlsx.ts';
 
 const DANGEROUS = ['=HYPERLINK("http://evil.test","x")', '+84 Trần Văn Hai', '-Lê Thu Cúc', '@SUM(A1)', '\tTab đầu dòng', '\rCR đầu dòng', '=1+1'];

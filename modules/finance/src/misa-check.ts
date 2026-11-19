@@ -2,7 +2,7 @@
 // The check before a MISA SME voucher export (#3848): what MISA's import will refuse or cut, found over the very rows a file is built from, with the same template that builds it, so the check
 // and the file cannot drift. Pure: no database, no clock. A finding names a row (Crove's voucher number and the line) and a column, never a name, an invoice number, an amount or a bank detail.
 // It only warns: the export never waits for it. The kinds and what each means are in packages/kernel-contract misa-check.ts.
-import { MISA_CHECK_EXAMPLES, type MisaCheck, type MisaCheckFormat, type MisaCheckKind, type MisaFindingGroup } from '@crove/kernel-contract';
+import { MISA_CHECK_EXAMPLES, type MisaCheck, type MisaCheckFormat, type MisaCheckKind, type MisaFindingGroup } from '@ludy/kernel-contract';
 import type { MisaTemplate, MisaValue } from './misa.ts';
 
 // MISA allows 25 characters for an invoice number, and Crove never cuts it (a cut number could make two invoices look the same), so a longer one is flagged here instead.

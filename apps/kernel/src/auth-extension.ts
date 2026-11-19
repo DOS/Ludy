@@ -15,9 +15,9 @@
 // handler runs and which the route enumeration test (#693) reads: a token is refused on every other route.
 import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { EXTENSION_ID_FORMAT } from '@crove/kernel-contract';
-import { DomainError, EXTENSION_SCOPES, toDomainError, type ExtensionScope } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { EXTENSION_ID_FORMAT } from '@ludy/kernel-contract';
+import { DomainError, EXTENSION_SCOPES, toDomainError, type ExtensionScope } from '@ludy/kernel-runtime';
 import { logEvent } from './log.ts';
 
 // The extension id an `Origin` header names: chrome-extension://<32 letters a to p>, nothing else (no path, port, userinfo or other

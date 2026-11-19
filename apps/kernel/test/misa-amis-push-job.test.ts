@@ -3,9 +3,9 @@
 // recorded for each way a send ends, that a voucher that changed since the person approved it is never sent, that a lost answer is never sent again, that results are read by polling, and that nothing but
 // ids, codes and states is recorded or logged (not the access code, not the integrator's ClientID, not a party's name). The database side (the table's states, idempotency, the ledger) is the DB tests'.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AmisError, createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@crove/misa-amis';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { amisContextOf, amisPartRows, loadAmisEntries, type CashVoucher, type MisaAmisPushBegin } from '@crove/mod-finance';
+import { AmisError, createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@ludy/misa-amis';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
+import { amisContextOf, amisPartRows, loadAmisEntries, type CashVoucher, type MisaAmisPushBegin } from '@ludy/mod-finance';
 import { PUSH_PRESS_RECHECK_SECONDS, PUSH_RECHECK_SECONDS, PUSH_UNREACHABLE_ROUNDS, PUSH_WAIT_ROUNDS, pushFollowUp, runMisaAmisPush, type MisaAmisPushOutcome } from '../src/misa-amis-push-job.ts';
 
 const CLIENT_ID = 'planted-client-id-0123456789';

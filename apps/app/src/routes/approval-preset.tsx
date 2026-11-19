@@ -5,8 +5,8 @@
 import { useMutation } from '@tanstack/react-query';
 import { useId, useState, type FormEvent, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { ErrorText, Spinner } from '../components/ui.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';

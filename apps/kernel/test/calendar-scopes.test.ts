@@ -2,8 +2,8 @@
 // The events scope is named in two places that cannot import each other: the contract (the kernel checks a grant for it)
 // and the Google adapter (the connect dialog asks for it). They must be the same string.
 import { describe, expect, it } from 'vitest';
-import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE as ASKED_READ, GOOGLE_CALENDAR_EVENTS_SCOPE as ASKED, MICROSOFT_CALENDAR_READ_SCOPE as ASKED_MICROSOFT } from '@crove/channel';
-import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE as CHECKED_READ, GOOGLE_CALENDAR_EVENTS_SCOPE as CHECKED, MICROSOFT_CALENDAR_READ_SCOPE as CHECKED_MICROSOFT, calendarReadScope, canReadEventsWith } from '@crove/kernel-contract';
+import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE as ASKED_READ, GOOGLE_CALENDAR_EVENTS_SCOPE as ASKED, MICROSOFT_CALENDAR_READ_SCOPE as ASKED_MICROSOFT } from '@ludy/channel';
+import { GOOGLE_CALENDAR_EVENTS_READ_SCOPE as CHECKED_READ, GOOGLE_CALENDAR_EVENTS_SCOPE as CHECKED, MICROSOFT_CALENDAR_READ_SCOPE as CHECKED_MICROSOFT, calendarReadScope, canReadEventsWith } from '@ludy/kernel-contract';
 
 describe('the Google events scope', () => {
   it('is the same string where the adapter asks for it and where the kernel checks for it', () => {

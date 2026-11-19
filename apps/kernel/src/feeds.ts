@@ -2,10 +2,10 @@
 // through the egress guard, read in crove-extract (the kernel parses no XML) and recorded: the new items become drafts,
 // or the failure counts towards a pause. A failure of the extract service itself is left for the next pass, unrecorded.
 import { sql } from 'kysely';
-import { EXTRACT_LIMITS, type ExtractClient } from '@crove/extract-contract';
-import type { Db } from '@crove/db';
-import { EgressError, guardedFetch, type Runtime } from '@crove/kernel-runtime';
-import type { FeedResult } from '@crove/mod-social';
+import { EXTRACT_LIMITS, type ExtractClient } from '@ludy/extract-contract';
+import type { Db } from '@ludy/db';
+import { EgressError, guardedFetch, type Runtime } from '@ludy/kernel-runtime';
+import type { FeedResult } from '@ludy/mod-social';
 
 export const FEED_TIMEOUT_MS = 10_000;
 const FEED_LIMIT = 50;

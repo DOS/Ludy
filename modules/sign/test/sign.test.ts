@@ -2,8 +2,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { decodePdfSealInput } from '@crove/extract-contract';
-import { zSignDetectedTag, zSignTemplateRoleKey } from '@crove/kernel-contract';
+import { decodePdfSealInput } from '@ludy/extract-contract';
+import { zSignDetectedTag, zSignTemplateRoleKey } from '@ludy/kernel-contract';
 import {
   buildCanonicalCertificateArtifact,
   buildPdfSealCertificate,

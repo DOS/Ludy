@@ -6,9 +6,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { MeetingPlatformError, type MeetingPlatformAdapter, type MeetingPlatformTranscript, type MeetingPlatformTranscriptEntry } from '@crove/channel';
-import { TRANSCRIPT_SEGMENTS_MAX, TRANSCRIPT_SPEAKER_MAX, TRANSCRIPT_TEXT_MAX, zMeetingTranscriptImport } from '@crove/kernel-contract';
-import { LocalDiskStore } from '@crove/kernel-runtime';
+import { MeetingPlatformError, type MeetingPlatformAdapter, type MeetingPlatformTranscript, type MeetingPlatformTranscriptEntry } from '@ludy/channel';
+import { TRANSCRIPT_SEGMENTS_MAX, TRANSCRIPT_SPEAKER_MAX, TRANSCRIPT_TEXT_MAX, zMeetingTranscriptImport } from '@ludy/kernel-contract';
+import { LocalDiskStore } from '@ludy/kernel-runtime';
 import { runMeetingsImport, stageTranscript, UNKNOWN_SPEAKER, type MeetingsImportDeps, type MeetingsImportJob } from '../src/meetings-import.ts';
 
 const KEY = `staging/${'d'.repeat(64)}`;

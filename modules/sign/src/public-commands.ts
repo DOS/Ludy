@@ -4,8 +4,8 @@
 // because crove_app is deliberately blocked from calling crove_kernel.enter_system_context.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { tableWrite, zId, type SignPageDimension } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { tableWrite, zId, type SignPageDimension } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { signManifest } from './manifest.ts';
 import { generateRawSigningToken, hashSigningToken } from './sealing.ts';
 

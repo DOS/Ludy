@@ -2,8 +2,8 @@
 // The recorder's Vy writing the table of contents of a meeting, the parts that never read a private result row (#3844): the start and the status. The copy of a finished result into the draft, which
 // does, is in summary.ts (the one consumer file of the Vy results). The same switch as the summary (MEETINGS_SUMMARY), the same guards, its own feature key so it never cuts off a transcription,
 // a summary, a translation or live notes (#3029).
-import { zSummaryRef, zSummaryStart, zSummaryStarted, zSummaryStatus } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { zSummaryRef, zSummaryStart, zSummaryStarted, zSummaryStatus } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { lockMeetingMedia, markAudioUsed } from './media-record.ts';
 import { isSummaryEnabled } from './summary-run.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';

@@ -6,7 +6,7 @@
 // actor): the background run of M4b is the recorder's own Vy and writes only its own result (member_vy_result); the recorder's
 // own action copies that result into the draft through draft_store, so no agent context ever writes this table.
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   zMeetingRef,
   zTranscriptCorrect,
@@ -15,8 +15,8 @@ import {
   type TranscriptSegmentInput,
   type TranscriptStage,
   type TranscriptionMaker,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { dayText, vnDay } from './retention.ts';
 
 export const ROLES: readonly MemberRole[] = ['owner', 'admin', 'member'];

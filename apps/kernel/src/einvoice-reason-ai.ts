@@ -7,8 +7,8 @@
 // the list; it is looked up in the list once more here, and a code that is not in it is dropped. The person changes or confirms the select, and starting the correction checks the code against the list again.
 // With no list, no note, no model, a spent AI budget, too frequent calls, a failed call or a refused answer, the answer names the state (`ai`) with no code and the form works as it does with AI off. A failure is
 // named, never quoted: neither the note nor the answer is logged.
-import { AiBudgetExhaustedError, type EInvoiceReasonFacts, type InboxReader } from '@crove/agent';
-import type { EInvoiceReasonInput, EInvoiceReasonSource, EInvoiceReasonSuggested } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type EInvoiceReasonFacts, type InboxReader } from '@ludy/agent';
+import type { EInvoiceReasonInput, EInvoiceReasonSource, EInvoiceReasonSuggested } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface EInvoiceReasonAi {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // CRM quotes (issue #2693, plan docs/plan/crm-quotes.md section 4 and step Q1): a quote of a deal with its lines, saved by a person as a draft. Every amount and
-// quantity is a decimal string, never a number; the totals are computed by the command from the lines (the rule of @crove/l10n-vn, the one an e-invoice draft
+// quantity is a decimal string, never a number; the totals are computed by the command from the lines (the rule of @ludy/l10n-vn, the one an e-invoice draft
 // uses), never taken from the caller.
 import { z } from 'zod';
 import { zId } from './schemas.ts';
@@ -56,7 +56,7 @@ export const zQuoteLineInput = z.discriminatedUnion('kind', [
     quantity: zQuantity,
     unitPrice: zUnitPrice,
     discountPercent: zDiscount.optional(),
-    // As an invoice writes it ('10%', 'KCT'); the command checks it against the allowed set of @crove/l10n-vn.
+    // As an invoice writes it ('10%', 'KCT'); the command checks it against the allowed set of @ludy/l10n-vn.
     vatRate: z.string().trim().min(1).max(QUOTE_VAT_RATE_INPUT_MAX),
     // A stock item of Kế toán, by id only (no cross-module key): optional, empty on a free-text line.
     stockItemId: zId.nullable().optional(),

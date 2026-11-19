@@ -1,6 +1,6 @@
 // The legal entities card's helpers (issue #1278): which entities a form offers as the parent, and a parent's name.
 import { describe, expect, it } from 'vitest';
-import type { LegalEntity } from '@crove/kernel-contract';
+import type { LegalEntity } from '@ludy/kernel-contract';
 import { parentChoices, parentName } from '../src/lib/legal-entities.ts';
 
 const entity = (id: string, parentId: string | null, name = id): LegalEntity => ({

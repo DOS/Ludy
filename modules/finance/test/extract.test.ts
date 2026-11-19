@@ -1,8 +1,8 @@
 // How the extraction job maps crove-extract answers (External-tenant gate T12): failures caused by the file are
 // recorded on the file and never retried; a sandbox that cannot answer throws, so the job is retried.
 import { describe, expect, it } from 'vitest';
-import { ExtractServiceError, type ExtractClient, type ExtractResponse } from '@crove/extract-contract';
-import { sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { ExtractServiceError, type ExtractClient, type ExtractResponse } from '@ludy/extract-contract';
+import { sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import { AI_STOPPED_MESSAGE, extractAndPropose } from '../src/extract.ts';
 
 const ORG = '00000000-0000-4000-8000-000000000001';

@@ -1,5 +1,5 @@
 // The notes screens' small rules (issue #1671, plan docs/plan/notes.md §3.9 and §3.10).
-import { NOTE_TAGS_MAX, NOTE_TAG_MAX, NOTE_LIST_VIEWS, TODO_TITLE_MAX, type NoteListView } from '@crove/kernel-contract';
+import { NOTE_TAGS_MAX, NOTE_TAG_MAX, NOTE_LIST_VIEWS, TODO_TITLE_MAX, type NoteListView } from '@ludy/kernel-contract';
 
 // Tags as typed, separated by commas: trimmed, lower case, each once, as many as a note keeps.
 export function parseTags(input: string): string[] {

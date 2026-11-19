@@ -6,12 +6,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { POSTED_IN_APP, SENT_TO_APP, TIKTOK_NO_POST_ID, WORDPRESS_DRAFT, WORDPRESS_PENDING, mentionsForEditing, mentionsForStoring } from '@crove/mod-social/contract';
-import { cn } from '@crove/ui/lib/utils';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { POSTED_IN_APP, SENT_TO_APP, TIKTOK_NO_POST_ID, WORDPRESS_DRAFT, WORDPRESS_PENDING, mentionsForEditing, mentionsForStoring } from '@ludy/mod-social/contract';
+import { cn } from '@ludy/ui/lib/utils';
 import { CommentBody, MentionBox, useMemberNames, type Picked } from './social-mentions.tsx';
 import { PinBoard, boardPins, clockOf, commentAnchor, revealMarker, useMediaLabels, type DraftPin, type PinMedia } from './social-comment-pins.tsx';
 import { Thumb } from './social-media.tsx';

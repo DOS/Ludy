@@ -7,8 +7,8 @@
 // its comment, on an earlier image, with that file's thumbnail.
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { cn } from '@crove/ui/lib/utils';
+import { Button } from '@ludy/ui/components/button';
+import { cn } from '@ludy/ui/lib/utils';
 import { scrollBehavior } from '../lib/media.ts';
 import { useImageUrl } from './social-media.tsx';
 import { Spinner } from './ui.tsx';

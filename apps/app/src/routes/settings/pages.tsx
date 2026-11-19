@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Link, useSearch } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { buttonVariants } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import { buttonVariants } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
 import { ConversationRetentionCard } from '../../components/conversation-retention.tsx';
 import { ExtensionDevices } from '../../components/extension-devices.tsx';
 import { MeetingPlatforms } from '../../components/meeting-platforms.tsx';

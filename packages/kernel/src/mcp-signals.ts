@@ -10,9 +10,9 @@
 //
 // It reads no audit table and writes nothing. Every item counts against the grant's daily row budget (the endpoint charges one row per item), and the endpoint's audit row names the tool.
 import { z } from 'zod';
-import { zTodayItem, type TodayItem } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { zTodayItem, type TodayItem } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { checkConversationUnanswered, checkDealWithoutInvoice, checkReceivableWithOpenDeal, checkSupplierBankChanged, type RuleCheck } from './signals.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

@@ -3,8 +3,8 @@
 // narrower than the org gets SIGNAL_PARTIAL_VIEW (as the signals reads), and so does an org with more than one legal entity, because the books are read per entity and one entity's
 // figures must never read as the org's. It returns the one entity the figures are read from.
 import { sql } from 'kysely';
-import { SIGNAL_PARTIAL_VIEW_CODE } from '@crove/kernel-contract';
-import { DomainError, type QueryContext } from '@crove/kernel-runtime';
+import { SIGNAL_PARTIAL_VIEW_CODE } from '@ludy/kernel-contract';
+import { DomainError, type QueryContext } from '@ludy/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 
 export async function wholeOrgEntity(ctx: QueryContext): Promise<string> {

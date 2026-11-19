@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A member's own notes and to-dos as a file for their download (#1678, notes.md section 5 "Tải về"): Markdown to read,
 // JSON to move them elsewhere. Built in the browser from notes.mine.export; no React imports, so it is unit tested.
-import type { NotesExport } from '@crove/kernel-contract';
+import type { NotesExport } from '@ludy/kernel-contract';
 
 export interface NotesExportWords {
   heading: string;

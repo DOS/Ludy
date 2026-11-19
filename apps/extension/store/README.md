@@ -25,7 +25,7 @@ All images are PNG with no alpha channel (24-bit RGB), because the store refuses
 Regenerate the images after the popup changes, then upload the new set:
 
 ```
-pnpm install --frozen-lockfile --filter "@crove/extension..."
+pnpm install --frozen-lockfile --filter "@ludy/extension..."
 cd apps/extension
 node scripts/build.mjs
 node scripts/store-art.mjs

@@ -4,7 +4,7 @@
 // posted from it: requireConfirmedMarketplaceMap refuses with MARKETPLACE_POSTING_MAP_UNCONFIRMED, as hr and finance do for the pay accounts (HR_POSTING_MAP_UNCONFIRMED).
 // The gate is per path (#3711 slice 1): each posting asks only for the rows it uses, so a path opens when ITS rows are confirmed and the household tax path (whose debit account is still the
 // accountant's choice) stays closed without holding the rest.
-import { DomainError } from '@crove/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 
 export type MarketplaceMapStatus = 'commentary' | 'confirmed';
 

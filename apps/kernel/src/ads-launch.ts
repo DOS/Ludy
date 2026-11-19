@@ -18,9 +18,9 @@
 // Whatever dies where, no object is created twice: a worker that dies after the platform answered and before the record leaves a `started` row, which the next run
 // reconciles by the tag and finds. The secret lives in one function's scope and is never logged, never put in an error, never sent to a command: the commands see
 // ids, codes the platform answered and the objects' own ids.
-import { AdPlatformError, type AdTargeting, type AdTargetingResolution, type LaunchWriter } from '@crove/ad-platform';
-import { LAUNCH_STEP_PAUSED, type LaunchBegin, type LaunchRecorded, type LaunchResult, type LaunchWriterCaps } from '@crove/mod-ads';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { AdPlatformError, type AdTargeting, type AdTargetingResolution, type LaunchWriter } from '@ludy/ad-platform';
+import { LAUNCH_STEP_PAUSED, type LaunchBegin, type LaunchRecorded, type LaunchResult, type LaunchWriterCaps } from '@ludy/mod-ads';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { recordAfterCall } from './record-after-call.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'ads.launch' };

@@ -5,8 +5,8 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
-import { MCP_WAKE_PROVIDER, type McpWakeDeliveryRow, type McpWakeTargetRow } from '@crove/kernel';
-import { CredentialVault, parseVaultKey, type Runtime } from '@crove/kernel-runtime';
+import { MCP_WAKE_PROVIDER, type McpWakeDeliveryRow, type McpWakeTargetRow } from '@ludy/kernel';
+import { CredentialVault, parseVaultKey, type Runtime } from '@ludy/kernel-runtime';
 import { WAKE_RETRY_LIMIT, runWakeDelivery, wakeSignature } from '../src/mcp-wake.ts';
 import { wakeBody, wakeEvent } from '../src/mcp-wake-body.ts';
 

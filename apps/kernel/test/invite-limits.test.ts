@@ -2,7 +2,7 @@
 // concurrency, the busy answer, the cap across orgs) is in test/invite-limits.db.test.ts, and the cap's enumeration
 // safety in test/invariant/invites.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_INVITE_LIMITS, buildKernelCommands, inviteCreateCommand } from '@crove/kernel';
+import { DEFAULT_INVITE_LIMITS, buildKernelCommands, inviteCreateCommand } from '@ludy/kernel';
 import { loadConfig } from '../src/config.ts';
 import { moduleDefinitions } from '../src/kernel.ts';
 

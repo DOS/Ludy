@@ -13,21 +13,21 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { HrRunSheet, HrRunWritten, HrWritten } from '@crove/kernel-contract';
-import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@crove/kernel-runtime';
-import { PAYROLL_POSTING_MAPS, PAYROLL_RULES } from '@crove/l10n-vn';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { hrCommands, hrQueries } from '@crove/mod-hr';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { HrRunSheet, HrRunWritten, HrWritten } from '@ludy/kernel-contract';
+import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@ludy/kernel-runtime';
+import { PAYROLL_POSTING_MAPS, PAYROLL_RULES } from '@ludy/l10n-vn';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { hrCommands, hrQueries } from '@ludy/mod-hr';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
 
 // Every rule of the shipped set, and every account map of the posting, is `commentary` until the accountant confirms it (#2535), so a real approval or posting cannot pass yet: the tests confirm the
 // rows for themselves (see hr-payroll-run), and one test leaves the maps as shipped to show the posting is refused.
-vi.mock('@crove/l10n-vn', async (importOriginal) => {
-  const real = await importOriginal<typeof import('@crove/l10n-vn')>();
+vi.mock('@ludy/l10n-vn', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@ludy/l10n-vn')>();
   return {
     ...real,
     PAYROLL_RULES: real.PAYROLL_RULES.map((row) => ({ ...row })),

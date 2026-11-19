@@ -1,5 +1,5 @@
 {
-  "name": "@crove/mod-notes",
+  "name": "@ludy/mod-notes",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,10 +12,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@crove/db": "workspace:*",
-    "@crove/kernel": "workspace:*",
-    "@crove/kernel-contract": "workspace:*",
-    "@crove/kernel-runtime": "workspace:*",
+    "@ludy/db": "workspace:*",
+    "@ludy/kernel": "workspace:*",
+    "@ludy/kernel-contract": "workspace:*",
+    "@ludy/kernel-runtime": "workspace:*",
     "kysely": "catalog:",
     "zod": "catalog:"
   }

@@ -4,7 +4,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { EInvoiceDraftSummary, EInvoiceNoticeList } from '@crove/kernel-contract';
+import type { EInvoiceDraftSummary, EInvoiceNoticeList } from '@ludy/kernel-contract';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 

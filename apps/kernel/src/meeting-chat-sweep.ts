@@ -5,8 +5,8 @@
 //   last, is failed ('expire'); one whose attempt began and never concluded for three minutes is settled ambiguous ('lost'). So a post is stored once and tried at least once, and never sent again once it may have gone.
 // A failure for one post never stops the others, and a failure of the queue leaves the post stored, to be handed over again.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 import type { ChatJob } from './meeting-chat-job.ts';
 
 export const MEETING_CHAT_SWEEP_CRON = '* * * * *';

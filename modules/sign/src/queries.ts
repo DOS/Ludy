@@ -9,9 +9,9 @@ import {
   type MemberRole,
   type SignEnvelopeStatus,
   type SignSealStatus,
-} from '@crove/db';
-import { SIGN_BY_SOURCE_MAX, zId, type SignEnvelopeBySourceItem } from '@crove/kernel-contract';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/db';
+import { SIGN_BY_SOURCE_MAX, zId, type SignEnvelopeBySourceItem } from '@ludy/kernel-contract';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import type { SigningEventChainRow } from './events.ts';
 import { parseEventPayload, verifyEventChain } from './events.ts';
 import {

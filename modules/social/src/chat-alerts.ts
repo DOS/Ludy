@@ -14,9 +14,9 @@
 // No answer carries the target, and no audit row holds more than its kind and kinds.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { SOCIAL_CHAT_ALERT_KINDS, SOCIAL_CHAT_ALERT_TARGETS, type MemberRole, type SocialChatAlertKind, type SocialChatAlertTarget } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { SOCIAL_CHAT_ALERT_KINDS, SOCIAL_CHAT_ALERT_TARGETS, type MemberRole, type SocialChatAlertKind, type SocialChatAlertTarget } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];

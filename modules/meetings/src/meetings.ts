@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
 import { meetingSearch } from './search.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
@@ -86,7 +86,7 @@ import {
   type MeetingStatus,
   type MeetingSummary,
   type MeetingVisibility,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import {
   DomainError,
   defineCommand,
@@ -94,7 +94,7 @@ import {
   fileKey,
   type CommandContext,
   type QueryContext,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member'];

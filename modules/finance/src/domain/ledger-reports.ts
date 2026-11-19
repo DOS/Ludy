@@ -17,8 +17,8 @@
 // credit balances of the vendors still owed, not a smaller credit balance. Other accounts show their net balance.
 //
 // Amounts are decimal strings; arithmetic goes through decimal.js, never JS numbers.
-import { LEDGER_PERIOD_PATTERN } from '@crove/kernel-contract';
-import { money, type DecimalValue, type Money } from '@crove/l10n-vn';
+import { LEDGER_PERIOD_PATTERN } from '@ludy/kernel-contract';
+import { money, type DecimalValue, type Money } from '@ludy/l10n-vn';
 import { canonical, parseDecimal } from './money.ts';
 import { vatPeriod } from './vat-return.ts';
 

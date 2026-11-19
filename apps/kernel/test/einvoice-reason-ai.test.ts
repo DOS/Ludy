@@ -2,8 +2,8 @@
 // The accounting coworker's proposal of a correction's reason code, on the API side (#3690): the list and the note are checked before any call, the model is asked once with the facts, the code the answer
 // names is looked up in the list again, and every state with no code (no list, no note, no model, a spent budget, too many calls, a failed or refused call) is named and never quoted.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type EInvoiceReasonFacts, type EInvoiceReasonResult } from '@crove/agent';
-import type { EInvoiceReasonInput, EInvoiceReasonSource } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type EInvoiceReasonFacts, type EInvoiceReasonResult } from '@ludy/agent';
+import type { EInvoiceReasonInput, EInvoiceReasonSource } from '@ludy/kernel-contract';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { einvoiceReasonAi, suggestCorrectionReason } from '../src/einvoice-reason-ai.ts';
 

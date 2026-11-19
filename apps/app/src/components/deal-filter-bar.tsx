@@ -6,12 +6,12 @@
 // columns already say, so they show there only while a view has set one.
 import { useId, useMemo, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import type { PipelineStage, SavedViewSort } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import type { PipelineStage, SavedViewSort } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import {
   DEAL_SORT_OPTIONS,
   EMPTY_DEAL_FILTER,

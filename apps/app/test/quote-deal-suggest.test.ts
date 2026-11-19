@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What the sales coworker offers on a deal once its quote was sent or accepted (#3420): the stage by folded name, the won stage by kind, and the amount by an exact decimal compare.
 import { describe, expect, it } from 'vitest';
-import type { Deal, PipelineStage, QuoteSummary } from '@crove/kernel-contract';
+import type { Deal, PipelineStage, QuoteSummary } from '@ludy/kernel-contract';
 import { sameAmount, suggestDealOffers } from '../src/lib/quote-deal-suggest.ts';
 
 const stage = (n: number, name: string, kind: PipelineStage['kind']): PipelineStage => ({ id: `00000000-0000-4000-8000-0000000002${n}0`, name, kind, position: n });

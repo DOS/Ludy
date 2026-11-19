@@ -12,7 +12,7 @@
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { EXTRACT_LIMITS, EXTRACT_TIMING, zExtractResponse, type ExtractKind, type ExtractResponse } from '@crove/extract-contract';
+import { EXTRACT_LIMITS, EXTRACT_TIMING, zExtractResponse, type ExtractKind, type ExtractResponse } from '@ludy/extract-contract';
 import { failure } from './parse.ts';
 
 export interface SandboxOptions {

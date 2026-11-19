@@ -4,8 +4,8 @@
 // path and one set of rules for the key, the file row, the segment and the live pieces.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import type { MeetingMediaRecord } from '@crove/kernel-contract';
-import { DomainError, type CommandContext } from '@crove/kernel-runtime';
+import type { MeetingMediaRecord } from '@ludy/kernel-contract';
+import { DomainError, type CommandContext } from '@ludy/kernel-runtime';
 import { readRetentionSettings, retentionDates } from './retention.ts';
 
 const MEDIA_EXTENSIONS: Record<string, string> = {

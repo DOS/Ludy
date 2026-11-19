@@ -7,8 +7,8 @@
 // The sentence is read, never written: nothing here stores a text, declares or posts anything, and it is not a command; a person decides the supplementary declaration. When there is
 // no late sale, no model, the AI budget is spent, the member's calls are too frequent, the call fails or its text is refused, the answer names the state (`ai`) with no words and
 // the screen shows the template sentence built from the same lists. An answer is kept for a while by its facts. A failure is named, never quoted.
-import { AiBudgetExhaustedError, VAT_LATE_ASK_MAX, vatLateFactsText, vatLateQuiet, type InboxReader, type VatLateFacts } from '@crove/agent';
-import { vatLateFacts, vatLateKey, type VatLateExplanation, type VatLateSource } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, VAT_LATE_ASK_MAX, vatLateFactsText, vatLateQuiet, type InboxReader, type VatLateFacts } from '@ludy/agent';
+import { vatLateFacts, vatLateKey, type VatLateExplanation, type VatLateSource } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface VatLateAi {

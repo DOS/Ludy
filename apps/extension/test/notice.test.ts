@@ -2,8 +2,8 @@
 // The recording notice the popup shows is the version the server stores (Meetings A1, #3159): one text file, one version,
 // and the server refuses a version it does not know.
 import { describe, expect, it } from 'vitest';
-import { CONSENT_NOTICE_VERSION, IMPORT_CONSENT_NOTICE_VERSION, KNOWN_CONSENT_NOTICE_VERSIONS, RECORDING_STOP_REASONS as CONTRACT_REASONS, zMeetingCreate } from '@crove/kernel-contract';
-import { IMPORT_NOTICE, RECORDING_NOTICE, RECORDING_STOP_REASONS, noticeToCopy } from '@crove/meeting-recorder';
+import { CONSENT_NOTICE_VERSION, IMPORT_CONSENT_NOTICE_VERSION, KNOWN_CONSENT_NOTICE_VERSIONS, RECORDING_STOP_REASONS as CONTRACT_REASONS, zMeetingCreate } from '@ludy/kernel-contract';
+import { IMPORT_NOTICE, RECORDING_NOTICE, RECORDING_STOP_REASONS, noticeToCopy } from '@ludy/meeting-recorder';
 import { consentBlocker } from '../src/consent.ts';
 import { ENGLISH, VIETNAMESE } from '../src/strings.ts';
 

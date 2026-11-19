@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { PublishedSample } from '@crove/mod-social/contract';
+import type { PublishedSample } from '@ludy/mod-social/contract';
 import { BEST_TIME_MIN_POSTS, QUEUE_SUGGEST_MAX, channelBestTimes, knownZone, listedPosts, nextOccurrence, queueSuggestions, suggestBestTimes, takenTimes, weekBestSlots, bestSlotSearch } from '../src/lib/social-best-time.ts';
 
 const HCM = 'Asia/Ho_Chi_Minh';

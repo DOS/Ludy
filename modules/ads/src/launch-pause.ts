@@ -10,14 +10,14 @@
 // - `ads.pause.pending` (a system query): the stopped launches of an account that are not wound down, for the revoke sweep, which pauses with the sealed copy of a
 //   closed connection's token before it revokes (a switch-off closes the write connection in its own transaction, so that copy is the only token left).
 //
-// NOTHING IN THIS FILE UN-PAUSES. The only change of status the pause job can make at the platform is PAUSED (the narrowed view of @crove/ad-platform, pausers.ts).
+// NOTHING IN THIS FILE UN-PAUSES. The only change of status the pause job can make at the platform is PAUSED (the narrowed view of @ludy/ad-platform, pausers.ts).
 // The platform is never called inside a command, so a platform that is down cannot stop a stop. The secret is never here: the commands deal in ids, states, counts and
 // the platform's error codes.
 import { z } from 'zod';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { draftPlanOf } from './campaign-draft.ts';
 import { lockedLaunch, STARTED_STATES, stopStartedLaunches } from './launch-ledger.ts';
 import { WIND_DOWN_LEASE_SECONDS, isTooOld, settlePause, type PauseSummary } from './launch-pause-policy.ts';

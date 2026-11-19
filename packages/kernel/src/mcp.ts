@@ -14,9 +14,9 @@
 // - kernel.mcp.propose: what an MCP grant's call to an R2 or R3 command becomes (ADR-0051 decision 10, #3858 slice d): a pending proposal, never an execution.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MCP_SCOPE_IDS, plainLine, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMemberGrantsView, type McpGrantView } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, MCP_PROPOSE_COMMAND, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
+import { MCP_SCOPE_IDS, plainLine, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMemberGrantsView, type McpGrantView } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, MCP_PROPOSE_COMMAND, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@ludy/kernel-runtime';
 import { hasApprovalPolicy } from './approval.ts';
 import { PROPOSAL_PREPARERS } from './proposal-resubmit.ts';
 import { mcpConversationQueries } from './mcp-conversations.ts';

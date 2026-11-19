@@ -12,7 +12,7 @@
 // The job writes no meeting table: the recorder's own action copies the result into the draft (meetings.transcript.copy_result). A failed run stores a fixed
 // code, never a message. Logs carry ids and codes. A job is never retried by the queue: another try would send the audio to the provider again; the recorder
 // starts it again if they want to.
-import { AiBudgetExhaustedError, aiCost, mergeChunkTranscripts, transcribeChunks, withAiScope, TranscriptionError, type AiCall, type AiMeter, type AiUsage, type TranscribeConfig, type TranscribeInput, type TranscriptSegment } from '@crove/agent';
+import { AiBudgetExhaustedError, aiCost, mergeChunkTranscripts, transcribeChunks, withAiScope, TranscriptionError, type AiCall, type AiMeter, type AiUsage, type TranscribeConfig, type TranscribeInput, type TranscriptSegment } from '@ludy/agent';
 import {
   DomainError,
   decryptBlobBuffer,
@@ -24,10 +24,10 @@ import {
   type MemberVyRuntime,
   type Runtime,
   type SystemActor,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import type { MediaMeasurer } from './meetings-measure.ts';
-import { MEMBER_VY_RUN_ERROR_CODES, type MemberVyRunErrorCode } from '@crove/kernel';
-import { decodeTranscriptResult, encodeTranscriptResult, TRANSCRIPT_RESULT_MAX } from '@crove/mod-meetings';
+import { MEMBER_VY_RUN_ERROR_CODES, type MemberVyRunErrorCode } from '@ludy/kernel';
+import { decodeTranscriptResult, encodeTranscriptResult, TRANSCRIPT_RESULT_MAX } from '@ludy/mod-meetings';
 
 export interface MeetingsTranscribeJob {
   orgId: string;

@@ -11,11 +11,11 @@
 // No query, audit fact or error carries a credential or a provider's own text: only ids, counts and the state.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { isEInvoiceProvider } from '@crove/einvoice';
-import { zChannelConnect } from '@crove/kernel';
-import { zEInvoiceConnectionRecordTest, zEInvoiceSeriesSetDefault, zId, zSellerTaxCode, type EInvoiceConnection, type EInvoiceConnectionTested } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { isEInvoiceProvider } from '@ludy/einvoice';
+import { zChannelConnect } from '@ludy/kernel';
+import { zEInvoiceConnectionRecordTest, zEInvoiceSeriesSetDefault, zId, zSellerTaxCode, type EInvoiceConnection, type EInvoiceConnectionTested } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { addSeriesFrom, loadSeries } from './einvoice-drafts.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 

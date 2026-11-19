@@ -4,8 +4,8 @@
 // command meetings.series.nudge in the org's system context, which derives the row again before it writes the notice (once per member and event: the notice's key).
 // The definer lists only nudges still to send (not told, not muted, Meetings on), so a pass that hits the limit goes on with the rest on the next one. A failure for one nudge never stops the others; it stays listed for the next pass, which is still inside the 30 minutes until the meeting starts. Logs carry id prefixes and codes only.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 
 export const MEETINGS_SERIES_NUDGE_CRON = '*/5 * * * *';
 // Nudges one pass handles at most; the rest wait for the next pass.

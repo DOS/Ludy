@@ -32,9 +32,9 @@
 // The bulk commands take up to 100 posts, lock them in id order (as the other bulk edits do) and run the single
 // command on each as a nested command, with its checks and its audit row; a post left out is named with the reason.
 import { sql } from 'kysely';
-import { zSocialBulkArchive, zSocialPostArchive, type SocialBulkSkipReason } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zSocialBulkArchive, zSocialPostArchive, type SocialBulkSkipReason } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { REMOVE_READY, isProvider, removeAtFit, removeAtOf } from './domain/channels.ts';
 import { IN_FLIGHT } from './domain/state.ts';
 import { channelScope, postsInScope, refusePostWholly } from './channel-access.ts';

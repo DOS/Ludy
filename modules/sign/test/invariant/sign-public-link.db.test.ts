@@ -11,8 +11,8 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import {
   DEFAULT_MESSAGE_ID_DOMAIN,
   createOrg,
@@ -20,8 +20,8 @@ import {
   kernelManifest,
   kernelQueries,
   upsertIdentity,
-} from '@crove/kernel';
-import { mintContextToken, Runtime, contentGeneration, fileKey, sha256Hex } from '@crove/kernel-runtime';
+} from '@ludy/kernel';
+import { mintContextToken, Runtime, contentGeneration, fileKey, sha256Hex } from '@ludy/kernel-runtime';
 import {
   generateCertificateCode,
   generateRawSigningToken,

@@ -4,7 +4,7 @@
 // credential, and only what the member needs on their own calendar comes back: times, the event type, where, and the
 // visitor's name (no email, phone or note).
 import { sql } from 'kysely';
-import type { Runtime } from '@crove/kernel-runtime';
+import type { Runtime } from '@ludy/kernel-runtime';
 import { escapeText, foldLine, icsTime } from './calendar-feed.ts';
 import { DEFAULT_BRAND_NAME } from './config.ts';
 

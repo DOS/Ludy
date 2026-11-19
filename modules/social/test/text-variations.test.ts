@@ -3,7 +3,7 @@
 // shape, and the contract's shape.
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { SOCIAL_TEXT_VARIATIONS_MAX, zSocialTextVariations } from '@crove/kernel-contract';
+import { SOCIAL_TEXT_VARIATIONS_MAX, zSocialTextVariations } from '@ludy/kernel-contract';
 import { TEXT_VARIATIONS_MAX, cursorAfterEdit, cursorOf, keepAiMarks, parseTextVariations, pickVariation, variationOrder, type TextVariation } from '../src/index.ts';
 
 const v = (text: string, ai = false): TextVariation => ({ text, ai });

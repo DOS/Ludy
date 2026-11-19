@@ -3,8 +3,8 @@ import { randomBytes } from 'node:crypto';
 // port, and that a missing required port stops the boot. The end-to-end run of overridden ports is in
 // kernel-composition.db.test.ts.
 import { describe, expect, it, vi } from 'vitest';
-import { InvoiceExtractor, type InvoiceReader } from '@crove/agent';
-import { LocalDiskStore, S3BlobStore, type BlobStore } from '@crove/kernel-runtime';
+import { InvoiceExtractor, type InvoiceReader } from '@ludy/agent';
+import { LocalDiskStore, S3BlobStore, type BlobStore } from '@ludy/kernel-runtime';
 import type { AlertSink } from '../src/alert.ts';
 import { loadConfig } from '../src/config.ts';
 import { createKernel, defaultAdapters, selfHostBilling, type Billing, type IdentityPort, type KernelAdapters } from '../src/kernel.ts';

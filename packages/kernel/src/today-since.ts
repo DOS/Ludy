@@ -9,9 +9,9 @@
 // a record or an id of one: the answer is the coworker, its count and a link, and it is the same with AI off.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SINCE_YESTERDAY_HOURS, SINCE_YESTERDAY_MAX, type SinceYesterday } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { defineQuery } from '@crove/kernel-runtime';
+import { SINCE_YESTERDAY_HOURS, SINCE_YESTERDAY_MAX, type SinceYesterday } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 // Where what a coworker prepared waits for a person: the AI inbox, where every proposal is approved (a person approves money,

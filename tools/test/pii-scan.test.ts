@@ -109,7 +109,7 @@ describe('G5 PII scan (#1628)', () => {
       // reserved domains (RFC 2606, RFC 6761)
       'a@example.com b@mail.example.org c@example.net d@shop.test e@x.example f@y.invalid g@z.localhost',
       // credentials in a URL are not an address; package and image versions are not either
-      'https://user:pass@www.pexels.com/x react@18.3.1 node:26-slim@sha256:abc @crove/kernel',
+      'https://user:pass@www.pexels.com/x react@18.3.1 node:26-slim@sha256:abc @ludy/kernel',
       // a CCCD needs a province that exists and a century digit of 0 to 3
       join2('000', '2', '99', tail.slice(0, 6)),
       join2('079', '7', '99', tail.slice(0, 6)),

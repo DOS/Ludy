@@ -13,8 +13,8 @@
 // on the Limited tier with `ads_read` [C]; its rate limits are low [C] (plan section 5.3), so a run reads each account
 // with a handful of calls, backs off for the time a rate limit names, and the app never retries in a loop.
 import { createHmac } from 'node:crypto';
-import type { AuthorizeInput, ConnectedAccount, ExchangeInput, Fetch, MetaAppConfig, OAuthConnector } from '@crove/channel';
-import { ConnectorError, Graph, GraphError, MetaLogin, META_DEFAULT_GRAPH_VERSION, META_GRAPH_HOST, asProviderError } from '@crove/channel';
+import type { AuthorizeInput, ConnectedAccount, ExchangeInput, Fetch, MetaAppConfig, OAuthConnector } from '@ludy/channel';
+import { ConnectorError, Graph, GraphError, MetaLogin, META_DEFAULT_GRAPH_VERSION, META_GRAPH_HOST, asProviderError } from '@ludy/channel';
 import { AdPlatformError, type AdDailyRow, type AdPlatform, type AdPlatformAccount, type AdPlatformCapabilities } from './index.ts';
 
 // Reading reports is all the ads module does; Meta's ads_read is "read reports of ad accounts you own or were granted".

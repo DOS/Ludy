@@ -3,7 +3,7 @@
 // amounts and dates through the person's formats, and an id through the names the screen knows. A condition that cannot be
 // said in those words (a field the screen has no name for, an id it cannot name) is never printed raw ("gte 1000000", a
 // uuid): the chips fold it into one "Điều kiện khác (n)" chip. No browser or API imports, so it is unit tested.
-import type { FilterCondition } from '@crove/kernel-contract';
+import type { FilterCondition } from '@ludy/kernel-contract';
 
 // A translator over the whole catalog (i18n/runtime.ts `Translate`): the keys below are built at run time, so it is typed by
 // its call shape here, and the catalog test checks that every key exists in both languages.
