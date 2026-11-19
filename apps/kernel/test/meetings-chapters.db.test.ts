@@ -332,18 +332,12 @@ suite('the chapters of a meeting (#3844)', () => {
     users.admin = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'chapters', subject: 'admin', email: 'admin@chapters.test', name: null });
     await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, users.admin]);
 
-    // What each context may do to this meeting's rows with raw SQL, as the app's tenant login (rolled back). A read the login cannot make at all counts as reading nothing.
+    // What each context may do to this meeting's rows with raw SQL, as the app's tenant login (rolled back). The read runs outside a savepoint on purpose: a login that could not read the table at all
+    // would abort the transaction and fail the test loudly, never count as "reads nothing". The agent contexts' inserts are refused by the write guard trigger (agent_write_guard) before the policy is met;
+    // their reads, updates and deletes are decided by the policies, and so are every user context's and the system context's.
     type Probe = { read: number; insert: 'refused' | 'allowed'; update: number; delete: number };
     const probe = async (c: pg.Client): Promise<Probe> => {
-      const count = async () => {
-        try {
-          return Number((await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_meetings.meeting_chapter WHERE meeting_id = $1`, [meetingId])).rows[0]?.n);
-        } catch (error) {
-          if ((error as { code?: string }).code === '42501') return 0;
-          throw error;
-        }
-      };
-      const read = await count();
+      const read = Number((await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_meetings.meeting_chapter WHERE meeting_id = $1`, [meetingId])).rows[0]?.n);
       const attempt = async <T,>(sql: string, params: unknown[], done: (r: pg.QueryResult) => T, none: T): Promise<T> => {
         await c.query('SAVEPOINT p');
         try {
@@ -367,6 +361,8 @@ suite('the chapters of a meeting (#3844)', () => {
       return { read, insert, update, delete: del };
     };
     const NOTHING: Probe = { read: 0, insert: 'refused', update: 0, delete: 0 };
+    // A positive control for the contexts below: each one sees this org and says who the actor is, so its zeros come from the policy and not from a context that was never entered.
+    const whoAmI = async (c: pg.Client) => (await c.query<{ org: string; actor: string }>(`SELECT crove_kernel.ctx_org_id()::text AS org, crove_kernel.ctx_actor_type() AS actor`)).rows[0];
 
     // User contexts: the admin and the stranger read and write nothing; the reader reads the published rows and writes nothing.
     expect(await asMember('admin', probe)).toEqual(NOTHING);
@@ -393,12 +389,15 @@ suite('the chapters of a meeting (#3844)', () => {
       }
     };
     const contexts: Record<string, Record<string, unknown>> = {
-      'an MCP company grant (sealed, admin role)': sealed({ kind: 'mcp_company', role: 'admin', grantor: users.owner }),
-      "an MCP grant of the recorder's own account": sealed({ kind: 'mcp_member', member: users.recorder }),
+      'an MCP company grant (sealed, admin role)': sealed({ kind: 'mcp_company', role: 'admin', module: 'kernel', grantor: users.owner }),
+      "an MCP grant of the recorder's own account": sealed({ kind: 'mcp_member', module: 'kernel', member: users.recorder }),
       'a Vy of the recorder, with a run': sealed({ kind: 'member_vy', member: users.recorder, run: randomUUID(), module: 'meetings' }),
       'an agent with no run and the admin role': sealed({ role: 'admin', module: 'kernel' }),
     };
-    for (const [name, ctx] of Object.entries(contexts)) expect(await asSealed(ctx, probe), name).toEqual(NOTHING);
+    for (const [name, ctx] of Object.entries(contexts)) {
+      expect(await asSealed(ctx, whoAmI), `${name}: the context is entered`).toEqual({ org: orgId, actor: 'agent' });
+      expect(await asSealed(ctx, probe), name).toEqual(NOTHING);
+    }
 
     // The worker's system context (the login of the background jobs, org-wide but not a user): no read, no write.
     const worker = new pg.Client({ connectionString: workerUrl });
@@ -406,6 +405,7 @@ suite('the chapters of a meeting (#3844)', () => {
     try {
       await worker.query('BEGIN');
       await worker.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      expect(await whoAmI(worker), 'the system context is entered').toEqual({ org: orgId, actor: 'system' });
       expect(await probe(worker), 'the system context').toEqual(NOTHING);
     } finally {
       await worker.query('ROLLBACK').catch(() => {});
@@ -424,7 +424,7 @@ suite('the chapters of a meeting (#3844)', () => {
     // A tainted draft (born of a run) never flips: the trigger refuses it with the recorder's own login, so the unread text of a model cannot be published by a raw statement.
     const run = randomUUID();
     await sqlAdmin(`INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds, tainted, source_run_id) VALUES ($1, $2, 2, 'Từ run', 10, true, $3)`, [orgId, meetingId, run]);
-    await expect(asMember('recorder', (c) => c.query(`UPDATE crove_meetings.meeting_chapter SET stage = 'published' WHERE meeting_id = $1 AND title = 'Từ run'`, [meetingId]))).rejects.toMatchObject({ code: '42501' });
+    await expect(asMember('recorder', (c) => c.query(`UPDATE crove_meetings.meeting_chapter SET stage = 'published' WHERE meeting_id = $1 AND title = 'Từ run'`, [meetingId]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('MEETINGS_DRAFT_NOT_REVIEWED') });
     // A published row cannot be turned back into a draft, nor edited, by the recorder in place (the update policy sees drafts only).
     await sqlAdmin(`INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, stage, position, title, start_seconds) VALUES ($1, $2, 'published', 9, 'Đã công bố', 20)`, [orgId, meetingId]);
     await expect(asMember('recorder', (c) => c.query(`UPDATE crove_meetings.meeting_chapter SET stage = 'draft' WHERE meeting_id = $1 AND title = 'Đã công bố'`, [meetingId]).then((r) => r.rowCount))).resolves.toBe(0);
