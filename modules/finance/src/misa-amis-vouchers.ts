@@ -163,11 +163,14 @@ function vatFields(vat: MisaVatRate): Record<string, unknown> | null {
 
 /**
  * The AMIS party code of a party, by tax code; undefined when the dictionary says there is none; null when it was not read.
- * A party with no tax code (a private person) is also null: there is nothing to match on, so it is sent by name and address
- * without a code and is no blocker. Whether AMIS accepts that is UNCONFIRMED (see the top of this file).
+ * Before a catalogue check a party with no tax code (a private person) is null: it is sent by name and address without a code
+ * and is no blocker (whether AMIS accepts that is UNCONFIRMED, see the top of this file). After a check it is undefined, a
+ * blocker like any party the catalogue does not have: there is nothing to match it on, and matching it by name as a proposal
+ * a person confirms is S3b (#4124), so until then the check does not let it through unjudged.
  */
 function partyCode(party: VoucherParty, ctx: AmisContext): string | null | undefined {
-  if (ctx.partyCodes === null || party.taxCode === null) return null;
+  if (ctx.partyCodes === null) return null;
+  if (party.taxCode === null) return undefined;
   // The catalogue is matched on the tax code's digits: a tax code that is not 10 or 13 digits cannot be matched, so it is as unknown as one the catalogue does not have.
   const key = normalizeTaxCode(party.taxCode);
   return key === null ? undefined : ctx.partyCodes.get(key);

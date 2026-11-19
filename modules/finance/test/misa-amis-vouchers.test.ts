@@ -294,6 +294,13 @@ describe('blockers: what AMIS needs that was not given', () => {
     expect(purchaseServiceAmisVouchers(broken, ctx({ partyCodes: null })).blockers).toEqual([]);
   });
 
+  it('blocks a party with no tax code once a check is done (nothing to match it on until S3b), and sends it by name as before while no check is done', () => {
+    const person = purchase({ vendor: { name: 'Nguyễn Văn A', taxCode: null, address: null } });
+    const checked = ctx({ partyCodes: new Map([['0101234564', 'NCC_ABC']]) });
+    expect(purchaseServiceAmisVouchers(person, checked).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: null })).blockers).toEqual([]);
+  });
+
   it('names an item code the catalogue does not have, by line, once a check is done; with no check it judges nothing', () => {
     const checked = ctx({ itemCodes: new Set(['KHAC']) });
     expect(purchaseServiceAmisVouchers(purchase(), checked).blockers.map((b) => [b.code, b.lineNo])).toEqual([

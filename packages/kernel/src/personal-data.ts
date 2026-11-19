@@ -289,6 +289,13 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "MISA AMIS's own words for a voucher it refused, which may quote a party or an invoice; an erasure clears the text of a refused row that mentions the value and keeps the row's state",
   },
+  // The tax code a MISA catalogue check looked a party up by (#4112): the key of one stored result (matched, unknown or ambiguous) per party of a connection's batch. An erasure deletes the party's rows
+  // whole (the row holds nothing but the key, the state and the matched entry's code and id), and the next check files them anew. Item rows hold an item code and are not matched.
+  'crove_finance.misa_amis_match.match_key': {
+    kind: 'tax_code',
+    handling: 'erase',
+    reason: "The tax code a check of a MISA AMIS connection looked a party up by; an erasure deletes the party's stored results and the next check makes them anew",
+  },
   // More free text (#1961): a task's title and description, which members and agents write, are replaced where they
   // quote the value; a bank statement line and a journal line's memo are kept.
   'crove_kernel.task.title': {
@@ -1203,6 +1210,19 @@ export const personalDataErase = defineCommand({
       add('crove_crm.import_row.phone', Number(r.phone));
       add('crove_crm.import_row.tax_code', Number(r.tax_code));
       add('crove_crm.import_row.address', Number(r.address));
+    }
+
+    // The stored results of a MISA catalogue check (#4112), keyed by the party's tax code: the rows of a party matching the probe are deleted whole (an item row's key is an item code, so only party rows are looked at).
+    // Through the command's own transaction: the delete policy of the table lets an owner's context delete. A short tax code (fewer than 10 digits) is never matched here, as the stored keys are 10 or 13 digits.
+    const matchKey = match('tax_code', 'm.match_key');
+    if (matchKey) {
+      const { rows: misaMatches } = await sql<{ n: number }>`
+        WITH gone AS (
+          DELETE FROM crove_finance.misa_amis_match m
+           WHERE m.org_id = ${ctx.orgId}::uuid AND m.kind = 'party' AND ${matchKey}
+           RETURNING 1)
+        SELECT count(*)::int AS n FROM gone`.execute(ctx.trx);
+      add('crove_finance.misa_amis_match.match_key', Number(misaMatches[0]?.n ?? 0));
     }
 
     if (probe.kind === 'email') {
