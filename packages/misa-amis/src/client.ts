@@ -158,12 +158,15 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
     for (const [k, v] of tokens) if (now() >= v.until) tokens.delete(k);
     const inFlight = pending.get(key);
     if (inFlight) return inFlight;
-    const request = fetchToken(c)
+    // A request that was set aside (a call with `freshToken` asked for its own) still answers the call that made it, but neither keeps its token nor clears the newer request's place.
+    const request: Promise<string> = fetchToken(c)
       .then((token) => {
-        tokens.set(key, { token, until: now() + AMIS_TOKEN_TTL_MS });
+        if (pending.get(key) === request) tokens.set(key, { token, until: now() + AMIS_TOKEN_TTL_MS });
         return token;
       })
-      .finally(() => pending.delete(key));
+      .finally(() => {
+        if (pending.get(key) === request) pending.delete(key);
+      });
     pending.set(key, request);
     return request;
   }
@@ -206,7 +209,11 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
   return {
     async companyInfo(connection, branchId = null, options = {}) {
       const c = snapshot(connection);
-      if (options.freshToken === true) tokens.delete(keyOf(c));
+      // The kept token and any token request already on its way are both set aside: this call's own request is the one that sends the access code to MISA now.
+      if (options.freshToken === true) {
+        tokens.delete(keyOf(c));
+        pending.delete(keyOf(c));
+      }
       const data = await authed(c, '/amiskt/v1/get_company_info', 'POST', toJsonText({ branch_id: branchId }));
       let value = data;
       if (typeof value === 'string') {
