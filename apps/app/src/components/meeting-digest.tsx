@@ -35,9 +35,10 @@ export function MeetingDigest({ slug }: { slug: string }) {
   // The card stays on screen while another window loads (the picker the member just used must not vanish).
   const facts = useQuery({ ...orpc.meetings.digest.facts.queryOptions({ input: { days } }), ...READ_ONCE, placeholderData: keepPreviousData });
   const data = facts.data;
-  if (facts.error && !data) return <ErrorText>{errorMessage(facts.error)}</ErrorText>;
+  // The first read failed: the error stands alone. A window the member picked failed: the card stays with its picker (they may pick another window) and the error sits in it, so the focus is not lost (WCAG 2.4.3).
+  if (facts.error && !data && !picked) return <ErrorText>{errorMessage(facts.error)}</ErrorText>;
   // Nothing else is shown until the facts have been read.
-  if (!data) return null;
+  if (!data && !facts.error) return null;
   return (
     <Card data-testid="meeting-digest">
       <CardHeader>
@@ -64,7 +65,9 @@ export function MeetingDigest({ slug }: { slug: string }) {
         <p role="status" className="sr-only" data-testid="digest-window-status">
           {picked && !facts.isPlaceholderData ? t('windowShown', { count: String(days) }) : ''}
         </p>
-        {data.empty ? (
+        {!data ? (
+          <ErrorText>{errorMessage(facts.error)}</ErrorText>
+        ) : data.empty ? (
           <>
             <p className="text-sm text-muted-foreground" data-testid="digest-nothing">
               {t('nothing', { count: String(days) })}

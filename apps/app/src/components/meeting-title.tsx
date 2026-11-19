@@ -2,7 +2,7 @@
 // "Gợi ý tên" (#3947): the recorder's own Vy reads the transcript once, on a click, and offers up to three titles for the meeting. The candidates live only in this component's state, nothing is stored;
 // each is plain text, and nothing changes until the recorder picks one (the rename command, audited) or none. Absent when AI is off (the status says so) or when the person is not the recorder.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { TitleAnswer } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
@@ -28,13 +28,23 @@ export function MeetingTitleSuggest({ meetingId, isRecorder, hasTranscript }: { 
       void queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
     },
   });
+  const answer = dismissed ? undefined : suggest.data;
+  // A pick or "none of these" removes the list and the button that held the focus: it goes back to the button that asked (WCAG 2.4.3).
+  const runRef = useRef<HTMLButtonElement>(null);
+  const hadAnswer = useRef(false);
+  useEffect(() => {
+    if (answer) hadAnswer.current = true;
+    else if (hadAnswer.current) {
+      hadAnswer.current = false;
+      runRef.current?.focus();
+    }
+  }, [answer]);
   // The recorder alone, with a transcript to read, and only when this system lets Vy work: otherwise no button and no word about it.
   if (!isRecorder || !hasTranscript || !status.data?.enabled) return null;
-  const answer = dismissed ? undefined : suggest.data;
   return (
     <div className="mb-4 space-y-2" data-testid="title-suggest">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="outline" loading={suggest.isPending} disabled={suggest.isPending || rename.isPending} onClick={() => suggest.mutate()} data-testid="title-suggest-run">
+        <Button ref={runRef} size="sm" variant="outline" loading={suggest.isPending} disabled={suggest.isPending || rename.isPending} onClick={() => suggest.mutate()} data-testid="title-suggest-run">
           {t('button')}
         </Button>
         <span className="text-xs text-muted-foreground">{t('note')}</span>
@@ -43,6 +53,9 @@ export function MeetingTitleSuggest({ meetingId, isRecorder, hasTranscript }: { 
       <div role="status" aria-live="polite" className="space-y-2 empty:hidden">
         {suggest.isPending && <p className="text-xs">{t('running')}</p>}
         {rename.isSuccess && !answer && <p className="text-xs" data-testid="title-renamed">{t('renamed')}</p>}
+        {/* What the answer is, said once when it arrives; the list below it is not read out, the member moves to it (WCAG 4.1.3). */}
+        {answer?.state === 'suggested' && <p className="sr-only">{t('found', { count: answer.titles.length })}</p>}
+        {answer?.state === 'none' && <p className="sr-only">{t('none')}</p>}
       </div>
       {answer && <TitleResult answer={answer} picking={rename.isPending ? rename.variables : null} onPick={(title) => rename.mutate(title)} onDismiss={() => setDismissed(true)} />}
       {suggest.error && <ErrorText>{errorMessage(suggest.error)}</ErrorText>}
@@ -56,7 +69,7 @@ export function TitleResult({ answer, picking, onPick, onDismiss }: { answer: Ti
   const t = useTranslations('meetings.titleSuggest');
   if (answer.state === 'none') {
     return (
-      <p className="text-sm text-muted-foreground" role="status" data-testid="title-none">
+      <p className="text-sm text-muted-foreground" data-testid="title-none">
         {t('none')}
       </p>
     );
@@ -72,11 +85,12 @@ export function TitleResult({ answer, picking, onPick, onDismiss }: { answer: Ti
     <div className="space-y-2 rounded-lg border border-border bg-card p-3" data-testid="title-candidates">
       <p className="text-sm font-semibold">{t('pickTitle')}</p>
       <ul className="space-y-2">
-        {answer.titles.map((title) => (
+        {answer.titles.map((title, index) => (
           <li key={title} className="flex flex-wrap items-center gap-2" data-testid="title-candidate">
             {/* Plain text: a candidate is the model's words, never markup. */}
-            <span className="text-sm">{title}</span>
-            <Button size="sm" loading={picking === title} disabled={picking !== null} onClick={() => onPick(title)} data-testid="title-pick">
+            <span id={`title-candidate-${index}`} className="text-sm">{title}</span>
+            {/* The same words on every row: the candidate is each button's description, so a screen reader says which title it takes (WCAG 2.4.6). */}
+            <Button size="sm" aria-describedby={`title-candidate-${index}`} loading={picking === title} disabled={picking !== null} onClick={() => onPick(title)} data-testid="title-pick">
               {t('use')}
             </Button>
           </li>
