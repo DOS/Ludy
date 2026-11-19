@@ -133,7 +133,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
   }
 
   // The whole consent: authorize, the page's details call, the approve call, the resumed authorization, the code.
-  async function consent(owner: string, orgOf: string = orgId, decision: 'approve' | 'deny' = 'approve', kind?: 'company' | 'member', opts: { scope?: string; draft?: boolean } = {}) {
+  async function consent(owner: string, orgOf: string = orgId, decision: 'approve' | 'deny' = 'approve', kind?: 'company' | 'member', opts: { scope?: string; draft?: boolean; writes?: string[] } = {}) {
     const reg = await register();
     expect(reg.status, JSON.stringify(reg.body)).toBe(201);
     const clientId = String(reg.body.client_id);
@@ -143,7 +143,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const uid = new URL(started.location, base).pathname.split('/').pop() as string;
     const headers = { ...(await asBrowser(owner, null)), cookie: started.cookie };
     const detailsResponse = await fetch(`${base}/oauth/interaction/${uid}/details`, { headers });
-    const approved = await fetch(`${base}/oauth/interaction/${uid}/consent`, { method: 'POST', headers, body: JSON.stringify(decision === 'approve' ? { decision, orgId: orgOf, ...(kind ? { kind } : {}), ...(opts.draft !== undefined ? { draft: opts.draft } : {}) } : { decision }) });
+    const approved = await fetch(`${base}/oauth/interaction/${uid}/consent`, { method: 'POST', headers, body: JSON.stringify(decision === 'approve' ? { decision, orgId: orgOf, ...(kind ? { kind } : {}), ...(opts.draft !== undefined ? { draft: opts.draft } : {}), ...(opts.writes !== undefined ? { writes: opts.writes } : {}) } : { decision }) });
     const answer = (await approved.json()) as { redirectTo?: string; message?: string; code?: string };
     return { clientId, verifier, redirect: reg.redirect, uid, started, details: { status: detailsResponse.status, body: (await detailsResponse.json()) as Record<string, unknown> }, consentStatus: approved.status, redirectTo: answer.redirectTo ?? '', cookie: started.cookie + '; ' + cookiesOf(approved) };
   }
@@ -254,7 +254,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
 
   it('publishes its metadata: the resource, the issuer, S256 only, registration, revocation', async () => {
     const protectedResource = (await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json()) as Record<string, unknown>;
-    expect(protectedResource).toMatchObject({ resource, authorization_servers: [base], scopes_supported: ['ludy.read', 'ludy.social.draft'] });
+    expect(protectedResource).toMatchObject({ resource, authorization_servers: [base], scopes_supported: ['ludy.read', 'ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft'] });
     for (const path of ['/.well-known/oauth-authorization-server', '/.well-known/openid-configuration']) {
       const meta = (await (await fetch(`${base}${path}`)).json()) as Record<string, any>;
       expect(meta.issuer).toBe(base);
@@ -1029,6 +1029,42 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(draftOnly.consentStatus).toBe(422);
     // Nothing half made is left: no grant of those clients.
     for (const c of [readOnly, asMember, draftOnly]) {
+      expect((await admin((client) => client.query(`SELECT count(*)::int AS n FROM crove_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].n).toBe(0);
+    }
+  });
+
+  // The per-line write scopes (ADR-0051 decision 11, #3858): each is ticked on its own, held only by a company grant with the read scope, and lists no tool yet (no command declares them).
+  const ENGAGE = 'ludy.engage.write';
+  const ADS = 'ludy.ads.draft';
+  const ALL_WRITES = `ludy.read ${DRAFT} ${ENGAGE} ${ADS}`;
+
+  it('lets an owner tick the Engage and Ads write scopes one by one: the page offers all three, the token and the grant hold exactly the ticked ones, and no write tool is listed for them yet', async () => {
+    const asked = await consent('owner', orgId, 'approve', undefined, { scope: ALL_WRITES, writes: [ENGAGE] });
+    expect(asked.details.body).toMatchObject({ scopes: ['ludy.read', DRAFT, ENGAGE, ADS] });
+    const access = await tokenOf(asked);
+    expect(claimsOf(access).scope.split(' ').sort()).toEqual(['ludy.engage.write', 'ludy.read']);
+    expect((await admin((client) => client.query(`SELECT scopes, kind FROM crove_kernel.agent_grant WHERE client_id = $1`, [asked.clientId]))).rows[0]).toEqual({ scopes: ['ludy.engage.write', 'ludy.read'], kind: 'company' });
+    // The tool list is filtered by scope: the Social draft tool is not listed for a grant that does not hold its scope, and no tool names the Engage scope yet.
+    const names = await toolNames(access);
+    expect(names).not.toContain('ludy_social_draft_create');
+    expect(names).toContain('ludy_about');
+    const both = await tokenOf(await consent('owner', orgId, 'approve', undefined, { scope: ALL_WRITES, writes: [DRAFT, ADS] }));
+    expect(claimsOf(both).scope.split(' ').sort()).toEqual(['ludy.ads.draft', 'ludy.read', DRAFT]);
+    expect(await toolNames(both)).toContain('ludy_social_draft_create');
+    // Ticking nothing leaves the read scope alone, whatever the client asked for.
+    const none = await tokenOf(await consent('owner', orgId, 'approve', undefined, { scope: ALL_WRITES, writes: [] }));
+    expect(claimsOf(none).scope).toBe('ludy.read');
+  });
+
+  it('refuses a write scope the client did not ask for, one asked for a member grant, and the old draft box together with another scope the client left out', async () => {
+    const notAsked = await consent('owner', orgId, 'approve', undefined, { scope: `ludy.read ${ENGAGE}`, writes: [ADS] });
+    expect(notAsked.consentStatus).toBe(422);
+    const asMember = await consent('owner', orgId, 'approve', 'member', { scope: ALL_WRITES, writes: [ENGAGE] });
+    expect(asMember.consentStatus).toBe(422);
+    const noRead = await consent('owner', orgId, 'approve', undefined, { scope: ENGAGE, writes: [ENGAGE] });
+    expect(noRead.details.body).toMatchObject({ scopes: ['ludy.read'] });
+    expect(noRead.consentStatus).toBe(422);
+    for (const c of [notAsked, asMember, noRead]) {
       expect((await admin((client) => client.query(`SELECT count(*)::int AS n FROM crove_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].n).toBe(0);
     }
   });
