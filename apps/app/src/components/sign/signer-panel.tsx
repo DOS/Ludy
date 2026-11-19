@@ -196,10 +196,37 @@ export function SignerPanel({
                       <Badge variant="outline">{t('signer.orderBadge', { order: String(signer.routingOrder) })}</Badge>
                     ) : null}
                     {signer.requireEmailOtp ? <Badge variant="outline">OTP</Badge> : null}
+                    {signer.preExpiryRemindedAt ? (
+                      signer.preExpiryRemindStatus === 'suppressed' ? (
+                        <Badge variant="warning" data-testid={`signer-pre-expiry-suppressed-${signer.id}`}>
+                          {t('signer.preExpirySuppressedBadge')}
+                        </Badge>
+                      ) : signer.preExpiryRemindStatus === 'failed' || signer.preExpiryRemindStatus === 'bounced' ? (
+                        <Badge variant="destructive" data-testid={`signer-pre-expiry-failed-${signer.id}`}>
+                          {t('signer.preExpiryFailedBadge')}
+                        </Badge>
+                      ) : signer.preExpiryRemindStatus === 'sent' || signer.preExpiryRemindStatus === 'delivered' ? (
+                        <Badge variant="outline" data-testid={`signer-pre-expiry-reminded-${signer.id}`}>
+                          {t('signer.preExpiryRemindedBadge')}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" data-testid={`signer-pre-expiry-queued-${signer.id}`}>
+                          {t('signer.preExpiryQueuedBadge')}
+                        </Badge>
+                      )
+                    ) : null}
                     {isSelected && isDraft ? (
                       <Badge variant="default">{t('signer.activeChip')}</Badge>
                     ) : null}
                   </div>
+                  {signer.status === 'declined' && signer.declineReason ? (
+                    <p
+                      className="mt-1.5 rounded bg-destructive/10 px-2 py-1 text-xs text-destructive"
+                      data-testid={`signer-decline-reason-${signer.id}`}
+                    >
+                      {t('signer.declineReasonNote', { reason: signer.declineReason })}
+                    </p>
+                  ) : null}
 
                   {isDraft ? (
                     <div className="mt-2 flex flex-wrap items-center gap-1">
