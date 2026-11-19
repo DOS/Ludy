@@ -6,7 +6,8 @@ import { zId } from './schemas.ts';
 
 // Whether this deployment offers the connector at all: it does only when the deployment holds the integrator's ClientID (never in any answer).
 // `pushOffered`: the push of vouchers is also switched on (MISA_AMIS_PUSH, after the sandbox check): without it the screen draws no confirm button and the route answers 404.
-export const zMisaAmisStatus = z.object({ offered: z.boolean(), pushOffered: z.boolean() });
+// `aspOffered` (#4111, S2 of #4103): this deployment also holds a ClientID for MISA ASP (MISA_ASP_CLIENT_ID), so a connection may be made for that product. Each product is on only with its own ClientID.
+export const zMisaAmisStatus = z.object({ offered: z.boolean(), pushOffered: z.boolean(), aspOffered: z.boolean() });
 export type MisaAmisStatus = z.infer<typeof zMisaAmisStatus>;
 
 // What a connection test came back with, as a state and never MISA's own text (the column's CHECK).
@@ -14,8 +15,14 @@ export const MISA_AMIS_TEST_STATES = ['works', 'wrong_credentials', 'unreachable
 export const zMisaAmisTestState = z.enum(MISA_AMIS_TEST_STATES);
 export type MisaAmisTestState = z.infer<typeof zMisaAmisTestState>;
 
+// The MISA product a connection is for: AMIS Kế toán or MISA ASP. A legal entity is on one of them, never both; the product is fixed for the connection's life.
+export const MISA_AMIS_PRODUCTS = ['amis', 'asp'] as const;
+export const zMisaAmisProduct = z.enum(MISA_AMIS_PRODUCTS);
+export type MisaAmisProduct = z.infer<typeof zMisaAmisProduct>;
+
 export const zMisaAmisConnection = z.object({
   id: zId,
+  product: zMisaAmisProduct,
   // The channel connection that holds the sealed access code. The code itself is never in any answer.
   connectionId: zId,
   legalEntityId: zId,
@@ -34,6 +41,8 @@ export const MISA_AMIS_ACCESS_CODE_MAX = 500;
 export const zMisaAmisConnect = z.strictObject({
   // Left out, the org's default entity.
   legalEntityId: zId.nullable(),
+  // Left out, AMIS Kế toán (what every caller before #4111 meant).
+  product: zMisaAmisProduct.default('amis'),
   accessCode: z.string().trim().min(1).max(MISA_AMIS_ACCESS_CODE_MAX),
 });
 export type MisaAmisConnect = z.infer<typeof zMisaAmisConnect>;

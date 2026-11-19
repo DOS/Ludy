@@ -90,7 +90,8 @@ export interface AmisClient {
    * `freshToken` drops any token kept for this connection first, so the access code is sent to MISA again: a test must not pass on a token made before the code was revoked.
    */
   companyInfo(connection: AmisConnection, branchId?: string | null, options?: { freshToken?: boolean }): Promise<AmisRecord | null>;
-  dictionary(connection: AmisConnection, query: AmisDictionaryQuery): Promise<AmisRecord[]>;
+  /** `freshToken` drops any token kept for this connection first, as for `companyInfo`: MISA ASP's connection test (#4111) is a catalogue read and must send the access code again too. */
+  dictionary(connection: AmisConnection, query: AmisDictionaryQuery, options?: { freshToken?: boolean }): Promise<AmisRecord[]>;
   /** Creates catalogue entries (parties, items, ...): only for rows a person confirmed. */
   saveDictionary(connection: AmisConnection, dataType: AmisDictionaryType, rows: readonly AmisRecord[]): Promise<void>;
   /** Pushes vouchers as requests to generate a voucher. Success means MISA queued them; the results come by callback or by `callbackResults`. */
@@ -247,8 +248,12 @@ export function createAmisClient(options: AmisClientOptions): AmisClient {
       return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as AmisRecord) : null;
     },
 
-    async dictionary(connection, query) {
+    async dictionary(connection, query, options = {}) {
       const c = snapshot(connection);
+      if (options.freshToken === true) {
+        tokens.delete(keyOf(c));
+        pending.delete(keyOf(c));
+      }
       // Read once: the page size that is asked for is the bound the answer is held to.
       const { dataType, skip, take } = query;
       if (product === 'asp' && !ASP_DICTIONARIES.has(dataType)) throw new AmisError('unsupported');
