@@ -55,6 +55,9 @@ export const AI_FEATURES = {
   // The accounting coworker's plain-Vietnamese reason for the VAT rate a correcting e-invoice proposes (#3709): code decided the basis and the rate, a person confirms; the model is told the nature, two
   // dates and the rates only, and its text is refused when it states a figure or a rate the facts do not hold.
   'finance.einvoice_rate_explain': 'finance',
+  // The accounting coworker's plain-Vietnamese explanation of the surplus of a count of stock (#3712 slice 2b): code reads the items, the amount and the supplier the goods were last received
+  // from, and its text is refused when it states a figure the facts do not hold, advises an account or claims a step was done.
+  'finance.stock_surplus_explain': 'finance',
   // The accounting coworker's proposal of the reason code of an adjusting or replacing e-invoice (#3690): the model answers a number into the list of Appendix XVII codes it is shown, so a code outside
   // the list cannot come out; its one-line why is refused when it states a figure the note, the lines or the labels do not hold. A person confirms by starting the correction.
   'finance.einvoice_reason_suggest': 'finance',
