@@ -10,6 +10,8 @@
 //   the rows it took or whose answer was lost (`sent`, `ambiguous`, or `sending` for too long, which becomes `ambiguous`), once per run, then send the next batch of queued rows (at most AMIS_SAVE_BATCH_MAX, one
 //   voucher type and one set of choices). A batch whose call was begun before is never sent again.
 // - finance.misa_amis.push_record (system; R1): writes what came back into the rows and the call. Only moves the graph allows (the table's guard says the same).
+// - finance.misa_amis.push_resolve (owners and admins; R2 internal): after three days without MISA's answer a person who looked in AMIS says "it is in AMIS" (`sent`, no call) or "it is not in AMIS" (`failed`: only a new
+//   confirmed push sends it again).
 // - finance.misa_amis.push_list (every member; query): the rows of a connection with their state and MISA's reason (untrusted text: the screen shows it escaped).
 // No voucher body is stored, and no row, audit fact, ledger row or error carries a credential, a party name or an amount: ids, codes, dates, counts and states. MISA's own text is only the `reason` of a refused row.
 import { createHash } from 'node:crypto';
@@ -442,6 +444,44 @@ export const misaAmisPushRecord = defineCommand({
 });
 
 // ---------------------------------------------------------------------------------------------------------------
+// What a person decides about a row MISA never answered for
+
+// After this long without MISA's answer an `ambiguous` row is shown to an owner or admin to look at in AMIS.
+export const PUSH_AMBIGUOUS_REVIEW_DAYS = 3;
+
+export const zMisaAmisPushResolve = z.strictObject({
+  connectionId: zId,
+  orgRefid: zOrgRefid,
+  // "It is in AMIS": the row is `sent` (no call is made; MISA's result is read as for any sent row). "It is not in AMIS": the row is `failed` and only a new confirmed push sends it again.
+  outcome: z.enum(['in_amis', 'not_in_amis']),
+});
+
+export const misaAmisPushResolve = defineCommand({
+  name: 'finance.misa_amis.push_resolve',
+  input: zMisaAmisPushResolve,
+  // A person records what they found in AMIS about a request whose answer was lost. Nothing is sent; a resend needs a new confirmed push (finance.misa_amis.push).
+  risk: 'R2',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  handler: async (ctx, input): Promise<{ resolved: boolean }> => {
+    const [state, reason] = input.outcome === 'in_amis' ? (['sent', 'CONFIRMED_IN_AMIS'] as const) : (['failed', 'NOT_IN_AMIS'] as const);
+    const moved = await ctx.trx
+      .updateTable('crove_finance.misa_amis_push')
+      .set({ state, reason, ...(state === 'sent' ? { sent_at: ctx.now } : {}), updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('connection_id', '=', input.connectionId)
+      .where('org_refid', '=', input.orgRefid)
+      .where('state', '=', 'ambiguous')
+      .where('updated_at', '<', new Date(ctx.now.getTime() - PUSH_AMBIGUOUS_REVIEW_DAYS * 24 * 3600 * 1000))
+      .executeTakeFirst();
+    const resolved = Number(moved.numUpdatedRows) > 0;
+    if (!resolved) throw new DomainError('MISA_AMIS_PUSH_STATE', 409, 'Chứng từ này chưa thể xác nhận: chỉ chứng từ chưa có phản hồi từ MISA quá ba ngày mới xác nhận được');
+    ctx.audit({ connectionId: input.connectionId, outcome: input.outcome });
+    return { resolved };
+  },
+});
+
+// ---------------------------------------------------------------------------------------------------------------
 // What a person reads
 
 export interface MisaAmisPushRow {
@@ -495,5 +535,5 @@ export const misaAmisPushList = defineQuery({
   },
 });
 
-export const misaAmisPushCommands = [misaAmisPush, misaAmisPushBegin, misaAmisPushRecord];
+export const misaAmisPushCommands = [misaAmisPush, misaAmisPushBegin, misaAmisPushRecord, misaAmisPushResolve];
 export const misaAmisPushQueries = [misaAmisPushTarget, misaAmisPushList];

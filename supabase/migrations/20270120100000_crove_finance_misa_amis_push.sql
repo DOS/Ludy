@@ -7,7 +7,8 @@
 --                  No voucher body is stored (it holds party names): the worker rebuilds it from the source and checks the digest again before it sends.
 --
 -- State (a guard enforces the graph): queued -> sending -> sent -> accepted | refused. A call whose answer was lost leaves `ambiguous`: the worker asks MISA for the `org_refid` before anything is
--- sent again. An `ambiguous` row leaves only with MISA's own answer (accepted or refused); nothing sends it again. `failed` is a row that could not be sent (the source changed since the person looked, or a code the worker could not map). Only a person moves a `refused` or `failed` row back to `queued`
+-- sent again. An `ambiguous` row leaves only with MISA's own answer (accepted or refused), or, after three days without one, with what a person found in AMIS ("it is in AMIS": `sent`; "it is not in AMIS": `failed`, to be
+-- confirmed again); nothing sends it again. `failed` is a row that could not be sent (the source changed since the person looked, or a code the worker could not map). Only a person moves a `refused` or `failed` row back to `queued`
 -- (a new confirmed push, one more attempt); nothing else moves a row out of `accepted` or `refused`, and no tenant role deletes a row, so nobody erases the record and pushes the same voucher again unseen.
 --
 -- Every member of the entity reads the rows; owners and admins push (the command), and the system context (the worker) records what came back. A tenant role updates only the state columns, through the guard.
@@ -121,7 +122,13 @@ BEGIN
     ) THEN
       RAISE EXCEPTION 'MISA_AMIS_PUSH_STATE' USING ERRCODE = '42501';
     END IF;
-  ELSIF NOT (OLD.state IN ('refused', 'failed') AND NEW.state = 'queued' AND NEW.attempts = OLD.attempts + 1 AND NEW.reason IS NULL AND NEW.sent_at IS NULL AND NEW.answered_at IS NULL) THEN
+  ELSIF OLD.state IN ('refused', 'failed') AND NEW.state = 'queued' AND NEW.attempts = OLD.attempts + 1 AND NEW.reason IS NULL AND NEW.sent_at IS NULL AND NEW.answered_at IS NULL THEN
+    NULL;
+  ELSIF OLD.state = 'ambiguous' AND OLD.updated_at < pg_catalog.now() - interval '3 days' AND NOT v_batch AND NEW.attempts = OLD.attempts AND NEW.answered_at IS NOT DISTINCT FROM OLD.answered_at
+        AND ((NEW.state = 'sent' AND NEW.reason = 'CONFIRMED_IN_AMIS') OR (NEW.state = 'failed' AND NEW.reason = 'NOT_IN_AMIS')) THEN
+    -- A person looked in AMIS after three days without MISA's answer: "it is in AMIS" (the row is `sent`, no call is made) or "it is not in AMIS" (`failed`; it goes back to `queued` only through a new confirmed push).
+    NULL;
+  ELSE
     RAISE EXCEPTION 'MISA_AMIS_PUSH_STATE' USING ERRCODE = '42501';
   END IF;
   RETURN NEW;

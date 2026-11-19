@@ -14545,6 +14545,7 @@ export const en = {
         push_begin: 'Begin a run of sending vouchers to MISA AMIS',
         push_list: 'View the vouchers sent to MISA AMIS',
         push_record: 'Record the result of sending vouchers to MISA AMIS',
+        push_resolve: 'Confirm a voucher MISA AMIS never answered for',
         push_target: 'Get the MISA AMIS connection for sending vouchers',
       },
       misa_goods_code: {

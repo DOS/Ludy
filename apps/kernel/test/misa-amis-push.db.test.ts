@@ -358,6 +358,25 @@ suite('MISA AMIS push (#3902)', () => {
     await expect(rows("UPDATE crove_finance.misa_amis_push SET state = 'queued' WHERE org_refid = $1", [batches[2]])).resolves.toBeDefined();
   });
 
+  it('after three days without MISA\'s answer an owner or admin says what they found in AMIS: "in AMIS" is sent (no call), "not in AMIS" is failed and needs a new confirmed push', async () => {
+    const ambiguous = (await rows<{ org_refid: string }>("SELECT org_refid FROM crove_finance.misa_amis_push WHERE connection_id = $1 AND state = 'ambiguous' ORDER BY org_refid", [connectionId])).map((r) => r.org_refid);
+    expect(ambiguous.length).toBeGreaterThanOrEqual(2);
+    const [inAmis, notInAmis] = ambiguous as [string, string];
+    const resolve = (who: keyof typeof users, orgRefid: string, outcome: 'in_amis' | 'not_in_amis') => api.execute('finance.misa_amis.push_resolve', { connectionId, orgRefid, outcome }, asUser(who));
+    // Too early: only a row with no answer for more than three days.
+    await expect(resolve('owner', inAmis, 'in_amis')).rejects.toMatchObject({ code: 'MISA_AMIS_PUSH_STATE' });
+    await rows("UPDATE crove_finance.misa_amis_push SET updated_at = pg_catalog.now() - interval '4 days' WHERE org_refid = ANY($1::uuid[])", [[inAmis, notInAmis]]);
+    for (const who of ['member', 'viewer'] as const) await expect(resolve(who, inAmis, 'in_amis'), who).rejects.toMatchObject({ status: 403 });
+    expect(await resolve('admin', inAmis, 'in_amis')).toEqual({ resolved: true });
+    expect(await resolve('owner', notInAmis, 'not_in_amis')).toEqual({ resolved: true });
+    expect(await rows<{ state: string; reason: string | null; attempts: number }>('SELECT state, reason, attempts FROM crove_finance.misa_amis_push WHERE org_refid = $1', [inAmis])).toEqual([{ state: 'sent', reason: 'CONFIRMED_IN_AMIS', attempts: 1 }]);
+    expect(await rows<{ state: string; reason: string | null; attempts: number }>('SELECT state, reason, attempts FROM crove_finance.misa_amis_push WHERE org_refid = $1', [notInAmis])).toEqual([{ state: 'failed', reason: 'NOT_IN_AMIS', attempts: 1 }]);
+    // A row that is not ambiguous cannot be resolved, and "not in AMIS" is not a resend: the row waits for a new confirmed push.
+    await expect(resolve('owner', inAmis, 'not_in_amis')).rejects.toMatchObject({ code: 'MISA_AMIS_PUSH_STATE' });
+    expect((await begin({ branchKnown: true, checked: true })).action).not.toBe('send');
+    expect((await pushRows()).find((r) => r.org_refid === notInAmis)).toMatchObject({ state: 'failed', attempts: 1 });
+  });
+
   it('a person sends a refused row again only through a new confirmed push: one more attempt, the new digest, the reason cleared', async () => {
     const refused = (await pushRows()).find((r) => r.state === 'refused');
     if (!refused) throw new Error('expected a refused row');
