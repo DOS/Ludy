@@ -5270,6 +5270,29 @@ export const en = {
       not_recognized: 'Could not recognise the marketplace\'s order format',
     },
   },
+  misaAmisConnections: {
+    title: 'MISA AMIS Kế toán: send vouchers to your accountant',
+    intro:
+      'Connect the company\'s AMIS Kế toán data so that vouchers can later be sent to AMIS as requests to generate a voucher; your people in AMIS still make the voucher. This step only saves the connection and sends nothing to AMIS.',
+    off: 'The MISA AMIS connector is turned off in this system.',
+    noConnections: 'No AMIS connected yet.',
+    connectTitle: 'Connect AMIS',
+    entity: 'Legal entity',
+    accessCode: 'Connection code from AMIS',
+    accessCodeNote: 'The connection code is made in AMIS by someone with rights over the connection data. What you type is encrypted when it is saved and is never shown again.',
+    connect: 'Connect',
+    connectedSince: 'Connected since {when}',
+    disconnect: 'Disconnect',
+    disconnectConfirm: 'Disconnect this? The saved connection code will be deleted; vouchers already in AMIS are not affected.',
+    disconnectYes: 'Disconnect',
+    keep: 'Keep',
+    status: {
+      active: 'Connected',
+      expired: 'Expired, disconnect, then connect again',
+      revoked: 'Disconnected',
+      error: 'Error, disconnect, then connect again',
+    },
+  },
   bankFeeds: {
     title:'Bank feed',
     intro:
@@ -13046,6 +13069,9 @@ export const en = {
       MARKETPLACE_CONNECTION_EXISTS: 'This legal entity already has a connection to this marketplace.',
       MARKETPLACE_CONNECTION_NOT_FOUND: 'That marketplace connection was not found.',
       MARKETPLACE_CONNECTION_LIVE: 'Disconnect from the marketplace before removing this row.',
+      MISA_AMIS_DISABLED: 'The MISA AMIS connector is not turned on in this system.',
+      MISA_AMIS_CONNECTION_EXISTS: 'This legal entity already has a MISA AMIS connection.',
+      MISA_AMIS_CONNECTION_LIVE: 'Disconnect MISA AMIS before removing this row.',
       MARKETPLACE_PROVIDER_NOT_READY: 'This connector cannot be tested or pulled from the screen yet; it can once its connector is finished.',
       MARKETPLACE_NOT_STAGED: 'This report was already handled or was read again; reload the list.',
       MARKETPLACE_BUSY: 'Another report is being imported at the same moment; try again in a few minutes.',
@@ -14022,6 +14048,12 @@ export const en = {
       },
       mcp: {
         invoices: 'Show an AI app the list of recorded invoices',
+      },
+      misa_amis_connection: {
+        connect: 'Connect MISA AMIS Kế toán',
+        list: 'View the MISA AMIS connections',
+        target: 'Check the legal entity of a MISA AMIS connection',
+        unlink: 'Disconnect MISA AMIS',
       },
       misa_goods_code: {
         remove: 'Remove a MISA item code',
