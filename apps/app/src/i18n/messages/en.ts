@@ -1747,6 +1747,12 @@ export const en = {
       budget: "{finance} has used this month's AI budget: the figures above stand alone.",
       failed: '{finance} could not word this one: the figures above stand alone.',
     },
+    lineFeeNotesTitle: "{finance}'s notes on the fees waiting for an invoice (the table above is what counts)",
+    lineFeeNotesAi: {
+      busy: '{finance} is busy, the table above stands alone for now.',
+      budget: "{finance} has used this month's AI budget: the table above stands alone.",
+      failed: '{finance} could not word this one: the table above stands alone.',
+    },
   },
   stock: {
     marketplaceLink: 'See each marketplace platform\'s money in the books',
@@ -9096,6 +9102,7 @@ export const en = {
       finance_vat_late_explain: 'One sentence naming the late sales invoices on the VAT working',
       finance_bank_match_explain: 'Explaining why a bank transaction may be a payroll payment',
       finance_marketplace_line: 'Wording what is waiting on the marketplace screen',
+      finance_marketplace_fee_note: 'Wording the platform fees waiting for an invoice',
       finance_misa_check_line: 'Wording what a MISA export check found',
       finance_misa_amis_blocker_notes: 'Wording each problem that keeps a voucher from MISA AMIS',
       finance_supplier_payable_line: 'Wording the received invoices waiting to be paid',
