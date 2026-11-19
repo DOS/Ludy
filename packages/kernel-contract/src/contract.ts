@@ -508,6 +508,7 @@ import {
 } from './meeting-minutes-templates.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
+import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import {
   zMeetingHookCleared,
@@ -1230,6 +1231,8 @@ export const contract = {
     recordingStopped: oc.input(zMeetingRecordingStopped).output(zMeetingRecordingStoppedDone),
     // The calling member's meeting the extension is recording right now, for the app's recording chip (A1, #3159).
     recordingNow: oc.input(zMeetingRecordingNowInput).output(zMeetingRecordingNow),
+    // The recorder's own new title for a meeting (#3947): a pick from Vy's suggestions or a title they typed; audited, ids only.
+    rename: oc.input(zMeetingRename).output(zMeetingRenamed),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),
     ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
     // The owner's compliance list (#2703): every meeting of the org as metadata only, no title or text, a page at a time; audited per call.
@@ -1312,6 +1315,12 @@ export const contract = {
       facts: oc.input(zBriefTarget).output(zBriefFacts),
       status: oc.input(zBriefEmpty).output(zBriefStatus),
       write: oc.input(zBriefTarget).output(zBriefAnswer),
+    },
+    // The recorder's Vy suggesting a title from the transcript (#3947): `status` is the button (the same answer as the chapters'), `suggest` the click that has the recorder's own Vy write up to three candidates.
+    // The candidates go back to the browser and are stored nowhere; the recorder's pick is `meetings.rename`.
+    title: {
+      status: oc.input(zSummaryRef).output(zSummaryStatus),
+      suggest: oc.input(zSummaryRef).output(zTitleAnswer),
     },
     // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): no model; code matches by time and a person confirms. `list` is today's meetings, `suggest` the event
     // a recording overlaps, `setReadEvents` the member's switch (the cache is deleted when it goes off), `link` the click that attaches a recorded meeting to its event.

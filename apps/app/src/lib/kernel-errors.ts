@@ -460,6 +460,10 @@ export const KERNEL_ERROR_CODES = [
   'ASK_BUSY',
   'BRIEF_OFF',
   'BRIEF_BUSY',
+  // The recorder's Vy suggesting a meeting title and the rename (#3947).
+  'TITLE_BUSY',
+  'MEETING_TITLE_EMPTY',
+  'MEETING_TITLE_TOO_LONG',
   'TRANSLATION_NOT_FOUND',
   'TRANSLATION_NOTHING',
   'TRANSLATION_RESULT_INVALID',

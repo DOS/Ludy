@@ -16,6 +16,7 @@ import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingLive } from '../components/meeting-live.tsx';
 import { MeetingBrief } from '../components/meeting-brief.tsx';
 import { MeetingSeries } from '../components/meeting-series.tsx';
+import { MeetingTitleSuggest } from '../components/meeting-title.tsx';
 import { MeetingChapters } from '../components/meeting-chapters.tsx';
 import { MeetingNotes } from '../components/meeting-notes.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
@@ -282,6 +283,8 @@ export function MeetingDetailPage() {
       />
       {/* A recording that ended without the recorder's click leaves a visible line (A1, #3159): when it stopped and why, in plain words. */}
       <RecordingStoppedNote meeting={meeting} />
+      {/* The recorder's own Vy offers up to three titles on a click (#3947); a pick renames the meeting, nothing changes before it */}
+      <MeetingTitleSuggest meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} />
 
       {/* AI Off Status Card: gone once the meeting has a transcript */}
       {!hasTranscript && (

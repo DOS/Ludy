@@ -27,6 +27,9 @@ export const MEMBER_VY_FEATURE_TABLE = {
   'meetings.brief': { module: 'meetings', expiryMinutes: 30 },
   // The recorder's Vy writing the table of contents of one meeting in the foreground (#3844): one model call over the transcript, the member waiting for it. Its own key, so it never cuts off a transcription, a summary, a translation, a question or live notes (#3029).
   'meetings.chapters': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy suggesting up to three titles for one meeting from its transcript in the foreground (#3947): one model call, the member waiting for it, the candidates shown and never stored. Its own key, so it
+  // never cuts off a transcription, a summary, a translation, a question, a brief or chapters (#3029).
+  'meetings.title': { module: 'meetings', expiryMinutes: 30 },
   'projects.tasks_from_note': { module: 'projects', expiryMinutes: 30 },
   'projects.tasks_from_source': { module: 'projects', expiryMinutes: 30 },
 } as const;
