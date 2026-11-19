@@ -3468,7 +3468,9 @@ export function createHttpApp(deps: HttpDeps) {
           throw new DomainError('BAD_REQUEST', 400, 'Bản chép lời đã lưu không đọc được');
         }
         const lines = typeof staged === 'object' && staged !== null ? (staged as { segments?: unknown }).segments : undefined;
-        const input = zMeetingTranscriptImport.safeParse({ meetingId, segments: lines });
+        // The worker's job marks a transcript it had to cut (#3922); only a literal true counts, anything else is a whole transcript.
+        const cut = typeof staged === 'object' && staged !== null && (staged as { truncated?: unknown }).truncated === true;
+        const input = zMeetingTranscriptImport.safeParse({ meetingId, segments: lines, platformCut: cut });
         if (!input.success) throw new DomainError('BAD_REQUEST', 400, 'Bản chép lời đã lưu không hợp lệ');
         const result = await runtime.execute('meetings.import.take_transcript', input.data, { actor: actorOf(user), orgId });
         return c.json(result);
