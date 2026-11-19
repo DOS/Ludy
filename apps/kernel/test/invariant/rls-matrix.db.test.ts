@@ -195,6 +195,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.audio_segment', () => 'false'], // Meetings read through the recorder and the readers, who are users (ADR-0047).
   ['crove_meetings.calendar_agenda', () => 'false'], // A member's own calendar meetings, read by that member, a user (meetings integrations B1, #3165).
   ['crove_meetings.chat_post', () => 'false'], // The recorder's own log of minutes posted to a channel, read by the recorder, a user (meetings integrations B4, #3168).
+  ['crove_meetings.glossary_term', () => 'false'], // The org's glossary is for owners and admins in a user context (#4043); an agent context reads none, the recorder's run reads it through a definer.
   ['crove_meetings.live_chunk', () => 'false'], // The recorder's own live pieces, read by the recorder, a user (ADR-0052 L4a, #3109).
   ['crove_meetings.live_line', () => 'false'], // The live preview of a recording, read by the recorder, a user (ADR-0052 L4a, #3110).
   ['crove_meetings.meeting', () => 'false'], // As above.
@@ -293,6 +294,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.calendar_agenda', 'false'],
   // The recorder's own log of minutes posted to a channel (meetings integrations B4, #3168): the recorder's alone; the worker system context reads and writes nothing.
   ['crove_meetings.chat_post', 'false'],
+  // The org's glossary (#4043): owners and admins alone, in a user context; the system context sees and changes none of it.
+  ['crove_meetings.glossary_term', 'false'],
   // Live pieces of a recording (ADR-0052 L4a, #3109): worker system context reads and writes nothing.
   ['crove_meetings.live_chunk', 'false'],
   // The live preview of a recording (ADR-0052 L4a, #3110): worker system context reads and writes nothing.
@@ -2873,6 +2876,13 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #4043 (meetings glossary): a term the org spells one way (a product, an acronym, jargon). Only an owner or admin reads and writes it (restrictive policies; the factory's owner is one), and a
+  // recorder's run reads it through a definer. Its factory lands before the table (step 1 of 4), so PENDING_TABLES holds it until the migration of step 2. The term is letters only (a term may hold at most 4 digits) and unique per org.
+  'crove_meetings.glossary_term': {
+    make: (o) => ({
+      row: { org_id: o.id, id: randomUUID(), term: `Glossary${Array.from(randomBytes(6), (b) => String.fromCharCode(97 + (b % 26))).join('')}`, created_by: o.owner },
+    }),
+  },
   // #3164 (meetings integrations A6): one delivery of a member's minutes webhook, here a ping whose body carries the ids of its own row and no meeting data. Definer-only, in MACHINERY.
   // It references the member's webhook of the same org.
   'crove_meetings.hook_delivery': {
@@ -3069,13 +3079,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_meetings.minutes_template': {
     make: (o) => ({
       row: { org_id: o.id, id: randomUUID(), name: `RLS matrix template ${tag()}`, sections: JSON.stringify([{ key: 's1', title: 'Nội dung', hint: '' }]), created_by: o.owner },
-    }),
-  },
-  // #4043 (meetings glossary): a term the org spells one way (a product, an acronym, jargon). Only an owner or admin reads and writes it (restrictive policies; the factory's owner is one), and a
-  // recorder's run reads it through a definer. Its factory lands before the table (step 1 of 4), so PENDING_TABLES holds it until the migration of step 2. The term is letters only (a term may hold at most 4 digits) and unique per org.
-  'crove_meetings.glossary_term': {
-    make: (o) => ({
-      row: { org_id: o.id, id: randomUUID(), term: `Glossary ${Array.from(randomBytes(6), (b) => String.fromCharCode(97 + (b % 26))).join('')}`, created_by: o.owner },
     }),
   },
   // #3955 (part B): a member's own opt-in to the morning notice of the day's meetings (a time of day, their zone and language), one row per member, read, written and deleted by that member alone, so the
