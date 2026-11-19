@@ -227,10 +227,27 @@ export function inTargetScript(text: string, to: CjkTarget): boolean {
 
 const squash = (text: string): string => text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
+// How many characters a translation may have per character of its original (plus a fixed allowance for a short text). The pair vi and en keeps its factor of 3. Chinese, Japanese and
+// Korean write the same thing in far fewer characters (a vi or en sentence comes out at about a third to a half of its length), so a CJK text longer than the original is a runaway
+// or a repeat, not a translation; the bound is deliberately loose (1.5) until the eval meetings of each language give a measured one (#3186, the native reader's runbook).
 const MAX_FACTOR = 3;
-function limitFor(key: string, source: string): number {
+const CJK_MAX_FACTOR: Record<CjkTarget, number> = { zh: 1.5, ja: 1.5, ko: 1.5 };
+function limitFor(key: string, source: string, to?: TranslationTarget): number {
   const cap = key === 'summary' ? TRANSLATION_LIMITS.summaryChars : key.startsWith('decision:') ? TRANSLATION_LIMITS.decisionChars : key.startsWith('item:') ? TRANSLATION_LIMITS.itemChars : TRANSLATION_LIMITS.lineChars;
+  if (to !== undefined && isCjkTarget(to)) return Math.min(cap, Math.ceil(source.length * CJK_MAX_FACTOR[to]) + 60);
   return Math.min(cap, source.length * MAX_FACTOR + 100);
+}
+
+// The Latin-script names and acronyms of a source that a CJK translation has to carry as written (the prompt says so): a capitalised word in the middle of a sentence that is not a
+// country, a month or a title (those are translated), and an acronym of two to six capitals that a language does not usually write in its own words (OK, CEO, VAT and the like are).
+// Lower case, NFKC, so the full-width form of a Latin letter counts as the plain one.
+const COMMON_ACRONYMS = new Set<string>(['ok', 'am', 'pm', 'ceo', 'cfo', 'cto', 'coo', 'vat', 'ai']);
+const kept = (word: string): string => word.normalize('NFKC').toLowerCase();
+function namesToKeep(source: string): string[] {
+  const out = new Set<string>();
+  for (const word of midSentenceCapitals(source)) if (!KNOWN_WORDS.has(norm(word))) out.add(kept(word));
+  for (const word of wordsOf(source)) if (/^[A-Z]{2,6}$/.test(word) && !COMMON_ACRONYMS.has(kept(word))) out.add(kept(word));
+  return [...out];
 }
 
 /**
@@ -243,7 +260,7 @@ export function checkSegment(source: TranslationSegmentInput, answered: string |
   if (answered === null) return refuse('MISSING');
   const text = answered.replace(/\r\n?/g, '\n').trim();
   if (text === '') return refuse('EMPTY');
-  if (text.length > limitFor(source.key, source.text)) return refuse('TOO_LONG');
+  if (text.length > limitFor(source.key, source.text, to)) return refuse('TOO_LONG');
   if (squash(text) === squash(source.text)) return refuse('UNCHANGED');
   // Into Chinese, Japanese or Korean: a text that is mostly not in that script is the source language again (or a wrong one), and shows as untranslated.
   if (to !== undefined && isCjkTarget(to) && !inTargetScript(text, to)) return refuse('UNCHANGED');
@@ -254,10 +271,14 @@ export function checkSegment(source: TranslationSegmentInput, answered: string |
   for (const contact of contactsIn(text)) if (!known.has(contact)) return refuse('CONTACT_ADDED');
   const codes: TranslationCode[] = [];
   if (original.some((token) => !held(token, translated, true))) codes.push('NUMBER_DROPPED');
-  // The capitalised-name check reads Latin script split by spaces: a CJK text has neither, so it cannot say anything there (the prompt keeps names as written and the reader's check covers them).
   if (to === undefined || !isCjkTarget(to)) {
     const seen = new Set(wordsOf(source.text).map(norm));
     if (midSentenceCapitals(text).some((word) => !seen.has(norm(word)) && !KNOWN_WORDS.has(norm(word)))) codes.push('NAME_ADDED');
+  } else {
+    // The capitalised-name check reads Latin script split by spaces, which a CJK text has neither of. The other way is checked instead: every Latin name and acronym the source has
+    // must stand in the translation as written (the prompt says so); one that was transliterated or dropped shows the same mark, "a name may differ from the original".
+    const written = text.normalize('NFKC').toLowerCase();
+    if (namesToKeep(source.text).some((name) => !written.includes(name))) codes.push('NAME_ADDED');
   }
   return { key: source.key, text, state: codes.length > 0 ? 'warn' : 'ok', codes };
 }
@@ -301,7 +322,7 @@ const LANGUAGE_NAME: Record<TranslationTarget, string> = { vi: 'Vietnamese', en:
 // What a CJK target needs said besides the rest: figures stay in Arabic digits (a number written 万, 億 or 만 would read as an invented figure to the checks and to the reader), names stay as written.
 const cjkRules = (to: TranslationTarget): string[] =>
   isCjkTarget(to)
-    ? [`Write every number with Arabic digits exactly as the source writes it; never use number words or units such as 万, 億, 만. Write names of people and companies in their Latin spelling as the source has them, never transliterated.`]
+    ? [`Write every number with Arabic digits exactly as the source writes it; never use number words or units such as 万, 億, 만. Write names of people and companies, and acronyms, in their Latin spelling as the source has them, never transliterated.`]
     : [];
 
 const INSTRUCTION = (from: TranslationLanguage, to: TranslationTarget): string =>

@@ -220,6 +220,34 @@ describe('Chinese, Japanese and Korean as targets (#3186)', () => {
     expect(checkSegment(source, 'Agreed 500 with customer Nguyen today')).toMatchObject({ state: 'warn', codes: ['NAME_ADDED'] });
   });
 
+  it('into a CJK target, a Latin name or acronym of the source that is not kept as written shows the name mark; kept ones, countries and common acronyms do not', () => {
+    const source = seg('Chốt giá với khách Acme Corp qua MISA ngày mai');
+    expect(checkSegment(source, '已与客户 Acme Corp 通过 MISA 明天确定价格', 'zh')).toMatchObject({ state: 'ok', codes: [] });
+    // Transliterated, or the acronym dropped: the same mark as a name that was added, never a refusal (the reader decides).
+    expect(checkSegment(source, '已与客户阿克米公司通过 MISA 明天确定价格', 'zh')).toMatchObject({ state: 'warn', codes: ['NAME_ADDED'] });
+    expect(checkSegment(source, '已与客户 Acme Corp 明天确定价格', 'zh')).toMatchObject({ state: 'warn', codes: ['NAME_ADDED'] });
+    // The full-width form of a Latin letter is the plain one.
+    expect(checkSegment(source, '已与客户 Ａcme Ｃorp 通过 ＭＩＳＡ 明天确定价格', 'zh')).toMatchObject({ state: 'ok', codes: [] });
+    // A country, a month and a common acronym are translated, not carried.
+    expect(checkSegment(seg('Gửi hàng sang Japan vào tháng May, OK với CEO'), '五月发货到日本，已与首席执行官确认', 'zh')).toMatchObject({ state: 'ok', codes: [] });
+    // Digits written full-width count as the source's digits (NFKC), so the figure is neither invented nor dropped.
+    expect(checkSegment(seg('Chốt giá 1250 đồng'), '价格确定为１２５０越南盾', 'zh')).toMatchObject({ state: 'ok', codes: [] });
+    // Into English the check is the old one: nothing is demanded of the source's names.
+    expect(checkSegment(source, 'Agreed the price with the customer', 'en')).toMatchObject({ codes: [] });
+  });
+
+  it('bounds the length of a CJK translation by a smaller factor than the pair vi and en, per target', () => {
+    const source = seg('x'.repeat(100));
+    // 100 characters of source: a CJK text up to 1.5 x 100 + 60 = 210 characters is let through, one of 211 is TOO_LONG; the pair keeps 3 x 100 + 100 = 400.
+    for (const to of ['zh', 'ja', 'ko'] as const) {
+      const letter = to === 'zh' ? '价' : to === 'ja' ? 'の' : '가';
+      expect(checkSegment(source, letter.repeat(210), to).codes).not.toContain('TOO_LONG');
+      expect(checkSegment(source, letter.repeat(211), to)).toMatchObject({ state: 'refused', codes: ['TOO_LONG'] });
+    }
+    expect(checkSegment(source, 'word '.repeat(79), 'en').codes).not.toContain('TOO_LONG');
+    expect(checkSegment(source, 'word '.repeat(81), 'en')).toMatchObject({ state: 'refused', codes: ['TOO_LONG'] });
+  });
+
   it('asks for the target by name, says to keep Arabic digits and Latin names, and estimates more output tokens for a CJK target', async () => {
     const seen: Array<{ system: string; user: string }> = [];
     const model: ModelPort = {
