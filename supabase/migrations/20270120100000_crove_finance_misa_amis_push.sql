@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS crove_finance.misa_amis_push (
 );
 -- What the worker takes next (the queued rows of a connection, oldest first) and what a person lists (a connection's rows by state).
 CREATE INDEX IF NOT EXISTS misa_amis_push_connection_idx ON crove_finance.misa_amis_push (org_id, connection_id, state, requested_at);
+-- The foreign key to the legal entity needs an index that leads with its columns (the tenant conventions, G3).
+CREATE INDEX IF NOT EXISTS misa_amis_push_entity_idx ON crove_finance.misa_amis_push (org_id, legal_entity_id);
 CREATE INDEX IF NOT EXISTS misa_amis_push_list_idx ON crove_finance.misa_amis_push (org_id, connection_id, requested_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS misa_amis_push_source_idx ON crove_finance.misa_amis_push (org_id, source_type, source_id);
 CREATE INDEX IF NOT EXISTS misa_amis_push_requested_by_idx ON crove_finance.misa_amis_push (org_id, requested_by) WHERE requested_by IS NOT NULL;
