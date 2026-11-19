@@ -460,6 +460,17 @@ export const KERNEL_ERROR_CODES = [
   'ASK_BUSY',
   'BRIEF_OFF',
   'BRIEF_BUSY',
+  // Vy checking a meeting's agenda against its transcript (#3959).
+  'ADHERENCE_OFF',
+  'ADHERENCE_BUSY',
+  // The recorder's Vy suggesting a meeting title and the rename (#3947).
+  'TITLE_BUSY',
+  'COMMITMENTS_BUSY',
+  'MEETING_TITLE_EMPTY',
+  'MEETING_TITLE_TOO_LONG',
+  // The weekly digest across meetings (#3949).
+  'DIGEST_OFF',
+  'DIGEST_BUSY',
   // Vy naming who an action item belongs to (#3921).
   'ASSIGNEE_OFF',
   'ASSIGNEE_BUSY',
@@ -895,6 +906,8 @@ export const KERNEL_ERROR_CODES = [
   'STOCK_SURPLUS_RESOLVED',
   'STOCK_SURPLUS_PENDING',
   'STOCK_SURPLUS_STALE',
+  // The books of the entity changed since a sale was proposed (#3712 slice 4).
+  'BOOKS_REGIME_CHANGED',
   'STOCK_COUNT_ENTRY',
   'STOCK_COUNT_ITEM_INACTIVE',
   'STOCK_COUNT_ITEM_ENTITY',
@@ -908,6 +921,7 @@ export const KERNEL_ERROR_CODES = [
   'MISA_AMIS_DISABLED',
   'MISA_AMIS_CONNECTION_EXISTS',
   'MISA_AMIS_CONNECTION_LIVE',
+  'MISA_AMIS_CONNECTION_NOT_FOUND',
   'MARKETPLACE_PROVIDER_NOT_READY',
   // Marketplace order reports (#2515).
   'MARKETPLACE_NOT_STAGED',

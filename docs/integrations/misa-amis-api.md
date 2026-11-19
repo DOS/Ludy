@@ -3,7 +3,7 @@
 `packages/misa-amis` (`@crove/misa-amis`) is the adapter for the AMISKT v1.0.0 API, documented at
 [developer.misa.vn](https://developer.misa.vn/products-openapi/AMISKT). It is slice S1 of
 [#3854](https://github.com/DOS/Ludy/issues/3854); the plan is [accounting-software-sync.md](../plan/accounting-software-sync.md).
-The connection (S2, [#3875](https://github.com/DOS/Ludy/issues/3875)) is built on it, and the mapping and its preview (S3a, [#3901](https://github.com/DOS/Ludy/issues/3901)) use it; the push (S3b), the callback route (S4) and the AI check (S5) come next.
+The connection (S2, [#3875](https://github.com/DOS/Ludy/issues/3875)) and its test (S2b, [#3885](https://github.com/DOS/Ludy/issues/3885)) are built on it, and the mapping and its preview (S3a, [#3901](https://github.com/DOS/Ludy/issues/3901)) use it; the push (S3b), the callback route (S4) and the AI check (S5) come next.
 
 ## The connection (S2)
 
@@ -15,7 +15,24 @@ The connection (S2, [#3875](https://github.com/DOS/Ludy/issues/3875)) is built o
   in `crove_kernel.credential`, which the org export never carries.
 - **`org_company_code`** is the opaque code (`ludy-` and 32 hex characters, unique across the deployment) that AMIS is told for this connection and that the callback of S4 compares with the connection of the organisation it found from its own stored push row by `org_refid` (the code is unsigned, so it is a hint to compare, never the authority). It is in no answer
   and not in the org export; a reconnect makes a new one.
-- **Not in S2:** the connection test (a worker job that asks for a token and reads the company information; the table already holds its result), the push, the callback.
+- **Not in S2:** the connection test (S2b, below), the push, the callback.
+
+## The connection test (S2b, #3885)
+
+- **Flow.** An owner or admin clicks "Kiểm tra kết nối" on a live connection: route `misaAmis.connections.test` runs `finance.misa_amis_connection.request_test` (R2 external, because it starts a call with the org's sealed
+  code), which emits `finance.misa_amis_connection.test_requested`. The outbox relay queues one job on `finance-misa-amis-test` (one per connection at a time, so a double click is one test). The worker job reads
+  `finance.misa_amis_connection.test_target`, opens the sealed access code (only here, through the credential broker), asks AMIS for a token and then for the company information (two reads that change nothing
+  in AMIS), and records the result with `finance.misa_amis_connection.record_test` (system only).
+- **What is recorded:** `last_test_state` (`works`, `wrong_credentials`, `unreachable`) and `last_tested_at`, nothing else. AMIS refusing the access code, a disconnected app, no accounting data connected, or a gateway 401 or 403
+  is `wrong_credentials`. No answer, a deadline, a 5xx or 429, a body that is not MISA's shape, a refusal of the call itself, an answer whose company data is not the object the document describes (its shape is unconfirmed until the sandbox check), and `InvalidAPPID` (the deployment's own ClientID is unknown to MISA: nothing a customer's new code can fix) are `unreachable`;
+  its text tells the person to try again later and to tell the Ludy administrator if it stays, and the worker log carries the adapter's kind and MISA's error code (a plain word) for the operator. A connector's member who left, or a connection no longer
+  active, is `wrong_credentials` without calling AMIS (the connection also shows as expired). The test asks for a new token every time (`companyInfo(..., { freshToken: true })`), so the access code goes to AMIS on each test and a code revoked meanwhile reads `wrong_credentials`; other calls keep using the token held in memory for up to half an hour. The job opens only a credential sealed for provider `accounting_misa_amis`.
+  No AMIS text, token, header, access code or ClientID is stored, audited, logged or put in the job's data: the log line is the connection's first eight characters, the state, the adapter's error kind and MISA's error code.
+- **The screen** shows the last result and time to every member, and the button to owners and admins; the list is read again every two seconds for up to half a minute until the time changes.
+- **The transport** (`apps/kernel/src/misa-amis-transport.ts`) goes through `guardedRequest`: https and `developer.misa.vn` only, public addresses, the connection pinned to the checked address, a 30 s deadline, a 16 MB cap on the answer, no redirect followed.
+  The client is built once per process, only where `MISA_AMIS_CLIENT_ID` is set, and handed to the worker as `channels.misaAmis` (egress `provider:misa_amis`, classified in the egress invariant first, #3943).
+- **No external call ledger here:** the test reads only, so there is no effect whose outcome could be unknown. The push (S3b) commits its `external_call` before it sends.
+- **Not in S2b:** reading the dictionary (the branch and party codes of the preview), the push and the callback.
 
 ## What it does
 
@@ -89,7 +106,7 @@ sandbox yet.
   with the same rule as the MISA SME export (`allocateVat`), so the lines add up to the voucher's VAT exactly. `vat_rate` is the
   rate itself for 0, 5, 8, 10, and -1 KCT, -2 KKKNT, -3 KHAC with `other_vat_rate`.
 - **The preview** (`vouchers.misaAmisPreview`, a read) lists the vouchers of a period and kind with their AMIS type, parts, lines,
-  total and blockers. The branch and the party codes are not read until the dictionary is (the connection test of #3885), so it
+  total and blockers. The branch and the party codes are not read until the dictionary is (a follow-up on the transport of the connection test, S2b), so it
   says `checkedAgainstAmis: false` and leaves those two blockers out.
 
 Unconfirmed, to check in the sandbox. First, the three choices Ludy made itself, each marked unconfirmed in the code and shown in the
