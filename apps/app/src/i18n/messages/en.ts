@@ -225,6 +225,7 @@ export const en = {
     subtitle: 'What needs you across the apps, warnings first.',
     empty: 'Nothing needs you today',
     emptyHint: 'Warnings, proposals waiting for approval, unanswered messages and upcoming deadlines show up here when there are some.',
+    guideLink: 'Read the quick guide',
     kinds: { flag: 'Warnings', proposal: 'Waiting for your approval', message: 'Unanswered messages', deadline: 'Coming up' },
     severity: { block: 'Blocking', warn: 'Needs a look', info: 'Note' },
     // On the proposals' heading: how many of them carry a failed check or a warning (#3591).
@@ -7848,7 +7849,7 @@ export const en = {
     // One line for what waits in an app the company switched off (ADR-0053): it stays where it is and cannot be approved until the app is on.
     hiddenApps: '{count} waiting in an app that is switched off',
     emptyOther: 'Nothing here yet',
-    guideLink: 'Read the quick guide: upload, approve, export (in Vietnamese)',
+    guideLink: 'Read the quick guide: upload, approve, VAT return, export',
     columns: {
       document: 'Document',
       issueDate: 'Invoice date',
@@ -8203,12 +8204,9 @@ export const en = {
   guide: {
     contents: 'On this page',
     title: 'Quick guide',
-    subtitle: 'Three steps to record purchase invoices: upload, approve and export to Excel. The guide is in Vietnamese.',
+    subtitle: 'The three jobs of each month: upload and approve invoices, file the VAT return, export to Excel for your accountant.',
     crmTitle: 'CRM guide',
-    crmSubtitle: 'Contacts, importing them from a file, following deals on the board, then quotes, orders and invoices. The steps are in Vietnamese.',
-    firmTitle: 'Guide for accounting firms',
-    firmSubtitle:
-      "One client company's month in {brand}: add the client, take in and approve invoices, bank and cash, period close, the VAT return and handing the figures to the firm's accounting software. The steps are in Vietnamese.",
+    crmSubtitle: 'Contacts, importing them from a file, following deals on the board, then quotes, orders and invoices.',
     supportHint: 'Found a problem or need help? Tell us through',
     statusHint: 'Is the app slow or showing errors? See how each part is doing on the',
   },
