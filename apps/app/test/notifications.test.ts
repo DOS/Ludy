@@ -12,7 +12,7 @@ describe('notificationKinds', () => {
     expect(notificationKinds(['notes'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'notes.todo_due']);
     expect(notificationKinds(['projects'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'projects.weekly_status']);
     // The series nudge is a kind of the Meetings module (#3542).
-    expect(notificationKinds(['meetings']).slice(-2)).toEqual(['meetings.series_open_items', 'meetings.summary_ready']);
+    expect(notificationKinds(['meetings']).slice(-3)).toEqual(['meetings.series_open_items', 'meetings.summary_ready', 'meetings.morning']);
     expect(notificationKinds(['finance'])).not.toContain('meetings.series_open_items');
     // An ad account's paused connection is a kind of the Ads module (#2219).
     expect(notificationKinds(['ads'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'kernel.channel_expired']);

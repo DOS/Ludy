@@ -15,8 +15,8 @@ export const NOTIFICATION_KINDS = {
   // A project weekly status mailed to members (#2609).
   projects: ['projects.weekly_status'],
   // About 30 minutes before the next meeting of a series: how many of my items from the previous meeting are still open (#3542). It holds a count and the previous meeting, no title.
-  // And the recorder's "minutes draft ready" notice (#3730): it holds no text of the draft, and the same switch turns off its email.
-  meetings: ['meetings.series_open_items', 'meetings.summary_ready'],
+  // And the recorder's "minutes draft ready" notice (#3730): it holds no text of the draft, and the same switch turns off its email. And the opt-in "meetings today" notice (#3955): a count and a link, no title; the same switch turns off its email.
+  meetings: ['meetings.series_open_items', 'meetings.summary_ready', 'meetings.morning'],
 } as const;
 export type KnownNotificationKind = (typeof NOTIFICATION_KINDS)[keyof typeof NOTIFICATION_KINDS][number];
 
@@ -51,6 +51,7 @@ export type NotificationTarget =
   | { to: 'project'; id: string }
   | { to: 'projects' }
   | { to: 'meeting'; id: string }
+  | { to: 'meetings' }
   | { to: 'ads' }
   | { to: 'agents' };
 
@@ -86,6 +87,9 @@ export function notificationTarget(item: { kind: string; subjectId: string | nul
     // The meeting whose draft is ready: the recorder's own, opened where the draft is reviewed.
     case 'meetings.summary_ready':
       return item.subjectId ? { to: 'meeting', id: item.subjectId } : null;
+    // The morning notice opens the meetings page, where the day's meetings and their briefs are (#3955).
+    case 'meetings.morning':
+      return { to: 'meetings' };
     case 'kernel.channel_expired':
       return { to: 'ads' };
     // The AI budget's notice (#2382) opens the page with this month's use and the budgets, where an owner raises one.
