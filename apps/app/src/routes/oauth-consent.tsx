@@ -12,6 +12,13 @@ import { ErrorText, ScreenTitle, Spinner } from '../components/ui.tsx';
 import { apiFetch, errorMessage } from '../lib/api.ts';
 import { forgetInteraction, safeResume, type ConsentDetails } from '../lib/oauth-consent.ts';
 
+// The write scopes a client may ask for, each a choice the person ticks (ADR-0051 decision 11, #3858): the scope id, its message keys and its test id. Listed in the order of MCP_WRITE_SCOPE_IDS.
+const WRITE_OPTIONS = [
+  { scope: 'ludy.social.draft', option: 'draftOption', detail: 'scope.draft', testId: 'oauth-consent-draft' },
+  { scope: 'ludy.engage.write', option: 'engageOption', detail: 'scope.engage', testId: 'oauth-consent-engage' },
+  { scope: 'ludy.ads.draft', option: 'adsOption', detail: 'scope.ads', testId: 'oauth-consent-ads' },
+] as const;
+
 export function OauthConsentPage({ uid }: { uid: string }) {
   const t = useTranslations('oauthConsent');
   const details = useQuery({
@@ -26,18 +33,20 @@ export function OauthConsentPage({ uid }: { uid: string }) {
   // A member or viewer can only connect for themself; an owner or admin picks.
   const privileged = org?.role === 'owner' || org?.role === 'admin';
   const kind: 'company' | 'member' = privileged ? chosenKind : 'member';
-  // The draft scope (#3227, writing Social post drafts a person reviews) is a choice, off by default: offered only when the client asked for it, and only for the company (a member grant never carries a write).
-  const [draft, setDraft] = useState(false);
-  const draftAsked = details.data?.scopes.includes('ludy.social.draft') === true;
-  const draftOffered = draftAsked && org !== undefined && kind === 'company';
-  const draftOn = draftOffered && draft;
+  // A write scope (Social drafts #3227; Engage and Ads per line, #3858) is a choice, off by default: offered only when the client asked for it, and only for the company (a member grant never carries a write).
+  // Each can be ticked or unticked on its own; the grant holds exactly the ticked ones.
+  const [ticked, setTicked] = useState<readonly string[]>([]);
+  const askedWrites = WRITE_OPTIONS.filter((option) => details.data?.scopes.includes(option.scope) === true);
+  const offeredWrites = org !== undefined && kind === 'company' ? askedWrites : [];
+  const writesOn = offeredWrites.filter((option) => ticked.includes(option.scope));
+  const toggle = (scope: string, on: boolean) => setTicked((current) => (on ? [...current.filter((s) => s !== scope), scope] : current.filter((s) => s !== scope)));
 
   const answer = useMutation({
     mutationFn: async (decision: 'approve' | 'deny') => {
       const response = await apiFetch(`/oauth/interaction/${encodeURIComponent(uid)}/consent`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(decision === 'approve' ? { decision, orgId: org?.orgId, kind, draft: draftOn } : { decision }),
+        body: JSON.stringify(decision === 'approve' ? { decision, orgId: org?.orgId, kind, writes: writesOn.map((option) => option.scope) } : { decision }),
       });
       const body = (await response.json()) as { redirectTo?: string };
       return safeResume(body.redirectTo ?? '', window.location.origin);
@@ -84,31 +93,38 @@ export function OauthConsentPage({ uid }: { uid: string }) {
                 ))}
               </fieldset>
             )}
-            {draftOffered && (
-              <label className="flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm text-foreground" data-testid="oauth-consent-draft">
-                <input type="checkbox" className="mt-1" checked={draft} onChange={(event) => setDraft(event.target.checked)} />
-                <span>
-                  <span className="block font-medium">{t('draftOption')}</span>
-                  <span className="block text-muted-foreground">{t('scope.draft')}</span>
-                </span>
-              </label>
+            {offeredWrites.length > 0 && (
+              <fieldset className="space-y-2" data-testid="oauth-consent-writes">
+                <legend className="text-sm font-medium text-foreground">{t('chooseWrites')}</legend>
+                {offeredWrites.map((option) => (
+                  <label key={option.scope} className="flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm text-foreground" data-testid={option.testId}>
+                    <input type="checkbox" className="mt-1" checked={ticked.includes(option.scope)} onChange={(event) => toggle(option.scope, event.target.checked)} />
+                    <span>
+                      <span className="block font-medium">{t(option.option)}</span>
+                      <span className="block text-muted-foreground">{t(option.detail)}</span>
+                    </span>
+                  </label>
+                ))}
+              </fieldset>
             )}
-            {draftAsked && org && kind === 'member' && (
+            {askedWrites.length > 0 && org && kind === 'member' && (
               <p className="text-sm text-muted-foreground" data-testid="oauth-consent-draft-company-only">
-                {t(privileged ? 'draftCompanyOnly' : 'draftOwnerOnly')}
+                {t(privileged ? 'writeCompanyOnly' : 'writeOwnerOnly')}
               </p>
             )}
-            {org && <p className="text-sm font-medium text-foreground">{t(draftOn ? 'allowDraft' : 'allow', { client: details.data.client.name, org: org.name })}</p>}
+            {org && <p className="text-sm font-medium text-foreground">{t(writesOn.length > 0 ? 'allowWrite' : 'allow', { client: details.data.client.name, org: org.name })}</p>}
             {org && kind === 'member' && (
               <p className="text-sm text-foreground" data-testid="oauth-consent-member-only">
                 {t('memberOnly', { org: org.name })}
               </p>
             )}
             <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-              <li>{t(draftOn ? 'scope.readDraftOn' : 'scope.read')}</li>
-              {draftOn && <li>{t('scope.draft')}</li>}
+              <li>{t(writesOn.length > 0 ? 'scope.readWriteOn' : 'scope.read')}</li>
+              {writesOn.map((option) => (
+                <li key={option.scope}>{t(option.detail)}</li>
+              ))}
               {kind === 'company' && <li data-testid="oauth-consent-meetings">{t('scope.meetings')}</li>}
-              <li>{t(draftOn ? 'limitsDraft' : 'limits')}</li>
+              <li>{t(writesOn.length > 0 ? 'limitsWrite' : 'limits')}</li>
               <li>{t('actsAs')}</li>
               <li>{t('revokeHint', { days: details.data.expiresInDays })}</li>
             </ul>
