@@ -18,7 +18,7 @@ export const TRANSCRIPT: ReadonlyArray<{ from: number; to: number; who: string; 
 export type Route = 'title' | 'commitments' | 'adherence' | 'digest' | 'brief';
 export type Scenario = 'default' | 'bad' | 'garbage' | 'down';
 
-// A phrase of each feature's instruction, copied from the first line of its INSTRUCTION in packages/agent/src/member-vy; tools/test/fake-model.test.ts fails when a source stops holding its phrase, so the
+// A phrase of each feature's instruction, copied from the first line of its INSTRUCTION in the member-Vy feature files of the agent package; tools/test/fake-model.test.ts fails when a source stops holding its phrase, so the
 // route cannot silently fall back to the fixed summary.
 export const ROUTE_MARKERS: Readonly<Record<Route, string>> = {
   title: 'You suggest a title for one meeting',
