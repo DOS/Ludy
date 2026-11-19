@@ -31,11 +31,13 @@ describe('digestLines', () => {
 
   it('writes each fact as one line with its meeting and day, the Vietnam day of a due instant, and no control character', () => {
     const lines = digestLines(facts());
-    expect(lines[0]?.text).toBe('Decision of "Giao ban tuần" on 2026-11-17: Chốt giá 15.000.000 đồng');
+    expect(lines[0]).toMatchObject({ text: 'Chốt giá 15.000.000 đồng', meeting: 'Giao ban tuần', date: '2026-11-17' });
     // 17:00 UTC on the 19th is 00:00 on the 20th in Vietnam.
-    expect(lines[1]?.text).toBe('Open item of "Giao ban tuần" on 2026-11-17: Gửi báo giá (accepted as a task; owner: Lan; due: 2026-11-20; status: in progress)');
-    expect(lines[2]?.text).toBe('Open item of "Giao ban tuần" on 2026-11-17: Chưa ai nhận (not given to anyone yet)');
-    for (const line of lines) expect(line.text).not.toMatch(/\p{Cc}/u);
+    expect(lines[1]?.text).toBe('Gửi báo giá (accepted as a task; owner: Lan; due: 2026-11-20; status: in progress)');
+    expect(lines[2]?.text).toBe('Chưa ai nhận (not given to anyone yet)');
+    // The meeting's name and day are fields of their own: the text the checks read never holds them.
+    for (const line of lines) expect(line.text).not.toMatch(/Giao ban|Họp khách|2026-11-1[67]/u);
+    for (const line of lines) expect(line.text + line.meeting).not.toMatch(/\p{Cc}/u);
   });
 
   it('never gives more lines than the cap, and none for no meeting', () => {

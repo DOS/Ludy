@@ -40,17 +40,25 @@ export const digestFacts = defineQuery({
   handler: async (ctx, input): Promise<DigestFacts> => {
     userOf(ctx.actor);
     const since = new Date(Date.now() - input.days * DAY_MS);
-    // The meetings the caller reads (row security), not yet past their text date, newest first. A meeting still being recorded has no published result and no published item, so it adds nothing below.
-    const meetings = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
-      .select(['id', 'title', 'started_at'])
-      .where('org_id', '=', ctx.orgId)
-      .where('started_at', '>=', since)
-      .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', vnDay(new Date()))]))
-      .orderBy('started_at', 'desc')
-      .orderBy('id')
-      .limit(DIGEST_MEETINGS_MAX)
+    // The meetings the caller reads (row security), not yet past their text date, that have something published (a result or an action item), newest first. A meeting with only a draft, or still being recorded, takes no
+    // place: the limit counts the meetings that can show something. One more than the limit is read, to know whether the limit cut.
+    const readable = await ctx.trx
+      .selectFrom('crove_meetings.meeting as m')
+      .select(['m.id', 'm.title', 'm.started_at'])
+      .where('m.org_id', '=', ctx.orgId)
+      .where('m.started_at', '>=', since)
+      .where((eb) => eb.or([eb('m.text_retention_date', 'is', null), eb('m.text_retention_date', '>', vnDay(new Date()))]))
+      .where((eb) =>
+        eb.or([
+          eb.exists(eb.selectFrom('crove_meetings.meeting_result as r').select('r.id').whereRef('r.org_id', '=', 'm.org_id').whereRef('r.meeting_id', '=', 'm.id').where('r.stage', '=', 'published')),
+          eb.exists(eb.selectFrom('crove_meetings.action_item as a').select('a.id').whereRef('a.org_id', '=', 'm.org_id').whereRef('a.meeting_id', '=', 'm.id').where('a.stage', '=', 'published')),
+        ]),
+      )
+      .orderBy('m.started_at', 'desc')
+      .orderBy('m.id')
+      .limit(DIGEST_MEETINGS_MAX + 1)
       .execute();
+    const meetings = readable.slice(0, DIGEST_MEETINGS_MAX);
     if (meetings.length === 0) return zDigestFacts.parse({ days: input.days, meetings: [], cut: false, empty: true });
     const ids = meetings.map((m) => m.id);
     // Published decisions only, read under the caller's own row security (a published result is read by the readers of its meeting).
@@ -71,7 +79,8 @@ export const digestFacts = defineQuery({
     const out: DigestMeeting[] = [];
     let decisionsLeft = DIGEST_DECISIONS_MAX;
     let itemsLeft = DIGEST_ITEMS_MAX;
-    let cut = false;
+    // Meetings left unread because of the limit are a cut too.
+    let cut = readable.length > DIGEST_MEETINGS_MAX;
     for (const meeting of meetings) {
       const allDecisions = decisionsOf.get(meeting.id) ?? [];
       const allItems = withItems.has(meeting.id) ? await openItemsOf(ctx.trx, ctx.orgId, meeting.id) : [];

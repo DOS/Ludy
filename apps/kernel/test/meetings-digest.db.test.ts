@@ -117,9 +117,9 @@ suite("This week's decisions and open items (#3949)", () => {
     const db = createDb(appPool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
     setSummaryEnabled(true);
-    for (const key of ['owner', 'rec', 'lan', 'other']) users[key] = await upsertIdentity(db, { issuer: 'digest', subject: key, email: `${key}@digest.test`, name: key });
+    for (const key of ['owner', 'rec', 'lan', 'other', 'solo1', 'solo2']) users[key] = await upsertIdentity(db, { issuer: 'digest', subject: key, email: `${key}@digest.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Tổng Kết')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.rec, users.lan, users.other]);
+    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [orgId, users.rec, users.lan, users.other, users.solo1, users.solo2]);
   }, 300_000);
 
   afterAll(async () => {
@@ -171,7 +171,9 @@ suite("This week's decisions and open items (#3949)", () => {
     const lines = digestLines(lan);
     expect(lines.map((l) => l.kind)).toEqual(['decision', 'item', 'decision', 'item', 'item']);
     expect(lines.map((l) => l.n)).toEqual([1, 2, 3, 4, 5]);
-    expect(lines[0]?.text).toContain('"Họp khách Á Châu"');
+    expect(lines[0]).toMatchObject({ meeting: 'Họp khách Á Châu', text: 'Hẹn khách ký hợp đồng thứ sáu' });
+    // The meeting's name and day are fields of their own: the text the checks read never holds them.
+    for (const line of lines) expect(line.text).not.toMatch(/Họp khách|Giao ban|2026-/u);
   });
 
   it('caps the decisions and the items and says it cut', async () => {
@@ -196,6 +198,9 @@ suite("This week's decisions and open items (#3949)", () => {
     const given = (lastPrompt as unknown as { user: string }).user;
     // The newest meeting's decision is the first fact; the caps of the test before this one leave the older meetings out of the sixty.
     expect(given).toContain('Hẹn khách ký hợp đồng thứ sáu');
+    // The meeting is a field of its own next to the fact's text, and the answer says how many facts it rests on.
+    expect(JSON.parse(/<subject-[0-9a-f]+>\n([\s\S]*?)\n<\/subject-[0-9a-f]+>/.exec(given)?.[1] ?? '{}').facts[0]).toMatchObject({ n: 1, kind: 'decision', meeting: 'Họp khách Á Châu', text: 'Hẹn khách ký hợp đồng thứ sáu' });
+    expect(out.lines).toBeGreaterThan(0);
     // No id, no email and nothing a member may not read goes to the model.
     for (const secret of [...Object.values(users), '@digest.test', 'nháp', 'không đọc']) expect(given, secret).not.toContain(secret);
     const rows = (await resultRows()).slice(before);
@@ -211,7 +216,7 @@ suite("This week's decisions and open items (#3949)", () => {
       { text: 'Giá đã chốt là 20.000.000 đồng.', cites: [f[0]?.n] },
       { text: 'Dẫn một việc không có.', cites: [99] },
     ]);
-    expect(await recap('rec', 7, { model })).toEqual({ state: 'none', errorCode: null, sentences: [], dropped: 2 });
+    expect(await recap('rec', 7, { model })).toMatchObject({ state: 'none', errorCode: null, sentences: [], dropped: 2 });
   });
 
   it('keeps an instruction inside a decision as data: the model is fenced and it cannot make the page say what no fact holds', async () => {
@@ -225,7 +230,7 @@ suite("This week's decisions and open items (#3949)", () => {
 
   it('has nothing to ask when there is no fact, and makes no run and no call', async () => {
     const runs = (await resultRows()).length;
-    expect(await recap('other')).toEqual({ state: 'none', errorCode: null, sentences: [], dropped: 0 });
+    expect(await recap('other')).toEqual({ state: 'none', errorCode: null, sentences: [], dropped: 0, lines: 0 });
     expect(modelCalls).toBe(0);
     expect((await resultRows()).length).toBe(runs);
   });
@@ -233,7 +238,7 @@ suite("This week's decisions and open items (#3949)", () => {
   it('names a timeout, a provider failure, an unreadable answer and a spent budget by a fixed code and closes the run with a failed result', async () => {
     const throwing = (error: Error): ModelPort => ({ generate: async () => { throw error; } });
     const before = (await resultRows()).length;
-    expect(await recap('rec', 7, { model: throwing(new DigestModelError('timeout')) })).toEqual({ state: 'failed', errorCode: 'DIGEST_TIMEOUT', sentences: [], dropped: 0 });
+    expect(await recap('rec', 7, { model: throwing(new DigestModelError('timeout')) })).toMatchObject({ state: 'failed', errorCode: 'DIGEST_TIMEOUT', sentences: [], dropped: 0 });
     expect(await recap('rec', 7, { model: throwing(new Error('provider said Chốt giá')) })).toMatchObject({ state: 'failed', errorCode: 'DIGEST_FAILED' });
     expect(await recap('rec', 7, { model: { generate: async () => ({ text: 'Tuần này có hai quyết định.', usage: { inputTokens: 1, outputTokens: 1 } }) } })).toMatchObject({ state: 'failed', errorCode: 'DIGEST_UNPARSABLE' });
     expect(await recap('rec', 7, { model: throwing(new AiBudgetExhaustedError('org', null)) })).toMatchObject({ state: 'failed', errorCode: 'AI_BUDGET_EXHAUSTED' });
@@ -245,6 +250,50 @@ suite("This week's decisions and open items (#3949)", () => {
       ['failed', 'AI_BUDGET_EXHAUSTED'],
     ]);
     expect(logged.join('\n')).not.toMatch(/Chốt giá/u);
+  });
+
+  it('counts the meetings that can show something against the limit, and says when the limit cut', async () => {
+    // A member who recorded 55 meetings with only a draft result (nothing published) and 3 older ones with a published decision: the drafts take no place, the 3 show, nothing was cut.
+    const stamp = (n: number) => String(n);
+    await admin(async (c) => {
+      for (let i = 0; i < 55; i += 1) {
+        const id = randomUUID();
+        await c.query(
+          `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+           VALUES ($1, $2, $4, 'vi', now() - interval '1 day', now() - interval '1 day' + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date - 1, current_date + 365)`,
+          [orgId, id, users.solo1, `Họp nháp ${stamp(i)}`],
+        );
+        await c.query(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, 'Tóm tắt', '["Chỉ là nháp"]'::jsonb, 'manual', 'draft')`, [orgId, id]);
+      }
+    });
+    for (let i = 0; i < 3; i += 1) await result(await meeting(`Họp có kết quả ${i}`, 3, 'solo1', []), [`Quyết định thật ${i}`], 'published');
+    const first = await facts('solo1');
+    expect(first.meetings).toHaveLength(3);
+    expect(first).toMatchObject({ cut: false, empty: false });
+    expect(JSON.stringify(first)).not.toMatch(/nháp/u);
+
+    // A member whose 50 newest meetings only have a finished item (published, nothing open) and whose 51st has a decision: the limit hides it, and the answer says so instead of "nothing".
+    await admin(async (c) => {
+      for (let i = 0; i < 50; i += 1) {
+        const id = randomUUID();
+        const taskId = randomUUID();
+        await c.query(
+          `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+           VALUES ($1, $2, $4, 'vi', now() - interval '2 days', now() - interval '2 days' + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date - 1, current_date + 365)`,
+          [orgId, id, users.solo2, `Họp đã xong ${stamp(i)}`],
+        );
+        await c.query(`INSERT INTO crove_kernel.task (org_id, id, title, source, created_by_type, status) VALUES ($1, $2, 'Đã xong', 'human', 'system', 'done')`, [orgId, taskId]);
+        await c.query(
+          `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
+           VALUES ($1, $2, $3, 'Đã xong', 'Lan', $4, '', 'published', 'accepted', $5, false, 10)`,
+          [orgId, randomUUID(), id, users.lan, taskId],
+        );
+      }
+    });
+    await result(await meeting('Họp cũ có quyết định', 20, 'solo2', []), ['Quyết định bị giới hạn che'], 'published');
+    const cut = await facts('solo2', 30);
+    expect(cut.meetings).toEqual([]);
+    expect(cut).toMatchObject({ cut: true, empty: true });
   });
 
   it('works with AI off: the facts are read and the recap is refused before any run or call', async () => {

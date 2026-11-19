@@ -110,6 +110,9 @@ describe('MeetingDigest', () => {
     expect(none).toContain('data-testid="digest-window"');
     expect(none).not.toContain('data-testid="digest-vy"');
     expect(render(facts({ cut: true }))).toContain('data-testid="digest-cut"');
+    // Nothing shown but the limit hid some: the note says so rather than leaving "nothing" alone.
+    expect(render(facts({ meetings: [], empty: true, cut: true }))).toContain('data-testid="digest-cut"');
+    expect(none).not.toContain('data-testid="digest-cut"');
     expect(render(facts({ cut: false }))).not.toContain('data-testid="digest-cut"');
     // Nothing at all until the facts are read.
     expect(render(undefined)).toBe('');
@@ -139,8 +142,8 @@ describe('MeetingDigest', () => {
 });
 
 describe('DigestResult', () => {
-  const answer = (over: Partial<DigestAnswer>): DigestAnswer => ({ state: 'written', errorCode: null, sentences: [{ text: 'Tuần này đã chốt giá gói kế toán 15.000.000 đồng.', facts: [1] }], dropped: 0, ...over });
-  const show = (a: DigestAnswer) => render(undefined, { node: <DigestResult answer={a} /> });
+  const answer = (over: Partial<DigestAnswer>): DigestAnswer => ({ state: 'written', errorCode: null, sentences: [{ text: 'Tuần này đã chốt giá gói kế toán 15.000.000 đồng.', facts: [1] }], dropped: 0, lines: 5, ...over });
+  const show = (a: DigestAnswer, count?: number) => render(undefined, { node: <DigestResult answer={a} {...(count === undefined ? {} : { count })} /> });
 
   it('shows the sentences as text with the numbers of the facts they rest on, and what was left out', () => {
     const html = show(answer({ dropped: 2 }));
@@ -150,6 +153,13 @@ describe('DigestResult', () => {
     expect(text(html)).toContain('Based on: 1');
     expect(text(html)).toContain('Left out 2 sentence(s)');
     expect(text(html)).toContain(en.meetings.digest.private);
+  });
+
+  it('says so when the lists changed since the card read them: the numbers a sentence cites may point at other facts', () => {
+    expect(show(answer({ lines: 5 }), 5)).not.toContain('data-testid="digest-stale"');
+    const stale = show(answer({ lines: 5 }), 6);
+    expect(stale).toContain('data-testid="digest-stale"');
+    expect(text(stale)).toContain(en.meetings.digest.stale);
   });
 
   it('writes a sentence as text and never as markup', () => {

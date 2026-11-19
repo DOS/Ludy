@@ -2859,6 +2859,7 @@ export const vi = {
       answerTitle: 'Vy tóm tắt tuần này (bản nháp)',
       cites: 'Căn cứ: {numbers}',
       private: 'Chỉ bạn thấy và không được lưu. Vy chỉ dựa vào các mục đánh số ở trên; hãy đọc lại trước khi dựa vào, nhất là con số và ngày.',
+      stale: 'Danh sách đã đổi trong lúc Vy viết, nên các số nó nêu có thể không khớp với các mục ở trên. Hãy tải lại trang và hỏi lại.',
       none: 'Vy không có gì thêm để viết từ những mục này.',
       dropped: 'Đã bỏ {count} câu vì không có mục nào ở trên xác nhận.',
       failed: 'Vy chưa viết được lần này.',

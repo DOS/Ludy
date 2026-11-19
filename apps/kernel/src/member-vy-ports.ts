@@ -800,8 +800,10 @@ export async function runMeetingDigest(deps: MeetingBriefDeps, orgId: string, ac
   const model = deps.model;
   const meter = deps.meter(actor);
   if (!model || !meter) throw new DomainError('DIGEST_OFF', 422, 'Vy writing the weekly recap is not turned on here');
-  const none = (dropped = 0): DigestAnswer => ({ state: 'none', errorCode: null, sentences: [], dropped });
-  const failed = (errorCode: string): DigestAnswer => ({ state: 'failed', errorCode, sentences: [], dropped: 0 });
+  // `count` is how many numbered facts the answer rests on, so the card can tell when its own numbering has gone stale.
+  let count = 0;
+  const none = (dropped = 0): DigestAnswer => ({ state: 'none', errorCode: null, sentences: [], dropped, lines: count });
+  const failed = (errorCode: string): DigestAnswer => ({ state: 'failed', errorCode, sentences: [], dropped: 0, lines: count });
   const status = await deps.runtime.query<DigestStatus>('meetings.digest.status', {}, as);
   if (!status.enabled) {
     if (status.reason === 'off') throw new DomainError('DIGEST_OFF', 422, 'Vy writing the weekly recap is not turned on here');
@@ -813,6 +815,7 @@ export async function runMeetingDigest(deps: MeetingBriefDeps, orgId: string, ac
   try {
     const facts = await deps.runtime.query<DigestFacts>('meetings.digest.facts', ask, as);
     const lines = digestLines(facts);
+    count = lines.length;
     if (facts.empty || lines.length === 0) return none();
     let started: { runId: string };
     try {
@@ -840,7 +843,7 @@ export async function runMeetingDigest(deps: MeetingBriefDeps, orgId: string, ac
     try {
       const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
       const result = await withDeadline(
-        withAiScope({ orgId, memberRunId: runId, meter }, () => writeDigest({ facts: lines.map((l) => ({ kind: l.kind, text: l.text })) }, bindPorts({ orgId, memberUserId: actor.userId }, ports))),
+        withAiScope({ orgId, memberRunId: runId, meter }, () => writeDigest({ facts: lines.map((l) => ({ kind: l.kind, text: l.text, meeting: l.meeting, date: l.date })) }, bindPorts({ orgId, memberUserId: actor.userId }, ports))),
         timeoutMs,
       );
       checked = result.answer;
@@ -863,7 +866,7 @@ export async function runMeetingDigest(deps: MeetingBriefDeps, orgId: string, ac
       console.error('[meetings-digest] run failed: AI_STOPPED');
       return failed('AI_STOPPED');
     }
-    return sentences.length === 0 ? none(checked.dropped) : { state: 'written', errorCode: null, sentences, dropped: checked.dropped };
+    return sentences.length === 0 ? none(checked.dropped) : { state: 'written', errorCode: null, sentences, dropped: checked.dropped, lines: count };
   } finally {
     ticket.release();
   }

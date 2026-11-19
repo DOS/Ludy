@@ -59,6 +59,8 @@ export const zDigestAnswer = z.strictObject({
   sentences: z.array(zDigestSentence).max(BRIEF_SENTENCES_MAX),
   // How many sentences code removed for want of a valid citation, a quoted phrase or a figure the cited facts hold.
   dropped: z.number().int().min(0).max(100),
+  // How many numbered facts the answer was written from. The card compares it with its own count: when the lists changed since the card read them, the numbers a sentence cites may point at other facts, and the card says so.
+  lines: z.number().int().min(0).max(DIGEST_LINES_MAX),
 });
 export type DigestAnswer = z.infer<typeof zDigestAnswer>;
 
@@ -70,8 +72,11 @@ export interface DigestLine {
   // Counting from 1: the number a sentence cites.
   n: number;
   kind: 'decision' | 'item';
-  // The fact as the model is given it (English words around the data, which stays as people wrote it).
+  // The fact itself, as people wrote it, and nothing else: the checks on Vy's sentences read this text and only this text, so the figures and the dates of a meeting's name or day are never "written in a cited fact".
   text: string;
+  // The meeting the fact comes from, given to the model in fields of their own (and to the card), outside `text`.
+  meeting: string;
+  date: string;
   meetingId: string;
 }
 
@@ -86,8 +91,8 @@ const STATUS_TEXT: Record<string, string> = { todo: 'to do', in_progress: 'in pr
 export function digestLines(facts: DigestFacts): DigestLine[] {
   const lines: Omit<DigestLine, 'n'>[] = [];
   for (const meeting of facts.meetings) {
-    const where = `"${flat(meeting.title, 120)}" on ${vnDateOf(meeting.startedAt)}`;
-    for (const decision of meeting.decisions) lines.push({ kind: 'decision', text: `Decision of ${where}: ${flat(decision, TEXT_CHARS)}`, meetingId: meeting.meetingId });
+    const where = { meeting: flat(meeting.title, 120), date: vnDateOf(meeting.startedAt) };
+    for (const decision of meeting.decisions) lines.push({ kind: 'decision', text: flat(decision, TEXT_CHARS), ...where, meetingId: meeting.meetingId });
     for (const item of meeting.items) {
       const owner = item.whoUserId !== null || item.who !== '' ? flat(item.who, 100) : '';
       const parts = [
@@ -96,7 +101,7 @@ export function digestLines(facts: DigestFacts): DigestLine[] {
         ...(briefItemDue(item) !== null ? [`due: ${briefItemDue(item)}`] : []),
         ...(item.taskStatus !== null ? [`status: ${STATUS_TEXT[item.taskStatus] ?? item.taskStatus}`] : []),
       ];
-      lines.push({ kind: 'item', text: `Open item of ${where}: ${flat(item.title, TEXT_CHARS)} (${parts.join('; ')})`, meetingId: meeting.meetingId });
+      lines.push({ kind: 'item', text: `${flat(item.title, TEXT_CHARS)} (${parts.join('; ')})`, ...where, meetingId: meeting.meetingId });
     }
   }
   return lines.slice(0, DIGEST_LINES_MAX).map((line, index) => ({ ...line, n: index + 1 }));

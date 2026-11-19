@@ -3,11 +3,11 @@
 // The facts are read by code as the member (a meeting they do not read, a draft result and a meeting past its text date show nothing) and work with AI off. Every fact is numbered and sits under the meeting
 // it comes from, with a link. On top, one click has the member's own Vy write two or three sentences from those numbered facts: code checked each sentence before it got here (it must cite facts above and write
 // no figure or date they do not hold), the answer lives only in this component's state and is never stored.
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { DIGEST_DAYS, briefItemDue, vnDateOf, type DigestAnswer, type DigestAsk, type DigestFacts } from '@crove/kernel-contract';
+import { DIGEST_DAYS, briefItemDue, digestLines, vnDateOf, type DigestAnswer, type DigestAsk, type DigestFacts } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
@@ -37,9 +37,11 @@ const FactNumber = ({ n }: { n: number }) => (
 export function MeetingDigest({ slug }: { slug: string }) {
   const t = useTranslations('meetings.digest');
   const [days, setDays] = useState<DigestAsk['days']>(7);
-  const facts = useQuery({ ...orpc.meetings.digest.facts.queryOptions({ input: { days } }), ...READ_ONCE });
+  // The card stays on screen while another window loads (the picker the member just used must not vanish).
+  const facts = useQuery({ ...orpc.meetings.digest.facts.queryOptions({ input: { days } }), ...READ_ONCE, placeholderData: keepPreviousData });
   const data = facts.data;
-  // Nothing is shown until the facts have been read.
+  if (facts.error && !data) return <ErrorText>{errorMessage(facts.error)}</ErrorText>;
+  // Nothing else is shown until the facts have been read.
   if (!data) return null;
   return (
     <Card data-testid="meeting-digest">
@@ -60,9 +62,16 @@ export function MeetingDigest({ slug }: { slug: string }) {
       </CardHeader>
       <CardContent className="space-y-4">
         {data.empty ? (
-          <p className="text-sm text-muted-foreground" data-testid="digest-nothing">
-            {t('nothing', { count: String(days) })}
-          </p>
+          <>
+            <p className="text-sm text-muted-foreground" data-testid="digest-nothing">
+              {t('nothing', { count: String(days) })}
+            </p>
+            {data.cut && (
+              <p className="text-xs text-muted-foreground" data-testid="digest-cut">
+                {t('cut')}
+              </p>
+            )}
+          </>
         ) : (
           <>
             <Meetings slug={slug} facts={data} />
@@ -71,7 +80,7 @@ export function MeetingDigest({ slug }: { slug: string }) {
                 {t('cut')}
               </p>
             )}
-            <VyWords days={days} />
+            <VyWords key={days} days={days} count={digestLines(data).length} />
           </>
         )}
       </CardContent>
@@ -128,7 +137,7 @@ function Meetings({ slug, facts }: { slug: string; facts: DigestFacts }) {
 }
 
 // The click: Vy's two or three sentences. Absent when AI is off (no model, the deployment's switch, no right to work with Vy), with the reason said when the member could expect it to be there.
-function VyWords({ days }: { days: DigestAsk['days'] }) {
+function VyWords({ days, count }: { days: DigestAsk['days']; count: number }) {
   const t = useTranslations('meetings.digest');
   const ask = useTranslations('meetings.ask');
   const f = useFormat();
@@ -158,14 +167,14 @@ function VyWords({ days }: { days: DigestAsk['days'] }) {
       <div aria-live="polite" className="space-y-2">
         {recap.isPending && <p className="text-xs">{t('running')}</p>}
         {recap.error && <ErrorText>{errorMessage(recap.error)}</ErrorText>}
-        {recap.data && <DigestResult answer={recap.data} />}
+        {recap.data && <DigestResult answer={recap.data} count={count} />}
       </div>
     </div>
   );
 }
 
 // The answer from the server's answer alone: the sentences with the numbers of the facts they rest on, or "nothing to add", or the fixed words of a failure.
-export function DigestResult({ answer }: { answer: DigestAnswer }) {
+export function DigestResult({ answer, count }: { answer: DigestAnswer; count?: number }) {
   const t = useTranslations('meetings.digest');
   if (answer.state === 'written') {
     return (
@@ -180,6 +189,11 @@ export function DigestResult({ answer }: { answer: DigestAnswer }) {
           ))}
         </ol>
         {answer.dropped > 0 && <p className="text-xs text-muted-foreground">{t('dropped', { count: String(answer.dropped) })}</p>}
+        {count !== undefined && answer.lines !== count && (
+          <p className="text-xs text-destructive" role="status" data-testid="digest-stale">
+            {t('stale')}
+          </p>
+        )}
         <p className="text-xs text-muted-foreground">{t('private')}</p>
       </div>
     );

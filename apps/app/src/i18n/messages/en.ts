@@ -2862,6 +2862,7 @@ export const en = {
       answerTitle: 'Vy sums up the week (draft)',
       cites: 'Based on: {numbers}',
       private: 'Only you see this and it is not stored. Vy rests only on the numbered items above; read it again before relying on it, especially figures and dates.',
+      stale: 'The lists changed while Vy was writing, so the numbers it cites may not match the items above. Reload the page and ask again.',
       none: 'Vy has nothing to add from these items.',
       dropped: 'Left out {count} sentence(s) that no item above confirms.',
       failed: 'Vy could not write this time.',
