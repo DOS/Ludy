@@ -51,6 +51,7 @@ const item = (id: string, over: Partial<ActionItemView> = {}): ActionItemView =>
   taskId: null,
   positions: [],
   clean: false,
+  suggestion: null,
   ...over,
 });
 
