@@ -13,7 +13,7 @@ const INVARIANT_IMPORTER_RE = /^(?:apps|packages|modules)\/[^/]+\/test\/invarian
 // Two-step package rename bridge (#3965, ADR-0054): once all workspace packages carry the @ludy/* scope,
 // rewrite @crove/<pkg> imports originating inside the base-branch invariant suite (never in PR application code)
 // to @ludy/<pkg> and let Vite's standard package/exports resolver select the exact same module entry.
-function legacyCroveInvariantBridge(rootDir: string) {
+export function legacyCroveInvariantBridge(rootDir: string) {
   const pkgDirs: string[] = [];
   if (existsSync(join(rootDir, 'e2e', 'package.json'))) pkgDirs.push(join(rootDir, 'e2e'));
   for (const group of ['apps', 'modules', 'packages']) {
@@ -73,7 +73,9 @@ function legacyCroveInvariantBridge(rootDir: string) {
       const rest = source.slice('@crove/'.length);
       const slug = rest.split('/', 1)[0] ?? '';
       const expectedDir = ludyPkgDirs.get(slug);
-      if (!expectedDir) return null;
+      if (!expectedDir) {
+        throw new Error(`legacy-crove-invariant-bridge: missing workspace package @ludy/${slug} for ${source} imported from ${relImporter}`);
+      }
       const target = `@ludy/${rest}`;
       const resolved = await this.resolve(target, importer, { skipSelf: true });
       if (!resolved) {
