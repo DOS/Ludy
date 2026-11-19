@@ -7,13 +7,14 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { TranscriptTranslationView } from '@crove/kernel-contract';
+import type { TranscriptTranslationView, TranslationTarget } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { useFormat } from '../i18n/provider.tsx';
 import { ErrorText } from './ui.tsx';
-import { translateBlocked } from './meeting-translation.tsx';
+import { TranslationTargetPicker, translateBlocked, translateLabel } from './meeting-translation.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { hasChoice, langTag, pickedTarget } from '../lib/translation-targets.ts';
 
 type Part = TranscriptTranslationView['parts'][number];
 const KNOWN_CODES = ['AI_BUDGET_EXHAUSTED', 'AI_STOPPED', 'TRANSLATE_TIMEOUT', 'TRANSLATE_FAILED', 'TRANSLATE_UNPARSABLE', 'TRANSLATE_EMPTY', 'TRANSLATE_TOO_LONG', 'TRANSLATION_TOO_LARGE', 'RUN_ENDED', 'RUN_CANCELLED', 'TRANSLATE_RUNNING', 'TRANSLATION_DONE', 'TRANSLATION_STALE'] as const;
@@ -24,8 +25,8 @@ const knownCode = (code: unknown): KnownCode | 'default' => ((KNOWN_CODES as rea
 const refresh = () => Promise.all([queryClient.refetchQueries({ queryKey: orpc.meetings.translation.transcriptStatus.key() }), queryClient.refetchQueries({ queryKey: orpc.meetings.translation.transcriptGet.key() })]);
 
 /** The member's own translated parts of the transcript, by the line they translate; empty until they asked. The read is audited, so it is not refetched on focus. */
-export function useTranscriptParts(meetingId: string): { parts: ReadonlyMap<string, Part>; to: string } {
-  const query = useQuery({ ...orpc.meetings.translation.transcriptGet.queryOptions({ input: { meetingId } }), staleTime: 5 * 60_000, refetchOnWindowFocus: false });
+export function useTranscriptParts(meetingId: string, target?: TranslationTarget): { parts: ReadonlyMap<string, Part>; to: string } {
+  const query = useQuery({ ...orpc.meetings.translation.transcriptGet.queryOptions({ input: { meetingId, ...(target ? { to: target } : {}) } }), staleTime: 5 * 60_000, refetchOnWindowFocus: false });
   return { parts: new Map((query.data?.parts ?? []).map((p) => [p.lineId, p])), to: query.data?.to ?? 'en' };
 }
 
@@ -33,7 +34,7 @@ export function useTranscriptParts(meetingId: string): { parts: ReadonlyMap<stri
 export function TranslatedLine({ part, to }: { part: Part; to: string }) {
   const t = useTranslations('meetings.transcript.translation');
   return (
-    <div className="border-l-2 border-muted pl-2 text-sm text-muted-foreground" lang={to} data-testid="transcript-translation-line">
+    <div className="border-l-2 border-muted pl-2 text-sm text-muted-foreground" lang={langTag(to)} data-testid="transcript-translation-line">
       <Badge variant="outline" className="mr-1">
         {t('label')}
       </Badge>
@@ -54,16 +55,18 @@ export function TranslatedLine({ part, to }: { part: Part; to: string }) {
   );
 }
 
-export function TranscriptTranslationPanel({ meetingId }: { meetingId: string }) {
+// `target` is the language the member picked, kept by the transcript so its lines show the same one; `onTarget` changes it. None until they pick (the server then takes the other language of the pair).
+export function TranscriptTranslationPanel({ meetingId, target, onTarget }: { meetingId: string; target?: TranslationTarget | undefined; onTarget?: ((to: TranslationTarget | undefined) => void) | undefined }) {
   const t = useTranslations('meetings.transcript.translation');
+  const tt = useTranslations('meetings.translationTargets');
   const f = useFormat();
-  const status = useQuery({ ...orpc.meetings.translation.transcriptStatus.queryOptions({ input: { meetingId } }), refetchOnWindowFocus: false });
+  const status = useQuery({ ...orpc.meetings.translation.transcriptStatus.queryOptions({ input: { meetingId, ...(target ? { to: target } : {}) } }), refetchOnWindowFocus: false });
   const meter = useQuery({ ...orpc.ai.meter.queryOptions({ input: { module: 'meetings' } }), staleTime: 15_000 });
   // On while this page goes on from one batch to the next; off at the end, at a failure, at a refusal and at the member's stop.
   const [auto, setAuto] = useState(false);
   const lastRemaining = useRef<number | null>(null);
   const translate = useMutation({
-    mutationFn: () => orpc.meetings.translation.transcriptTranslate.call({ meetingId }),
+    mutationFn: () => orpc.meetings.translation.transcriptTranslate.call({ meetingId, ...(target ? { to: target } : {}) }),
     // The mutation stays pending until the status is read again, so the screen never shows the state before the batch that just ended.
     onSuccess: refresh,
     // A refusal ends the loop and the status is read again (a run of the member's that is live shows as running there, and the panel waits for it through the status).
@@ -95,7 +98,7 @@ export function TranscriptTranslationPanel({ meetingId }: { meetingId: string })
   if (!data) return null;
   const blocked = translateBlocked(data, meter.data);
   const running = translate.isPending || auto || data.state === 'running';
-  const label = data.to === 'en' ? t('toEnglish') : t('toVietnamese');
+  const label = translateLabel(t, tt, data.to);
   const begun = data.translated > 0 || data.stale > 0;
   const finished = begun && data.remaining === 0;
   const cost = data.estimate?.cost ?? null;
@@ -136,6 +139,7 @@ export function TranscriptTranslationPanel({ meetingId }: { meetingId: string })
         </p>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
+          {hasChoice(data.targets) && onTarget && <TranslationTargetPicker id="transcript-translate-to" targets={data.targets} value={data.to} disabled={translate.isPending} onChange={(to) => onTarget(pickedTarget(to, data.targets))} />}
           <Button
             size="sm"
             variant={begun ? 'outline' : 'default'}

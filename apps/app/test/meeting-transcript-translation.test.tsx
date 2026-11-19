@@ -7,6 +7,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
 import type { TranscriptTranslationStatus } from '@crove/kernel-contract';
+import { en } from '../src/i18n/messages/en.ts';
+import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
@@ -48,7 +50,7 @@ const STATUS: TranscriptTranslationStatus = {
 };
 const METER = { aiOn: true, state: 'ok', percent: 10, scope: null, resetAt: '2026-12-01T00:00:00Z' };
 
-function render(opts: { status?: Partial<TranscriptTranslationStatus>; meter?: Record<string, unknown>; locale?: 'en' | 'vi' } = {}) {
+function render(opts: { status?: Partial<TranscriptTranslationStatus>; meter?: Record<string, unknown>; locale?: 'en' | 'vi'; onTarget?: boolean } = {}) {
   client.current.clear();
   client.current.setQueryData(['meetings', 'translation', 'transcriptStatus'], { ...STATUS, ...opts.status });
   client.current.setQueryData(['ai', 'meter'], { ...METER, ...opts.meter });
@@ -56,7 +58,7 @@ function render(opts: { status?: Partial<TranscriptTranslationStatus>; meter?: R
   return renderToStaticMarkup(
     <QueryClientProvider client={client.current}>
       <IntlProvider locale={locale} messages={catalog(locale)}>
-        <TranscriptTranslationPanel meetingId="m1" />
+        <TranscriptTranslationPanel meetingId="m1" {...(opts.onTarget ? { onTarget: () => undefined } : {})} />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -149,5 +151,31 @@ describe('a translated line', () => {
     expect(refused).toContain('không dịch được dòng này');
     const stale = renderLine({ lineId: 'l3', text: 'Old text', state: 'ok', codes: [], stale: true }, 'vi');
     expect(stale).toContain('Bản dịch cũ, dịch lại');
+  });
+});
+
+describe('the language picker of the transcript panel (E3, #3186)', () => {
+  it('shows it only where the server offers more than the other language of the pair and the page can take a choice, and words the button for the language shown', () => {
+    expect(render({ status: { targets: ['en'] }, onTarget: true })).not.toContain('data-testid="translation-target"');
+    // Without a handler (the panel used on its own) there is nothing to pick into.
+    expect(render({ status: { to: 'ja', targets: ['en', 'ja'] } })).not.toContain('data-testid="translation-target"');
+    for (const locale of ['en', 'vi'] as const) {
+      const messages = locale === 'en' ? en : viMessages;
+      const html = render({ status: { to: 'ja', targets: ['en', 'ja'] }, locale, onTarget: true });
+      expect(html, locale).toContain('data-testid="translation-target"');
+      expect(html, locale).toContain('日本語');
+      expect(html, locale).toContain(messages.meetings.translationTargets.to.replace('{language}', '日本語'));
+    }
+  });
+
+  it('tags a translated line with its own language, Chinese as Simplified', () => {
+    const line = (to: string) =>
+      renderToStaticMarkup(
+        <IntlProvider locale="en" messages={catalog('en')}>
+          <TranslatedLine part={{ lineId: 'l1', text: '你好', state: 'ok', codes: [], stale: false }} to={to} />
+        </IntlProvider>,
+      );
+    expect(line('zh')).toContain('lang="zh-Hans"');
+    expect(line('ko')).toContain('lang="ko"');
   });
 });

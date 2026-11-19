@@ -3048,6 +3048,12 @@ export const vi = {
       saved: 'Đã lưu thời gian lưu cuộc họp.',
       adminOnly: 'Chỉ chủ sở hữu hoặc quản trị viên mới đổi được các thời hạn này.',
     },
+    // Ngôn ngữ để dịch sang (E3, #3186): mỗi tên viết bằng chính ngôn ngữ đó.
+    translationTargets: {
+      label: 'Dịch sang',
+      to: 'Dịch sang {language}',
+      names: { vi: 'Tiếng Việt', en: 'English', zh: '中文 (简体)', ja: '日本語', ko: '한국어' },
+    },
     transcript: {
       title: 'Bản ghi lời',
       draftTitle: 'Bản ghi lời (nháp)',
