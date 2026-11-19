@@ -55,7 +55,6 @@ import { DateInput } from '../components/date-input.tsx';
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
 import { TimeInput } from '../components/time-input.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
-import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { refreshProjectQueries } from '../components/project-task-dialog.tsx';
 import { TaskChecklistBadge } from '../components/task-checklist.tsx';
 import { TodoQuickAddBar } from '../components/todo-quick-add.tsx';
@@ -1755,7 +1754,6 @@ export function MyWorkPage() {
   return (
     <div className="space-y-4">
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
-      <NotesSubnav slug={slug} active="my-work" />
       <div className="grid gap-4 md:grid-cols-[220px_minmax(0,1fr)] md:items-start">
         <aside aria-label={t('listsTitle')} data-testid="my-work-lists-sidebar" className="space-y-2">
           <div className="flex items-center justify-between px-1">
