@@ -32,6 +32,8 @@ export const KERNEL_ERROR_CODES = [
   'MCP_PROPOSAL_CAP',
   'MCP_GRANT_TOO_MANY',
   'MCP_WAKE_GRANT_NOT_FOUND',
+  // A line's wake-up event for a connection that does not hold that line's permission (ADR-0051 decision 13).
+  'MCP_WAKE_SCOPE',
   'MCP_WAKE_NOT_FOUND',
   'MCP_WAKE_TOO_SOON',
   // A member's minutes webhook (Meetings A6, #3164).
