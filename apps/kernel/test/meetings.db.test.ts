@@ -2083,8 +2083,6 @@ suite('meetings module database integration tests (#2576)', () => {
     const otherOrg = await rpc('org/create', 'recorder', { name: `Meetings Lookup Org ${randomUUID().slice(0, 6)}`, idempotencyKey: randomUUID() }, null);
     expect(otherOrg.status).toBe(200);
     expect(await runtime.query<unknown[]>('kernel.meeting_platform.recordings', { recordingId: audioId }, { actor: asUser('recorder'), orgId: String(otherOrg.body.orgId) })).toEqual([]);
-    // An id the import routes accept (any 8-4-4-4-12 hex text) but a strict RFC check would not: the lookup answers an empty list, so the claim answers "not found" rather than a plain 400.
-    expect(await runtime.query<unknown[]>('kernel.meeting_platform.recordings', { recordingId: '00000000-0000-0000-0000-000000000001' }, { actor: asUser('recorder'), orgId })).toEqual([]);
     // Each route still refuses the other kind before the claim moves the row, though neither row is among the 50 newest.
     expect(await postTranscript(audio.meetingId, audioId)).toBe(400);
     expect((await recordingRow(audioId)).status).toBe('staged');

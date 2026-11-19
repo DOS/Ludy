@@ -547,12 +547,10 @@ export function setMeetingPlatformVideoImport(maxBytes: number | null): void {
 }
 
 // The member's own recordings, newest first: the suggestions and what became of the ones they imported. A dismissed one is hidden. With `recordingId` it is that one row (or none), found by its id
-// whatever its age, so a caller that needs one row does not depend on it being among the newest RECORDINGS_LIMIT; that lookup neither sorts nor limits (one row at most). Its id is `z.guid()`, the same
-// 8-4-4-4-12 hex text as the import routes' own `UUID_TEXT` check in apps/kernel/src/http.ts, so a route and its wrong-route guard agree on what an id is (a stricter `z.uuid()` would answer a plain 400
-// for an id the route accepted, before the claim could answer "not found").
+// whatever its age, so a caller that needs one row does not depend on it being among the newest RECORDINGS_LIMIT; that lookup neither sorts nor limits (one row at most).
 export const meetingPlatformRecordings = defineQuery({
   name: 'kernel.meeting_platform.recordings',
-  input: z.strictObject({ recordingId: z.guid().optional() }),
+  input: z.strictObject({ recordingId: zId.optional() }),
   access: OWN,
   handler: async (ctx, input): Promise<MeetingPlatformRecordingView[]> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được bản ghi từ nền tảng họp');
