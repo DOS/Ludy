@@ -66,6 +66,10 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'packages/kernel/src/agents.ts': {
     'proposal_command <- info.name': 'the name of the command a proposal runs',
     'title <- before.title': 'the title of a position in the org chart (crove_kernel.position.title, internal)',
+    // `reason` is also the name of crove_finance.misa_amis_push.reason (MISA AMIS's refusal text, personal data since #4015); none of these facts carries it.
+    'reason <- reason': 'why a run did not start, a code of the run-start result (a closed set)',
+    "reason <- ' '": "why a proposal was not created or approved, a code written out at the call (a closed set)",
+    'decision <- decision.reason': "the approval policy's decision code (a closed set), not free text",
   },
   'modules/social/src/review-links.ts': {
     'cleared <- body === null': 'whether the reply was cleared, a boolean',
@@ -97,8 +101,31 @@ const ALLOWED: Record<string, Record<string, string>> = {
   },
   'modules/finance/src/missing-invoices.ts': { 'skipped <- skipped': 'the periods too large to reconcile' },
   'modules/finance/src/portal-list.ts': { 'skipped <- input.skippedCount': "the count of the portal list's skipped rows, not the rows" },
-  'modules/social/src/archive.ts': { 'skipped <- result.skipped.map((s) => ({ post_id: s.postId, reason: s.reason }))': 'the post ids left out and why' },
-  'modules/social/src/bulk-edit.ts': { 'skipped <- result.skipped.map((s) => ({ post_id: s.postId, reason: s.reason }))': 'the post ids left out and why' },
+  // `reason` below is the name that crove_finance.misa_amis_push.reason (MISA AMIS's refusal text, personal data since #4015) shares; no fact of these files carries that column.
+  'modules/social/src/archive.ts': {
+    'skipped <- result.skipped.map((s) => ({ post_id: s.postId, reason: s.reason }))': 'the post ids left out and why',
+    'reason <- s.reason': "why a post was left out, a code of the archive result (a closed set)",
+  },
+  'modules/social/src/bulk-edit.ts': {
+    'skipped <- result.skipped.map((s) => ({ post_id: s.postId, reason: s.reason }))': 'the post ids left out and why',
+    'reason <- s.reason': "why a post was left out, a code of the bulk edit result (a closed set)",
+  },
+  'modules/social/src/evergreen.ts': { "reason <- ' '": 'why evergreen was switched off, a code written out at the call' },
+  'modules/social/src/publish-hold.ts': {
+    'reason <- input.reason': "the hold's own reason, the command's input (crove_social.publish_hold.reason, internal)",
+    'reason <- live.reason': "the released hold's own reason (crove_social.publish_hold.reason, internal)",
+  },
+  'modules/social/src/recurring.ts': { 'reason <- reason': 'why a recurrence was switched off, a code of the caller (a closed set)' },
+  'modules/social/src/remove.ts': { 'reason <- reason = input.reason ? input.reason : null': "why a variant removal was asked, the command's own input (crove_social.post_variant.remove_reason)" },
+  'packages/kernel/src/calendar-connections.ts': { 'reason <- input.reason': "why a calendar connection was revoked or marked, the command's own input, no MISA AMIS text" },
+  'packages/kernel/src/commands.ts': { 'signature_reason <- signature.reason': "the reason of an inbound mail's signature check, a code of the verifier (a closed set)" },
+  'packages/kernel/src/numbering.ts': { 'reason <- input.reason': "the reason a document number was voided, the command's own input" },
+  'modules/ads/src/launch-run.ts': { 'reason <- reason': "why a launch step was dropped, 'stale' or 'settled'" },
+  'modules/crm/src/sales-orders.ts': { 'hasReason <- reason !== null': 'whether a decline gave a reason, a boolean' },
+  'modules/finance/src/period-lock.ts': { 'reason <- input.reason': "why a period was locked, the command's own input (crove_finance.period_lock, internal)" },
+  'modules/meetings/src/links.ts': { "reason <- ' '": 'the code DEAL_DELETED written out at the call' },
+  'modules/meetings/src/meetings.ts': { 'reason <- input.reason': "why a recording was stopped, the command's own input" },
+  'apps/kernel/src/org-purge.ts': { 'reason <- input.reason': "why an owner purged an org, the command's own input" },
   'modules/social/src/digest.ts': { 'skipped <- skipped = 0': 'the count of digest mails that failed' },
   'modules/social/src/report-branding.ts': { 'name <- name = input.name ? input.name : null': "the org's own brand name on its reports (crove_social.report_branding.display_name, internal)" },
   'modules/social/src/report-schedules.ts': { 'recipients <- recipients.length': 'the count of recipients, never their addresses' },
@@ -139,7 +166,7 @@ interface Fn {
 }
 
 // A function that passes one of its parameters on to ctx.audit: as the facts (`...facts`, `ctx.audit(facts)`), or as a
-// fact's value (`{ reason }`).
+// fact's value (`{ outcome }`).
 interface Wrapper {
   fn: Fn;
   param: number;
@@ -907,7 +934,7 @@ describe('audit facts and classified columns (#1626, #1632)', () => {
     expect(check(`${wrapper}\naudit(ctx, result, { email: input.email });`)).toEqual(['email: the key names a classified column and its value is not auditValue(...)']);
     expect(check(`${wrapper}\naudit(ctx, result, someFacts);`)).toEqual(['audit(...): audit passes its argument to ctx.audit; write the facts out as an object literal at the call']);
     // A helper that passes a parameter on as a fact's value: each call's argument is read as that value.
-    const done = 'const done = (reason: string) => {\n  ctx.audit({ agent: agent.id, reason });\n  return null;\n};';
+    const done = 'const done = (outcome: string) => {\n  ctx.audit({ agent: agent.id, outcome });\n  return null;\n};';
     expect(check(`${done}\nif (x) return done('not_runnable');`)).toEqual([]);
     expect(check(`${done}\nif (x) return done(party.email);`)).toEqual(['done(...): the value reads the classified column email outside auditValue(...)']);
     // A parameter the helper masks itself does not make it a wrapper; one with no call in its file cannot be read.
