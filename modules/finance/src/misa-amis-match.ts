@@ -84,7 +84,7 @@ export const misaAmisMatchRequestCheck = defineCommand({
     if (existing) {
       await ctx.trx
         .updateTable('crove_finance.misa_amis_match_check')
-        .set({ params, state: 'requested', failure: null, requested_by: by, requested_at: ctx.now, finished_at: null })
+        .set({ params, state: 'requested', failure: null, requested_by: by, requested_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.id)
         .execute();
@@ -168,7 +168,7 @@ export const misaAmisMatchRecordCheck = defineCommand({
     }
     await ctx.trx
       .updateTable('crove_finance.misa_amis_match_check')
-      .set({ state: input.state, failure: input.failure, finished_at: ctx.now })
+      .set(input.state === 'done' ? { state: 'done', failure: null, finished_at: ctx.now } : { state: input.state, failure: input.failure })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', check.id)
       .execute();
@@ -205,7 +205,8 @@ export const misaAmisMatchResultsQuery = defineQuery({
       .where('connection_id', '=', check.connection_id)
       .execute();
     // While a re-check waits, or after one failed, the results of the last done check still stand (a block it raised is not lifted by asking again); with none stored there is nothing to judge against.
-    if (check.state !== 'done' && rows.length === 0) return { connectionId: check.connection_id, status, partyCodes: null, itemCodes: null };
+    // A connection that was checked once (a done check finished) and has no stored result (its batch needed none) is still checked: the sets are empty, not null.
+    if (check.state !== 'done' && rows.length === 0 && check.finished_at === null) return { connectionId: check.connection_id, status, partyCodes: null, itemCodes: null };
     const partyCodes = new Map<string, string>();
     const itemCodes = new Set<string>();
     for (const row of rows) {

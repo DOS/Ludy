@@ -25,11 +25,12 @@ CREATE TABLE IF NOT EXISTS crove_finance.misa_amis_match_check (
   failure text CHECK (failure IS NULL OR failure IN ('credentials', 'unreachable', 'invalid_response', 'catalogue_too_large')),
   requested_by uuid,
   requested_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
+  -- When the last DONE check finished: a new request keeps it (a waiting or failed re-check does not forget that the connection was checked), a failed check does not set it.
   finished_at timestamptz,
   PRIMARY KEY (org_id, id),
   -- One row per connection: a new request is the same row asked again.
   CONSTRAINT misa_amis_match_check_connection_uq UNIQUE (org_id, connection_id),
-  CONSTRAINT misa_amis_match_check_state_ck CHECK ((state = 'requested') = (finished_at IS NULL) AND (state = 'failed') = (failure IS NOT NULL)),
+  CONSTRAINT misa_amis_match_check_state_ck CHECK ((state <> 'done' OR finished_at IS NOT NULL) AND (state = 'failed') = (failure IS NOT NULL)),
   CONSTRAINT misa_amis_match_check_entity_fk FOREIGN KEY (org_id, legal_entity_id) REFERENCES crove_kernel.legal_entity (org_id, id),
   -- A disconnect deletes the connection and, with it, its check and results.
   CONSTRAINT misa_amis_match_check_connection_fk FOREIGN KEY (org_id, connection_id) REFERENCES crove_finance.misa_amis_connection (org_id, id) ON DELETE CASCADE,
@@ -96,7 +97,7 @@ BEGIN
     IF v_ask OR NOT (OLD.state = 'requested' AND NEW.state IN ('done', 'failed')) THEN
       RAISE EXCEPTION 'MISA_AMIS_MATCH_STATE' USING ERRCODE = '42501';
     END IF;
-  ELSIF NEW.state = 'requested' AND NEW.failure IS NULL AND NEW.finished_at IS NULL THEN
+  ELSIF NEW.state = 'requested' AND NEW.failure IS NULL AND NEW.finished_at IS NOT DISTINCT FROM OLD.finished_at THEN
     NULL;
   ELSE
     RAISE EXCEPTION 'MISA_AMIS_MATCH_STATE' USING ERRCODE = '42501';

@@ -1216,6 +1216,8 @@ export const personalDataErase = defineCommand({
     // Through the command's own transaction: the delete policy of the table lets an owner's context delete. A short tax code (fewer than 10 digits) is never matched here, as the stored keys are 10 or 13 digits.
     const matchKey = match('tax_code', 'm.match_key');
     if (matchKey) {
+      // The checks are locked first (record_check locks its row too): a record that is writing results finishes before the delete looks, or waits and then finds its request moved on.
+      await sql`SELECT 1 FROM crove_finance.misa_amis_match_check WHERE org_id = ${ctx.orgId}::uuid FOR UPDATE`.execute(ctx.trx);
       const { rows: misaMatches } = await sql<{ n: number }>`
         WITH gone AS (
           DELETE FROM crove_finance.misa_amis_match m

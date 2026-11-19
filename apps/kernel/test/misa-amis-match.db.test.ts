@@ -303,6 +303,21 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toHaveLength(1);
   });
 
+  it('keeps a connection checked while a re-check waits or fails, even when its check had nothing to look up (no stored result): the sets are empty, never null', async () => {
+    await rows("UPDATE crove_finance.misa_amis_match_check SET state = 'requested', failure = NULL WHERE org_id = $1", [orgId]);
+    expect(await record({ state: 'done', failure: null, results: [] })).toEqual({ recorded: true, results: 0 });
+    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toEqual([]);
+    expect(await call('matches/check', owner, { id: connectionId, ask: ASK })).toMatchObject({ body: { queued: true } });
+    const waiting = await results(member);
+    expect(waiting.status.state).toBe('requested');
+    expect(waiting.partyCodes).toEqual(new Map());
+    expect(waiting.itemCodes).toEqual(new Set());
+    expect(await record({ state: 'failed', failure: 'unreachable', results: [] })).toEqual({ recorded: true, results: 0 });
+    const failed = await results(member);
+    expect(failed.status).toMatchObject({ state: 'failed', failure: 'unreachable', checkedAt: null });
+    expect(failed.partyCodes).toEqual(new Map());
+  });
+
   it('is the entity\'s alone: another org reads no check, and a disconnect takes the check and its results with the connection', async () => {
     const none = await api.query<{ connectionId: string | null; status: { state: string } }>('finance.misa_amis_match.results', {}, { actor: asUser(outsider), orgId: otherOrgId });
     expect(none).toMatchObject({ connectionId: null, status: { state: 'none' } });
