@@ -26,11 +26,12 @@ async function answersOnScreen(page: Page, slug: string, meetingId: string): Pro
   await expect(page.getByTestId('adherence-answer')).toBeVisible();
 }
 
-// What fails in the cards on show: a page that scrolls sideways, a serious or critical violation of the WCAG 2.2 AA rules inside the three cards.
+// What fails in the cards on show: a card wider than the screen, a serious or critical violation of the WCAG 2.2 AA rules inside the three cards.
 async function problemsOf(page: Page, label: string, include: readonly string[] = CARDS): Promise<string[]> {
   const problems: string[] = [];
-  const widths = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, view: document.documentElement.clientWidth }));
-  if (widths.page > widths.view) problems.push(`${label}: scrolls sideways (${widths.page}px in ${widths.view}px)`);
+  // The cards must fit the screen (the rest of the meeting page has its own scans, and an overflow of another widget is not this spec's to report).
+  const overflow = await page.evaluate((selectors) => selectors.flatMap((selector) => [...document.querySelectorAll(selector)].filter((el) => el.getBoundingClientRect().right > window.innerWidth + 1).map(() => selector)), [...include]);
+  for (const selector of overflow) problems.push(`${label}: ${selector} runs past the edge of the screen`);
   let builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']);
   for (const selector of include) builder = builder.include(selector);
   for (const v of (await builder.analyze()).violations.filter((x) => x.impact === 'serious' || x.impact === 'critical')) {
@@ -39,7 +40,8 @@ async function problemsOf(page: Page, label: string, include: readonly string[] 
   return problems;
 }
 
-// Every theme at one width: the answers are in the page's own state, so each theme opens the meeting afresh and has Vy answer again.
+// Every theme at one width: the answers are in the page's own state, so each theme opens the meeting afresh and has Vy answer again. Mind the budget: title and commitments share the kernel's `summaries`
+// bucket (4 runs per user a minute, refilled one every 15 seconds), and this makes two of each, so one more theme, width or run in here would meet a "busy" answer.
 async function scanAt(page: Page, slug: string, meetingId: string, width: number, height: number): Promise<string[]> {
   const problems: string[] = [];
   await page.setViewportSize({ width, height });
@@ -111,7 +113,7 @@ test('names, descriptions, announcements and focus of the Vy results: pick butto
     for (let i = 0; i < 3; i += 1) {
       const jump = jumps.nth(i);
       const time = ((await jump.textContent()) ?? '').trim();
-      await expect(jump).toHaveAccessibleName(new RegExp(`Mở bản ghi lời nói ở ${time}$`));
+      await expect(jump).toHaveAccessibleName(`Mở bản ghi lời nói ở ${time}`);
       expect((await jump.boundingBox())?.height ?? 0).toBeGreaterThanOrEqual(24);
     }
   });
@@ -145,6 +147,9 @@ test('a window of the weekly card that fails to load keeps the card, its picker 
     await expect(card.getByRole('alert')).toBeVisible({ timeout: 40_000 });
     await expect(card).toBeVisible();
     await expect(picker).toBeVisible();
+    // The focus stayed on the picker (the card was not replaced), and the facts of the failed window are not drawn.
+    await expect(picker).toBeFocused();
+    await expect(card.getByTestId('digest-meeting')).toHaveCount(0);
     // It said nothing about showing 14 days: they are not shown.
     await expect(card.getByTestId('digest-window-status')).toBeEmpty();
   });
