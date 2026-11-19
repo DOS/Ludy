@@ -2957,7 +2957,13 @@ describe('member-Vy feature modules are pure (ADR-0049, stage A write boundary)'
     expect(workspaceAdapterLeakViolations(`export * from '@crove/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
       'export * from @crove/agent',
     ]);
+    expect(workspaceAdapterLeakViolations(`export * from '@ludy/agent';`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
+      'export * from @crove/agent',
+    ]);
     expect(workspaceAdapterLeakViolations(`const a = await import('@crove/agent');`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
+      'dynamic import from @crove/agent',
+    ]);
+    expect(workspaceAdapterLeakViolations(`const a = await import('@ludy/agent');`, DEFAULT_ADAPTER_EXPORTS)).toEqual([
       'dynamic import from @crove/agent',
     ]);
     expect(workspaceAdapterLeakViolations(`const a = await import('@crove/' + 'agent');`, DEFAULT_ADAPTER_EXPORTS)).toEqual([

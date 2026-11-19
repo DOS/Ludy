@@ -373,10 +373,12 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
     expect(scan("const re = /[`'*]/g;\nconst k = require('x');").problems).toEqual(['require()']);
     expect(scan(`import { 'Runtime' as R } from '@crove/kernel-runtime';`).names).toEqual(['R']);
     expect(scan(`import { Runtime } from '@crove/kernel-runtime';`).names).toEqual(['Runtime']);
+    expect(scan(`import { Runtime } from '@ludy/kernel-runtime';`).names).toEqual(['Runtime']);
     expect(scan(`import {\n  DomainError,\n  Runtime as R, // the class\n} from '@crove/kernel-runtime';`).names).toEqual(['R']);
     expect(scan(`import { Runtime as R } from '../../packages/kernel-runtime/src/runtime.ts';`).names).toEqual(['R']);
     for (const source of [
       `import * as K from '@crove/kernel-runtime';`,
+      `import * as K from '@ludy/kernel-runtime';`,
       `export * from '@crove/kernel-runtime';`,
       `export { Runtime } from '@crove/kernel-runtime';`,
       `import K from '@crove/kernel-runtime';`,

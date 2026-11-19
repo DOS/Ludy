@@ -330,10 +330,12 @@ describe('job egress (#1653)', () => {
       'modules/planted/src/a.ts': "import { checkTelegramChat, CHANNEL_PROVIDERS } from '@crove/channel';\nexport const a = () => checkTelegramChat(CHANNEL_PROVIDERS);",
       'modules/planted/src/b.ts': "export const b = () => globalThis.fetch('https://example.test/');",
       'modules/planted/src/c.ts': "export const c = () => window['fetch']('https://example.test/');",
+      'modules/planted/src/d.ts': "import { checkTelegramChat, CHANNEL_PROVIDERS } from '@ludy/channel';\nimport { guardedFetch } from '@ludy/kernel-runtime';\nimport { chatModel } from '@ludy/agent';\nexport const d = () => [checkTelegramChat(CHANNEL_PROVIDERS), guardedFetch, chatModel];",
     });
     expect([...reachOf(planted.get('modules/planted/src/a.ts').program, planted)]).toEqual(['provider:telegram']);
     expect([...reachOf(planted.get('modules/planted/src/b.ts').program, planted)]).toEqual(['raw_network']);
     expect([...reachOf(planted.get('modules/planted/src/c.ts').program, planted)]).toEqual(['raw_network']);
+    expect(reachOf(planted.get('modules/planted/src/d.ts').program, planted)).toEqual(new Set(['provider:telegram', 'tenant_url', 'provider:ai']));
   }, 60_000);
 
   it('hands the egress guard to the adapters of the providers whose host the tenant names, and to no other', () => {
