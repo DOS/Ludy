@@ -1275,6 +1275,12 @@ export function createRpcHandler(
         update: os.meetings.template.update.handler(meetingsCommand('meetings.template.update')),
         archive: os.meetings.template.archive.handler(meetingsCommand('meetings.template.archive')),
       },
+      glossary: {
+        list: os.meetings.glossary.list.handler(meetingsQuery('meetings.glossary.list')),
+        add: os.meetings.glossary.add.handler(meetingsCommand('meetings.glossary.add')),
+        update: os.meetings.glossary.update.handler(meetingsCommand('meetings.glossary.update')),
+        remove: os.meetings.glossary.remove.handler(meetingsCommand('meetings.glossary.remove')),
+      },
       settings: {
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
         set: os.meetings.settings.set.handler(meetingsCommand('meetings.settings.set')),
