@@ -627,8 +627,8 @@ suite('MISA AMIS push (#3902)', () => {
       expect(sending.rows.map((r) => r.orgRefid)).toEqual([queued]);
       expect(sending.callKey).toContain(`misa_amis:save:${aspConnection}:`);
       expect((await rows<{ state: string }>('SELECT state FROM crove_finance.misa_amis_push WHERE org_refid = $1', [queued]))[0]?.state).toBe('sending');
-      // While it is being sent the run waits (the next run sweeps it into `ambiguous` if its answer is lost).
-      expect(await aspBegin({ branchKnown: true, checked: true })).toEqual({ action: 'none', reason: 'busy', waiting: true });
+      // While it is being sent the run waits (the next run sweeps it into `ambiguous` if its answer is lost): nothing else is queued, so there is nothing to send, and `waiting` stays true for the row in flight.
+      expect(await aspBegin({ branchKnown: true, checked: true })).toEqual({ action: 'none', reason: 'nothing', waiting: true });
       await rows("UPDATE crove_finance.misa_amis_push SET updated_at = pg_catalog.now() - interval '10 minutes' WHERE org_refid = $1", [queued]);
       expect(await aspBegin({ branchKnown: true, checked: false })).toEqual({ action: 'none', reason: 'nothing', waiting: false });
       expect((await rows<{ state: string; reason: string }>('SELECT state, reason FROM crove_finance.misa_amis_push WHERE org_refid = $1', [queued]))[0]).toEqual({ state: 'ambiguous', reason: 'LOST_ANSWER' });
