@@ -84,7 +84,7 @@ interface Harness {
   opened: unknown[];
 }
 // `script` answers push_begin in order; a begin past the script's end answers "nothing, not waiting".
-function harness(options: { script?: MisaAmisPushBegin[]; vouchers?: CashVoucher[]; target?: unknown; credential?: () => unknown } = {}): Harness {
+function harness(options: { script?: MisaAmisPushBegin[]; vouchers?: CashVoucher[] | (() => CashVoucher[]); target?: unknown; credential?: () => unknown } = {}): Harness {
   const queries: Harness['queries'] = [];
   const executed: Harness['executed'] = [];
   const begins: Harness['begins'] = [];
@@ -96,7 +96,7 @@ function harness(options: { script?: MisaAmisPushBegin[]; vouchers?: CashVoucher
       queries.push({ name, input });
       if (name === 'finance.misa_amis.push_target') return target;
       if (name === 'kernel.channel.credential') return options.credential ? options.credential() : { provider: 'accounting_misa_amis', externalAccountId: 'entity', keyId: 'k1', envelope: Buffer.from('sealed').toString('base64') };
-      if (name === 'finance.vouchers.cash') return options.vouchers ?? [cash()];
+      if (name === 'finance.vouchers.cash') return typeof options.vouchers === 'function' ? options.vouchers() : (options.vouchers ?? [cash()]);
       throw new Error(`unexpected query ${name}`);
     },
     execute: async (name: string, input: unknown) => {
@@ -167,6 +167,26 @@ describe('the MISA AMIS push job: sending', () => {
     expect(records(h)).toEqual([
       { connectionId: CONNECTION, rows: [{ orgRefid: SOURCE, from: 'sending', to: 'failed', reason: 'STALE' }], call: { key: 'misa_amis:save:test', end: { state: 'failed', kind: 'bad_request', code: 'STALE' } } },
     ]);
+  });
+
+  it('every batch is rebuilt from the source: a voucher changed between two batches of one run is STALE in the second, one that is unchanged is still sent', async () => {
+    const other = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5e';
+    const a = cash();
+    const b = cash({ sourceId: other, code: 'PC00013' });
+    const rowsA = await approved([a]);
+    const rowsB = await approved([a, b]).then((all) => all.filter((r) => r.sourceId === other));
+    const changedB = cash({ sourceId: other, code: 'PC00013', lines: [{ lineNo: 1, account: '331', amount: '999', memo: null }] });
+    let reads = 0;
+    // The first read (batch 1) sees A and B as approved; the second (batch 2) sees B changed.
+    const h = harness({ script: [{ action: 'need_branch' }, send(rowsA), send(rowsB)], vouchers: () => (reads++ === 0 ? [a, b] : [a, changedB]) });
+    const amis = fakeAmis();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const out = await run(h, amis);
+    expect(reads).toBe(2);
+    expect(out).toMatchObject({ state: 'done', sent: 1, failed: 1 });
+    const saves = amis.calls.filter((c) => c.path === '/amiskt/v1/save');
+    expect(saves).toHaveLength(1);
+    expect(records(h).map((r) => r.rows.map((x) => [x.orgRefid, x.to]))).toEqual([[[SOURCE, 'sent']], [[other, 'failed']]]);
   });
 
   it('a voucher gone from its period (or blocked now) is STALE too, and one that is still good in the same batch is still sent', async () => {
@@ -260,12 +280,12 @@ describe('the MISA AMIS push job: how a send ends', () => {
     expect(records(h)[0]?.rows).toEqual([{ orgRefid: SOURCE, from: 'sending', to: 'queued', reason: 'BUILD_FAILED' }]);
   });
 
-  it('reads the source once for a long queue of one set of choices', async () => {
+  it('reads the source again for every batch of a long queue, never reusing what an earlier batch read', async () => {
     const rows = await approved([cash()]);
     const h = harness({ script: [{ action: 'need_branch' }, send(rows), send(rows)] });
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     await run(h, fakeAmis());
-    expect(h.queries.filter((q) => q.name === 'finance.vouchers.cash')).toHaveLength(1);
+    expect(h.queries.filter((q) => q.name === 'finance.vouchers.cash')).toHaveLength(2);
   });
 
   it('a 5xx (it may have been processed) is ambiguous too, never a refusal', async () => {

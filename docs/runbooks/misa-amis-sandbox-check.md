@@ -32,7 +32,8 @@ Every item is **unconfirmed** today. For each, the result is written on #3902 (w
 12. **A refused `save`.** When MISA answers `Success: false` with an error code to a whole batch, the push takes it as "nothing was created" and marks every row `refused` (with the text Ludy has for that code). Check that a refusal never leaves some vouchers of the batch created.
 13. **A refused row sent again.** A person's new confirmed push sends a `refused` row again under the same `org_refid`; check that MISA takes it (a corrected voucher) and does not answer that the id exists.
 14. **Results.** `get_call_back_detail_error` returns one entry per `org_refid` (if it returns several, the worker keeps the last), and an entry's `success` is final. Also check how its date range is filtered (by the day of the request, which the worker assumes, asking from one day before the first send day to tomorrow) and that a range of several days is accepted: a row a person confirmed "in AMIS" days later is read from its original send day.
-15. **The callback** (S4, [#3903](https://github.com/DOS/Ludy/issues/3903)) is a separate check once that slice exists: `app_id` against the ClientID, the signature, the reply AMIS expects.
+15. **A result of an older send.** The worker matches a result to a row by `org_refid` alone. After a refused row is sent again (the same `org_refid`, one more attempt), check that `get_call_back_detail_error` does not still return the old refusal for it, and whether a result carries something (a session id) that names the send it belongs to; if it does, the worker is to match on it too, before any refused row is sent again for real.
+16. **The callback** (S4, [#3903](https://github.com/DOS/Ludy/issues/3903)) is a separate check once that slice exists: `app_id` against the ClientID, the signature, the reply AMIS expects.
 
 ## Turning the push on, and off
 
