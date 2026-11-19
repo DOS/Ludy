@@ -8,6 +8,7 @@ import { dealCommands, dealQueries } from './deals.ts';
 import { boardQueries, stageCommands } from './stages.ts';
 import { eventTypeCommands, eventTypeQueries } from './event-types.ts';
 import { importCommands, importQueries } from './import.ts';
+import { mcpCrmQueries } from './mcp.ts';
 import { nextStepCommands, nextStepQueries } from './next-steps.ts';
 import { followupQueries } from './followup-source.ts';
 import { meetingBriefQueries } from './meeting-brief.ts';
@@ -27,6 +28,7 @@ export * from './bookings.ts';
 export * from './agent.ts';
 export * from './booking-feed.ts';
 export * from './contacts.ts';
+export * from './mcp.ts';
 export { importCancel, importCommands, importCommit, importExpire, importPreview, importQueries, importStage } from './import.ts';
 
 export { dealSettingGet, dealSettingSet, nextStepCommands, nextStepDone, nextStepList, nextStepQueries, nextStepRaise, nextStepSnooze, staleDays } from './next-steps.ts';
@@ -48,5 +50,5 @@ export { dealSalesOrders, quoteAccept, quoteDecline, salesOrderCancel, salesOrde
 export { crmToday } from './today.ts';
 
 export const crmCommands = [...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...stageCommands, ...importCommands, ...nextStepCommands, ...quoteCommands, ...quotePdfCommands, ...salesOrderCommands];
-export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, ...quoteQueries, quoteSuggestSource, ...followupQueries, ...meetingBriefQueries, quoteReport, ...quotePdfQueries, ...salesOrderQueries, crmToday, crmWonDealsSignals, crmOpenDealsSignals];
+export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, ...quoteQueries, quoteSuggestSource, ...followupQueries, ...meetingBriefQueries, quoteReport, ...quotePdfQueries, ...salesOrderQueries, crmToday, crmWonDealsSignals, crmOpenDealsSignals, ...mcpCrmQueries];
 export { crmManifest } from './manifest.ts';

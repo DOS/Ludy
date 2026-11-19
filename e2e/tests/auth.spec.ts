@@ -171,6 +171,7 @@ test('managing members asks for two-factor first, then works once it is on', asy
 
   // Inviting is R3, and the owner has no second factor yet.
   const member = newEmail('member');
+  await page.getByRole('button', { name: 'Mời thành viên' }).click();
   await page.getByPlaceholder('email@congty.vn').fill(member);
   await page.getByRole('button', { name: 'Mời', exact: true }).click();
   await expect(page.getByText(`Đang chờ: mời ${member} với vai trò Thành viên.`)).toBeVisible();

@@ -26,6 +26,7 @@ test('the finance screens follow the legal entity chosen in the sidebar', async 
 
   await test.step('a second entity added in Settings shows the switcher at once', async () => {
     await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('button', { name: 'Thêm pháp nhân' }).click();
     const add = page.getByRole('form', { name: 'Thêm pháp nhân' });
     await add.getByLabel('Tên pháp nhân').fill(BRANCH);
     await add.getByRole('button', { name: 'Thêm', exact: true }).click();

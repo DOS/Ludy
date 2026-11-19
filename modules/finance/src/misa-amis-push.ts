@@ -541,6 +541,8 @@ export const misaAmisPushResolve = defineCommand({
 
 export interface MisaAmisPushRow {
   id: string;
+  // The request's id in AMIS: what a person settles a row by.
+  orgRefid: string;
   sourceType: MisaAmisPushSource;
   sourceId: string;
   voucherType: number;
@@ -566,7 +568,7 @@ export const misaAmisPushList = defineQuery({
   handler: async (ctx, input): Promise<MisaAmisPushRow[]> => {
     let query = ctx.trx
       .selectFrom('crove_finance.misa_amis_push')
-      .select(['id', 'source_type', 'source_id', 'voucher_type', 'part', 'org_refno', 'state', 'reason', 'attempts', 'requested_at', 'sent_at', 'answered_at', 'updated_at'])
+      .select(['id', 'org_refid', 'source_type', 'source_id', 'voucher_type', 'part', 'org_refno', 'state', 'reason', 'attempts', 'requested_at', 'sent_at', 'answered_at', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId);
     if (input.state) query = query.where('state', '=', input.state);
@@ -577,6 +579,7 @@ export const misaAmisPushList = defineQuery({
       .execute();
     return rows.map((r) => ({
       id: r.id,
+      orgRefid: r.org_refid,
       sourceType: r.source_type,
       sourceId: r.source_id,
       voucherType: r.voucher_type,

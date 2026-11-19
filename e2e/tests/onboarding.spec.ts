@@ -57,6 +57,9 @@ test('a firm adds a client company by tax code, then opens the form again for th
     // Inviting is R3: a user without a second factor is asked to enable one first.
     await page.getByRole('button', { name: 'Mời', exact: true }).click();
     await expect(page.getByText(`mời ${contact}`, { exact: false })).toBeVisible();
+    // Nothing was changed in the dialog, so Escape closes it and the page behind is reachable again.
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     // The tax code and the address are on the first tab, Tổ chức. The org's own field (a <dd>): the legal entities card shows the default entity's code too (#1278).
     await openSettingsTab(page, 'org');
     await expect(page.getByRole('definition').getByText(TAX_CODE, { exact: true })).toBeVisible();

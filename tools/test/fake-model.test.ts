@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { GARBAGE, ROUTE_MARKERS, SCENARIO_TOKENS, TRANSCRIPT, type Route } from '../../e2e/fake-model/fixtures.ts';
+import { GARBAGE, ROUTE_MARKERS, SCENARIO_TOKENS, TRANSCRIPT, scenarioOf, type Route } from '../../e2e/fake-model/fixtures.ts';
 import { FIXED_SUMMARY, startFakeModel, type FakeModel } from '../../e2e/fake-model/server.ts';
 import { checkAdherence } from '../../packages/agent/src/member-vy/meetings-adherence.ts';
 import { checkBrief } from '../../packages/agent/src/member-vy/meetings-brief.ts';
@@ -160,6 +160,12 @@ describe('the fake model answers each member-Vy feature of the meetings line, an
     expect(codeOf(() => checkDigest(GARBAGE, FACTS))).toBe('DIGEST_UNPARSABLE');
     expect(codeOf(() => checkBrief(GARBAGE, FACTS))).toBe('BRIEF_UNPARSABLE');
     for (const route of Object.keys(ROUTE_MARKERS) as Route[]) expect((await ask(route, subjectWith(route, 'down'))).status).toBe(500);
+  });
+
+  it('picks the scenario by the order of the tokens when data holds more than one (the digest spec relies on bad over garbage)', () => {
+    expect(scenarioOf(`x ${SCENARIO_TOKENS.garbage} y ${SCENARIO_TOKENS.bad}`)).toBe('bad');
+    expect(scenarioOf(`x ${SCENARIO_TOKENS.down} y ${SCENARIO_TOKENS.garbage}`)).toBe('garbage');
+    expect(scenarioOf('no token')).toBe('default');
   });
 
   it('reads a user message given as a list of text parts, and answers a request no feature routes with the fixed summary', async () => {

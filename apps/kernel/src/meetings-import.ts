@@ -262,7 +262,9 @@ export function stageTranscript(transcript: MeetingPlatformTranscript): Uint8Arr
   if (segments.length === 0) throw new MeetingPlatformError('no_transcript');
   // Cut by the adapter (its own cap) or by the draft's (the lines beyond TRANSCRIPT_SEGMENTS_MAX are dropped above): the member is told the draft stops early. Absent when whole, so the staged bytes of a whole
   // transcript are what they always were.
-  const cut = transcript.truncated || transcript.entries.length > TRANSCRIPT_SEGMENTS_MAX;
+  // Lines past the cap count only when one of them would have been a line (an empty or invalid one lost is no loss).
+  const lostPastCap = transcript.entries.slice(TRANSCRIPT_SEGMENTS_MAX).some((e) => e.text.replaceAll('\u0000', '').trim() !== '' && Number.isFinite(e.startSeconds) && Number.isFinite(e.endSeconds));
+  const cut = transcript.truncated || lostPastCap;
   const bytes = new TextEncoder().encode(JSON.stringify(cut ? { segments, truncated: true } : { segments }));
   if (bytes.byteLength > MEETING_PLATFORM_TRANSCRIPT_MAX_BYTES) throw new MeetingPlatformError('too_large');
   return bytes;

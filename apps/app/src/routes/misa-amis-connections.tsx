@@ -12,10 +12,12 @@ import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { MisaAmisPreviewPanel } from '../components/misa-amis-preview-panel.tsx';
+import { MisaAmisPushList } from '../components/misa-amis-push-panel.tsx';
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { connectableEntities, misaAmisCardShown } from '../lib/misa-amis-connections.ts';
+import { pushOffer } from '../lib/misa-amis-push.ts';
 import type { Role } from '../lib/members.ts';
 
 const refresh = async () => {
@@ -28,7 +30,7 @@ const TEST_STATE_KEYS = { works: 'testState.works', wrong_credentials: 'testStat
 const TEST_POLL_MS = 2000;
 const TEST_WAIT_MS = 30_000;
 
-function ConnectionItem({ connection, entities, canManage }: { connection: MisaAmisConnection; entities: readonly LegalEntity[]; canManage: boolean }) {
+function ConnectionItem({ connection, entities, canManage, pushOffered }: { connection: MisaAmisConnection; entities: readonly LegalEntity[]; canManage: boolean; pushOffered: boolean }) {
   const t = useTranslations('misaAmisConnections');
   const f = useFormat();
   const [confirming, setConfirming] = useState(false);
@@ -101,7 +103,8 @@ function ConnectionItem({ connection, entities, canManage }: { connection: MisaA
       )}
       {disconnect.error && <ErrorText>{errorMessage(disconnect.error)}</ErrorText>}
       {test.error && <ErrorText>{errorMessage(test.error)}</ErrorText>}
-      {connection.status === 'active' && <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} />}
+      {connection.status === 'active' && <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }) }} />}
+      {connection.status === 'active' && <MisaAmisPushList connectionId={connection.id} canManage={canManage} />}
     </li>
   );
 }
@@ -201,7 +204,7 @@ export function MisaAmisConnectionsCard({ role }: { role: Role }) {
           ) : (
             <ul className="mt-3 divide-y">
               {list.map((c) => (
-                <ConnectionItem key={c.id} connection={c} entities={entities.data ?? []} canManage={canManage} />
+                <ConnectionItem key={c.id} connection={c} entities={entities.data ?? []} canManage={canManage} pushOffered={status.data?.pushOffered === true} />
               ))}
             </ul>
           )}
