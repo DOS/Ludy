@@ -14,6 +14,7 @@ import {
   chunkExpectedUsage,
   contactsIn,
   digitRuns,
+  inTargetScript,
   scriptShare,
   translateSummary,
   type TranslationSegmentInput,
@@ -182,6 +183,15 @@ describe('Chinese, Japanese and Korean as targets (#3186)', () => {
     expect(scriptShare('견적서', 'zh')).toBe(0);
     expect(scriptShare('', 'ja')).toBe(0);
     expect(scriptShare('1.250.000 - 14/11', 'ko')).toBe(0);
+  });
+
+  it('counts a short sentence about a long Latin name as in the script (a few characters of it are enough), and a text left in the source language as not', () => {
+    expect(inTargetScript('会见Nguyen Van Minh', 'zh')).toBe(true);
+    expect(inTargetScript('Gặp Nguyen Van Minh', 'zh')).toBe(false);
+    expect(inTargetScript('Hợp đồng ký ngày 14/11/2026', 'ja')).toBe(false);
+    expect(inTargetScript('Hợp đồng 契約', 'ko')).toBe(false);
+    expect(inTargetScript('', 'zh')).toBe(false);
+    expect(checkSegment(seg('Gặp Nguyen Van Minh'), '会见Nguyen Van Minh', 'zh')).toMatchObject({ state: 'ok' });
   });
 
   it('keeps a translation in the target script and refuses one left in the source language as untranslated', () => {

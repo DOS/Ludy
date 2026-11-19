@@ -884,7 +884,7 @@ export async function runTranscriptTranslation(deps: TranscriptTranslationDeps, 
       if (error instanceof DomainError && error.code === 'TRANSLATION_STALE') return { meetingId, runId, state: 'failed', errorCode: 'TRANSLATION_STALE', translated: 0, remaining: started.remaining };
       throw error;
     }
-    const after = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId }, as);
+    const after = await deps.runtime.query<TranscriptTranslationStatus & { bytes: number }>('meetings.translation.transcript_status', { meetingId, ...target }, as);
     return { meetingId, runId, state: 'ready', errorCode: null, translated: kept, remaining: after.remaining };
   } finally {
     ticket.release();

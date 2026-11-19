@@ -609,7 +609,8 @@ suite('the member\'s Vy translating the summary (E1, #3184)', () => {
     expect(zh?.segments.map((x) => x.state)).toEqual(['ok', 'ok', 'ok']);
     expect(await sqlAdmin<{ target_language: string }>('SELECT target_language FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2 ORDER BY target_language', [orgId, meetingId]).then((r) => r.rows.map((x) => x.target_language))).toEqual(['en', 'zh']);
     // A model that leaves the text in Vietnamese is not a translation into Chinese: every segment is refused, so nothing is kept for it.
-    const stillVietnamese = await asked('zh', { model: translating((t) => `${t}.`) }).then((out) => out.errorCode);
+    // Changed words, so it is not refused as unchanged before the script check runs.
+    const stillVietnamese = await asked('zh', { model: translating((t) => `${t} nữa`) }).then((out) => out.errorCode);
     expect(stillVietnamese).toBe('TRANSLATE_EMPTY');
     // Switched off again, the stored row stays the member's own but no new request for the language is accepted.
     setTranslationTargets([]);

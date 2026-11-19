@@ -202,7 +202,7 @@ function midSentenceCapitals(text: string): string[] {
 // (or in another script) has almost none, whatever names and figures it holds, so a share below this is "not translated". Letters only: digits, spaces and punctuation do not count either way.
 const SCRIPT_OF: Record<CjkTarget, RegExp> = { zh: /\p{Script=Han}/u, ja: /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u, ko: /\p{Script=Hangul}/u };
 const MIN_SCRIPT_SHARE = 0.15;
-export function scriptShare(text: string, to: CjkTarget): number {
+function scriptCounts(text: string, to: CjkTarget): { letters: number; hits: number } {
   const inScript = SCRIPT_OF[to];
   let letters = 0;
   let hits = 0;
@@ -211,7 +211,18 @@ export function scriptShare(text: string, to: CjkTarget): number {
     letters += 1;
     if (inScript.test(ch)) hits += 1;
   }
+  return { letters, hits };
+}
+export function scriptShare(text: string, to: CjkTarget): number {
+  const { letters, hits } = scriptCounts(text, to);
   return letters === 0 ? 0 : hits / letters;
+}
+// A text is "in" the target's script when enough of its letters are, or when it has a few characters of it at all: a short sentence about a long Latin name ("会见Nguyen Van Minh") has few letters in
+// the script but is still a translation, while a text left in the source language has none.
+const MIN_SCRIPT_HITS = 2;
+export function inTargetScript(text: string, to: CjkTarget): boolean {
+  const { letters, hits } = scriptCounts(text, to);
+  return hits >= MIN_SCRIPT_HITS || (letters > 0 && hits / letters >= MIN_SCRIPT_SHARE);
 }
 
 const squash = (text: string): string => text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
@@ -235,7 +246,7 @@ export function checkSegment(source: TranslationSegmentInput, answered: string |
   if (text.length > limitFor(source.key, source.text)) return refuse('TOO_LONG');
   if (squash(text) === squash(source.text)) return refuse('UNCHANGED');
   // Into Chinese, Japanese or Korean: a text that is mostly not in that script is the source language again (or a wrong one), and shows as untranslated.
-  if (to !== undefined && isCjkTarget(to) && scriptShare(text, to) < MIN_SCRIPT_SHARE) return refuse('UNCHANGED');
+  if (to !== undefined && isCjkTarget(to) && !inTargetScript(text, to)) return refuse('UNCHANGED');
   const original = numberTokens(source.text);
   const translated = numberTokens(text);
   if (translated.some((token) => !held(token, original))) return refuse('INVENTED_NUMBER');
