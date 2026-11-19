@@ -65,13 +65,14 @@ interface Row {
   digest: string;
   sourceId: string;
   part: number;
+  attempts: number;
 }
 
 // The rows the push would have queued for these vouchers, so the digests are the ones the person approved.
 async function approved(vouchers: CashVoucher[]): Promise<Row[]> {
   const ask = { ...PARAMS, legalEntityId: ENTITY };
   const { entries } = await loadAmisEntries(async () => vouchers as never, ask, amisContextOf(ask), 501);
-  return amisPartRows(entries).map((p) => ({ orgRefid: p.orgRefid, digest: p.digest, sourceId: p.sourceId, part: p.part }));
+  return amisPartRows(entries).map((p) => ({ orgRefid: p.orgRefid, digest: p.digest, sourceId: p.sourceId, part: p.part, attempts: 1 }));
 }
 
 interface Harness {
@@ -117,7 +118,10 @@ function harness(options: { script?: MisaAmisPushBegin[]; vouchers?: CashVoucher
   return { runtime, broker, queries, executed, begins, opened };
 }
 
-const records = (h: Harness) => h.executed.filter((e) => e.name === 'finance.misa_amis.push_record').map((e) => e.input as { connectionId: string; rows: Array<{ orgRefid: string; from: string; to: string; reason: string | null }>; call: { key: string; end: Record<string, unknown> } | null });
+type RecordedInput = { connectionId: string; rows: Array<{ orgRefid: string; attempts: number; from: string; to: string; reason: string | null }>; call: { key: string; end: Record<string, unknown> } | null };
+// The attempt every row carries is checked in its own test; the others compare what moved.
+const recordsWithAttempts = (h: Harness) => h.executed.filter((e) => e.name === 'finance.misa_amis.push_record').map((e) => e.input as RecordedInput);
+const records = (h: Harness) => recordsWithAttempts(h).map((r) => ({ ...r, rows: r.rows.map(({ attempts: _attempts, ...move }) => move) }));
 const send = (rows: Row[]): MisaAmisPushBegin => ({ action: 'send', callKey: 'misa_amis:save:test', voucherType: 4, sourceType: 'cash_voucher', params: PARAMS, rows });
 const run = (h: Harness, amis: ReturnType<typeof fakeAmis>, now = () => new Date('2026-11-19T03:00:00Z')) =>
   runMisaAmisPush({ runtime: h.runtime, broker: h.broker, client: createAmisClient({ clientId: CLIENT_ID, transport: amis.transport }), now }, { orgId: ORG, connectionId: CONNECTION });
@@ -308,7 +312,7 @@ describe('the MISA AMIS push job: how a send ends', () => {
 });
 
 describe('the MISA AMIS push job: asking MISA for results', () => {
-  const check = (rows: Array<{ orgRefid: string; state: 'sent' | 'ambiguous' }>): MisaAmisPushBegin => ({ action: 'check', rows, from: '2026-11-18' });
+  const check = (rows: Array<{ orgRefid: string; state: 'sent' | 'ambiguous'; attempts?: number }>): MisaAmisPushBegin => ({ action: 'check', rows: rows.map((r) => ({ ...r, attempts: r.attempts ?? 1 })), from: '2026-11-18' });
   const result = (orgRefId: string, success: boolean, message = '') => ({ org_refid: orgRefId, voucher_type: 4, success, error_code: success ? null : 'InvalidParam', error_message: message, session_id: 's1' });
 
   it('reads the results of the days since the first row was sent and moves the rows MISA answered: accepted, or refused with MISA\'s text (capped)', async () => {
@@ -333,6 +337,16 @@ describe('the MISA AMIS push job: asking MISA for results', () => {
     expect(records(h)[0]?.call).toBeNull();
     // Checked once, then the run goes on to send (the begin that follows says checked).
     expect(h.begins[1]).toEqual({ connectionId: CONNECTION, branchKnown: false, checked: true });
+  });
+
+  it('carries the attempt each row was begun under into what it records, for a checked row and a sent one', async () => {
+    const rows = (await approved([cash()])).map((r) => ({ ...r, attempts: 3 }));
+    const h = harness({ script: [check([{ orgRefid: SOURCE, state: 'sent', attempts: 2 }]), { action: 'need_branch' }, send(rows)] });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await run(h, fakeAmis({ results: [result(SOURCE, true)] }));
+    const recorded = recordsWithAttempts(h);
+    expect(recorded[0]?.rows.map((r) => [r.to, r.attempts])).toEqual([['accepted', 2]]);
+    expect(recorded[1]?.rows.map((r) => [r.to, r.attempts])).toEqual([['sent', 3]]);
   });
 
   it('records nothing when MISA has no answer yet, and reports that rows are waiting', async () => {

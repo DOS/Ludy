@@ -242,6 +242,8 @@ export interface PushRowRef {
   digest: string;
   sourceId: string;
   part: number;
+  // The attempt the row was begun under: what the worker records back, so a completion of an older attempt never lands on a newer one.
+  attempts: number;
 }
 
 export type MisaAmisPushBegin =
@@ -251,7 +253,7 @@ export type MisaAmisPushBegin =
   | { action: 'need_branch' }
   | { action: 'send'; callKey: string; voucherType: number; params: PushParams; rows: PushRowRef[]; sourceType: MisaAmisPushSource }
   // Rows MISA took (`sent`) or whose answer was lost (`ambiguous`): MISA is asked for their results. `from` is the first day it is asked about (YYYY-MM-DD).
-  | { action: 'check'; rows: Array<{ orgRefid: string; state: MisaAmisPushState }>; from: string };
+  | { action: 'check'; rows: Array<{ orgRefid: string; state: MisaAmisPushState; attempts: number }>; from: string };
 
 const dayOf = (date: Date): string => date.toISOString().slice(0, 10);
 
@@ -280,7 +282,8 @@ export const misaAmisPushBegin = defineCommand({
     // A batch begun and never answered for too long: its fate is unknown, so it is asked about and never sent again.
     await ctx.trx
       .updateTable(table)
-      .set({ state: 'ambiguous', reason: 'LOST_ANSWER', updated_at: ctx.now })
+      // `sent_at` keeps the day the batch was begun (the old `updated_at`), so the result check asks about that day and not the day of this sweep.
+      .set({ state: 'ambiguous', reason: 'LOST_ANSWER', sent_at: sql<Date>`updated_at`, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
       .where('state', '=', 'sending')
@@ -302,7 +305,7 @@ export const misaAmisPushBegin = defineCommand({
     if (!input.checked) {
       const checkable = await ctx.trx
         .selectFrom(table)
-        .select(['org_refid', 'state', 'sent_at', 'updated_at'])
+        .select(['org_refid', 'state', 'attempts', 'sent_at', 'updated_at'])
         .where('org_id', '=', ctx.orgId)
         .where('connection_id', '=', input.connectionId)
         .where('state', 'in', ['ambiguous', 'sent'])
@@ -313,7 +316,7 @@ export const misaAmisPushBegin = defineCommand({
         .execute();
       if (checkable.length > 0) {
         const earliest = checkable.reduce((min, r) => (new Date(r.sent_at ?? r.updated_at) < min ? new Date(r.sent_at ?? r.updated_at) : min), ctx.now);
-        return { action: 'check', rows: checkable.map((r) => ({ orgRefid: r.org_refid, state: r.state })), from: dayOf(earliest) };
+        return { action: 'check', rows: checkable.map((r) => ({ orgRefid: r.org_refid, state: r.state, attempts: r.attempts })), from: dayOf(earliest) };
       }
     }
 
@@ -383,7 +386,7 @@ export const misaAmisPushBegin = defineCommand({
         voucherType: first.voucher_type,
         sourceType: first.source_type,
         params: (typeof first.params === 'string' ? JSON.parse(first.params) : first.params) as PushParams,
-        rows: batch.map((r) => ({ orgRefid: r.org_refid, digest: r.payload_digest, sourceId: r.source_id, part: r.part })),
+        rows: batch.map((r) => ({ orgRefid: r.org_refid, digest: r.payload_digest, sourceId: r.source_id, part: r.part, attempts: r.attempts })),
       };
     }
 
@@ -406,6 +409,8 @@ export const misaAmisPushBegin = defineCommand({
 
 const zRowMove = z.strictObject({
   orgRefid: zOrgRefid,
+  // The attempt the worker acted on: a row a person has sent again meanwhile (one more attempt) is left alone.
+  attempts: z.number().int().min(1).max(1000),
   // Where the row stood when the worker acted (a row another step moved meanwhile is left alone) and where it goes.
   from: z.enum(['sending', 'sent', 'ambiguous']),
   to: z.enum(['sent', 'accepted', 'refused', 'ambiguous', 'failed', 'queued']),
@@ -449,13 +454,14 @@ export const misaAmisPushRecord = defineCommand({
         .set({
           state: move.to,
           reason: move.reason === null ? null : move.reason.slice(0, REASON_MAX),
-          ...(move.to === 'sent' ? { sent_at: ctx.now } : {}),
+          ...(move.to === 'sent' || (move.to === 'ambiguous' && move.from === 'sending') ? { sent_at: ctx.now } : {}),
           ...(answered ? { answered_at: ctx.now } : {}),
           updated_at: ctx.now,
         })
         .where('org_id', '=', ctx.orgId)
         .where('connection_id', '=', input.connectionId)
         .where('org_refid', '=', move.orgRefid)
+        .where('attempts', '=', move.attempts)
         .where('state', '=', move.from)
         .executeTakeFirst();
       if (Number(done.numUpdatedRows) > 0) applied += 1;
@@ -500,6 +506,8 @@ export const misaAmisPushResolve = defineCommand({
       .executeTakeFirst();
     const resolved = Number(moved.numUpdatedRows) > 0;
     if (!resolved) throw new DomainError('MISA_AMIS_PUSH_STATE', 409, 'Chứng từ này chưa thể xác nhận: chỉ chứng từ chưa có phản hồi từ MISA quá ba ngày mới xác nhận được');
+    // "It is in AMIS": the row is `sent`, so the job is asked to read MISA's result for it (its window runs from this change); no voucher is sent.
+    if (input.outcome === 'in_amis') await ctx.emit(MISA_AMIS_PUSH_REQUESTED, { connection_id: input.connectionId });
     ctx.audit({ connectionId: input.connectionId, outcome: input.outcome });
     return { resolved };
   },

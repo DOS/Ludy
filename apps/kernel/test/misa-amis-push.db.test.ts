@@ -325,7 +325,7 @@ suite('MISA AMIS push (#3902)', () => {
     // One batch at a time per connection: while this batch is sending, another run waits (the rows of the other choices are still queued).
     expect(await begin({ branchKnown: true, checked: true })).toEqual({ action: 'none', reason: 'busy', waiting: true });
     // Record the first batch as sent: the rows move along, the ledger call ends.
-    const done = await record({ rows: sent.rows.map((r) => ({ orgRefid: r.orgRefid, from: 'sending', to: 'sent', reason: null })), call: { key: sent.callKey, end: { state: 'succeeded' } } });
+    const done = await record({ rows: sent.rows.map((r) => ({ orgRefid: r.orgRefid, attempts: r.attempts, from: 'sending', to: 'sent', reason: null })), call: { key: sent.callKey, end: { state: 'succeeded' } } });
     expect(done).toEqual({ applied: sent.rows.length, ignored: 0 });
     expect((await rows<{ state: string }>('SELECT state FROM crove_kernel.external_call WHERE key = $1', [sent.callKey]))[0]?.state).toBe('succeeded');
     const after = await pushRows();
@@ -337,7 +337,7 @@ suite('MISA AMIS push (#3902)', () => {
     expect(other.rows).toHaveLength(4);
     expect(other.callKey).not.toBe(sent.callKey);
     // The same record again changes nothing (the rows are not where it says they were).
-    expect(await record({ rows: sent.rows.map((r) => ({ orgRefid: r.orgRefid, from: 'sending', to: 'sent', reason: null })), call: null })).toEqual({ applied: 0, ignored: sent.rows.length });
+    expect(await record({ rows: sent.rows.map((r) => ({ orgRefid: r.orgRefid, attempts: r.attempts, from: 'sending', to: 'sent', reason: null })), call: null })).toEqual({ applied: 0, ignored: sent.rows.length });
   });
 
   it('a batch with no answer for too long is ambiguous, is never sent again, and leaves only with MISA\'s own answer', async () => {
@@ -351,16 +351,23 @@ suite('MISA AMIS push (#3902)', () => {
     // The sent rows of the first batch are asked about too.
     expect(check.rows.filter((r) => r.state === 'sent').length).toBe(4);
     for (const id of sending) expect(await stateOf(id)).toBe('ambiguous');
+    // The sweep keeps the day the batch was begun in `sent_at` (not the day of the sweep), so the result check asks about that day.
+    const kept = await rows<{ age: number }>("SELECT extract(epoch FROM (pg_catalog.now() - sent_at))::int AS age FROM crove_finance.misa_amis_push WHERE connection_id = $1 AND state = 'ambiguous' AND org_refid = ANY($2)", [connectionId, sending]);
+    expect(kept).toHaveLength(4);
+    for (const r of kept) expect(r.age).toBeGreaterThanOrEqual(590);
     // Nothing is queued any more, and the ambiguous rows are not taken for a send.
     const after = await begin({ branchKnown: true, checked: true });
     expect(after).toEqual({ action: 'none', reason: 'nothing', waiting: true });
     // MISA's answer moves them: refused or accepted. A person cannot, and nothing else can.
     const [one, two, three] = sending as [string, string, string];
-    expect(await record({ rows: [{ orgRefid: one, from: 'ambiguous', to: 'accepted', reason: null }, { orgRefid: two, from: 'ambiguous', to: 'refused', reason: 'Số chứng từ đã tồn tại' }], call: null })).toEqual({ applied: 2, ignored: 0 });
+    // A completion of another attempt than the row's is ignored; one of its own attempt applies.
+    expect(await record({ rows: [{ orgRefid: one, attempts: 2, from: 'ambiguous', to: 'accepted', reason: null }], call: null })).toEqual({ applied: 0, ignored: 1 });
+    expect(await stateOf(one)).toBe('ambiguous');
+    expect(await record({ rows: [{ orgRefid: one, attempts: 1, from: 'ambiguous', to: 'accepted', reason: null }, { orgRefid: two, attempts: 1, from: 'ambiguous', to: 'refused', reason: 'Số chứng từ đã tồn tại' }], call: null })).toEqual({ applied: 2, ignored: 0 });
     expect(await stateOf(one)).toBe('accepted');
     expect(await stateOf(two)).toBe('refused');
     // The graph is closed on the worker's side too: ambiguous cannot go back to queued.
-    await expect(record({ rows: [{ orgRefid: three, from: 'ambiguous', to: 'queued', reason: null }], call: null })).rejects.toMatchObject({ status: 422 });
+    await expect(record({ rows: [{ orgRefid: three, attempts: 1, from: 'ambiguous', to: 'queued', reason: null }], call: null })).rejects.toMatchObject({ status: 422 });
     expect(await stateOf(three)).toBe('ambiguous');
   });
 
@@ -453,6 +460,11 @@ suite('MISA AMIS push (#3902)', () => {
   it('a connection is not removed while vouchers MISA took have no result; once they have, the removal takes the rows with it (the audit trail and the ledger keep the history)', async () => {
     const before = (await pushRows()).length;
     expect(before).toBeGreaterThan(0);
+    // The API asks first, before it revokes anything: refused while a row is sending, sent or ambiguous, so the channel and its access code stay; only owners and admins ask.
+    expect((await pushRows()).some((r) => ['sending', 'sent', 'ambiguous'].includes(r.state))).toBe(true);
+    await expect(api.query('finance.misa_amis_connection.can_disconnect', { id: connectionId }, asUser('owner'))).rejects.toMatchObject({ code: 'MISA_AMIS_PUSH_PENDING' });
+    await expect(api.query('finance.misa_amis_connection.can_disconnect', { id: connectionId }, asUser('member'))).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId])).every((r) => r.status !== 'revoked')).toBe(true);
     // The channel connection is revoked first (as the API does), then the row is removed by the command: refused while a row is sending, sent or ambiguous.
     await rows("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1", [orgId]);
     expect((await pushRows()).some((r) => ['sending', 'sent', 'ambiguous'].includes(r.state))).toBe(true);

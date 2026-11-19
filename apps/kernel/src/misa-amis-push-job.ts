@@ -51,7 +51,8 @@ interface SealedChannelCredential {
   envelope: string;
 }
 
-type Move = MisaAmisPushRecord['rows'][number];
+// A move as the job builds it: the attempt is added from what the begin step handed out (see `record`).
+type Move = Omit<MisaAmisPushRecord['rows'][number], 'attempts'>;
 type CallEnd = NonNullable<MisaAmisPushRecord['call']>['end'];
 
 const reasonOf = (error: AmisError): string => (error.code ? amisErrorText(error.code) : 'AMIS từ chối yêu cầu này');
@@ -93,7 +94,14 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
   }
 
   const query = <T>(name: string, input: unknown): Promise<T> => deps.runtime.query<T>(name, input, options);
-  const record = (rows: Move[], call: MisaAmisPushRecord['call']) => deps.runtime.execute<{ applied: number; ignored: number }>('finance.misa_amis.push_record', { connectionId: job.connectionId, rows, call }, options);
+  // The attempt each row was begun under: a completion carries it back, so a stalled run never lands on a row a person has sent again (one more attempt).
+  const attemptOf = new Map<string, number>();
+  const record = (rows: Move[], call: MisaAmisPushRecord['call']) =>
+    deps.runtime.execute<{ applied: number; ignored: number }>(
+      'finance.misa_amis.push_record',
+      { connectionId: job.connectionId, rows: rows.map((m) => ({ ...m, attempts: attemptOf.get(m.orgRefid) ?? 1 })), call },
+      options,
+    );
   const tally = { batches: 0, sent: 0, failed: 0, accepted: 0, refused: 0 };
   let checked = false;
   let branchKnown = false;
@@ -123,6 +131,7 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
 
     if (begun.action === 'check') {
       checked = true;
+      for (const row of begun.rows) attemptOf.set(row.orgRefid, row.attempts);
       let results: AmisCallbackResult[];
       try {
         results = await readResults(deps.client, connection, begun.from, now());
@@ -149,6 +158,7 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
 
     // action === 'send'
     tally.batches += 1;
+    for (const row of begun.rows) attemptOf.set(row.orgRefid, row.attempts);
     const ask: MisaAmisPreviewAsk = { ...begun.params, legalEntityId: target.legalEntityId };
     const moves: Move[] = [];
     const ready: AmisPartRow[] = [];

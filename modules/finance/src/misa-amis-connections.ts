@@ -3,7 +3,7 @@
 // - finance.misa_amis_connection.target (owners and admins; query): the legal entity a connect is for, resolved before anything is sealed.
 // - finance.misa_amis_connection.connect (owners and admins; R2 external): runs kernel.channel.connect (provider `accounting_misa_amis`, the access code sealed in crove_kernel.credential)
 //   and files the connection under the legal entity in ONE transaction. It sees no credential: the sealing is the API edge's, and only a worker opens it.
-// - finance.misa_amis_connection.unlink (same; R2): deletes the row. The API revokes the channel connection first, which drops the credential.
+// - finance.misa_amis_connection.unlink (same; R2): deletes the row. The API asks `can_disconnect` (no voucher awaiting MISA's answer), then revokes the channel connection, which drops the credential.
 // - finance.misa_amis_connection.request_test (owners and admins; R2 external): queues the connection test (S2b, #3885). The worker's job opens the access code, asks AMIS for a token and the company's
 //   information, and records the state through finance.misa_amis_connection.record_test (system only: a state and a time, nothing else). The test_target query hands the worker what it needs.
 // - finance.misa_amis_connection.list: every member reads the connections ("connected since", the channel's status, the last test).
@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { zChannelConnect } from '@crove/kernel';
 import { zId, zMisaAmisConnectionRecordTest, type MisaAmisConnection, type MisaAmisTestState } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -75,6 +75,31 @@ export const misaAmisConnectionConnect = defineCommand({
   },
 });
 
+// Vouchers MISA took or may have taken stay on record while they await an answer: deleting the connection would delete the record, and a reconnect could send the same voucher again.
+// The API asks this (`can_disconnect`) before it revokes the channel, so a refused disconnect leaves the access code and the channel as they were; the unlink asks again as the last guard.
+async function refuseWhilePending(ctx: Pick<CommandContext, 'trx' | 'orgId'>, connectionId: string): Promise<void> {
+  const pending = await ctx.trx
+    .selectFrom('crove_finance.misa_amis_push')
+    .select('id')
+    .where('org_id', '=', ctx.orgId)
+    .where('connection_id', '=', connectionId)
+    .where('state', 'in', ['sending', 'sent', 'ambiguous'])
+    .limit(1)
+    .executeTakeFirst();
+  if (pending) throw new DomainError('MISA_AMIS_PUSH_PENDING', 409, 'Còn chứng từ đã gửi sang MISA AMIS chưa có kết quả; hãy xử lý xong trước khi xóa kết nối');
+}
+
+// Asked by the API before the channel is revoked. A push that begins between this and the revocation is the one gap: its rows then stay on record and the unlink refuses, as before.
+export const misaAmisConnectionCanDisconnect = defineQuery({
+  name: 'finance.misa_amis_connection.can_disconnect',
+  input: z.strictObject({ id: zId }),
+  access: MANAGERS,
+  handler: async (ctx, input): Promise<{ ok: true }> => {
+    await refuseWhilePending(ctx, input.id);
+    return { ok: true };
+  },
+});
+
 export const misaAmisConnectionUnlink = defineCommand({
   name: 'finance.misa_amis_connection.unlink',
   input: z.strictObject({ id: zId }),
@@ -93,16 +118,7 @@ export const misaAmisConnectionUnlink = defineCommand({
       .where('ch.status', '<>', 'revoked')
       .executeTakeFirst();
     if (live) throw new DomainError('MISA_AMIS_CONNECTION_LIVE', 409, 'Hãy ngắt kết nối MISA AMIS trước khi xóa dòng này');
-    // Vouchers MISA took or may have taken stay on record while they await an answer: deleting the connection would delete the record, and a reconnect could send the same voucher again.
-    const pending = await ctx.trx
-      .selectFrom('crove_finance.misa_amis_push')
-      .select('id')
-      .where('org_id', '=', ctx.orgId)
-      .where('connection_id', '=', input.id)
-      .where('state', 'in', ['sending', 'sent', 'ambiguous'])
-      .limit(1)
-      .executeTakeFirst();
-    if (pending) throw new DomainError('MISA_AMIS_PUSH_PENDING', 409, 'Còn chứng từ đã gửi sang MISA AMIS chưa có kết quả; hãy xử lý xong trước khi xóa kết nối');
+    await refuseWhilePending(ctx, input.id);
     const gone = await ctx.trx.deleteFrom('crove_finance.misa_amis_connection').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
     const removed = Number(gone.numDeletedRows) > 0;
     ctx.audit({ removed });
@@ -211,4 +227,4 @@ export const misaAmisConnectionList = defineQuery({
 });
 
 export const misaAmisConnectionCommands = [misaAmisConnectionConnect, misaAmisConnectionUnlink, misaAmisConnectionRequestTest, misaAmisConnectionRecordTest];
-export const misaAmisConnectionQueries = [misaAmisConnectionList, misaAmisConnectionTarget, misaAmisConnectionTestTarget];
+export const misaAmisConnectionQueries = [misaAmisConnectionList, misaAmisConnectionTarget, misaAmisConnectionTestTarget, misaAmisConnectionCanDisconnect];
