@@ -724,7 +724,8 @@ suite('the privacy pins of the Meetings MCP reads (#3731)', () => {
     for (const bad of [{}, { q: '' }, { q: 'a' }, { q: ' a ' }, { q: 'x'.repeat(201) }, { q: 'hop', limit: 0 }, { q: 'hop', limit: 51 }, { q: 'hop', limit: 1.5 }, { q: 'hop', offset: 1 }, { q: 'hop', meetingId: ids.sA }, { q: 5 }]) {
       expect((await refusal(searchD(bad))).code, JSON.stringify(bad)).toBe('VALIDATION');
     }
-    expect((await searchD({ q: 'x'.repeat(200) })).items).toEqual([]);
+    // A query of exactly 200 characters is taken (a letter no fixture line holds, since a word is matched by its start and sD holds a line of 2,000 x).
+    expect((await searchD({ q: 'q'.repeat(200) })).items).toEqual([]);
     expect((await searchD({ q: 'hop', limit: 50 })).items.length).toBeGreaterThan(0);
   });
 
