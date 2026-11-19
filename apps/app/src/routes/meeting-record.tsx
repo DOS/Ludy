@@ -17,7 +17,6 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { useMe } from '../components/conversation-inbox.tsx';
-import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { useConsentPolicy } from '../components/consent-policy.tsx';
 import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { RecordingNotice } from '../components/recording-notice.tsx';
@@ -200,7 +199,6 @@ export function MeetingRecordPage() {
           </Link>
         }
       />
-      <NotesSubnav slug={slug} active="meetings" />
       {/* An import the member started (C1, #3173): its copied audio is claimed here too */}
       <ImportAutoClaim />
 
