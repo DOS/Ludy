@@ -140,7 +140,8 @@ suite('the recorder\'s Vy title suggestion (#3947)', () => {
     expect(await refuses(exec('recorder', 'meetings.meeting.rename', { meetingId, title: '\u200B \u202E' }))).toBe('MEETING_TITLE_EMPTY');
     expect(await refuses(exec('recorder', 'meetings.meeting.rename', { meetingId, title: 'a'.repeat(201) }))).not.toBeNull();
     expect(await titleOf(meetingId)).toBe('Chốt báo giá tháng 12');
-    const audit = await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.rename' ORDER BY id DESC LIMIT 1`, [orgId]);
+    const audit = await sqlAdmin<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.meeting.rename' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]);
+    // Refused attempts are audited too (with their code); the successful rename's row is the one that names the meeting.
     const detail = JSON.stringify(audit.rows[0]?.detail);
     expect(detail).toContain(meetingId);
     expect(detail).not.toContain('Chốt');
