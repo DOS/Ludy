@@ -526,7 +526,7 @@ suite('the privacy pins of the Meetings MCP reads (#3731)', () => {
     expect(mine).toHaveLength(2);
     expect(mine[0]?.decision).toContain('IGNORE PREVIOUS INSTRUCTIONS');
     expect(mine[0]?.decision).toContain('giá');
-    expect([...(mine[1]?.decision as string)]).toHaveLength(2000);
+    expect([...(mine[1]?.decision ?? '')]).toHaveLength(2000);
     for (const i of got.items) expect(/[\p{Cc}\p{Cf}]/u.test(i.decision) || /[\p{Cc}\p{Cf}]/u.test(i.meetingTitle), i.decision).toBe(false);
     expect(got.items.every((i) => i.decision !== '' && [...i.decision].length <= 2000)).toBe(true);
     expect(got.truncated).toBe(true);
