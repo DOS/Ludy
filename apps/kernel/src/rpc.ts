@@ -81,6 +81,7 @@ import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace
 import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
 import { misaCheck } from './misa-check.ts';
 import { explainMisaCheckLine, misaCheckLineAi } from './finance-misa-check-line-ai.ts';
+import { misaAmisPreview } from './misa-amis-preview.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -731,6 +732,13 @@ export function createRpcHandler(
         return { command: 'ads.launches.unblock', input: {} };
       case 'campaign_launch':
         return { command: 'ads.campaign.launch', input: { draftId: change.draftId } };
+      // What can start or raise spend on a running ad (#3835, W4): each asks through its own preparer, and the approval runs the command.
+      case 'object_resume':
+        return { command: 'ads.object.resume', input: { launchId: change.launchId, slot: change.slot } };
+      case 'budget_raise':
+        return { command: 'ads.budget.raise', input: { launchId: change.launchId, dailyBudget: change.dailyBudget } };
+      case 'schedule_extend':
+        return { command: 'ads.schedule.extend', input: { launchId: change.launchId, endOn: change.endOn } };
     }
   };
   const inAds = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
@@ -1340,18 +1348,18 @@ export function createRpcHandler(
       // The machine translation of the summary the member reads (meetings integrations E1, #3184): the member's own Vy, the answer theirs alone; see member-vy-ports.ts.
       translation: {
         status: os.meetings.translation.status.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => translationStatusOf({ runtime, price: aiPrice }, orgId, actor, input.meetingId, input.stage)),
+          inMeetings(context, (orgId, actor) => translationStatusOf({ runtime, price: aiPrice }, orgId, actor, input.meetingId, input.stage, input.to)),
         ),
         translate: os.meetings.translation.translate.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => runMeetingTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: translations, price: aiPrice }, orgId, actor, input.meetingId, input.stage)),
+          inMeetings(context, (orgId, actor) => runMeetingTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: translations, price: aiPrice }, orgId, actor, input.meetingId, input.stage, input.to)),
         ),
         get: os.meetings.translation.get.handler(meetingsQuery('meetings.translation.get')),
         // The transcript (E2, #3185): the member's own Vy translates the next batch of the lines they read, in the request; the page asks again while it is open.
         transcriptStatus: os.meetings.translation.transcriptStatus.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => transcriptTranslationStatusOf({ runtime, price: aiPrice, hasModel: summaryModel !== null }, orgId, actor, input.meetingId)),
+          inMeetings(context, (orgId, actor) => transcriptTranslationStatusOf({ runtime, price: aiPrice, hasModel: summaryModel !== null }, orgId, actor, input.meetingId, input.to)),
         ),
         transcriptTranslate: os.meetings.translation.transcriptTranslate.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => runTranscriptTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: transcriptTranslations, price: aiPrice }, orgId, actor, input.meetingId)),
+          inMeetings(context, (orgId, actor) => runTranscriptTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: transcriptTranslations, price: aiPrice }, orgId, actor, input.meetingId, input.to)),
         ),
         transcriptStop: os.meetings.translation.transcriptStop.handler(meetingsCommand('meetings.translation.transcript_stop')),
         transcriptGet: os.meetings.translation.transcriptGet.handler(meetingsQuery('meetings.translation.transcript_get')),
@@ -3011,6 +3019,10 @@ export function createRpcHandler(
       list: os.vouchers.list.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.vouchers.list', input, { actor, orgId })),
       ),
+      // What would be sent to MISA AMIS Kế toán (#3901): a read over the same vouchers as the MISA SME export, in the caller's own context. It sends nothing and calls no one.
+      misaAmisPreview: os.vouchers.misaAmisPreview.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => misaAmisPreview((name, query) => runtime.query(name, query, { actor, orgId }), input)),
+      ),
       // What MISA's import will refuse or cut in one of the seven exports (#3848): a read over the rows the file is built from, in the caller's own context. The export is unchanged and never waits for it.
       misaCheck: os.vouchers.misaCheck.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => misaCheck((name, query) => runtime.query(name, query, { actor, orgId }), input)),
@@ -3497,6 +3509,7 @@ export function createRpcHandler(
       report: os.stock.report.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.report', input, { actor, orgId }))),
       card: os.stock.card.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.card', input, { actor, orgId }))),
       periods: os.stock.periods.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.periods', input, { actor, orgId }))),
+      closeCheck: os.stock.closeCheck.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.close_check', input, { actor, orgId }))),
       closeEmpty: os.stock.closeEmpty.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock.close_empty', input, { actor, orgId }))),
       // The coworker's reads (#2514): the model is asked outside any transaction, from what the member's own read said it may see.
       suggest: os.stock.suggest.handler(({ context, input }) =>
@@ -3916,6 +3929,40 @@ export function createRpcHandler(
           return runtime.execute('ads.launch.stop', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+      // Managing a running ad (W4, #3835): owners and admins. A pause, an archive, a lower budget and a shorter schedule only reduce spend: each is written here and queued, and the
+      // platform is called by the manage job afterwards (never in this request). A resume, a raise and an extension are proposals (requestChange).
+      pauseObject: os.ads.pauseObject.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.object.pause', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      archiveObject: os.ads.archiveObject.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.object.archive', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      lowerBudget: os.ads.lowerBudget.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.budget.lower', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      shortenSchedule: os.ads.shortenSchedule.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.schedule.shorten', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      cancelChange: os.ads.cancelChange.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.manage.cancel', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      manageState: os.ads.manageState.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.manage.state', input, { actor, orgId }))),
+      manageSuggestions: os.ads.manageSuggestions.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.manage.suggestions', input, { actor, orgId }))),
       // Running a launch that needs attention again (W2-4b): owners and admins; the request is stamped here and the launch job takes it (never a platform call in this request).
       retryLaunch: os.ads.retryLaunch.handler(({ context, input }) =>
         inAds(context, (orgId, actor) => {

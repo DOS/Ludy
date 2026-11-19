@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { EXTRACT_TIMING } from '@crove/extract-contract';
 import { misaBlockers } from '@crove/einvoice';
-import { MODULE_IDS, zExtensionId, type ModuleId } from '@crove/kernel-contract';
+import { MODULE_IDS, TRANSLATION_FLAGGED_TARGETS, zExtensionId, type ModuleId, type TranslationFlaggedTarget } from '@crove/kernel-contract';
 import type { UsageLimits } from '@crove/kernel';
 import { parseAllowedEmails } from './auth-access.ts';
 import { checkHostedLoginUrl, hostedLoginName } from './auth-hosted-login.ts';
@@ -623,6 +623,20 @@ const schema = z.object({
   // The recorder's Vy summarizing a meeting (#2580, M6): off unless MEETINGS_SUMMARY=on (it also needs the deployment's AI provider and Vy turned on for members). The same switch lets a member's Vy translate the summary they read (#3184).
   // The module works with it off: the recorder types a summary and items by hand, and no button asks Vy.
   MEETINGS_SUMMARY: z.enum(['on', 'off']).default('off'),
+  // The languages besides vi and en a member's Vy may translate a meeting INTO (E3, #3186): a comma-separated list from zh, ja, ko, empty (none) by default. Each is a separate switch because each needs a
+  // native reader's check of its quality before a deployment offers it; it works only where MEETINGS_SUMMARY is on. An unknown name stops the boot, so a typo never silently leaves a language off.
+  MEETINGS_TRANSLATION_LANGUAGES: optional.transform((value, ctx): readonly TranslationFlaggedTarget[] => {
+    const names = (value ?? '')
+      .split(',')
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean);
+    const unknown = names.filter((name) => !(TRANSLATION_FLAGGED_TARGETS as readonly string[]).includes(name));
+    if (unknown.length > 0) {
+      ctx.addIssue({ code: 'custom', message: `unknown translation language(s) ${unknown.join(', ')}; available: ${TRANSLATION_FLAGGED_TARGETS.join(', ')}` });
+      return z.NEVER;
+    }
+    return TRANSLATION_FLAGGED_TARGETS.filter((language) => names.includes(language));
+  }),
   // How many meeting videos this process streams at once, over all members (#2965; each member may have 3, or this many if it is lower). A stream holds a slot until its body ends,
   // so size it from the members who may watch together and the process's memory (a window is 4 MiB); a request over the limit is told to retry (429).
   MEETINGS_VIDEO_STREAMS_MAX: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1).max(4096).default(64)),
