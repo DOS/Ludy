@@ -2,7 +2,8 @@
 // The test of a MISA AMIS connection, the worker's half (#3885, S2b of #3854; ADR-0025), run as the system for one connection when an owner or admin asked (finance.misa_amis_connection.request_test).
 // The access code is opened here and nowhere else (the API only seals it). The client asks AMIS for a token and then for the company's information: two reads that change nothing in AMIS.
 // What is recorded is a state (works, wrong_credentials, unreachable) and a time, never AMIS's own text, a token, a header or the code; the log carries ids and a state too.
-// The three states are all a person can act on: "works", "the access code or the app is refused, make a new code in AMIS and connect again", "AMIS did not answer or answered with an error, try again later".
+// The three states: "works", "AMIS refused the connection (the access code, or no accounting data connected in AMIS): check it or make a new code and connect again", and "no test could be made (AMIS did not
+// answer, answered with an error of its own, or does not know this deployment's app): try again later, and tell the Ludy administrator if it stays".
 import { AmisError, type AmisClient } from '@crove/misa-amis';
 import type { MisaAmisTestState } from '@crove/kernel-contract';
 import type { MisaAmisTestTarget } from '@crove/mod-finance';
@@ -61,8 +62,10 @@ export async function runMisaAmisTest(deps: MisaAmisTestDeps, job: MisaAmisTestJ
   } catch (error) {
     // Only the adapter's own kind is kept: its message and whatever else a failure carries are neither stored nor logged, and pg-boss never keeps them in the job's output.
     const kind = error instanceof AmisError ? error.kind : 'unreachable';
-    const state: MisaAmisTestState = kind === 'credentials' ? 'wrong_credentials' : 'unreachable';
-    console.warn(`[misa-amis] ${job.connectionId.slice(0, 8)}: ${state} (${kind})`);
+    const code = error instanceof AmisError ? error.code : null;
+    // InvalidAPPID is the deployment's own ClientID being unknown to MISA: nothing the customer can fix with a new access code, so it is not told as one (an operator reads it in the log).
+    const state: MisaAmisTestState = kind === 'credentials' && code !== 'InvalidAPPID' ? 'wrong_credentials' : 'unreachable';
+    console.warn(`[misa-amis] ${job.connectionId.slice(0, 8)}: ${state} (${kind}${code ? `, ${code}` : ''})`);
     return record(state);
   }
   return record('works');

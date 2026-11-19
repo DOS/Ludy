@@ -2769,7 +2769,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 });
               }
               // An owner or admin asked for a MISA AMIS connection's test (#3885): its job asks AMIS for a token and the company's information. Ids only in the job.
-              if (finance && deps.channels?.misaAmis && row.type === 'finance.misa_amis_connection.test_requested') {
+              if (finance && deps.channels?.misaAmis && deps.channels.broker && row.type === 'finance.misa_amis_connection.test_requested') {
                 const connectionId = String(row.payload.connection_id);
                 await boss.send(QUEUES.misaAmisTest, { orgId: row.org_id, connectionId } satisfies MisaAmisTestJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.misaAmisTest, connectionId),

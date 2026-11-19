@@ -95,7 +95,7 @@ describe('the MISA AMIS connection test job', () => {
   });
 
   it('records "wrong_credentials" when AMIS refuses the access code, the app or the data connection, and never keeps AMIS\'s text', async () => {
-    for (const code of ['InvalidAccessToken', 'InvalidAPPID', 'AppIDDisconnect', 'DBAmisNotConnectDBAC']) {
+    for (const code of ['InvalidAccessToken', 'AppIDDisconnect', 'DBAmisNotConnectDBAC']) {
       const h = harness();
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       const amis = fakeAmis((_request, path) => (path === '/amiskt/v1/token' ? fail(code) : undefined));
@@ -105,6 +105,16 @@ describe('the MISA AMIS connection test job', () => {
       const everything = JSON.stringify([h.executed, warn.mock.calls]);
       for (const secret of [ACCESS_CODE, CLIENT_ID, 'planted AMIS text']) expect(everything, `${code} ${secret}`).not.toContain(secret);
     }
+  });
+
+  it('does not blame the customer\'s access code when AMIS does not know the deployment\'s own app: "unreachable", and the log says which code', async () => {
+    const h = harness();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const amis = fakeAmis((_request, path) => (path === '/amiskt/v1/token' ? fail('InvalidAPPID') : undefined));
+    const out = await runMisaAmisTest({ runtime: h.runtime, broker: h.broker, client: createAmisClient({ clientId: CLIENT_ID, transport: amis.transport }) }, { orgId: ORG, connectionId: CONNECTION });
+    expect(out).toEqual({ state: 'unreachable' });
+    expect(recorded(h)).toEqual([{ id: CONNECTION, state: 'unreachable' }]);
+    expect(warn.mock.calls).toEqual([['[misa-amis] 22222222: unreachable (credentials, InvalidAPPID)']]);
   });
 
   it('records "wrong_credentials" for a gateway\'s 401 or 403', async () => {

@@ -42,6 +42,8 @@ function ConnectionItem({ connection, entities, canManage }: { connection: MisaA
       onSuccess: () => setWaiting({ from: connection.lastTestedAt, until: Date.now() + TEST_WAIT_MS }),
     }),
   );
+  // A result that lands late (a refetch on focus, say) takes the "no result yet" note away.
+  useEffect(() => setSlow(false), [connection.lastTestedAt]);
   useEffect(() => {
     if (waiting === null) return;
     if (connection.lastTestedAt !== waiting.from) {

@@ -5311,8 +5311,8 @@ export const en = {
     testedAt: 'Last tested {when}',
     testState: {
       works: 'The connection works',
-      wrong_credentials: 'AMIS refused the connection code. Make a new code in AMIS, then disconnect and connect again',
-      unreachable: 'AMIS could not be reached or reported an error. Try again later',
+      wrong_credentials: 'AMIS refused the connection. Check the connection code and the accounting data connected in AMIS; if needed, make a new code, then disconnect and connect again',
+      unreachable: 'The test could not be made (AMIS did not answer or reported an error). Try again later; if it stays, tell the Ludy administrator',
     },
     status: {
       active: 'Connected',

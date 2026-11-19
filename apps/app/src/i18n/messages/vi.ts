@@ -5309,8 +5309,8 @@ export const vi = {
     testedAt: 'Kiểm tra lần cuối {when}',
     testState: {
       works: 'Kết nối dùng được',
-      wrong_credentials: 'AMIS từ chối mã kết nối. Hãy tạo mã mới trong AMIS, rồi ngắt kết nối và kết nối lại',
-      unreachable: 'Chưa liên lạc được với AMIS hoặc AMIS báo lỗi. Hãy thử lại sau',
+      wrong_credentials: 'AMIS từ chối kết nối. Hãy kiểm tra mã kết nối và dữ liệu kế toán đã nối trong AMIS; nếu cần, tạo mã mới rồi ngắt kết nối và kết nối lại',
+      unreachable: 'Chưa kiểm tra được với AMIS (AMIS không trả lời hoặc báo lỗi). Hãy thử lại sau; nếu vẫn lỗi, báo quản trị viên Ludy',
     },
     status: {
       active: 'Đang kết nối',
