@@ -109,6 +109,12 @@ const SIGNALS = [
 const FINANCE_READS: readonly string[] = [
 ];
 
+// The wake rules of Engage (#3862, E3 of epic #3857; ADR-0051 decision 13): the two reads the wake sweep runs as a company grant, in its sealed context, to tell an AI coworker there is work, and that Home runs as the member
+// (kernel.wake.conversations: ids, a kind and instants of the threads that wait; crm.wake.facts: ids, a day and an amount of a quote follow-up and a booking tomorrow). They may join the set when that PR lands, each pinned
+// by its tests (nothing a person typed leaves in either answer); this list lets the names in and does not require them, as the lists above. A name outside the lists still fails, and so do the checks
+// below on every query that carries `mcp`.
+const ENGAGE_WAKE_READS: readonly string[] = ['kernel.wake.conversations:ludy.read', 'crm.wake.facts:ludy.read'];
+
 // The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Exactly this one,
 // with exactly this scope: a second command that carries `mcp`, or this one with another scope, fails, and so does its absence.
 const WRITES = ['social.mcp.draft_create:ludy.social.draft'];
@@ -160,7 +166,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
   it('pins the queries that carry `mcp`, and none is sensitive, streamed, role-less or open to member mode or an extension token', () => {
     const carrying = queries.filter((q) => (q as { mcp?: unknown }).mcp !== undefined);
     const names = carrying.map((q) => `${q.name}:${(q as { mcp: { scope: string } }).mcp.scope}`).sort();
-    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n))).toEqual([...REACHABLE].sort());
+    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n) && !ENGAGE_WAKE_READS.includes(n))).toEqual([...REACHABLE].sort());
     for (const q of carrying) {
       expect(Array.isArray(q.access), q.name).toBe(true);
       expect(q.sensitive === true, q.name).toBe(false);
