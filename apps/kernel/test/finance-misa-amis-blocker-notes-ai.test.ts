@@ -22,7 +22,7 @@ const item = (voucherNo: string, blockers: Array<MisaAmisPreviewItem['blockers']
   blockers,
   blockersMore: 0,
 });
-const preview = (items: MisaAmisPreviewItem[]): MisaAmisPreview => ({ kind: 'purchase_services', vouchers: items.length, ready: items.filter((i) => i.blockers.length === 0).length, blocked: items.filter((i) => i.blockers.length > 0).length, checkedAgainstAmis: false, purchasePurpose: '1', more: false, digest: 'd'.repeat(64), items });
+const preview = (items: MisaAmisPreviewItem[]): MisaAmisPreview => ({ kind: 'purchase_services', vouchers: items.length, ready: items.filter((i) => i.blockers.length === 0).length, blocked: items.filter((i) => i.blockers.length > 0).length, checkedAgainstAmis: false, matchCheck: { state: 'none', failure: null, requestedAt: null, checkedAt: null }, purchasePurpose: '1', more: false, digest: 'd'.repeat(64), items });
 const BLOCKED = preview([item('CRMDV000000001', [{ code: 'vat_rate_unmapped', lineNo: 2 }, { code: 'item_code_unknown', lineNo: 1 }, { code: 'item_code_unknown', lineNo: 2 }]), item('CRMDV000000002', [{ code: 'vat_rate_unmapped', lineNo: 1 }])]);
 const CLEAN = preview([item('CRMDV000000003', [])]);
 const NOTES: MisaAmisBlockerNotesResult = { kind: 'notes', notes: [{ kind: 'item_code_unknown', text: 'Dòng chưa có mã hàng AMIS: hãy nhập mã hàng AMIS trong Ludy.' }, { kind: 'vat_rate_unmapped', text: 'Thuế suất của dòng không nằm trong số AMIS nhận: hãy sửa thuế suất trong Ludy.' }] };

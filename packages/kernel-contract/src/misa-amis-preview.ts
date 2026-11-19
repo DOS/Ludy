@@ -5,6 +5,7 @@
 // are left out until then; the deterministic list of what Ludy can decide alone is shown.
 import { z } from 'zod';
 import { zId, zLocalDate, zMoney } from './schemas.ts';
+import { zMisaAmisMatchStatus } from './misa-amis-match.ts';
 
 // The seven kinds Ludy hands to AMIS, with the voucher_type AMIS gives them (17, 18, 13, 5, 4, 1, 3).
 export const MISA_AMIS_KINDS = ['purchase_services', 'purchase_goods', 'sales', 'cash_receipt', 'cash_payment', 'bank_credit', 'bank_debit'] as const;
@@ -64,8 +65,10 @@ export const zMisaAmisPreview = z.strictObject({
   vouchers: z.number().int().min(0),
   ready: z.number().int().min(0),
   blocked: z.number().int().min(0),
-  // false until the AMIS dictionary has been read: the branch and the party codes are not checked ("not matched with AMIS yet").
+  // false until a check against the firm's catalogue is done (S3a, #4112): until then the party and item codes are not checked ("not matched with AMIS yet"). True when `matchCheck.state` is `done`.
   checkedAgainstAmis: z.boolean(),
+  // The last check of this entity's connection: asked, waiting, done (when) or failed (why). `none` while there is no connection or no check.
+  matchCheck: zMisaAmisMatchStatus,
   // The "mục đích mua vào" the purchases and payments are written with (default 1, not yet confirmed in a MISA sandbox).
   purchasePurpose: z.enum(['1', '2', '3', '4', '5']),
   // true when the period holds more than MISA_AMIS_PREVIEW_LIMIT vouchers: the counts and items are of the first ones.

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AmisError, createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@crove/misa-amis';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { amisContextOf, amisPartRows, loadAmisEntries, PUSH_IN_FLIGHT_SECONDS, type CashVoucher, type MisaAmisPushBegin } from '@crove/mod-finance';
+import { amisContextOf, amisPartRows, loadAmisEntries, NO_MATCH_RESULTS, PUSH_IN_FLIGHT_SECONDS, type CashVoucher, type MisaAmisMatchResults, type MisaAmisPushBegin } from '@crove/mod-finance';
 import { PUSH_PRESS_RECHECK_SECONDS, PUSH_RECHECK_SECONDS, PUSH_UNREACHABLE_ROUNDS, PUSH_WAIT_ROUNDS, pushFollowUp, pushGiveUp, pushPressKeyTail, runMisaAmisPush, type MisaAmisPushOutcome } from '../src/misa-amis-push-job.ts';
 
 const CLIENT_ID = 'planted-client-id-0123456789';
@@ -86,7 +86,7 @@ interface Harness {
   opened: unknown[];
 }
 // `script` answers push_begin in order; a begin past the script's end answers "nothing, not waiting".
-function harness(options: { script?: MisaAmisPushBegin[]; vouchers?: CashVoucher[] | (() => CashVoucher[]); target?: unknown; credential?: () => unknown } = {}): Harness {
+function harness(options: { script?: MisaAmisPushBegin[]; vouchers?: CashVoucher[] | (() => CashVoucher[]); target?: unknown; credential?: () => unknown; matches?: MisaAmisMatchResults } = {}): Harness {
   const queries: Harness['queries'] = [];
   const executed: Harness['executed'] = [];
   const begins: Harness['begins'] = [];
@@ -99,6 +99,7 @@ function harness(options: { script?: MisaAmisPushBegin[]; vouchers?: CashVoucher
       if (name === 'finance.misa_amis.push_target') return target;
       if (name === 'kernel.channel.credential') return options.credential ? options.credential() : { provider: (target as { product?: string }).product === 'asp' ? 'accounting_misa_asp' : 'accounting_misa_amis', externalAccountId: 'entity', keyId: 'k1', envelope: Buffer.from('sealed').toString('base64') };
       if (name === 'finance.vouchers.cash') return typeof options.vouchers === 'function' ? options.vouchers() : (options.vouchers ?? [cash()]);
+      if (name === 'finance.misa_amis_match.results') return options.matches ?? NO_MATCH_RESULTS;
       throw new Error(`unexpected query ${name}`);
     },
     execute: async (name: string, input: unknown) => {
@@ -169,6 +170,43 @@ describe('the MISA AMIS push job: sending', () => {
     expect(records(h)).toEqual([
       { connectionId: CONNECTION, rows: [{ orgRefid: SOURCE, from: 'sending', to: 'failed', reason: 'STALE' }], call: { key: 'misa_amis:save:test', end: { state: 'failed', kind: 'bad_request', code: 'STALE' } } },
     ]);
+  });
+
+  it('writes the voucher with the party code the last check matched, asking for the entity of the target; a check made since the person approved changes the part, so it is STALE and never sent', async () => {
+    const rows = await approved([cash()]);
+    // The person approved the part with no check done; a check has since matched the party: the part now carries a code the person never saw.
+    const checked: MisaAmisMatchResults = {
+      connectionId: CONNECTION,
+      status: { state: 'done', failure: null, requestedAt: '2026-11-19T11:00:00.000Z', checkedAt: '2026-11-19T11:01:00.000Z' },
+      partyCodes: new Map([['0101234564', 'NCC_ABC']]),
+      itemCodes: new Set(),
+    };
+    const h = harness({ script: [{ action: 'need_branch' }, send(rows)], matches: checked });
+    const amis = fakeAmis();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await run(h, amis)).toMatchObject({ state: 'done', sent: 0, failed: 1 });
+    expect(h.queries.find((q) => q.name === 'finance.misa_amis_match.results')?.input).toMatchObject({ legalEntityId: ENTITY });
+    expect(amis.calls.some((c) => c.path === '/amiskt/v1/save')).toBe(false);
+    expect(records(h)[0]?.rows).toEqual([{ orgRefid: SOURCE, from: 'sending', to: 'failed', reason: 'STALE' }]);
+  });
+
+  it('sends the part as approved when the check it was approved under is the one still stored, with the matched code written', async () => {
+    const checked: MisaAmisMatchResults = {
+      connectionId: CONNECTION,
+      status: { state: 'done', failure: null, requestedAt: '2026-11-19T11:00:00.000Z', checkedAt: '2026-11-19T11:01:00.000Z' },
+      partyCodes: new Map([['0101234564', 'NCC_ABC']]),
+      itemCodes: new Set(),
+    };
+    // The approved digest is of the part written with the same matches.
+    const ask = { ...PARAMS, legalEntityId: ENTITY };
+    const { entries } = await loadAmisEntries(async () => [cash()] as never, ask, amisContextOf(ask, undefined, checked), 501);
+    const rows = amisPartRows(entries).map((p) => ({ orgRefid: p.orgRefid, digest: p.digest, sourceId: p.sourceId, part: p.part, attempts: 1 }));
+    const h = harness({ script: [{ action: 'need_branch' }, send(rows)], matches: checked });
+    const amis = fakeAmis();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await run(h, amis)).toMatchObject({ state: 'done', sent: 1, failed: 0 });
+    const saved = amis.calls.find((c) => c.path === '/amiskt/v1/save');
+    expect(JSON.stringify(saved?.body)).toContain('NCC_ABC');
   });
 
   it('every batch is rebuilt from the source: a voucher changed between two batches of one run is STALE in the second, one that is unchanged is still sent', async () => {

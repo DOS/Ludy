@@ -22,7 +22,8 @@ import { MISA_AMIS_PREVIEW_LIMIT, zId, zMisaAmisPreviewAsk, type MisaAmisPreview
 import type { MemberRole, MisaAmisPushSource, MisaAmisPushState } from '@crove/db';
 import { AMIS_SAVE_BATCH_MAX } from '@crove/misa-amis';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { amisBatchDigest, amisContextOf, amisPartRows, loadAmisEntries, type AmisQuery } from './misa-amis-build.ts';
+import { AMIS_PLACEHOLDER_BRANCH, amisBatchDigest, amisContextOf, amisPartRows, loadAmisEntries, type AmisQuery } from './misa-amis-build.ts';
+import type { MisaAmisMatchResults } from './misa-amis-match.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -143,7 +144,10 @@ export const misaAmisPush = defineCommand({
     const { connectionId: _id, digest, ...ask } = input;
     const buildAsk: MisaAmisPreviewAsk = { ...ask, legalEntityId: connection.legal_entity_id };
     // One more than the list holds, as the preview asks: a longer period is never pushed from a partial view.
-    const { entries, loaded } = await loadAmisEntries(queryOf(ctx), buildAsk, amisContextOf(buildAsk), MISA_AMIS_PREVIEW_LIMIT + 1);
+    // The vouchers are written with what the last check against the firm's catalogue matched (S3a, #4112): the same read as the preview's, so a check made since the person looked changes the digest, and the
+    // push is refused as stale instead of sending what was not looked at.
+    const matches = await queryOf(ctx)<MisaAmisMatchResults>('finance.misa_amis_match.results', { legalEntityId: connection.legal_entity_id, ask: buildAsk });
+    const { entries, loaded } = await loadAmisEntries(queryOf(ctx), buildAsk, amisContextOf(buildAsk, AMIS_PLACEHOLDER_BRANCH, matches), MISA_AMIS_PREVIEW_LIMIT + 1);
     if (loaded > MISA_AMIS_PREVIEW_LIMIT) throw new DomainError('MISA_AMIS_PUSH_TOO_MANY', 422, 'Kỳ này có quá nhiều chứng từ, hãy chọn khoảng ngắn hơn');
     if (entries.some((e) => e.mapping.blockers.length > 0)) throw new DomainError('MISA_AMIS_PUSH_BLOCKED', 409, 'Có chứng từ chưa đủ điều kiện gửi, hãy xem lại bản xem trước');
     if (amisBatchDigest(entries) !== digest) throw new DomainError('MISA_AMIS_PUSH_STALE', 409, 'Dữ liệu đã thay đổi từ lúc bạn xem, hãy xem trước lại');

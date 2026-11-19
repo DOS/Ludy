@@ -33,7 +33,7 @@ const { MisaAmisPushConfirm, MisaAmisPushList } = await import('../src/component
 const ID = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5d';
 const NOW = Date.parse('2026-11-19T12:00:00.000Z');
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
-const result = (over: Partial<MisaAmisPreview> = {}): MisaAmisPreview => ({ kind: 'cash_payment', vouchers: 2, ready: 2, blocked: 0, checkedAgainstAmis: false, purchasePurpose: '1', more: false, digest: 'c'.repeat(64), items: [], ...over });
+const result = (over: Partial<MisaAmisPreview> = {}): MisaAmisPreview => ({ kind: 'cash_payment', vouchers: 2, ready: 2, blocked: 0, checkedAgainstAmis: false, matchCheck: { state: 'none', failure: null, requestedAt: null, checkedAt: null }, purchasePurpose: '1', more: false, digest: 'c'.repeat(64), items: [], ...over });
 const ask = { kind: 'cash_payment', legalEntityId: ID, purchasePurpose: '1' } as const;
 const row = (over: Partial<MisaAmisPushRow> = {}): MisaAmisPushRow => ({
   id: ID,

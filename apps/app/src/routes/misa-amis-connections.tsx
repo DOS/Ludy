@@ -111,7 +111,7 @@ function ConnectionItem({ connection, entities, canManage, pushOffered }: { conn
       {/* The preview and the push list belong to an AMIS connection always, and to an ASP connection only where this deployment switched the push to ASP on (MISA_ASP_PUSH, #4113): `pushOffered` here is the
           switch of the connection's own product. Without it an ASP connection is connected and tested here and nothing more. */}
       {connection.status === 'active' && (connection.product === 'amis' || pushOffered) && (
-        <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }) }} />
+        <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} {...(canManage ? { checkConnectionId: connection.id } : {})} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }) }} />
       )}
       {connection.status === 'active' && (connection.product === 'amis' || pushOffered) && <MisaAmisPushList connectionId={connection.id} canManage={canManage} />}
       {connection.status === 'active' && connection.product === 'asp' && !pushOffered && (
