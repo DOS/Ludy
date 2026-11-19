@@ -82,6 +82,6 @@ export const zMisaAmisBlockerNotesAsk = zMisaAmisPreviewAsk.extend({ lang: z.enu
 export type MisaAmisBlockerNotesAsk = z.infer<typeof zMisaAmisBlockerNotesAsk>;
 export const zMisaAmisBlockerNotes = z.strictObject({
   ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']),
-  notes: z.array(z.strictObject({ code: z.enum(MISA_AMIS_BLOCKERS), text: z.string().max(300) })).max(MISA_AMIS_BLOCKERS.length),
+  notes: z.array(z.strictObject({ code: z.enum(MISA_AMIS_BLOCKERS), text: z.string().max(480) })).max(MISA_AMIS_BLOCKERS.length),
 });
 export type MisaAmisBlockerNotes = z.infer<typeof zMisaAmisBlockerNotes>;

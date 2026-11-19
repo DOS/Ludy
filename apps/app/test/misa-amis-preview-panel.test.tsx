@@ -136,6 +136,14 @@ describe("the accounting coworker's notes on the blockers (#3904, S5 of #3854)",
     }
   });
 
+  it('shows no note for a kind whose rows are all under "and N more" (only the rows on screen count)', () => {
+    const quiet = { ...result.items[0] as MisaAmisPreview['items'][number], blockers: [] };
+    const hidden = { ...(result.items[1] as MisaAmisPreview['items'][number]), sourceId: '0192f0a1-2b3c-7d4e-8f50-6172839a4b99' };
+    const many: MisaAmisPreview = { ...result, items: [...Array.from({ length: 20 }, (_v, i) => ({ ...quiet, sourceId: `0192f0a1-2b3c-7d4e-8f50-6172839a4b${String(i).padStart(2, '0')}` })), hidden] };
+    const html = wrap(<MisaAmisPreviewResult result={many} notes={NOTES} />, 'en');
+    expect(html).not.toContain('data-testid="misa-amis-preview-notes"');
+  });
+
   it('is in Vietnamese too', () => {
     const html = wrap(<MisaAmisPreviewResult result={result} notes={{ ai: 'used', notes: [{ code: 'item_code_unknown', text: 'Dòng chưa có mã hàng AMIS: hãy nhập mã hàng AMIS trong phần xem trước.' }] }} />, 'vi');
     expect(html).toContain('Ghi chú của');

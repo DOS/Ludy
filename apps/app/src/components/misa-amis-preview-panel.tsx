@@ -19,9 +19,9 @@ type Purpose = (typeof PURPOSES)[number];
 // How many vouchers the list shows on screen (the server sends up to 500).
 const SHOWN = 20;
 
-// The kinds of blocker on the list a preview shows, each once: the coworker's notes are shown only beside a kind that is on the list on screen, so a note is never read beside a list it was not written for.
+// The kinds of blocker on the rows the screen shows (the first SHOWN vouchers), each once: the coworker's notes are shown only beside a kind that is on the list on screen, so a note is never read beside a list it was not written for.
 function kindsOnList(result: MisaAmisPreview): Set<string> {
-  return new Set(result.items.flatMap((item) => item.blockers.map((b) => b.code)));
+  return new Set(result.items.slice(0, SHOWN).flatMap((item) => item.blockers.map((b) => b.code)));
 }
 
 export function MisaAmisPreviewPanel({ legalEntityId }: { legalEntityId: string }) {

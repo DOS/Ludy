@@ -59,6 +59,15 @@ describe('the notes that stand', () => {
   });
 });
 
+describe('a note that stands although it starts like a number word', () => {
+  it('keeps "Một" (the Vietnamese article) and the English "One", which count nothing', () => {
+    const vi = check([{ kind: 'item_code_unknown', text: 'Một dòng chứng từ chưa có mã hàng AMIS: hãy nhập mã hàng AMIS trong Ludy.' }]);
+    expect(vi).toMatchObject({ kind: 'notes' });
+    const en = checkMisaAmisBlockerNotes({ language: 'en', kinds: ['item_code_unknown'] }, { notes: [{ kind: 'item_code_unknown', text: 'One line has no AMIS item code: type the AMIS item code in Ludy.' }] });
+    expect(en).toMatchObject({ kind: 'notes' });
+  });
+});
+
 describe('a note that is dropped', () => {
   const dropped = (text: string) => expect(check([{ kind: 'item_code_unknown', text }])).toEqual({ kind: 'none', code: 'REFUSED' });
 
@@ -73,6 +82,18 @@ describe('a note that is dropped', () => {
     dropped('Dòng chưa có mã hàng AMIS 100% cần mã: hãy nhập mã trong Ludy.');
     dropped('Hai dòng chưa có mã hàng AMIS: hãy nhập mã hàng trong Ludy.');
     dropped('Two lines have no AMIS item code: type the code in Ludy.');
+  });
+
+  it('uses a Vietnamese number word without its accents, a Roman numeral or an emoji', () => {
+    dropped('hai dong chua co ma hang AMIS: hay nhap ma hang trong Ludy.');
+    dropped('Ⅲ dòng chưa có mã hàng AMIS: hãy nhập mã hàng trong Ludy.');
+    dropped('Dòng chưa có mã hàng AMIS ⚠️: hãy nhập mã hàng trong Ludy.');
+  });
+
+  it('promises a result in other words: "để AMIS nhận", "goes through", "going to"', () => {
+    dropped('Hãy nhập mã hàng AMIS trong Ludy để AMIS nhận chứng từ.');
+    dropped('A line has no AMIS item code: type it in Ludy so the push goes through.');
+    dropped('You are going to need the AMIS item code: type it in Ludy.');
   });
 
   it('has a link', () => {
