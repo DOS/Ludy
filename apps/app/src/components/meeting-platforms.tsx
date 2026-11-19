@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // "Kết nối nền tảng họp" in Settings (meetings integrations C1, #3173): the member's own meeting platform connections, when each was last listed, a refresh, a disconnect that asks first,
-// and the connect button of each provider this deployment offers: the offline sandbox where the deployment's test channels are on, and Zoom (C3, #3175) where the deployment has its own Zoom app;
-// Google Meet and Microsoft Teams come in later steps and are not offered. Ludy only lists recordings through a connection; the import is a click on the Meetings tab. The core works with AI off: no model is called here.
+// and the connect button of each provider this deployment offers: the offline sandbox where the deployment's test channels are on, and Zoom (C3, #3175) and Microsoft Teams (C4, #3176) where the
+// deployment has its own app; Google Meet comes in a later step and is not offered. Ludy only lists recordings through a connection; the import is a click on the Meetings tab. The core works with AI off: no model is called here.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
@@ -12,7 +12,8 @@ import { Card } from '@crove/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
-import { errorKey } from '../lib/meeting-platform.ts';
+import { MEETINGS_TEAMS_GUIDE, errorKey } from '../lib/meeting-platform.ts';
+import { adminConsentLink, rememberAdminLink } from '../lib/calendar-oauth.ts';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
 import { toast } from '../lib/toast.ts';
 import { meetingsInstalled } from './linked-meetings.tsx';
@@ -108,11 +109,15 @@ export function MeetingPlatforms({ canConnect }: { canConnect: boolean }) {
       // The org the screen is showing: the platform sends the browser back to one address for every org.
       const slug = getCurrentOrg();
       if (slug) rememberOAuthAttempt(attempt.state, slug);
+      // A Microsoft tenant may need its administrator's consent: the address for them is kept with the attempt, so the return page can show it. Null for any other platform's address.
+      const adminLink = adminConsentLink(attempt.authorizeUrl);
+      if (adminLink) rememberAdminLink(attempt.state, adminLink);
       window.location.assign(attempt.authorizeUrl);
     },
   });
   if (!on) return null;
   const offeredZoom = canConnect && (providers.data ?? []).includes('zoom');
+  const offeredTeams = canConnect && (providers.data ?? []).includes('microsoft_teams');
   // The offline test platform is offered only where the deployment turned its test channels on (the same switch as the channels screen).
   const sandbox = getConfig().channels?.sandbox ?? false;
   const rows = connections.data ?? [];
@@ -155,6 +160,22 @@ export function MeetingPlatforms({ canConnect }: { canConnect: boolean }) {
           <p className="text-xs text-subtle-foreground" data-testid="meeting-platform-zoom-note">
             {t('zoomNote')}
           </p>
+        </div>
+      )}
+      {offeredTeams && (
+        <div className="space-y-2">
+          <Button type="button" variant="outline" size="sm" loading={start.isPending} disabled={start.isPending} onClick={() => start.mutate('microsoft_teams')} data-testid="meeting-platform-connect-teams">
+            {t('connectTeams')}
+          </Button>
+          <p className="text-xs text-subtle-foreground" data-testid="meeting-platform-teams-note">
+            {t('teamsNote')}
+          </p>
+          <p className="text-xs text-subtle-foreground" data-testid="meeting-platform-teams-cost">
+            {t('teamsCost')}
+          </p>
+          <a href={MEETINGS_TEAMS_GUIDE} target="_blank" rel="noreferrer" className="text-xs font-medium text-primary hover:underline" data-testid="meeting-platform-teams-guide">
+            {t('teamsGuide')}
+          </a>
         </div>
       )}
       {start.error && <ErrorText>{errorMessage(start.error)}</ErrorText>}

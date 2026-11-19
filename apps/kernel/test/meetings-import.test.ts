@@ -195,8 +195,8 @@ describe('runMeetingsImport', () => {
       expect(recorded(big.calls)).toEqual(['kernel.meeting_platform.import_failed:too_large']);
     });
 
-    it('maps statuses: 401 expired, 404 gone, 503 retries, 400 refused', async () => {
-      const cases: Array<[number, string | 'retry']> = [[401, 'connection_expired'], [404, 'recording_gone'], [400, 'platform_refused'], [503, 'retry']];
+    it('maps statuses: 401 expired, a 403 only fails this recording (the connection stays), 404 gone, 503 retries, 400 refused', async () => {
+      const cases: Array<[number, string | 'retry']> = [[401, 'connection_expired'], [403, 'platform_refused'], [404, 'recording_gone'], [400, 'platform_refused'], [503, 'retry']];
       for (const [status, expected] of cases) {
         const { deps, calls } = harness({ adapters: { sandbox: remote() }, stream: stream(status, []) });
         if (expected === 'retry') {

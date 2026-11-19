@@ -139,6 +139,17 @@ export class MeetingPlatformError extends Error {
   }
 }
 
+/**
+ * A tenant whose administrator has not allowed the app (Microsoft: AADSTS65001, AADSTS90094, AADSTS90095), seen when the connect step exchanges the code. A refusal like any other
+ * (`platform_refused`), but one the member can do nothing about, so the screen says so in plain words and nothing is retried. Never carries Microsoft's words.
+ */
+export class MeetingPlatformConsentError extends MeetingPlatformError {
+  constructor() {
+    super('platform_refused', 'the tenant administrator has not allowed the app');
+    this.name = 'MeetingPlatformConsentError';
+  }
+}
+
 export const MEETING_PLATFORM_LIST_MAX = 100;
 
 // 2 seconds of mono 8 kHz 16-bit PCM silence: a real, valid WAV (44-byte RIFF header, then 32000 bytes of zero samples).

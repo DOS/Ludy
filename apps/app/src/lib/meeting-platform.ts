@@ -3,6 +3,9 @@
 // and which words a failure code gets. Pure functions, so the screens and their tests share one reading of a row.
 import { MEETING_PLATFORM_ERROR_CODES, MEETING_PLATFORM_IMPORT_MAX_BYTES, MEETING_PLATFORM_TRANSCRIPT_PROVIDERS, MEETING_PLATFORM_VIDEO_MAX_BYTES, type MeetingPlatformErrorCode, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
 
+// The guide for the Microsoft 365 administrator of a Teams connection (the two steps in their own admin pages): the runbook of the repository, which is public.
+export const MEETINGS_TEAMS_GUIDE = 'https://github.com/DOS/Ludy/blob/main/docs/runbooks/meetings-teams.md';
+
 // The longest recording the import accepts: the transcription limit of 90 minutes (the product owner's rule for C1). A longer one is shown as too long to import.
 export const IMPORT_MAX_SECONDS = 90 * 60;
 

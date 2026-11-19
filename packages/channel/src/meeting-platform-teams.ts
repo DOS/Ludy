@@ -14,7 +14,7 @@
 //   goes only there, and a redirect may go to `sharepoint.com` or its subdomains and nowhere else. Microsoft does not document a redirect for this call; the allowance is the documented OneDrive pattern.
 // - The transcript is read by the adapter itself (`text/vtt` with `<v Speaker>` voice tags): it is MICROSOFT's transcription, never Ludy's, and the result says so.
 // - Tokens live only in the credential the job opens (ADR-0025); an error carries a short code, never a token, Microsoft's response body or its words.
-import { MEETING_PLATFORM_LIST_MAX, MeetingPlatformError } from './meeting-platform.ts';
+import { MEETING_PLATFORM_LIST_MAX, MeetingPlatformConsentError, MeetingPlatformError } from './meeting-platform.ts';
 import type {
   MeetingPlatformAccount,
   MeetingPlatformAdapter,
@@ -490,6 +490,8 @@ export class TeamsMeetingPlatform implements MeetingPlatformAdapter, MeetingPlat
     });
     if (input.codeVerifier) form.set('code_verifier', input.codeVerifier);
     const { status, body } = await this.token(form, signal);
+    // A tenant that needs its administrator's consent can answer here as well as at the redirect: said apart, so the member is told whom to ask.
+    if (status >= 400 && teamsConnectProblem(text(body.error), text(body.error_description)) === 'admin_consent_required') throw new MeetingPlatformConsentError();
     if (status < 200 || status >= 300) throw new MeetingPlatformError('platform_refused');
     const accessToken = text(body.access_token);
     const refreshToken = text(body.refresh_token);

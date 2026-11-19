@@ -2702,7 +2702,11 @@ export const vi = {
         connectedToast: 'Đã kết nối bản thử.',
         connectZoom: 'Kết nối Zoom',
         zoomNote: 'Zoom: Ludy liệt kê các bản ghi đám mây của chính tài khoản Zoom của bạn (cần gói Zoom có lưu bản ghi đám mây) và ưu tiên tệp chỉ có âm thanh. Bản ghi chỉ có video chỉ nhập được khi máy chủ đã bật bộ xử lý media; hãy hỏi người quản lý Ludy của bạn. Bạn tự duyệt các quyền ngay trên màn hình của Zoom và có thể gỡ ứng dụng trong Zoom bất cứ lúc nào.',
-        moreLater: 'Google Meet và Microsoft Teams sẽ có ở các bản sau.',
+        connectTeams: 'Kết nối Microsoft Teams',
+        teamsNote: 'Microsoft Teams: Ludy liệt kê bản ghi của các cuộc họp Teams do bạn tổ chức và bản chép lời của các cuộc họp bạn tham gia, từ tài khoản Microsoft 365 công việc hoặc trường học của bạn. Quản trị viên Microsoft 365 của bạn phải cho phép Ludy một lần, và bật quyền đọc bản chép lời trong Teams admin center nếu muốn lấy bản chép lời; Ludy không tự làm được việc này. Bản ghi là video, nên chỉ nhập được khi máy chủ đã bật môi trường xử lý media; hãy hỏi người vận hành Ludy của bạn. Không có gì được tải về cho đến khi bạn bấm "Nhập".',
+        teamsCost: 'Chi phí: Microsoft không tính phí khi đọc bản ghi và bản chép lời Teams (Microsoft đã ngừng tính phí các API này từ ngày 25/8/2025). Ludy tự chép lời phần âm thanh, và phần đó được tính vào hạn mức như mọi tệp tải lên.',
+        teamsGuide: 'Hướng dẫn cho quản trị viên Microsoft 365 của bạn',
+        moreLater: 'Google Meet sẽ có ở bản sau.',
       },
       // Nơi Zoom đưa trình duyệt quay lại (/meetings/oauth/zoom/callback): việc kết nối được hoàn tất ở đây, rồi thành viên trở về Cài đặt.
       oauth: {
@@ -2712,6 +2716,9 @@ export const vi = {
         cancelled: 'Bạn đã hủy việc kết nối, không có gì thay đổi.',
         lost: 'Không tìm thấy lượt kết nối này trong trình duyệt (có thể nó bắt đầu ở tab khác). Hãy bắt đầu lại từ Cài đặt.',
         back: 'Về Cài đặt',
+        adminConsent: 'Quản trị viên Microsoft 365 của bạn chưa cho phép Ludy. Chỉ họ làm được việc này (Ludy không làm thay được), và chỉ cần làm một lần cho cả tổ chức. Hãy gửi cho họ địa chỉ bên dưới và bản hướng dẫn, rồi kết nối lại.',
+        adminConsentLink: 'Địa chỉ để quản trị viên của bạn mở:',
+        guide: 'Hướng dẫn cho quản trị viên Microsoft 365 của bạn',
       },
       recordings: {
         title: 'Bản ghi có sẵn trên nền tảng',
@@ -2773,6 +2780,8 @@ export const vi = {
         platformTranscript: 'Đây là bản chép lời của {platform}, không phải của Ludy. Bạn đọc lại và sửa trước khi chia sẻ.',
         titleLabel: 'Tên cuộc họp',
         copyAudio: 'Ludy chỉ sao chép phần âm thanh.',
+        teamsVideo: 'Bản ghi Teams là video: Ludy chỉ tải về để lấy phần âm thanh ra, và chỉ giữ lại phần âm thanh.',
+        teamsCost: 'Microsoft không tính phí khi đọc bản ghi Teams (Microsoft đã ngừng tính phí các API này từ ngày 25/8/2025). Ludy tự chép lời phần âm thanh, và phần đó được tính vào hạn mức như mọi tệp tải lên.',
         keepOriginal: 'Bản gốc vẫn nằm ở nền tảng họp: Ludy không bao giờ xóa nó.',
         noParticipants: 'Danh sách người tham dự không được sao chép.',
         ownTranscript: 'Ludy tự phiên âm âm thanh, không dùng bản ghi lời của nền tảng.',
@@ -12446,6 +12455,7 @@ export const vi = {
       CALENDAR_NOT_FOUND: 'Không tìm thấy lịch đã kết nối này',
       CALENDAR_SCOPE_MISSING: 'Hãy kết nối lại lịch này và cho phép ghi lịch hẹn',
       OAUTH_ADMIN_CONSENT_REQUIRED: 'Tổ chức Microsoft của bạn yêu cầu quản trị viên cho phép ứng dụng này trước. Hãy nhờ quản trị viên Microsoft 365 cho phép Ludy đọc lịch, rồi kết nối lại.',
+      OAUTH_MEETINGS_ADMIN_CONSENT_REQUIRED: 'Tổ chức Microsoft của bạn yêu cầu quản trị viên cho phép ứng dụng này trước. Quản trị viên Microsoft 365 của bạn phải cho phép Ludy đọc bản ghi cuộc họp Teams (Ludy không tự làm được việc này), rồi bạn kết nối lại.',
       CALENDAR_READ_SCOPE_MISSING: 'Hãy kết nối lại lịch này và cho phép Ludy đọc tên và giờ cuộc họp trong lịch',
       CALENDAR_OWNER_LEFT: 'Chủ của lịch này không còn là thành viên của tổ chức',
       CALENDAR_PROVIDER_DISABLED: 'Loại lịch này chưa được cấu hình trên máy chủ',
@@ -12672,6 +12682,7 @@ export const vi = {
       ACTION_ITEM_ACCEPTED: 'Việc cần làm này đã được tạo thành việc nhóm rồi.',
       TOO_MANY_ITEMS: 'Một cuộc họp có tối đa 100 việc cần làm.',
       NOTHING_TO_PUBLISH: 'Chưa có gì để chia sẻ: hãy viết tóm tắt hoặc thêm một việc cần làm trước.',
+      CHAPTER_ANCHOR_LOST: 'Bản ghi lời nói đã thay đổi sau khi bạn lưu mục lục, nên có mục không còn bắt đầu ở một dòng của bản ghi. Hãy lưu lại mục lục rồi chia sẻ.',
       NO_CLEAN_ITEMS: 'Không có việc nào rõ ràng: hãy tự chọn người, ngày và vị trí cho từng việc.',
       DRAFT_NOT_REVIEWED: 'Còn mục do Vy gợi ý chưa được bạn xem lại. Hãy đọc và xác nhận trước khi chia sẻ.',
       DRAFT_SUMMARY_EXISTS: 'Bạn đã có bản tóm tắt nháp. Hãy chia sẻ hoặc lưu đè lên nó, rồi mới chép bản của Vy.',
@@ -14047,6 +14058,7 @@ export const vi = {
       },
       mcp: {
         invoices: 'Cho ứng dụng AI xem danh sách hóa đơn đã ghi sổ',
+        overview: 'Cho ứng dụng AI xem tổng quan tiền, lãi lỗ, công nợ phải thu và phải trả của một kỳ',
       },
       misa_amis_connection: {
         connect: 'Kết nối MISA AMIS Kế toán',
