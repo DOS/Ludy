@@ -547,7 +547,7 @@ export function setMeetingPlatformVideoImport(maxBytes: number | null): void {
 }
 
 // The member's own recordings, newest first: the suggestions and what became of the ones they imported. A dismissed one is hidden. With `recordingId` it is that one row (or none), found by its id
-// whatever its age, so a caller that needs one row does not depend on it being among the newest RECORDINGS_LIMIT.
+// whatever its age, so a caller that needs one row does not depend on it being among the newest RECORDINGS_LIMIT; that lookup neither sorts nor limits (one row at most).
 export const meetingPlatformRecordings = defineQuery({
   name: 'kernel.meeting_platform.recordings',
   input: z.strictObject({ recordingId: zId.optional() }),
@@ -555,18 +555,16 @@ export const meetingPlatformRecordings = defineQuery({
   handler: async (ctx, input): Promise<MeetingPlatformRecordingView[]> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được bản ghi từ nền tảng họp');
     const only = input.recordingId;
-    const rows = await ctx.trx
+    let query = ctx.trx
       .selectFrom('crove_kernel.meeting_platform_recording as r')
       .innerJoin('crove_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
       .select(['r.id', 'r.connection_id', 'c.provider', 'r.title', 'r.started_at', 'r.length_seconds', 'r.size_bytes', 'r.has_audio', 'r.has_video', 'r.has_transcript', 'r.status', 'r.meeting_id', 'r.error_code'])
       .where('r.org_id', '=', ctx.orgId)
       .where('r.user_id', '=', ctx.actor.userId)
-      .where('r.status', '<>', 'dismissed')
-      .$if(only !== undefined, (q) => q.where('r.id', '=', only as string))
-      .orderBy('r.started_at', 'desc')
-      .orderBy('r.id', 'desc')
-      .limit(RECORDINGS_LIMIT)
-      .execute();
+      .where('r.status', '<>', 'dismissed');
+    // One row by its id: the primary key finds it, so there is nothing to order or to cap. The list is newest first and capped.
+    query = only === undefined ? query.orderBy('r.started_at', 'desc').orderBy('r.id', 'desc').limit(RECORDINGS_LIMIT) : query.where('r.id', '=', only);
+    const rows = await query.execute();
     return rows.map((r) => ({
       id: r.id,
       connectionId: r.connection_id,
