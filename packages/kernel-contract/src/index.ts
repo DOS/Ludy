@@ -138,6 +138,7 @@ export * from './meeting-agenda.ts';
 export * from './meeting-chat.ts';
 export * from './meeting-ask.ts';
 export * from './meeting-brief.ts';
+export * from './meeting-digest.ts';
 export * from './meeting-assignee.ts';
 export * from './meeting-chapters.ts';
 export * from './meeting-title.ts';

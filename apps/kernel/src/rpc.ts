@@ -72,7 +72,7 @@ import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
-import { assigneeStatusOf, runMeetingAssignee, briefStatusOf, runMeetingBrief, runMeetingTitle, runMeetingCommitments, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
+import { assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingCommitments, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
 import { MISA_AMIS_CHANNEL_PROVIDER, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
@@ -427,6 +427,8 @@ export function createRpcHandler(
   // A question across meetings (A3, #3161) is one model call over at most 40 lines and any member may ask: its own budget, apart from the summaries' and the translations'.
   const asks = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   const meetingBriefs = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // The weekly digest (#3949) is one call per click: its own budget, so it never makes a brief or a question wait.
+  const meetingDigests = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   // Naming who an action item belongs to (#3921) is one short call per click: its own budget, so it never makes a brief or a question wait.
   const meetingAssignees = new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
   // Proposing project tasks from a note (#2598): one call per click, own budget so it does not contend with meetings.
@@ -1398,6 +1400,15 @@ export function createRpcHandler(
         status: os.meetings.commitments.status.handler(meetingsQuery('meetings.commitments.status')),
         list: os.meetings.commitments.list.handler(({ context, input }) =>
           inMeetings(context, (orgId, actor) => runMeetingCommitments({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
+      },
+      // This week's decisions and what is still open, across the meetings the member reads (#3949): the facts are read as the member (no model); the click has the member's own Vy write two or three sentences from
+      // them, each citing facts, and a sentence whose figure no cited fact writes is refused; nothing is stored or sent. See member-vy-ports.ts.
+      digest: {
+        facts: os.meetings.digest.facts.handler(meetingsQuery('meetings.digest.facts')),
+        status: os.meetings.digest.status.handler(({ context }) => inMeetings(context, (orgId, actor) => digestStatusOf({ runtime, price: aiPrice, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor))),
+        recap: os.meetings.digest.recap.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingDigest({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingDigests, price: aiPrice }, orgId, actor, input)),
         ),
       },
       // Who an action item belongs to, by Vy, when code found nobody (#3921, step 2): the click has the member's own Vy pick one of the people the member may give the work to from the said name, or nobody; the model

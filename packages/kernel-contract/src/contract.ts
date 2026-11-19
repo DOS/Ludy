@@ -510,6 +510,7 @@ import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
 import { zCommitmentsAnswer } from './meeting-commitments.ts';
+import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
 import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import {
@@ -1330,6 +1331,14 @@ export const contract = {
     commitments: {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       list: oc.input(zSummaryRef).output(zCommitmentsAnswer),
+    },
+    // This week's decisions and what is still open, across the meetings the member reads (#3949): `facts` are read by code as the member (published decisions and open action items of the meetings that started in the
+    // last 7, 14 or 30 days) and work with AI off; `status` is the button (may Vy be used now, the cost of one recap), `recap` the click that has the member's own Vy write two or three sentences from those facts. Nothing
+    // is stored or sent.
+    digest: {
+      facts: oc.input(zDigestAsk).output(zDigestFacts),
+      status: oc.input(zBriefEmpty).output(zDigestStatus),
+      recap: oc.input(zDigestAsk).output(zDigestAnswer),
     },
     // Who an action item belongs to, by Vy, when code found nobody (#3921, step 2): `status` is the button (may Vy be used now), `suggest` the click that has the member's own Vy pick one of the people they may give
     // the work to from the name said in the meeting, or nobody. The model sees names only; the answer is a number the route maps to a person; nothing is stored, and a person still picks the seat and makes the task.

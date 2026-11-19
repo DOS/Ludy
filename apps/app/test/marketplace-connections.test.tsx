@@ -138,7 +138,9 @@ describe('MarketplaceConnectionsCard', () => {
     expect(rows).toHaveLength(3);
     expect(rows.filter((r) => r.includes('data-adapter="false"'))).toHaveLength(2);
     expect(html.match(new RegExp(esc(en.marketplaceConnections.fileOnly), 'g'))).toHaveLength(2);
-    expect(html).toContain(`>${en.marketplaceConnections.adapterOn}<`);
+    // Only the offline adapter serves it, so the row says there is a test version to try and does not promise a connection to the marketplace.
+    expect(html).toContain(`>${en.marketplaceConnections.adapterTest}<`);
+    expect(html).not.toContain(`>${en.marketplaceConnections.adapterOn}<`);
     // The connect form offers only the platform an adapter serves.
     const form = html.slice(html.indexOf(`aria-label="${en.marketplaceConnections.connectTitle}"`));
     expect(form).toContain('>Shopee<');
@@ -172,6 +174,14 @@ describe('MarketplaceConnectionsCard', () => {
     const dead = card('owner', { connections: [connection({ status: 'error' })] });
     expect(dead).not.toContain(`>${en.marketplaceConnections.test}<`);
     expect(dead).not.toContain(`>${en.marketplaceConnections.pollNow}<`);
+  });
+
+  it('says a platform can be connected only where a real adapter serves it (ST-4)', () => {
+    const real: MarketplaceProviders = { ...partial, adapters: [{ id: 'shopee_api', offline: false, connectFields: ['user', 'password'], platforms: ['shopee'] }] };
+    const html = card('owner', { providers: real, connections: [] });
+    expect(html).toContain(`>${en.marketplaceConnections.adapterOn}<`);
+    expect(html).not.toContain(`>${en.marketplaceConnections.adapterTest}<`);
+    expect(en.marketplaceConnections.adapterTest).not.toMatch(/server|sandbox/i);
   });
 
   it('offers no pull button for an adapter that is not the offline one: the worker polls it', () => {
