@@ -5349,6 +5349,7 @@ export const en = {
   },
   glossary: {
     title: 'Company glossary',
+    open: 'See and edit the list',
     intro: "A list of the company's own product names, acronyms and jargon. Only owners and admins see and edit this list.",
     noPersonalData: "Do not put people's names, customers' names, phone numbers or email addresses here",
     empty: 'No terms yet.',

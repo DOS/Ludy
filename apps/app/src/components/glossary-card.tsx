@@ -147,7 +147,8 @@ function NewTerm({ count }: { count: number }) {
   );
 }
 
-// Owners and admins only: the commands and the list are theirs (meetings.glossary.add, update, remove, list); a member has no glossary screen.
+// Owners and admins only: the commands and the list are theirs (meetings.glossary.add, update, remove, list); a member has no glossary screen. The list sits behind a native disclosure, closed
+// at first, so the apps tab of Settings stays under the 1200 px every tab keeps (e2e/tests/settings-tabs.spec.ts).
 export function GlossaryCard() {
   const t = useTranslations('glossary');
   const list = useQuery(orpc.meetings.glossary.list.queryOptions({ input: {} }));
@@ -155,29 +156,32 @@ export function GlossaryCard() {
   return (
     <Card role="region" aria-labelledby="glossary-title" className="block p-4" data-testid="glossary-card">
       <h2 id="glossary-title" className="text-sm font-medium text-muted-foreground">{t('title')}</h2>
-      <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
-      <p className="mt-1 text-sm font-medium">{t('noPersonalData')}</p>
-      {list.isLoading ? (
-        <RowsSkeleton />
-      ) : list.error ? (
-        <ErrorText>{errorMessage(list.error)}</ErrorText>
-      ) : (
-        <>
-          {terms.length === 0 ? (
-            <p className="mt-3 text-sm text-muted-foreground">{t('empty')}</p>
-          ) : (
-            <>
-              <p className="mt-3 text-xs text-muted-foreground">{t('count', { count: String(terms.length), max: String(GLOSSARY_TERMS_MAX) })}</p>
-              <ul className="mt-1 divide-y">
-                {terms.map((x) => (
-                  <TermRow key={x.id} term={x} />
-                ))}
-              </ul>
-            </>
-          )}
-          <NewTerm count={terms.length} />
-        </>
-      )}
+      <details className="mt-2 text-sm">
+        <summary className="cursor-pointer font-medium">{t('open')}</summary>
+        <p className="mt-2 text-muted-foreground">{t('intro')}</p>
+        <p className="mt-1 font-medium">{t('noPersonalData')}</p>
+        {list.isLoading ? (
+          <RowsSkeleton />
+        ) : list.error ? (
+          <ErrorText>{errorMessage(list.error)}</ErrorText>
+        ) : (
+          <>
+            {terms.length === 0 ? (
+              <p className="mt-3 text-muted-foreground">{t('empty')}</p>
+            ) : (
+              <>
+                <p className="mt-3 text-xs text-muted-foreground">{t('count', { count: String(terms.length), max: String(GLOSSARY_TERMS_MAX) })}</p>
+                <ul className="mt-1 divide-y">
+                  {terms.map((x) => (
+                    <TermRow key={x.id} term={x} />
+                  ))}
+                </ul>
+              </>
+            )}
+            <NewTerm count={terms.length} />
+          </>
+        )}
+      </details>
     </Card>
   );
 }

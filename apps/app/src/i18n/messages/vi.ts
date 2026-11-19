@@ -5347,6 +5347,7 @@ export const vi = {
   },
   glossary: {
     title: 'Từ điển thuật ngữ của công ty',
+    open: 'Xem và sửa danh sách',
     intro: 'Danh sách các tên sản phẩm, từ viết tắt và thuật ngữ riêng của công ty. Chỉ chủ sở hữu và quản trị viên thấy và sửa danh sách này.',
     noPersonalData: 'Không ghi tên người, tên khách hàng, số điện thoại hay địa chỉ email vào đây',
     empty: 'Chưa có thuật ngữ nào.',
