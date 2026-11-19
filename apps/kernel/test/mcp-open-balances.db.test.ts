@@ -164,6 +164,6 @@ suite('finance.mcp.open_balances on PostgreSQL (#3849)', () => {
     await expect(o.read(o.owner, { side: 'payable', limit: 51 })).rejects.toBeTruthy();
     await expect(rt.query('finance.mcp.open_balances', { side: 'payable' }, { actor: user(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
     await expect(rt.query('finance.mcp.open_balances', { side: 'payable' }, { actor: mcp(o.owner, await o.grant(o.owner), ['ludy.other']), orgId: o.orgId })).rejects.toBeTruthy();
-    await expect(o.read(o.member, { side: 'payable' })).rejects.toMatchObject({ status: 403 });
+    await expect(o.read(o.member, { side: 'payable' })).rejects.toMatchObject({ status: 401, code: 'MCP_GRANT_INVALID' });
   });
 });

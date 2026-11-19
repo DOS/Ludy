@@ -147,6 +147,6 @@ suite('the privacy pin of finance.mcp.open_balances (#3849)', () => {
     const plain = await org();
     await expect(rt.query('finance.mcp.open_balances', { side: 'payable' }, { actor: user(plain.owner), orgId: plain.orgId })).rejects.toMatchObject({ status: 403 });
     await expect(rt.query('finance.mcp.open_balances', { side: 'payable' }, { actor: mcp(plain.owner, await plain.grant(plain.owner), ['ludy.other']), orgId: plain.orgId })).rejects.toBeTruthy();
-    await expect(plain.read(plain.member, { side: 'payable' })).rejects.toMatchObject({ status: 403 });
+    await expect(plain.read(plain.member, { side: 'payable' })).rejects.toMatchObject({ status: 401, code: 'MCP_GRANT_INVALID' });
   });
 });
