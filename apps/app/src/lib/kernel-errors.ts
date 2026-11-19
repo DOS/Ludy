@@ -892,6 +892,8 @@ export const KERNEL_ERROR_CODES = [
   'STOCK_SURPLUS_RESOLVED',
   'STOCK_SURPLUS_PENDING',
   'STOCK_SURPLUS_STALE',
+  // The books of the entity changed since a sale was proposed (#3712 slice 4).
+  'BOOKS_REGIME_CHANGED',
   'STOCK_COUNT_ENTRY',
   'STOCK_COUNT_ITEM_INACTIVE',
   'STOCK_COUNT_ITEM_ENTITY',
