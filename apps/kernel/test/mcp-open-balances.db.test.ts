@@ -65,7 +65,7 @@ suite('finance.mcp.open_balances on PostgreSQL (#3849)', () => {
     };
     // Planted on purpose: what a grant must never read.
     const party = (name: string) =>
-      rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email, phone, address) VALUES ($1, $2, 'organization', 'secret-contact@example.test', '0909000111', 'Số 9 Đường Bí Mật') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
+      rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, email, phone, address) VALUES ($1, $2, 'organization', 'secret-contact@example.test', '0900000000', 'Số 9 Đường Bí Mật') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
     // A sale (Dr 131 / Cr 511) or a purchase (Dr 156 / Cr 331) with its balanced entry, in one transaction.
     async function invoice(partyId: string, number: string, date: string, total: string, direction: 'sale' | 'purchase' = 'sale'): Promise<string> {
       const doc = randomUUID();
