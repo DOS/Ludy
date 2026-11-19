@@ -137,6 +137,7 @@ suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
     await expect(o.read(o.owner, { range: 'this_month', legalEntityId: randomUUID() })).rejects.toBeTruthy();
     await expect(rt.query('finance.mcp.overview', {}, { actor: user(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
     await expect(rt.query('finance.mcp.overview', {}, { actor: mcp(o.owner, await o.grant(o.owner), ['ludy.other']), orgId: o.orgId })).rejects.toBeTruthy();
-    await expect(o.read(o.member)).rejects.toMatchObject({ status: 403 });
+    // The grant of a member (only an owner or an admin may consent) is not in standing: the same 401 as for a grant that never existed.
+    await expect(o.read(o.member)).rejects.toMatchObject({ status: 401, code: 'MCP_GRANT_INVALID' });
   });
 });
