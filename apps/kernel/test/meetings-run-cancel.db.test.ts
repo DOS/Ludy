@@ -101,20 +101,27 @@ suite('a meeting\'s removal and the Vy runs bound to it (#3951)', () => {
       [orgId, feature, meetingId],
     ).then((r) => r.rows);
 
-  it('cancels a title run in flight when the meeting is removed, audits it by ids, and deletes its private result row; the recorder\'s other meeting is unaffected', async () => {
+  it('cancels a title run and a commitments run in flight when the meeting is removed, audits each by ids, and deletes their private result rows; the recorder\'s other meeting is unaffected', async () => {
     const meetingId = await seedMeeting('recorder');
     const other = await seedMeeting('recorder');
-    const { runId } = await runStart('recorder', 'meetings.title', meetingId);
-    expect(await results(meetingId)).toBe(1);
+    // Two features, so the member's one live run per feature does not supersede either.
+    const title = await runStart('recorder', 'meetings.title', meetingId);
+    const commitments = await runStart('recorder', 'meetings.commitments', meetingId);
+    expect(await results(meetingId)).toBe(2);
     await sqlAdmin(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
     expect(await results(meetingId)).toBe(0);
-    expect(await runRow(runId)).toMatchObject({ status: 'cancelled', error: 'MEETING_REMOVED' });
-    const rows = await audits('meetings.title', meetingId);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.detail).toEqual({ runId, meetingId, feature: 'meetings.title', reason: 'MEETING_REMOVED' });
-    // The other meeting still stands, and a run of its own starts and stays live.
+    for (const [feature, runId] of [['meetings.title', title.runId], ['meetings.commitments', commitments.runId]] as const) {
+      expect(await runRow(runId), feature).toMatchObject({ status: 'cancelled', error: 'MEETING_REMOVED' });
+      const rows = await audits(feature, meetingId);
+      expect(rows, feature).toHaveLength(1);
+      // Ids and the reason only: no title, no text.
+      expect(rows[0]?.detail, feature).toEqual({ runId, meetingId, feature, reason: 'MEETING_REMOVED' });
+    }
+    // The other meeting still stands, and runs of its own start and stay live.
     const second = await runStart('recorder', 'meetings.title', other);
+    const third = await runStart('recorder', 'meetings.commitments', other);
     expect(await runRow(second.runId)).toMatchObject({ status: 'running' });
-    expect(await results(other)).toBe(1);
+    expect(await runRow(third.runId)).toMatchObject({ status: 'running' });
+    expect(await results(other)).toBe(2);
   });
 });
