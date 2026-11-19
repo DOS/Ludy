@@ -61,7 +61,7 @@ export const MCP_WRITE_SCOPES = Object.freeze(['ludy.social.draft', 'ludy.engage
 // The write scopes that have a sealed write context to enter (ADR-0051 decision 11, #3858 slice c). A scope is listed in MCP_WRITE_SCOPES before its commands exist, so a person can consent to it and the tool list can
 // be filtered by it; a command that declares a scope with no context here is refused at run time (rule `mcp_scope`), never run in another scope's context. A scope joins this list with the migration that seals its context
 // and the guard branch that says what that context may write (Engage E2, #3861, for `ludy.engage.write` and `ludy.ads.draft`).
-export const MCP_WRITE_CONTEXT_SCOPES: readonly string[] = Object.freeze(['ludy.social.draft']);
+export const MCP_WRITE_CONTEXT_SCOPES: readonly string[] = Object.freeze(['ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft']);
 export const MCP_SCOPES = Object.freeze([...MCP_READ_SCOPES, ...MCP_WRITE_SCOPES] as const);
 export type McpReadScope = (typeof MCP_READ_SCOPES)[number];
 export type McpWriteScope = (typeof MCP_WRITE_SCOPES)[number];
@@ -2346,7 +2346,7 @@ export class Runtime {
       // A company MCP grant that holds a write scope runs the command that declares it (ADR-0051 decision 2, #3227): the same sealed shape as the read context (agent-shaped, no user,
       // tainted), at R1 and of its own kind, so the database guard lets it write exactly what that scope names. The grantor named in the seal is the user the edge named, else a bug.
       const { rows } = await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
-        SELECT crove_kernel.enter_mcp_company_draft_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
+        SELECT ${mcpWrite === 'ludy.social.draft' ? sql`crove_kernel.enter_mcp_company_draft_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid)` : sql`crove_kernel.enter_mcp_company_write_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid, ${mcpWrite}::text)`} AS entered`.execute(trx);
       const got = rows[0]?.entered;
       const role = got?.role;
       if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R1' || got.tainted !== true || (role !== 'owner' && role !== 'admin')) {

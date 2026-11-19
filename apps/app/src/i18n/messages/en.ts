@@ -14304,6 +14304,7 @@ export const en = {
         state: 'Read the switches and spend caps of running ads',
       },
       mcp: {
+        campaign_draft_save: 'Lets a connected AI app save a new ad campaign draft for a person to review',
         flags: 'Let an AI app read the ad spend flags',
         spend: 'Let an AI app read the ad accounts and the spend of one',
         today: 'Let an AI app read what needs a person in Ads today',
@@ -14429,6 +14430,12 @@ export const en = {
       },
       today: 'Read the CRM items that need you today',
       mcp: {
+        deal_create: 'Lets a connected AI app create a sales deal',
+        deal_move: 'Lets a connected AI app move a deal to another stage',
+        next_step_done: 'Lets a connected AI app mark the next step of a deal done',
+        next_step_snooze: 'Lets a connected AI app snooze the next step of a deal',
+        quote_revise: 'Lets a connected AI app make a draft revision of a sent quote',
+        quote_save: 'Lets a connected AI app save a draft quote',
         bookings: 'Let an AI app list the bookings',
         deal: 'Let an AI app read one deal',
         deals: 'Let an AI app list the deals',
@@ -15384,6 +15391,12 @@ export const en = {
         set_shared: 'Share or unshare a saved view',
       },
       mcp: {
+        conversation_assign: 'Lets a connected AI app assign an inbox conversation to a member',
+        conversation_link_contact: 'Lets a connected AI app link an inbox conversation to a contact',
+        conversation_note: 'Lets a connected AI app add an internal note to an inbox conversation',
+        conversation_reopen: 'Lets a connected AI app reopen a resolved inbox conversation',
+        conversation_resolve: 'Lets a connected AI app mark an inbox conversation resolved',
+        party_create: 'Lets a connected AI app add a contact',
         conversation: 'Let an AI app read one inbox conversation with its messages',
         conversations: 'Let an AI app list the inbox conversations',
         about: 'Show an AI app the organization name and its own connection',

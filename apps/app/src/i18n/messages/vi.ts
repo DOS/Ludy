@@ -14303,6 +14303,7 @@ export const vi = {
         state: 'Xem công tắc và hạn mức chi tiêu của việc chạy quảng cáo',
       },
       mcp: {
+        campaign_draft_save: 'Cho ứng dụng AI lưu một bản nháp chiến dịch quảng cáo mới chờ người xem',
         flags: 'Cho ứng dụng AI xem các cảnh báo chi tiêu quảng cáo',
         spend: 'Cho ứng dụng AI xem các tài khoản quảng cáo và chi tiêu của một tài khoản',
         today: 'Cho ứng dụng AI xem việc cần người xử lý hôm nay trong Quảng cáo',
@@ -14428,6 +14429,12 @@ export const vi = {
       },
       today: 'Xem việc CRM cần bạn trong hôm nay',
       mcp: {
+        deal_create: 'Cho ứng dụng AI tạo một cơ hội bán hàng',
+        deal_move: 'Cho ứng dụng AI chuyển một cơ hội sang giai đoạn khác',
+        next_step_done: 'Cho ứng dụng AI đánh dấu xong việc tiếp theo của cơ hội',
+        next_step_snooze: 'Cho ứng dụng AI hoãn việc tiếp theo của cơ hội',
+        quote_revise: 'Cho ứng dụng AI tạo bản nháp sửa đổi của một báo giá đã gửi',
+        quote_save: 'Cho ứng dụng AI lưu một bản nháp báo giá',
         bookings: 'Cho ứng dụng AI xem danh sách lịch hẹn',
         deal: 'Cho ứng dụng AI xem một cơ hội bán hàng',
         deals: 'Cho ứng dụng AI xem danh sách cơ hội bán hàng',
@@ -15383,6 +15390,12 @@ export const vi = {
         set_shared: 'Chia sẻ hoặc thôi chia sẻ chế độ xem đã lưu',
       },
       mcp: {
+        conversation_assign: 'Cho ứng dụng AI giao một cuộc trò chuyện trong Hộp thư cho một thành viên',
+        conversation_link_contact: 'Cho ứng dụng AI gắn một cuộc trò chuyện trong Hộp thư với một liên hệ',
+        conversation_note: 'Cho ứng dụng AI ghi chú nội bộ vào một cuộc trò chuyện trong Hộp thư',
+        conversation_reopen: 'Cho ứng dụng AI mở lại một cuộc trò chuyện đã xong trong Hộp thư',
+        conversation_resolve: 'Cho ứng dụng AI đánh dấu xong một cuộc trò chuyện trong Hộp thư',
+        party_create: 'Cho ứng dụng AI thêm một liên hệ',
         conversation: 'Cho ứng dụng AI xem một cuộc trò chuyện trong Hộp thư cùng các tin nhắn',
         conversations: 'Cho ứng dụng AI xem danh sách cuộc trò chuyện trong Hộp thư',
         about: 'Cho ứng dụng AI xem tên tổ chức và quyền kết nối của nó',

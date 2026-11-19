@@ -27,6 +27,8 @@ import { zMcpBookingsInput, zMcpDealInput, zMcpDealsInput, zMcpQuoteInput, zMcpQ
 import { zMcpInvoicesInput, zMcpOpenBalancesInput, zMcpOverviewInput, zMcpPaymentReminderInput } from '@crove/mod-finance';
 import { zMcpDraftCreate, zMcpMetricsSummaryInput, zMcpMetricsTotalsInput, zMcpPostsInput, zMcpReviewQueueInput } from '@crove/mod-social';
 import { DraftBudget } from './ai-draft-limit.ts';
+import { engageWriteTools } from './mcp-engage-write.ts';
+import { McpWriteBudget } from './mcp-write-limit.ts';
 import type { AuthUser } from './auth.ts';
 import { actorOf } from './auth.ts';
 import { createAccountEmailAccess } from './auth-access.ts';
@@ -50,6 +52,8 @@ export interface McpDeps {
   now?: () => number;
   // The drafts budget (#386) the one write tool takes before its command runs, as a person's own draft does; one per process unless a test passes its own.
   draftBudget?: DraftBudget;
+  // The writes budget of a grant (E2, #3861): a few writes a minute for every Engage write tool; one per process unless a test passes its own.
+  writeBudget?: McpWriteBudget;
 }
 
 interface NodeBindings {
@@ -203,6 +207,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
   const refusalAuditLimiter = new RateLimiter({ perMinute: 6, ...(deps.now ? { now: deps.now } : {}) });
   const inFlight = new Map<string, number>();
   const draftBudget = deps.draftBudget ?? new DraftBudget(deps.now ? { now: deps.now } : {});
+  const writeBudget = deps.writeBudget ?? new McpWriteBudget({ perGrantPerMinute: config.MCP_GRANT_WRITES_PER_MINUTE, ...(deps.now ? { now: deps.now } : {}) });
   // AUTH_ALLOWED_EMAILS for an MCP grant, which carries no email (issue #3223); null while the list is unset.
   const accountAccess = createAccountEmailAccess(config.AUTH_ALLOWED_EMAILS);
 
@@ -430,7 +435,7 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
         aal: 'aal1',
         mcp: { grantId: claims.grantId, clientId: claims.clientId, clientName: grant.clientName, scopes: grant.scopes, kind: grant.kind },
       };
-      const tools = toolsFor(runtime, actor, grant.orgId, draftBudget);
+      const tools = toolsFor(runtime, actor, grant.orgId, draftBudget, writeBudget);
       // The tools of an app the org switched off (or does not hold) are not listed; a call into one still runs, and the runtime answers MODULE_OFF (ADR-0053, slice e).
       // If the read fails the list is not trimmed (every call is still gated by the runtime itself), so one failed read does not take the whole endpoint down.
       const effective = await runtime.effectiveModules(grant.orgId).then(
@@ -480,7 +485,10 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
           }
           if (error instanceof DomainError && error.status === 429) {
             const wait = (error.details as { retryAfterSeconds?: unknown } | undefined)?.retryAfterSeconds;
-            if (typeof wait === 'number') return { code: RPC_INTERNAL, message: `Too many drafts just now; try again in ${Math.max(1, Math.ceil(wait))} seconds` };
+            if (typeof wait === 'number') {
+              const writes = (error.details as { what?: unknown } | undefined)?.what === 'writes';
+              return { code: RPC_INTERNAL, message: `${writes ? 'Too many changes' : 'Too many drafts'} just now; try again in ${Math.max(1, Math.ceil(wait))} seconds` };
+            }
             return { code: RPC_INTERNAL, message: 'The daily limit of rows this connection may read is used up; it starts again at midnight UTC' };
           }
           if (error instanceof DomainError && error.status < 500) return { code: RPC_INTERNAL, message: error.status === 403 ? 'Not allowed for this connection' : 'The request could not be completed' };
@@ -584,7 +592,7 @@ const MEETING_REQUIRED = ['id', 'title', 'startedAt', 'lengthSeconds', 'language
 
 // The tools: `ludy_about` (kernel.mcp.about) and, from slice 1b, `ludy_parties_list` (kernel.mcp.parties) and `ludy_invoices_list` (finance.mcp.invoices), from step S4 `ludy_signals` (kernel.mcp.signals), and from #3227 `ludy_social_posts_list` and `ludy_social_review_queue` (social.mcp.posts, social.mcp.review_queue). A tool is a
 // descriptor over one query; the endpoint never builds SQL and runs nothing that is not on this list. Each query's own comment is the privacy review of its output.
-export function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draftBudget: DraftBudget): ToolDescriptor[] {
+export function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draftBudget: DraftBudget, writeBudget: McpWriteBudget = new McpWriteBudget()): ToolDescriptor[] {
   // The one write tool is listed, and runnable, only for a company grant that holds the draft scope; the runtime and the database check the same again, so this list is a courtesy, not the control.
   const tools: ToolDescriptor[] = [
     {
@@ -1064,6 +1072,7 @@ export function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draf
           } satisfies ToolDescriptor,
         ]),
     draftTool(runtime, actor, orgId, draftBudget),
+    ...engageWriteTools(runtime, actor, orgId, writeBudget),
   ];
   return visibleTools(tools, actor);
 }
