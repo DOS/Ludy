@@ -3432,6 +3432,31 @@ export const en = {
     },
     // The table of contents of a meeting (#3844): a title and the line of the transcript each chapter starts at.
     // The recorder's own Vy offers up to three titles for the meeting on a click (#3947); a pick renames it.
+    // The recorder's own Vy lists what each speaker committed to or decided, on a click (#3954).
+    commitments: {
+      title: 'Who committed to what',
+      desc: 'Vy reads the transcript and lists, for each speaker, what they said they would do and what they said was decided. Each line opens the transcript where it was said. Nothing is saved, shared or made a task from here. Vy can be wrong.',
+      button: 'List commitments',
+      restart: 'Ask again',
+      running: 'Vy is reading the transcript…',
+      commitment: 'Will do',
+      decision: 'Decided',
+      open: 'Open the transcript at {time}',
+      dropped: '{count} of Vy\'s lines were left out because they did not pass the checks.',
+      none: 'No suggestion this time. Try again, or read the transcript.',
+      private: 'Only you see this, and it is not saved. Read it against the transcript before you use it.',
+      failed: 'Vy could not list the commitments.',
+      codes: {
+        default: 'Try again in a few minutes, or read the transcript.',
+        AI_BUDGET_EXHAUSTED: 'The AI budget for this period is used up.',
+        AI_STOPPED: 'AI is switched off for now.',
+        COMMITMENTS_TIMEOUT: 'It took too long.',
+        COMMITMENTS_FAILED: 'The AI service did not answer.',
+        COMMITMENTS_TOO_LONG: 'The transcript is too long for Vy to read in one go.',
+        COMMITMENTS_NO_TRANSCRIPT: 'There is no transcript yet.',
+        COMMITMENTS_BUSY: 'A run is already going. Wait a moment.',
+      },
+    },
     titleSuggest: {
       button: 'Suggest a title',
       note: 'Vy reads the transcript and offers up to three titles. Nothing changes until you pick one.',
@@ -9016,6 +9041,7 @@ export const en = {
       meetings_brief: 'Writing a few sentences to prepare for a meeting from what was decided, what is open and the customer\'s deals',
       meetings_chapters: 'Writing the table of contents of a meeting from its transcript, each chapter at the second of its first line',
       meetings_title: 'Suggesting up to three titles for a meeting from its transcript, on the recorder\'s click',
+      meetings_commitments: 'Listing what each speaker of a meeting said they would do or decided, from its transcript, on the recorder\'s click',
       meetings_followup_words: 'Wording the opening and closing of a meeting follow-up email',
       projects_weekly_status: 'Summarizing a project week from counts and task titles/comments',
       projects_tasks_from_note: 'Proposing project tasks from a note',
@@ -13098,6 +13124,7 @@ export const en = {
       ASSIGNEE_BUSY: 'Vy is busy reading names. Try again in a few minutes.',
       BRIEF_BUSY: 'Vy is busy writing preparations. Try again in a few minutes.',
       TITLE_BUSY: 'Vy is busy suggesting titles. Try again in a few minutes.',
+      COMMITMENTS_BUSY: 'Vy is busy listing commitments. Try again in a few minutes.',
       MEETING_TITLE_EMPTY: 'A meeting needs a title.',
       MEETING_TITLE_TOO_LONG: 'A meeting title holds at most 200 characters.',
       DIGEST_OFF: 'Vy writing the weekly recap is not turned on on this system.',
@@ -15340,6 +15367,10 @@ export const en = {
       title: {
         start: 'Ask Vy to suggest a title for a meeting',
         status: 'See whether Vy can suggest a title for a meeting',
+      },
+      commitments: {
+        start: 'Ask Vy what each speaker of a meeting committed to',
+        status: 'See whether Vy can list what each speaker of a meeting committed to',
       },
       chapters: {
         copy_result: 'Copy the chapters Vy finished for a meeting into the draft',

@@ -18,6 +18,7 @@ describe('member-Vy features (agent side)', () => {
       'meetings.brief': { module: 'meetings', expiryMinutes: 30 },
       'meetings.chapters': { module: 'meetings', expiryMinutes: 30 },
       'meetings.title': { module: 'meetings', expiryMinutes: 30 },
+      'meetings.commitments': { module: 'meetings', expiryMinutes: 30 },
       'meetings.digest': { module: 'meetings', expiryMinutes: 30 },
       'meetings.assignee': { module: 'meetings', expiryMinutes: 30 },
       'meetings.adherence': { module: 'meetings', expiryMinutes: 30 },
