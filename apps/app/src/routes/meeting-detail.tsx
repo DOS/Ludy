@@ -378,6 +378,19 @@ export function MeetingDetailPage() {
         template={meeting.summaryTemplate}
         minutesTemplate={meeting.minutesTemplate}
         title={meeting.title}
+        {...(orgQuery.data
+          ? {
+              signInfo: {
+                startedAt: meeting.startedAt,
+                createdAt: meeting.createdAt,
+                endedAt: meeting.endedAt,
+                recorderUserId: meeting.recorderUserId,
+                companyName: orgQuery.data.name,
+                orgMembers,
+                canEdit: orgQuery.data.role !== 'viewer',
+              },
+            }
+          : {})}
         minutesLink={
           <Link to="/o/$slug/print/meeting-minutes/$id" params={{ slug, id }} className="text-sm text-link underline">
             {t('minutes.open')}
