@@ -86,18 +86,20 @@ export interface AmisCallbackKey {
   product: AmisProduct;
   clientId: string;
 }
-export type AmisCallbackReadAny = { ok: true; callback: AmisCallback; product: AmisProduct } | { ok: false; reason: 'malformed' | 'signature' | 'app_id' | 'data' };
+// `products`: every product whose key verified the message (one, unless the deployment holds the same ClientID for both products, which MISA may issue: then the signature cannot tell them apart).
+export type AmisCallbackReadAny = { ok: true; callback: AmisCallback; products: AmisProduct[] } | { ok: false; reason: 'malformed' | 'signature' | 'app_id' | 'data' };
 
 /**
- * The callback read against every key a deployment holds, one per product: the first that verifies the signature of `data` and equals the envelope's `app_id` wins, and its product is the message's (an AMIS-signed
- * result must not settle an ASP voucher, nor the reverse: the caller keeps the product with the result). Every key is tried, none is skipped once another has matched, so the time taken does not say which key signed
+ * The callback read against every key a deployment holds, one per product: the keys that verify the signature of `data` and equal the envelope's `app_id` give the message's product(s) (an AMIS-signed
+ * result must not settle an ASP voucher, nor the reverse: the caller keeps the product with the result). Where the deployment holds the SAME ClientID for both products every product matches and all are returned: the
+ * signature cannot tell them apart, so the caller stores the result for each and the claim, which finds the stored voucher only through a connection of that product, lets the real connection's row through. Every key is tried, none is skipped once another has matched, so the time taken does not say which key signed
  * or how many were tried before it. A failure that no key decides (a body that is not an envelope, a `data` that is not a list of results) is that failure; otherwise the refusal is the signature's, whichever key
  * came closest (a good signature under another `app_id` is the same refusal as a bad signature). Nothing here names a key.
  */
 export function readCallbackAny(rawBody: string, keys: readonly AmisCallbackKey[]): AmisCallbackReadAny {
   const reads = keys.map((key) => ({ key, read: readCallback(rawBody, key.clientId) }));
   const good = reads.find((r) => r.read.ok);
-  if (good?.read.ok) return { ok: true, callback: good.read.callback, product: good.key.product };
+  if (good?.read.ok) return { ok: true, callback: good.read.callback, products: [...new Set(reads.filter((r) => r.read.ok).map((r) => r.key.product))] };
   const decided = reads.find((r) => !r.read.ok && (r.read.reason === 'malformed' || r.read.reason === 'data'));
   return decided && !decided.read.ok ? { ok: false, reason: decided.read.reason } : { ok: false, reason: 'signature' };
 }

@@ -58,6 +58,7 @@ suite('MISA AMIS callback (#3903)', () => {
   let worker: Runtime;
   let workerPool: pg.Pool;
   let app: ReturnType<typeof createHttpApp>;
+  let cfg: ReturnType<typeof loadConfig>;
   const users = { owner: '', outsider: '' };
   const A = { org: '', entity: '', connection: '', code: '' };
   const B = { org: '', entity: '', connection: '', code: '' };
@@ -140,7 +141,7 @@ suite('MISA AMIS callback (#3903)', () => {
     });
     workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
-    const config = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+    const config = (cfg = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' }));
     app = createHttpApp({ config, runtime: api, store: new MemoryStore(), authenticate: createAuthenticator(config, createDb(pool)), pool, aiEnabled: false, misaAmisCallback: { keys: [{ product: 'amis', clientId: CLIENT }, { product: 'asp', clientId: ASP_CLIENT }] } });
     const token = async (email: string) =>
       new SignJWT({ role: 'authenticated', email, session_id: randomUUID(), aal: 'aal1', is_anonymous: false })
@@ -242,6 +243,7 @@ suite('MISA AMIS callback (#3903)', () => {
       await expect(
         api.orgless(async (db) => void (await sql`SELECT crove_finance.misa_callback_enqueue_for('asp', ${C.code}, ${[randomUUID()]}::uuid[], ${[1]}::integer[], ${[true]}::boolean[], ${[null]}::text[], ${[null]}::text[])`.execute(db))),
       ).rejects.toBeDefined();
+      // (The refusal is pinned by the privilege checks above: has_function_privilege is false for every login and tenant role.)
       expect(await pending()).toEqual([]);
       const wrapper = await got(asp);
       expect(wrapper?.secdef).toBe(true);
@@ -515,6 +517,23 @@ suite('MISA AMIS callback (#3903)', () => {
       await relay();
       expect((await stateOf(C, aspRow))?.state).toBe('sent');
       expect((await stateOf(A, amisRow))?.state).toBe('sent');
+      expect(await pending()).toEqual([]);
+    });
+
+    it('where MISA issued one ClientID for both products, a result is stored for each product and only the real connection\'s row is settled', async () => {
+      const same = createHttpApp({ config: cfg, runtime: api, store: new MemoryStore(), authenticate: createAuthenticator(cfg, createDb(pool)), pool, aiEnabled: false, misaAmisCallback: { keys: [{ product: 'amis', clientId: CLIENT }, { product: 'asp', clientId: CLIENT }] } });
+      const aspRow = randomUUID();
+      const amisRow = randomUUID();
+      await seed(C, aspRow, 'sent');
+      await seed(A, amisRow, 'sent');
+      const send = (items: Item[], company: string) => same.request(PATH, { method: 'POST', headers: { 'content-type': 'application/json' }, body: message(items, { org_company_code: company }) });
+      expect((await send([{ org_refid: aspRow, voucher_type: 1, success: true }], C.code)).status).toBe(200);
+      expect((await send([{ org_refid: amisRow, voucher_type: 1, success: true }], A.code)).status).toBe(200);
+      // Each result is stored for both products; the claim finds each stored voucher through its own connection's product only.
+      expect(await pending()).toHaveLength(4);
+      await relay();
+      expect((await stateOf(C, aspRow))?.state).toBe('accepted');
+      expect((await stateOf(A, amisRow))?.state).toBe('accepted');
       expect(await pending()).toEqual([]);
     });
 

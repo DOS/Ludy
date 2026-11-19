@@ -35,8 +35,9 @@ export async function acceptMisaAmisCallback(runtime: Runtime, keys: readonly Am
   await runtime.orgless(async (db) => {
     const args = sql`${callback.orgCompanyCode}, ${results.map((r) => r.orgRefId)}::uuid[], ${results.map((r) => r.voucherType)}::integer[], ${results.map((r) => r.success)}::boolean[],
         ${results.map((r) => r.errorCode)}::text[], ${results.map((r) => (r.success ? null : r.errorMessage))}::text[]`;
-    // One definer per product, each writing its own product on the machinery row: a result signed under one product's ClientID is never taken for the other's.
-    await (read.product === 'asp' ? sql`SELECT crove_finance.misa_asp_callback_enqueue(${args})` : sql`SELECT crove_finance.misa_amis_callback_enqueue(${args})`).execute(db);
+    // One definer per product, each writing its own product on the machinery row: a result signed under one product's ClientID is never taken for the other's. Where both products hold the same ClientID the
+    // signature cannot tell them apart: the result is stored for each, and the claim finds the stored voucher only through a connection of that product, so only the real one's row is settled.
+    for (const product of read.products) await (product === 'asp' ? sql`SELECT crove_finance.misa_asp_callback_enqueue(${args})` : sql`SELECT crove_finance.misa_amis_callback_enqueue(${args})`).execute(db);
   });
   return { status: 200 };
 }

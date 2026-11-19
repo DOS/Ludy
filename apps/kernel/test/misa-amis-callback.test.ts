@@ -105,6 +105,22 @@ describe('the MISA AMIS callback route with a ClientID per product (#4103)', () 
     expect(f.sqlSeen[1]?.sql).toContain('misa_asp_callback_enqueue');
   });
 
+  it('where one ClientID is held for both products the message is stored once for each product, AMIS first, so the claim can settle the real connection\'s row', async () => {
+    const f = fixture({
+      misaAmisCallback: {
+        keys: [
+          { product: 'amis', clientId: CLIENT },
+          { product: 'asp', clientId: CLIENT },
+        ],
+      },
+    });
+    expect((await f.post(message([item()], {}, CLIENT))).status).toBe(200);
+    expect(f.sqlSeen).toHaveLength(2);
+    expect(f.sqlSeen[0]?.sql).toContain('misa_amis_callback_enqueue');
+    expect(f.sqlSeen[1]?.sql).toContain('misa_asp_callback_enqueue');
+    expect(f.sqlSeen[1]?.parameters).toEqual(f.sqlSeen[0]?.parameters);
+  });
+
   it('refuses a message whose app_id is not the key that signed it, and one nobody holds, with the same fixed 401 and nothing logged about a key', async () => {
     const f = both();
     const wrongApp = await f.post(message([item()], { app_id: CLIENT }, ASP));

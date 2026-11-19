@@ -73,7 +73,7 @@ describe('the offer to send a previewed batch (#3902)', () => {
   it('shows the button, the note that the data is re-checked, and sends nothing until it is pressed', () => {
     const html = wrap(<MisaAmisPushConfirm result={result()} ask={ask} connectionId={ID} offer="ready" />);
     expect(html).toContain('data-testid="misa-amis-push-confirm"');
-    expect(html).toContain('Send these 2 vouchers to MISA AMIS');
+    expect(html).toContain('Send these 2 vouchers to MISA');
     expect(html).toContain('Only owners and admins can send');
     // The second click is not drawn yet.
     expect(html).not.toContain('misa-amis-push-yes');
@@ -154,8 +154,8 @@ describe('what was sent to MISA AMIS (#3902)', () => {
     ];
     const owner = list(rows, true);
     expect(settle(owner)).toBe(2);
-    expect(owner).toContain('It is in AMIS');
-    expect(owner).toContain('It is not in AMIS');
+    expect(owner).toContain('It is in MISA');
+    expect(owner).toContain('It is not in MISA');
     expect(settle(list(rows, false))).toBe(0);
   });
 
@@ -171,6 +171,6 @@ describe('what was sent to MISA AMIS (#3902)', () => {
   it('is written in Vietnamese too', () => {
     const html = list([row({ state: 'accepted' })], true, 'vi');
     expect(html).toContain('MISA đã nhận');
-    expect(html).toContain('Chứng từ đã gửi sang MISA AMIS');
+    expect(html).toContain('Chứng từ đã gửi sang MISA');
   });
 });

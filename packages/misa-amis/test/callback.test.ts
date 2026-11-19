@@ -127,10 +127,19 @@ describe('readCallbackAny: the deployment holds one ClientID per product (#4103)
       for (const sender of [AMIS, ASP]) {
         const body = signedBy(sender.clientId);
         const read = readCallbackAny(body, keys);
-        expect(read).toEqual({ ...readCallback(body, sender.clientId), product: sender.product });
+        expect(read).toEqual({ ...readCallback(body, sender.clientId), products: [sender.product] });
       }
     }
-    expect(readCallbackAny(signedBy(CLIENT), [AMIS])).toMatchObject({ ok: true, product: 'amis' });
+    expect(readCallbackAny(signedBy(CLIENT), [AMIS])).toMatchObject({ ok: true, products: ['amis'] });
+  });
+
+  it('where MISA issued one ClientID for both products every product matches and all are returned, once each, whatever the order', () => {
+    const same = { product: 'asp', clientId: CLIENT } as const;
+    expect(readCallbackAny(signedBy(CLIENT), [AMIS, same])).toMatchObject({ ok: true, products: ['amis', 'asp'] });
+    expect(readCallbackAny(signedBy(CLIENT), [same, AMIS])).toMatchObject({ ok: true, products: ['asp', 'amis'] });
+    expect(readCallbackAny(signedBy(CLIENT), [AMIS, same, AMIS])).toMatchObject({ ok: true, products: ['amis', 'asp'] });
+    // A third key of another value does not join them.
+    expect(readCallbackAny(signedBy(CLIENT), [AMIS, same, { product: 'asp', clientId: OTHER }])).toMatchObject({ ok: true, products: ['amis', 'asp'] });
   });
 
   it('refuses a message no held key signed, and one signed by a key but carrying another app_id, the same way: `signature`', () => {
