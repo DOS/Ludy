@@ -213,10 +213,11 @@ suite('MISA AMIS callback (#3903)', () => {
       const refid = randomUUID();
       expect(await enqueue(A.code, [{ refid }, { refid: randomUUID(), ok: false, code: 'Boom', text: REASON_TEXT }])).toBe(2);
       expect(await enqueue(A.code, [{ refid }])).toBe(0);
-      // The same refid with another result or another company code is another row; the claim and the graph decide between them.
+      // The same refid with another result is another row; the claim and the graph decide between them. The unsigned company code is not part of the replay key: the first copy wins, so a replay with varied codes
+      // cannot fill the backlog.
       expect(await enqueue(A.code, [{ refid, ok: false }])).toBe(1);
-      expect(await enqueue(B.code, [{ refid }])).toBe(1);
-      expect(await pending()).toHaveLength(4);
+      for (const code of ['ludy-c', 'ludy-d', B.code]) expect(await enqueue(code, [{ refid }])).toBe(0);
+      expect(await pending()).toHaveLength(3);
       await expect(enqueue('not a code!', [{ refid }])).rejects.toMatchObject({ code: 'INVALID' });
       await expect(enqueue(A.code, [])).rejects.toMatchObject({ code: 'INVALID' });
       await expect(enqueue(A.code, Array.from({ length: 1001 }, () => ({ refid: randomUUID() })))).rejects.toMatchObject({ code: 'INVALID' });

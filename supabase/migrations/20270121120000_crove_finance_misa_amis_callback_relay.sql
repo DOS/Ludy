@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS crove_finance.misa_amis_callback_pending (
   seq bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   org_refid uuid NOT NULL,
   voucher_type integer NOT NULL CHECK (voucher_type BETWEEN 1 AND 99),
-  -- The unsigned envelope's hint: compared with the located connection's own code, never believed.
+  -- The unsigned envelope's hint (of the first copy received): compared with the located connection's own code, never believed.
   org_company_code text NOT NULL CHECK (org_company_code ~ '^[A-Za-z0-9_.-]{1,64}$'),
   success boolean NOT NULL,
   -- MISA's error code when it is a plain word.
@@ -30,8 +30,9 @@ CREATE TABLE IF NOT EXISTS crove_finance.misa_amis_callback_pending (
   received_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   -- Set when the relay takes the row; a row not marked done within five minutes is taken again (the relay may have stopped), and recording is idempotent.
   claimed_at timestamptz,
-  -- A replay of the same signed result is one row.
-  CONSTRAINT misa_amis_callback_pending_replay_uq UNIQUE (org_refid, voucher_type, org_company_code, success)
+  -- A replay of the same signed result is one row, whatever company code the unsigned envelope carried: the first copy wins (a replay with varied codes cannot fill the backlog; a first copy with a wrong code is dropped by the
+  -- claim's comparison and polling recovers the result).
+  CONSTRAINT misa_amis_callback_pending_replay_uq UNIQUE (org_refid, voucher_type, success)
 );
 CREATE INDEX IF NOT EXISTS misa_amis_callback_pending_claim_idx ON crove_finance.misa_amis_callback_pending (seq) WHERE claimed_at IS NULL;
 REVOKE ALL ON crove_finance.misa_amis_callback_pending FROM PUBLIC;
@@ -68,7 +69,7 @@ BEGIN
   WHERE r.refid IS NOT NULL AND r.vtype BETWEEN 1 AND 99 AND r.ok IS NOT NULL
     AND (r.code IS NULL OR r.code = '' OR r.code ~ '^[A-Za-z0-9_.-]{1,64}$')
     AND (r.message IS NULL OR pg_catalog.char_length(r.message) <= 500)
-  ON CONFLICT (org_refid, voucher_type, org_company_code, success) DO NOTHING;
+  ON CONFLICT (org_refid, voucher_type, success) DO NOTHING;
   GET DIAGNOSTICS v_count = ROW_COUNT;
   IF v_count > 0 THEN
     PERFORM pg_catalog.pg_notify('crove_outbox', '');
