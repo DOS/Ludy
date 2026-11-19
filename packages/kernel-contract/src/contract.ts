@@ -509,8 +509,10 @@ import {
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
 import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
+import { zCommitmentsAnswer } from './meeting-commitments.ts';
 import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
 import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
+import { zAdherenceAgenda, zAdherenceAnswer, zAdherenceAsk, zAdherenceRef, zAdherenceStatus } from './meeting-adherence.ts';
 import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import {
   zMeetingHookCleared,
@@ -1325,6 +1327,12 @@ export const contract = {
       status: oc.input(zSummaryRef).output(zSummaryStatus),
       suggest: oc.input(zSummaryRef).output(zTitleAnswer),
     },
+    // What each speaker committed to or decided (#3954): `status` is the button (the same answer as the chapters'), `list` the click that has the recorder's own Vy list, from the transcript, each speaker's commitments
+    // and decisions with the second of the line each rests on. The lines go back to the browser and are stored nowhere; nothing is published or made a task from here.
+    commitments: {
+      status: oc.input(zSummaryRef).output(zSummaryStatus),
+      list: oc.input(zSummaryRef).output(zCommitmentsAnswer),
+    },
     // This week's decisions and what is still open, across the meetings the member reads (#3949): `facts` are read by code as the member (published decisions and open action items of the meetings that started in the
     // last 7, 14 or 30 days) and work with AI off; `status` is the button (may Vy be used now, the cost of one recap), `recap` the click that has the member's own Vy write two or three sentences from those facts. Nothing
     // is stored or sent.
@@ -1338,6 +1346,14 @@ export const contract = {
     assignee: {
       status: oc.input(zBriefEmpty).output(zAssigneeStatus),
       suggest: oc.input(zAssigneeAsk).output(zAssigneeAnswer),
+    },
+    // Agenda adherence (#3959): after a meeting with a transcript the recorder may click once and have their own Vy compare the agenda (the series' open items and up to eight typed lines) with the transcript. `agenda` is the
+    // list the recorder sees before clicking (with AI off too), `status` the button (may Vy be used now), `check` the click. Per agenda line: covered with the transcript lines it cites, or not heard; no score, nothing per
+    // person, nothing stored.
+    adherence: {
+      agenda: oc.input(zAdherenceRef).output(zAdherenceAgenda),
+      status: oc.input(zAdherenceRef).output(zAdherenceStatus),
+      check: oc.input(zAdherenceAsk).output(zAdherenceAnswer),
     },
     // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): no model; code matches by time and a person confirms. `list` is today's meetings, `suggest` the event
     // a recording overlaps, `setReadEvents` the member's switch (the cache is deleted when it goes off), `link` the click that attaches a recorded meeting to its event.
