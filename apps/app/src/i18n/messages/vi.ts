@@ -5289,7 +5289,7 @@ export const vi = {
   misaAmisConnections: {
     title: 'MISA AMIS Kế toán: gửi chứng từ cho kế toán',
     intro:
-      'Kết nối dữ liệu AMIS Kế toán của công ty để sau này gửi chứng từ sang AMIS dưới dạng đề nghị sinh chứng từ; người của bạn trong AMIS vẫn là người lập chứng từ. Bước này chỉ lưu kết nối, chưa gửi gì sang AMIS.',
+      'Kết nối dữ liệu AMIS Kế toán của công ty để sau này gửi chứng từ sang AMIS dưới dạng đề nghị sinh chứng từ; người của bạn trong AMIS vẫn là người lập chứng từ. Bạn có thể kiểm tra kết nối (chỉ đọc thông tin công ty); chưa có chứng từ nào được gửi sang AMIS.',
     off: 'Bộ kết nối MISA AMIS đang tắt trên hệ thống này.',
     noConnections: 'Chưa kết nối AMIS nào.',
     connectTitle: 'Kết nối AMIS',
@@ -5302,6 +5302,16 @@ export const vi = {
     disconnectConfirm: 'Ngắt kết nối này? Mã kết nối đã lưu sẽ bị xóa; chứng từ đã có trong AMIS không bị ảnh hưởng.',
     disconnectYes: 'Ngắt kết nối',
     keep: 'Giữ lại',
+    test: 'Kiểm tra kết nối',
+    testing: 'Đang kiểm tra...',
+    testSlow: 'Chưa có kết quả sau nửa phút. Hãy tải lại trang sau ít phút để xem.',
+    neverTested: 'Chưa kiểm tra',
+    testedAt: 'Kiểm tra lần cuối {when}',
+    testState: {
+      works: 'Kết nối dùng được',
+      wrong_credentials: 'AMIS từ chối mã kết nối. Hãy tạo mã mới trong AMIS, rồi ngắt kết nối và kết nối lại',
+      unreachable: 'Chưa liên lạc được với AMIS hoặc AMIS báo lỗi. Hãy thử lại sau',
+    },
     status: {
       active: 'Đang kết nối',
       expired: 'Đã hết hạn, hãy ngắt kết nối rồi kết nối lại',

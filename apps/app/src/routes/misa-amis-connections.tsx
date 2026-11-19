@@ -3,7 +3,7 @@
 // admins connect an entity by typing the access code they made in AMIS (it is sealed on the server and never shown back: the screen only says since when the connection exists) and
 // disconnect it; every member reads the connections. The card sends nothing to AMIS: pushing vouchers is a later slice. The server enforces every rule; the screen offers only what can succeed.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import type { LegalEntity, MisaAmisConnection } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -23,12 +23,41 @@ const refresh = async () => {
 };
 
 const STATUS_KEYS = { active: 'status.active', expired: 'status.expired', revoked: 'status.revoked', error: 'status.error' } as const;
+const TEST_STATE_KEYS = { works: 'testState.works', wrong_credentials: 'testState.wrong_credentials', unreachable: 'testState.unreachable' } as const;
+// The test runs in the worker: after it is queued the list is read again every two seconds until the time of the last test changes, for half a minute at most.
+const TEST_POLL_MS = 2000;
+const TEST_WAIT_MS = 30_000;
 
 function ConnectionItem({ connection, entities, canManage }: { connection: MisaAmisConnection; entities: readonly LegalEntity[]; canManage: boolean }) {
   const t = useTranslations('misaAmisConnections');
   const f = useFormat();
   const [confirming, setConfirming] = useState(false);
   const disconnect = useMutation(orpc.misaAmis.connections.disconnect.mutationOptions({ onSuccess: refresh }));
+  // What the time of the last test was when the test was asked for: the answer has landed once it changes.
+  const [waiting, setWaiting] = useState<{ from: string | null; until: number } | null>(null);
+  const [slow, setSlow] = useState(false);
+  const test = useMutation(
+    orpc.misaAmis.connections.test.mutationOptions({
+      onMutate: () => setSlow(false),
+      onSuccess: () => setWaiting({ from: connection.lastTestedAt, until: Date.now() + TEST_WAIT_MS }),
+    }),
+  );
+  useEffect(() => {
+    if (waiting === null) return;
+    if (connection.lastTestedAt !== waiting.from) {
+      setWaiting(null);
+      return;
+    }
+    const timer = setInterval(() => {
+      if (Date.now() > waiting.until) {
+        setWaiting(null);
+        setSlow(true);
+        return;
+      }
+      void refresh();
+    }, TEST_POLL_MS);
+    return () => clearInterval(timer);
+  }, [waiting, connection.lastTestedAt]);
   const entity = entities.length > 1 ? entities.find((e) => e.id === connection.legalEntityId) : undefined;
   return (
     <li className="py-3" data-testid="misa-amis-connection">
@@ -37,8 +66,17 @@ function ConnectionItem({ connection, entities, canManage }: { connection: MisaA
         {entity && <span className="text-xs text-muted-foreground">{entity.name}</span>}
         <span className="text-xs text-muted-foreground">{t('connectedSince', { when: f.dateTime(connection.connectedAt) })}</span>
       </div>
+      <p className="mt-1 text-sm text-muted-foreground" data-testid="misa-amis-test-state">
+        {connection.lastTestState ? `${t(TEST_STATE_KEYS[connection.lastTestState])}${connection.lastTestedAt ? ` · ${t('testedAt', { when: f.dateTime(connection.lastTestedAt) })}` : ''}` : t('neverTested')}
+      </p>
+      {slow && <p className="mt-1 text-xs text-muted-foreground">{t('testSlow')}</p>}
       {canManage && (
         <div className="mt-2 flex flex-wrap gap-2">
+          {connection.status === 'active' && !confirming && (
+            <Button loading={test.isPending || waiting !== null} size="sm" variant="outline" onClick={() => test.mutate({ id: connection.id })}>
+              {waiting !== null ? t('testing') : t('test')}
+            </Button>
+          )}
           {confirming ? (
             <>
               <span className="self-center text-xs text-muted-foreground">{t('disconnectConfirm')}</span>
@@ -57,6 +95,7 @@ function ConnectionItem({ connection, entities, canManage }: { connection: MisaA
         </div>
       )}
       {disconnect.error && <ErrorText>{errorMessage(disconnect.error)}</ErrorText>}
+      {test.error && <ErrorText>{errorMessage(test.error)}</ErrorText>}
       {connection.status === 'active' && <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} />}
     </li>
   );

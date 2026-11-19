@@ -7,15 +7,17 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
 import { CredentialVault, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { AmisError, createAmisClient, type AmisRequest, type AmisResponse } from '@crove/misa-amis';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
+import { runMisaAmisTest } from '../src/misa-amis-test-job.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { contextToken } from './invariant/fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -58,6 +60,10 @@ suite('MISA AMIS connections (#3875)', () => {
   const dbName = `crove_test_misa_amis_conn_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
+  let workerPool: pg.Pool;
+  // The worker's runtime (the system actor of the test job) and the one the API uses.
+  let worker: Runtime;
+  let api: Runtime;
   let vault: CredentialVault;
   // The deployment that holds the integrator's ClientID, and one that does not.
   let app: ReturnType<typeof createHttpApp>;
@@ -105,6 +111,7 @@ suite('MISA AMIS connections (#3875)', () => {
   }
   const call = async (path: string, who: Account, input?: unknown, on: ReturnType<typeof createHttpApp> = app, org: string | null = slug) => rpc(`misaAmis/${path}`, await tokenFor(who), input, org, on);
   const connectInput = (extra: Record<string, unknown> = {}) => ({ legalEntityId: null, accessCode: PLANTED, ...extra });
+  const asUser = (who: Account) => ({ type: 'user' as const, userId: who.userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
   const defaultEntity = async (org = orgId) => String((await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org]))[0]?.id);
 
   beforeAll(async () => {
@@ -124,11 +131,16 @@ suite('MISA AMIS connections (#3875)', () => {
       return url.toString();
     };
     pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
     const db = createDb(pool);
-    const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' as const }).register({
-      commands: [...kernelCommands, ...financeCommands],
-      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
-    });
+    const register = (target: ReturnType<typeof createDb>, sessions = false) =>
+      new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' as const } : {}) }).register({
+        commands: [...kernelCommands, ...financeCommands],
+        queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
+      });
+    const runtime = register(db, true);
+    api = runtime;
+    worker = register(createDb(workerPool));
     const config = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
     const deps = { config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false };
@@ -151,6 +163,7 @@ suite('MISA AMIS connections (#3875)', () => {
 
   afterAll(async () => {
     await pool?.end();
+    await workerPool?.end();
     if (!ADMIN) return;
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -265,6 +278,107 @@ suite('MISA AMIS connections (#3875)', () => {
     await expect(rows('INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3)', [orgId, entity, channel])).rejects.toThrow(/MISA_AMIS_CONNECTION_PROVIDER/);
   });
 
+  // A fake AMIS: it knows the integrator's ClientID, the access code the connection was last made with and the connection's company code, and answers the way MISA documents.
+  const CLIENT_ID = 'planted-integrator-client-id-0123';
+  const fakeAmis = (accessCode: string, orgCompanyCode: string, force: (path: string) => AmisResponse | Promise<AmisResponse> | undefined = () => undefined) => {
+    const seen: Array<{ path: string; accessCode?: unknown }> = [];
+    const ok = (data: unknown): AmisResponse => ({ status: 200, body: JSON.stringify({ Success: true, ErrorMessage: '', Data: data }) });
+    const refuse = (code: string): AmisResponse => ({ status: 200, body: JSON.stringify({ Success: false, ErrorCode: code, ErrorMessage: `planted AMIS text ${accessCode}` }) });
+    const transport = async (request: AmisRequest): Promise<AmisResponse> => {
+      const path = new URL(request.url).pathname.replace(/^\/apis/, '');
+      const body = JSON.parse(request.body) as Record<string, unknown>;
+      seen.push({ path, accessCode: body.access_code });
+      const forced = await force(path);
+      if (forced) return forced;
+      if (request.headers.ClientID !== CLIENT_ID) return refuse('InvalidAPPID');
+      if (path === '/amiskt/v1/token') return body.access_code === accessCode && body.org_company_code === orgCompanyCode ? ok({ access_token: 'tok-1' }) : refuse('InvalidAccessToken');
+      if (request.headers['X-MISA-AccessToken'] !== 'tok-1') return refuse('InvalidToken');
+      return path === '/amiskt/v1/get_company_info' ? ok({ company_name: 'Công ty thử' }) : refuse('InvalidParam');
+    };
+    return { seen, client: createAmisClient({ clientId: CLIENT_ID, transport }) };
+  };
+  const system = { type: 'system' as const, component: 'finance.misa_amis' };
+
+  it('asks for a test for an owner or admin only, queues it as an event with ids only, and refuses where the connector is off, for another org and for a connection that is gone', async () => {
+    const [listed] = (await call('connections/list', owner)).body as Array<{ id: string }>;
+    const id = String(listed?.id);
+    for (const who of [member, viewer]) expect((await call('connections/test', who, { id })).status).toBe(403);
+    await expect(call('connections/test', owner, { id }, offApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
+    // Another org's owner cannot reach it.
+    expect((await call('connections/test', outsider, { id }, app, otherSlug)).body).toMatchObject({ code: 'MISA_AMIS_CONNECTION_NOT_FOUND' });
+    expect((await call('connections/test', owner, { id: randomUUID() })).body).toMatchObject({ code: 'MISA_AMIS_CONNECTION_NOT_FOUND' });
+    expect(await rows("SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.misa_amis_connection.test_requested'", [orgId])).toEqual([]);
+    for (const who of [owner, adminUser]) expect((await call('connections/test', who, { id })).body).toEqual({ queued: true });
+    const events = await rows<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.misa_amis_connection.test_requested'", [orgId]);
+    expect(events).toEqual([{ payload: { connection_id: id } }, { payload: { connection_id: id } }]);
+    // The event and the audit row carry ids: not the access code, the company code or the ClientID.
+    const [stored] = await rows<{ org_company_code: string }>('SELECT org_company_code FROM crove_finance.misa_amis_connection WHERE org_id = $1', [orgId]);
+    for (const table of ['crove_kernel.audit_event', 'crove_kernel.outbox_event']) {
+      for (const secret of [PLANTED, stored?.org_company_code, CLIENT_ID]) expect(await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text LIKE '%' || $2 || '%'`, [orgId, secret]), `${table} ${secret}`).toEqual([]);
+    }
+  });
+
+  it('runs the test as the worker against AMIS: opens the sealed code, records only a state and a time that every member then reads, and keeps AMIS\'s text, the code and the ClientID out of every row', async () => {
+    const [listed] = (await call('connections/list', owner)).body as Array<{ id: string; lastTestState: string | null; lastTestedAt: string | null }>;
+    const id = String(listed?.id);
+    expect(listed).toMatchObject({ lastTestState: null, lastTestedAt: null });
+    const [stored] = await rows<{ org_company_code: string }>('SELECT org_company_code FROM crove_finance.misa_amis_connection WHERE org_id = $1', [orgId]);
+    const company = String(stored?.org_company_code);
+    // The access code is the one the connection was last made with (the second connect of the entity replaced the first).
+    const code = `${PLANTED}-again`;
+    const run = (amis: ReturnType<typeof fakeAmis>) => runMisaAmisTest({ runtime: worker, broker: vault, client: amis.client }, { orgId, connectionId: id });
+    const read = async (who: Account = member) => ((await call('connections/list', who)).body as Array<{ lastTestState: string | null; lastTestedAt: string | null }>)[0];
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const good = fakeAmis(code, company);
+    expect(await run(good)).toEqual({ state: 'works' });
+    expect(good.seen.map((c) => c.path)).toEqual(['/amiskt/v1/token', '/amiskt/v1/get_company_info']);
+    expect(good.seen[0]?.accessCode).toBe(code);
+    const first = await read();
+    expect(first).toMatchObject({ lastTestState: 'works', lastTestedAt: expect.any(String) });
+
+    // AMIS refuses the code: a state a person can act on, and the time moves.
+    expect(await run(fakeAmis('another-code', company))).toEqual({ state: 'wrong_credentials' });
+    const second = await read(viewer);
+    expect(second).toMatchObject({ lastTestState: 'wrong_credentials' });
+    expect(new Date(String(second?.lastTestedAt)).getTime()).toBeGreaterThanOrEqual(new Date(String(first?.lastTestedAt)).getTime());
+
+    // AMIS cannot be reached.
+    expect(await run(fakeAmis(code, company, () => Promise.reject(new AmisError('timeout'))))).toEqual({ state: 'unreachable' });
+    expect(await read()).toMatchObject({ lastTestState: 'unreachable' });
+    expect(await run(fakeAmis(code, company, () => ({ status: 503, body: 'planted gateway text' })))).toEqual({ state: 'unreachable' });
+
+    // Back to working: the row follows the last test.
+    expect(await run(good)).toEqual({ state: 'works' });
+    expect(await read()).toMatchObject({ lastTestState: 'works' });
+
+    // Only a state and a time: the audit rows of the test name the state and nothing else, and no row anywhere carries the code, the company code, the ClientID or AMIS's text.
+    const audits = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.misa_amis_connection.record_test' AND outcome = 'ok'", [orgId]);
+    expect(audits).toHaveLength(5);
+    for (const a of audits) expect(JSON.stringify(a.detail)).toMatch(/^\{"state":"(works|wrong_credentials|unreachable)"\}$/);
+    for (const table of ['crove_kernel.audit_event', 'crove_kernel.outbox_event', 'crove_kernel.channel_connection', 'crove_finance.misa_amis_connection']) {
+      for (const secret of [PLANTED, company, CLIENT_ID, 'planted AMIS text', 'planted gateway text']) {
+        // The connection row holds its own company code, which is the one thing here that may be in it.
+        if (table === 'crove_finance.misa_amis_connection' && secret === company) continue;
+        expect(await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text LIKE '%' || $2 || '%'`, [orgId, secret]), `${table} ${secret}`).toEqual([]);
+      }
+    }
+    vi.restoreAllMocks();
+  });
+
+  it('lets only the system record or read a test: a user, even an owner, is refused both', async () => {
+    const [listed] = (await call('connections/list', owner)).body as Array<{ id: string }>;
+    const id = String(listed?.id);
+    const user = asUser(owner);
+    await expect(api.execute('finance.misa_amis_connection.record_test', { id, state: 'works' }, { actor: user, orgId })).rejects.toThrow();
+    await expect(api.query('finance.misa_amis_connection.test_target', { id }, { actor: user, orgId })).rejects.toThrow();
+    // The system reads the target of this org's connection, and of no other org's.
+    expect(await worker.query('finance.misa_amis_connection.test_target', { id }, { actor: system, orgId })).toMatchObject({ action: 'test', id });
+    expect(await worker.query('finance.misa_amis_connection.test_target', { id }, { actor: system, orgId: otherOrgId })).toEqual({ action: 'none', reason: 'not_found' });
+    // A state outside the three is refused before it is written.
+    await expect(worker.execute('finance.misa_amis_connection.record_test', { id, state: 'maybe' }, { actor: system, orgId })).rejects.toThrow();
+  });
+
   it('disconnects for an owner or admin only, dropping the sealed access code with the connection, and a viewer or another org cannot', async () => {
     const [listed] = (await call('connections/list', owner)).body as Array<{ id: string; connectionId: string }>;
     for (const who of [member, viewer]) expect((await call('connections/disconnect', who, { id: listed?.id })).status).toBe(403);
@@ -276,6 +390,9 @@ suite('MISA AMIS connections (#3875)', () => {
     expect(await rows('SELECT 1 FROM crove_kernel.credential WHERE org_id = $1 AND connection_id = $2', [orgId, listed?.connectionId])).toEqual([]);
     expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, listed?.connectionId]))[0]?.status).toBe('revoked');
     expect(((await call('connections/list', owner)).body as unknown[]).length).toBe(0);
+    // A connection that is gone is left alone by a test: nothing is asked, and the request is refused.
+    expect((await call('connections/test', owner, { id: listed?.id })).body).toMatchObject({ code: 'MISA_AMIS_CONNECTION_NOT_FOUND' });
+    expect(await runMisaAmisTest({ runtime: worker, broker: vault, client: fakeAmis('x', 'y').client }, { orgId, connectionId: String(listed?.id) })).toEqual({ state: 'skipped', reason: 'not_found' });
     // A second disconnect of nothing is a plain no.
     expect((await call('connections/disconnect', owner, { id: listed?.id })).body).toEqual({ removed: false });
     // A reconnect is a new connection with a new code.

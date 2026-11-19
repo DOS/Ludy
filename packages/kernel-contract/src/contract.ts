@@ -2590,6 +2590,10 @@ export const contract = {
       // MISA_AMIS_DISABLED (404) when this deployment does not offer the connector, MISA_AMIS_CONNECTION_EXISTS (409), FORBIDDEN (403) unless owner or admin.
       connect: oc.input(zMisaAmisConnect).output(z.object({ id: zId })),
       disconnect: oc.input(z.object({ id: zId })).output(z.object({ removed: z.boolean() })),
+      // Asks the worker to test the connection (S2b, #3885): it opens the sealed access code, asks AMIS for a token and the company's information, and records only a state (works, wrong_credentials,
+      // unreachable) and a time, which the list then shows. Owner or admin. MISA_AMIS_DISABLED (404) when this deployment does not offer the connector, MISA_AMIS_CONNECTION_NOT_FOUND (404),
+      // CHANNEL_NOT_ACTIVE (409), FORBIDDEN (403).
+      test: oc.input(z.object({ id: zId })).output(z.object({ queued: z.boolean() })),
     },
   },
   // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.

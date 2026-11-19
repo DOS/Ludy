@@ -5291,7 +5291,7 @@ export const en = {
   misaAmisConnections: {
     title: 'MISA AMIS Kế toán: send vouchers to your accountant',
     intro:
-      'Connect the company\'s AMIS Kế toán data so that vouchers can later be sent to AMIS as requests to generate a voucher; your people in AMIS still make the voucher. This step only saves the connection and sends nothing to AMIS.',
+      'Connect the company\'s AMIS Kế toán data so that vouchers can later be sent to AMIS as requests to generate a voucher; your people in AMIS still make the voucher. You can test the connection (it only reads the company\'s information); no voucher is sent to AMIS yet.',
     off: 'The MISA AMIS connector is turned off in this system.',
     noConnections: 'No AMIS connected yet.',
     connectTitle: 'Connect AMIS',
@@ -5304,6 +5304,16 @@ export const en = {
     disconnectConfirm: 'Disconnect this? The saved connection code will be deleted; vouchers already in AMIS are not affected.',
     disconnectYes: 'Disconnect',
     keep: 'Keep',
+    test: 'Test connection',
+    testing: 'Testing...',
+    testSlow: 'No result after half a minute. Reload the page in a few minutes to see it.',
+    neverTested: 'Not tested yet',
+    testedAt: 'Last tested {when}',
+    testState: {
+      works: 'The connection works',
+      wrong_credentials: 'AMIS refused the connection code. Make a new code in AMIS, then disconnect and connect again',
+      unreachable: 'AMIS could not be reached or reported an error. Try again later',
+    },
     status: {
       active: 'Connected',
       expired: 'Expired, disconnect, then connect again',
