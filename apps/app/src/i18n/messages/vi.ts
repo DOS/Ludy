@@ -1745,6 +1745,12 @@ export const vi = {
       budget: '{finance} đã dùng hết ngân sách AI của tháng này: chỉ có các số ở trên.',
       failed: '{finance} chưa diễn đạt được lần này: chỉ có các số ở trên.',
     },
+    lineFeeNotesTitle: 'Ghi chú của {finance} về phí đang chờ hóa đơn (bảng bên trên mới là căn cứ)',
+    lineFeeNotesAi: {
+      busy: '{finance} đang bận, bảng bên trên đứng một mình lúc này.',
+      budget: '{finance} đã dùng hết ngân sách AI của tháng này: bảng bên trên đứng một mình.',
+      failed: '{finance} chưa diễn đạt được lần này: bảng bên trên đứng một mình.',
+    },
   },
   stock: {
     marketplaceLink: 'Xem tiền của từng sàn trong sổ sách',
@@ -9092,6 +9098,7 @@ export const vi = {
       finance_vat_late_explain: 'Viết một câu nêu các hóa đơn bán ra lập muộn trong bảng kê thuế GTGT',
       finance_bank_match_explain: 'Giải thích vì sao một giao dịch ngân hàng có thể là khoản trả lương',
       finance_marketplace_line: 'Diễn đạt điều đang chờ trên màn hình sàn thương mại điện tử',
+      finance_marketplace_fee_note: 'Diễn đạt phí sàn đang chờ hóa đơn',
       finance_misa_check_line: 'Diễn đạt kết quả kiểm tra file xuất MISA',
       finance_misa_amis_blocker_notes: 'Diễn đạt từng điểm chặn khi gửi sang MISA AMIS',
       finance_supplier_payable_line: 'Diễn đạt các hóa đơn mua đang chờ chi',

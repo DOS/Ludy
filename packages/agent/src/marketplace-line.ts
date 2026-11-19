@@ -164,3 +164,8 @@ export function checkMarketplaceLineSentence(facts: MarketplaceLineFacts, output
   if (bindingProblem(facts, text)) return { kind: 'none', code: 'BINDING' };
   return { kind: 'sentence', text };
 }
+
+// Shared with the notes under the Sàn table (marketplace-fee-note.ts): the same words for "something was done", "nothing is waiting" and the platforms' names, so the two texts cannot drift apart.
+export const marketplaceLineClaimsDone = claimsDone;
+export const MARKETPLACE_SAYS_NOTHING = SAYS_NOTHING;
+export const MARKETPLACE_PLATFORM_NAMES = PLATFORM_NAMES;
