@@ -72,10 +72,18 @@ test('Vy summarizes a stored transcript, the recorder reads, edits and shares it
   });
 
   await test.step('the draft ready notice is in the notifications, and leads to the meeting', async () => {
+    // The notice reaches the recorder through the outbox relay and a worker job, so it can come after the run's last click by longer than any fixed wait on the page (#3805: one CI run missed it at 45 s).
+    // Wait for the SIGNAL, the notification row itself, then open the page: the list is read once when the page loads, so a page opened before the row exists would never show it.
+    await expect
+      .poll(() => sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.notification WHERE kind = 'meetings.summary_ready' AND subject_id = :'meeting'`, { meeting: meetingId })[0]?.n, {
+        message: 'the draft ready notification row exists',
+        timeout: 90_000,
+        intervals: [500, 1_000, 2_000, 5_000],
+      })
+      .toBeGreaterThanOrEqual(1);
     await page.goto(`/o/${slug}/notifications`);
-    // The worker sends it after the run: poll until it is there.
     const notice = page.getByText('Bản nháp biên bản của cuộc họp bạn ghi đã sẵn sàng');
-    await expect(notice).toBeVisible({ timeout: 45_000 });
+    await expect(notice).toBeVisible();
     // A notification is a button that opens what it is about.
     await notice.click();
     await expect(page).toHaveURL(new RegExp(`/meetings/${meetingId}$`));
