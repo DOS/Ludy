@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The bank feed notice route limits the address before the body cap reads a body (#4047): hono's bodyLimit reads a body sent without a Content-Length (a chunked one) up to the cap before it calls
 // the next handler, so a limiter that ran inside the handler refused an address only after its body was read. The runtime and the adapter are fakes: nothing here needs a database.
+// Keep this directory self-contained: no imports from outside test/invariant/ besides the app's own source.
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
-import type { BankFeedProvider } from '@crove/bank-feed';
+import { BankFeedWebhookRejected, type BankFeedProvider } from '@crove/bank-feed';
 import type { BlobStore, Runtime } from '@crove/kernel-runtime';
-import { loadConfig } from '../src/config.ts';
-import { createHttpApp } from '../src/http.ts';
-import { RateLimiter } from '../src/rate-limit.ts';
+import { loadConfig } from '../../src/config.ts';
+import { createHttpApp } from '../../src/http.ts';
+import { RateLimiter } from '../../src/rate-limit.ts';
 
 const PATH = '/api/bank-feed/fake/webhook';
 
@@ -18,7 +19,7 @@ function fixture(perMinute: number) {
   const provider = {
     id: 'fake',
     verifyWebhook: () => {
-      throw Object.assign(new Error('x'), { name: 'BankFeedWebhookRejected' });
+      throw new BankFeedWebhookRejected('malformed');
     },
   } as unknown as BankFeedProvider;
   return createHttpApp({
@@ -59,7 +60,7 @@ describe('the bank feed notice route: limit, then cap, then handler', () => {
     expect((await http.request('/api/bank-feed/nobody/webhook', { method: 'POST', body: 'x' })).status).toBe(404);
     expect((await http.request('/api/bank-feed/nobody/webhook', { method: 'POST', body: 'x' })).status).toBe(404);
     // The one token is still there: the first real request is not limited.
-    expect((await http.request(PATH, { method: 'POST', body: 'x' })).status).not.toBe(429);
+    expect((await http.request(PATH, { method: 'POST', body: 'x' })).status).toBe(400);
     expect((await http.request(PATH, { method: 'POST', body: 'x' })).status).toBe(429);
   });
 });
