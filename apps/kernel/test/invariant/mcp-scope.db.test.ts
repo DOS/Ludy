@@ -62,6 +62,25 @@ const REACHABLE = [
   // The Meetings read that searches the published minutes (#4030, step 3 of the three-step landing): it matches only the views the minutes tool can return, of the same readable meetings as the reads above,
   // for a company grant only; the typed words never reach SQL. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
   'meetings.mcp.search:ludy.read',
+  // The Engage reads of epic #3857, E1 (#3860, owner decision 2026-11-19: Dy and Uy work Engage through MCP; step 3 of the three-step landing, #4052 and #4068 before it). A missing name now fails.
+  // Results of Social and Ads, for a company grant only (their privacy review is the comment at the top of each query's file; the output is pinned in the DB tests engage-mcp-results.db.test.ts):
+  'social.mcp.metrics_summary:ludy.read',
+  'social.mcp.metrics_totals:ludy.read',
+  'ads.mcp.spend:ludy.read',
+  'ads.mcp.today:ludy.read',
+  'ads.mcp.flags:ludy.read',
+  // The CRM records: deals and quotes for every role (the CRM tables carry the org policy only, so a member-bound grant reads the whole org's, as that member does in the app); the bookings, a guest's
+  // contact details, for a company grant only. Pinned in engage-mcp-crm.db.test.ts.
+  'crm.mcp.deals:ludy.read',
+  'crm.mcp.deal:ludy.read',
+  'crm.mcp.quotes:ludy.read',
+  'crm.mcp.quote:ludy.read',
+  'crm.mcp.bookings:ludy.read',
+  // The Hộp thư conversations, read inside the sealed grant contexts of #3858 slice b (a company grant the whole org, a member-bound grant what its member may read), as paged allowlist projections. They are
+  // named `kernel.mcp.*` on purpose: the check below keeps every `kernel.conversation.*` and `kernel.inbox*` name, the screens' own queries, out of a grant's reach. Pinned in
+  // test/invariant/mcp-conversation-reads.db.test.ts.
+  'kernel.mcp.conversations:ludy.read',
+  'kernel.mcp.conversation:ludy.read',
 ];
 // The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the kernel rules and the line reads they
 // call (a query run inside a query keeps the caller's identity, so a rule over MCP needs every read it calls to declare the scope as well). They are optional here so each can land
@@ -70,8 +89,8 @@ const SIGNALS = [
   'kernel.signals.deal_without_invoice:ludy.read',
   'kernel.signals.receivable_with_open_deal:ludy.read',
   'kernel.signals.supplier_bank_changed:ludy.read',
-  // The fourth rule (#3124): a customer conversation unanswered past its reply window on an open deal. Its conversation read declares no scope on purpose: conversations are not in the reach of a
-  // grant, so over MCP the read refuses and the rule reports `not_available`, never an empty "all clear".
+  // The fourth rule (#3124): a customer conversation unanswered past its reply window on an open deal. The screens' own conversation read (`kernel.conversation.*`) declares no scope on purpose, so over MCP that
+  // read refuses and this rule reports `not_available`, never an empty "all clear"; a grant reads conversations only through the two paged projections `kernel.mcp.conversations` and `kernel.mcp.conversation` (above).
   'kernel.signals.conversation_unanswered:ludy.read',
   'finance.signals.sales:ludy.read',
   'finance.signals.overdue_receivables:ludy.read',
@@ -79,21 +98,6 @@ const SIGNALS = [
   'finance.signals.supplier_payments_waiting:ludy.read',
   'crm.signals.won_deals:ludy.read',
   'crm.signals.open_deals:ludy.read',
-  // The Engage reads of epic #3857, E1 (#3860, owner decision 2026-11-19: Dy and Uy work Engage through MCP): the results of Social and Ads (company grants), the CRM records (deals, quotes, bookings) and the
-  // Hộp thư conversations (read over the sealed grant contexts of #3858 slice b, within the grant's role and member binding). Optional here so the names can be accepted before the queries land (two steps);
-  // the next tests-only step moves them to REACHABLE. The conversation reads are named `kernel.mcp.*` on purpose: the check below keeps every `kernel.conversation.*` and `kernel.inbox*` name out.
-  'social.mcp.metrics_summary:ludy.read',
-  'social.mcp.metrics_totals:ludy.read',
-  'ads.mcp.spend:ludy.read',
-  'ads.mcp.today:ludy.read',
-  'ads.mcp.flags:ludy.read',
-  'crm.mcp.deals:ludy.read',
-  'crm.mcp.deal:ludy.read',
-  'crm.mcp.quotes:ludy.read',
-  'crm.mcp.quote:ludy.read',
-  'crm.mcp.bookings:ludy.read',
-  'kernel.mcp.conversations:ludy.read',
-  'kernel.mcp.conversation:ludy.read',
   // The one query behind the `ludy_signals` tool (step S4): it runs the three rules above as the grant and returns their items.
   'kernel.mcp.signals:ludy.read',
 ];
@@ -138,7 +142,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
       expect(q.stream === true, q.name).toBe(false);
       expect(q.memberVy, q.name).toBeUndefined();
       expect(q.extension, q.name).toBeUndefined();
-      // Member-private data (ADR-0049, ADR-0037): nothing from the notes, the member's own results or memory, until the member-bound grant exists. Conversations are never reachable over MCP (a customer's messages; the signals rule over them reports not_available).
+      // Member-private data (ADR-0049, ADR-0037): nothing from the notes, the member's own results or memory, until the member-bound grant exists. The screens' own conversation queries (`kernel.conversation.*`, `kernel.inbox*`) stay out of a grant's reach (the signals rule over them reports not_available); a grant reads conversations only through `kernel.mcp.conversations` and `kernel.mcp.conversation`, which read inside the sealed grant context and are pinned in mcp-conversation-reads.db.test.ts.
       expect(q.name.startsWith('notes.') || q.name.startsWith('kernel.member_vy.') || q.name.startsWith('kernel.inbox') || q.name.startsWith('kernel.conversation.'), q.name).toBe(false);
     }
   });
