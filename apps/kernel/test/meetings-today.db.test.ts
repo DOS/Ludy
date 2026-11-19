@@ -53,12 +53,12 @@ suite('the Today view of the meetings page (#3955)', () => {
     return id;
   }
   // An agenda event of `lan` starting `startExpr` (a SQL expression) and lasting `minutes`.
-  async function event(title: string, startExpr: string, minutes: number, over: { series?: string | null; meetingId?: string | null } = {}): Promise<string> {
+  async function event(title: string, startExpr: string, minutes: number, over: { series?: string | null; meetingId?: string | null; who?: string; connection?: string } = {}): Promise<string> {
     return (
       await sqlAdmin<{ id: string }>(
         `INSERT INTO crove_meetings.calendar_agenda (org_id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, series_id, meeting_id)
          VALUES ($1, $2, $3, $4, $5, ${startExpr}, ${startExpr} + ($6 || ' minutes')::interval, 'Asia/Ho_Chi_Minh', $7, $8) RETURNING id`,
-        [orgId, connection, users.lan, randomUUID(), title, String(minutes), over.series ?? null, over.meetingId ?? null],
+        [orgId, over.connection ?? connection, users[over.who ?? 'lan'], randomUUID(), title, String(minutes), over.series ?? null, over.meetingId ?? null],
       )
     ).rows[0]!.id;
   }
@@ -94,6 +94,8 @@ suite('the Today view of the meetings page (#3955)', () => {
       [orgId, randomUUID(), ids.earlier, users.lan],
     );
     ids.current = await meeting('Giao ban hôm nay', 0, 'rec', ['lan'], series);
+    // This morning's meeting starts at 13:00 Vietnam time, like its event, so it is after the first event and never that event's previous meeting, whatever the hour the test runs at.
+    await sqlAdmin(`UPDATE crove_meetings.meeting SET started_at = ${VN_NINE} + interval '4 hours', ended_at = ${VN_NINE} + interval '4 hours 30 minutes' WHERE org_id = $1 AND id = $2`, [orgId, ids.current]);
     ids.hidden = await meeting('Họp riêng của rec', 1, 'rec', [], null);
     connection = randomUUID();
     await sqlAdmin(`INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', 'lan@calendar.test', 'lan', '{}', true)`, [orgId, connection, users.lan]);
@@ -131,8 +133,18 @@ suite('the Today view of the meetings page (#3955)', () => {
     expect(first?.brief).toEqual(alone);
   });
 
-  it('shows an owner, another member and the system context none of someone else\'s agenda or facts', async () => {
-    for (const who of ['owner', 'rec', 'other']) {
+  it('shows each member their own agenda only, and an owner, another member and the system context none of someone else\'s agenda or facts', async () => {
+    // `other` has a calendar and an event of their own: they see that one and not lan's, and lan does not see theirs.
+    const otherConnection = randomUUID();
+    await sqlAdmin(`INSERT INTO crove_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events) VALUES ($1, $2, $3, 'google', 'other@calendar.test', 'other', '{}', true)`, [orgId, otherConnection, users.other]);
+    const theirs = await event('Việc riêng của other', `${VN_NINE} + interval '2 hours'`, 30, { who: 'other', connection: otherConnection, series: ids.series as string });
+    const mine = await today('other');
+    expect(mine.items.map((i) => i.event.id)).toEqual([theirs]);
+    expect(JSON.stringify(mine)).not.toMatch(/Giao ban|Cà phê/u);
+    expect((await today('lan')).items.map((i) => i.event.id)).not.toContain(theirs);
+    // `other` reads neither last week's meeting nor its decisions, so even the event they put in the same series briefs them with nothing.
+    expect(mine.items[0]?.brief.empty).toBe(true);
+    for (const who of ['owner', 'rec']) {
       const out = await today(who);
       expect(out, who).toEqual({ enabled: false, totalMinutes: 0, items: [] });
     }
@@ -149,7 +161,8 @@ suite('the Today view of the meetings page (#3955)', () => {
     const out = await today('lan');
     const item = out.items.find((i) => i.event.id === stray);
     expect(item?.brief.empty).toBe(true);
-    expect(out.items).toHaveLength(4);
+    expect(out.items.map((i) => i.event.id)).toContain(stray);
+    expect(out.items.filter((i) => i.event.id !== stray)).toHaveLength(3);
     await sqlAdmin('DELETE FROM crove_meetings.calendar_agenda WHERE org_id = $1 AND id = $2', [orgId, stray]);
   });
 });

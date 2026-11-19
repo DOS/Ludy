@@ -11,6 +11,8 @@ import { briefFactsOf } from './brief.ts';
 import { ROLES, userOf } from './transcript.ts';
 
 const MINUTE_MS = 60_000;
+// The facts of at most this many events are read (each is several reads and a few CRM calls); a day with more shows the rest as events with nothing to say.
+const BRIEFS_MAX = 20;
 const NONE = zBriefFacts.parse({ previous: null, decisions: [], items: [], customer: null, deals: [], empty: true });
 
 export const todayFacts = defineQuery({
@@ -23,9 +25,13 @@ export const todayFacts = defineQuery({
     const agenda = await todaysAgenda(ctx.trx, ctx.orgId, userId);
     if (!agenda.enabled) return zMeetingsTodayFacts.parse({ enabled: false, totalMinutes: 0, items: [] });
     const items: MeetingsTodayFacts['items'] = [];
-    for (const event of agenda.events) {
+    for (const [index, event] of agenda.events.entries()) {
       // A recorded event is briefed from its meeting (which the member may no longer read, or whose text is gone): no facts then, and never an error for the whole page.
       let brief = NONE;
+      if (index >= BRIEFS_MAX) {
+        items.push({ event, brief });
+        continue;
+      }
       try {
         brief = await briefFactsOf(ctx, event.meetingId !== null ? { meetingId: event.meetingId, agendaId: null } : { meetingId: null, agendaId: event.id });
       } catch (error) {

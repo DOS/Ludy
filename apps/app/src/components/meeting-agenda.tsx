@@ -114,7 +114,7 @@ export function TodayAgenda({ slug }: { slug: string }) {
               {/* What was decided last time, what is still open and the customer's open deals (#3543), read by code and shown with the event; Vy's sentences are the click under them. Nothing for an event with nothing to say. */}
               {!brief.empty && (
                 <div className="basis-full space-y-3 border-t border-border pt-3" data-testid="meeting-agenda-brief">
-                  <BriefBody slug={slug} facts={brief} target={event.meetingId ? { meetingId: event.meetingId, agendaId: null } : { meetingId: null, agendaId: event.id }} />
+                  <BriefBody slug={slug} showSource facts={brief} target={event.meetingId ? { meetingId: event.meetingId, agendaId: null } : { meetingId: null, agendaId: event.id }} />
                 </div>
               )}
             </li>

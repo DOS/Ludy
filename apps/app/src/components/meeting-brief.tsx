@@ -63,9 +63,19 @@ export function MeetingBrief({ slug, emptyNote = false, ...which }: { slug: stri
 }
 
 // The facts of one brief and Vy's click under them, for a page that already read the facts (the Today view, #3955): the same numbered lists and the same button as the card above, with the same checks.
-export function BriefBody({ slug, facts, target: input }: { slug: string; facts: BriefFacts; target: BriefTarget }) {
+export function BriefBody({ slug, facts, target: input, showSource = false }: { slug: string; facts: BriefFacts; target: BriefTarget; showSource?: boolean }) {
+  const t = useTranslations('meetings.brief');
   return (
     <>
+      {/* Which meeting the decisions and items come from, with a link, where the card has no header to say it (the Today view). */}
+      {showSource && facts.previous && (
+        <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" data-testid="brief-source">
+          <span>{t('from', { title: facts.previous.title, date: vnDateOf(facts.previous.startedAt) })}</span>
+          <Link to="/o/$slug/meetings/$id" params={{ slug, id: facts.previous.meetingId }} className="font-medium text-link underline" data-testid="brief-open-previous">
+            {t('openPrevious')}
+          </Link>
+        </p>
+      )}
       <Facts slug={slug} facts={facts} />
       <VyWords input={input} lines={briefLines(facts)} />
     </>

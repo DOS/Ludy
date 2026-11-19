@@ -147,8 +147,16 @@ describe('TodayAgenda', () => {
     expect(html.match(/data-testid="brief-fact"/g)).toHaveLength(4);
     expect(html).toContain('Chốt giá gói kế toán 15.000.000 đồng');
     expect(html).toContain('Gửi báo giá');
-    // AI off (no status answered): the facts show and Vy has no button.
+    // The source of the facts is said, with a link to that meeting.
+    expect(html.match(/data-testid="brief-source"/g)).toHaveLength(2);
+    expect(html).toContain('data-testid="brief-open-previous"');
+    // AI off: the facts show and Vy has no button, whether the status is not known yet, says off, or the model is missing.
     expect(html).not.toContain('data-testid="brief-vy"');
+    client.current.setQueryData(['meetings', 'brief', 'status'], { enabled: false, reason: 'off', estimate: null });
+    expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />))).not.toContain('data-testid="brief-vy"');
+    client.current.setQueryData(['meetings', 'brief', 'status'], { enabled: true, reason: null, estimate: null });
+    client.current.setQueryData(['ai', 'meter'], { aiOn: false, state: 'ok', percent: 0 });
+    expect(renderToStaticMarkup(wrap(<TodayAgenda slug="acme" />))).not.toContain('data-testid="brief-vy"');
     // With the switch on, each brief has Vy's button under its facts.
     client.current.setQueryData(['meetings', 'brief', 'status'], { enabled: true, reason: null, estimate: null });
     client.current.setQueryData(['ai', 'meter'], { aiOn: true, state: 'ok', percent: 10 });
