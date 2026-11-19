@@ -23,7 +23,7 @@ describe('zMcpDecisionsInput', () => {
 
   it('advertises the three windows as a list of numbers to the client', async () => {
     const { z } = await import('zod');
-    const schema = z.toJSONSchema(zMcpDecisionsInput, { io: 'input' }) as { properties: { days: { enum?: number[]; anyOf?: Array<{ const: number }> } } };
+    const schema = z.toJSONSchema(zMcpDecisionsInput, { io: 'input' }) as unknown as { properties: { days: { enum?: number[]; anyOf?: Array<{ const: number }> } } };
     const days = schema.properties.days;
     const offered = days.enum ?? (days.anyOf ?? []).map((a) => a.const);
     expect([...offered].sort((a, b) => a - b)).toEqual([7, 14, 30]);
