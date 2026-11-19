@@ -207,6 +207,7 @@ export interface CroveMeetingsSchema {
   'crove_meetings.calendar_agenda': MeetingsCalendarAgendaTable;
   'crove_meetings.chat_channel': MeetingsChatChannelTable;
   'crove_meetings.chat_post': MeetingsChatPostTable;
+  'crove_meetings.glossary_term': MeetingsGlossaryTermTable;
   'crove_meetings.live_chunk': MeetingsLiveChunkTable;
   'crove_meetings.live_line': MeetingsLiveLineTable;
   'crove_meetings.meeting': MeetingsMeetingTable;
@@ -3235,6 +3236,16 @@ export interface MeetingsChatPostTable {
   handed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
   sending_at: ColumnType<Date | null, Date | string | null, NotGranted>;
   settled_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+}
+
+/** crove_meetings.glossary_term */
+export interface MeetingsGlossaryTermTable {
+  org_id: string;
+  id: Generated<string>;
+  term: string;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_meetings.live_chunk */

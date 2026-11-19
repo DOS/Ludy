@@ -498,6 +498,7 @@ import {
   zSummaryCopied,
   zSummaryCopy,
 } from './meetings.ts';
+import { zGlossaryAdd, zGlossaryDone, zGlossaryList, zGlossaryRemove, zGlossaryTerms, zGlossaryUpdate } from './meeting-glossary.ts';
 import {
   zMinutesTemplateArchive,
   zMinutesTemplateCreate,
@@ -1287,6 +1288,13 @@ export const contract = {
       create: oc.input(zMinutesTemplateCreate).output(zMinutesTemplateDone),
       update: oc.input(zMinutesTemplateUpdate).output(zMinutesTemplateDone),
       archive: oc.input(zMinutesTemplateArchive).output(zMinutesTemplateDone),
+    },
+    // The org's glossary (#4043): terms Vy spells the way the org does. Owner and admin only, for the list too. GLOSSARY_TERM_TAKEN (409), GLOSSARY_TERM_NOT_FOUND (404), GLOSSARY_MAX (422).
+    glossary: {
+      list: oc.input(zGlossaryList).output(zGlossaryTerms),
+      add: oc.input(zGlossaryAdd).output(zGlossaryDone),
+      update: oc.input(zGlossaryUpdate).output(zGlossaryDone),
+      remove: oc.input(zGlossaryRemove).output(zGlossaryDone),
     },
     // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
     settings: {

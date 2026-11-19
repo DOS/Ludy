@@ -146,6 +146,7 @@ export * from './meeting-adherence.ts';
 export * from './meeting-chapters.ts';
 export * from './meeting-title.ts';
 export * from './meeting-commitments.ts';
+export * from './meeting-glossary.ts';
 export * from './meeting-minutes-templates.ts';
 export * from './meeting-templates.ts';
 export * from './meetings.ts';

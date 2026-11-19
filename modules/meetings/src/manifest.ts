@@ -117,6 +117,9 @@ export const meetingsManifest = defineModule({
         'video_retention_date',
         'created_at',
       ]),
+      // The glossary an org's owner or admin keeps (#4043): terms (a product, an acronym, jargon) Vy spells the org's way. Plain text the org wrote; the settings screen asks for no people's names
+      // or personal details, and the command refuses an email or web address and a number. Nothing here is a meeting's own text.
+      glossary_term: columns(['org_id', 'id', 'term', 'created_by', 'created_at', 'updated_at']),
       // A member's own webhook for the minutes they publish (A6, #3164): definer-only. The address can carry a token in its path and the sealed secret is the broker's envelope, so both are sensitive.
       member_hook: columns(['org_id', 'id', 'user_id', 'fields', 'enabled', 'paused_reason', 'secret_hint', 'previous_until', 'failing_since', 'consecutive_failures', 'last_delivery_at', 'last_status', 'created_at', 'updated_at'], { url: 'sensitive', secret_sealed: 'sensitive', previous_sealed: 'sensitive' }),
       // The minutes templates an org's owner or admin writes (#3578): a name and 1 to 8 sections (title, hint for Vy). Layout the org wrote, not personal data; the settings screen asks for no
@@ -138,6 +141,8 @@ export const meetingsManifest = defineModule({
     { type: 'meetings.meeting', table: 'meeting', legalEntityScoped: false, audit: 'command' },
     // A minutes template the org wrote (#3578): the target of its update and archive commands.
     { type: 'meetings.minutes_template', table: 'minutes_template', legalEntityScoped: false, audit: 'command' },
+    // A term of the org's glossary (#4043): the target of its update and remove commands.
+    { type: 'meetings.glossary_term', table: 'glossary_term', legalEntityScoped: false, audit: 'command' },
   ],
   ...MODULE_SCREENS.meetings,
 });
