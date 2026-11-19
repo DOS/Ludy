@@ -13033,6 +13033,7 @@ export const vi = {
       HOUSEHOLD_PROFILE_LOCKED: 'Kỳ này đã khóa sổ; hồ sơ mới phải có hiệu lực sau kỳ đã khóa',
       HOUSEHOLD_BOOK_NOT_REQUIRED: 'Hồ sơ hộ kinh doanh của pháp nhân này không yêu cầu sổ S1a trong kỳ đã chọn',
       HOUSEHOLD_TRADES_CHANGED: 'Ngành nghề của hộ kinh doanh đổi trong kỳ đã chọn nên sổ chưa chia được doanh thu theo ngành; hãy chọn kỳ ngắn hơn, trước và sau ngày đổi',
+      HOUSEHOLD_S2D_MONTH_ONLY: 'Sổ S2d chỉ lập theo từng tháng vì giá vốn tính bình quân theo tháng; hãy chọn một tháng. Cách gộp nhiều tháng đang chờ kế toán xác nhận',
       HOUSEHOLD_VAT_CUT_CHANGED: 'Câu trả lời về giảm thuế GTGT của hộ kinh doanh đổi trong kỳ đã chọn nên sổ chưa tính được; hãy chọn kỳ ngắn hơn, trước và sau ngày đổi',
       HOUSEHOLD_RETURN_NOT_REQUIRED: 'Hộ này không phải kê khai tờ khai 01/CNKD theo quý trong kỳ đã chọn (chưa có hồ sơ, hoặc hồ sơ không theo phương pháp tỷ lệ)',
       HOUSEHOLD_RETURN_METHOD: 'Bảng tính cho phương pháp thu nhập chưa có; hộ nộp theo phương pháp này nhờ kế toán lập tờ khai',

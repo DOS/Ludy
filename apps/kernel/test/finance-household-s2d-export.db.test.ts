@@ -158,7 +158,7 @@ suite('the S2d-HKD book download (#2517 slice 2d)', () => {
     const one = await download(`legalEntityId=${groupOne}&month=2026-09`);
     expect(one.status).toBe(422);
     expect(await one.json()).toMatchObject({ code: 'HOUSEHOLD_BOOK_NOT_REQUIRED' });
-    for (const query of [`legalEntityId=${percentage}&month=2026-13`, `legalEntityId=${percentage}&month=2026-Q3`, `legalEntityId=${percentage}&month=abc`, `legalEntityId=${percentage}`, 'legalEntityId=not-an-id&month=2026-09']) {
+    for (const query of [`legalEntityId=${percentage}&month=2026-13`, `legalEntityId=${percentage}&month=abc`, `legalEntityId=${percentage}`, 'legalEntityId=not-an-id&month=2026-09']) {
       const response = await download(query);
       expect(response.status).toBeGreaterThanOrEqual(400);
       expect(response.status).toBeLessThan(500);

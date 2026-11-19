@@ -25,6 +25,8 @@ export const householdS2d = defineQuery({
   input: zHouseholdS2dGet,
   access: ALL,
   handler: async (ctx, input): Promise<HouseholdS2d> => {
+    // The stock cost is a monthly average, so the book is one month; whether to chain months or take a whole-period average is the accountant's question (#2520, B5).
+    if (!/^\d{4}-\d{2}$/.test(input.month)) throw new DomainError('HOUSEHOLD_S2D_MONTH_ONLY', 422, 'Sổ S2d chỉ lập theo từng tháng vì giá vốn tính bình quân theo tháng; hãy chọn một tháng');
     const w = await householdBookWindow(ctx, input.legalEntityId, input.month, 'S2d');
     // S2d is a book of the income method; the form row says so, and the profile must agree on the last day.
     if (w.profile.pitMethod !== 'income') throw new DomainError('HOUSEHOLD_BOOK_NOT_REQUIRED', 422, 'Hồ sơ hộ kinh doanh của pháp nhân này không yêu cầu sổ S2d trong kỳ đã chọn');

@@ -13033,6 +13033,7 @@ export const en = {
       HOUSEHOLD_PROFILE_LOCKED: 'The period is locked; the new profile must take effect after the locked period',
       HOUSEHOLD_BOOK_NOT_REQUIRED: 'The household profile of this legal entity does not require the S1a book in the period chosen',
       HOUSEHOLD_TRADES_CHANGED: 'The household trades change inside the period chosen, so the book cannot split revenue by trade; choose shorter periods, before and after the change date',
+      HOUSEHOLD_S2D_MONTH_ONLY: 'The S2d book is kept one month at a time because the cost is a monthly average; choose a month. How to combine several months is waiting for the accountant to confirm',
       HOUSEHOLD_VAT_CUT_CHANGED: 'The household answer on the VAT cut changes inside the period chosen, so the book cannot compute it; choose shorter periods, before and after the change date',
       HOUSEHOLD_RETURN_NOT_REQUIRED: 'This household does not file a quarterly 01/CNKD return in the period chosen (no profile yet, or no percentage-method profile)',
       HOUSEHOLD_RETURN_METHOD: 'The worksheet for the income method is not built yet; a household on that method has its accountant prepare the return',

@@ -293,7 +293,8 @@ export type HouseholdS2c = z.infer<typeof zHouseholdS2c>;
 // totals (in, out, closing, and the unit cost). What leaves is valued on the totals line only (quantity out x the month's unit cost), never per move: the cost is a month average, so per-move values would not add up
 // to the total after rounding. `monthClosed` is false until a person closes the month (the cost is then provisional); `commentary` is true while the S2d layout row is not confirmed by the accountant.
 // A quarter or a year is not offered: whether to chain the months or take a whole-period average is the accountant's question (#2520, B5).
-export const zHouseholdS2dGet = z.strictObject({ legalEntityId: zId, month: zStockMonth });
+// `month` takes any ledger period so that a quarter or a year is refused with a named error (HOUSEHOLD_S2D_MONTH_ONLY) that says why, not a bare validation failure.
+export const zHouseholdS2dGet = z.strictObject({ legalEntityId: zId, month: zLedgerPeriod });
 export type HouseholdS2dGet = z.infer<typeof zHouseholdS2dGet>;
 export const zHouseholdS2dRow = z.strictObject({
   moveId: zId,

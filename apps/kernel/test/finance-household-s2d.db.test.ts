@@ -202,6 +202,12 @@ suite('the S2d-HKD goods book of a household business (#2517 slice 2d)', () => {
     expect(december.form).toMatchObject({ version: '2026.2', status: 'confirmed' });
   });
 
+  it('refuses a quarter or a year with a named error that says why', async () => {
+    const o = await org();
+    await setProfile(o);
+    for (const period of ['2026-Q3', '2026']) await expect(s2d(o, period)).rejects.toMatchObject({ code: 'HOUSEHOLD_S2D_MONTH_ONLY' });
+  });
+
   it('refuses an entity that is not a household, has no profile, is on group 1 or on the percentage method, and lets a viewer read the book', async () => {
     const o = await org();
     await expect(s2d(o, '2026-09')).rejects.toMatchObject({ code: 'HOUSEHOLD_BOOK_NOT_REQUIRED' });
