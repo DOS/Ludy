@@ -59,6 +59,8 @@ export const glossaryAdd = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     await requireOwnerOrAdmin(ctx.trx, ctx.orgId, userId);
+    // Two adds at 59 terms would both pass the count: one add at a time per org keeps the cap at 60.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.meetings.glossary:${ctx.orgId}`}, 0))`.execute(ctx.trx);
     const count = await countTerms(ctx.trx, ctx.orgId);
     if (count >= GLOSSARY_TERMS_MAX) throw new DomainError('GLOSSARY_MAX', 422, `An organization keeps at most ${GLOSSARY_TERMS_MAX} terms; remove one first`);
     if (await termInUse(ctx.trx, ctx.orgId, input.term, null)) throw taken();

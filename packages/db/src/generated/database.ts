@@ -3240,11 +3240,11 @@ export interface MeetingsChatPostTable {
 
 /** crove_meetings.glossary_term */
 export interface MeetingsGlossaryTermTable {
-  org_id: string;
-  id: Generated<string>;
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
   term: string;
-  created_by: string;
-  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
