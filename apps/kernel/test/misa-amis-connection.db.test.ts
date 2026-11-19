@@ -541,6 +541,8 @@ suite('MISA AMIS connections (#3875)', () => {
     // Asked on a deployment without the ASP ClientID: refused as AMIS's is. Where it holds it, queued with ids only.
     await expect(call('connections/test', owner, { id }, app)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
     expect((await call('connections/test', owner, { id }, aspOnlyApp)).body).toEqual({ queued: true });
+    // A connection that is not there is not found, on a deployment that holds only ASP's ClientID too (the product cannot be told, so it is not asked).
+    expect((await call('connections/test', owner, { id: randomUUID() }, aspOnlyApp)).body).toMatchObject({ code: 'MISA_AMIS_CONNECTION_NOT_FOUND' });
     const [stored] = await rows<{ org_company_code: string }>('SELECT org_company_code FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, id]);
     const company = String(stored?.org_company_code);
     const seen: Array<{ path: string; body: Record<string, unknown> }> = [];

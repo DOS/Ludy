@@ -5518,7 +5518,7 @@ export const en = {
   misaAmisConnections: {
     title: 'MISA AMIS Kế toán: send vouchers to your accountant',
     titleBoth: 'MISA (AMIS Kế toán or ASP): connect with your accounting software',
-    introBoth: 'Connect the company\'s MISA accounting data (AMIS Kế toán or MISA ASP). You can test the connection (it only reads); no voucher is sent from here yet, and a legal entity connects to one MISA product only.',
+    introBoth: 'Connect the company\'s MISA accounting data (AMIS Kế toán or MISA ASP). You can test the connection (it only reads). Sending vouchers to MISA ASP is not available yet. A legal entity connects to one MISA product only.',
     productLabel: 'MISA product',
     product: { amis: 'MISA AMIS Kế toán', asp: 'MISA ASP' },
     connectTitleAsp: 'Connect MISA ASP',

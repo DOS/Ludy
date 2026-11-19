@@ -5515,7 +5515,7 @@ export const vi = {
   misaAmisConnections: {
     title: 'MISA AMIS Kế toán: gửi chứng từ cho kế toán',
     titleBoth: 'MISA (AMIS Kế toán hoặc ASP): kết nối với phần mềm kế toán',
-    introBoth: 'Kết nối dữ liệu kế toán MISA của công ty (AMIS Kế toán hoặc MISA ASP). Bạn có thể kiểm tra kết nối (chỉ đọc); từ đây chưa gửi chứng từ nào, và một pháp nhân chỉ nối với một phần mềm MISA.',
+    introBoth: 'Kết nối dữ liệu kế toán MISA của công ty (AMIS Kế toán hoặc MISA ASP). Bạn có thể kiểm tra kết nối (chỉ đọc). Việc gửi chứng từ sang MISA ASP chưa có. Một pháp nhân chỉ nối với một phần mềm MISA.',
     productLabel: 'Phần mềm MISA',
     product: { amis: 'MISA AMIS Kế toán', asp: 'MISA ASP' },
     connectTitleAsp: 'Kết nối MISA ASP',
