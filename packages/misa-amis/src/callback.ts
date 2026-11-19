@@ -45,8 +45,14 @@ function sameText(a: string, b: string): boolean {
 
 // MISA's text is untrusted and ends in a text column: a NUL (or a lone surrogate) makes PostgreSQL refuse the value (22021), so the command would fail, the route would answer 503 and MISA would retry for ever.
 // NUL and every other control character (C0, DEL and C1, a newline and a tab included: a refusal reason is one line) are dropped before the cap, and a lone surrogate becomes U+FFFD.
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
-const text = (value: unknown, max: number): string | null => (typeof value === 'string' ? value.toWellFormed().replace(CONTROL, '').slice(0, max) : null);
+const withoutControls = (value: string): string =>
+  Array.from(value.toWellFormed())
+    .filter((ch) => {
+      const code = ch.codePointAt(0) ?? 0;
+      return !(code <= 0x1f || (code >= 0x7f && code <= 0x9f));
+    })
+    .join('');
+const text = (value: unknown, max: number): string | null => (typeof value === 'string' ? withoutControls(value).slice(0, max) : null);
 
 /** The results in a `data` string (a callback's or a polling answer's), or null when it is not a list of results in the document's shape. */
 export function parseCallbackResults(data: string): AmisCallbackResult[] | null {
