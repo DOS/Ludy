@@ -148,7 +148,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
       expect([c.risk, c.sideEffect, c.access], c.name).toEqual(['R1', 'internal', ['owner', 'admin']]);
       const scope = (c as { mcp: { scope: string } }).mcp.scope;
       // Only the scope, in the mode that runs the command (a command of mode 'proposal' is R2 or R3, and is pinned in mcp-proposals.db.test.ts).
-      expect((c as { mcp: unknown }).mcp, c.name).toEqual({ scope });
+      expect((c as { mcp: unknown }).mcp, c.name).toStrictEqual({ scope });
       expect(WRITES.concat(ENGAGE_WRITES), c.name).toContain(`${c.name}:${scope}`);
       expect(c.permission, c.name).toBeUndefined();
       expect(c.extension, c.name).toBeUndefined();
