@@ -73,6 +73,10 @@ function settlementProposalLines(input: SettlementProposalInput, map: Pick<Marke
       if (typeof v !== 'string' || !/^\d+(\.\d{1,4})?$/.test(v)) throw bad('Số tiền của dòng đối soát không hợp lệ', { amount: String(v) });
     }
   }
+  // A map that books a refund on its own account (TT99 521) is not built yet: the entry nets a refund into the revenue line, which is right only where the refund account is the revenue account (TT133). Refused, never booked wrong.
+  if (map.salesReturn.code !== map.revenue.code && money(toMoney(sum(input.lines.map((l) => l.refund)))).greaterThan(0)) {
+    throw bad('Kỳ đối soát có hoàn hàng; chế độ kế toán này ghi hoàn hàng vào tài khoản giảm trừ doanh thu riêng, chưa hỗ trợ. Kế toán xử lý', { reason: 'REFUND_ACCOUNT', account: map.salesReturn.code });
+  }
   const net = money(toMoney(sum(input.lines.map((l) => l.sales)))).minus(money(toMoney(sum(input.lines.map((l) => l.sellerDiscount))))).minus(money(toMoney(sum(input.lines.map((l) => l.refund)))));
   // A negative net (refunds and discounts above the sales, for example a quiet month with returns from the one before) is legitimate: the entry runs the other way, the platform owing less.
   const amount = toMoney(net.abs());
