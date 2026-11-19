@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The widening of the invisible-character class (Meetings #4137, point 2) on PostgreSQL 17: the database is made as it was before 20270122010000, rows that hold the four ranges the class missed
 // (U+180B to U+180D, U+206A to U+206F, U+FFA0, U+1D173 to U+1D17A) are written as the old CHECKs allowed them, then the migration runs. The rows come out clean (a title that would be empty is a dash, a
-// name that would equal another active template's takes the first eight characters of its id, the meeting's copy of a template has its hash made again), the CHECKs refuse each new range at both
+// name that would equal another active template's takes the last eight characters of its id, the meeting's copy of a template has its hash made again), the CHECKs refuse each new range at both
 // edges, and what lies just outside the class still passes. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -80,13 +80,16 @@ suite('widening the invisible-character class of the minutes templates and the c
     ids.b = await template('Họp tuần', sections('Nội dung'));
     ids.c = await template('Mẫu sạch', sections('Quyết định', ''));
     ids.d = await template(`Mẫu cũ${ch(0x1d17a)}`, sections(hidden), true);
+    // Two names that clean to the same name, created together (their ids share the first characters, which are a timestamp): both take a suffix, and the suffixes differ.
+    ids.f = await template(`Mẫu X${ch(0x206a)}`, sections('Nội dung'));
+    ids.g = await template(`mẫu x${ch(0x206b)}`, sections('Nội dung'));
     ids.e = await template(ch(0xffa0), sections(`${ch(0x180c)}${ch(0x180d)}`, ch(0x206b)));
     meetingId = (
       await sql<{ id: string }>(
         `INSERT INTO crove_meetings.meeting (org_id, recorder_user_id, title, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date,
                                               summary_template, minutes_template_name, minutes_template_sections, minutes_template_hash)
-         VALUES ($1, $2, 'Họp thử', 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, current_date + 30, 'custom', 'Bản sao', $3::jsonb, md5($3::jsonb::text)) RETURNING id`,
-        [orgId, userId, JSON.stringify(sections(`Tiêu${hidden}đề`, `Gợi${hidden}ý`))],
+         VALUES ($1, $2, 'Họp thử', 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, current_date + 30, 'custom', $4, $3::jsonb, md5($3::jsonb::text)) RETURNING id`,
+        [orgId, userId, JSON.stringify(sections(`Tiêu${hidden}đề`, `Gợi${hidden}ý`)), `Bản${ch(0x206c)} sao`],
       )
     ).rows[0]!.id;
     ids.k1 = await chapterRow(1, `Mở${ch(0x206f)}đầu`);
@@ -115,14 +118,20 @@ suite('widening the invisible-character class of the minutes templates and the c
     expect((await templateRow(ids.d!)).name).toBe('Mẫu cũ');
   });
 
-  it('gives a template whose cleaned name equals another active template\'s name the first eight characters of its id, and leaves the other one alone', async () => {
+  it('gives a template whose cleaned name equals another active template\'s name the last eight characters of its id, and leaves the other one alone', async () => {
     expect((await templateRow(ids.b!)).name).toBe('Họp tuần');
-    expect((await templateRow(ids.a!)).name).toBe(`Họp tuần ${ids.a!.slice(0, 8)}`);
+    expect((await templateRow(ids.a!)).name).toBe(`Họp tuần ${ids.a!.slice(-8)}`);
+    const f = (await templateRow(ids.f!)).name;
+    const g = (await templateRow(ids.g!)).name;
+    expect(f).toBe(`Mẫu X ${ids.f!.slice(-8)}`);
+    expect(g).toBe(`mẫu x ${ids.g!.slice(-8)}`);
+    expect(f.toLowerCase()).not.toBe(g.toLowerCase());
   });
 
   it('cleans the meeting\'s copy of a template and makes its hash again, so the copy\'s CHECK holds and the meeting can be updated', async () => {
-    const row = (await sql<{ s: unknown; h: string }>(`SELECT minutes_template_sections AS s, minutes_template_hash AS h FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId])).rows[0]!;
+    const row = (await sql<{ s: unknown; h: string; n: string }>(`SELECT minutes_template_sections AS s, minutes_template_hash AS h, minutes_template_name AS n FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId])).rows[0]!;
     expect(row.s).toEqual([{ key: 's1', title: 'Tiêuđề', hint: 'Gợiý' }]);
+    expect(row.n).toBe('Bản sao');
     expect(row.h).toBe((await sql<{ h: string }>(`SELECT md5(minutes_template_sections::text) AS h FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId])).rows[0]!.h);
     await expect(sql(`UPDATE crove_meetings.meeting SET title = 'Họp đã sửa' WHERE org_id = $1 AND id = $2`, [orgId, meetingId])).resolves.toMatchObject({ rowCount: 1 });
   });

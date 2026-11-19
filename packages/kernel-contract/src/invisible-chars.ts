@@ -9,6 +9,6 @@
 // variation selectors and vowel separator (U+180B to U+180E), the zero-width and directional marks (U+200B to U+200F), the line and paragraph separators and bidirectional embeddings and overrides
 // (U+2028 to U+202E), the word joiner, the invisible operators, the bidi isolates and the deprecated format controls (U+2060 to U+206F), the braille blank, the byte order mark, the interlinear
 // annotation marks, the musical symbol beam and slur format controls (U+1D173 to U+1D17A) and the tag characters (which can carry a hidden message). The combining grapheme joiner (U+034F) is a
-// separate alternative: a combining mark inside a character class is a lint warning (no-misleading-character-class). Variation selectors U+FE00 to U+FE0F stay: emoji need them.
+// separate alternative inside a non-capturing group, so the pattern can be placed in a longer one: a combining mark inside a character class is a lint warning (no-misleading-character-class). Variation selectors U+FE00 to U+FE0F stay: emoji need them.
 export const INVISIBLE_PATTERN =
-  '[\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u115f\\u1160\\u180b-\\u180e\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u206f\\u2800\\u3164\\uffa0\\ufeff\\ufff9-\\ufffb\\u{1d173}-\\u{1d17a}\\u{e0000}-\\u{e007f}]|\\u034f';
+  '(?:[\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u061c\\u115f\\u1160\\u180b-\\u180e\\u200b-\\u200f\\u2028-\\u202e\\u2060-\\u206f\\u2800\\u3164\\uffa0\\ufeff\\ufff9-\\ufffb\\u{1d173}-\\u{1d17a}\\u{e0000}-\\u{e007f}]|\\u034f)';

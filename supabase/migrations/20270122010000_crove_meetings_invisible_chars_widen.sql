@@ -9,7 +9,7 @@
 -- 2. Rows are scrubbed before any CHECK is widened, as 20270117210000 did for the chapter titles (#3882): a title or name that holds a character of the class loses it (a title that would be empty
 --    becomes a dash; a hint is trimmed); the meeting's own copy of a template (minutes_template_sections) is cleaned the same way and its hash is made again from the stored sections, which is what
 --    the copy's CHECK compares; a template name that would then equal another active template's name in the org (the unique index is on the lower-cased name) takes the first eight characters of
---    its id after it.
+--    its id after it (the last eight characters, which are random; the first eight of a uuid v7 are its timestamp).
 -- 3. The name CHECK of minutes_template and the title CHECK of meeting_chapter are dropped and added again with the wider class, NOT VALID, then validated (the rows are already clean).
 -- crove_meetings.glossary_term (step 2 of #4043, a table of another PR) gets its own forward migration after that PR merges.
 SET LOCAL lock_timeout = '2s';
@@ -82,7 +82,7 @@ $$;
 REVOKE ALL ON FUNCTION crove_meetings.scrub_invisible_sections(jsonb) FROM PUBLIC;
 
 -- The templates: the sections and the name. A name that equals another active template's name once cleaned (the unique index is on the lower-cased name of the active ones) keeps the first eight
--- characters of its id after it; every row of such a pair gets the suffix, so no two collide.
+-- characters of its id after it (the last eight, the random ones: the first eight of a uuid v7 are its timestamp and repeat for a minute); every row of such a pair gets the suffix, so no two collide.
 UPDATE crove_meetings.minutes_template AS t
    SET sections = crove_meetings.scrub_invisible_sections(t.sections),
        name = CASE
@@ -90,17 +90,20 @@ UPDATE crove_meetings.minutes_template AS t
            SELECT 1 FROM crove_meetings.minutes_template AS o
             WHERE o.org_id = t.org_id AND o.id <> t.id AND o.archived_at IS NULL
               AND pg_catalog.lower(crove_meetings.scrub_invisible_text(o.name, true)) = pg_catalog.lower(crove_meetings.scrub_invisible_text(t.name, true)))
-         THEN pg_catalog.left(crove_meetings.scrub_invisible_text(t.name, true), 71) || ' ' || pg_catalog.left(t.id::text, 8)
+         THEN pg_catalog.left(crove_meetings.scrub_invisible_text(t.name, true), 71) || ' ' || pg_catalog.right(t.id::text, 8)
          ELSE crove_meetings.scrub_invisible_text(t.name, true)
        END,
        updated_at = pg_catalog.now()
  WHERE NOT crove_meetings.minutes_sections_ok(t.sections) OR t.name OPERATOR(pg_catalog.~) '[\u0001-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u180b-\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\u2800\u3164\uffa0\ufeff\ufff9-\ufffb\U0001d173-\U0001d17a\U000e0000-\U000e007f]';
 
--- The meeting's own copy of a template: the sections, and the hash the copy's CHECK compares with the sections as stored.
+-- The meeting's own copy of a template: the sections, the name (it has no CHECK on the class, but it was copied from a template whose name is cleaned above) and the hash the copy's CHECK compares
+-- with the sections as stored.
 UPDATE crove_meetings.meeting AS m
    SET minutes_template_sections = crove_meetings.scrub_invisible_sections(m.minutes_template_sections),
-       minutes_template_hash = pg_catalog.md5(crove_meetings.scrub_invisible_sections(m.minutes_template_sections)::text)
- WHERE m.minutes_template_sections IS NOT NULL AND NOT crove_meetings.minutes_sections_ok(m.minutes_template_sections);
+       minutes_template_hash = pg_catalog.md5(crove_meetings.scrub_invisible_sections(m.minutes_template_sections)::text),
+       minutes_template_name = crove_meetings.scrub_invisible_text(m.minutes_template_name, true)
+ WHERE m.minutes_template_sections IS NOT NULL
+   AND (NOT crove_meetings.minutes_sections_ok(m.minutes_template_sections) OR m.minutes_template_name OPERATOR(pg_catalog.~) '[\u0001-\u001f\u007f-\u009f\u00ad\u034f\u061c\u115f\u1160\u180b-\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\u2800\u3164\uffa0\ufeff\ufff9-\ufffb\U0001d173-\U0001d17a\U000e0000-\U000e007f]');
 
 -- The chapter titles.
 UPDATE crove_meetings.meeting_chapter

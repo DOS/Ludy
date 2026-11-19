@@ -16,6 +16,9 @@ const SAMPLES = [
   '<img src=x onerror=alert(1)> **bold** `code`',
 ];
 
+// Both edges of each range the class missed before #4137, one sample each.
+SAMPLES.push(...[0x180b, 0x180d, 0x206a, 0x206f, 0xffa0, 0x1d173, 0x1d17a].map((point) => `edge ${String.fromCodePoint(point)} end`));
+
 describe('the cleaning of an organization\'s section text in the instruction', () => {
   it('is the contract\'s cleaning, then the caps, whatever the text', () => {
     for (const sample of SAMPLES) {
