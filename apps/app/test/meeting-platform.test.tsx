@@ -190,7 +190,8 @@ describe('MeetingPlatforms (Settings)', () => {
     const without = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
     expect(without).not.toContain('meeting-platform-connect-google');
     expect(without).not.toMatch(/later version/i);
-    expect(without).not.toContain('bản sau');
+    // The same card in Vietnamese: no "comes later" line either (the English render above cannot show a Vietnamese string).
+    expect(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />, 'vi'))).not.toContain('bản sau');
     client.current.setQueryData(KEYS.providers, ['google_meet', 'zoom']);
     const html = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
     expect(html).toContain('data-testid="meeting-platform-connect-google"');
