@@ -467,7 +467,7 @@ describe('the MISA AMIS push job: when it comes back', () => {
     expect(pushFollowUp({ ...job, round: PUSH_WAIT_ROUNDS }, done(true))).toBeNull();
   });
 
-  it('a run that came from a press asks once more a minute later even when nothing waits, so a press whose send was dropped is found; later rounds with nothing waiting stop', () => {
+  it('a run that came from a press asks once more a minute later even when nothing waits (a safety net: a press has a job of its own now); later rounds with nothing waiting stop', () => {
     const once = pushFollowUp(job, done(false));
     expect(once).toMatchObject({ startAfterSeconds: PUSH_PRESS_RECHECK_SECONDS, data: { round: 1 } });
     expect(pushFollowUp({ ...job, round: 1 }, done(false))).toBeNull();

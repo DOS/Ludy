@@ -518,8 +518,8 @@ suite('MISA AMIS push (#3902)', () => {
 
   it('a call the ledger already holds is never made again: rows queued under the key of a call begun or ended before fail as CALL_ENDED and nothing goes out (#4041)', async () => {
     // Two queued rows with params of their own (so a batch holds nothing else) and the oldest request in the queue (so begin takes them first; six days old, inside the week after which a queued row expires), whose
-    // last change is a fixed time: the key of the call names the rows, their attempt and that time, so putting them back in the queue with the same time, as a worker that died after the begin would leave them,
-    // asks for the same call.
+    // last change is a fixed time: the key of the call names the rows, their attempt and that time, so putting them back in the queue with the same time asks for the same call. The real flows do not reach these
+    // branches (a worker that died leaves `sending` rows, which become `ambiguous`, and a record sets `updated_at` to now, a new key): they are defensive, and the test reaches them by putting the time back.
     const FIXED = '2000-01-01T00:00:00.000Z';
     const REQUESTED = new Date(Date.now() - 6 * 24 * 3600 * 1000).toISOString();
     const queue = async (tag: string) => {
@@ -540,30 +540,30 @@ suite('MISA AMIS push (#3902)', () => {
       return refids.map((id) => now.find((r) => r.org_refid === id)).map((r) => ({ state: r?.state, reason: r?.reason }));
     };
 
-    // A call still `started`: the worker died after the begin. It is asked about, never made again.
+    // A call still `started`: it is asked about, never made again.
     const started = await queue('A');
-    const first = await begin({ branchKnown: true, checked: true });
-    if (first.action !== 'send') throw new Error(`expected a send, got ${first.action}`);
-    expect(first.rows.map((r) => r.orgRefid).sort()).toEqual(started);
+    const begunA = await begin({ branchKnown: true, checked: true });
+    if (begunA.action !== 'send') throw new Error(`expected a send, got ${begunA.action}`);
+    expect(begunA.rows.map((r) => r.orgRefid).sort()).toEqual(started);
     await requeue(started);
     expect(await begin({ branchKnown: true, checked: true })).toEqual({ action: 'none', reason: 'nothing', waiting: true });
     expect(await failedAsEnded(started)).toEqual([{ state: 'failed', reason: 'CALL_ENDED' }, { state: 'failed', reason: 'CALL_ENDED' }]);
-    expect(await ledgerOf(first.callKey)).toEqual({ state: 'started', calls: 2 });
+    expect(await ledgerOf(begunA.callKey)).toEqual({ state: 'started', calls: 2 });
 
     // A call that ended (the rows went back to the queue because nothing left Ludy): it never changes, and the same rows under the same key are not sent.
     const ended = await queue('B');
-    const second = await begin({ branchKnown: true, checked: true });
-    if (second.action !== 'send') throw new Error(`expected a send, got ${second.action}`);
-    expect(second.rows.map((r) => r.orgRefid).sort()).toEqual(ended);
+    const begunB = await begin({ branchKnown: true, checked: true });
+    if (begunB.action !== 'send') throw new Error(`expected a send, got ${begunB.action}`);
+    expect(begunB.rows.map((r) => r.orgRefid).sort()).toEqual(ended);
     await record({
-      rows: second.rows.map((r) => ({ orgRefid: r.orgRefid, attempts: r.attempts, from: 'sending', to: 'queued', reason: 'UNREACHABLE' })),
-      call: { key: second.callKey, end: { state: 'failed', kind: 'transient', code: 'UNREACHABLE' } },
+      rows: begunB.rows.map((r) => ({ orgRefid: r.orgRefid, attempts: r.attempts, from: 'sending', to: 'queued', reason: 'UNREACHABLE' })),
+      call: { key: begunB.callKey, end: { state: 'failed', kind: 'transient', code: 'UNREACHABLE' } },
     });
-    expect(await ledgerOf(second.callKey)).toEqual({ state: 'failed', calls: 1 });
+    expect(await ledgerOf(begunB.callKey)).toEqual({ state: 'failed', calls: 1 });
     await requeue(ended);
     expect(await begin({ branchKnown: true, checked: true })).toEqual({ action: 'none', reason: 'nothing', waiting: true });
     expect(await failedAsEnded(ended)).toEqual([{ state: 'failed', reason: 'CALL_ENDED' }, { state: 'failed', reason: 'CALL_ENDED' }]);
-    expect(await ledgerOf(second.callKey)).toEqual({ state: 'failed', calls: 1 });
+    expect(await ledgerOf(begunB.callKey)).toEqual({ state: 'failed', calls: 1 });
   });
 
   it('a connection is not removed while vouchers MISA took have no result; once they have, the removal takes the rows with it (the audit trail and the ledger keep the history)', async () => {
