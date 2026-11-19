@@ -118,6 +118,17 @@ describe('an old link to the single Settings page', () => {
     for (const tab of SETTINGS_TABS) expect(await lands(`/o/acme/${SETTINGS_TAB_PATH[tab]}`)).toBe(`/o/acme/${SETTINGS_TAB_PATH[tab]}`);
   });
 
+  // The preferences left the bell's screen for a card of the security tab (#3592); the daily brief mail's turn-off link, written by the kernel, still opens `notifications?todayMail=off`.
+  it('sends the daily brief mail link and the bell to where the preferences are', async () => {
+    session.modules = ['kernel'];
+    expect(await lands('/o/acme/notifications?todayMail=off')).toBe('/o/acme/settings/security?todayMail=off#notification-settings');
+    expect(await lands('/o/acme/notifications')).toBe('/o/acme/notifications');
+    // Only `off` is a link the mail writes: any other value stays on the bell's screen.
+    expect(await lands('/o/acme/notifications?todayMail=on')).toBe('/o/acme/notifications?todayMail=on');
+    expect(await lands('/o/acme/settings#notification-settings')).toBe('/o/acme/settings/security#notification-settings');
+    expect(CARD_TAB[SETTINGS_CARD.notifications]).toBe('security');
+  });
+
   it('opens the accounting, connections and sales tabs only where their apps run', async () => {
     session.modules = ['kernel', 'crm'];
     expect(await lands('/o/acme/settings/accounting')).toBe('/o/acme/overview');
@@ -146,6 +157,7 @@ describe('every link of the app to a card of Settings', () => {
     SALES_PROCESS_ID: SETTINGS_CARD.salesProcess,
     BOOKING_SETTINGS_ID: SETTINGS_CARD.bookingSettings,
     BOOKING_EVENT_TYPES_ID: SETTINGS_CARD.bookingEventTypes,
+    NOTIFICATION_SETTINGS_ID: SETTINGS_CARD.notifications,
   };
   const links = files(src)
     .filter((path) => !path.includes(`${join('routes', 'settings')}`))

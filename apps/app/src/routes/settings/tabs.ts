@@ -52,6 +52,7 @@ export const SETTINGS_CARD = {
   bookingEventTypes: 'booking-event-types',
   quoteSettings: 'quote-settings',
   salesProcess: 'sales-process',
+  notifications: 'notification-settings',
 } as const;
 
 export const CARD_TAB: Readonly<Record<string, SettingsTab>> = {
@@ -71,6 +72,7 @@ export const CARD_TAB: Readonly<Record<string, SettingsTab>> = {
   [SETTINGS_CARD.bookingEventTypes]: 'bookings',
   [SETTINGS_CARD.quoteSettings]: 'quotes',
   [SETTINGS_CARD.salesProcess]: 'sales',
+  [SETTINGS_CARD.notifications]: 'security',
 };
 
 // Where an old link to the single Settings page belongs now: the address `settings` with a card's #fragment (the booking cards, the quotes, the sales process, the members card, the integrations) or with

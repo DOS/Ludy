@@ -26,6 +26,7 @@ import { WorkingHoursCard } from '../working-hours.tsx';
 import { AddressField, ContactEmailField, ProposalRemindersField, RotateInboundAddress, TaxCalendarField, TaxCodeField, VatFilingPeriodField } from './fields.tsx';
 import { Anchor, SettingsFrame } from './frame.tsx';
 import { MembersCard } from './members-card.tsx';
+import { NotificationPreferences } from './notifications-card.tsx';
 import { Offboarding } from './offboarding.tsx';
 import { SETTINGS_CARD } from './tabs.ts';
 
@@ -236,7 +237,7 @@ export function SettingsConnectionsPage() {
   );
 }
 
-// Bảo mật tài khoản: the person's own second factor, devices and meeting platform connections; the team's extension devices for owners and admins.
+// Bảo mật tài khoản: the person's own second factor, devices, notification preferences (NT-1, #3592) and meeting platform connections; the team's extension devices for owners and admins.
 export function SettingsSecurityPage() {
   return (
     <SettingsFrame>
@@ -250,6 +251,8 @@ export function SettingsSecurityPage() {
               <MySessions userId={me.userId} />
             </Anchor>
           )}
+          {/* Which notices the member gets, and the daily brief by email (NT-1, #3592): theirs alone, moved from the bell's screen. */}
+          <NotificationPreferences />
           {/* The member's own meeting platform connections (C1, #3173): the recordings they hold are suggested on the Meetings tab. */}
           {modules.includes('meetings') && (
             <Anchor id={SETTINGS_CARD.meetingPlatforms}>

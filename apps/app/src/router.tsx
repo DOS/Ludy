@@ -40,7 +40,7 @@ import { OpeningBalancePage } from './routes/opening-balance.tsx';
 import { OrgLayout } from './routes/org-layout.tsx';
 import { ResetPasswordPage } from './routes/reset-password.tsx';
 import { SettingsAccountingPage, SettingsAppsPage, SettingsBookingsPage, SettingsConnectionsPage, SettingsDataPage, SettingsMembersPage, SettingsOrgPage, SettingsQuotesPage, SettingsSalesPage, SettingsSecurityPage } from './routes/settings/pages.tsx';
-import { legacySettingsTab, SETTINGS_TAB_TO } from './routes/settings/tabs.ts';
+import { legacySettingsTab, SETTINGS_CARD, SETTINGS_TAB_TO } from './routes/settings/tabs.ts';
 import { SocialPage } from './routes/social.tsx';
 import { SocialImportPage } from './routes/social-import.tsx';
 import { SocialSnippetsPage } from './routes/social-snippets.tsx';
@@ -606,6 +606,8 @@ const socialPlanPrintRoute = createRoute({
 // Settings is seven tabs, each its own screen (#3589); the first keeps the address `settings`. ?invite=<email> fills the invite form: onboarding sends a firm here to invite the new client's
 // contact (issue #324), and the form is on the members tab. An old link to a card of the single page (`settings#quote-settings`, `settings#integrations`...) goes to the tab that holds it, with its #fragment.
 const parseSettingsSearch = (search: Record<string, unknown>): { invite?: string } => (typeof search.invite === 'string' ? { invite: search.invite.slice(0, 320) } : {});
+// `?todayMail=off` on the notification preferences' tab shows the one-click turn-off of the daily brief (#2406).
+const parseTodayMailSearch = (search: Record<string, unknown>): { todayMail?: 'off' } => (search.todayMail === 'off' ? { todayMail: 'off' } : {});
 const settingsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: 'settings',
@@ -623,7 +625,7 @@ const settingsSalesRoute = createRoute({ getParentRoute: () => orgRoute, path: '
 const settingsQuotesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/quotes', component: SettingsQuotesPage });
 const settingsAccountingRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/accounting', component: SettingsAccountingPage });
 const settingsConnectionsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/connections', component: SettingsConnectionsPage });
-const settingsSecurityRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/security', component: SettingsSecurityPage });
+const settingsSecurityRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/security', validateSearch: parseTodayMailSearch, component: SettingsSecurityPage });
 const settingsDataRoute = createRoute({ getParentRoute: () => orgRoute, path: 'settings/data', component: SettingsDataPage });
 // The audit log (#672): owners and admins only, which the page checks and the server enforces.
 // ?targetType=&targetId= (and the other filters) open it filtered: a decided proposal links here (#1445).
@@ -631,7 +633,16 @@ const auditRoute = createRoute({ getParentRoute: () => orgRoute, path: 'audit', 
 const personalDataRoute = createRoute({ getParentRoute: () => orgRoute, path: 'personal-data', component: PersonalDataPage });
 // AI agents and tasks (ADR-0029) belong to the kernel, so every deployment has them.
 // In-app notifications of the kernel and finance (#671).
-const notificationsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'notifications', component: NotificationsPage });
+// The daily brief mail's turn-off link opens `notifications?todayMail=off` (the kernel writes it); the preferences are a card of Settings now (#3592), so that link goes there with its search.
+const notificationsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: 'notifications',
+  validateSearch: parseTodayMailSearch,
+  beforeLoad: ({ params, search }) => {
+    if (search.todayMail === 'off') throw redirect({ to: SETTINGS_TAB_TO.security, params: { slug: (params as { slug: string }).slug }, search: { todayMail: 'off' as const }, hash: SETTINGS_CARD.notifications, replace: true });
+  },
+  component: NotificationsPage,
+});
 const agentsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'agents', component: AgentsPage });
 // The AI use and budgets and the AI apps connected over MCP: screens of the Ludy AI app (#3225), moved off the org chart screen and Settings.
 const aiUsageRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ai-usage', component: AiUsagePage });
