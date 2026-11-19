@@ -3,6 +3,7 @@ import { financeOverdueReceivablesSignals } from './signals-overdue-receivables.
 import { financeSalesSignals } from './signals-sales.ts';
 export { MCP_LINES_PER_INVOICE, zMcpInvoicesInput } from './mcp.ts';
 export { zMcpOverviewInput } from './mcp-overview.ts';
+export { zMcpOpenBalancesInput } from './mcp-open-balances.ts';
 import { fixedAssetCommands, fixedAssetQueries } from './fixed-assets.ts';
 import { createAccount, setVendorDefaultAccount, updateAccount } from './accounts.ts';
 import { categorizationCommands, categorizationQueries } from './categorization.ts';
