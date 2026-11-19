@@ -26,6 +26,7 @@ import { briefCommands, briefQueries } from './brief.ts';
 import { digestCommands, digestQueries } from './digest.ts';
 import { todayQueries } from './today.ts';
 import { assigneeCommands, assigneeQueries } from './assignee.ts';
+import { adherenceCommands, adherenceQueries } from './adherence.ts';
 import { agendaCommands, agendaQueries } from './agenda.ts';
 import { chatCommands, chatQueries } from './chat.ts';
 import { linkCommands, linkQueries } from './links.ts';
@@ -1025,6 +1026,7 @@ export const meetingsCommands = [
   ...briefCommands,
   ...digestCommands,
   ...assigneeCommands,
+  ...adherenceCommands,
   ...agendaCommands,
   ...chatCommands,
   ...linkCommands,
@@ -1066,6 +1068,7 @@ export const meetingsQueries = [
   ...digestQueries,
   ...todayQueries,
   ...assigneeQueries,
+  ...adherenceQueries,
   ...agendaQueries,
   ...chatQueries,
   ...linkQueries,

@@ -14,6 +14,7 @@ import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { MeetingLinks } from '../components/meeting-links.tsx';
 import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingLive } from '../components/meeting-live.tsx';
+import { MeetingAdherence } from '../components/meeting-adherence.tsx';
 import { MeetingBrief } from '../components/meeting-brief.tsx';
 import { MeetingSeries } from '../components/meeting-series.tsx';
 import { MeetingTitleSuggest } from '../components/meeting-title.tsx';
@@ -355,6 +356,8 @@ export function MeetingDetailPage() {
       {/* The chapters (#3844): the published table of contents for every reader, the recorder's own draft editor; a click takes the transcript below to the line */}
       <MeetingChapters key={id} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       <MeetingTranscript meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} />
+      {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}
+      <MeetingAdherence key={id} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}
       {/* What to bring to the next meeting of a series (#3543): the previous meeting's decisions, the open items, the linked customer's open deals, and Vy's few sentences on a click */}
       <MeetingBrief slug={slug} meetingId={id} />
