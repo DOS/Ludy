@@ -10,7 +10,7 @@ import { cn } from '@crove/ui/lib/utils';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { groupNotifications, isKnownKind, NOTIFICATION_LIST_LIMIT, notificationTarget, periodParts, unreadIdChunks, type GroupableKind, type NotificationTarget } from '../lib/notifications.ts';
+import { groupNotifications, groupSubjectCount, isKnownKind, NOTIFICATION_LIST_LIMIT, notificationTarget, periodParts, unreadIdChunks, type GroupableKind, type NotificationTarget } from '../lib/notifications.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { SETTINGS_CARD } from './settings/tabs.ts';
 
@@ -169,7 +169,7 @@ export function NotificationsPage() {
                 <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', 'bg-primary')} aria-hidden />
                 <span className="min-w-0 flex-1 space-y-0.5">
                   <span className={cn('block text-sm', 'font-medium text-foreground')}>
-                    {t(`group.${row.kind.replace('kernel.', '') as 'approval_waiting'}`, { count: row.items.length, more: capped && row === rows[rows.length - 1] ? 'yes' : 'no' })}
+                    {t(`group.${row.kind.replace('kernel.', '') as 'approval_waiting'}`, { count: groupSubjectCount(row.items), more: capped && row === rows[rows.length - 1] ? 'yes' : 'no' })}
                     <span className="sr-only"> ({t('unread')})</span>
                   </span>
                   <span className="block text-xs text-subtle-foreground">{f.dateTime(row.items[0]!.createdAt)}</span>

@@ -130,6 +130,12 @@ export function groupNotifications<T extends { kind: string; read: boolean }>(it
   return rows;
 }
 
+// How many things a group stands for: a file that failed to read in two versions, or a task given to me twice, is two notices of one thing, so the count is of subjects (a notice without
+// one counts for itself).
+export function groupSubjectCount(items: readonly { id: string; subjectId: string | null }[]): number {
+  return new Set(items.map((n) => n.subjectId ?? n.id)).size;
+}
+
 // The ids of a group's unread items, in chunks the read command takes (100 at most).
 export function unreadIdChunks(items: readonly { id: string; read: boolean }[], size = 100): string[][] {
   const ids = items.filter((n) => !n.read).map((n) => n.id);

@@ -40,7 +40,7 @@ export function NotificationPreferences() {
             <h2 className="text-sm font-medium text-foreground">{t('prefsTitle')}</h2>
             <p className="text-xs text-subtle-foreground">{t('settingsHint')}</p>
           </div>
-          <fieldset className="space-y-2" disabled={list.isPending || list.isError}>
+          <fieldset className="space-y-2" disabled={!list.data}>
             <legend className="mb-2 text-sm text-muted-foreground">{t('settings')}</legend>
             <div className="grid gap-2 sm:grid-cols-2">
               {kinds.map((kind) => {

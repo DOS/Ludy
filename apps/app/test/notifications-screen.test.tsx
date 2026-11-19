@@ -129,6 +129,11 @@ describe('a run of the same kind is one row', () => {
     expect(html.match(/Waiting for your approval: /g)).toHaveLength(4);
   });
 
+  it('counts files, not notices: one file that failed twice is one file', () => {
+    const twice = ['a', 'b'].map((n) => ({ id: `00000000-0000-4000-c000-00000000000${n === 'a' ? 1 : 2}`, kind: 'kernel.file_unreadable', subjectId: '00000000-0000-4000-d000-000000000001', detail: { filename: 'hd.pdf' }, read: false, createdAt: '2026-11-18T08:00:00.000Z' }));
+    expect(page({ items: twice })).toContain('1 file could not be read');
+  });
+
   it('shows no group for read notices', () => {
     const html = page({ items: approvals(3, true) });
     expect(html).not.toContain('notification-group');

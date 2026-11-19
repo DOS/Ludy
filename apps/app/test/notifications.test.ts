@@ -1,7 +1,7 @@
 // The kernel's and finance's in-app notifications in the app (#671): the kinds the settings list, what an item opens
 // and how a VAT period reads.
 import { describe, expect, it } from 'vitest';
-import { GROUPABLE_KINDS, groupNotifications, isKnownKind, kindKey, notificationKinds, notificationTarget, periodParts, unreadIdChunks } from '../src/lib/notifications.ts';
+import { GROUPABLE_KINDS, groupNotifications, groupSubjectCount, isKnownKind, kindKey, notificationKinds, notificationTarget, periodParts, unreadIdChunks } from '../src/lib/notifications.ts';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';
 
@@ -104,6 +104,10 @@ describe('groupNotifications', () => {
       expect(vi.notifications.group[key], kind).toBeTruthy();
       expect(en.notifications.group[key], kind).toBeTruthy();
     }
+  });
+
+  it('counts the things a group stands for, not the notices: one file read twice is one file', () => {
+    expect(groupSubjectCount([{ id: 'a', subjectId: 'f1' }, { id: 'b', subjectId: 'f1' }, { id: 'c', subjectId: 'f2' }, { id: 'd', subjectId: null }, { id: 'e', subjectId: null }])).toBe(4);
   });
 
   it('chunks the unread ids for the read command, which takes 100 at a time', () => {
