@@ -517,7 +517,7 @@ function S2eBook({ entityId }: { entityId: string }) {
   const data = book.data;
   const provisional = data?.commentary ? (
     <span className="block text-xs text-muted-foreground" data-testid="household-s2e-provisional">
-      {t('cnkdProvisional')}
+      {t('layoutProvisional')}
     </span>
   ) : null;
   return (
@@ -646,6 +646,141 @@ function S2eBook({ entityId }: { entityId: string }) {
             <dt className="font-medium text-foreground">{t('s2eAllAccounts')}: {t('s2eClosing')}</dt>
             <dd className="text-right font-medium tabular-nums" data-testid="household-s2e-total-closing">
               {f.money(data.totals.closing)}
+              {provisional}
+            </dd>
+          </dl>
+        </>
+      )}
+    </Card>
+  );
+}
+
+// S2d-HKD (#2517 slice 2d), the goods book of a household that pays PIT on income: per item the quantity and value in, out and on hand for ONE month, read from the stock data of #2513 (the same figures as the Nhập xuất
+// tồn report). A month that is not closed says the cost is provisional; while the layout row is unconfirmed (#2520) the figures and the Excel file carry "Số liệu tạm, kế toán chưa xác nhận tỷ lệ". Ludy files nothing.
+function S2dBook({ entityId }: { entityId: string }) {
+  const t = useTranslations('household');
+  const ts = useTranslations('stock');
+  const f = useFormat();
+  const [month, setMonth] = useState(vietnamToday().slice(0, 7));
+  const valid = /^20\d{2}-(0[1-9]|1[0-2])$/.test(month);
+  const book = useQuery({ ...orpc.household.s2d.queryOptions({ input: { legalEntityId: entityId, month } }), enabled: valid, retry: false });
+  const download = useMutation({
+    mutationFn: async () => {
+      const response = await apiFetch(`/api/export/household-s2d.xlsx?legalEntityId=${encodeURIComponent(entityId)}&month=${encodeURIComponent(month)}`);
+      const url = URL.createObjectURL(await response.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = t('s2dFile', { month, org: getCurrentOrg() ?? 'org' });
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+  });
+  const data = book.data;
+  const provisional = data?.commentary ? (
+    <span className="block text-xs text-muted-foreground" data-testid="household-s2d-provisional">
+      {t('layoutProvisional')}
+    </span>
+  ) : null;
+  return (
+    <Card className="mb-6 block p-4" data-testid="household-s2d">
+      <h2 className="text-sm font-semibold text-foreground">{t('s2dTitle')}</h2>
+      <p className="mb-3 text-sm text-muted-foreground">{t('s2dHint')}</p>
+      <div className="mb-3 flex flex-wrap items-end gap-3">
+        <div className="space-y-1">
+          <Label htmlFor="s2d-month">{t('kinds.month')}</Label>
+          <DateInput id="s2d-month" kind="month" className="w-44" value={month} onChange={setMonth} />
+        </div>
+        <Button variant="outline" loading={download.isPending} disabled={!data} onClick={() => download.mutate()} data-testid="household-s2d-download">
+          {t('download')}
+        </Button>
+      </div>
+      {book.isLoading && valid && <CardSkeleton />}
+      {book.error && <ErrorText>{errorMessage(book.error)}</ErrorText>}
+      {download.error && <ErrorText>{errorMessage(download.error)}</ErrorText>}
+      {data && (
+        <>
+          <Alert className="mb-3" data-testid="household-s2d-notice">
+            <AlertDescription>{t('s2dNotice')}</AlertDescription>
+          </Alert>
+          {!data.monthClosed && (
+            <Alert className="mb-3" data-testid="household-s2d-open">
+              <AlertDescription>{t('s2dOpen')}</AlertDescription>
+            </Alert>
+          )}
+          {data.commentary && (
+            <Alert className="mb-3" data-testid="household-s2d-draft">
+              <AlertDescription>
+                {t('s2dDraft')}
+                <ul className="mt-1 list-disc pl-5">
+                  {data.unconfirmed.map((u) => (
+                    <li key={`${u.kind}-${u.key}`}>{t('cnkdUnconfirmedForm', { key: u.key, date: f.date(u.effectiveFrom) })}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+          {data.items.map((item) => (
+            <div key={item.itemId} className="mb-4" data-testid={`household-s2d-item-${item.code}`}>
+              <h3 className="mb-1 text-sm font-semibold text-foreground">{`${item.code} - ${item.name} (${item.unit})`}</h3>
+              <DataTable numeric={[3, 4, 5, 6]} head={[t('columns.date'), t('columns.reference'), t('columns.description'), t('s2dColumns.in'), t('s2dColumns.out'), t('s2dColumns.valueIn'), t('s2dColumns.balance')]}>
+                <TableRow>
+                  <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={2}>
+                    {t('s2dOpening')}
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-muted-foreground" colSpan={4}>
+                    {t('s2dOpeningValue', { value: f.money(item.openingValue) })}
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-right tabular-nums">{item.openingQuantity}</TableCell>
+                </TableRow>
+                {item.rows.map((r) => (
+                  <TableRow key={r.moveId}>
+                    <TableCell className="px-4 py-3 text-muted-foreground">{f.date(r.date)}</TableCell>
+                    <TableCell className="px-4 py-3 font-mono text-xs">{r.reference ?? ''}</TableCell>
+                    <TableCell className="px-4 py-3 text-foreground">{ts(`sources.${r.source}`)}</TableCell>
+                    <TableCell className="px-4 py-3 text-right tabular-nums">{r.quantityIn}</TableCell>
+                    <TableCell className="px-4 py-3 text-right tabular-nums">{r.quantityOut}</TableCell>
+                    <TableCell className="px-4 py-3 text-right tabular-nums">{r.valueIn === null ? '' : f.money(r.valueIn)}</TableCell>
+                    <TableCell className="px-4 py-3 text-right tabular-nums">{r.balanceQuantity}</TableCell>
+                  </TableRow>
+                ))}
+                <TableRow>
+                  <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={2}>
+                    {t('s2dMonthTotals')}
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-muted-foreground" colSpan={4}>
+                    {t('s2dTotalsLine', {
+                      inQuantity: item.inQuantity,
+                      inValue: f.money(item.inValue),
+                      outQuantity: item.outQuantity,
+                      outValue: f.money(item.outValue),
+                      unitCost: item.unitCost === null ? '' : f.money(item.unitCost),
+                    })}
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-right font-medium tabular-nums">{item.closingQuantity}</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="px-4 py-3 font-medium text-foreground" colSpan={6}>
+                    {t('s2dClosing')}
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-right font-medium tabular-nums" data-testid={`household-s2d-closing-${item.code}`}>
+                    {f.money(item.closingValue)}
+                    {provisional}
+                  </TableCell>
+                </TableRow>
+              </DataTable>
+            </div>
+          ))}
+          {data.items.length === 0 && <p className="mt-2 text-sm text-muted-foreground">{t('s2dNoItems')}</p>}
+          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm" data-testid="household-s2d-totals">
+            <dt className="text-subtle-foreground">{t('s2dTotalOpening')}</dt>
+            <dd className="text-right tabular-nums">{f.money(data.totals.openingValue)}</dd>
+            <dt className="text-subtle-foreground">{t('s2dTotalIn')}</dt>
+            <dd className="text-right tabular-nums">{f.money(data.totals.inValue)}</dd>
+            <dt className="text-subtle-foreground">{t('s2dTotalOut')}</dt>
+            <dd className="text-right tabular-nums">{f.money(data.totals.outValue)}</dd>
+            <dt className="font-medium text-foreground">{t('s2dTotalClosing')}</dt>
+            <dd className="text-right font-medium tabular-nums" data-testid="household-s2d-total-closing">
+              {f.money(data.totals.closingValue)}
               {provisional}
             </dd>
           </dl>
@@ -1161,7 +1296,7 @@ function ProfileCard({ entityId, canEdit }: { entityId: string; canEdit: boolean
             {view.data.books.map((b) => (
               <li key={b.book}>
                 {b.name}
-                {b.book !== 'S1a' && b.book !== 'S2a' && b.book !== 'S2b' && b.book !== 'S2c' && b.book !== 'S2e' && <span className="text-subtle-foreground"> {t('comingSoon')}</span>}
+                {b.book !== 'S1a' && b.book !== 'S2a' && b.book !== 'S2b' && b.book !== 'S2c' && b.book !== 'S2d' && b.book !== 'S2e' && <span className="text-subtle-foreground"> {t('comingSoon')}</span>}
               </li>
             ))}
           </ul>
@@ -1190,6 +1325,7 @@ export function HouseholdPage() {
   const hasS2a = view.data?.books.some((b) => b.book === 'S2a') ?? false;
   const hasS2b = view.data?.books.some((b) => b.book === 'S2b') ?? false;
   const hasS2c = view.data?.books.some((b) => b.book === 'S2c') ?? false;
+  const hasS2d = view.data?.books.some((b) => b.book === 'S2d') ?? false;
   const hasS2e = view.data?.books.some((b) => b.book === 'S2e') ?? false;
   // The quarterly worksheet is for the percentage method alone today (the income method and group 1 have no quarterly worksheet here).
   const cnkdTrades = view.data?.profile?.pitMethod === 'percentage' ? view.data.profile.trades : null;
@@ -1221,6 +1357,7 @@ export function HouseholdPage() {
           {hasS2a && <S2aBook key={entity.id} entityId={entity.id} />}
           {hasS2b && <S2aBook key={`${entity.id}-s2b`} entityId={entity.id} variant="S2b" />}
           {hasS2c && <S2cBook key={entity.id} entityId={entity.id} />}
+          {hasS2d && <S2dBook key={`${entity.id}-s2d`} entityId={entity.id} />}
           {hasS2e && <S2eBook key={`${entity.id}-s2e`} entityId={entity.id} />}
           {cnkdTrades && <CnkdReturn key={entity.id} entityId={entity.id} trades={cnkdTrades} />}
         </>
