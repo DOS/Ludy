@@ -1023,7 +1023,8 @@ suite('finding a person in the org (#923)', () => {
 
     // The finder reports the column, with what an erasure does to it.
     const found = await find(email);
-    expect(found.matches.filter((m) => m.column === 'crove_finance.misa_amis_push.reason')).toHaveLength(2);
+    // The finder lists the text in every state: the two refused rows and the queued one (an erasure clears only the refused ones).
+    expect(found.matches.filter((m) => m.column === 'crove_finance.misa_amis_push.reason')).toHaveLength(3);
     expect(found.matches.find((m) => m.column === 'crove_finance.misa_amis_push.reason')).toMatchObject({ handling: 'erase' });
 
     // A short number is listed, not cleared.
