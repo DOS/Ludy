@@ -1,9 +1,9 @@
-// Tasks (ADR-0029, issue #258): work given to positions of the chart, held by members or AI agents. Every member
+// Team tasks (ADR-0029, issue #258): work given to positions of the chart, held by members or AI agents. Every member
 // reads them; owners, admins and members give work, comment and change status. A task made from untrusted content
 // (an email, a run that read one) is marked, so nobody acts on it unchecked.
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { PROJECT_TASK_MAP_LIMIT, type FilterAst, type SavedViewSort } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -29,6 +29,7 @@ import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, c
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isModuleOff } from '../lib/errors.ts';
 import { filterTasksByProject, projectsInstalled, taskProjectMap, taskProjectOptions } from '../lib/projects.ts';
+import { myWorkShortcut, stepSelection } from '../lib/my-work.ts';
 import { withSearch } from '../lib/search.ts';
 import { EMPTY_TASK_FILTER, astToTaskFilter, taskFilterToAst, type TaskFilterState } from '../lib/task-filter.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
@@ -122,6 +123,31 @@ export function TasksPage() {
     [projectsActive, tasks.data, projectByTask, projectFilter],
   );
 
+  // The keys of My work work here too (DESIGN.md 5.2): N a new task, J and K the next and previous row, E edit the selected one. They do nothing
+  // while a field, the filter popover or the panel has the keyboard, and the hint at the foot of the list says so.
+  const [selected, setSelected] = useState<string | null>(null);
+  const order = useMemo(() => visibleTasks.map((task) => task.id), [visibleTasks]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const action = panel === null ? myWorkShortcut(event) : null;
+      if (!action) return;
+      if (action === 'new' && perms.tasks) {
+        event.preventDefault();
+        setPanel({ kind: 'new' });
+      } else if (action === 'next' || action === 'previous') {
+        event.preventDefault();
+        const id = stepSelection(order, selected, action === 'next' ? 1 : -1);
+        setSelected(id);
+        if (id) document.querySelector(`[data-task-id="${id}"]`)?.scrollIntoView({ block: 'nearest' });
+      } else if (action === 'edit' && perms.tasks && selected && order.includes(selected)) {
+        event.preventDefault();
+        setPanel({ kind: 'edit', id: selected });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [panel, perms.tasks, order, selected]);
+
   return (
     <div>
       <PageHeader
@@ -173,6 +199,7 @@ export function TasksPage() {
       <div className="mb-3 space-y-2">
         <ViewTabs scope="kernel.task" filters={filters} sort={sort} onApply={applyView} />
         <TaskFilterBar
+          popover
           idPrefix="tasks-filter"
           bar={bar}
           setBar={setBar}
@@ -226,7 +253,7 @@ export function TasksPage() {
             {visibleTasks.map((task) => {
               const project = projectsActive ? projectByTask.get(task.id) : undefined;
               return (
-                <TableRow key={task.id} data-testid="task-row">
+                <TableRow key={task.id} data-testid="task-row" data-task-id={task.id} data-selected={selected === task.id ? 'true' : undefined} className={selected === task.id ? 'bg-muted/60' : undefined}>
                   <TableCell className="px-4">
                     <Link to="/o/$slug/tasks/$id" params={{ slug, id: task.id }} className="font-medium text-link hover:underline">
                       {task.title}
@@ -283,6 +310,9 @@ export function TasksPage() {
           </DataTable>
         </>
       )}
+      <p className="mt-4 text-xs text-subtle-foreground" data-testid="tasks-shortcuts">
+        {t(perms.tasks ? 'shortcuts' : 'shortcutsReadOnly')}
+      </p>
     </div>
   );
 }
