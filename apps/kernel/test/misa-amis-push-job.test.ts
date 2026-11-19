@@ -526,8 +526,10 @@ describe('the MISA AMIS push job: when a chain gives up it says so, and a row on
   it('keeps a `sending` row for longer than a call can take: the begin step does not flip a row whose save or token renewal is still inside the transport deadline', () => {
     const transport = readFileSync(fileURLToPath(new URL('../src/misa-amis-transport.ts', import.meta.url)), 'utf8');
     const deadlineSeconds = Number(/const TIMEOUT_MS = (\d[\d_]*);/.exec(transport)?.[1]?.replaceAll('_', '')) / 1000;
-    expect(deadlineSeconds).toBeGreaterThan(0);
-    // At worst: a save, a token request and a second save (the one renewal of an expired token), each at the deadline, then the rebuild of the batch and the record, given two minutes.
-    expect(PUSH_IN_FLIGHT_SECONDS).toBeGreaterThanOrEqual(3 * deadlineSeconds + 120);
+    // A reformat of the constant in the transport that this pattern cannot read fails here: update the pattern, not the window.
+    expect(deadlineSeconds, 'the transport\'s `const TIMEOUT_MS = ...;` could not be read').toBeGreaterThan(0);
+    // At worst four requests (a token request, a save refused for its token, a second token request and a second save: the one renewal of an expired token), each at the deadline, then the rebuild of the batch
+    // and the record, given two minutes.
+    expect(PUSH_IN_FLIGHT_SECONDS).toBeGreaterThanOrEqual(4 * deadlineSeconds + 120);
   });
 });
