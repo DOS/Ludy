@@ -19,11 +19,13 @@ import { OWNER_RUN_EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries,
 import type { HrDeclarationDocument, HrPayslip, HrRunSheet, HrRunSummary, HrRunWritten, HrWritten } from '@crove/kernel-contract';
 import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, sha256Hex, type BlobStore, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
 import { calculatePayroll, PAYROLL_RULES } from '@crove/l10n-vn';
-import { hrCommands, hrQueries } from '@crove/mod-hr';
+import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { createHttpApp } from '../src/http.ts';
+import { orgPurgeCommand } from '../src/org-purge.ts';
+import { contextToken } from './invariant/fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 // A blob store in memory, for the HTTP app of the org export tests.
@@ -182,7 +184,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
         readAuditKey: randomBytes(32),
       }).register({ commands: [...kernelCommands, ...hrCommands, TOUCH_LINE], queries: [...kernelQueries({ inboundDomain: null }), ...hrQueries, PEEK] });
     rt = register(pool);
-    workerRt = register(workerPool);
+    workerRt = register(workerPool).register({ commands: [orgPurgeCommand({ store: new MemoryStore() })] });
   }, 120_000);
 
   afterAll(async () => {
@@ -875,7 +877,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
           [o.orgId],
         );
         await c.query(
-          `INSERT INTO crove_hr.payroll_line SELECT (jsonb_populate_record(NULL::crove_hr.payroll_line, to_jsonb(l) || jsonb_build_object('id', gen_random_uuid(), 'employee_id', m.new_id))).* FROM (SELECT l.* FROM crove_hr.payroll_line l JOIN crove_hr.payroll_run r ON r.org_id = l.org_id AND r.id = l.run_id WHERE l.org_id = $1 AND r.month = '2026-07' LIMIT 1) l, copies m`,
+          `INSERT INTO crove_hr.payroll_line SELECT (jsonb_populate_record(NULL::crove_hr.payroll_line, to_jsonb(l) || jsonb_build_object('id', gen_random_uuid(), 'employee_id', m.new_id, 'employment_id', NULL))).* FROM (SELECT l.* FROM crove_hr.payroll_line l JOIN crove_hr.payroll_run r ON r.org_id = l.org_id AND r.id = l.run_id WHERE l.org_id = $1 AND r.month = '2026-07' LIMIT 1) l, copies m`,
           [o.orgId],
         );
       } finally {
@@ -1000,5 +1002,318 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect((await get('hr.payroll_employee', other.owner, closing.slug)).status).toBe(403);
     // A key of Object.prototype is not an owner-run table: it takes the stored-export path and finds no export.
     expect((await get('constructor', closing.owner, closing.slug)).status).toBe(404);
+  });
+
+  async function waitForLockWait(pid: number, timeoutMs = 5_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const waiting = await withAdmin(
+        async (c) => (await c.query<{ wait_event_type: string | null }>('SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1', [pid])).rows[0]?.wait_event_type,
+      );
+      if (waiting === 'Lock') return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`backend pid ${pid} did not enter Lock wait within ${timeoutMs}ms`);
+  }
+
+  it('(#2720 H4) blocks a concurrent raw line INSERT, UPDATE or DELETE on FOR SHARE behind an approval and refuses it once the approval commits', async () => {
+    setRuleStatus('commentary');
+    const o = await org();
+    await o.team();
+    const extraEmp = (await o.hire({ displayName: 'Lê Thêm Canary', employment: { effectiveFrom: '2026-12-01', contractType: 'indefinite', region: 'I', baseWage: '10000000' } })).employeeId as string;
+    const extraEmployment = await withAdmin(
+      async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_hr.payroll_employment WHERE org_id = $1 AND employee_id = $2', [o.orgId, extraEmp])).rows[0]?.id as string,
+    );
+
+    const runCases: ReadonlyArray<{
+      month: string;
+      attempt: (writer: pg.Client, runId: string, lineId: string) => Promise<unknown>;
+    }> = [
+      {
+        month: '2026-01',
+        attempt: (writer, _runId, lineId) =>
+          writer.query('UPDATE crove_hr.payroll_line SET updated_at = now() WHERE org_id = $1 AND id = $2', [o.orgId, lineId]),
+      },
+      {
+        month: '2026-02',
+        attempt: (writer, runId) =>
+          writer.query(
+            `INSERT INTO crove_hr.payroll_line (org_id, run_id, employee_id, employment_id, kind, status, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost)
+             VALUES ($1, $2, $3, $4, 'pay', 'calculated', 10000000, 1050000, 2150000, 200000, 10000000, 0, 8950000, 12350000)`,
+            [o.orgId, runId, extraEmp, extraEmployment],
+          ),
+      },
+      {
+        month: '2026-03',
+        attempt: (writer, _runId, lineId) =>
+          writer.query('DELETE FROM crove_hr.payroll_line WHERE org_id = $1 AND id = $2', [o.orgId, lineId]),
+      },
+    ];
+
+    const approver = new pg.Client({ connectionString: appUrl });
+    const writer = new pg.Client({ connectionString: appUrl });
+    await Promise.all([approver.connect(), writer.connect()]);
+    try {
+      const writerPid = (await writer.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid as number;
+      for (const { month, attempt } of runCases) {
+        const opened = await o.open(month);
+        const s = await o.sheet(opened.runId);
+        const lineId = (s.lines[0] as HrRunSheet['lines'][number]).id;
+
+        await approver.query('BEGIN');
+        await approver.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+        await approver.query(
+          `UPDATE crove_hr.payroll_run
+              SET status = 'approved', approved_by = $2, approved_at = now(), approval = '{}'::jsonb, updated_at = now()
+            WHERE org_id = $1 AND id = $3`,
+          [o.orgId, o.owner, opened.runId],
+        );
+
+        await writer.query('BEGIN');
+        await writer.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+        let settled = false;
+        const pending = attempt(writer, opened.runId, lineId).finally(() => {
+          settled = true;
+        });
+        pending.catch(() => {});
+
+        await waitForLockWait(writerPid);
+        expect(settled, `${month} raw line write must block behind uncommitted approval`).toBe(false);
+
+        await approver.query('COMMIT');
+        await expect(pending, `${month} raw line write must be refused after approval commits`).rejects.toMatchObject({
+          code: '42501',
+          message: expect.stringMatching(/frozen once approved/),
+        });
+        expect(settled).toBe(true);
+        await writer.query('ROLLBACK');
+      }
+    } finally {
+      await Promise.all([approver, writer].map((c) => c.query('ROLLBACK').catch(() => {})));
+      await Promise.all([approver.end(), writer.end()]);
+    }
+  });
+
+  it('(#2720 H5a, H5b) classifies payroll_line.note as sensitive and binds payroll_line FKs to the employee and legal entity', async () => {
+    expect(hrManifest.tables.crove_hr.payroll_line.note).toBe('sensitive');
+
+    setRuleStatus('confirmed');
+    try {
+      const o = await org();
+      const [emp1, emp2] = await o.team();
+      const empUnpaid = (await o.hire({ displayName: 'Trần Chưa Chạy Canary', employment: { effectiveFrom: '2026-12-01', contractType: 'indefinite', region: 'I', baseWage: '11000000' } })).employeeId as string;
+      const employments = await withAdmin(
+        async (c) =>
+          (await c.query<{ employee_id: string; id: string }>('SELECT employee_id, id FROM crove_hr.payroll_employment WHERE org_id = $1', [o.orgId])).rows,
+      );
+      const empOf = (employeeId: string) => employments.find((e) => e.employee_id === employeeId)?.id as string;
+
+      const oct = await o.open(PREVIOUS);
+      await o.approve(oct.runId, (await o.sheet(oct.runId)).fingerprint);
+
+      const branch = await withAdmin(
+        async (c) =>
+          (
+            await c.query<{ id: string }>(
+              `INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh H5b', 'branch', $2) RETURNING id`,
+              [o.orgId, o.owner],
+            )
+          ).rows[0]?.id as string,
+      );
+      await o.hire({ legalEntityId: branch, displayName: 'Nhân viên Chi nhánh', employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: '10000000' } });
+      const branchOct = await o.open(PREVIOUS, { legalEntityId: branch });
+      await o.approve(branchOct.runId, (await o.sheet(branchOct.runId)).fingerprint);
+
+      const nov = await o.open(MONTH);
+      const novSheet = await o.sheet(nov.runId);
+      const emp1Line = novSheet.lines.find((l) => l.employeeId === emp1) as HrRunSheet['lines'][number];
+
+      const client = new pg.Client({ connectionString: appUrl });
+      await client.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+
+        // H5b (employment): assigning another employee's employment_id on UPDATE or INSERT is refused with 23503.
+        await client.query('SAVEPOINT s1');
+        await expect(
+          client.query('UPDATE crove_hr.payroll_line SET employment_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, emp1Line.id, empOf(emp2 as string)]),
+        ).rejects.toMatchObject({ code: '23503', constraint: 'payroll_line_employment_fk' });
+        await client.query('ROLLBACK TO SAVEPOINT s1');
+
+        await client.query('SAVEPOINT s2');
+        await expect(
+          client.query(
+            `INSERT INTO crove_hr.payroll_line (org_id, run_id, employee_id, employment_id, kind, status, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost)
+             VALUES ($1, $2, $3, $4, 'pay', 'calculated', 11000000, 1155000, 2365000, 220000, 11000000, 0, 9845000, 13585000)`,
+            [o.orgId, nov.runId, empUnpaid, empOf(emp1 as string)],
+          ),
+        ).rejects.toMatchObject({ code: '23503', constraint: 'payroll_line_employment_fk' });
+        await client.query('ROLLBACK TO SAVEPOINT s2');
+
+        // H5b (adjusted run): referencing an approved run of another legal entity in the same org is refused with 23503.
+        await client.query('SAVEPOINT s3');
+        await expect(
+          client.query(
+            `INSERT INTO crove_hr.payroll_line (org_id, run_id, employee_id, employment_id, kind, status, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost, adjusts_run_id, note)
+             VALUES ($1, $2, $3, $4, 'adjustment', 'calculated', 500000, 0, 0, 0, 500000, 25000, 475000, 500000, $5, 'Sai pháp nhân')`,
+            [o.orgId, nov.runId, emp1, empOf(emp1 as string), branchOct.runId],
+          ),
+        ).rejects.toMatchObject({ code: '23503', constraint: 'payroll_line_adjusts_fk' });
+        await client.query('ROLLBACK TO SAVEPOINT s3');
+
+        // Controls: NULL employment_id, the employee's own employment_id, and an adjusted run of the same entity all succeed.
+        await expect(
+          client.query(
+            `INSERT INTO crove_hr.payroll_line (org_id, run_id, employee_id, employment_id, kind, status, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost)
+             VALUES ($1, $2, $3, NULL, 'pay', 'calculated', 11000000, 1155000, 2365000, 220000, 11000000, 0, 9845000, 13585000)`,
+            [o.orgId, nov.runId, empUnpaid],
+          ),
+        ).resolves.toMatchObject({ rowCount: 1 });
+        await expect(
+          client.query(
+            `INSERT INTO crove_hr.payroll_line (org_id, run_id, employee_id, employment_id, kind, status, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost, adjusts_run_id, note)
+             VALUES ($1, $2, $3, $4, 'adjustment', 'calculated', 500000, 0, 0, 0, 500000, 25000, 475000, 500000, $5, 'Cùng pháp nhân')`,
+            [o.orgId, nov.runId, emp1, empOf(emp1 as string), oct.runId],
+          ),
+        ).resolves.toMatchObject({ rowCount: 1 });
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        await client.end();
+      }
+    } finally {
+      setRuleStatus('commentary');
+    }
+  });
+
+  it('(#2720 N1) refuses DELETE of kind = adjustment lines on a draft run unless org_purge is running', async () => {
+    setRuleStatus('confirmed');
+    try {
+      const o = await org();
+      const [emp1] = await o.team();
+      const oct = await o.open(PREVIOUS);
+      await o.approve(oct.runId, (await o.sheet(oct.runId)).fingerprint);
+      const nov = await o.open(MONTH);
+      const adjusted = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.line.adjust', {
+        runId: nov.runId,
+        adjustsRunId: oct.runId,
+        employeeId: emp1,
+        note: 'Bù phụ cấp tháng 10',
+        gross: '300000',
+        pit: '0',
+      });
+      const novSheet = await o.sheet(nov.runId);
+      const payLine = novSheet.lines.find((l) => l.kind === 'pay') as HrRunSheet['lines'][number];
+
+      const client = new pg.Client({ connectionString: appUrl });
+      await client.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+        await client.query('SAVEPOINT before_adj_del');
+        await expect(
+          client.query('DELETE FROM crove_hr.payroll_line WHERE org_id = $1 AND id = $2', [o.orgId, adjusted.lineId]),
+        ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/adjustment line .* cannot be deleted/) });
+        await client.query('ROLLBACK TO SAVEPOINT before_adj_del');
+
+        // Deleting a draft pay line still succeeds, as runRecalculate requires.
+        const deletedPay = await client.query('DELETE FROM crove_hr.payroll_line WHERE org_id = $1 AND id = $2', [o.orgId, payLine.id]);
+        expect(deletedPay.rowCount).toBe(1);
+        await client.query('COMMIT');
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        await client.end();
+      }
+
+      // Even the table owner cannot delete an adjustment line outside org_purge.
+      await expect(
+        withAdmin((c) => c.query('DELETE FROM crove_hr.payroll_line WHERE org_id = $1 AND id = $2', [o.orgId, adjusted.lineId])),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/adjustment line .* cannot be deleted/) });
+
+      // Closing and purging the org deletes both runs and the adjustment line cleanly.
+      await withAdmin(async (c) => {
+        await c.query('BEGIN');
+        await c.query('SET LOCAL session_replication_role = replica');
+        await c.query(`UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [o.orgId]);
+        await c.query('COMMIT');
+        await c.query(
+          `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+           VALUES ($1, now() - interval '40 days', 'user', $2, 'kernel.org.offboard', $3, 'ok', $5, '{}'::jsonb),
+                  ($1, now() - interval '31 days', 'system', NULL, 'kernel.org.export.record', $4, 'ok', $5, $6)`,
+          [o.orgId, o.owner, randomUUID(), randomUUID(), '0'.repeat(64), JSON.stringify({ format: 'crove.org-export.v2', file_count: 2 })],
+        );
+      });
+      const purged = await workerRt.execute<{ counts: { deleted: Record<string, number> } }>(
+        'kernel.org.purge',
+        { minDays: 30, reason: 'Owner closed org' },
+        { actor: { type: 'system', component: 'operator' }, orgId: o.orgId },
+      );
+      expect(purged.counts.deleted['crove_hr.payroll_line']).toBe(6);
+      const left = await withAdmin(
+        async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_hr.payroll_line WHERE org_id = $1', [o.orgId])).rows[0]?.n,
+      );
+      expect(left).toBe(0);
+    } finally {
+      setRuleStatus('commentary');
+    }
+  });
+
+  it('(#2720 N2) pins expected runtime grants across all crove_hr tables so accidental DELETE or table UPDATE grants fail', async () => {
+    const EXPECTED_HR_TABLE_GRANTS: Record<string, readonly string[]> = {
+      candidate: ['INSERT', 'SELECT'],
+      department: ['INSERT', 'SELECT'],
+      job_opening: ['INSERT', 'SELECT'],
+      payroll_bank_template: ['DELETE', 'INSERT', 'SELECT'],
+      payroll_dependent: ['INSERT', 'SELECT'],
+      payroll_employee: ['INSERT', 'SELECT'],
+      payroll_employment: ['INSERT', 'SELECT'],
+      payroll_leave_entry: ['DELETE', 'INSERT', 'SELECT'],
+      payroll_line: ['DELETE', 'INSERT', 'SELECT'],
+      payroll_run: ['INSERT', 'SELECT'],
+    };
+    const TENANT_ROLES = ['crove_app', 'crove_definer_tenant', 'crove_tenant', 'crove_worker'];
+    const ALL_OPS = ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE'];
+
+    const { tables, grants } = await withAdmin(async (c) => ({
+      tables: (
+        await c.query<{ relname: string }>(
+          `SELECT c.relname
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'crove_hr' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
+            ORDER BY 1`,
+        )
+      ).rows.map((r) => r.relname),
+      grants: (
+        await c.query<{ relname: string; role: string; ops: string[] }>(
+          `SELECT c.relname,
+                  r.rolname AS role,
+                  ARRAY(
+                    SELECT op
+                      FROM pg_catalog.unnest($2::text[]) AS op
+                     WHERE pg_catalog.has_table_privilege(r.oid, c.oid, op)
+                     ORDER BY op
+                  ) AS ops
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             CROSS JOIN pg_catalog.pg_roles r
+            WHERE n.nspname = 'crove_hr'
+              AND c.relkind IN ('r', 'p')
+              AND NOT c.relispartition
+              AND r.rolname = ANY($1::text[])
+            ORDER BY 1, 2`,
+          [[...TENANT_ROLES, 'crove_auth_reader'], ALL_OPS],
+        )
+      ).rows,
+    }));
+
+    expect(tables).toEqual(Object.keys(EXPECTED_HR_TABLE_GRANTS).sort());
+    for (const row of grants) {
+      if (row.role === 'crove_auth_reader') {
+        expect(row.ops, `${row.role} on crove_hr.${row.relname}`).toEqual([]);
+      } else {
+        expect(row.ops, `${row.role} on crove_hr.${row.relname}`).toEqual(EXPECTED_HR_TABLE_GRANTS[row.relname]);
+      }
+    }
   });
 });
