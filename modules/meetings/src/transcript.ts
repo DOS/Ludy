@@ -58,7 +58,9 @@ export async function replaceDraft(
   // The meeting row is held first, in the order a publish, a chapters save and the personal-data erasure take it (the meeting, then its rows): a re-transcription is one after the other with them, so
   // a chapter checked against the lines cannot be saved or published against lines that a concurrent replacement is deleting (#3916). The caller may already hold the meeting's media lock (an
   // advisory lock taken before any row of the meeting), which is the same order.
-  await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', meetingId).forNoKeyUpdate().execute();
+  const held = await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', meetingId).forNoKeyUpdate().executeTakeFirst();
+  // A meeting deleted while this waited is gone, not a foreign key error from the insert below.
+  if (!held) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
   await ctx.trx.deleteFrom('crove_meetings.transcript_segment').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).where('stage', '=', 'draft').execute();
   // The batch transcript replaces the live preview (ADR-0052 L4a, #3110): once a real transcript is stored the "Bản nháp trực tiếp" lines are gone, with the text they held.
   if (segments.length > 0) await ctx.trx.deleteFrom('crove_meetings.live_line').where('org_id', '=', ctx.orgId).where('meeting_id', '=', meetingId).execute();

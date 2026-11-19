@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Replacing a meeting's draft transcript is one after the other with a chapters save and a publish (#3916): the meeting row is held first, in the order those take it. On a real database: a replacement
-// waits while another transaction holds the meeting row (a publish in flight, simulated by holding it), and goes on when that ends; and many saves, publishes and replacements of one meeting at once never
-// deadlock.
+// waits while another transaction holds the meeting row (a publish in flight, simulated by holding it), and goes on when that ends; a replacement of a meeting deleted meanwhile is a not-found answer;
+// and many saves, publishes and replacements of one meeting at once end with every replacement whole (never a mix of two) and no database deadlock (a smoke check: the deadlock the order prevents
+// was with a meeting delete and the erasure, which is argued from the lock order in the code and the PR).
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -108,7 +109,27 @@ suite('replacing the draft transcript holds the meeting row (#3916)', () => {
     }
   });
 
-  it('never deadlocks when saves, publishes and replacements of one meeting run at once', async () => {
+  it('answers not-found when the meeting is deleted while the replacement waits for its row', async () => {
+    const meetingId = await seedMeeting();
+    const holder = new pg.Client({ connectionString: adminUrl });
+    await holder.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(`SELECT id FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2 FOR NO KEY UPDATE`, [orgId, meetingId]);
+      const store = exec('recorder', 'meetings.transcript.draft_store', { meetingId, segments: lines(0, 40) }).then(() => 'stored', (error: unknown) => (error as { code?: string }).code ?? 'ERR');
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      // The meeting goes while the replacement waits (its lines and rows with it).
+      await holder.query(`DELETE FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
+      await holder.query(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
+      await holder.query('COMMIT');
+      expect(await store).toBe('MEETING_NOT_FOUND');
+    } finally {
+      await holder.query('ROLLBACK').catch(() => {});
+      await holder.end();
+    }
+  });
+
+  it('ends with every replacement whole and no deadlock when saves, publishes and replacements of one meeting run at once', async () => {
     const meetingId = await seedMeeting();
     const settle = (p: Promise<unknown>) => p.then(() => 'ok', (error: unknown) => (error as { code?: string }).code ?? 'ERR');
     const work: Array<Promise<string>> = [];
