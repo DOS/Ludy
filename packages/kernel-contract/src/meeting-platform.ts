@@ -53,6 +53,9 @@ export const MEETING_PLATFORM_ERROR_CODES = [
   'not_claimed',
   'claim_failed',
   'timeout',
+  // Microsoft Teams (C4): the customer's tenant administrator has not turned on Graph access to meeting transcripts, or the speaker names; only they can.
+  'transcripts_disabled',
+  'speakers_disabled',
 ] as const;
 export type MeetingPlatformErrorCode = (typeof MEETING_PLATFORM_ERROR_CODES)[number];
 export const zMeetingPlatformErrorCode = z.enum(MEETING_PLATFORM_ERROR_CODES);
@@ -81,6 +84,9 @@ export const zMeetingPlatformRecordingView = z.strictObject({
   hasAudio: z.boolean(),
   hasVideo: z.boolean(),
   hasTranscript: z.boolean(),
+  // The most bytes of a video file this deployment can take the audio out of (C2a, #3306), or null when it cannot (no crove-media): a recording that has only a video file can then be imported when its
+  // size fits; null, it is refused as before. It is the video cap lowered to crove-media's own input limit where the deployment sets one.
+  videoImportMaxBytes: z.number().int().positive().nullable(),
   status: z.enum(MEETING_PLATFORM_RECORDING_STATUSES),
   meetingId: zId.nullable(),
   errorCode: z.string().nullable(),

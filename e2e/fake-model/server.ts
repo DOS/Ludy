@@ -31,15 +31,16 @@ export async function startFakeModel(options: { port: number; host: string }): P
     if (!HOSTS.has(name)) return send(421, { error: 'not this host' });
     if (req.method === 'GET' && req.url === '/healthz') return send(200, { ok: true });
     if (req.method !== 'POST' || req.url !== '/v1/chat/completions') return send(404, { error: 'not found' });
+    // The cap counts BYTES (a Buffer chunk's length), not characters: a body of multi-byte text must not slip past it.
     let size = 0;
-    let raw = '';
-    req.setEncoding('utf8');
-    req.on('data', (chunk: string) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > BODY_LIMIT) req.destroy();
-      else raw += chunk;
+      else chunks.push(chunk);
     });
     req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
       let model = 'fake-summary';
       try {
         const parsed = JSON.parse(raw) as { model?: unknown };

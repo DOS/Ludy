@@ -1,0 +1,9 @@
+{
+  "error": {
+    "code": "Forbidden",
+    "message": "x",
+    "innerError": {
+      "code": "SomethingElse"
+    }
+  }
+}

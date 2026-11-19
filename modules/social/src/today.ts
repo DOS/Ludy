@@ -81,6 +81,7 @@ export const socialToday = defineQuery({
         .where('provider', 'not like', 'bank\\_%')
         .where('provider', 'not like', '%\\_ads')
         .where('provider', 'not like', 'einvoice\\_%')
+        .where('provider', 'not like', 'accounting\\_%')
         .executeTakeFirstOrThrow();
       const n = Number(channels.n);
       if (n > 0) items.push({ kind: 'flag', app: 'social', id: 'channels', title: { key: 'social.channels', params: { count: n } }, count: n, severity: 'warn', href: '/social/channels' });

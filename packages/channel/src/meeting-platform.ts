@@ -8,6 +8,7 @@
 //
 // The provider and error-code unions below repeat those of `@crove/kernel-contract` (meeting-platform.ts); this package does not depend on the contract, and the kernel's tests hold the two equal.
 
+import { TeamsMeetingPlatform, type TeamsAppConfig } from './meeting-platform-teams.ts';
 import { ZoomMeetingPlatform, type ZoomAppConfig } from './meeting-platform-zoom.ts';
 
 export type MeetingPlatformProvider = 'sandbox' | 'google_meet' | 'zoom' | 'microsoft_teams';
@@ -24,7 +25,10 @@ export type MeetingPlatformErrorCode =
   | 'normalize_failed'
   | 'not_claimed'
   | 'claim_failed'
-  | 'timeout';
+  | 'timeout'
+  // Microsoft Teams (C4): a tenant administrator has not turned on Graph access to meeting transcripts, or speaker names; only the administrator can fix either.
+  | 'transcripts_disabled'
+  | 'speakers_disabled';
 
 // What the adapter lists for one recording, as `zMeetingPlatformListed` of the contract reads it (`startedAt` an ISO instant with an offset).
 export interface MeetingPlatformListed {
@@ -71,7 +75,7 @@ export interface MeetingPlatformTranscriptEntry {
 // A platform's transcript of a call. `source` names who made it: this is the PLATFORM's transcription, never Ludy's, and the data and the screens say so. `truncated`: the platform's transcript was longer
 // than the adapter reads.
 export interface MeetingPlatformTranscript {
-  source: 'google_meet';
+  source: 'google_meet' | 'microsoft_teams';
   language: string | null;
   truncated: boolean;
   entries: MeetingPlatformTranscriptEntry[];
@@ -232,6 +236,8 @@ export class SandboxMeetingPlatform implements MeetingPlatformAdapter {
 export interface MeetingPlatformAdaptersConfig {
   // The Zoom adapter (C3, #3175) is there only when the deployment has a Zoom OAuth app (ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET); without one the provider has no adapter at all.
   zoom?: ZoomAppConfig | undefined;
+  // The Teams adapter (C4, #3176) is there only when the deployment has a Microsoft Entra app for it (TEAMS_OAUTH_CLIENT_ID and TEAMS_OAUTH_CLIENT_SECRET); without one the provider has no adapter at all.
+  teams?: TeamsAppConfig | undefined;
   // The offline sandbox is on unless this is `false`.
   sandbox?: boolean | undefined;
   // A shared sandbox store (tests and the dev stack add fixtures to it); a fresh seeded one when omitted.
@@ -243,5 +249,6 @@ export function meetingPlatformAdapters(config: MeetingPlatformAdaptersConfig = 
   const adapters: Partial<Record<MeetingPlatformProvider, MeetingPlatformAdapter>> = {};
   if (config.sandbox !== false) adapters.sandbox = config.sandboxPlatform ?? new SandboxMeetingPlatform();
   if (config.zoom) adapters.zoom = new ZoomMeetingPlatform(config.zoom);
+  if (config.teams) adapters.microsoft_teams = new TeamsMeetingPlatform(config.teams);
   return adapters;
 }

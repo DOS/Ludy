@@ -83,6 +83,7 @@ export interface CroveFinanceSchema {
   'crove_finance.legal_entity_books': FinanceLegalEntityBooksTable;
   'crove_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
   'crove_finance.marketplace_party': FinanceMarketplacePartyTable;
+  'crove_finance.misa_amis_connection': FinanceMisaAmisConnectionTable;
   'crove_finance.misa_goods_code': FinanceMisaGoodsCodeTable;
   'crove_finance.org_account': FinanceOrgAccountTable;
   'crove_finance.period_balance_delta': FinancePeriodBalanceDeltaTable;
@@ -1390,6 +1391,19 @@ export interface FinanceMarketplacePartyTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
   platform: ColumnType<string, string, NotGranted>;
   party_id: ColumnType<string, string, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.misa_amis_connection */
+export interface FinanceMisaAmisConnectionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  channel_connection_id: ColumnType<string, string, NotGranted>;
+  org_company_code: ColumnType<string, string | undefined, NotGranted>;
+  last_test_state: string | null;
+  last_tested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }

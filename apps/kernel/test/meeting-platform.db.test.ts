@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { createOrg, kernelCommands, kernelQueries, setMeetingPlatformVideoImport, upsertIdentity } from '@crove/kernel';
 import type { MeetingPlatformConnectionView, MeetingPlatformRecordingView } from '@crove/kernel-contract';
 import { DomainError, Runtime, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -226,6 +226,20 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(text).not.toContain(envelopeOf(c.secret));
     expect(text).not.toContain(c.account);
     expect(text).toContain(c.connectionId);
+  });
+
+  it('C2a: every listed recording carries how big a video this deployment can take the audio out of, null when it cannot (#3306)', async () => {
+    const o = await org();
+    const c = await connect(o, o.lan);
+    await replace(o, c.connectionId, [listed('v1', { hasAudio: false, hasVideo: true })]);
+    // The default is off: no crove-media, no video import.
+    expect(await mine(o, o.lan)).toMatchObject([{ hasAudio: false, hasVideo: true, videoImportMaxBytes: null }]);
+    setMeetingPlatformVideoImport(1024 ** 3);
+    try {
+      expect(await mine(o, o.lan)).toMatchObject([{ videoImportMaxBytes: 1024 ** 3 }]);
+    } finally {
+      setMeetingPlatformVideoImport(null);
+    }
   });
 
   it('a connection that is expired comes back active, to be listed again, when the member connects again', async () => {

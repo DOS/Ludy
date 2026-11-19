@@ -1,0 +1,219 @@
+{
+  "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('00000000-0000-0000-0000-000000000001')/calendarView",
+  "value": [
+    {
+      "subject": "Họp tuần (Teams)",
+      "start": {
+        "dateTime": "2026-11-17T02:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-17T03:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isOnlineMeeting": true,
+      "isOrganizer": true,
+      "isCancelled": false,
+      "onlineMeeting": {
+        "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_AAAA%40thread.v2/0?context=%7b%22Tid%22%3a%22d6c9ce1e-4f71-8dc3-5b55-6a411ea46324%22%7d"
+      },
+      "onlineMeetingProvider": "teamsForBusiness"
+    },
+    {
+      "subject": "Product review (organized by someone else)",
+      "start": {
+        "dateTime": "2026-11-16T07:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-16T08:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isOnlineMeeting": true,
+      "isOrganizer": false,
+      "isCancelled": false,
+      "onlineMeeting": {
+        "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_BBBB%40thread.v2/0?context=%7b%22Tid%22%3a%22d6c9ce1e-4f71-8dc3-5b55-6a411ea46324%22%7d"
+      },
+      "onlineMeetingProvider": "teamsForBusiness"
+    },
+    {
+      "subject": "Cà phê với khách",
+      "start": {
+        "dateTime": "2026-11-16T03:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-16T04:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isOnlineMeeting": false,
+      "isOrganizer": true,
+      "isCancelled": false,
+      "onlineMeeting": null,
+      "onlineMeetingProvider": "unknown"
+    },
+    {
+      "subject": "Cancelled call",
+      "start": {
+        "dateTime": "2026-11-15T03:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-15T04:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isOnlineMeeting": true,
+      "isOrganizer": true,
+      "isCancelled": true,
+      "onlineMeeting": {
+        "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_DDDD%40thread.v2/0?context=%7b%22Tid%22%3a%22d6c9ce1e-4f71-8dc3-5b55-6a411ea46324%22%7d"
+      },
+      "onlineMeetingProvider": "teamsForBusiness"
+    },
+    {
+      "subject": "Stopped and started the recording",
+      "start": {
+        "dateTime": "2026-11-15T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-15T10:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isOnlineMeeting": true,
+      "isOrganizer": true,
+      "isCancelled": false,
+      "onlineMeeting": {
+        "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_EEEE%40thread.v2/0?context=%7b%22Tid%22%3a%22d6c9ce1e-4f71-8dc3-5b55-6a411ea46324%22%7d"
+      },
+      "onlineMeetingProvider": "teamsForBusiness"
+    },
+    {
+      "subject": "A call nobody recorded",
+      "start": {
+        "dateTime": "2026-11-14T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-14T10:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isOnlineMeeting": true,
+      "isOrganizer": true,
+      "isCancelled": false,
+      "onlineMeeting": {
+        "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_FFFF%40thread.v2/0?context=%7b%22Tid%22%3a%22d6c9ce1e-4f71-8dc3-5b55-6a411ea46324%22%7d"
+      },
+      "onlineMeetingProvider": "teamsForBusiness"
+    },
+    {
+      "subject": "Still running",
+      "start": {
+        "dateTime": "2026-11-18T11:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-18T14:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isOnlineMeeting": true,
+      "isOrganizer": true,
+      "isCancelled": false,
+      "onlineMeeting": {
+        "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_GGGG%40thread.v2/0?context=%7b%22Tid%22%3a%22d6c9ce1e-4f71-8dc3-5b55-6a411ea46324%22%7d"
+      },
+      "onlineMeetingProvider": "teamsForBusiness"
+    },
+    {
+      "subject": "A meeting Graph does not know",
+      "start": {
+        "dateTime": "2026-11-13T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-13T10:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isOnlineMeeting": true,
+      "isOrganizer": true,
+      "isCancelled": false,
+      "onlineMeeting": {
+        "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_HHHH%40thread.v2/0?context=%7b%22Tid%22%3a%22d6c9ce1e-4f71-8dc3-5b55-6a411ea46324%22%7d"
+      },
+      "onlineMeetingProvider": "teamsForBusiness"
+    },
+    {
+      "subject": "Weekly sync (second time)",
+      "start": {
+        "dateTime": "2026-11-12T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-12T10:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isOnlineMeeting": true,
+      "isOrganizer": true,
+      "isCancelled": false,
+      "onlineMeeting": {
+        "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_SSSS%40thread.v2/0?context=%7b%22Tid%22%3a%22d6c9ce1e-4f71-8dc3-5b55-6a411ea46324%22%7d"
+      },
+      "onlineMeetingProvider": "teamsForBusiness"
+    },
+    {
+      "subject": "Weekly sync (first time)",
+      "start": {
+        "dateTime": "2026-11-10T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-10T10:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isOnlineMeeting": true,
+      "isOrganizer": true,
+      "isCancelled": false,
+      "onlineMeeting": {
+        "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_SSSS%40thread.v2/0?context=%7b%22Tid%22%3a%22d6c9ce1e-4f71-8dc3-5b55-6a411ea46324%22%7d"
+      },
+      "onlineMeetingProvider": "teamsForBusiness"
+    },
+    {
+      "subject": "A call in another service",
+      "start": {
+        "dateTime": "2026-11-16T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-16T10:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isOnlineMeeting": true,
+      "isOrganizer": true,
+      "isCancelled": false,
+      "onlineMeeting": {
+        "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_JJJJ%40thread.v2/0?context=%7b%22Tid%22%3a%22d6c9ce1e-4f71-8dc3-5b55-6a411ea46324%22%7d"
+      },
+      "onlineMeetingProvider": "skypeForConsumer"
+    },
+    {
+      "subject": "Same series, two recordings in one window",
+      "start": {
+        "dateTime": "2026-11-13T09:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "end": {
+        "dateTime": "2026-11-13T10:00:00.0000000",
+        "timeZone": "UTC"
+      },
+      "isOnlineMeeting": true,
+      "isOrganizer": true,
+      "isCancelled": false,
+      "onlineMeeting": {
+        "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_SSSS%40thread.v2/0?context=%7b%22Tid%22%3a%22d6c9ce1e-4f71-8dc3-5b55-6a411ea46324%22%7d"
+      },
+      "onlineMeetingProvider": "teamsForBusiness"
+    }
+  ]
+}

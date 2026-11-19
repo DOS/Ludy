@@ -293,7 +293,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     const job = only(o, run.sent)[0];
     expect(job).toMatchObject({ id: recordingId, connectionId, provider: 'sandbox', externalId: 'sandbox-rec-audio', hasAudio: true, stagingKey: key });
     // The job opens the sealed token, fetches the sandbox file and stages it under the row's key.
-    expect(await runMeetingsImport({ runtime: worker, broker: vault, store: run.blobs, adapters: { sandbox: new SandboxMeetingPlatform() }, media: null } as never, job as MeetingsImportJob, { retryCount: 0, retryLimit: 3 })).toBe('staged');
+    expect(await runMeetingsImport({ runtime: worker, broker: vault, store: run.blobs, adapters: { sandbox: new SandboxMeetingPlatform() }, extractor: null } as never, job as MeetingsImportJob, { retryCount: 0, retryLimit: 3 })).toBe('staged');
     expect(run.blobs.stored.get(key)?.byteLength).toBeGreaterThan(44);
     expect((await mine(o, o.lan)).find((r) => r.id === recordingId)?.status).toBe('staged');
   });
@@ -350,7 +350,7 @@ suite('the meetings import sweep and job on PostgreSQL (meetings integrations C1
     await o.exec(o.lan, 'test.mp.begin', { recordingId, meetingId: await meetingFor(o, o.lan), stagingKey: key });
     const job: MeetingsImportJob = { orgId: o.orgId, id: recordingId, connectionId, provider: 'sandbox', externalId: 'sandbox-rec-audio', hasAudio: true, hasVideo: false, sizeBytes: null, stagingKey: key };
     const blobs = store();
-    const deps = { runtime: worker, broker: vault, store: blobs, adapters: { sandbox: new SandboxMeetingPlatform() }, media: null } as never;
+    const deps = { runtime: worker, broker: vault, store: blobs, adapters: { sandbox: new SandboxMeetingPlatform() }, extractor: null } as never;
     // The first job stages the row; a duplicate job of the same recording and key finds it staged and touches nothing (the bytes stay).
     expect(await runMeetingsImport(deps, job, { retryCount: 0, retryLimit: 3 })).toBe('staged');
     expect(await runMeetingsImport(deps, job, { retryCount: 0, retryLimit: 3 })).toBe('skipped');

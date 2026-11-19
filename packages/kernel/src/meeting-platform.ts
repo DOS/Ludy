@@ -539,6 +539,13 @@ export const meetingPlatformConnections = defineQuery({
   },
 });
 
+// How big a platform video file this deployment can take the audio out of (C2a, #3306), or null when it cannot (crove-media is not configured). Set once at start by the kernel; every recording the member lists
+// carries it, so the app offers "Nhập" for a video-only recording only when the import can work. The module's import command checks the on/off fact with its own copy.
+let videoImportMaxBytes: number | null = null;
+export function setMeetingPlatformVideoImport(maxBytes: number | null): void {
+  videoImportMaxBytes = maxBytes;
+}
+
 // The member's own recordings, newest first: the suggestions and what became of the ones they imported. A dismissed one is hidden.
 export const meetingPlatformRecordings = defineQuery({
   name: 'kernel.meeting_platform.recordings',
@@ -568,6 +575,7 @@ export const meetingPlatformRecordings = defineQuery({
       hasAudio: r.has_audio,
       hasVideo: r.has_video,
       hasTranscript: r.has_transcript,
+      videoImportMaxBytes,
       status: r.status,
       meetingId: r.meeting_id,
       errorCode: r.error_code,
