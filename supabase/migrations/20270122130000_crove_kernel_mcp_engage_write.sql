@@ -81,8 +81,8 @@ BEGIN
   PERFORM crove_kernel.ctx_write(pg_catalog.jsonb_build_object(
     'v', 1, 'org', p_org_id, 'actor', 'agent', 'user', NULL, 'role', v_role, 'agent', p_grant_id, 'run', NULL, 'position', NULL,
     'module', v_module, 'max_risk', 'R1', 'tainted', true, 'le_scope', pg_catalog.jsonb_build_array('*'), 'flags', '[]'::jsonb,
-    'kind', v_ctx_kind, 'grantor', v_user));
-  RETURN pg_catalog.jsonb_build_object('role', v_role, 'grantor', v_user, 'maxRisk', 'R1', 'tainted', true);
+    'kind', v_ctx_kind, 'grantor', v_user, 'scope', p_scope));
+  RETURN pg_catalog.jsonb_build_object('role', v_role, 'grantor', v_user, 'maxRisk', 'R1', 'tainted', true, 'scope', p_scope);
 END $$;
 REVOKE ALL ON FUNCTION crove_kernel.enter_mcp_company_write_context(uuid, uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.enter_mcp_company_write_context(uuid, uuid, text) TO crove_app;

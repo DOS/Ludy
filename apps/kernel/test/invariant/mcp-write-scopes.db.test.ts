@@ -14,6 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import { sql } from 'kysely';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
@@ -103,6 +104,7 @@ suite('what the database and the runtime do with a grant that holds a new write 
   let orgA = '';
   const users: Record<string, string> = {};
   const ran: string[] = [];
+  const sealedBy = new Map<string, Record<string, unknown>>();
   const browser = (who: string): UserActor => ({ type: 'user', userId: users[who] as string, aal: 'aal1' });
   const grantActor = (who: string, grantId: string, scopes: readonly string[], kind?: 'company' | 'member'): UserActor => ({
     type: 'user',
@@ -167,8 +169,11 @@ suite('what the database and the runtime do with a grant that holds a new write 
       sideEffect: 'internal' as const,
       access: ['owner', 'admin'] as never,
       mcp: { scope },
-      handler: async () => {
+      handler: async (ctx: { trx: unknown }) => {
         ran.push(name);
+        // What the command runs in: the sealed context of this very transaction, kept so the test can say which context each scope entered.
+        const { rows } = await sql<{ c: string }>`SELECT current_setting('crove.ctx', true) AS c`.execute(ctx.trx as never);
+        sealedBy.set(name, JSON.parse(rows[0]?.c ?? 'null') as Record<string, unknown>);
         return {};
       },
     });
@@ -234,6 +239,8 @@ suite('what the database and the runtime do with a grant that holds a new write 
       const holds = await insert(['ludy.read', scope]);
       await runtime.execute(name, {}, { actor: grantActor('owner', holds, ['ludy.read', scope], 'company'), orgId: orgA });
       expect(ran, `${name} with its scope`).toContain(name);
+      // Each scope entered its own context, and the context names the scope it was entered for: never the draft context, the read context or another scope's.
+      expect(sealedBy.get(name), name).toMatchObject({ actor: 'agent', user: null, max_risk: 'R1', tainted: true, kind: scope === ENGAGE ? 'mcp_engage_write' : 'mcp_ads_draft', scope });
       const before = [...ran];
       const without = await insert(['ludy.read']);
       expect((await refusal(runtime.execute(name, {}, { actor: grantActor('owner', without, ['ludy.read'], 'company'), orgId: orgA }))).status, `${name} without it`).toBe(403);

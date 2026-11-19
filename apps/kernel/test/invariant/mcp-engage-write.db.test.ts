@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { DomainError, Runtime, type UserActor } from '@crove/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -40,6 +40,7 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
   const pools: pg.Pool[] = [];
   const users = { owner: '', admin: '', member: '', other: '' };
   const s: Record<string, string> = {};
+  let runtime: Runtime;
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = new pg.Client({ connectionString: adminUrl });
@@ -139,7 +140,7 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
     const db = createDb(pool);
-    const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' })] });
+    runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' })] });
     for (const key of Object.keys(users) as Array<keyof typeof users>) {
       users[key] = await upsertIdentity(db, { issuer: 'mcp-engage-write', subject: key, email: `${key}@mcp-engage-write.test`, name: null });
     }
@@ -233,17 +234,17 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
     try {
       await c.query('BEGIN');
       const got = (await c.query(`SELECT crove_kernel.enter_mcp_company_write_context($1::uuid, $2::uuid, $3::text) AS got`, [orgId, live, ENGAGE])).rows[0].got;
-      expect(got).toEqual({ role: 'owner', grantor: users.owner, maxRisk: 'R1', tainted: true });
+      expect(got).toEqual({ role: 'owner', grantor: users.owner, maxRisk: 'R1', tainted: true, scope: ENGAGE });
       expect((await c.query(`SELECT crove_kernel.ctx_user_id() AS u, crove_kernel.ctx_actor_type() AS t`)).rows[0]).toEqual({ u: null, t: 'agent' });
       // The whole seal, key by key: a key added, dropped or changed is a change to what an engage grant may do.
       expect(JSON.parse((await c.query(`SELECT current_setting('crove.ctx') AS ctx`)).rows[0].ctx as string)).toEqual({
         v: 1, org: orgId, actor: 'agent', user: null, role: 'owner', agent: live, run: null, position: null, module: 'kernel', max_risk: 'R1', tainted: true, le_scope: ['*'], flags: [],
-        kind: 'mcp_engage_write', grantor: users.owner,
+        kind: 'mcp_engage_write', grantor: users.owner, scope: ENGAGE,
       });
       await c.query('ROLLBACK');
       await c.query('BEGIN');
       await c.query(`SELECT crove_kernel.enter_mcp_company_write_context($1::uuid, $2::uuid, $3::text)`, [orgId, live, ADS]);
-      expect(JSON.parse((await c.query(`SELECT current_setting('crove.ctx') AS ctx`)).rows[0].ctx as string)).toMatchObject({ module: 'ads', kind: 'mcp_ads_draft', user: null, tainted: true, max_risk: 'R1' });
+      expect(JSON.parse((await c.query(`SELECT current_setting('crove.ctx') AS ctx`)).rows[0].ctx as string)).toMatchObject({ module: 'ads', kind: 'mcp_ads_draft', user: null, tainted: true, max_risk: 'R1', scope: ADS });
       await c.query('ROLLBACK');
       await c.query('BEGIN READ ONLY');
       await expect(c.query(`SELECT crove_kernel.enter_mcp_company_write_context($1::uuid, $2::uuid, $3::text)`, [orgId, live, ENGAGE])).rejects.toThrow(/MCP_WRITE_READ_ONLY/);
@@ -459,6 +460,60 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
       // Whatever the row claimed, the database stamped the grantor's id and no agent (the claim of another actor was replaced).
       expect(row).toEqual({ actor_id: users.owner, agent_id: null });
     });
+  });
+
+  it('runs a twin directly in the write context and makes no proposal, and audits the write and the refusal as the grant\'s, naming the client and the command', async () => {
+    const mcpActor = (id: string, scopes: string[]): UserActor => ({ type: 'user', userId: users.owner, aal: 'aal1', mcp: { grantId: id, clientId: `client-${id}`, clientName: 'Dy test client', scopes, kind: 'company' } });
+    const proposals = async () => (await q(`SELECT count(*)::int AS n FROM crove_kernel.proposal WHERE org_id = $1`, [orgId])).rows[0]?.n as number;
+    const before = await proposals();
+    const g = await grant(orgId, users.owner, ['ludy.read', ENGAGE]);
+    const done = await runtime.execute<{ conversationId: string }>('kernel.mcp.conversation_resolve', { conversationId: s.conv }, { actor: mcpActor(g, ['ludy.read', ENGAGE]), orgId });
+    expect(done).toEqual({ conversationId: s.conv });
+    expect((await q(`SELECT status FROM crove_kernel.conversation WHERE id = $1`, [s.conv])).rows[0]?.status).toBe('resolved');
+    expect(await proposals()).toBe(before);
+    // A grant without the scope is refused before anything is written, and the refusal is audited as the grant's.
+    const readOnly = await grant(orgId, users.owner, ['ludy.read']);
+    const error = await runtime.execute('kernel.mcp.conversation_reopen', { conversationId: s.conv }, { actor: mcpActor(readOnly, ['ludy.read']), orgId }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DomainError);
+    expect(error).toMatchObject({ code: 'FORBIDDEN', status: 403, details: { rule: 'mcp_scope' } });
+    expect((await q(`SELECT status FROM crove_kernel.conversation WHERE id = $1`, [s.conv])).rows[0]?.status).toBe('resolved');
+    const rows = (await q<{ command: string; outcome: string; detail: Record<string, unknown> }>(
+      `SELECT command, outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND detail ->> 'mcpGrant' = ANY ($2::text[]) AND command LIKE 'kernel.mcp.conversation_%' ORDER BY id`,
+      [orgId, [g, readOnly]],
+    )).rows;
+    expect(rows.map((r) => [r.command, r.outcome])).toEqual([['kernel.mcp.conversation_resolve', 'ok'], ['kernel.mcp.conversation_reopen', 'denied']]);
+    expect(rows[0]?.detail).toMatchObject({ mcpCall: true, mcpGrant: g, mcpClient: `client-${g}`, mcpClientName: 'Dy test client' });
+    expect(rows[1]?.detail).toMatchObject({ mcpCall: true, mcpGrant: readOnly, mcpClient: `client-${readOnly}`, rule: 'mcp_scope' });
+  });
+
+  it('lists the allow-listed tables in the helper itself and the same ones the sweeps name, read from the catalog: no table is allowed that the test does not know', async () => {
+    const def = (await q<{ d: string }>(`SELECT pg_get_functiondef('crove_kernel.mcp_write_row_ok(text,text,text,jsonb,jsonb,uuid)'::regprocedure) AS d`)).rows[0]?.d as string;
+    // The helper's branches by kind, then by table: what it names is exactly what the sweeps below treat as written.
+    const [engageBranch, adsBranch] = [def.slice(def.indexOf("p_kind = 'mcp_engage_write'"), def.indexOf("p_kind = 'mcp_ads_draft'")), def.slice(def.indexOf("p_kind = 'mcp_ads_draft'"))];
+    const named = (text: string) => [...text.matchAll(/p_table = '([a-z_]+\.[a-z_]+)'/g)].map((m) => m[1] as string).sort();
+    expect(named(engageBranch)).toStrictEqual([...ENGAGE_TABLES].sort());
+    expect(named(adsBranch)).toStrictEqual([...ADS_TABLES].sort());
+    // Every table it names exists in the catalog (a renamed table would otherwise leave a branch that allows nothing, unnoticed).
+    const exist = (await q<{ t: string }>(`SELECT n.nspname || '.' || c.relname AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relkind IN ('r', 'p')`)).rows.map((r) => r.t);
+    for (const t of [...ENGAGE_TABLES, ...ADS_TABLES]) expect(exist, t).toContain(t);
+  });
+
+  it('never reaches another org: the sealed context of org A writes and updates nothing of org B, whatever the row names', async () => {
+    const foreign = { conv: randomUUID(), conn: randomUUID(), party: randomUUID() };
+    await q(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'facebook_page', 'ext-b', 'Trang B', $3)`, [otherOrg, foreign.conn, users.other]);
+    await q(`INSERT INTO crove_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, last_seq, last_message_at, last_inbound_at) VALUES ($1, $2, $3, 'comment_thread', 't-b', 1, now(), now())`, [otherOrg, foreign.conv, foreign.conn]);
+    await q(`INSERT INTO crove_kernel.party (org_id, id, kind, name, source_trust) VALUES ($1, $2, 'person', 'Khách B', 'user')`, [otherOrg, foreign.party]);
+    const g = await grant(orgId, users.owner);
+    await inWrite(g, ENGAGE, async (attempt, c) => {
+      // Reads: the other org's rows are not there at all.
+      for (const [table, id] of [['crove_kernel.conversation', foreign.conv], ['crove_kernel.party', foreign.party]] as const) expect((await c.query(`SELECT count(*)::int AS n FROM ${table} WHERE id = $1`, [id])).rows[0].n, table).toBe(0);
+      // Updates reach no row; inserts naming the other org are refused by the tenant policy.
+      expect(await attempt(`UPDATE crove_kernel.conversation SET status = 'resolved', resolved_at = now(), resolved_by = $2 WHERE org_id = $3 AND id = $1`, [foreign.conv, users.owner, otherOrg])).toBe('NO_ROW');
+      refused('a note on another org\'s thread', await attempt(`INSERT INTO crove_kernel.conversation_note (org_id, id, conversation_id, author_user_id, body) VALUES ($1, $2, $3, $4, 'x')`, [otherOrg, randomUUID(), foreign.conv, users.owner]));
+      refused('a contact in another org', await attempt(`INSERT INTO crove_kernel.party (org_id, id, kind, name, source_trust) VALUES ($1, $2, 'person', 'x', 'external')`, [otherOrg, randomUUID()]));
+      refused('a deal in another org', await attempt(`INSERT INTO crove_crm.deal (org_id, id, party_id, title, amount, stage_id, sort_key, created_by, updated_by) VALUES ($1, $2, $3, 'x', 5, $4, 'y', $5, $5)`, [otherOrg, randomUUID(), foreign.party, s.stageOpen, users.owner]));
+    });
+    expect((await q(`SELECT status FROM crove_kernel.conversation WHERE id = $1`, [foreign.conv])).rows[0]?.status).toBe('new');
   });
 
   it('leaves the read context of a company grant as it was: it writes its audit row and nothing else', async () => {

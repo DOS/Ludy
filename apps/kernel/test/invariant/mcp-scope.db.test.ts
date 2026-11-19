@@ -147,7 +147,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
     // A command of mode 'proposal' (the 14 proposal-only twins of E4, #3863) never runs for a grant: it is pinned in the test below and in mcp-proposals.db.test.ts.
     const carrying = commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined && (c as { mcp: { mode?: string } }).mcp.mode !== 'proposal');
     const named = carrying.map((c) => `${c.name}:${(c as { mcp: { scope: string } }).mcp.scope}`).sort();
-    expect(named).toEqual([...WRITES, ...ENGAGE_WRITES].sort());
+    expect(named).toStrictEqual([...WRITES, ...ENGAGE_WRITES].sort());
     for (const c of carrying) {
       expect([c.risk, c.sideEffect, c.access], c.name).toEqual(['R1', 'internal', ['owner', 'admin']]);
       const scope = (c as { mcp: { scope: string } }).mcp.scope;
@@ -201,7 +201,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
   it('pins the queries that carry `mcp`, and none is sensitive, streamed, role-less or open to member mode or an extension token', () => {
     const carrying = queries.filter((q) => (q as { mcp?: unknown }).mcp !== undefined);
     const names = carrying.map((q) => `${q.name}:${(q as { mcp: { scope: string } }).mcp.scope}`).sort();
-    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n) && !ENGAGE_WAKE_READS.includes(n))).toEqual([...REACHABLE].sort());
+    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n) && !ENGAGE_WAKE_READS.includes(n))).toStrictEqual([...REACHABLE].sort());
     for (const q of carrying) {
       expect(Array.isArray(q.access), q.name).toBe(true);
       expect(q.sensitive === true, q.name).toBe(false);

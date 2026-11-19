@@ -2345,11 +2345,16 @@ export class Runtime {
     if (actor.mcp && mcpWrite !== undefined && actor.mcp.scopes.includes(mcpWrite) && MCP_WRITE_CONTEXT_SCOPES.includes(mcpWrite)) {
       // A company MCP grant that holds a write scope runs the command that declares it (ADR-0051 decision 2, #3227): the same sealed shape as the read context (agent-shaped, no user,
       // tainted), at R1 and of its own kind, so the database guard lets it write exactly what that scope names. The grantor named in the seal is the user the edge named, else a bug.
-      const { rows } = await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
-        SELECT ${mcpWrite === 'ludy.social.draft' ? sql`crove_kernel.enter_mcp_company_draft_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid)` : sql`crove_kernel.enter_mcp_company_write_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid, ${mcpWrite}::text)`} AS entered`.execute(trx);
+      // Each write scope enters its own context, by name: the draft scope the draft entry, the engage and ads scopes the write entry (which seals the scope it was given and the kind of that scope). A scope
+      // with no entry is refused here and never falls back to the draft or the read context; the entry's answer must name the scope it was asked for.
+      let entry;
+      if (mcpWrite === 'ludy.social.draft') entry = sql`crove_kernel.enter_mcp_company_draft_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid)`;
+      else if (mcpWrite === 'ludy.engage.write' || mcpWrite === 'ludy.ads.draft') entry = sql`crove_kernel.enter_mcp_company_write_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid, ${mcpWrite}::text)`;
+      else throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+      const { rows } = await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean; scope?: string } }>`SELECT ${entry} AS entered`.execute(trx);
       const got = rows[0]?.entered;
       const role = got?.role;
-      if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R1' || got.tainted !== true || (role !== 'owner' && role !== 'admin')) {
+      if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R1' || got.tainted !== true || (role !== 'owner' && role !== 'admin') || (mcpWrite !== 'ludy.social.draft' && got.scope !== mcpWrite)) {
         throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
       }
       return { role, agent: null, memberVy: null };
