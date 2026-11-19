@@ -5,7 +5,7 @@
 //
 // The HMAC key is one per deployment, so a good signature proves the sender, not the organisation: a refid stored in two organisations is refused, and the envelope's company code and the signed voucher type
 // must equal the located connection's and row's. Moves are forward only: only a row in `sent` or `ambiguous` moves, to `accepted` on success, else `refused` with MISA's text (capped, untrusted, never logged),
-// and the command updates only where the state and the attempt still match, so a replay or an old failure after an acceptance changes nothing. A row still `sending` (or `queued`, `failed`) is left to polling.
+// and the command updates only where the state and the attempt still match, so a replay or an old failure after an acceptance changes nothing. A result for a row still `sending` or `queued` waits (MISA can call back before the worker records `sent`) and is taken again after five minutes; for a `failed` one, nothing is recorded.
 // The signed `data` carries no attempt, session or time, so a refusal is recorded only for a row never sent again: an old refusal replayed against a second send of the same voucher is ignored (an acceptance is
 // recorded for any attempt, the voucher is in AMIS).
 //
@@ -69,6 +69,16 @@ export function moveFor(
   return { orgId: row.org_id, connectionId: row.connection_id, move: { orgRefid: result.org_refid, attempts: row.attempts, from: row.state, to: result.success ? 'accepted' : 'refused', reason } };
 }
 
+/** Whether a result will be answerable soon: the one row that holds its refid is the located one (its company code and voucher type match) and has not been sent yet, or is being sent (MISA can call back before the worker records `sent`). Such a result is left, and taken again after five minutes; the seven day purge bounds it. */
+export function answerableLater(
+  result: Pick<ClaimedCallback, 'voucher_type' | 'org_company_code'>,
+  rows: readonly Located[],
+): boolean {
+  if (rows.length !== 1) return false;
+  const row = rows[0] as Located;
+  return row.org_company_code === result.org_company_code && row.voucher_type === result.voucher_type && (row.state === 'queued' || row.state === 'sending');
+}
+
 /** Takes the waiting results and records them. Returns how many results it took. */
 export async function runMisaAmisCallbacks(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
   let taken = 0;
@@ -88,7 +98,8 @@ export async function runMisaAmisCallbacks(deps: { runtime: Runtime; workerDb: D
     for (const [seq, { result, located }] of bySeq) {
       const found = moveFor(result, located);
       if (!found) {
-        done.push(seq);
+        // A row not sent yet may still be answered: the result waits for the next take instead of being dropped.
+        if (!answerableLater(result, located)) done.push(seq);
         continue;
       }
       const key = `${found.orgId}:${found.connectionId}`;

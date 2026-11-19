@@ -98,7 +98,8 @@ suite('the MISA AMIS callback definers (#3903)', () => {
     const claim = await one<{ src: string }>('SELECT prosrc AS src FROM pg_proc WHERE oid = $1::regprocedure', [CLAIM]);
     // The claim reads the push row, the connection and the tenant and checks the app switch; every write names the machinery table.
     expect(claim?.src).toMatch(/crove_kernel\.org_app_on\(x\.org_id, 'finance'\)/);
-    for (const write of claim?.src.matchAll(/\b(?:insert\s+into|update|delete\s+from)\s+([a-z_.]+)/gi) ?? []) expect(write[1], write[0]).toBe('crove_finance.misa_amis_callback_pending');
+    // (`FOR UPDATE SKIP LOCKED` is a row lock, not a write: an UPDATE is a statement start, not preceded by FOR.)
+    for (const write of claim?.src.matchAll(/(?<!\bfor\s)\b(?:insert\s+into|update|delete\s+from)\s+([a-z_.]+)/gi) ?? []) expect(write[1], write[0]).toBe('crove_finance.misa_amis_callback_pending');
   });
 
   it('has an index on the push table that leads with org_refid, so the claim does not scan every organisation (the unique key leads with org_id)', async () => {

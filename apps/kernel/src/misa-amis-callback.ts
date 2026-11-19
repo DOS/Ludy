@@ -25,7 +25,8 @@ export async function acceptMisaAmisCallback(runtime: Runtime, clientId: string,
   if (!read.ok) return read.reason === 'signature' || read.reason === 'app_id' ? { status: 401, code: 'WEBHOOK_SIGNATURE' } : { status: 400, code: 'WEBHOOK_MALFORMED' };
   const { callback } = read;
   // A message that repeats a refid keeps its last result, as polling does; the relay records forward only, whatever the order.
-  const results = [...new Map(callback.results.map((r) => [r.orgRefId, r] as const)).values()];
+  // A result whose voucher type is not one AMIS has (1 to 99) is dropped on its own: it would fail the integer cast of the whole list and make MISA retry the message for ever.
+  const results = [...new Map(callback.results.filter((r) => r.voucherType >= 1 && r.voucherType <= 99).map((r) => [r.orgRefId, r] as const)).values()];
   if (results.length === 0) return { status: 200 };
   // The envelope's company code is a hint the relay compares with the located connection's own code. MISA's text is kept for a refusal only.
   await runtime.orgless(async (db) => {

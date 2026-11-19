@@ -154,6 +154,15 @@ describe('the MISA AMIS callback route', () => {
     expect(on.sqlSeen[0]?.parameters).toEqual([CODE, [REF1], [1], [false], [null], [`Loi rieng ${REASON_TEXT}`]]);
   });
 
+  it('drops a result whose voucher type AMIS does not have, on its own, so one bad result does not fail the message', async () => {
+    const on = fixture();
+    expect((await on.post(message([item({ voucher_type: 10_000_000_000 }), item({ org_refid: REF2, voucher_type: 4 }), item({ org_refid: REF3, voucher_type: 0 })]))).status).toBe(200);
+    expect(on.sqlSeen[0]?.parameters).toEqual([CODE, [REF2], [4], [true], [null], [null]]);
+    const onlyBad = fixture();
+    expect((await onlyBad.post(message([item({ voucher_type: 100 })]))).status).toBe(200);
+    expect(onlyBad.sqlSeen).toEqual([]);
+  });
+
   it('answers a verified message the same whatever its results, so the answer never says whether a refid exists', async () => {
     const bodies = [
       await (await fixture().post(message([item()]))).text(),

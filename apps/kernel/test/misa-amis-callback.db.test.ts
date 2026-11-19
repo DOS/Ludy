@@ -349,6 +349,13 @@ suite('MISA AMIS callback (#3903)', () => {
       expect((await stateOf(A, sending))?.state).toBe('sending');
       expect((await stateOf(A, swapped))?.state).toBe('sent');
       expect((await stateOf(A, typed))?.state).toBe('sent');
+      // Only the result for the row still being sent waits (MISA can call back before the worker records `sent`); the others were dropped.
+      expect((await pending()).map((r) => r.org_refid)).toEqual([sending]);
+      // Once the row is sent, the next take records it.
+      await rows("UPDATE crove_finance.misa_amis_push SET state = 'sent' WHERE org_id = $1 AND org_refid = $2", [A.org, sending]);
+      await rows('UPDATE crove_finance.misa_amis_callback_pending SET claimed_at = pg_catalog.now() - interval \'6 minutes\'');
+      await relay();
+      expect((await stateOf(A, sending))?.state).toBe('accepted');
       expect(await pending()).toEqual([]);
     });
 

@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler, type CompiledQuery, type DatabaseConnection, type Driver, type QueryResult } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DomainError, type Runtime } from '@crove/kernel-runtime';
-import { MISA_AMIS_CALLBACK_CLAIM, moveFor, runMisaAmisCallbacks, type ClaimedCallback } from '../src/misa-amis-callback-relay.ts';
+import { MISA_AMIS_CALLBACK_CLAIM, answerableLater, moveFor, runMisaAmisCallbacks, type ClaimedCallback } from '../src/misa-amis-callback-relay.ts';
 
 const CODE = `ludy-${'a'.repeat(32)}`;
 const OTHER_CODE = `ludy-${'b'.repeat(32)}`;
@@ -113,6 +113,15 @@ describe('what a claimed result records', () => {
     for (const state of ['queued', 'sending', 'accepted', 'refused', 'failed']) expect(moveFor(answer(), [located({ state })]), state).toBeNull();
   });
 
+  it('says a result will be answerable later only for the one located row that is not sent yet (queued or being sent) with the right company code and voucher type', () => {
+    for (const state of ['queued', 'sending']) expect(answerableLater(answer(), [located({ state })]), state).toBe(true);
+    for (const state of ['sent', 'ambiguous', 'accepted', 'refused', 'failed']) expect(answerableLater(answer(), [located({ state })]), state).toBe(false);
+    expect(answerableLater(answer(), [])).toBe(false);
+    expect(answerableLater(answer(), [located({ state: 'sending' }), located({ state: 'sending', org_id: ORG_B, connection_id: CONN_B })])).toBe(false);
+    expect(answerableLater(answer(), [located({ state: 'sending', org_company_code: OTHER_CODE })])).toBe(false);
+    expect(answerableLater(answer({ voucher_type: 4 }), [located({ state: 'sending' })])).toBe(false);
+  });
+
   it('records no refusal for a row that was sent again, but an acceptance for any attempt', () => {
     expect(moveFor(answer({ success: false, error_message: REASON_TEXT }), [located({ attempts: 2 })])).toBeNull();
     expect(moveFor(answer(), [located({ attempts: 3 })])?.move).toMatchObject({ attempts: 3, to: 'accepted' });
@@ -140,16 +149,19 @@ describe('the relay', () => {
     expect(t.doneSeqs().sort()).toEqual([first.seq, second.seq].sort());
   });
 
-  it('marks done, and runs nothing for, a result nothing can be recorded for: no row, two organisations, another code, a row not yet answerable', async () => {
+  it('marks done, and runs nothing for, a result nothing can be recorded for: no row, two organisations, another code, a failed row; and leaves one whose row is not sent yet', async () => {
     const none = claimed({ m_org_id: null, m_connection_id: null, m_state: null, m_attempts: null, m_voucher_type: null, m_org_company_code: null });
     const twoA = claimed({ org_refid: REF2 });
     const twoB = { ...twoA, m_org_id: ORG_B, m_connection_id: CONN_B };
     const otherCode = claimed({ m_org_company_code: OTHER_CODE });
+    const failed = claimed({ m_state: 'failed' });
     const sending = claimed({ m_state: 'sending' });
-    const t = fixture([[none, twoA, twoB, otherCode, sending]]);
-    expect(await runMisaAmisCallbacks({ runtime: t.runtime, workerDb: t.workerDb as never })).toBe(4);
+    const queued = claimed({ m_state: 'queued' });
+    const t = fixture([[none, twoA, twoB, otherCode, failed, sending, queued]]);
+    expect(await runMisaAmisCallbacks({ runtime: t.runtime, workerDb: t.workerDb as never })).toBe(6);
     expect(t.executed).toEqual([]);
-    expect(t.doneSeqs().sort()).toEqual([none.seq, twoA.seq, otherCode.seq, sending.seq].sort());
+    // The two whose row is not sent yet wait for the next take (MISA can call back before the worker records `sent`).
+    expect(t.doneSeqs().sort()).toEqual([none.seq, twoA.seq, otherCode.seq, failed.seq].sort());
   });
 
   it('drops a result the command refuses, and leaves one that met an outage to be taken again, logging a fixed code only', async () => {

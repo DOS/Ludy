@@ -64,7 +64,7 @@ BEGIN
   END IF;
   INSERT INTO crove_finance.misa_amis_callback_pending (org_refid, voucher_type, org_company_code, success, error_code, error_message)
   SELECT r.refid, r.vtype, p_org_company_code, r.ok, NULLIF(r.code, ''), r.message
-  FROM pg_catalog.unnest(p_org_refids, p_voucher_types, p_successes, p_error_codes, p_error_messages) AS r(refid, vtype, ok, code, message)
+  FROM ROWS FROM (pg_catalog.unnest(p_org_refids), pg_catalog.unnest(p_voucher_types), pg_catalog.unnest(p_successes), pg_catalog.unnest(p_error_codes), pg_catalog.unnest(p_error_messages)) AS r(refid, vtype, ok, code, message)
   WHERE r.refid IS NOT NULL AND r.vtype BETWEEN 1 AND 99 AND r.ok IS NOT NULL
     AND (r.code IS NULL OR r.code = '' OR r.code ~ '^[A-Za-z0-9_.-]{1,64}$')
     AND (r.message IS NULL OR pg_catalog.char_length(r.message) <= 500)
@@ -93,7 +93,7 @@ BEGIN
     WHERE p.seq IN (
       SELECT q.seq FROM crove_finance.misa_amis_callback_pending q
       WHERE q.claimed_at IS NULL OR q.claimed_at < pg_catalog.now() - interval '5 minutes'
-      ORDER BY q.seq LIMIT pg_catalog.least(pg_catalog.greatest(p_limit, 1), 1000) FOR UPDATE SKIP LOCKED
+      ORDER BY q.seq LIMIT LEAST(GREATEST(p_limit, 1), 1000) FOR UPDATE SKIP LOCKED
     )
     RETURNING p.seq, p.org_refid, p.voucher_type, p.org_company_code, p.success, p.error_code, p.error_message
   )

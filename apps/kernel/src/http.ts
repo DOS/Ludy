@@ -1027,7 +1027,7 @@ export function createHttpApp(deps: HttpDeps) {
           if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
           return c.json({ ok: true }, 200);
         } catch {
-          // Not problem(): it logs the error's message, and a database error can quote the row it refused, which holds MISA's own text. A short code is all that is logged; MISA retries a 503.
+          // Not problem(): it logs the error's message, and a database error can quote the row it refused, which holds MISA's own text. This route logs a short code only (the runtime logs its own internal errors, which the enqueue keeps free of MISA's text: it filters before it inserts); MISA retries a 503.
           console.error('[misa-amis-callback] not recorded: CALLBACK_UNAVAILABLE');
           return c.json({ code: 'CALLBACK_UNAVAILABLE' }, 503);
         }
