@@ -36,6 +36,7 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/api/channels/facebook/webhook': { app: 'kernel', gate: 'kernel', why: 'conversation core' },
   '/api/channels/whatsapp/webhook': { app: 'kernel', gate: 'kernel', why: 'conversation core' },
   '/api/extension/token': { app: 'kernel', gate: 'kernel', why: 'one-time code exchange; the extension calls into Meetings are gated by the runtime' },
+  '/api/meeting-platform/zoom/webhook': { app: 'meetings', gate: 'pending', why: 'C3 doorbell (#3175): its PR gates in SQL (the ring definer asks org_app_on for meetings, like bank_feed_notice_claim) and replaces this class' },
   '/api/meetings/:id/video/stream': { app: 'meetings', gate: 'runtime', why: 'meetings.meeting.media_meta is gated; any 4xx is the bad-ticket answer' },
   '/api/stream': { app: 'kernel', gate: 'kernel', why: 'the event stream, opened with a ticket after the session check (its per-app filter is in the stream)' },
   '/api/review/view': { app: 'social', gate: 'sql', why: 'review_link_by_token' },

@@ -134,7 +134,7 @@ describe('brand name (#1040)', () => {
     // Where each coworker is named: the messages of the screens its app owns. The general manager names the work across apps
     // (the AI budget); the system coworker is reserved and hidden, with no message.
     const APP_OF: Record<string, RegExp> = {
-      finance: /^(auth\.|bank\.payroll\.aiState\.|marketplaceBalance\.line|vendors\.payable\.lineAi\.|misaCheck\.lineAi\.|financeOverview\.|hrPayroll\.coworker\.|inboxDetail\.|paymentReminders\.|salesInvoices\.ai\.|stock\.(suggest|low)\.|vat\.lateSummary\.|inbox\.(?!socialMails))/,
+      finance: /^(auth\.|bank\.payroll\.aiState\.|marketplaceBalance\.line|vendors\.payable\.lineAi\.|misaCheck\.lineAi\.|financeOverview\.|hrPayroll\.coworker\.|inboxDetail\.|paymentReminders\.|salesInvoices\.ai\.|stock\.(suggest|low)\.|stock\.counts\.surplusAiLabel|vat\.lateSummary\.|inbox\.(?!socialMails))/,
       sales: /^(bookings\.|conversations\.|commands\.|contacts\.company\.|quotes\.(suggest|dealOffer)\.|deals\.nextSteps\.followup\.)/,
       marketing: /^(social\.|ads\.|inbox\.socialMails\.|kernelErrors\.codes\.(AI_|ALT_TEXT_))/,
       gm: /^(aiMeter\.|today\.brief\.|today\.weekly\.|projects\.weeklyStatus\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
