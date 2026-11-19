@@ -17,7 +17,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { TranscriptSource, TranscriptTranslated, TranscriptTranslationStatus, TranscriptTranslationView } from '@crove/kernel-contract';
 import { Runtime, defineQuery } from '@crove/kernel-runtime';
-import { lineHash, meetingsCommands, meetingsQueries, setSummaryEnabled } from '@crove/mod-meetings';
+import { lineHash, meetingsCommands, meetingsQueries, setSummaryEnabled, setTranslationTargets } from '@crove/mod-meetings';
 import { memberMeter } from '../src/ai-meter.ts';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { runTranscriptTranslation, transcriptTranslationStatusOf } from '../src/member-vy-ports.ts';
@@ -84,6 +84,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     usedTokens = 0;
     prompts = [];
     setSummaryEnabled(true);
+    setTranslationTargets([]);
     await sqlAdmin('DELETE FROM crove_kernel.budget_policy WHERE org_id = $1', [orgId]);
     // A test that stopped half way leaves no live run to block the next one.
     await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'RUN_CANCELLED' WHERE org_id = $1 AND status = 'running'`, [orgId]);
@@ -147,7 +148,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
   const parts = (who: string, meetingId: string) => query<TranscriptTranslationView>(who, 'meetings.translation.transcript_get', { meetingId });
   const source = (who: string, meetingId: string, lineIds: string[]) => query<TranscriptSource>(who, 'meetings.translation.transcript_source', { meetingId, lineIds });
   // One request, as the page makes it: the route's whole flow (start, the text, the chunks behind the real member meter, the result, the member's own copy).
-  const batch = (who: string, meetingId: string, model: ModelPort = translating()): Promise<TranscriptTranslated> =>
+  const batch = (who: string, meetingId: string, model: ModelPort = translating(), to?: 'zh' | 'ja'): Promise<TranscriptTranslated> =>
     runTranscriptTranslation(
       {
         runtime,
@@ -160,6 +161,7 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
       orgId,
       asUser(who),
       meetingId,
+      to,
     );
 
   beforeAll(async () => {
@@ -534,5 +536,26 @@ suite("the member's Vy translating the transcript (E2, #3185)", () => {
     expect(JSON.stringify(hit)).not.toContain('English: Dòng gốc');
     const transcript = await query<{ segments: Array<{ text: string }> }>('attendee', 'meetings.transcript.get', { meetingId });
     expect(transcript.segments.map((s) => s.text)).toEqual(['Dòng gốc: số 9.']);
+  });
+  it('E3 (#3186): a transcript is translated into Chinese where the deployment switched it on, kept apart from the English one, and the request reports what is left of THAT language', async () => {
+    const meetingId = await seedMeeting();
+    await seedLines(meetingId, 'published', ['Chốt giá 1.250.000 cho khách A.', 'Giữ giá cũ cho khách A.', 'Họp tiếp vào thứ sáu.']);
+    const toZh = (t: string) => `这是中文翻译 ${(t.match(/\d[\d.]*/g) ?? []).join(' ')}`;
+    // Off: refused before any call.
+    expect(await refuses(batch('attendee', meetingId, translating(toZh), 'zh'))).toBe('TRANSLATION_LANGUAGE_OFF');
+    expect(modelCalls).toBe(0);
+    setTranslationTargets(['zh']);
+    const zhStatus = await transcriptTranslationStatusOf({ runtime, price: PRICE, hasModel: true }, orgId, asUser('attendee'), meetingId, 'zh');
+    expect(zhStatus).toMatchObject({ to: 'zh', targets: ['en', 'zh'], lines: 3, remaining: 3 });
+    // Everything the request kept is for Chinese, and the answer says so: `remaining` is of the Chinese translation (not of the English default, which has nothing kept yet).
+    const done = await batch('attendee', meetingId, translating(toZh), 'zh');
+    expect(done).toMatchObject({ state: 'ready', translated: 3, remaining: 0 });
+    const zhParts = await query<TranscriptTranslationView>('attendee', 'meetings.translation.transcript_get', { meetingId, to: 'zh' });
+    expect(zhParts).toMatchObject({ to: 'zh' });
+    expect(zhParts.parts.map((p) => p.state)).toEqual(['ok', 'ok', 'ok']);
+    // The English translation is untouched: no parts, all three lines still to translate.
+    expect((await parts('attendee', meetingId)).parts).toEqual([]);
+    expect(await rawStatus('attendee', meetingId)).toMatchObject({ to: 'en', translated: 0, remaining: 3 });
+    expect(await rawStatus('attendee', meetingId).then(() => query<TranscriptTranslationStatus & { bytes: number }>('attendee', 'meetings.translation.transcript_status', { meetingId, to: 'zh' }))).toMatchObject({ to: 'zh', translated: 3, remaining: 0 });
   });
 });

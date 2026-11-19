@@ -12769,6 +12769,7 @@ export const en = {
       BRIEF_BUSY: 'Vy is busy writing preparations. Try again in a few minutes.',
       TRANSLATION_NOT_FOUND: 'There is no summary you can read to translate.',
       TRANSLATION_NOTHING: 'There is nothing to translate yet.',
+      TRANSLATION_LANGUAGE_OFF: 'This translation language is not turned on here.',
       TRANSLATE_RUNNING: 'Another translation of yours is running. Wait for it to finish or stop it.',
       TRANSLATION_DONE: 'The whole transcript is translated.',
       TRANSLATION_TOO_LARGE: 'The translation is too large to keep.',

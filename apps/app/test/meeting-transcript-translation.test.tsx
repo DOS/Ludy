@@ -33,6 +33,7 @@ const STATUS: TranscriptTranslationStatus = {
   enabled: true,
   reason: null,
   from: 'vi',
+  targets: ['en'],
   to: 'en',
   lines: 144,
   translated: 0,
