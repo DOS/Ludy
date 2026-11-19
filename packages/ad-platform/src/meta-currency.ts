@@ -41,3 +41,17 @@ export function metaMinorUnits(amount: string, currency: string): string {
   if (/^0+$/.test(minor)) throw new AdPlatformError('bad_request', 'BUDGET_INVALID');
   return minor;
 }
+
+// The inverse, for what a read of an ad set says (W4, #3835): Meta's minor unit, as a decimal string of digits, back in the currency's own units, as a plain decimal string
+// without a trailing zero (`5000000` dong is `5000000`, `12345` cents is `123.45`). The same table and the same refusals: a currency with no verified offset, or an answer that
+// is not digits, is an error, never a guess.
+export function fromMetaMinorUnits(minor: string, currency: string): string {
+  const places = Object.hasOwn(OFFSET_PLACES, currency) ? OFFSET_PLACES[currency] : undefined;
+  if (places === undefined) throw new AdPlatformError('bad_request', 'CURRENCY_UNSUPPORTED');
+  if (!/^\d{1,16}$/.test(minor)) throw new AdPlatformError('unknown', 'BUDGET_UNREADABLE');
+  if (places === 0) return minor.replace(/^0+(?=\d)/, '');
+  const padded = minor.padStart(places + 1, '0');
+  const whole = padded.slice(0, padded.length - places).replace(/^0+(?=\d)/, '');
+  const fraction = padded.slice(padded.length - places).replace(/0+$/, '');
+  return fraction === '' ? whole : `${whole}.${fraction}`;
+}

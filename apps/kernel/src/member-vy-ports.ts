@@ -4,9 +4,9 @@
 // member's own user context. Asking about anyone else is refused before a command is run, and the database would refuse it anyway (the
 // restrictive policy shows a member their own rows only). Knowledge has no declared queries yet: a feature that asks gets no passages.
 import { z } from 'zod';
-import { ASK_TIMEOUT_MS, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, CHAPTERS_TIMEOUT_MS, ChaptersModelError, generateMeetingBriefText, generateMeetingChaptersText, generateMeetingTitleText, TITLE_TIMEOUT_MS, TitleModelError, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter } from '@crove/agent';
-import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, BriefError, writeBrief, ChaptersError, chapterMeeting, TitleError, suggestMeetingTitles, NoteAiError, NoteAiModelError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind } from '@crove/agent/member-vy';
-import { ASK_ESTIMATE, ASK_HITS_MAX, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, type TitleAnswer, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationTarget, type TranslationStatus } from '@crove/kernel-contract';
+import { ASK_TIMEOUT_MS, ASSIGNEE_TIMEOUT_MS, AssigneeModelError, generateMeetingAssigneeText, AiBudgetExhaustedError, AiMeterMissingError, AskModelError, BRIEF_TIMEOUT_MS, BriefModelError, CHAPTERS_TIMEOUT_MS, ChaptersModelError, generateMeetingBriefText, generateMeetingChaptersText, SUMMARY_TIMEOUT_MS, SummaryModelError, TASKS_FROM_NOTE_TIMEOUT_MS, TasksFromNoteModelError, TranslationModelError, aiCost, generateMeetingAskText, generateMeetingSummaryText, generateMeetingTranslationText, generateNoteSummaryText, generateTasksFromNoteText, generateTasksFromSourceText, generateTodoSuggestText, withAiScope, type AiConfig, type AiMeter, generateMeetingTitleText, TITLE_TIMEOUT_MS, TitleModelError } from '@crove/agent';
+import { NOTE_AI_LIMITS, NOTE_AI_TIMEOUT_MS, TASKS_FROM_NOTE_LIMITS, AskError, AssigneeError, pickAssignee, BriefError, writeBrief, ChaptersError, chapterMeeting, NoteAiError, NoteAiModelError, SummaryError, TasksFromNoteError, TasksFromSourceError, TranslationError, askAcrossMeetings, bindPorts, noKnowledge, privateText, proposeTasksFromNote, proposeTasksFromSource, revealPrivateText, enhanceNotes, suggestTodosFromNote, summarizeMeeting, summarizeNote, translateSummary, translateTranscriptChunk, planTranscriptChunks, chunkExpectedUsage, lineHash, type MemberRef, type MemoryEntry, type MemoryPort, type ModelPort, type Ports, type TaskSourceKind, TitleError, suggestMeetingTitles } from '@crove/agent/member-vy';
+import { ASK_ESTIMATE, ASK_HITS_MAX, type AssigneeAnswer, type AssigneeAsk, type AssigneeFacts, type AssigneeStatus, BRIEF_ESTIMATE, briefLines, type BriefAnswer, type BriefFacts, type BriefStatus, type BriefTarget, DEFAULT_TIME_ZONE, zNoteTodoSuggestion, zTranscriptTranslationResult, zonedDate, templateSections, type AskAnswer, type AskLines, type AskStatus, type LiveNotesDone, type LiveNotesInput, type MeetingSummaryTemplate, type MinutesTemplateCopy, type Note, type NoteSuggestTodosInput, type NoteSuggestTodosResult, type NoteSummarizeInput, type NoteSummarizeResult, type NoteVyResults, type NoteVyStatus, type ProjectSeat, type ProjectTaskSourceType, type ProjectTasksFromNoteInput, type ProjectTasksFromNoteResult, type ProjectTasksFromNoteStatus, type ProjectTasksFromSourceInput, type ProjectTasksFromSourceResult, type ProjectTasksFromSourceStatus, type Summarized, type Transcript, type TranscriptSource, type TranscriptStarted, type TranscriptTranslated, type TranscriptTranslationStatus, type Translated, type TranslationSource, type TranslationTarget, type TranslationStatus, type TitleAnswer } from '@crove/kernel-contract';
 import { readTasksFromSourceData, type SourceQueryFn } from '@crove/mod-projects';
 import { DomainError, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import type { DraftBudget } from './ai-draft-limit.ts';
@@ -111,7 +111,9 @@ export function summaryModelPort(config: AiConfig, timeoutMs: number = SUMMARY_T
   // A question about meetings counts under meetings.ask (#3161) for the same reason.
   return {
     generate: (_who, prompt) =>
-      prompt.feature === 'meetings.brief'
+      prompt.feature === 'meetings.assignee'
+        ? generateMeetingAssigneeText(config, prompt, Math.min(timeoutMs, ASSIGNEE_TIMEOUT_MS))
+        : prompt.feature === 'meetings.brief'
         ? generateMeetingBriefText(config, prompt, Math.min(timeoutMs, BRIEF_TIMEOUT_MS))
         : prompt.feature === 'meetings.chapters'
         ? generateMeetingChaptersText(config, prompt, Math.min(timeoutMs, CHAPTERS_TIMEOUT_MS))
@@ -867,6 +869,100 @@ export async function runMeetingBrief(deps: MeetingBriefDeps, orgId: string, act
   }
 }
 
+
+// The member's Vy naming who an action item belongs to, when code found nobody (#3921, step 2, ADR-0049 stage A). Step 1 works with AI off; this is the member's click on one item. In order:
+//   1. meetings.assignee.status, as the member: the deployment's switch, the right to work with Vy, a kill switch, a spent budget; a refusal here has made no run and spent nothing;
+//   2. meetings.assignee.facts: the said name and the people the member may give the work to, read as the member (row security), with their seats. Not eligible (the item has a person or a task, code finds a
+//      person, the text is not a name, nobody to pick): no run and no call;
+//   3. meetings.assignee.start, then the kernel's run.start (vy.use, the kill switches, the budget) makes the member's Vy and the run;
+//   4. the one model call, outside any transaction, through the member's own meter under meetings.assignee (the scope carries the run), with a hard timeout. The model is given the said name and the numbered
+//      names, no id, no title and no address, and has no tools; the answer is {"n": number} or {"n": null}, checked by code (a number off the list or a pick the said text does not support is dropped);
+//   5. the result row holds counts only; the answer is the person the number named, with the seats they hold now. Nothing is stored: a person picks the seat and makes the task.
+// The answer goes back to the browser and nowhere else. A name is never logged: a failure is named by a fixed code.
+export async function assigneeStatusOf(deps: Pick<MeetingBriefDeps, 'runtime' | 'model' | 'meter'>, orgId: string, actor: UserActor): Promise<AssigneeStatus> {
+  if (!deps.model || !deps.meter(actor)) return { enabled: false, reason: 'off', estimate: null };
+  return deps.runtime.query<AssigneeStatus>('meetings.assignee.status', {}, { actor, orgId });
+}
+
+function assigneeCodeOf(error: unknown): string {
+  if (error instanceof AssigneeError) return error.code;
+  if (error instanceof AssigneeModelError) return error.kind === 'timeout' ? 'ASSIGNEE_TIMEOUT' : 'ASSIGNEE_FAILED';
+  const code = codeOf(error);
+  return code === 'SUMMARY_FAILED' || code === 'SUMMARY_TIMEOUT' ? 'ASSIGNEE_FAILED' : code;
+}
+
+export async function runMeetingAssignee(deps: MeetingBriefDeps, orgId: string, actor: UserActor, ask: AssigneeAsk): Promise<AssigneeAnswer> {
+  const as = { actor, orgId };
+  const timeoutMs = deps.timeoutMs ?? SUMMARY_TIMEOUT_MS;
+  const model = deps.model;
+  const meter = deps.meter(actor);
+  if (!model || !meter) throw new DomainError('ASSIGNEE_OFF', 422, 'Vy naming who an action item belongs to is not turned on here');
+  const none = (): AssigneeAnswer => ({ state: 'none', errorCode: null, suggestion: null });
+  const failed = (errorCode: string): AssigneeAnswer => ({ state: 'failed', errorCode, suggestion: null });
+  const status = await deps.runtime.query<AssigneeStatus>('meetings.assignee.status', {}, as);
+  if (!status.enabled) {
+    if (status.reason === 'off') throw new DomainError('ASSIGNEE_OFF', 422, 'Vy naming who an action item belongs to is not turned on here');
+    if (status.reason === 'forbidden') throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
+    throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Vy đang tạm dừng hoặc đã hết ngân sách tháng này; sổ sách và mọi việc không cần AI vẫn chạy bình thường');
+  }
+  const ticket = deps.budget.take(orgId, actor.userId);
+  if (!ticket.allowed) throw new DomainError('ASSIGNEE_BUSY', 429, 'Vy is busy; try again in a few minutes', { retryAfterSeconds: ticket.retryAfterSeconds });
+  try {
+    const facts = await deps.runtime.query<AssigneeFacts>('meetings.assignee.facts', ask, as);
+    if (!facts.eligible || facts.people.length === 0) return none();
+    let started: { runId: string };
+    try {
+      started = await deps.runtime.execute<{ runId: string }>('meetings.assignee.start', {}, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && (error.code === 'AI_BUDGET_EXHAUSTED' || error.code === 'VY_RUN_BUSY')) {
+        const errorCode = error.code === 'VY_RUN_BUSY' ? 'ASSIGNEE_BUSY' : error.code;
+        console.error(`[meetings-assignee] run not started: ${errorCode}`);
+        return failed(errorCode);
+      }
+      throw error;
+    }
+    const runId = started.runId;
+    const fail = async (errorCode: string): Promise<AssigneeAnswer> => {
+      try {
+        await deps.runtime.execute('kernel.member_vy.result.store', { runId, outcome: { status: 'failed', errorCode } }, as);
+      } catch (storeError: unknown) {
+        // The run stays open until it expires; the caller still gets the failure, and only the codes are logged.
+        console.error(`[meetings-assignee] failed result not stored: ${assigneeCodeOf(storeError)}`);
+      }
+      console.error(`[meetings-assignee] run failed: ${errorCode}`);
+      return failed(errorCode);
+    };
+    let checked: Awaited<ReturnType<typeof pickAssignee>>['answer'];
+    try {
+      const ports: Ports = { model, memory: nothingToRemember, knowledge: noKnowledge };
+      const result = await withDeadline(
+        withAiScope({ orgId, memberRunId: runId, meter }, () => pickAssignee({ said: facts.said, people: facts.people.map((p) => p.name) }, bindPorts({ orgId, memberUserId: actor.userId }, ports))),
+        timeoutMs,
+      );
+      checked = result.answer;
+    } catch (error: unknown) {
+      return await fail(error instanceof SummaryModelError ? 'ASSIGNEE_TIMEOUT' : assigneeCodeOf(error));
+    }
+    // Counts only: never a name.
+    const body = JSON.stringify({ v: 1, people: facts.people.length, picked: checked.pick === null ? 0 : 1, dropped: checked.dropped ? 1 : 0 });
+    let stored: { stored: boolean; status: 'ready' | 'failed' };
+    try {
+      stored = await deps.runtime.execute<{ stored: boolean; status: 'ready' | 'failed' }>('kernel.member_vy.result.store', { runId, outcome: { status: 'ready', body } }, as);
+    } catch (error: unknown) {
+      if (error instanceof DomainError && error.code === 'VY_RUN_NOT_LIVE') return failed('AI_STOPPED');
+      return await fail(assigneeCodeOf(error));
+    }
+    // The kernel re-checked the switches and the budget at the store and may have stopped the run: nothing of the model's answer is shown for a stopped run.
+    if (stored.status === 'failed') {
+      console.error('[meetings-assignee] run failed: AI_STOPPED');
+      return failed('AI_STOPPED');
+    }
+    const person = checked.pick === null ? undefined : facts.people[checked.pick - 1];
+    return person ? { state: 'suggested', errorCode: null, suggestion: person } : none();
+  } finally {
+    ticket.release();
+  }
+}
 
 // The button and the progress of the transcript translation (E2, #3185): the module's status plus the cost expected for the lines still to translate (their size, priced; one call a
 // chunk, each with the fixed instruction around it). The text itself is not read here. With no model in the deployment the button says why (as when the module's own switch is off).

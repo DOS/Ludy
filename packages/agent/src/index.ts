@@ -40,6 +40,7 @@ export * from './summary-model.ts';
 export * from './translation-model.ts';
 export * from './ask-model.ts';
 export * from './brief-model.ts';
+export * from './assignee-model.ts';
 export * from './chapters-model.ts';
 export * from './title-model.ts';
 export * from './tasks-from-note-model.ts';

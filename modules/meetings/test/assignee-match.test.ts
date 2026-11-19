@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Who a said name points at (#3921): the Vietnamese forms people use in a meeting, with honorifics and without diacritics, one unambiguous person or nobody.
 import { describe, expect, it } from 'vitest';
-import { saidNameWords, suggestAssignee, type Person } from '../src/assignee-match.ts';
+import { matchAssignee, saidNameWords, suggestAssignee, type Person } from '../src/assignee-match.ts';
 
 const p = (userId: string, name: string): Person => ({ userId, name });
 const nam = p('nam', 'Trần Văn Nam');
@@ -140,5 +140,17 @@ describe('suggestAssignee', () => {
   it('handles a person with no usable name and a name of one word', () => {
     expect(suggestAssignee('Hà', [p('ha', 'Hà')], [])).toMatchObject({ userId: 'ha', source: 'attendee' });
     expect(suggestAssignee('Hà', [p('x', '')], [])).toBeNull();
+  });
+});
+
+describe('matchAssignee', () => {
+  const lanB = p('lanB', 'Phạm Thị Lan');
+  it('tells nobody from two people from no name, so the model is asked only when nobody answers', () => {
+    expect(matchAssignee('anh Nam', [nam], [])).toMatchObject({ kind: 'one', person: { userId: 'nam', source: 'attendee' } });
+    expect(matchAssignee('anh Tí', [nam, lan], [quan])).toEqual({ kind: 'none' });
+    expect(matchAssignee('chị Lan', [lan, lanB], [])).toEqual({ kind: 'ambiguous' });
+    expect(matchAssignee('anh Minh', [nam], [minhA, minhB])).toEqual({ kind: 'ambiguous' });
+    expect(matchAssignee('anh', [nam], [])).toEqual({ kind: 'no_name' });
+    expect(matchAssignee('', [nam], [])).toEqual({ kind: 'no_name' });
   });
 });
