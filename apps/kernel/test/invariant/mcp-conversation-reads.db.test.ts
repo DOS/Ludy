@@ -190,6 +190,9 @@ suite('what an MCP grant reads of Hộp thư through the conversation reads, and
     // inside a random UUID of org A's own rows, so the check names the id and the text instead.
     expect(JSON.stringify(listed)).not.toContain(conv.b1c as string);
     expect(JSON.stringify(listed)).not.toContain(' b1c');
+    // Its platform ids carry the key after a letter that is not hex, so no UUID can match them.
+    expect(JSON.stringify(listed)).not.toContain('t-b1c');
+    expect(JSON.stringify(listed)).not.toContain('u-b1c-');
     expect(keysOf(listed)).not.toContain('b1c');
     // An admin's company grant reads the same.
     expect((await list('admin', 'company')).conversations).toHaveLength(5);
