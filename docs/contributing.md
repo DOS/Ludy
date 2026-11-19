@@ -13,6 +13,10 @@ Read this when you add a package with tests, or when `tools/test/typecheck-cover
 
 `pnpm typecheck` checks every test file too, since Vitest runs tests without checking types (#294): a package's `tsconfig.json` includes `test`, or, where the source must not see test-only types, a `tsconfig.test.json` that extends it does and the package's `typecheck` script runs both (`apps/app`, whose browser code gets no Node types). `tools/tsconfig.json` covers `tools/test` from the root script. A new package with tests follows the same pattern; `tools/test/typecheck-coverage.test.ts` fails when a test directory is outside them.
 
+### Typecheck memory (#4034)
+
+`tsconfig.lib.json` sets `"checkers": 1` (the TypeScript 7 compiler's type checker workers; the default is 4). `pnpm -r typecheck` runs several packages at once, and with the default the kernel project alone reaches about 13.6 GB and the app 6.8 GB, which killed the 16 GB CI runner ("The runner has received a shutdown signal") and the typecheck job with it. With one checker the kernel peaks at about 5.6 GB and the app at 2.9 GB, and the whole `pnpm -r typecheck` peaks at about 7 GB above idle (12.8 GB and killed before), for about twice the wall time of the sum of the parts run alone. Do not raise it without measuring the peak of a full `pnpm -r typecheck` first.
+
 ### Leftover test roles on a shared dev PostgreSQL
 
 Read this when every migrate on a shared dev cluster fails the T17 check with `role t100_test_runner_..._proxy can create temporary objects`.

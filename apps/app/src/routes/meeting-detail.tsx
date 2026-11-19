@@ -286,7 +286,7 @@ export function MeetingDetailPage() {
       {/* A recording that ended without the recorder's click leaves a visible line (A1, #3159): when it stopped and why, in plain words. */}
       <RecordingStoppedNote meeting={meeting} />
       {/* The recorder's own Vy offers up to three titles on a click (#3947); a pick renames the meeting, nothing changes before it */}
-      <MeetingTitleSuggest key={id} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} />
+      <MeetingTitleSuggest key={`title-${id}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} />
 
       {/* AI Off Status Card: gone once the meeting has a transcript */}
       {!hasTranscript && (
@@ -354,13 +354,14 @@ export function MeetingDetailPage() {
 
       <MeetingLive meetingId={id} liveNotes={meeting.liveNotes} isRecorder={meeting.isRecorder} />
       {/* The transcript: the recorder's draft, or what was shared with the meeting */}
+      {/* Each keyed child below has a key of its own: the same key on siblings makes React duplicate or drop children on a re-render (#4066) */}
       {/* The chapters (#3844): the published table of contents for every reader, the recorder's own draft editor; a click takes the transcript below to the line */}
-      <MeetingChapters key={id} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
+      <MeetingChapters key={`chapters-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* What each speaker said they would do or decided (#3954): the recorder's own Vy on a click, each line opens the transcript where it was said, nothing is saved */}
-      <MeetingCommitments key={id} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
-      <MeetingTranscript key={id} meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} />
+      <MeetingCommitments key={`commitments-${id}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
+      <MeetingTranscript key={`transcript-${id}`} meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} platformCut={meeting.platformTranscriptCut} />
       {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}
-      <MeetingAdherence key={id} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
+      <MeetingAdherence key={`adherence-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}
       {/* What to bring to the next meeting of a series (#3543): the previous meeting's decisions, the open items, the linked customer's open deals, and Vy's few sentences on a click */}
       <MeetingBrief slug={slug} meetingId={id} />
@@ -368,7 +369,7 @@ export function MeetingDetailPage() {
       <MeetingSeries meetingId={id} isRecorder={meeting.isRecorder} startedAt={meeting.startedAt} />
       {meeting.isRecorder && <MeetingNotes meetingId={id} minutesTemplate={meeting.minutesTemplate} />}
       <MeetingResults
-        key={id}
+        key={`results-${id}`}
         meetingId={id}
         slug={slug}
         visibility={meeting.visibility}
