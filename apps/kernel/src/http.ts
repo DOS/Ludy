@@ -3092,7 +3092,8 @@ export function createHttpApp(deps: HttpDeps) {
   // media route's. A request that names the wrong route is refused BEFORE the claim moves the row, so the row stays staged with its bytes for the right request (the app routes by the same rule). A row that is
   // not in the member's own list is left to the claim, which answers "not found".
   const refuseWrongImportRoute = async (user: AuthUser, orgId: string, recordingId: string, route: 'media' | 'transcript'): Promise<void> => {
-    const rows = await runtime.query<Array<{ id: string; hasAudio: boolean; hasVideo: boolean }>>('kernel.meeting_platform.recordings', {}, { actor: actorOf(user), orgId });
+    // The row by its id, whatever its age (the list holds only the newest 50, so a scan of it would miss an older row and let the wrong route claim it).
+    const rows = await runtime.query<Array<{ id: string; hasAudio: boolean; hasVideo: boolean }>>('kernel.meeting_platform.recordings', { recordingId }, { actor: actorOf(user), orgId });
     const row = rows.find((r) => r.id === recordingId);
     if (!row) return;
     const transcriptOnly = !row.hasAudio && !row.hasVideo;
