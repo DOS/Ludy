@@ -196,6 +196,28 @@ suite('the chapters of a meeting (#3844)', () => {
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('NOTHING_TO_PUBLISH');
   });
 
+  it('refuses to publish a chapter whose second a re-transcription has since left without a line, and keeps everything as it was (#3881)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    await save('recorder', meetingId, [{ title: 'Mở đầu', startSeconds: 0 }, { title: 'Kế hoạch', startSeconds: 300 }]);
+    // The transcript is replaced: the lines now start at 0 and 40, so the chapter at 300 points at no line.
+    await exec('recorder', 'meetings.transcript.draft_store', {
+      meetingId,
+      segments: [
+        { startSeconds: 0, endSeconds: 40, speakerLabel: 'Hà', text: 'Chào mọi người' },
+        { startSeconds: 40, endSeconds: 80, speakerLabel: 'Nam', text: 'Kế hoạch giao hàng' },
+      ],
+    });
+    expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('CHAPTER_NOT_ANCHORED');
+    // Nothing of the publish is kept: the chapters are still the recorder's draft and the readers still read none.
+    expect((await rowsOf(meetingId, 'published')).length).toBe(0);
+    expect((await rowsOf(meetingId, 'draft')).map((r) => r.start_seconds)).toEqual([0, 300]);
+    expect(await get('reader', meetingId)).toEqual({ meetingId, draft: [], published: [] });
+    // Saved again at a second a line starts at, the same publish goes through.
+    await save('recorder', meetingId, [{ title: 'Mở đầu', startSeconds: 0 }, { title: 'Kế hoạch', startSeconds: 40 }]);
+    expect(await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true })).toEqual({ meetingId, results: 0, items: 0, chapters: 2 });
+    expect(titles((await get('reader', meetingId)).published)).toEqual(['Mở đầu', 'Kế hoạch']);
+  });
+
   it('replaces the published set at the next publish, and keeps it while a new draft waits', async () => {
     const meetingId = await seedMeeting('recorder');
     await save('recorder', meetingId, [{ title: 'Bản một', startSeconds: 0 }]);

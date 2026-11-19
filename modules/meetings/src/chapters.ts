@@ -6,9 +6,8 @@
 // title holds no email address and no run of eight or more digits (the personal-data finder and erasure reach a title anyway, so nothing rests on that rule). Audit rows carry the meeting id and counts, never a title.
 import { CHAPTERS_MAX, chapterTitleProblem, zChapters, zChaptersSave, zChaptersSaved, zMeetingRef, type Chapter, type Chapters } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
-import { sql } from 'kysely';
 import { recorderMeeting } from './results.ts';
-import { ROLES, openMeeting, userOf } from './transcript.ts';
+import { ROLES, missingAnchors, openMeeting, userOf } from './transcript.ts';
 
 const TITLE_MESSAGES = {
   empty: 'A chapter needs a title',
@@ -39,13 +38,8 @@ export const chaptersSave = defineCommand({
     await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forNoKeyUpdate().execute();
     if (chapters.length > 0) {
       // Each second must be the start (to the whole second) of a line of this meeting's transcript, which the recorder reads in full.
-      const seconds = chapters.map((c) => c.startSeconds);
-      const found = await sql<{ second: number }>`
-        SELECT DISTINCT pg_catalog.floor(s.start_seconds)::int AS second
-          FROM crove_meetings.transcript_segment s
-         WHERE s.org_id = ${ctx.orgId}::uuid AND s.meeting_id = ${input.meetingId}::uuid AND pg_catalog.floor(s.start_seconds)::int = ANY(${sql.val(seconds)}::int[])`.execute(ctx.trx);
-      const anchored = new Set(found.rows.map((r) => r.second));
-      if (seconds.some((s) => !anchored.has(s))) throw new DomainError('CHAPTER_NOT_ANCHORED', 422, 'A chapter must start at a line of the transcript');
+      const missing = await missingAnchors(ctx, input.meetingId, chapters.map((c) => c.startSeconds));
+      if (missing.length > 0) throw new DomainError('CHAPTER_NOT_ANCHORED', 422, 'A chapter must start at a line of the transcript');
     }
     // The draft set is replaced whole. A chapter that starts at the second of a chapter the model wrote, or that carries its title, keeps the mark (and the run it came from) even when the other is edited: only the recorder's review
     // (meetings.draft.review) clears it, never a save. A chapter at any other second is the recorder's own.
