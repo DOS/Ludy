@@ -41,7 +41,7 @@ const nameOf = (members: readonly EventTypeMember[], userId: string) => {
   return m ? (m.displayName ?? m.email) : null;
 };
 
-function EventTypeForm({
+export function EventTypeForm({
   slug,
   type,
   members,
