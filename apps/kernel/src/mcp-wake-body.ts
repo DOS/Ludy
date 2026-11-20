@@ -62,7 +62,7 @@ export const WAKE_CURRENCIES = ['vnd', 'usd', 'eur', 'gbp', 'jpy', 'krw', 'cny',
 const ENGAGE = 'ludy.engage.write' as const;
 const SOCIAL = 'ludy.social.draft' as const;
 const ADS = 'ludy.ads.draft' as const;
-// Engage's wake rules (#3862, E3 of epic #3857): what each event carries is ids, days, amounts and enum words (the migration 20270122190000 registers the same list in the catalog, and a test keeps the two equal).
+// Engage's wake rules (#3862, E3 of epic #3857): what each event carries is ids, days, amounts and enum words (the migration 20270122200000 registers the same list in the catalog, and a test keeps the two equal).
 // The rules, their windows and the "seen" key of each are in mcp-wake-engage.ts.
 export const LINE_WAKE_EVENTS: LineWakeRegistry = Object.freeze({
   'engage.conversation_new': { scope: ENGAGE, fields: { conversation_id: 'id', kind: ['direct', 'email'], since: 'date' } },
