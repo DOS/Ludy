@@ -1,6 +1,6 @@
 # Ba cách ghi cuộc họp, một cuộc họp chỉ ghi một lần: tóm tắt cho JOY
 
-> Bản tóm tắt tiếng Việt của [ADR-0055](https://github.com/DOS/Ludy/blob/main/docs/adr/0055-three-capture-paths-one-meeting.md), ngày 2026-11-19. Bản tiếng Anh là bản chính. Trạng thái: **Đề xuất, chưa làm gì và chưa được duyệt**. Số 0054 đã có người dùng (PR #3980, đổi tên Ludy), nên tài liệu này là 0055.
+> Bản tóm tắt tiếng Việt của [ADR-0055](https://github.com/DOS/Ludy/blob/main/docs/adr/0055-three-capture-paths-one-meeting.md), đề xuất ngày 2026-11-19. Bản tiếng Anh là bản chính. Trạng thái: **Đã duyệt (2026-11-20 UTC / 2026-11-21 +07:00)**, theo quyết định của JOY ở hộp thoại A2 với AI Meeting Notes PO ([#3986](https://github.com/DOS/Ludy/pull/3986#issuecomment-7048557563)): đồng ý cả 10 đề xuất (làm xong lát 1 `#4123` chống ghi trùng trước, sau đó làm app máy tính Electron `Ludy Desktop` thuộc khung chung của nhóm Platform, Windows trước rồi macOS; thêm câu hỏi luật sư vào `#2585` / `#62` ngay; chưa mua tài khoản ký phần mềm hay làm bot vội; giữ nguyên 6 câu hỏi mở về bot của ADR-0052; mô-đun chat vẫn ngoài kế hoạch cho tới khi có quyết định và ADR riêng). Số 0054 đã dùng cho [ADR-0054](0054-rebrand-internal-crove-identifiers-to-ludy.md) (đổi tên Ludy, đã gộp từ [#3980](https://github.com/DOS/Ludy/pull/3980)), nên tài liệu này là 0055.
 
 ## Vấn đề
 
@@ -20,8 +20,8 @@ Tôi đọc trang trợ giúp và blog chính thức của tám sản phẩm: Gr
 
 - **Tiện ích** (Chrome, Edge): họp trong trình duyệt và máy không cài được app. Đã có.
 - **Ghi trong app và tải file lên**: họp quanh bàn, file bất kỳ. Đã có.
-- **App máy tính "Ludy Desktop"**: Zoom, Teams, Zalo PC, huddle Slack và họp trực tiếp trên laptop (âm thanh hệ thống cộng micro). Đây là đường duy nhất cho Zalo PC và huddle Slack. Chưa làm.
-- **Bot** (ADR-0052, L4b): họp khi người ghi không ngồi trước máy. Vẫn là đề xuất; các câu 2, 3, 4, 6, 7, 8 của ADR-0052 chưa trả lời và tài liệu này **không trả lời hộ**.
+- **App máy tính "Ludy Desktop"**: Zoom, Teams, Zalo PC, huddle Slack và họp trực tiếp trên laptop (âm thanh hệ thống cộng micro). Đây là đường duy nhất cho Zalo PC và huddle Slack. Đã duyệt hướng đi (2026-11-20 UTC / 2026-11-21 +07:00): khung Electron thuộc nhóm Platform (lát 2), ghi âm Windows trước rồi macOS (lát 3), làm sau lát 1 (#4123); lát 3 còn chờ câu trả lời luật sư (#2585 / #62).
+- **Bot** (ADR-0052, L4b): họp khi người ghi không ngồi trước máy. Vẫn là đề xuất (Icebox); các câu 2, 3, 4, 6, 7, 8 của ADR-0052 vẫn giữ mở và **chưa trả lời** (chưa làm bot vội).
 - **Nhập bản ghi của nền tảng** (C1 đến C3): ghi sau cuộc họp.
 
 ## Quy tắc "một cuộc họp, một lần ghi"
@@ -30,7 +30,7 @@ Tôi đọc trang trợ giúp và blog chính thức của tám sản phẩm: Gr
 2. **Máy chủ quyết định, không tin máy khách.** Một bảng mới "phiên ghi" (đề xuất): mỗi cuộc họp chỉ có một phiên đang mở. Mọi cách ghi phải xin bắt đầu trước khi gửi âm thanh. Nếu đã có phiên khác, máy chủ từ chối và nói **ghi bằng cách nào và từ lúc nào** ("Tiện ích đang ghi cuộc họp này từ 14:02"), không nói tên ai. Phiên không có tín hiệu sống 90 giây thì tự đóng (trình duyệt sập, laptop gập lại không khóa cuộc họp). Phải có bản xác nhận thông báo trước khi bắt đầu, như hiện nay.
 3. **Bot đã hẹn và ghi trên máy:** ghi trên máy thắng **nếu bot chưa bắt đầu**: bot không vào, hoặc lệnh hẹn bị hủy. Nếu bot đã vào và đang ghi thì bản ghi đầu tiên được giữ; ghi trên máy bị từ chối và nói bot đang ghi; người dùng có thể bấm "Dừng bot" rồi ghi trên máy. Không bao giờ tự động.
 4. **Nhập bản ghi nền tảng** không bao giờ tạo cuộc họp thứ hai cho cuộc gọi Ludy đã ghi: dòng nhập sẽ báo "Ludy đã có bản ghi của cuộc họp này". Sau này có thể cho gắn bản chép lời của nền tảng vào cuộc họp đó (ghi rõ là của nền tảng).
-5. **Hai người cùng công ty:** người thứ hai nhận cùng câu từ chối (ghi bằng cách nào, từ lúc nào) và gợi ý xin chia sẻ cuộc họp đang ghi.
+5. **Hai người cùng công ty (đã chốt theo câu 4):** người thứ hai nhận cùng câu từ chối (ghi bằng cách nào, từ lúc nào) và gợi ý xin chia sẻ cuộc họp đang ghi.
 
 ## App máy tính: một khung dùng chung, ghi cuộc họp là việc đầu tiên
 
@@ -41,7 +41,7 @@ Tôi đọc trang trợ giúp và blog chính thức của tám sản phẩm: Gr
 - **Electron:** bản cài khoảng 100 MB trở lên; ghi âm thanh hệ thống có sẵn (Windows loopback, macOS Core Audio tap từ Electron 39); cập nhật tự động có sẵn; một ngôn ngữ (TypeScript) như phần còn lại của dự án. Nhược điểm: nặng hơn; trên macOS nếu thiếu quyền thì âm thanh im lặng chứ không báo lỗi.
 - **Tauri 2:** bản cài chỉ vài MB, nhẹ hơn; nhưng không có API ghi âm thanh hệ thống sẵn (plugin của bên thứ ba chỉ ghi micro trên macOS), nên phải tự viết bằng Rust; hai bộ vẽ giao diện khác nhau (WebView2 và WKWebView).
 - **Ký phần mềm:** macOS cần tài khoản Apple Developer 99 USD một năm, công ty có mã D-U-N-S và website, rồi ký và "notarize". Windows: dịch vụ Azure Artifact Signing (khoảng 9,99 USD một tháng) **không liệt kê Việt Nam**, nên nhiều khả năng phải mua chứng chỉ EV hoặc OV từ một tổ chức cấp chứng chỉ (một bài báo 2026 nêu khoảng 290 đến 500 USD một năm cho EV; chưa có giá OV đáng tin). Tài khoản, tiền và khóa ký là việc của chủ sở hữu, không ai trong nhóm tự làm.
-- **Đề xuất: Electron cho lát đầu**, vì có sẵn ghi âm thanh hai hệ điều hành và cập nhật, một ngôn ngữ, giao diện của tiện ích dùng lại được. Giữ khối ghi âm sau một giao diện hẹp để sau này đổi sang Tauri nếu kích thước hoặc bộ nhớ thành vấn đề.
+- **Lựa chọn đã duyệt (câu 3): Electron cho lát ghi âm đầu**, vì có sẵn ghi âm thanh hai hệ điều hành và cập nhật, một ngôn ngữ, giao diện của tiện ích dùng lại được. Nhóm Platform sở hữu khung app chung, phối hợp định khung lát 2 và xác nhận số đo kích thước, bộ nhớ trên bản dựng đầu tiên cùng chủ sở hữu. Giữ khối ghi âm sau một giao diện hẹp để sau này đổi sang Tauri nếu kích thước hoặc bộ nhớ thành vấn đề.
 
 ## Xin phép người tham gia khi không có bot nhìn thấy được
 
@@ -54,30 +54,30 @@ Luật Bảo vệ dữ liệu cá nhân 91/2025/QH15 (hiệu lực 2026-01-01) v
 5. Chỉ ghi tiếng của app họp, không ghi cả máy, nếu hệ điều hành cho phép (nhạc, cuộc gọi cá nhân không bị ghi). Điểm này là suy luận, sẽ thử ở lát đầu.
 6. Không nhận diện giọng giữa các cuộc họp.
 
-**Câu hỏi thêm cho luật sư (danh sách #2585 và #62):** thông báo do người ghi đọc to hoặc dán vào chat có đủ cho cách ghi không bot không, hay từng người phải đồng ý; thông báo phải hiện trước âm thanh đầu tiên không và bản xác nhận của người ghi có đủ làm bằng chứng không; ghi âm thanh hệ thống của cuộc gọi mà người ghi tham gia nhưng không phải người tổ chức (Zoom của khách, cuộc gọi Zalo với nhà cung cấp) có nằm trong mục đích hợp pháp của công ty không; họp trực tiếp trên laptop có dùng cùng một thông báo không; và văn bản nào là căn cứ (91/2025 kèm 356/2025, hay 13/2023).
+**Câu hỏi thêm cho luật sư (danh sách [#2585](https://github.com/DOS/Ludy/issues/2585#issuecomment-7049109109) và [#62](https://github.com/DOS/Ludy/issues/62)):** thông báo do người ghi đọc to hoặc dán vào chat có đủ cho cách ghi không bot không, hay từng người phải đồng ý; thông báo phải hiện trước âm thanh đầu tiên không và bản xác nhận của người ghi có đủ làm bằng chứng không; ghi âm thanh hệ thống của cuộc gọi mà người ghi tham gia nhưng không phải người tổ chức (Zoom của khách, cuộc gọi Zalo với nhà cung cấp) có nằm trong mục đích hợp pháp của công ty không; họp trực tiếp trên laptop có dùng cùng một thông báo không; và văn bản nào là căn cứ (91/2025 kèm 356/2025, hay 13/2023).
 
 ## Lát đầu tiên và rủi ro
 
-- **Lát 1: quy tắc "một cuộc họp, một lần ghi" cho các cách ghi đang có** (tiện ích và ghi trong app), thêm dòng "Ludy đã có bản ghi" khi nhập. Không cần app mới, có ích ngay, và là điều kiện cho app máy tính và bot.
-- **Lát 2: khung Ludy Desktop chưa có ghi âm** (đăng nhập bằng token giới hạn, kho khóa của hệ điều hành, tự cập nhật, khay, bộ cài đã ký cho một hệ điều hành). **Lát 3: ghi âm trên Windows trước** (loopback theo từng app không hiện hộp xin quyền; Windows là nơi có Zalo PC, app Teams và Zoom, là giả định về doanh nghiệp nhỏ ở Việt Nam, chưa kiểm chứng), rồi macOS.
+- **Lát 1 (#4123): quy tắc "một cuộc họp, một lần ghi" cho các cách ghi đang có** (tiện ích và ghi trong app), thêm dòng "Ludy đã có bản ghi" khi nhập. Không cần app mới, có ích ngay, và là điều kiện cho app máy tính và bot. Tình trạng ngày 2026-11-21: #4123 đang thực hiện (bước 3 PR #4196 báo đã có bản ghi đã gộp; bước 1 PR #4130 phía máy chủ đang mở; bước 2 phía tiện ích và app đang làm).
+- **Lát 2: khung `Ludy Desktop` chưa có ghi âm** (nhóm Platform `line:platform`: đăng nhập bằng token giới hạn, kho khóa của hệ điều hành, tự cập nhật, khay, bộ cài đã ký cho một hệ điều hành, phối hợp khung với Platform PO sau lát 1). **Lát 3: ghi âm trên Windows trước** (loopback theo từng app không hiện hộp xin quyền; Windows là nơi có Zalo PC, app Teams và Zoom, là giả định về doanh nghiệp nhỏ ở Việt Nam, chưa kiểm chứng), rồi macOS; lát 3 chờ thêm câu trả lời luật sư ở #2585 / #62.
 - **Rủi ro chính:** macOS im lặng khi thiếu quyền (app phải kiểm tra mức âm và báo trong vài giây); ký phần mềm và notarize tốn tiền và thời gian; Apple hay Microsoft đổi quy định; hai khối âm thanh và hệ thống phát hành là chi phí bảo trì lâu dài; ghi không bot thì người khác không thấy, luật sư chưa trả lời.
 - **Đường dẫn được bảo vệ khi làm:** migration, `packages/kernel-contract`, tuyến cho phạm vi của token tiện ích (`http.ts`, phần lõi dùng chung); lát 2 thêm thư mục `apps/desktop`, `package.json` và khóa pnpm, workflow CI ký và phát hành (có bí mật ký: không worker nào chạy; chỉ điều phối viên chạy đúng danh sách bước bạn đã duyệt), `tools/deploy/**` nếu tự host máy chủ cập nhật, và đăng nhập bằng token (ADR-0032). Tất cả cần rà soát bảo mật.
 
-## Mười câu cần bạn trả lời
+## Mười quyết định đã được JOY duyệt (2026-11-20 UTC / 2026-11-21 +07:00)
 
-Mỗi câu có đề xuất đứng đầu. Không có câu trả lời thì không làm gì.
+Tại hộp thoại A2 với AI Meeting Notes PO ([#3986](https://github.com/DOS/Ludy/pull/3986#issuecomment-7048557563)), JOY đồng ý cả 10 đề xuất: *"Đồng ý cả 10 đề xuất trong ADR-0055: làm xong lát 1 chống ghi trùng trước, sau đó làm app máy tính Electron thuộc khung chung Platform (Windows trước macOS), thêm câu hỏi luật sư #2585/#62 ngay, chưa mua tài khoản ký phần mềm hay làm bot vội."*
 
-1. **Có làm app máy tính không (đảo lại quyết định "không làm app máy tính" ngày 2026-11-03)?** Đề xuất: **có, là khung chung của nhóm Platform, ghi cuộc họp trước, sau lát 1.** Không trả lời thì kế hoạch giữ nguyên "chưa làm".
-2. **Làm quy tắc "một cuộc họp, một lần ghi" trước (lát 1), trước mọi việc về app máy tính hay bot?** Đề xuất: **có.**
-3. **Electron hay Tauri cho khung app?** Đề xuất: **Electron cho lát ghi âm đầu**; nhóm Platform và bạn xác nhận sau khi đo kích thước và bộ nhớ bản đầu.
-4. **Hai người cùng công ty cùng ghi một cuộc họp: từ chối bản thứ hai và gợi ý chia sẻ bản đang chạy?** Đề xuất: **có** (nếu để mỗi người ghi riêng thì tốn gấp đôi tiền và thông báo cho cùng một cuộc nói chuyện).
-5. **Ghi trên máy gặp bot đã hẹn: ghi trên máy thắng nếu bot chưa bắt đầu, bản ghi đầu tiên được giữ nếu bot đã vào?** Đề xuất: **có.** Chỉ cần khi có làm bot.
-6. **Làm Windows trước rồi macOS?** Đề xuất: **có** (giả định về máy của khách chưa kiểm chứng; bạn biết máy của khách dùng thử).
-7. **Tài khoản ký phần mềm (việc của chủ sở hữu, chi tiền mới):** tài khoản Apple Developer (99 USD một năm) và chứng chỉ Windows từ một tổ chức cấp chứng chỉ (Azure Artifact Signing không liệt kê Việt Nam). Đề xuất: chỉ mở khi lát 2 được duyệt.
-8. **Thêm các câu hỏi luật sư ở trên vào danh sách (#2585, #62)?** Đề xuất: **có, ngay**; câu hỏi rẻ và chặn lát 3.
-9. **Các câu hỏi về bot của ADR-0052 vẫn mở, tài liệu này không trả lời:** 2 (bot Zoom ngay hay khi khách thử nghiệm đòi), 3 (bot Meet và bot Teams: xác nhận "chưa làm"), 4 (dịch vụ bot của bên thứ ba), 6 (ai được gửi bot, không tự vào), 7 (chi phí và tài khoản Zoom), 8 (thông báo trong cuộc gọi cho bot).
-10. **Mô-đun chat khiến app máy tính thành bắt buộc:** chưa có trong kế hoạch. Đề xuất: **chỉ ghi chú lại**; mở ra là một quyết định khác của bạn, kèm ADR riêng.
+1. **Có làm app máy tính không (đảo lại quyết định "không làm app máy tính" ngày 2026-11-03)?** **Đã duyệt: có, là khung chung `Ludy Desktop` của nhóm Platform (`line:platform`), ghi cuộc họp trước, sau lát 1 (`#4123`).** Các dòng "chưa làm app máy tính" trong kế hoạch `meetings.md` và `meetings-integrations.md` được cập nhật theo ADR này.
+2. **Làm quy tắc "một cuộc họp, một lần ghi" trước (lát 1, `#4123`), trước mọi việc về app máy tính hay bot?** **Đã duyệt: có.**
+3. **Electron hay Tauri cho khung app?** **Đã duyệt: Electron cho lát ghi âm đầu**; nhóm Platform sở hữu khung chung, phối hợp định khung lát 2 và xác nhận số đo kích thước, bộ nhớ trên bản dựng đầu.
+4. **Hai người cùng công ty cùng ghi một cuộc họp: từ chối bản thứ hai và gợi ý chia sẻ bản đang chạy?** **Đã duyệt: có** (nếu để mỗi người ghi riêng thì tốn gấp đôi tiền và thông báo cho cùng một cuộc nói chuyện).
+5. **Ghi trên máy gặp bot đã hẹn: ghi trên máy thắng nếu bot chưa bắt đầu, bản ghi đầu tiên được giữ nếu bot đã vào?** **Đã duyệt: có.** Chỉ cần khi có làm bot.
+6. **Làm Windows trước rồi macOS?** **Đã duyệt: có** (giả định về máy của khách chưa kiểm chứng; kiểm tra lại trên máy của khách dùng thử khi tới lát 3).
+7. **Tài khoản ký phần mềm (việc của chủ sở hữu, chi tiền mới):** tài khoản Apple Developer (99 USD một năm) và chứng chỉ Windows từ một tổ chức cấp chứng chỉ (Azure Artifact Signing không liệt kê Việt Nam). **Đã duyệt: chưa mua vội, chỉ mở khi lát 2 được duyệt.**
+8. **Thêm các câu hỏi luật sư ở trên vào danh sách (#2585, #62)?** **Đã duyệt: có, thêm ngay**; câu hỏi không tốn thêm chi phí và chặn lát 3.
+9. **Các câu hỏi về bot của ADR-0052 vẫn mở, tài liệu này không trả lời:** **Đã duyệt: giữ mở và chưa trả lời (chưa làm bot vội):** 2 (bot Zoom ngay hay khi khách thử nghiệm đòi), 3 (bot Meet và bot Teams: xác nhận "chưa làm"), 4 (dịch vụ bot của bên thứ ba), 6 (ai được gửi bot, không tự vào), 7 (chi phí và tài khoản Zoom), 8 (thông báo trong cuộc gọi cho bot).
+10. **Mô-đun chat khiến app máy tính thành bắt buộc:** chưa có trong kế hoạch. **Đã duyệt: chỉ ghi chú lại**; mô-đun chat kiểu Slack/Lark vẫn nằm ngoài kế hoạch hiện tại cho tới khi có quyết định riêng của chủ sở hữu và một ADR riêng.
 
-## Nếu không trả lời
+## Việc tiếp theo sau khi duyệt
 
-Không làm gì. Ghi âm vẫn chạy bằng tiện ích, ghi trong app và tải file lên như hiện nay; vẫn có thể ghi trùng một cuộc họp bằng hai cách vì chưa có quy tắc của lát 1.
+Hoàn tất lát 1 (`#4123`) trước, thêm các câu hỏi ghi âm không bot ở trên vào `#2585` và liên kết với `#62` ngay, rồi phối hợp với Platform PO (`line:platform`) về khung `Ludy Desktop` cho lát 2 trước khi mở tài khoản ký phần mềm. Việc làm bot (ADR-0052 L4b) tiếp tục chờ cho tới khi các câu hỏi mở về bot được trả lời và có nhu cầu từ khách thí điểm.

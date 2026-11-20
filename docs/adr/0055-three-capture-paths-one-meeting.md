@@ -1,11 +1,12 @@
 # 0055. Three capture paths, one meeting: extension, desktop app, bot
 
-- Status: **Proposed.** Nothing here is built, and nothing here is approved. The owner decisions are listed at the end, each with a recommendation. The desktop app reverses the owner's decision of 2026-11-03 ("no desktop app", [meetings.md](../plan/meetings.md) section 11 and [meetings-integrations.md](../plan/meetings-integrations.md) section 8) only if the owner says yes to question 1.
-- Date: 2026-11-19
-- Deciders: owner (JOY) for the questions in "Owner decisions". The engineering choices were written by the Meetings worker session for the Meetings PO; the desktop shell (section 4) is for the Platform PO, who would own it.
+- Status: **Accepted** (owner decision 2026-11-20 UTC / 2026-11-21 +07:00, AI Meeting Notes PO popup A2, [#3986 comment](https://github.com/DOS/Ludy/pull/3986#issuecomment-7048557563)). JOY approved all 10 recommendations below ("Đồng ý cả 10 đề xuất trong ADR-0055: làm xong lát 1 chống ghi trùng trước, sau đó làm app máy tính Electron thuộc khung chung Platform (Windows trước macOS), thêm câu hỏi luật sư #2585/#62 ngay, chưa mua tài khoản ký phần mềm hay làm bot vội"): Slice 1 ([#4123](https://github.com/DOS/Ludy/issues/4123), the one-meeting rule on existing capture paths) ships first; `Ludy Desktop` reverses the 2026-11-03 "no desktop app" decision as a general Platform-owned (`line:platform`) Electron shell with meeting capture first (Windows before macOS); the section 5 non-bot capture legal questions go to `#2585` / `#62` immediately (gating Slice 3); software-signing accounts wait until Slice 2 is approved; ADR-0052 open bot questions 2, 3, 4, 6, 7, 8 remain open and unanswered (no bot build now); and a Slack/Lark-style chat module stays outside current plans until a separate owner decision and its own ADR.
+- Date: 2026-11-20 (proposed 2026-11-19; accepted 2026-11-20 UTC / 2026-11-21 +07:00)
+- Deciders: owner (JOY) for the 10 decisions in "Owner decisions" (approved 2026-11-20 UTC / 2026-11-21 +07:00). The engineering choices were written by the Meetings worker session for the Meetings PO and the Platform PO; `Ludy Desktop` shell ownership (section 4) belongs to the Platform line (`line:platform`), so Slice 2 framing and shared-core work are coordinated with the Platform PO.
 - Builds on: [ADR-0047](0047-meeting-notes-audio-and-transcripts.md) (audio storage, consent, retention, the extension), [ADR-0052](0052-meeting-bot-and-live-notes.md) (live notes, L4a built; the bot, L4b, still Proposed), [ADR-0049](0049-member-scoped-vy.md) (the recorder's own Vy), [ADR-0025](0025-channel-layer.md) (connectors), [ADR-0032](0032-oauth-authorization-server.md) (scoped tokens for software other than the app, proposed), [meetings.md](../plan/meetings.md) section 5.5 (three ways to capture) and [meetings-integrations.md](../plan/meetings-integrations.md) (B1 calendar match, C1 to C3 import).
-- Issue: none yet. One is opened per slice after the owner answers. The Vietnamese summary for the owner is [0055-three-capture-paths-one-meeting.vi.md](0055-three-capture-paths-one-meeting.vi.md).
-- Number: 0054 is taken by the open pull request [#3980](https://github.com/DOS/Ludy/pull/3980) (the Ludy rename), so this is 0055.
+- Amends: reverses the 2026-11-03 "no desktop app" decision in [ADR-0047](0047-meeting-notes-audio-and-transcripts.md) (section 10 "Not captured" and "Alternatives considered"), [meetings.md](../plan/meetings.md) (sections 2 and 11), and [meetings-integrations.md](../plan/meetings-integrations.md) (sections 1 and 8).
+- Issue: [#4123](https://github.com/DOS/Ludy/issues/4123) (Slice 1: one-meeting rule on existing capture paths; In progress as of 2026-11-21: Step 3 import-notice PR [#4196](https://github.com/DOS/Ludy/pull/4196) merged, Step 1 server PR [#4130](https://github.com/DOS/Ludy/pull/4130) open, Step 2 client capture in progress). Desktop Slices 2 and 3 are opened after Slice 1 ships and after Platform PO coordination on the `Ludy Desktop` shell; Slice 3 also stays gated on the legal answers in [#2585](https://github.com/DOS/Ludy/issues/2585) / [#62](https://github.com/DOS/Ludy/issues/62). The Vietnamese summary for the owner is [0055-three-capture-paths-one-meeting.vi.md](0055-three-capture-paths-one-meeting.vi.md).
+- Number: 0054 is [ADR-0054](0054-rebrand-internal-crove-identifiers-to-ludy.md) (the Ludy rename, merged from [#3980](https://github.com/DOS/Ludy/pull/3980)), so this is 0055.
 
 ## Context and problem statement
 
@@ -52,8 +53,8 @@ What the table says, and what it does not:
 |---|---|---|
 | **Extension** (Chrome, Edge) | Browser meetings (Meet, and Teams or Zoom opened in a tab) and machines where an app cannot be installed. Records a tab plus the microphone, with the consent step in its popup, live notes opt-in | Built (ADR-0047, L4a #3109) |
 | **In-app recorder and upload** | A meeting around a table on a laptop or phone, and any file | Built |
-| **Desktop app** ("Ludy Desktop") | Native Zoom, Teams, Zalo PC, a Slack huddle, and in-person on a laptop: system audio plus the microphone, no browser tab. The only route for Zalo PC calls and Slack huddles (the repository's earlier research found no official API for either) | Not built; Proposed here (section 4) |
-| **Bot** (ADR-0052, L4b) | A meeting the recorder is not at the keyboard for. A Zoom bot only when a pilot customer pulls it | Proposed; owner questions 2, 3, 4, 6, 7, 8 of ADR-0052 are open and are listed again under "Owner decisions", not answered |
+| **Desktop app** ("Ludy Desktop") | Native Zoom, Teams, Zalo PC, a Slack huddle, and in-person on a laptop: system audio plus the microphone, no browser tab. The only route for Zalo PC calls and Slack huddles (the repository's earlier research found no official API for either) | Approved direction (2026-11-20 UTC / 2026-11-21 +07:00): Platform-owned Electron shell (Slice 2), Windows capture first then macOS (Slice 3), queued after Slice 1 (#4123); Slice 3 gated on #2585/#62 legal answers |
+| **Bot** (ADR-0052, L4b) | A meeting the recorder is not at the keyboard for. A Zoom bot only when a pilot customer pulls it | Proposed (Icebox); ADR-0052 owner questions 2, 3, 4, 6, 7, 8 remain explicitly open and unanswered (no bot build now) |
 | **Platform import** (C1 to C3) | After the fact: Meet, Zoom and Teams recordings or transcripts the member asks for | C1 built; C2 and C3 in progress |
 
 The three live paths differ in who is told: the extension and the desktop app show nothing to the other participants (Chrome's own indicator and Ludy's recording indicator are the recorder's alone), a bot is visible. That is the reason the consent step cannot be the same for all (section 5).
@@ -96,7 +97,7 @@ Import is after the fact and must never make a second meeting for a call Ludy al
 
 ### 3.5 Two people in one org
 
-If a second member of the same org starts a capture for a meeting key that is already being captured, the answer is the same 409 (which source, since when, not who). The recommendation is **no second recording in one org** and a message that suggests sharing the running meeting with the second member as a reader. The alternative (each records and has their own draft) doubles the bill and the consent records for one conversation, which is what the owner wants to prevent. Owner decision 4.
+If a second member of the same org starts a capture for a meeting key that is already being captured, the answer is the same 409 (which source, since when, not who). The accepted rule (owner decision 4, 2026-11-20 UTC / 2026-11-21 +07:00) is **no second recording in one org** and a message that suggests sharing the running meeting with the second member as a reader. The alternative (each records and has their own draft) doubles the bill and the consent records for one conversation, which is what the owner wants to prevent.
 
 ### 3.6 What is reused and what is new
 
@@ -126,7 +127,7 @@ Numbers below are from blogs and single-developer tests, not an independent benc
 
 **Windows signing for a Vietnamese company.** Azure Artifact Signing (formerly Trusted Signing) costs about 9.99 USD a month for 5,000 signatures (Basic) or 99.99 USD for 100,000 (Premium) according to a trade article of 2026-01-14 and a search summary; Microsoft's own pricing page did not show the figures. Microsoft's quickstart (updated 2026-11-17) lists the countries open to organizations: the US, Canada, the EU, the UK, Australia, New Zealand, Japan, South Korea, Singapore, Switzerland, Norway and Israel. **Vietnam is not in the list**, so a Vietnamese entity would likely need a traditional EV or OV certificate from a certificate authority (one 2026 article quotes about 290 to 500 USD a year for Sectigo EV; no reliable OV price was found; certificate validity has dropped to about 460 days since 2026-03-01). Identity validation by Microsoft takes 1 to 30 business days where it is open. The signing keys, the Apple account and the Microsoft or CA account are owner or operator actions (accounts, payments, secrets): no worker or team lead creates them.
 
-**Recommendation: Electron for the first slice.** The reasons are the audio capture on both systems and the updater come with it, the team writes one language, and the renderer is the one the extension UI already targets. The costs are size and memory, which matter less for an installed work tool than for a utility, and Chromium's security updates become ours to ship. Tauri is the better shell if size and memory become a complaint and a Rust audio core exists; keeping the capture module behind the narrow interface above keeps that door open. The choice is the Platform PO's to make with the owner (question 3).
+**Accepted choice (owner decision 3, 2026-11-20 UTC / 2026-11-21 +07:00): Electron for the first capture slice.** The reasons are the audio capture on both systems and the updater come with it, the team writes one language, and the renderer is the one the extension UI already targets. The costs are size and memory, which matter less for an installed work tool than for a utility, and Chromium's security updates become ours to ship. Tauri is the better shell if size and memory become a complaint and a Rust audio core exists; keeping the capture module behind the narrow interface above keeps that door open. The Platform PO (`line:platform`) owns the shared shell, coordinates Slice 2 framing, and confirms size and memory measurements on the first build with the owner.
 
 ## 5. Consent without a visible bot
 
@@ -141,7 +142,7 @@ A visible bot tells everyone by being there. The extension and the desktop app t
 5. **Capture the meeting app, not the whole machine, where the operating system allows it** (a Core Audio process tap or WASAPI process loopback on the meeting app), so other sounds such as music or a personal call are not recorded. This is a privacy default, from the repository's earlier research; it is an inference that it works for each target app and it is tested in the first slice.
 6. **Keep the voiceprint rule**: no speaker recognition across meetings (ADR-0047).
 
-**Questions added to the lawyer list** ([meetings.md](../plan/meetings.md) section 7, #2585 and #62), as an addition to the existing ones and to ADR-0052 question 8:
+**Questions added to the lawyer list** ([meetings.md](../plan/meetings.md) section 7, [#2585 comment](https://github.com/DOS/Ludy/issues/2585#issuecomment-7049109109) and [#62](https://github.com/DOS/Ludy/issues/62)), as an addition to the existing ones and to ADR-0052 question 8:
 
 - Is a notice the recorder reads aloud or pastes in the call's chat enough for a **bot-free desktop capture**, or must each participant agree?
 - Does the notice have to be shown **before** the first audio is captured, and is the recorder's confirmation enough evidence?
@@ -153,9 +154,9 @@ A visible bot tells everyone by being there. The extension and the desktop app t
 
 ### Smallest first slice
 
-**Slice 1: the one-meeting rule on the paths that exist (no new app).** `capture_session`, `meetings.capture.start`, `.stop` and the heartbeat, the meeting key, the extension and the in-app recorder calling it, the import notice "đã có bản ghi". One person can use it with the defaults; the AI part is unchanged (the recorder's Vy transcribes as today). It is the precondition for everything else and is useful alone: today a second tab or a second device can already record the same call.
+**Slice 1 ([#4123](https://github.com/DOS/Ludy/issues/4123)): the one-meeting rule on the paths that exist (no new app).** `capture_session`, `meetings.capture.start`, `.stop` and the heartbeat, the meeting key, the extension and the in-app recorder calling it, the import notice "đã có bản ghi". One person can use it with the defaults; the AI part is unchanged (the recorder's Vy transcribes as today). It is the precondition for everything else and is useful alone: today a second tab or a second device can already record the same call. Status as of 2026-11-21: `#4123` is In progress (Step 3 import-notice PR [#4196](https://github.com/DOS/Ludy/pull/4196) merged at `2b4162174ff7eb7de131801f852be7d265cfd5f3`; Step 1 server PR [#4130](https://github.com/DOS/Ludy/pull/4130) open; Step 2 client capture in progress).
 
-**Slice 2: a Ludy Desktop shell with no capture** (Platform line): sign-in with a scoped token, the keychain, auto-update, the tray, signed installers for one system. **Slice 3: capture on Windows first** (WASAPI process loopback needs no permission prompt, and Windows is where Zalo PC and the Teams and Zoom desktop clients are, which is an assumption about Vietnamese small businesses that is not verified), then macOS (Screen and System Audio Recording permission, Sequoia's periodic re-approval). Each slice is its own issue, with the plan's milestone and priority set by the owner. A bot waits on its own questions.
+**Slice 2: a `Ludy Desktop` shell with no capture** (Platform line, `line:platform`): sign-in with a scoped token, the keychain, auto-update, the tray, signed installers for one system, framed with the Platform PO after Slice 1. **Slice 3: capture on Windows first** (WASAPI process loopback needs no permission prompt, and Windows is where Zalo PC and the Teams and Zoom desktop clients are, which is an assumption about Vietnamese small businesses that is not verified), then macOS (Screen and System Audio Recording permission, Sequoia's periodic re-approval), gated on the non-bot capture legal answers in [#2585](https://github.com/DOS/Ludy/issues/2585) / [#62](https://github.com/DOS/Ludy/issues/62). Each slice is its own issue, with the plan's milestone and priority set by the owner. A bot waits on its own open questions in ADR-0052.
 
 ### Risks
 
@@ -168,18 +169,18 @@ A visible bot tells everyone by being there. The extension and the desktop app t
 
 ### Owner decisions
 
-Each question has a recommendation (first). Without an answer nothing here is built.
+**Decided 2026-11-20 UTC / 2026-11-21 +07:00** (AI Meeting Notes PO popup A2, [#3986 comment](https://github.com/DOS/Ludy/pull/3986#issuecomment-7048557563)): JOY approved all 10 recommendations ("Đồng ý cả 10 đề xuất trong ADR-0055: làm xong lát 1 chống ghi trùng trước, sau đó làm app máy tính Electron thuộc khung chung Platform (Windows trước macOS), thêm câu hỏi luật sư #2585/#62 ngay, chưa mua tài khoản ký phần mềm hay làm bot vội").
 
-1. **Build a desktop app at all (reverses "no desktop app" of 2026-11-03)?** Recommended **yes, as a Platform-line shell with meeting capture first, after slice 1**. Without an answer the plan's "not planned" stands.
-2. **The one-meeting rule first (slice 1), before any desktop or bot work?** Recommended **yes**: it is useful now and the other two paths depend on it.
-3. **Electron or Tauri for the shell?** Recommended **Electron for the first capture slice** (section 4); the Platform PO and the owner confirm. Needs a size and memory measurement of the first build.
-4. **Two members of one org: refuse a second recording and offer to share the running one?** Recommended **yes**.
-5. **When a local capture and a scheduled bot meet: local wins before the bot has started, the first live capture stays after?** Recommended **yes** (section 3.3). Only matters if a bot is built.
-6. **Windows first, then macOS?** Recommended **yes**, unverified assumption about the user base: the owner knows the pilot's machines.
-7. **Signing accounts (owner action, new spending):** an Apple Developer Program account (99 USD a year) and a Windows certificate from a certificate authority (Azure Artifact Signing does not list Vietnam). Recommended to open them only when slice 2 is approved.
-8. **The lawyer questions of section 5 added to the list (#2585, #62)?** Recommended **yes, now**; they are cheap and block slice 3.
-9. **ADR-0052's bot questions stay open and are not answered here:** 2 (a Zoom bot now or when a pilot asks), 3 (a Meet and a Teams bot: confirm "not planned"), 4 (a third-party meeting-bot API), 6 (who may send a bot, no auto-join), 7 (Zoom spending and accounts), 8 (the in-call notice for a bot).
-10. **A chat module that would make the desktop app mandatory:** not planned. Recommended **leave it as a note**; opening it is a separate owner decision with its own ADR.
+1. **Build a desktop app at all (reverses "no desktop app" of 2026-11-03)?** **Accepted: yes, as a Platform-owned (`line:platform`) `Ludy Desktop` shell with meeting capture first, after Slice 1 (`#4123`).** Reverses the 2026-11-03 "not planned" lines in `meetings.md` and `meetings-integrations.md`.
+2. **The one-meeting rule first (Slice 1, `#4123`), before any desktop or bot work?** **Accepted: yes.** Useful immediately for existing paths, and desktop/bot paths depend on it.
+3. **Electron or Tauri for the shell?** **Accepted: Electron for the first capture slice** (section 4). Platform PO (`line:platform`) owns the shell, coordinates Slice 2 framing, and confirms size and memory measurements on the first build.
+4. **Two members of one org: refuse a second recording and offer to share the running one?** **Accepted: yes** (409 `CAPTURE_ALREADY_RUNNING` naming source and start time, suggesting sharing the running meeting as a reader).
+5. **When a local capture and a scheduled bot meet: local wins before the bot has started, the first live capture stays after?** **Accepted: yes** (section 3.3). Applies only if a bot is later built.
+6. **Windows first, then macOS?** **Accepted: yes** (remains an unverified assumption about Vietnamese SME machines; pilot hardware check applies when Slice 3 approaches).
+7. **Signing accounts (owner action, new spending):** an Apple Developer Program account (99 USD a year) and a Windows certificate from a certificate authority (Azure Artifact Signing does not list Vietnam). **Accepted: defer purchase until Slice 2 is approved** (do not buy signing accounts or certificates yet).
+8. **The lawyer questions of section 5 added to the list (#2585, #62)?** **Accepted: yes, append now**; they cost no new spend and gate Slice 3 desktop capture.
+9. **ADR-0052's bot questions stay open and are not answered here:** **Accepted: keep open and unanswered (no bot build now):** 2 (a Zoom bot now or when a pilot asks), 3 (a Meet and a Teams bot: confirm "not planned"), 4 (a third-party meeting-bot API), 6 (who may send a bot, no auto-join), 7 (Zoom spending and accounts), 8 (the in-call notice for a bot).
+10. **A chat module that would make the desktop app mandatory:** not planned. **Accepted: leave as a note only**; any Slack/Lark-style chat module stays outside current plans until a separate owner decision with its own ADR.
 
 ### Protected paths (Decision 7) for the slices
 
@@ -187,10 +188,12 @@ Slice 1: `supabase/migrations/` (the new table and indexes), `packages/kernel-co
 
 ## Consequences
 
-- If the owner says yes to 1 and 2, slice 1 is opened first and is the only code until it ships.
-- The plan's "not planned" lines for a desktop app (meetings.md section 11, meetings-integrations.md section 8) are updated when the owner decides, not before.
-- ADR-0052's L4b stays Proposed with its questions open.
-- The lawyer list gains the questions of section 5.
+- Slice 1 (`#4123`, one-meeting rule on existing capture paths plus the import notice) finishes first before any desktop or bot build (Step 3 PR `#4196` merged; Step 1 PR `#4130` open; Step 2 client capture in progress).
+- The 2026-11-03 "no desktop app" / "not planned" lines in `meetings.md` (sections 2, 11, and plan notes) and `meetings-integrations.md` (sections 1 and 8) are updated to reference Accepted ADR-0055.
+- `Ludy Desktop` shell ownership sits with the Platform line (`line:platform`); Slice 2 framing, Electron size/memory verification, and shared-core review are coordinated with the Platform PO after Slice 1, and software-signing accounts wait until Slice 2 is approved.
+- The non-bot capture legal questions of section 5 are appended to [#2585](https://github.com/DOS/Ludy/issues/2585#issuecomment-7049109109) and cross-linked with [#62](https://github.com/DOS/Ludy/issues/62); Slice 3 desktop capture (Windows first, then macOS) stays gated on those legal answers.
+- ADR-0052's L4b stays `Proposed` in the Icebox with bot questions 2, 3, 4, 6, 7, 8 explicitly open and unanswered (no bot build now).
+- A Slack/Lark-style chat module stays outside current plans (note only) until a separate owner decision with its own ADR.
 
 ## Revisit when
 
