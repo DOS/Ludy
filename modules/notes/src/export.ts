@@ -193,6 +193,42 @@ export const notesExportMine = defineQuery({
       list.push({ targetType: l.target_type, targetId: l.target_id });
       targetMap.set(ownerId, list);
     }
+    const attachments =
+      noteIdsList.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('crove_notes.attachment')
+            .select(['id', 'note_id', 'filename', 'content_type', 'size_bytes', 'sha256', 'extract_status', 'created_at'])
+            .where('org_id', '=', ctx.orgId)
+            .where('note_id', 'in', noteIdsList)
+            .orderBy('created_at', 'asc')
+            .orderBy('id', 'asc')
+            .execute();
+    const noteAttachmentsOf = new Map<
+      string,
+      Array<{
+        id: string;
+        filename: string;
+        contentType: string;
+        sizeBytes: number;
+        sha256: string;
+        extractStatus: 'pending' | 'done' | 'skipped' | 'failed';
+        createdAt: string;
+      }>
+    >();
+    for (const a of attachments) {
+      const list = noteAttachmentsOf.get(a.note_id) ?? [];
+      list.push({
+        id: a.id,
+        filename: a.filename,
+        contentType: a.content_type,
+        sizeBytes: a.size_bytes,
+        sha256: a.sha256,
+        extractStatus: a.extract_status,
+        createdAt: new Date(a.created_at).toISOString(),
+      });
+      noteAttachmentsOf.set(a.note_id, list);
+    }
     return {
       exportedAt: new Date().toISOString(),
       notes: notes.map((n) => ({
@@ -208,6 +244,7 @@ export const notesExportMine = defineQuery({
         archivedAt: iso(n.archived_at),
         deletedAt: iso(n.deleted_at),
         links: noteLinksOf.get(n.id) ?? [],
+        attachments: noteAttachmentsOf.get(n.id) ?? [],
       })),
       notebooks: notebooks.map((b) => ({
         id: b.id,

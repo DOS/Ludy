@@ -95,6 +95,8 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
+  '/api/bank-feed/:provider/webhook/:hookKey':
+    "a bank feed provider's signed notice at the address of one connection (Tingee S3 of #2045, #4203, ADR-0039): the hook key in the path is looked up by its SHA-256 before anything is stored, the per-address limit and the 16 KB cap run first, and the worker verifies the provider's signature with the connection's sealed secret",
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
@@ -342,6 +344,10 @@ describe('route enumeration with an extension token (#2582)', () => {
       ['POST', '/api/rpc/notes/todos/update'],
       ['POST', '/api/rpc/notes/todos/complete'],
       ['POST', '/api/rpc/notes/todos/delete'],
+      ['POST', '/api/rpc/notes/attachments/list'],
+      ['POST', '/api/rpc/notes/attachments/delete'],
+      ['POST', `/api/notes/${UUID}/attachments`],
+      ['GET', `/api/notes/attachments/${UUID}`],
       ['GET', `/api/meetings/${UUID}/audio`],
       ['GET', `/api/meetings/${UUID}/video`],
       ['GET', `/api/files/${UUID}`],
@@ -365,7 +371,7 @@ describe('route enumeration with an extension token (#2582)', () => {
       // The RPC procedures live under the one wildcard route; every other entry is a route of its own.
       const own = route.path.startsWith('/api/rpc/') ? '/api/rpc/*' : route.path;
       expect(paths.has(own), `${route.method} ${route.path}`).toBe(true);
-      expect(route.path, 'a route that streams media or files').not.toMatch(/\/(audio|video)$|^\/api\/files\/:id$|export/);
+      expect(route.path, 'a route that streams media or files').not.toMatch(/\/(audio|video|attachments)$|^\/api\/(files|notes\/attachments)\/:id$|export/);
     }
   });
 });

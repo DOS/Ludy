@@ -346,6 +346,9 @@ import {
 import {
   zNote,
   zNoteAcceptSummary,
+  zNoteAttachment,
+  zNoteAttachmentDeleted,
+  zNoteAttachmentRef,
   zNoteBacklinksInput,
   zNoteClip,
   zNoteCreate,
@@ -1193,6 +1196,10 @@ export const contract = {
     delete: oc.input(zNoteRef).output(zNoteWritten),
     linkAdd: oc.input(zNoteLinkAdd).output(zNoteLinkWritten),
     linkRemove: oc.input(zNoteLinkRemove).output(zNoteLinkWritten),
+    attachments: {
+      list: oc.input(zNoteRef).output(z.array(zNoteAttachment)),
+      delete: oc.input(zNoteAttachmentRef).output(zNoteAttachmentDeleted),
+    },
     // Notebooks and 2-level stacks (#3559): private to their author or shared with the org.
     notebooks: {
       list: oc.input(z.strictObject({})).output(zNotebooksResponse),

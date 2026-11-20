@@ -188,6 +188,7 @@ export const EXPORT_TABLES = {
   // policies let the snapshot read, without their folded search words; private notes and private notebooks stay out,
   // and private_count / private_notebook_count record how many each author had (counts only).
   'notes.note': { from: 'crove_notes.note', omit: ['search'] },
+  'notes.attachment': { from: 'crove_notes.attachment', omit: ['search'] },
   'notes.notebook': { from: 'crove_notes.notebook', omit: [] },
   'notes.link': { from: 'crove_notes.link', omit: [] },
   'notes.private_count': { from: 'crove_notes.private_counts()', omit: [] },

@@ -5,11 +5,13 @@
 // answer counts, never text.
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
-import { NOTE_MEMBER_PURGE_DAYS } from '@crove/kernel-contract';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
-import { trashCutoff } from '@crove/mod-notes';
+import { INPUT_ERROR_CODES, type ExtractClient } from '@crove/extract-contract';
+import { NOTE_ATTACHMENT_EXTRACTED_TEXT_MAX, NOTE_ATTACHMENT_MAX_BYTES, NOTE_MEMBER_PURGE_DAYS } from '@crove/kernel-contract';
+import { BlobNotFoundError, BlobTooLargeError, DomainError, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT, trashCutoff, type NoteAttachmentExtractSource } from '@crove/mod-notes';
 import { jobKey } from './job-keys.ts';
 import { QUEUES } from './jobs-schema.ts';
+import { DOCX_CONTENT_TYPE } from './note-attachments.ts';
 import type { JobSender } from './worker.ts';
 
 // After the nightly retention purge (02:30), on the same clock.
@@ -118,4 +120,166 @@ export async function runNotesMemberPurge(runtime: Runtime, job: { orgId: string
   const done = await runtime.execute<{ removed: number }>('notes.member_items.purge', input, { actor: ACTOR, orgId: job.orgId });
   console.log(`[notes-member-purge] org ${job.orgId.slice(0, 8)}: removed ${done.removed}`);
   return done;
+}
+
+export const NOTE_ATTACHMENT_EXTRACT_RETRY_LIMIT = 3;
+
+export interface NotesAttachmentExtractJob {
+  orgId: string;
+  attachmentId: string;
+}
+
+export function queueNoteAttachmentExtract(
+  boss: JobSender,
+  row: { org_id: string; event_id: string; type: string; payload: Record<string, unknown> },
+) {
+  if (row.type !== NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT || typeof row.payload.attachmentId !== 'string') return null;
+  const attachmentId = row.payload.attachmentId;
+  return boss.send(
+    QUEUES.notesAttachmentExtract,
+    { orgId: row.org_id, attachmentId } satisfies NotesAttachmentExtractJob,
+    {
+      singletonKey: jobKey(row.org_id, QUEUES.notesAttachmentExtract, attachmentId),
+      retryLimit: NOTE_ATTACHMENT_EXTRACT_RETRY_LIMIT,
+      retryDelay: 15,
+      retryBackoff: true,
+    },
+  );
+}
+
+export async function runNoteAttachmentExtract(
+  deps: { runtime: Runtime; store: BlobStore; extract: ExtractClient },
+  job: NotesAttachmentExtractJob,
+  retryCount = 0,
+): Promise<{ status: 'done' | 'skipped' | 'failed' | 'skipped_not_pending' | 'app_off' }> {
+  if (!(await deps.runtime.appOn(job.orgId, 'notes', { fresh: true }).catch(() => true))) {
+    return { status: 'app_off' };
+  }
+  const source = await deps.runtime.query<NoteAttachmentExtractSource | null>(
+    'notes.attachment.extract_source',
+    { attachmentId: job.attachmentId },
+    { actor: ACTOR, orgId: job.orgId },
+  );
+  if (!source) return { status: 'skipped_not_pending' };
+
+  const record = (status: 'done' | 'skipped' | 'failed', extractedText: string | null) =>
+    deps.runtime.execute<{ updated: boolean }>(
+      'notes.attachment.extract_record',
+      { attachmentId: job.attachmentId, status, extractedText },
+      { actor: ACTOR, orgId: job.orgId },
+    );
+
+  let bytes: Uint8Array;
+  try {
+    bytes = await deps.store.get(source.storageKey, null, NOTE_ATTACHMENT_MAX_BYTES);
+  } catch (error) {
+    if (error instanceof BlobNotFoundError || error instanceof BlobTooLargeError || retryCount >= NOTE_ATTACHMENT_EXTRACT_RETRY_LIMIT) {
+      await record('failed', null);
+      return { status: 'failed' };
+    }
+    throw error;
+  }
+
+  const contentType = source.contentType.toLowerCase();
+  if (contentType === 'text/plain' || contentType === 'text/markdown' || contentType === 'text/csv') {
+    const raw = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+    const cleaned = raw.replaceAll('\0', '').trim().slice(0, NOTE_ATTACHMENT_EXTRACTED_TEXT_MAX);
+    await record('done', cleaned.length > 0 ? cleaned : null);
+    return { status: 'done' };
+  }
+
+  if (contentType !== 'application/pdf' && contentType !== DOCX_CONTENT_TYPE) {
+    await record('skipped', null);
+    return { status: 'skipped' };
+  }
+
+  const kind = contentType === 'application/pdf' ? 'pdf_text' : 'docx_text';
+  let result: Awaited<ReturnType<ExtractClient['extract']>>;
+  try {
+    result = await deps.extract.extract(kind, bytes);
+  } catch (error) {
+    if (retryCount >= NOTE_ATTACHMENT_EXTRACT_RETRY_LIMIT) {
+      await record('failed', null);
+      return { status: 'failed' };
+    }
+    throw error;
+  }
+
+  if (!result.ok) {
+    if (INPUT_ERROR_CODES.includes(result.code) || retryCount >= NOTE_ATTACHMENT_EXTRACT_RETRY_LIMIT) {
+      await record('failed', null);
+      return { status: 'failed' };
+    }
+    throw new Error(`crove-extract ${kind} transient error: ${result.code}`);
+  }
+
+  if (result.kind !== 'pdf_text' && result.kind !== 'docx_text') {
+    await record('failed', null);
+    return { status: 'failed' };
+  }
+
+  const cleaned = result.text.replaceAll('\0', '').trim().slice(0, NOTE_ATTACHMENT_EXTRACTED_TEXT_MAX);
+  await record('done', cleaned.length > 0 ? cleaned : null);
+  return { status: 'done' };
+}
+
+// The attachments whose extraction never ran (dropped while Notes was off or the note was in the trash): asked for again,
+// for the orgs that have Notes on, on the reminders' 5-minute tick. The singleton key keeps one job per attachment.
+export async function requestDueNoteAttachmentExtracts(deps: { runtime: Runtime; workerDb: Db; boss: JobSender }): Promise<number> {
+  const { rows } = await sql<{ org_id: string; id: string }>`
+    SELECT org_id, id FROM crove_notes.attachment_extract_due(200)
+  `.execute(deps.workerDb);
+  let sent = 0;
+  for (const row of rows) {
+    if (!(await deps.runtime.appOn(row.org_id, 'notes').catch(() => false))) continue;
+    await queueNoteAttachmentExtract(deps.boss, {
+      org_id: row.org_id,
+      event_id: row.id,
+      type: NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT,
+      payload: { attachmentId: row.id },
+    });
+    sent++;
+  }
+  return sent;
+}
+
+const BLOB_SWEEP_MS = 60_000;
+const BLOB_SWEEP_BATCH = 200;
+let lastNoteBlobSweep = 0;
+
+export async function sweepNoteAttachmentBlobs(deps: {
+  workerDb: Db;
+  store: BlobStore;
+  now?: () => number;
+  force?: boolean;
+}): Promise<number> {
+  const now = (deps.now ?? Date.now)();
+  if (!deps.force && now - lastNoteBlobSweep < BLOB_SWEEP_MS) return 0;
+  lastNoteBlobSweep = now;
+  let deleted = 0;
+  for (let pass = 0; pass < 10; pass++) {
+    const { rows } = await sql<{ blob_key: string }>`
+      SELECT blob_key FROM crove_notes.attachment_blob_claim(${BLOB_SWEEP_BATCH}::int)
+    `.execute(deps.workerDb);
+    if (rows.length === 0) break;
+    const done: string[] = [];
+    for (const { blob_key: key } of rows) {
+      try {
+        await deps.store.delete(key);
+        done.push(key);
+      } catch {
+        // Left to its 5-minute lease; keys are never logged.
+      }
+    }
+    if (done.length > 0) {
+      await sql`SELECT crove_notes.attachment_blob_done(${done}::text[])`.execute(deps.workerDb);
+    }
+    deleted += done.length;
+    if (done.length < rows.length) {
+      console.error(`[notes-attachments] ${rows.length - done.length} blob(s) not deleted; claimed again after the lease`);
+      break;
+    }
+    if (rows.length < BLOB_SWEEP_BATCH) break;
+  }
+  return deleted;
 }

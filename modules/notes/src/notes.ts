@@ -36,6 +36,7 @@ import {
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { loadNoteAttachments } from './attachments.ts';
 import { insertRecordLink, loadEnrichedLinks, NOTE_TARGET_QUERIES } from './links.ts';
 import { notesManifest } from './manifest.ts';
 import { TODO_SUMMARY_COLUMNS, loadSourceNotes, todoSummaryRow } from './todos.ts';
@@ -596,14 +597,18 @@ export const noteGet = defineQuery({
       .where('id', '=', input.noteId)
       .executeTakeFirst();
     if (!row) throw notFound();
-    const shown = await loadEnrichedLinks(ctx, { kind: 'note', id: input.noteId });
-    return { ...summary(row, userId), body: row.body, links: shown };
+    const [shown, attachments] = await Promise.all([
+      loadEnrichedLinks(ctx, { kind: 'note', id: input.noteId }),
+      loadNoteAttachments(ctx, input.noteId),
+    ]);
+    return { ...summary(row, userId), body: row.body, links: shown, attachments };
   },
 });
 
 // Words typed without Vietnamese marks find them ("hoa don" finds "hóa đơn"), each as a prefix, in the title, tags and
-// body of the notes the caller may read, outside the trash: the row policies decide, so another member's private note
-// is never found. The closest matches first, then the latest.
+// body of the notes the caller may read, outside the trash, or in the file name or extracted text of one of their
+// attachments (#3561): the row policies decide, so another member's private note is never found, and the attachments'
+// own policy keeps their words from any agent. The closest matches first, then the latest.
 export const noteSearch = defineQuery({
   name: 'notes.note.search',
   input: zNoteSearch,
@@ -615,8 +620,12 @@ export const noteSearch = defineQuery({
       .select(SUMMARY)
       .where('org_id', '=', ctx.orgId)
       .where('deleted_at', 'is', null)
-      .where(sql<boolean>`search @@ crove_kernel.search_query(${input.q})`)
-      .orderBy(sql`pg_catalog.ts_rank(search, crove_kernel.search_query(${input.q}))`, 'desc')
+      .where(
+        sql<boolean>`(note.search @@ crove_kernel.search_query(${input.q}) OR EXISTS (
+          SELECT 1 FROM crove_notes.attachment a
+           WHERE a.org_id = note.org_id AND a.note_id = note.id AND a.search @@ crove_kernel.search_query(${input.q})))`,
+      )
+      .orderBy(sql`pg_catalog.ts_rank(note.search, crove_kernel.search_query(${input.q}))`, 'desc')
       .orderBy('updated_at', 'desc')
       .orderBy('id')
       .limit(input.limit)

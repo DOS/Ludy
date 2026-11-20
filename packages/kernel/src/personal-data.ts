@@ -362,7 +362,20 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_notes.note.title': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared' },
   'crove_notes.note.body': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared' },
   'crove_notes.note.tags': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared', list: true },
-  'crove_notes.note.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a note's title, tags and body, rebuilt from them" },
+  'crove_notes.note.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a note's title, tags, body and attachments, rebuilt from them" },
+  'crove_notes.attachment.filename': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Filename of a note attachment: on a shared note, the erasure deletes the attachment and queues its blob; on a private note, counted per author and deleted once the author was told',
+    privateRows: 'unless_shared',
+  },
+  'crove_notes.attachment.extracted_text': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Extracted text of a note attachment: on a shared note, the erasure deletes the attachment and queues its blob; on a private note, counted per author and deleted once the author was told',
+    privateRows: 'unless_shared',
+  },
+  'crove_notes.attachment.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a note attachment's filename and extracted text, rebuilt from them" },
   'crove_notes.notebook.name': { kind: 'free_text', handling: 'erase', reason: 'A shared notebook: the erasure edits the value out of its name and stack name, and the notebook stays; a private notebook is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
   'crove_notes.notebook.stack_name': { kind: 'free_text', handling: 'erase', reason: 'A shared notebook stack name: the erasure edits the value out of its name and stack name, and the notebook stays; a private notebook is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
   'crove_notes.todo.title': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
@@ -776,7 +789,12 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
     if (!match) continue;
     // Row security already hides other members' private notes; the finder's own private ones are counted below too,
     // not listed, so every author's are reported alike.
-    const shared = entry.privateRows === 'unless_shared' ? sql`AND t.visibility = 'org'` : sql``;
+    const shared =
+      entry.privateRows === 'unless_shared'
+        ? schema === 'crove_notes' && table === 'attachment'
+          ? sql`AND EXISTS (SELECT 1 FROM crove_notes.note n WHERE n.org_id = t.org_id AND n.id = t.note_id AND n.visibility = 'org')`
+          : sql`AND t.visibility = 'org'`
+        : sql``;
     let byId = sql``;
     if (schema === 'crove_meetings') {
       const ids = meetingRows.get(table) ?? [];
@@ -1025,7 +1043,7 @@ export const personalDataNotify = defineCommand({
     const authors = new Map<string, { authorUserId: string; notes: number; todos: number; meetings: number }>();
     for (const row of rows) {
       const a = authors.get(row.author_user_id) ?? { authorUserId: row.author_user_id, notes: 0, todos: 0, meetings: 0 };
-      if (row.item_type === 'note' || row.item_type === 'notebook') a.notes += 1;
+      if (row.item_type === 'note' || row.item_type === 'note_attachment' || row.item_type === 'notebook') a.notes += 1;
       else a.todos += 1;
       authors.set(row.author_user_id, a);
     }
@@ -1058,6 +1076,7 @@ export const personalDataNotify = defineCommand({
       kind: probe.kind,
       key: keys[0]?.key ?? null,
       notes: items('note'),
+      note_attachments: items('note_attachment'),
       notebooks: items('notebook'),
       todos: items('todo'),
       todo_lists: items('todo_list'),
@@ -1348,6 +1367,26 @@ export const personalDataErase = defineCommand({
     add('crove_notes.note.title', notes.filter((n) => n.title).length);
     add('crove_notes.note.body', notes.filter((n) => n.body).length);
     add('crove_notes.note.tags', notes.filter((n) => n.tags).length);
+    const { rows: sharedNoteAttachments } = await sql<{ note_id: string; filename: boolean; extracted_text: boolean }>`
+      DELETE FROM crove_notes.attachment a
+       WHERE a.org_id = ${ctx.orgId}::uuid
+         AND EXISTS (
+           SELECT 1 FROM crove_notes.note n
+            WHERE n.org_id = a.org_id AND n.id = a.note_id AND n.visibility = 'org'
+         )
+         AND (${mentions('a.filename')} OR ${mentions('a.extracted_text')})
+       RETURNING a.note_id, ${mentions('a.filename')} AS filename, ${mentions('a.extracted_text')} AS extracted_text`.execute(ctx.trx);
+    add('crove_notes.attachment.filename', sharedNoteAttachments.filter((a) => a.filename).length);
+    add('crove_notes.attachment.extracted_text', sharedNoteAttachments.filter((a) => a.extracted_text).length);
+    const touchedSharedNoteIds = [...new Set(sharedNoteAttachments.map((a) => a.note_id))];
+    if (touchedSharedNoteIds.length > 0) {
+      await ctx.trx
+        .updateTable('crove_notes.note')
+        .set({ updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', 'in', touchedSharedNoteIds)
+        .execute();
+    }
     const { rows: notebooks } = await sql<{ name: boolean; stack_name: boolean }>`
       UPDATE crove_notes.notebook t
          SET name = COALESCE(NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.name'), ERASED_TEXT_MARK)}, ${NOTEBOOK_NAME_MAX}::int)), ''), ${ERASED_TEXT_MARK}),

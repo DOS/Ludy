@@ -228,6 +228,7 @@ export interface CroveMeetingsSchema {
 }
 
 export interface CroveNotesSchema {
+  'crove_notes.attachment': NotesAttachmentTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.notebook': NotesNotebookTable;
@@ -3521,6 +3522,23 @@ export interface MeetingsTranslationTable {
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_notes.attachment */
+export interface NotesAttachmentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  note_id: ColumnType<string, string, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  filename: ColumnType<string, string, NotGranted>;
+  content_type: ColumnType<string, string, NotGranted>;
+  size_bytes: ColumnType<number, number, NotGranted>;
+  sha256: ColumnType<string, string, NotGranted>;
+  storage_key: ColumnType<string, string, NotGranted>;
+  extracted_text: ColumnType<string | null, string | null, NotGranted>;
+  extract_status: ColumnType<string, string | undefined, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  search: ColumnType<string, string | undefined, NotGranted>;
 }
 
 /** crove_notes.link */
