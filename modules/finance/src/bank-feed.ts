@@ -32,9 +32,10 @@ const accountMapped = () => new DomainError('BANK_FEED_ACCOUNT_MAPPED', 409, 'Tร
 export const bankFeedMap = defineCommand({
   name: 'finance.bank_feed.map',
   input: zBankFeedMap,
-  // It decides where a feed's lines are stored and posts nothing (R1, as a bank account is made).
-  risk: 'R1',
-  sideEffect: 'internal',
+  // It decides where a feed's lines are stored and posts nothing, but it queues a pull (finance.bank_feed.sync_requested) that reaches the provider's host through its adapter: so it declares an external
+  // effect, R2 (plan ยง4.7, the job egress invariant #1653).
+  risk: 'R2',
+  sideEffect: 'external',
   access: MANAGERS,
   handler: async (ctx, input): Promise<{ feedAccountId: string }> => {
     const connection = await ctx.trx

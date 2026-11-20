@@ -1,6 +1,8 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Notes v2 E2 (#3561): crove_kernel.org_purge also collects crove_notes.attachment.storage_key into blob_keys and deletes crove_notes.attachment immediately before crove_notes.note.
--- This is verbatim from 20270122170000_crove_kernel_org_purge_misa_amis_match.sql (the newest restatement on main) with those additions only; signature, owner, grants and every other list and step are unchanged.
+-- Notes v2 E2 (#3561): crove_kernel.org_purge also deletes crove_notes.attachment immediately before crove_notes.note and returns its notes/<orgId>/<id> blob keys in blob_keys.
+-- This is the body of 20270126180000 (adding crove_notes.notebook) with ONE addition: crove_notes.attachment blob key collection and deletion before crove_notes.note.
+-- Its signature, owner, grants and every other list and step are unchanged (preserving crove_notes.notebook, crove_finance.marketplace_column_check and all prior entries).
+-- (Previous header, for the record: Notes v2 E1 (#3559): crove_kernel.org_purge also deletes crove_notes.notebook immediately after crove_notes.note (the notes that reference a notebook go first).)
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -41,7 +43,7 @@ DECLARE
     'crove_meetings.glossary_term', 'crove_meetings.minutes_template', 'crove_meetings.chat_post_body', 'crove_meetings.chat_post', 'crove_meetings.chat_channel_target', 'crove_meetings.chat_channel', 'crove_meetings.morning_notice', 'crove_meetings.calendar_agenda', 'crove_meetings.hook_delivery', 'crove_meetings.member_hook', 'crove_meetings.translation', 'crove_meetings.meeting_note', 'crove_meetings.media_key', 'crove_meetings.action_item', 'crove_meetings.meeting_result', 'crove_meetings.transcript_segment', 'crove_meetings.live_line', 'crove_meetings.live_chunk', 'crove_meetings.audio_segment', 'crove_meetings.meeting_video', 'crove_meetings.meeting_reader', 'crove_meetings.meeting',
     'crove_kernel.saved_reply', 'crove_kernel.conversation_setting', 'crove_kernel.member_availability', 'crove_kernel.conversation_composing', 'crove_kernel.conversation_draft', 'crove_kernel.conversation_note', 'crove_kernel.conversation_read', 'crove_kernel.conversation_attachment', 'crove_kernel.conversation_message', 'crove_kernel.conversation', 'crove_kernel.conversation_identity', 'crove_kernel.channel_access',
     'crove_ads.ad_flag_setting', 'crove_ads.ad_campaign_request', 'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
-    'crove_kernel.today_mail', 'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.todo_list', 'crove_notes.attachment', 'crove_notes.note',
+    'crove_kernel.today_mail', 'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.todo_list', 'crove_notes.attachment', 'crove_notes.note', 'crove_notes.notebook',
     'crove_projects.project_task', 'crove_projects.project_member', 'crove_projects.project',
     'crove_kernel.activity', 'crove_kernel.agent_wakeup', 'crove_kernel.extraction',
     'crove_kernel.inbound_message', 'crove_kernel.notification', 'crove_kernel.notification_mute', 'crove_kernel.inbox_item',
@@ -51,7 +53,7 @@ DECLARE
     'crove_kernel.proposal_policy', 'crove_kernel.refusal_tally', 'crove_kernel.tax_obligation_done',
     'crove_kernel.tax_profile', 'crove_kernel.usage_deferral', 'crove_kernel.file_upload', 'crove_kernel.record_le',
     'crove_kernel.budget_policy', 'crove_kernel.kill_switch', 'crove_kernel.credential', 'crove_kernel.subject_key', 'crove_kernel.calendar_credential',
-    'crove_finance.vendor_account_rule', 'crove_finance.categorization_rule', 'crove_finance.stock_alias', 'crove_finance.marketplace_party', 'crove_finance.einvoice_connection', 'crove_finance.marketplace_connection', 'crove_finance.misa_amis_match', 'crove_finance.misa_amis_match_check', 'crove_finance.misa_amis_push', 'crove_finance.misa_amis_connection', 'crove_finance.einvoice_series', 'crove_finance.bank_party_rule', 'crove_finance.customer_collection', 'crove_finance.collection_setting', 'crove_finance.bank_account_number', 'crove_finance.bank_feed_account', 'crove_finance.bank_feed_listed_account', 'crove_crm.booking_feed', 'crove_crm.booking', 'crove_kernel.availability_rule',
+    'crove_finance.vendor_account_rule', 'crove_finance.categorization_rule', 'crove_finance.stock_alias', 'crove_finance.marketplace_party', 'crove_finance.einvoice_connection', 'crove_finance.marketplace_connection', 'crove_finance.marketplace_column_check', 'crove_finance.misa_amis_match', 'crove_finance.misa_amis_match_check', 'crove_finance.misa_amis_push', 'crove_finance.misa_amis_connection', 'crove_finance.einvoice_series', 'crove_finance.bank_party_rule', 'crove_finance.customer_collection', 'crove_finance.collection_setting', 'crove_finance.bank_account_number', 'crove_finance.bank_feed_account', 'crove_finance.bank_feed_listed_account', 'crove_crm.booking_feed', 'crove_crm.booking', 'crove_kernel.availability_rule',
     'crove_kernel.calendar_event_link', 'crove_kernel.calendar_event', 'crove_kernel.calendar_connection', 'crove_kernel.meeting_platform_recording', 'crove_kernel.meeting_platform_credential', 'crove_kernel.meeting_platform_connection', 'crove_crm.sales_order_delivery', 'crove_crm.sales_order_line', 'crove_crm.sales_order', 'crove_crm.quote_link', 'crove_crm.quote_line', 'crove_crm.quote', 'crove_crm.quote_setting', 'crove_crm.deal_next_step', 'crove_crm.deal_setting', 'crove_crm.deal', 'crove_crm.pipeline_stage', 'crove_crm.import_row', 'crove_crm.import_batch', 'crove_crm.event_type'];
   v_social text[] := ARRAY[
     'crove_social.account_snapshot', 'crove_social.bio_click', 'crove_social.bio_page', 'crove_social.brand_voice',
@@ -192,7 +194,6 @@ BEGIN
   v_conversation_keys := ARRAY(
     SELECT a.storage_key FROM crove_kernel.conversation_attachment a
     WHERE a.org_id = v_org AND a.state = 'stored' AND a.storage_key LIKE 'conversation/' || v_org::text || '/%' ORDER BY 1);
-
   v_note_attachment_keys := ARRAY(
     SELECT a.storage_key FROM crove_notes.attachment a
     WHERE a.org_id = v_org AND a.storage_key LIKE 'notes/' || v_org::text || '/%' ORDER BY 1);

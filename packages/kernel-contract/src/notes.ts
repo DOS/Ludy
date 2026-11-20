@@ -20,6 +20,9 @@ export const NOTE_BODY_MAX = 100_000;
 export const NOTE_CLIP_SOURCE_URL_MAX = 2048;
 export const NOTE_TAGS_MAX = 20;
 export const NOTE_TAG_MAX = 40;
+export const NOTEBOOK_NAME_MAX = 120;
+export const NOTEBOOK_STACK_MAX = 80;
+export const NOTEBOOKS_MAX = 200;
 // Links one note keeps: each read of the note checks every link through its module (#1672).
 export const NOTE_LINKS_MAX = 50;
 // Isolated note attachments (#3561, docs/plan/notes-v2.md V2-5, owner decision A3): <= 25 MiB per file.
@@ -48,6 +51,8 @@ export const NOTE_MEMBER_PURGE_DAYS = 30;
 
 const zTitle = z.string().trim().min(1).max(NOTE_TITLE_MAX);
 const zBody = z.string().max(NOTE_BODY_MAX);
+const zNotebookName = z.string().trim().min(1).max(NOTEBOOK_NAME_MAX);
+const zNotebookStack = z.string().trim().min(1).max(NOTEBOOK_STACK_MAX);
 // Lower case, trimmed, each once, at most NOTE_TAGS_MAX.
 const zTags = z
   .array(z.string().trim().toLowerCase().min(1).max(NOTE_TAG_MAX))
@@ -113,13 +118,90 @@ export function formatClippedNoteBody(body: string, sourceUrl: string | null): s
 export const zNoteLinkTarget = z.strictObject({ targetType: z.enum(NOTE_LINK_TARGETS), targetId: zId });
 export type NoteLinkTargetInput = z.infer<typeof zNoteLinkTarget>;
 
+// Notebooks and 2-level stacks (#3559, notes-v2.md V2-4 / E1): private to their author or shared with the org.
+export const zNotebookCreate = z.strictObject({
+  name: zNotebookName,
+  stackName: zNotebookStack.nullable().default(null),
+  visibility: z.enum(NOTE_VISIBILITIES).default('private'),
+  pinned: z.boolean().default(false),
+});
+export type NotebookCreateInput = z.input<typeof zNotebookCreate>;
+
+export const zNotebookReorder = z.strictObject({
+  place: z.enum(['before', 'after']),
+  anchorId: zId,
+});
+export type NotebookReorderInput = z.input<typeof zNotebookReorder>;
+
+export const zNotebookUpdate = z
+  .strictObject({
+    notebookId: zId,
+    revision: z.number().int().positive(),
+    name: zNotebookName.optional(),
+    stackName: zNotebookStack.nullable().optional(),
+    visibility: z.enum(NOTE_VISIBILITIES).optional(),
+    pinned: z.boolean().optional(),
+    reorder: zNotebookReorder.optional(),
+  })
+  .refine(
+    (v) =>
+      v.name !== undefined ||
+      v.stackName !== undefined ||
+      v.visibility !== undefined ||
+      v.pinned !== undefined ||
+      v.reorder !== undefined,
+    { message: 'At least one notebook change is required' },
+  )
+  .refine((v) => !v.reorder || v.reorder.anchorId !== v.notebookId, {
+    message: 'A notebook is not moved next to itself',
+    path: ['reorder', 'anchorId'],
+  });
+export type NotebookUpdateInput = z.input<typeof zNotebookUpdate>;
+
+export const zNotebookRef = z.strictObject({ notebookId: zId });
+export const zNotebookWritten = z.object({ notebookId: z.string(), revision: z.number().int() });
+export type NotebookWritten = z.infer<typeof zNotebookWritten>;
+export const zNotebookDeleted = z.object({ notebookId: z.string() });
+export type NotebookDeleted = z.infer<typeof zNotebookDeleted>;
+
+export const zNotebookView = z.object({
+  id: z.string(),
+  authorUserId: z.string(),
+  mine: z.boolean(),
+  editable: z.boolean(),
+  visibility: z.enum(NOTE_VISIBILITIES),
+  name: z.string(),
+  stackName: z.string().nullable(),
+  pinned: z.boolean(),
+  sortKey: z.string(),
+  noteCount: z.number().int().nonnegative(),
+  revision: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type NotebookSummary = z.infer<typeof zNotebookView>;
+
+export const zNotebooksResponse = z.object({
+  notebooks: z.array(zNotebookView),
+  allCount: z.number().int().nonnegative(),
+  unfiledCount: z.number().int().nonnegative(),
+});
+export type NotebooksResponse = z.infer<typeof zNotebooksResponse>;
+
+export const zNoteBacklinksInput = z.strictObject({
+  noteId: zId,
+  limit: z.number().int().min(1).max(100).default(50),
+});
+export type NoteBacklinksInput = z.input<typeof zNoteBacklinksInput>;
+
 // A new note: private unless the caller shares it (a panel on a record shares by default, notes.md decision N-7),
-// optionally linked to one record at once.
+// optionally filed in a notebook and linked to one record at once.
 export const zNoteCreate = z.strictObject({
   title: zTitle,
   body: zBody.default(''),
   tags: zTags.default([]),
   visibility: z.enum(NOTE_VISIBILITIES).default('private'),
+  notebookId: zId.nullable().optional(),
   tainted: z.boolean().optional(),
   link: zNoteLinkTarget.optional(),
 });
@@ -132,8 +214,20 @@ export const zNoteClip = z.strictObject({
   sourceUrl: zClipSourceUrl.nullable().optional(),
 });
 export type NoteClipInput = z.input<typeof zNoteClip>;
-// The author's edit of the text, against the revision they read (NOTES.REVISION_CONFLICT when it moved on).
-export const zNoteUpdate = z.strictObject({ noteId: zId, revision: z.number().int().positive(), title: zTitle, body: zBody, tags: zTags });
+// The author's edit of the text (or notebook assignment), against the revision they read (NOTE_REVISION_CONFLICT when it moved on).
+export const zNoteUpdate = z
+  .strictObject({
+    noteId: zId,
+    revision: z.number().int().positive(),
+    title: zTitle.optional(),
+    body: zBody.optional(),
+    tags: zTags.optional(),
+    notebookId: zId.nullable().optional(),
+  })
+  .refine(
+    (v) => v.title !== undefined || v.body !== undefined || v.tags !== undefined || v.notebookId !== undefined,
+    { message: 'At least one note field is required' },
+  );
 export type NoteUpdateInput = z.input<typeof zNoteUpdate>;
 export const zNoteSetVisibility = z.strictObject({ noteId: zId, visibility: z.enum(NOTE_VISIBILITIES) });
 export const zNoteRef = z.strictObject({ noteId: zId });
@@ -143,6 +237,8 @@ export const zNoteLinkAdd = z.strictObject({ noteId: zId, targetType: z.enum(NOT
 export const zNoteLinkRemove = z.strictObject({ linkId: zId });
 export const zNoteList = z.strictObject({
   view: z.enum(NOTE_LIST_VIEWS),
+  notebookId: z.union([zId, z.literal('unfiled')]).optional(),
+  stackName: zNotebookStack.optional(),
   tag: z.string().trim().toLowerCase().min(1).max(NOTE_TAG_MAX).optional(),
   target: zNoteLinkTarget.optional(),
   limit: z.number().int().min(1).max(200).default(100),
@@ -160,6 +256,7 @@ export const zNoteSummary = z.object({
   id: z.string(),
   authorUserId: z.string(),
   mine: z.boolean(),
+  notebookId: z.string().nullable().optional(),
   visibility: z.enum(NOTE_VISIBILITIES),
   title: z.string(),
   tags: z.array(z.string()),
@@ -822,6 +919,7 @@ export const zNotesExport = z.object({
   notes: z.array(
     z.object({
       id: z.string(),
+      notebookId: z.string().nullable().optional(),
       visibility: z.enum(NOTE_VISIBILITIES),
       title: z.string(),
       body: z.string(),
@@ -847,6 +945,20 @@ export const zNotesExport = z.object({
         .optional(),
     }),
   ),
+  notebooks: z
+    .array(
+      z.object({
+        id: z.string(),
+        visibility: z.enum(NOTE_VISIBILITIES),
+        name: z.string(),
+        stackName: z.string().nullable(),
+        pinned: z.boolean(),
+        sortKey: z.string(),
+        createdAt: z.string(),
+        updatedAt: z.string(),
+      }),
+    )
+    .optional(),
   todos: z.array(
     z.object({
       id: z.string(),

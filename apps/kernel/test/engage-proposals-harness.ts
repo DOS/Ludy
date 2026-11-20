@@ -26,6 +26,9 @@ export interface Harness {
   adminUrl: string;
   orgId: string;
   owner: string;
+  // The worker's own runtime and database (the login of the sweeps), for the passes that read across orgs.
+  worker: Runtime;
+  workerDb: Db;
   // A system command as the worker's login runs it (the conversation ingest, a job's record step): the fixtures of a test that the screens never create.
   system: <O = unknown>(component: string, command: string, input: unknown) => Promise<O>;
   q: <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params?: unknown[]) => Promise<pg.QueryResult<R>>;
@@ -72,7 +75,8 @@ export async function startHarness(prefix: string): Promise<Harness> {
     commands: [...kernelCommands, ...socialCommands, ...crmCommands, ...adsCommands],
     queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries, ...crmQueries, ...adsQueries],
   };
-  const worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registered);
+  const workerDb = createDb(workerPool);
+  const worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registered);
   const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registered);
   async function q<R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []): Promise<pg.QueryResult<R>> {
     const c = new pg.Client({ connectionString: adminUrl });
@@ -89,6 +93,8 @@ export async function startHarness(prefix: string): Promise<Harness> {
   const h: Harness = {
     runtime,
     db,
+    worker,
+    workerDb,
     system: <O>(component: string, command: string, input: unknown) => worker.execute<O>(command, input, { actor: { type: 'system', component }, orgId }),
     adminUrl,
     orgId,

@@ -204,6 +204,17 @@ suite('the sealed write contexts of the Engage coworkers (#3861)', () => {
         'crove_kernel.enter_mcp_company_write_context(uuid,uuid,text)',
         'crove_kernel.mcp_write_row_ok(text,text,text,jsonb,jsonb,uuid)',
       ]);
+      // The net above matches the kinds as quoted literals only; a function that asked the one question through the helper, with no literal of its own, would slip through it (#4155, item 3). The functions whose
+      // definition names the helper are exactly the helper itself and the two triggers of the origin marks (20270123300000), which stamp a row written under the engage kind. A new one is a visible, reviewed addition.
+      const callers = (
+        await c.query(
+          `SELECT p.oid::regprocedure::text AS n FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+           WHERE n.nspname NOT IN ('pg_catalog', 'information_schema') AND p.prokind IN ('f', 'p') AND pg_get_functiondef(p.oid) ~ 'ctx_mcp_engage_write' ORDER BY 1`,
+        )
+      ).rows;
+      expect(callers.map((r) => r.n)).toEqual(['crove_kernel.ctx_mcp_engage_write()', 'crove_kernel.mcp_origin_stamp_insert()', 'crove_kernel.mcp_origin_stamp_update()']);
+      // The helper reads the sealed context as the tenant login itself (#4155, item 2): not a definer, with a pinned search path.
+      expect((await c.query(`SELECT prosecdef, proconfig FROM pg_proc WHERE oid = 'crove_kernel.ctx_mcp_engage_write()'::regprocedure`)).rows[0]).toEqual({ prosecdef: false, proconfig: ['search_path=pg_catalog, pg_temp'] });
       // The engage kind is asked about in policies of exactly these tables, through the one function and never by reading the sealed key, and only by read or write checks the engage kind passes.
       const pol = (await c.query(`SELECT schemaname || '.' || tablename AS t, policyname AS n FROM pg_policies WHERE coalesce(qual, '') || coalesce(with_check, '') ~ '(ctx_mcp_engage_write|mcp_engage_write|mcp_ads_draft)' ORDER BY 1, 2`)).rows;
       expect(pol.map((r) => `${r.t}.${r.n}`)).toEqual([

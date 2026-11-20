@@ -24,7 +24,7 @@ export function PhoneHeader({
   const t = useTranslations('nav');
   const tp = useTranslations('palette');
   return (
-    <header ref={headerRef} className="sticky top-0 z-10 flex items-center gap-2 border-b bg-sidebar px-3 py-2 md:hidden">
+    <header ref={headerRef} className="sticky top-0 z-10 flex items-center gap-2 border-b bg-sidebar px-3 py-2 md:hidden print:hidden">
       <button
         type="button"
         onClick={onOpenMenu}

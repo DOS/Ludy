@@ -33,8 +33,8 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
   return {
     ...(await importOriginal<object>()),
-    Link: ({ children, to, params, ...rest }: { children?: ReactNode; to: string; params?: Record<string, string>; 'data-testid'?: string }) =>
-      createElement('a', { href: to, 'data-testid': rest['data-testid'], 'data-params': JSON.stringify(params ?? {}) }, children),
+    Link: ({ children, to, params, ...rest }: { children?: ReactNode; to: string; params?: Record<string, string>; 'data-testid'?: string; 'aria-label'?: string; className?: string }) =>
+      createElement('a', { href: to, 'data-testid': rest['data-testid'], 'data-params': JSON.stringify(params ?? {}), 'aria-label': rest['aria-label'], className: rest.className }, children),
   };
 });
 
@@ -69,6 +69,7 @@ const recording = (over: Partial<MeetingPlatformRecordingView> = {}): MeetingPla
   status: 'suggested',
   meetingId: null,
   errorCode: null,
+  matchedMeeting: null,
   ...over,
 });
 
@@ -379,6 +380,53 @@ describe('PlatformRecordings (Meetings tab)', () => {
     expect(html).toContain(en.meetings.platform.recordings.tooLong);
     expect(html).toContain(en.meetings.platform.recordings.tooLarge);
     expect(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, 'vi'))).toContain('Chỉ có bản hình, chưa nhập được');
+  });
+
+  it('shows the already-recorded notice in vi and en with an accessible meeting link and hides Import when matchedMeeting is present', () => {
+    for (const locale of ['vi', 'en'] as const) {
+      reset();
+      const words = locale === 'vi' ? viMessages : en;
+      client.current.setQueryData(KEYS.connections, [connection()]);
+      client.current.setQueryData(KEYS.recordings, [
+        recording({ id: 'matched-ok', title: 'Họp quý 4', matchedMeeting: { meetingId: 'm-matched-1' } }),
+        recording({ id: 'matched-blocked', title: 'Video đã có', hasAudio: false, hasVideo: true, matchedMeeting: { meetingId: 'm-matched-2' } }),
+        recording({ id: 'unmatched', title: 'Họp mới' }),
+      ]);
+      const html = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+      const matchedItems = html.split('data-testid="meeting-recording"').slice(1);
+      expect(matchedItems).toHaveLength(3);
+
+      // Matched rows show the required notice and link to the meeting, offer no Import or blocked reason, and keep Skip.
+      for (const [idx, expectedMeetingId, expectedTitle] of [
+        [0, 'm-matched-1', 'Họp quý 4'],
+        [1, 'm-matched-2', 'Video đã có'],
+      ] as const) {
+        const item = matchedItems[idx] as string;
+        expect(item).toContain('data-testid="meeting-recording-matched"');
+        expect(item).toContain(esc(words.meetings.platform.recordings.alreadyRecorded));
+        expect(item).toContain('data-testid="meeting-recording-matched-link"');
+        expect(item).toContain('href="/o/$slug/meetings/$id"');
+        expect(item).toContain(`&quot;id&quot;:&quot;${expectedMeetingId}&quot;`);
+        expect(item).toContain(`&quot;slug&quot;:&quot;acme&quot;`);
+        expect(item).toContain(esc(words.meetings.platform.recordings.openMatched));
+        expect(item).toContain(`aria-label="${esc(words.meetings.platform.recordings.openMatchedOf.replace('{title}', expectedTitle))}"`);
+        // Accessibility checks: visible text starts accessible label (WCAG 2.5.3), keyboard focus ring, link color token, and >=44px mobile touch targets.
+        expect(words.meetings.platform.recordings.openMatchedOf.startsWith(words.meetings.platform.recordings.openMatched)).toBe(true);
+        expect(item).toContain('min-h-11');
+        expect(item).toContain('min-w-11');
+        expect(item).toContain('focus-visible:ring-3');
+        expect(item).toContain('text-link');
+        expect(item).not.toContain('meeting-recording-import');
+        expect(item).not.toContain('meeting-recording-blocked');
+        expect(item).toContain(words.meetings.platform.recordings.dismiss);
+      }
+
+      // The unmatched recording still renders the Import button normally.
+      expect(matchedItems[2]).toContain('data-testid="meeting-recording-import"');
+      expect(matchedItems[2]).not.toContain('meeting-recording-matched');
+    }
+    expect(viMessages.meetings.platform.recordings.alreadyRecorded).toBe('Ludy đã có bản ghi của cuộc họp này');
+    expect(en.meetings.platform.recordings.alreadyRecorded).toBe('Ludy already has a recording of this meeting');
   });
 
   it('shows each state in words: importing, processing, imported with a link to the meeting, failed with a retry', () => {

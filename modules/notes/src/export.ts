@@ -78,16 +78,44 @@ export const notesExportMine = defineQuery({
         WINDOW w AS (ORDER BY sort_key, id)) l
        ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
     const listKeep = todoListIds.filter((r) => r.fits).map((r) => r.id);
+    const listUsed = Number(
+      (
+        await sql<{ used: string | null }>`
+          SELECT pg_catalog.sum(pg_catalog.length(name) + pg_catalog.length(sections::text)) AS used
+            FROM crove_notes.todo_list WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${listKeep}::uuid[])`.execute(ctx.trx)
+      ).rows[0]?.used ?? 0,
+    );
+    const { rows: notebookIds } = await sql<{ id: string; fits: boolean }>`
+      SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT - used - todoUsed - listUsed}) AS fits FROM (
+        SELECT id, pg_catalog.row_number() OVER w AS n,
+               pg_catalog.sum(pg_catalog.length(name) + COALESCE(pg_catalog.length(stack_name), 0)) OVER w AS running
+          FROM crove_notes.notebook
+         WHERE org_id = ${ctx.orgId}::uuid AND author_user_id = ${userId}::uuid
+        WINDOW w AS (ORDER BY sort_key, id)) b
+       ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
+    const notebookKeep = notebookIds.filter((r) => r.fits).map((r) => r.id);
     const notes =
       noteKeep.length === 0
         ? []
         : await ctx.trx
             .selectFrom('crove_notes.note')
-            .select(['id', 'visibility', 'title', 'body', 'tags', 'pinned', 'created_at', 'updated_at', 'archived_at', 'deleted_at'])
+            .select(['id', 'notebook_id', 'visibility', 'title', 'body', 'tags', 'pinned', 'created_at', 'updated_at', 'archived_at', 'deleted_at'])
             .where('org_id', '=', ctx.orgId)
             .where('author_user_id', '=', userId)
             .where('id', 'in', noteKeep)
             .orderBy('created_at', 'desc')
+            .orderBy('id')
+            .execute();
+    const notebooks =
+      notebookKeep.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('crove_notes.notebook')
+            .select(['id', 'visibility', 'name', 'stack_name', 'pinned', 'sort_key', 'created_at', 'updated_at'])
+            .where('org_id', '=', ctx.orgId)
+            .where('author_user_id', '=', userId)
+            .where('id', 'in', notebookKeep)
+            .orderBy('sort_key')
             .orderBy('id')
             .execute();
     const todos =
@@ -205,6 +233,7 @@ export const notesExportMine = defineQuery({
       exportedAt: new Date().toISOString(),
       notes: notes.map((n) => ({
         id: n.id,
+        notebookId: n.notebook_id,
         visibility: n.visibility,
         title: n.title,
         body: n.body,
@@ -216,6 +245,16 @@ export const notesExportMine = defineQuery({
         deletedAt: iso(n.deleted_at),
         links: noteLinksOf.get(n.id) ?? [],
         attachments: noteAttachmentsOf.get(n.id) ?? [],
+      })),
+      notebooks: notebooks.map((b) => ({
+        id: b.id,
+        visibility: b.visibility,
+        name: b.name,
+        stackName: b.stack_name,
+        pinned: b.pinned,
+        sortKey: b.sort_key,
+        createdAt: new Date(b.created_at).toISOString(),
+        updatedAt: new Date(b.updated_at).toISOString(),
       })),
       todos: todos.map((t) => ({
         id: t.id,
@@ -251,7 +290,11 @@ export const notesExportMine = defineQuery({
         updatedAt: new Date(l.updated_at).toISOString(),
         deletedAt: iso(l.deleted_at),
       })),
-      truncated: noteKeep.length < noteIds.length || todoKeep.length < todoIds.length || listKeep.length < todoListIds.length,
+      truncated:
+        noteKeep.length < noteIds.length ||
+        todoKeep.length < todoIds.length ||
+        listKeep.length < todoListIds.length ||
+        notebookKeep.length < notebookIds.length,
     };
   },
 });

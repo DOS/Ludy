@@ -396,6 +396,12 @@ BEGIN
          AND (crove_kernel.text_mentions(a.filename, p_kind, p_value)
               OR crove_kernel.text_mentions(a.extracted_text, p_kind, p_value))
       UNION ALL
+      SELECT b.author_user_id, 1, 0
+        FROM crove_notes.notebook b
+       WHERE b.org_id = v_org AND b.visibility = 'private'
+         AND (crove_kernel.text_mentions(b.name, p_kind, p_value)
+              OR crove_kernel.text_mentions(b.stack_name, p_kind, p_value))
+      UNION ALL
       SELECT t.owner_user_id, 0, 1
         FROM crove_notes.todo t
        WHERE t.org_id = v_org
@@ -448,6 +454,12 @@ BEGIN
        AND (crove_kernel.text_mentions(a.filename, p_kind, p_value)
             OR crove_kernel.text_mentions(a.extracted_text, p_kind, p_value))
     UNION ALL
+    SELECT 'notebook'::text, b.id, b.author_user_id, b.revision
+      FROM crove_notes.notebook b
+     WHERE b.org_id = v_org AND b.visibility = 'private'
+       AND (crove_kernel.text_mentions(b.name, p_kind, p_value)
+            OR crove_kernel.text_mentions(b.stack_name, p_kind, p_value))
+    UNION ALL
     SELECT 'todo'::text, t.id, t.owner_user_id, t.revision
       FROM crove_notes.todo t
      WHERE t.org_id = v_org
@@ -478,6 +490,7 @@ DECLARE
   v_items jsonb := '[]'::jsonb;
   v_attachments jsonb := '[]'::jsonb;
   v_lists jsonb := '[]'::jsonb;
+  v_notebooks jsonb := '[]'::jsonb;
 BEGIN
   IF v_org IS NULL OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR NOT EXISTS (
     SELECT 1 FROM crove_kernel.tenant_member m
@@ -488,8 +501,42 @@ BEGIN
   PERFORM crove_kernel.text_mention_pattern(p_kind, p_value);
   v_key := crove_notes.private_notice_key_of(v_org, p_kind, p_value);
 
-  -- Global lock DAG: todo_list[id ASC] -> todo[id ASC] before any DELETE so concurrent todoUpdate/todoComplete
-  -- (which lock todo_list FOR SHARE before todo FOR UPDATE) and FK ON DELETE SET NULL stay deadlock-free.
+  -- Global lock DAG: notebook[id ASC] -> note[id ASC] and todo_list[id ASC] -> todo[id ASC]
+  -- before any DELETE so concurrent commands and FK ON DELETE SET NULL / CASCADE stay deadlock-free.
+  PERFORM b.id
+    FROM crove_notes.notebook b
+   WHERE b.org_id = v_org AND b.visibility = 'private'
+     AND (
+       crove_kernel.text_mentions(b.name, p_kind, p_value)
+       OR crove_kernel.text_mentions(b.stack_name, p_kind, p_value)
+       OR EXISTS (
+         SELECT 1 FROM crove_notes.note n
+          WHERE n.org_id = v_org AND n.notebook_id = b.id AND n.visibility = 'private'
+            AND (crove_kernel.text_mentions(n.title, p_kind, p_value)
+                 OR crove_kernel.text_mentions(n.body, p_kind, p_value)
+                 OR crove_kernel.text_mentions(pg_catalog.array_to_string(n.tags, ' '), p_kind, p_value))
+       )
+     )
+   ORDER BY b.id
+   FOR UPDATE;
+
+  PERFORM n.id
+    FROM crove_notes.note n
+   WHERE n.org_id = v_org AND n.visibility = 'private'
+     AND (
+       crove_kernel.text_mentions(n.title, p_kind, p_value)
+       OR crove_kernel.text_mentions(n.body, p_kind, p_value)
+       OR crove_kernel.text_mentions(pg_catalog.array_to_string(n.tags, ' '), p_kind, p_value)
+       OR EXISTS (
+         SELECT 1 FROM crove_notes.notebook b
+          WHERE b.org_id = v_org AND b.id = n.notebook_id AND b.visibility = 'private'
+            AND (crove_kernel.text_mentions(b.name, p_kind, p_value)
+                 OR crove_kernel.text_mentions(b.stack_name, p_kind, p_value))
+       )
+     )
+   ORDER BY n.id
+   FOR UPDATE;
+
   PERFORM l.id
     FROM crove_notes.todo_list l
    WHERE l.org_id = v_org
@@ -656,7 +703,40 @@ BEGIN
     INTO v_lists
     FROM list_counted c;
 
-  v_items := v_items || v_attachments || v_lists;
+  -- Erase matched private notebooks in a separate statement after matching notes are already removed.
+  WITH told AS (
+    SELECT a.detail, a.actor_id FROM crove_kernel.audit_event a
+     WHERE a.org_id = v_org AND a.command = 'kernel.personal_data.notify' AND a.outcome = 'ok'
+       AND a.occurred_at <= pg_catalog.now() - interval '24 hours'
+       AND pg_catalog.jsonb_typeof(a.detail) = 'object' AND a.detail ->> 'key' = v_key
+  ),
+  notebook_found AS (
+    SELECT b.id, b.revision, b.author_user_id AS author,
+           EXISTS (SELECT 1 FROM told
+                    WHERE pg_catalog.jsonb_typeof(told.detail -> 'notebooks') = 'array'
+                      AND (told.detail -> 'notebooks') ? (b.id::text || ':' || b.revision::text)
+                      AND crove_notes.private_notice_told(v_org, b.author_user_id, told.actor_id, told.detail ->> 'event')) AS named
+      FROM crove_notes.notebook b
+     WHERE b.org_id = v_org AND b.visibility = 'private'
+       AND (crove_kernel.text_mentions(b.name, p_kind, p_value)
+            OR crove_kernel.text_mentions(b.stack_name, p_kind, p_value))
+  ),
+  notebook_gone AS (
+    DELETE FROM crove_notes.notebook b USING notebook_found f
+     WHERE b.org_id = v_org AND b.id = f.id AND b.revision = f.revision AND f.named
+    RETURNING b.id, f.author
+  ),
+  notebook_counted AS (
+    SELECT g.author, g.id, 'note'::text AS kind, true AS gone FROM notebook_gone g
+    UNION ALL SELECT f.author, f.id, 'note', false FROM notebook_found f WHERE NOT EXISTS (SELECT 1 FROM notebook_gone g WHERE g.id = f.id)
+  )
+  SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+    'author', c.author, 'id', c.id, 'kind', c.kind, 'gone', c.gone
+  )), '[]'::jsonb)
+    INTO v_notebooks
+    FROM notebook_counted c;
+
+  v_items := v_items || v_attachments || v_lists || v_notebooks;
 
   RETURN QUERY
     SELECT c.author,
