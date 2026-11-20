@@ -40,6 +40,8 @@ export const amisSourceType = (kind: MisaAmisKind): MisaAmisPushSource =>
 /** What a check against the firm's catalogue found, as the mapper reads it (misa-amis-match.ts `finance.misa_amis_match.results`): null until a check is done. */
 export interface AmisMatches {
   partyCodes: ReadonlyMap<string, string> | null;
+  // The party tax codes the check found several active entries for (#4114); absent for a caller that does not read them.
+  partyAmbiguous?: ReadonlySet<string> | null;
   itemCodes: ReadonlySet<string> | null;
 }
 
@@ -54,6 +56,7 @@ export const amisContextOf = (ask: AmisBuildAsk, branchId: string | null = AMIS_
   salesItemCode: ask.salesItemCode ?? null,
   defaultUnitName: 'Lần',
   partyCodes: matches?.partyCodes ?? null,
+  partyAmbiguous: matches?.partyAmbiguous ?? null,
   itemCodes: matches?.itemCodes ?? null,
 });
 

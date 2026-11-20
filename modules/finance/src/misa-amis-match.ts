@@ -25,10 +25,12 @@ export interface MisaAmisMatchResults {
   connectionId: string | null;
   status: MisaAmisMatchStatus;
   partyCodes: ReadonlyMap<string, string> | null;
+  // The party tax codes that more than one active catalogue entry carries (the check's `ambiguous` rows): the preview names them apart from a party the catalogue does not have (#4114). Null with the codes.
+  partyAmbiguous: ReadonlySet<string> | null;
   itemCodes: ReadonlySet<string> | null;
 }
 
-export const NO_MATCH_RESULTS: MisaAmisMatchResults = { connectionId: null, status: { state: 'none', failure: null, requestedAt: null, checkedAt: null }, partyCodes: null, itemCodes: null };
+export const NO_MATCH_RESULTS: MisaAmisMatchResults = { connectionId: null, status: { state: 'none', failure: null, requestedAt: null, checkedAt: null }, partyCodes: null, partyAmbiguous: null, itemCodes: null };
 
 // A check asked this recently and still waiting is the running one; later than that a press asks again (a lost job must not block the connection for ever).
 const RUNNING_MS = 10 * 60 * 1000;
@@ -206,15 +208,17 @@ export const misaAmisMatchResultsQuery = defineQuery({
       .execute();
     // While a re-check waits, or after one failed, the results of the last done check still stand (a block it raised is not lifted by asking again); with none stored there is nothing to judge against.
     // A connection that was checked once (a done check finished) and has no stored result (its batch needed none) is still checked: the sets are empty, not null.
-    if (check.state !== 'done' && rows.length === 0 && check.finished_at === null) return { connectionId: check.connection_id, status, partyCodes: null, itemCodes: null };
+    if (check.state !== 'done' && rows.length === 0 && check.finished_at === null) return { connectionId: check.connection_id, status, partyCodes: null, partyAmbiguous: null, itemCodes: null };
     const partyCodes = new Map<string, string>();
+    const partyAmbiguous = new Set<string>();
     const itemCodes = new Set<string>();
     for (const row of rows) {
+      if (row.kind === 'party' && row.state === 'ambiguous') partyAmbiguous.add(row.match_key);
       if (row.state !== 'matched' || row.catalogue_code === null) continue;
       if (row.kind === 'party') partyCodes.set(row.match_key, row.catalogue_code);
       else itemCodes.add(row.match_key);
     }
-    return { connectionId: check.connection_id, status, partyCodes, itemCodes };
+    return { connectionId: check.connection_id, status, partyCodes, partyAmbiguous, itemCodes };
   },
 });
 

@@ -181,6 +181,7 @@ describe('the MISA AMIS push job: sending', () => {
       connectionId: CONNECTION,
       status: { state: 'done', failure: null, requestedAt: '2026-11-19T11:00:00.000Z', checkedAt: '2026-11-19T11:01:00.000Z' },
       partyCodes: new Map([['0101234564', 'NCC_ABC']]),
+      partyAmbiguous: new Set(),
       itemCodes: new Set(),
     };
     const h = harness({ script: [{ action: 'need_branch' }, send(rows)], matches: checked });
@@ -197,6 +198,7 @@ describe('the MISA AMIS push job: sending', () => {
       connectionId: CONNECTION,
       status: { state: 'done', failure: null, requestedAt: '2026-11-19T11:00:00.000Z', checkedAt: '2026-11-19T11:01:00.000Z' },
       partyCodes: new Map([['0101234564', 'NCC_ABC']]),
+      partyAmbiguous: new Set(),
       itemCodes: new Set(),
     };
     // The approved digest is of the part written with the same matches.
@@ -217,6 +219,7 @@ describe('the MISA AMIS push job: sending', () => {
     connectionId: CONNECTION,
     status: { state: 'done', failure: null, requestedAt: '2026-11-19T02:40:00.000Z', checkedAt: '2026-11-19T02:41:00.000Z' },
     partyCodes,
+    partyAmbiguous: new Set(),
     itemCodes: new Set(),
   });
   const approvedUnder = async (vouchers: CashVoucher[], matches: MisaAmisMatchResults): Promise<Row[]> => {

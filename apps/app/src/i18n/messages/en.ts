@@ -7710,6 +7710,7 @@ export const en = {
     blocker: {
       branch_missing: 'AMIS branch missing',
       party_code_unknown: 'Party not in AMIS',
+      party_code_ambiguous: 'Party found more than once in AMIS',
       item_code_unknown: 'AMIS item code missing',
       stock_missing: 'Warehouse code missing',
       vat_rate_unmapped: 'VAT rate AMIS does not take',
