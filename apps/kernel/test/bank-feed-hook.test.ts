@@ -302,4 +302,23 @@ describe('the worker verification of claimed notices', () => {
     expect(await verifyBankFeedHookNotices(d, [row()])).toEqual(['dropped']);
     expect(rejected).toEqual([]);
   });
+
+  it('answers a database failure 500 and logs only the error name, never a DETAIL that quotes the notice', async () => {
+    const detail = `Key (body)=(${JSON.stringify({ clientId: CLIENT, transactionId: 'T1' })}) violates a constraint`;
+    const on = fixture({
+      runtime: {
+        installed: () => true,
+        modules: () => ['kernel', 'finance'],
+        orgless: async () => {
+          throw new Error(detail);
+        },
+      } as unknown as Runtime,
+    });
+    const response = await on.post();
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ code: 'INTERNAL' });
+    const text = logged.join('\n');
+    expect(text).toContain('bank-feed-hook');
+    for (const secret of [KEY, CLIENT, 'T1', 'violates']) expect(text).not.toContain(secret);
+  });
 });

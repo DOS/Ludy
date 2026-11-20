@@ -107,9 +107,10 @@ export async function sweepBankFeedHookNotices(workerDb: Db): Promise<number> {
   return Number(rows[0]?.swept ?? 0);
 }
 
-// Counts a refused notice on its hook; true when the hook is now stopped (ten within an hour).
-export async function rejectBankFeedHook(trx: Transaction<Database>, hookId: string): Promise<boolean> {
-  const { rows } = await sql<{ stopped: boolean }>`SELECT crove_finance.bank_feed_hook_reject(${hookId}::uuid) AS stopped`.execute(trx);
+// Counts a refused notice on its hook; true when the hook is now stopped (ten within an hour). The worker calls it AFTER the claim's transaction has committed, never inside it: the claim holds the deleted notices'
+// row locks, and an API retry of the same request id that holds the hook's lock would otherwise wait on the claim while the claim waits on the hook.
+export async function rejectBankFeedHook(db: Db | Transaction<Database>, hookId: string): Promise<boolean> {
+  const { rows } = await sql<{ stopped: boolean }>`SELECT crove_finance.bank_feed_hook_reject(${hookId}::uuid) AS stopped`.execute(db);
   return rows[0]?.stopped === true;
 }
 

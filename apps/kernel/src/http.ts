@@ -1055,7 +1055,9 @@ export function createHttpApp(deps: HttpDeps) {
           }
           return c.json({ code: outcome.code }, outcome.status);
         } catch (error) {
-          return problem(c, error);
+          // Nothing of the error is logged: a database error's DETAIL can quote the notice's body, which is personal data. The line carries the error's name only.
+          console.error('[bank-feed-hook] request failed:', error instanceof Error ? error.name : 'error');
+          return c.json({ code: 'INTERNAL', message: 'Lỗi hệ thống' }, 500);
         }
       },
     );

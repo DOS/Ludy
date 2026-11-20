@@ -309,17 +309,17 @@ export const PERSONAL_DATA_COLUMNS = {
   // The preview of a column check on an unrecognised marketplace order report (#4036): at most 20 parsed lines (order no, line key, SKU, item name, variation, quantity, amount, status) a member looks at before
   // anything is saved. A line can carry a buyer's text when an unflagged column is mapped to a text field (the limit stated in #4178). An erasure deletes the check whose preview quotes the value (the file stays; the
   // person asks again); the preview is also deleted with its file, with the org, and by the nightly retention seven days after the check finished.
+  'crove_finance.marketplace_column_check.preview': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The preview of an order report's parsed lines, which may quote a buyer when a column was mapped by hand; an erasure deletes the check that quotes the value and the member asks again",
+  },
   // The raw body of a bank feed provider's signed notice waiting for the worker (#4203, Tingee S3): the transfer content and the payer's name as the provider sent them. It is kept only until the worker verifies it (the claim
   // deletes it), at most ten minutes whatever its state (the sweep), is never logged, is deleted by an erasure that its text mentions, and goes with the hook, the connection and the org.
   'crove_finance.bank_feed_webhook_notice.body': {
     kind: 'free_text',
     handling: 'erase',
     reason: "The raw body of a bank feed provider's signed notice, which carries the transfer content and the payer's name: kept only until the worker verifies it and at most ten minutes, deleted by an erasure whose value its text mentions, and with the connection and the org",
-  },
-  'crove_finance.marketplace_column_check.preview': {
-    kind: 'free_text',
-    handling: 'erase',
-    reason: "The preview of an order report's parsed lines, which may quote a buyer when a column was mapped by hand; an erasure deletes the check that quotes the value and the member asks again",
   },
   // More free text (#1961): a task's title and description, which members and agents write, are replaced where they
   // quote the value; a bank statement line and a journal line's memo are kept.

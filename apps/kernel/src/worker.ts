@@ -3304,9 +3304,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         const broker = deps.channels.broker;
         for (;;) {
           const tally = { ok: 0, refused: 0, dropped: 0 };
+          // The refused notices are counted on their hooks after the batch commits (see rejectBankFeedHook): one entry per refused notice.
+          const refusedHooks: string[] = [];
           const claimed = await relayBatch(deps.workerDb, boss, async (trx) => {
             const rows = await claimBankFeedHookNotices(trx);
-            const verdicts = await verifyBankFeedHookNotices({ runtime: deps.runtime, broker, providers: hostedFeeds, reject: (hookId) => rejectBankFeedHook(trx, hookId) }, rows);
+            const verdicts = await verifyBankFeedHookNotices({ runtime: deps.runtime, broker, providers: hostedFeeds, reject: async (hookId) => void refusedHooks.push(hookId) }, rows);
             const seen = new Set<string>();
             return rows.map((row, i) => {
               const verdict = verdicts[i] ?? 'dropped';
@@ -3324,6 +3326,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 });
             });
           });
+          for (const hookId of refusedHooks) await rejectBankFeedHook(deps.workerDb, hookId);
           if (claimed > 0) console.log(`[bank-feed-hook] ${claimed} notice(s): ${tally.ok} verified, ${tally.refused} refused, ${tally.dropped} dropped`);
           if (claimed < BANK_FEED_HOOK_CLAIM) break;
         }
