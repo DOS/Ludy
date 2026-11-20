@@ -39,6 +39,8 @@ export const zMisaAmisConnection = z.object({
   defaultSalesItemCode: z.string().nullable().optional(),
   // MISA ASP only (#4125): the stock code a person keeps for the connection's sales lines, as the catalogue spells it; null for none.
   defaultSalesStockCode: z.string().nullable().optional(),
+  // MISA ASP only (#4125): the unit names a person typed as the catalogue spells them, by the unit of Ludy (folded); absent or empty for none.
+  unitAliases: z.record(z.string(), z.string()).optional(),
 });
 export type MisaAmisConnection = z.infer<typeof zMisaAmisConnection>;
 
@@ -67,3 +69,23 @@ export const zMisaAmisDefaultItem = z.strictObject({
   code: z.string().trim().min(1).max(50).regex(/^[^\p{Cc}]+$/u).nullable(),
 });
 export type MisaAmisDefaultItem = z.infer<typeof zMisaAmisDefaultItem>;
+
+// A person keeps, or clears with a null name, the unit name MISA has for one unit of Ludy (#4125, MISA ASP only): `unit` is the unit as Ludy writes it (folded by the server the way the check folds it), `misaName`
+// the unit as the catalogue spells it, typed (1 to 64 characters). It is not looked up here (the API cannot read the catalogue): the next check matches it exactly, and a unit it does not find stays a blocker.
+export const MISA_AMIS_UNIT_ALIASES_MAX = 200;
+export const zMisaAmisUnitAlias = z.strictObject({
+  id: zId,
+  // No control character in either text (a NUL cannot be stored in jsonb text and would be a 500, not a refusal).
+  unit: z.string().trim().min(1).max(64).regex(/^[^\p{Cc}]+$/u),
+  misaName: z.string().trim().min(1).max(64).regex(/^[^\p{Cc}]+$/u).nullable(),
+});
+export type MisaAmisUnitAlias = z.infer<typeof zMisaAmisUnitAlias>;
+
+// The units of the last check a person can give a MISA name (#4125): a unit of Ludy the catalogue did not match (none or several of that name), or one that has a name typed. Owner or admin.
+export const zMisaAmisUnitsAsk = z.strictObject({ connectionId: zId });
+export const zMisaAmisUnitRow = z.strictObject({
+  unit: z.string(),
+  state: z.enum(['unknown', 'ambiguous', 'matched']),
+  alias: z.string().nullable(),
+});
+export type MisaAmisUnitRow = z.infer<typeof zMisaAmisUnitRow>;

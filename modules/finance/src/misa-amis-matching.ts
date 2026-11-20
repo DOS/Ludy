@@ -120,7 +120,7 @@ export function catalogueStocks(rows: ReadonlyArray<Readonly<Record<string, unkn
 }
 
 /** Each wanted unit name (as Ludy writes it) against the active catalogue units of the same name; the result is keyed by the normalized name. */
-export function matchUnits(wanted: Iterable<string>, catalogue: readonly CatalogueUnit[]): MisaAmisMatchResult[] {
+export function matchUnits(wanted: Iterable<string>, catalogue: readonly CatalogueUnit[], aliases: Readonly<Record<string, string>> = {}): MisaAmisMatchResult[] {
   const byName = new Map<string, CatalogueUnit[]>();
   for (const entry of catalogue) {
     const key = entry.active ? normalizeUnitName(entry.name) : null;
@@ -132,7 +132,10 @@ export function matchUnits(wanted: Iterable<string>, catalogue: readonly Catalog
     if (key !== null) keys.add(key);
   }
   return [...keys].sort().map((key) => {
-    const found = byName.get(key) ?? [];
+    // A name a person typed for the unit is looked up instead of the unit's own name (exactly, as every name is); the result stays under the unit of Ludy.
+    // A typed name that does not fold to a name is no name at all: the unit stays unmatched, never silently looked up under its own name.
+    const typed = Object.hasOwn(aliases, key) ? normalizeUnitName(aliases[key]) : undefined;
+    const found = typed === null ? [] : (byName.get(typed ?? key) ?? []);
     const [only] = found;
     // A unit whose id is not a usable id cannot be written on a line: it is as good as not there.
     if (found.length === 1 && only && only.id !== null) return { kind: 'unit' as const, ref: key, state: 'matched' as const, code: only.name, entryId: only.id };

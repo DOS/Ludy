@@ -1451,6 +1451,7 @@ export interface FinanceMisaAmisConnectionTable {
   default_service_item_code: string | null;
   default_sales_item_code: string | null;
   default_sales_stock_code: string | null;
+  unit_aliases: ColumnType<unknown, string | undefined, string>;
 }
 
 /** crove_finance.misa_amis_match_check */

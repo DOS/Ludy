@@ -635,6 +635,72 @@ suite('MISA AMIS connections (#3875)', () => {
     expect(await stockOf(aspId)).toBeNull();
   });
 
+  it('keeps the MISA names a person typed for units of an ASP connection (#4125): per unit, folded, owner or admin only, refused for AMIS, bounded in the command and in the table, and handed to the check', async () => {
+    const [asp] = await rows<{ id: string; legal_entity_id: string }>("SELECT id, legal_entity_id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND product = 'asp' ORDER BY created_at LIMIT 1", [orgId]);
+    const [amis] = await rows<{ id: string }>("SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND product = 'amis' ORDER BY created_at LIMIT 1", [orgId]);
+    const aspId = String(asp?.id);
+    const aliasesOf = async () => ((await call('connections/list', owner)).body as Array<{ id: string; unitAliases?: Record<string, string> }>).find((c) => c.id === aspId)?.unitAliases;
+    // Folded like the check folds a unit (composed, lower case, one space), the typed name trimmed.
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: '  CHIẾC  Lớn ', misaName: ' Cái ' })).toMatchObject({ status: 200, body: { saved: true } });
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'hộp', misaName: 'Hộp' })).toMatchObject({ status: 200 });
+    expect(await aliasesOf()).toEqual({ 'chiếc lớn': 'Cái', hộp: 'Hộp' });
+    // A unit named like a prototype property is an ordinary unit: stored, listed and cleared like any other.
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: '__proto__', misaName: 'P' })).toMatchObject({ status: 200 });
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'constructor', misaName: 'C' })).toMatchObject({ status: 200 });
+    // (Read from the row: a JSON answer built from a plain record cannot carry an own `__proto__` key, which nothing on the screen reads.)
+    const [stored] = await rows<{ unit_aliases: Record<string, string> }>('SELECT unit_aliases FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, aspId]);
+    expect(Object.entries(stored?.unit_aliases ?? {}).sort()).toEqual([['__proto__', 'P'], ['chiếc lớn', 'Cái'], ['constructor', 'C'], ['hộp', 'Hộp']]);
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: '__proto__', misaName: null })).toMatchObject({ status: 200 });
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'constructor', misaName: null })).toMatchObject({ status: 200 });
+    // Replaced per unit, and cleared per unit with a null name, without touching the others.
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'chiếc lớn', misaName: 'Chiếc' })).toMatchObject({ status: 200 });
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'HỘP', misaName: null })).toMatchObject({ status: 200 });
+    expect(await aliasesOf()).toEqual({ 'chiếc lớn': 'Chiếc' });
+    // The worker is handed them with the waiting check.
+    await call('matches/check', owner, { id: aspId, ask: { kind: 'sales', legalEntityId: String(asp?.legal_entity_id) } }, aspApp);
+    expect(await worker.query('finance.misa_amis_match.check_target', { id: aspId }, { actor: system, orgId })).toMatchObject({ action: 'check', unitAliases: { 'chiếc lớn': 'Chiếc' } });
+    // Owner or admin only; an AMIS connection has none; a unit that folds to nothing, or a name over 64 characters, is refused.
+    for (const who of [member, viewer]) expect(await call('connections/setUnitAlias', who, { id: aspId, unit: 'cái', misaName: 'Cái' })).toMatchObject({ status: 403 });
+    expect(await call('connections/setUnitAlias', owner, { id: String(amis?.id), unit: 'cái', misaName: 'Cái' })).toMatchObject({ status: 422, body: { code: 'MISA_AMIS_UNIT_NOT_ASP' } });
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'x'.repeat(65), misaName: 'Cái' })).toMatchObject({ status: 400 });
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'cái', misaName: 'x'.repeat(65) })).toMatchObject({ status: 400 });
+    // A control character in either text is a bad input, never a 500 from the table.
+    for (const bad of ['cái\u0000', 'cá\ni', '\u007fcái']) {
+      expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: bad, misaName: 'Cái' })).toMatchObject({ status: 400 });
+      expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'cái', misaName: bad })).toMatchObject({ status: 400 });
+    }
+    expect(await call('connections/setUnitAlias', owner, { id: randomUUID(), unit: 'cái', misaName: 'Cái' })).toMatchObject({ status: 404 });
+    // 200 units at most: a 201st is refused by the command, the 200 stay.
+    await rows("UPDATE crove_finance.misa_amis_connection SET unit_aliases = (SELECT jsonb_object_agg('u' || g, 'V' || g) FROM generate_series(1, 200) g) WHERE org_id = $1 AND id = $2", [orgId, aspId]);
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'một đơn vị nữa', misaName: 'X' })).toMatchObject({ status: 422, body: { code: 'MISA_AMIS_UNIT_ALIASES_FULL' } });
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'u1', misaName: 'Mới' })).toMatchObject({ status: 200 });
+    // The table holds the bounds too: an object, 200 entries, texts of 1 to 64 characters, ASP only.
+    const bad = (value: string, id = aspId) => rows('UPDATE crove_finance.misa_amis_connection SET unit_aliases = $3::jsonb WHERE org_id = $1 AND id = $2', [orgId, id, value]);
+    await expect(bad('[]')).rejects.toThrow(/misa_amis_connection_unit_aliases_ck/);
+    await expect(bad('{"a": 1}')).rejects.toThrow(/misa_amis_connection_unit_aliases_ck/);
+    await expect(bad(`{"a": "${'x'.repeat(65)}"}`)).rejects.toThrow(/misa_amis_connection_unit_aliases_ck/);
+    await expect(bad('{"": "x"}')).rejects.toThrow(/misa_amis_connection_unit_aliases_ck/);
+    await expect(rows("UPDATE crove_finance.misa_amis_connection SET unit_aliases = (SELECT jsonb_object_agg('u' || g, 'V') FROM generate_series(1, 201) g) WHERE org_id = $1 AND id = $2", [orgId, aspId])).rejects.toThrow(/misa_amis_connection_unit_aliases_ck/);
+    await expect(bad('{"cái": "Cái"}', String(amis?.id))).rejects.toThrow(/misa_amis_connection_unit_aliases_ck/);
+    // The units of the last check a person can give a name: the unmatched ones, and one with a name typed (matched through it), never a matched unit with no name; the list is for owners and admins.
+    await rows("UPDATE crove_finance.misa_amis_connection SET unit_aliases = '{\"chiếc\": \"Cái\", \"mới\": \"Hộp\"}'::jsonb WHERE org_id = $1 AND id = $2", [orgId, aspId]);
+    const [chk] = await rows<{ legal_entity_id: string }>('SELECT legal_entity_id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, aspId]);
+    for (const [key, state, code, id] of [['cái', 'matched', 'Cái', randomUUID()], ['chiếc', 'matched', 'Cái', randomUUID()], ['kg', 'unknown', null, null], ['hộp', 'ambiguous', null, null]] as const) {
+      await rows('INSERT INTO crove_finance.misa_amis_match (org_id, connection_id, legal_entity_id, kind, match_key, state, catalogue_code, catalogue_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [orgId, aspId, chk?.legal_entity_id, 'unit', key, state, code, id]);
+    }
+    expect((await call('matches/units', owner, { connectionId: aspId }, aspApp)).body).toEqual([
+      // A name typed for a unit no check has asked about comes first, so a long list never hides a name that can no longer be cleared.
+      { unit: 'mới', state: 'unknown', alias: 'Hộp' },
+      { unit: 'chiếc', state: 'matched', alias: 'Cái' },
+      { unit: 'hộp', state: 'ambiguous', alias: null },
+      { unit: 'kg', state: 'unknown', alias: null },
+    ]);
+    expect(await call('matches/units', member, { connectionId: aspId }, aspApp)).toMatchObject({ status: 403 });
+    await rows("DELETE FROM crove_finance.misa_amis_match WHERE org_id = $1 AND connection_id = $2 AND kind = 'unit'", [orgId, aspId]);
+    await rows("UPDATE crove_finance.misa_amis_connection SET unit_aliases = '{}'::jsonb WHERE org_id = $1 AND id = $2", [orgId, aspId]);
+    expect(await aliasesOf()).toEqual({});
+  });
+
   // The insert guard fails closed and cannot be skipped (#4132, two LOW items of the security review of #4131).
   it('files a connection only when the channel connection of its product is found, so a channel row the writer cannot see is refused, and the guard fires in replica mode too', async () => {
     const entity = await newEntity('Chi nhánh guard kín');

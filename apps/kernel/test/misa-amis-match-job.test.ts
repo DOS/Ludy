@@ -399,6 +399,18 @@ describe('the MISA ASP match check (#4152)', () => {
     expect(recorded(h2)).toMatchObject([{ results: expect.not.arrayContaining([expect.objectContaining({ kind: 'stock' })]) }]);
   });
 
+  it('matches the name a person typed for a unit instead of the unit\'s own, and records it under the unit of Ludy (#4125)', async () => {
+    const target = (unitAliases: Record<string, string>) => ({ action: 'check', id: CONNECTION, product: 'asp', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask: ASK, requestedAt: REQUESTED, confirmed: [], defaultSalesStockCode: null, unitAliases });
+    const units = [{ unit_id: ENTRY1, unit_name: 'Đơn vị MISA' }];
+    const h = harness({ product: 'asp', target: target({ lần: ' đơn VỊ misa ' }) });
+    expect(await runAsp(h, fakeAmis({ prefix: '/asp/v1', units }))).toMatchObject({ state: 'done' });
+    expect(recorded(h)).toMatchObject([{ results: expect.arrayContaining([{ kind: 'unit', ref: 'lần', state: 'matched', code: 'Đơn vị MISA', entryId: ENTRY1 }]) }]);
+    // Without the typed name the unit's own name is not in that catalogue.
+    const h2 = harness({ product: 'asp', target: target({}) });
+    await runAsp(h2, fakeAmis({ prefix: '/asp/v1', units }));
+    expect(recorded(h2)).toMatchObject([{ results: expect.arrayContaining([{ kind: 'unit', ref: 'lần', state: 'unknown', code: null, entryId: null }]) }]);
+  });
+
   it('does not touch the AMIS client for an ASP connection, and the other way round', async () => {
     const amisFake = fakeAmis();
     const aspFake = fakeAmis({ prefix: '/asp/v1' });

@@ -195,7 +195,7 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
-import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisDefaultItem, zMisaAmisStatus } from './misa-amis-connections.ts';
+import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisDefaultItem, zMisaAmisStatus, zMisaAmisUnitAlias, zMisaAmisUnitRow, zMisaAmisUnitsAsk } from './misa-amis-connections.ts';
 import { zMisaAmisMatchCheckQueued, zMisaAmisNameDecided, zMisaAmisNameDecision, zMisaAmisNameProposal, zMisaAmisNameProposalsAsk } from './misa-amis-match.ts';
 import { zMisaAmisPushConfirm, zMisaAmisPushConfirmed, zMisaAmisPushListAsk, zMisaAmisPushResolveAsk, zMisaAmisPushRow } from './misa-amis-push.ts';
 import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './misa-check.ts';
@@ -2677,6 +2677,9 @@ export const contract = {
       // Keeps (or, with a null code, clears) the default item of the connection for service lines or sales lines (S3b, #4124): a code typed as the MISA catalogue spells it, which the next check validates against
       // the catalogue. Owner or admin. MISA_AMIS_CONNECTION_NOT_FOUND (404), FORBIDDEN (403); not gated by the connector's switch (nothing is sent).
       setDefaultItem: oc.input(zMisaAmisDefaultItem).output(z.object({ saved: z.boolean() })),
+      // Keeps (or, with a null name, clears) the MISA name of one unit of Ludy on a MISA ASP connection (#4125): typed as the catalogue spells it, matched exactly by the next check. Owner or admin.
+      // MISA_AMIS_CONNECTION_NOT_FOUND (404), MISA_AMIS_UNIT_NOT_ASP (422), MISA_AMIS_UNIT_INVALID (422), MISA_AMIS_UNIT_ALIASES_FULL (422), FORBIDDEN (403).
+      setUnitAlias: oc.input(zMisaAmisUnitAlias).output(z.object({ saved: z.boolean() })),
     },
     // The check of a connection's vouchers against the firm's own MISA catalogue (S3a, #4112 of #4103): the worker opens the sealed access code, reads the catalogue pages in its memory, matches the parties
     // (by tax code) and items (by code) of the batch and records only what it found, which the preview then shows ("checked at"). Owner or admin; a second press while a check waits returns it. The ask is the
@@ -2686,6 +2689,8 @@ export const contract = {
       // The proposals of the last check (S3b, #4124): a party with no tax code and the one active catalogue entry of its name. Owner or admin. Confirming makes the entry's code the party's code on the vouchers (the
       // preview then changes); rejecting deletes the proposal. MISA_AMIS_NAME_PROPOSAL_GONE (409) when a newer check replaced it, MISA_AMIS_CONNECTION_NOT_FOUND (404), FORBIDDEN (403).
       proposals: oc.input(zMisaAmisNameProposalsAsk).output(z.array(zMisaAmisNameProposal)),
+      // The units of the last check of a MISA ASP connection that have no match (or a name typed) (#4125). Owner or admin.
+      units: oc.input(zMisaAmisUnitsAsk).output(z.array(zMisaAmisUnitRow)),
       confirmName: oc.input(zMisaAmisNameDecision).output(zMisaAmisNameDecided),
       rejectName: oc.input(zMisaAmisNameDecision).output(zMisaAmisNameDecided),
     },

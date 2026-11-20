@@ -228,6 +228,29 @@ describe('units and stocks (MISA ASP, #4125)', () => {
     ]);
   });
 
+  it('looks up the name a person typed for a unit instead of its own, exactly, and keeps the result under the unit of Ludy', () => {
+    const catalogue = catalogueUnits([unit('Cái', ID1), unit('Hộp', ID2), unit('hộp', ID1)]);
+    expect(matchUnits(['chiếc', 'Hộp lớn', 'Cái'], catalogue, { chiếc: ' CÁI ', 'hộp lớn': 'Hộp', cái: 'Thùng' })).toEqual([
+      { kind: 'unit', ref: 'chiếc', state: 'matched', code: 'Cái', entryId: ID1 },
+      { kind: 'unit', ref: 'cái', state: 'unknown', code: null, entryId: null },
+      { kind: 'unit', ref: 'hộp lớn', state: 'ambiguous', code: null, entryId: null },
+    ]);
+    // A name that is not typed for the unit changes nothing, and an inherited property is no alias.
+    expect(matchUnits(['cái', 'constructor'], catalogue, {})).toEqual([
+      { kind: 'unit', ref: 'constructor', state: 'unknown', code: null, entryId: null },
+      { kind: 'unit', ref: 'cái', state: 'matched', code: 'Cái', entryId: ID1 },
+    ]);
+  });
+
+  it('a typed name that does not fold to a name is no name: the unit stays unmatched, and a unit named like a prototype property is an ordinary unit', () => {
+    const catalogue = catalogueUnits([unit('Cái', ID1)]);
+    expect(matchUnits(['cái'], catalogue, { cái: 'İ'.repeat(64) })).toEqual([{ kind: 'unit', ref: 'cái', state: 'unknown', code: null, entryId: null }]);
+    expect(matchUnits(['constructor', '__proto__'], catalogue, Object.fromEntries([['constructor', 'Cái'], ['__proto__', 'Cái']]))).toEqual([
+      { kind: 'unit', ref: '__proto__', state: 'matched', code: 'Cái', entryId: ID1 },
+      { kind: 'unit', ref: 'constructor', state: 'matched', code: 'Cái', entryId: ID1 },
+    ]);
+  });
+
   it('never matches a unit or a stock that has no usable id', () => {
     expect(matchUnits(['cái'], catalogueUnits([unit('Cái', null)]))).toEqual([{ kind: 'unit', ref: 'cái', state: 'unknown', code: null, entryId: null }]);
     expect(matchStocks(['KHO1'], catalogueStocks([{ stock_code: 'KHO1', stock_id: 'not-a-guid' }]))).toEqual([{ kind: 'stock', ref: 'KHO1', state: 'unknown', code: null, entryId: null }]);
