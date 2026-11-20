@@ -3994,7 +3994,9 @@ export function createRpcHandler(
           const provider = hosted.bank_tingee as BankFeedProvider;
           // The org's own credential, as the one value the worker opens (the adapter reads it back). One read call tests it before anything is sealed; its answer is dropped, the worker lists the accounts.
           const secret = JSON.stringify({ clientId: input.clientId, secretToken: input.secretToken });
-          const ticket = [tingeeConnectsPerOrg.take(orgId), tingeeConnectsAll.take('all')].find((t) => !t.allowed);
+          // The org's ticket first: a refused org must not spend the deployment's. Both limits are per process (a deployment with several API instances allows up to that many times each).
+          const own = tingeeConnectsPerOrg.take(orgId);
+          const ticket = own.allowed ? [tingeeConnectsAll.take('all')].find((t) => !t.allowed) : own;
           if (ticket) throw new DomainError('RATE_LIMITED', 429, 'Đã thử kết nối Tingee nhiều lần trong phút này, hãy đợi một lát rồi thử lại', { retryAfterSeconds: ticket.retryAfterSeconds });
           try {
             // One cheap read call (a page of one account) when the adapter has one, else its account list.
