@@ -655,6 +655,7 @@ export type MarketplaceColumnCheckRefusal = (typeof MARKETPLACE_COLUMN_CHECK_REF
 export type MarketplaceColumnCheckTable = Refine<
   G.FinanceMarketplaceColumnCheckTable,
   {
+    platform: ChannelPlatform | null;
     state: Generated<MarketplaceColumnCheckState>;
     failure: MarketplaceColumnCheckFailure | null;
     refusal: MarketplaceColumnCheckRefusal | null;
