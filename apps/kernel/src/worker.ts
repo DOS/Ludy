@@ -462,6 +462,9 @@ const MISA_AMIS_TEST_RETRY_LIMIT = 2;
 const MISA_AMIS_MATCH_SUPERSEDED_RUNS = 2;
 // The same for the column check of an unrecognised order report (#4036): a record the request time did not match was dropped, and the job runs again a few times at most.
 const MARKETPLACE_COLUMNS_SUPERSEDED_RUNS = 2;
+// How many times the queue runs the column check job again after it failed, and the delay between them (seconds); the column check has its own, not the MISA connection test's.
+const MARKETPLACE_COLUMNS_RETRY_LIMIT = 2;
+const MARKETPLACE_COLUMNS_RETRY_DELAY_S = 30;
 // A push run that fails is tried again with backoff; rows begun and never answered are asked about, never sent twice (the ledger and the table's states say so).
 const MISA_AMIS_PUSH_RETRY_LIMIT = 2;
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
@@ -2926,8 +2929,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 const fileId = String(row.payload.file_id);
                 await boss.send(QUEUES.marketplaceColumns, { orgId: row.org_id, fileId } satisfies MarketplaceColumnsJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.marketplaceColumns, fileId),
-                  retryLimit: MISA_AMIS_TEST_RETRY_LIMIT,
-                  retryDelay: 30,
+                  retryLimit: MARKETPLACE_COLUMNS_RETRY_LIMIT,
+                  retryDelay: MARKETPLACE_COLUMNS_RETRY_DELAY_S,
                   retryBackoff: true,
                 });
               }

@@ -2663,7 +2663,7 @@ export const contract = {
     // The columns of a report no platform profile fits (#4036, slice 1c of #3850). The file is read in the extract sandbox, which only the worker reaches, so `columnsCheck` files a request and queues the worker's
     // job (the sheet alone, or a mapping to check on the real file; a press while one waits returns it), `columns` reads what the worker found (the masked sheet, the check's refusal and a preview of at most 20
     // parsed lines), and `columnsProposal` asks Ly for a first mapping from the masked sheet alone, within the AI budget. Nothing is imported or saved. Owners, admins and members.
-    // MARKETPLACE_COLUMNS_NOT_FOUND (404) for a file that is not a staged unrecognised report of the org.
+    // MARKETPLACE_COLUMNS_NOT_FOUND (404) for a file that is not a staged unrecognised report of the org, MARKETPLACE_COLUMNS_BUSY (409) when another request for the same file filed the row first.
     columnsCheck: oc.input(zMarketplaceColumnsCheckAsk.extend({ idempotencyKey: zId })).output(zMarketplaceColumnsCheckQueued),
     columns: oc.input(z.object({ fileId: zId })).output(zMarketplaceColumnsStatus),
     columnsProposal: oc.input(zMarketplaceColumnsProposalAsk).output(zMarketplaceColumnsProposal),

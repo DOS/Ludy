@@ -95,10 +95,16 @@ export const marketplaceColumnsCheck = defineCommand({
         .where('id', '=', existing.id)
         .execute();
     } else {
-      await ctx.trx
-        .insertInto('crove_finance.marketplace_column_check')
-        .values({ org_id: ctx.orgId, file_id: input.fileId, platform, assignments, requested_by: ctx.actor.userId, requested_at: ctx.now })
-        .execute();
+      try {
+        await ctx.trx
+          .insertInto('crove_finance.marketplace_column_check')
+          .values({ org_id: ctx.orgId, file_id: input.fileId, platform, assignments, requested_by: ctx.actor.userId, requested_at: ctx.now })
+          .execute();
+      } catch (error: unknown) {
+        // Two first requests for the same file at once: the other one filed the row (one row per file). A plain refusal, not a server error; the member presses again and gets the waiting one.
+        if ((error as { code?: unknown } | null)?.code === '23505') throw new DomainError('MARKETPLACE_COLUMNS_BUSY', 409, 'Báo cáo này vừa được yêu cầu kiểm tra ở nơi khác; hãy thử lại sau giây lát');
+        throw error;
+      }
     }
     // The job carries the file's id and nothing else.
     await ctx.emit(MARKETPLACE_COLUMN_CHECK_REQUESTED, { file_id: input.fileId });

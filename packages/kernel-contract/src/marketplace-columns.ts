@@ -30,11 +30,21 @@ export type MarketplaceColumnsCheckAsk = z.infer<typeof zMarketplaceColumnsCheck
 export const zMarketplaceColumnsCheckQueued = z.strictObject({ queued: z.boolean(), running: z.boolean() });
 export type MarketplaceColumnsCheckQueued = z.infer<typeof zMarketplaceColumnsCheckQueued>;
 
-// The masked sheet: header texts and the SHAPES of a few values (never a value), a buyer column an empty shell.
+// The masked sheet: header texts and the SHAPES of a few values (never a value), a buyer column an empty shell. The same rules as the sandbox's answer (packages/extract-contract marketplace_columns): a sample is
+// held to the character class a shape uses (9 for a digit, a for a letter, spaces and the marks of a date or an amount), so what the worker records, what the screen reads and what the model is told can only ever be
+// shapes, and a buyer column carries no header and no sample.
+const zSampleShape = z
+  .string()
+  .max(12)
+  .regex(/^[9a \-/.,:;@#()+%_]*$/, 'a masked shape');
 export const zMarketplaceColumnSheet = z.strictObject({
   headerRow: z.number().int().min(0).max(1_048_576),
   columns: z
-    .array(z.strictObject({ index: zColumnIndex, header: z.string().max(80), samples: z.array(z.string().max(12)).max(3), buyer: z.boolean() }))
+    .array(
+      z
+        .strictObject({ index: zColumnIndex, header: z.string().max(80), samples: z.array(zSampleShape).max(3), buyer: z.boolean() })
+        .refine((c) => !c.buyer || (c.header === '' && c.samples.length === 0), 'a buyer column carries nothing'),
+    )
     .max(60),
 });
 export type MarketplaceColumnSheet = z.infer<typeof zMarketplaceColumnSheet>;
