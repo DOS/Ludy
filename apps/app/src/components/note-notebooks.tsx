@@ -183,8 +183,8 @@ export function NotebooksSidebar({
           data-notebook-id={nb.id}
           className={
             active
-              ? 'flex min-w-0 flex-1 items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-left text-xs font-medium text-foreground'
-              : 'flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+              ? 'flex min-w-0 flex-1 items-center gap-1.5 rounded-md bg-muted px-2 py-1 text-left text-xs font-medium text-foreground max-md:min-h-11'
+              : 'flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground max-md:min-h-11'
           }
         >
           <VisibilityIcon shared={nb.visibility === 'org'} className="size-3 shrink-0" />
@@ -247,8 +247,8 @@ export function NotebooksSidebar({
             data-testid="notebook-filter-all"
             className={
               isAllSelected
-                ? 'flex w-full items-center justify-between rounded-md bg-muted px-2 py-1 text-left text-xs font-medium text-foreground'
-                : 'flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                ? 'flex w-full items-center justify-between rounded-md bg-muted px-2 py-1 text-left text-xs font-medium text-foreground max-md:min-h-11'
+                : 'flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground max-md:min-h-11'
             }
           >
             <span>{t('notebooks.allNotes')}</span>
@@ -263,8 +263,8 @@ export function NotebooksSidebar({
             data-testid="notebook-filter-unfiled"
             className={
               isUnfiledSelected
-                ? 'flex w-full items-center justify-between rounded-md bg-muted px-2 py-1 text-left text-xs font-medium text-foreground'
-                : 'flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                ? 'flex w-full items-center justify-between rounded-md bg-muted px-2 py-1 text-left text-xs font-medium text-foreground max-md:min-h-11'
+                : 'flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground max-md:min-h-11'
             }
           >
             <span>{t('notebooks.unfiled')}</span>
@@ -321,14 +321,14 @@ export function NotebooksSidebar({
                 value={visibility}
                 onChange={(e) => setVisibility(e.target.value as NoteVisibility)}
                 data-testid="notebook-visibility-select"
-                className="w-full rounded-md border bg-background px-2 py-1.5 text-xs text-foreground"
+                className="w-full rounded-md border bg-background px-2 py-1.5 text-xs text-foreground max-md:min-h-11"
               >
                 <option value="private">{t('notebooks.privateOption')}</option>
                 <option value="org">{t('notebooks.sharedOption')}</option>
               </select>
             </div>
           )}
-          <label className="flex items-center gap-2 text-foreground">
+          <label className="flex items-center gap-2 text-foreground max-md:min-h-11">
             <input
               type="checkbox"
               checked={pinned}
@@ -395,7 +395,7 @@ export function NotebooksSidebar({
                       aria-label={t('notebooks.expandStack', { stack: group.stackName })}
                       onClick={() => setCollapsedStacks((prev) => ({ ...prev, [group.stackName]: !collapsed }))}
                       data-testid="notebook-stack-toggle"
-                      className="rounded px-1.5 py-0.5 text-xs text-subtle-foreground hover:bg-muted/50 hover:text-foreground"
+                      className="rounded px-1.5 py-0.5 text-xs text-subtle-foreground hover:bg-muted/50 hover:text-foreground max-md:min-h-11 max-md:min-w-11"
                     >
                       {collapsed ? '+' : '-'}
                     </button>
@@ -407,8 +407,8 @@ export function NotebooksSidebar({
                       data-testid="notebook-stack-filter"
                       className={
                         stackActive
-                          ? 'flex min-w-0 flex-1 items-center justify-between rounded-md bg-muted px-2 py-1 text-left text-xs font-medium text-foreground'
-                          : 'flex min-w-0 flex-1 items-center justify-between rounded-md px-2 py-1 text-left text-xs font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                          ? 'flex min-w-0 flex-1 items-center justify-between rounded-md bg-muted px-2 py-1 text-left text-xs font-medium text-foreground max-md:min-h-11'
+                          : 'flex min-w-0 flex-1 items-center justify-between rounded-md px-2 py-1 text-left text-xs font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground max-md:min-h-11'
                       }
                     >
                       <span className="truncate">{group.stackName}</span>
@@ -477,7 +477,7 @@ export function NoteNotebookPicker({
         disabled={disabled}
         onChange={(e) => onChangeNotebook(e.target.value ? e.target.value : null)}
         data-testid="note-notebook-select"
-        className="max-w-xs rounded-md border bg-background px-2 py-1 text-xs text-foreground"
+        className="max-w-xs rounded-md border bg-background px-2 py-1 text-xs text-foreground max-md:min-h-11"
       >
         <option value="">{t('notebooks.unfiledOption')}</option>
         {choices.map((b) => {
@@ -547,8 +547,8 @@ export function NoteWikiAutocomplete({
                   data-testid="note-wiki-option"
                   className={
                     selected
-                      ? 'flex w-full items-center justify-between gap-2 rounded bg-muted px-2 py-1 text-left font-medium text-foreground'
-                      : 'flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-foreground hover:bg-muted/50'
+                      ? 'flex w-full items-center justify-between gap-2 rounded bg-muted px-2 py-1 text-left font-medium text-foreground max-md:min-h-11'
+                      : 'flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-foreground hover:bg-muted/50 max-md:min-h-11'
                   }
                 >
                   <span className="truncate">{item.title}</span>
@@ -595,7 +595,7 @@ export function NoteBacklinks({
                 params={{ slug }}
                 search={{ list: listOfNote(item, currentList), note: item.id }}
                 data-testid="note-backlink-item"
-                className="truncate font-medium text-link underline"
+                className="truncate font-medium text-link underline max-md:inline-flex max-md:min-h-11 max-md:items-center"
               >
                 {item.title}
               </Link>

@@ -773,7 +773,7 @@ export function NotesPage() {
   const mineLinkable = useQuery({ ...orpc.notes.list.queryOptions({ input: { view: 'mine' } }), enabled: Boolean(search.note) && role !== undefined });
   const sharedLinkable = useQuery({
     ...orpc.notes.list.queryOptions({ input: { view: 'shared' } }),
-    enabled: Boolean(search.note) && writer,
+    enabled: Boolean(search.note) && role !== undefined,
   });
   const linkableNotes = useMemo(() => {
     const byId = new Map<string, NoteSummary>();

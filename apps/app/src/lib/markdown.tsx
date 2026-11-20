@@ -324,7 +324,7 @@ export function Markdown({
               item.checked === null ? (
                 renderInline(item.text, `l${i}-${j}`, resolveWikiLink)
               ) : onToggleTask ? (
-                <label className="flex cursor-pointer items-start gap-2">
+                <label className="flex cursor-pointer items-start gap-2 max-md:min-h-11 max-md:items-center">
                   <input
                     type="checkbox"
                     checked={item.checked}
@@ -332,7 +332,7 @@ export function Markdown({
                     onChange={(e) => onToggleTask(item.lineIndex, e.target.checked)}
                     data-testid="note-task-checkbox"
                     data-line-index={item.lineIndex}
-                    className="mt-1 accent-primary"
+                    className="mt-1 accent-primary max-md:mt-0 max-md:size-5"
                   />
                   <span className={item.checked ? 'text-muted-foreground line-through' : undefined}>
                     {renderInline(item.text, `l${i}-${j}`, resolveWikiLink)}
@@ -340,8 +340,8 @@ export function Markdown({
                 </label>
               ) : (
                 // A labelled, read-only checkbox: a screen reader hears the step and whether it is done.
-                <label className="flex items-start gap-2">
-                  <input type="checkbox" checked={item.checked} readOnly disabled className="mt-1" />
+                <label className="flex items-start gap-2 max-md:min-h-11 max-md:items-center">
+                  <input type="checkbox" checked={item.checked} readOnly disabled className="mt-1 max-md:mt-0" />
                   <span className={item.checked ? 'text-muted-foreground line-through' : undefined}>
                     {renderInline(item.text, `l${i}-${j}`, resolveWikiLink)}
                   </span>
