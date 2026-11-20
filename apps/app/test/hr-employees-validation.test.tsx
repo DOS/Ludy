@@ -148,7 +148,7 @@ const sampleEmployee = (over: Partial<HrEmployee> = {}): HrEmployee => ({
   bankCode: null,
   birthDate: '1991-04-12',
   taxCode: '0123456789',
-  insuranceNumber: '7901234567',
+  insuranceNumber: '7901234568',
   endedOn: null,
   status: 'active',
   erased: false,
