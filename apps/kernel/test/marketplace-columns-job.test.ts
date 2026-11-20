@@ -65,7 +65,9 @@ describe('runMarketplaceColumns', () => {
     const { deps, records, sent } = setup({ target, answer: { ok: true, kind: 'marketplace_columns', columns: { sheet: SHEET, check: { ok: true, orders: { lines, skippedCount: 3 } } } } });
     expect(await runMarketplaceColumns(deps, { orgId: ORG, fileId: FILE })).toEqual({ state: 'done' });
     expect(decodeMarketplaceColumnsInput(sent[0] as Uint8Array).mapping).toEqual(MAPPING);
-    const preview = (records[0]?.result as { preview: { lines: unknown[]; total: number; skipped: number } }).preview;
+    const recorded = records[0];
+    if (!recorded) throw new Error('nothing was recorded');
+    const preview = (recorded.result as { preview: { lines: unknown[]; total: number; skipped: number } }).preview;
     expect(preview.lines).toHaveLength(20);
     expect(preview).toMatchObject({ total: 25, skipped: 3 });
     // Only what the confirm screen shows: no date, no stage, no unit price.
