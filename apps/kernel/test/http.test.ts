@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { ORG_NOT_OFFBOARDING, type OrgExportView } from '@crove/kernel';
 import { DIRECT_UPLOAD_MAX_BYTES, MAX_UPLOAD_BYTES, ORG_HEADER } from '@crove/kernel-contract';
 import {
   BlobConflictError,
@@ -1245,5 +1246,44 @@ describe('export slots', () => {
     } finally {
       failure = null;
     }
+  });
+});
+
+describe('org export owner-run route (#4137)', () => {
+  const orgId = randomUUID();
+  const owner: AuthUser = { userId: randomUUID(), email: 'owner@example.com', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null };
+  const view: OrgExportView = { status: 'active', requestedAt: null, ownerRunTables: [], export: null };
+  const stream = vi.fn();
+  const app = createHttpApp({
+    config: loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' }),
+    runtime: {
+      installed: () => true,
+      modules: () => ['kernel'],
+      forUser: async () => [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
+      query: async (name: string) => {
+        if (name === 'kernel.org.export.get') return view;
+        throw new Error(`unexpected query ${name}`);
+      },
+      execute: async () => ({}),
+      stream,
+    } as unknown as Runtime,
+    store: {} as BlobStore,
+    authenticate: async () => owner,
+    pool: {} as pg.Pool,
+    aiEnabled: false,
+  });
+
+  it('refuses owner-run export tables on an active org with the shared ORG_NOT_OFFBOARDING message', async () => {
+    for (const table of ['meetings.glossary_term', 'hr.payroll_employee']) {
+      const response = await app.request(`/api/org-export/${table}`, {
+        headers: { authorization: 'Bearer owner', [ORG_HEADER]: 'acme' },
+      });
+      expect(response.status, table).toBe(409);
+      expect(await response.json(), table).toEqual({
+        code: ORG_NOT_OFFBOARDING,
+        message: 'Chỉ tải được các tệp này khi tổ chức đang được đóng',
+      });
+    }
+    expect(stream).not.toHaveBeenCalled();
   });
 });
