@@ -3544,6 +3544,7 @@ export function createRpcHandler(
           return runtime.execute('finance.marketplace.columns_check', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+      columnsFiles: os.marketplace.columnsFiles.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.columns_files', {}, { actor, orgId }))),
       columns: os.marketplace.columns.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.columns', input, { actor, orgId }))),
       // Ly's first mapping, from the masked sheet the worker recorded (read again here in the caller's own context, so the model is told what the file shows, never what the caller says); a read that stores nothing.
       columnsProposal: os.marketplace.columnsProposal.handler(({ context, input }) =>
