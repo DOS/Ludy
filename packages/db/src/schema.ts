@@ -1013,6 +1013,9 @@ export type ConversationDraftTable = Refine<
 >;
 // The inbox (#2306): the marker of a member typing a reply to a thread (its kind is the thread's), and a member's availability for new conversations.
 export const MEMBER_AVAILABILITY_STATUSES = ['available', 'away'] as const;
+// Who made a row of the timeline: a person's own act ('ui') or a connected AI app in its sealed write context ('mcp'), stamped by the database (#4149).
+export const ACTOR_ORIGINS = ['ui', 'mcp'] as const;
+export type ActivityTable = Refine<G.KernelActivityTable, { actor_origin: Generated<(typeof ACTOR_ORIGINS)[number]> }>;
 export type ConversationComposingTable = Refine<G.KernelConversationComposingTable, { kind: (typeof CONVERSATION_KINDS)[number] }>;
 export type MemberPermissionOverrideTable = Refine<G.KernelMemberPermissionOverrideTable, { permission: (typeof MEMBER_PERMISSION_OVERRIDE_PERMISSIONS)[number] }>;
 export type MemberVyTableTable = Refine<G.KernelMemberVyTableTable, { mode: (typeof MEMBER_VY_TABLE_MODES)[number] }>;
@@ -1497,6 +1500,7 @@ type Refined = Tables<{
   'crove_kernel.conversation_composing': ConversationComposingTable;
   'crove_kernel.conversation_draft': ConversationDraftTable;
   'crove_kernel.external_call': ExternalCallTable;
+  'crove_kernel.activity': ActivityTable;
   'crove_kernel.member_availability': MemberAvailabilityTable;
   'crove_kernel.member_permission_override': MemberPermissionOverrideTable;
   'crove_kernel.member_vy_result': MemberVyResultTable;

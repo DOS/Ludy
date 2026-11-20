@@ -9020,7 +9020,8 @@ export const vi = {
   aiWritten: {
     label: 'Do đồng nghiệp AI viết',
     labelEdited: 'Đồng nghiệp AI đã sửa nội dung',
-    hint: 'Nội dung này do một ứng dụng AI đã kết nối ghi, dưới tên người đã kết nối nó. Đó là chữ để đọc, chưa ai duyệt; hãy kiểm tra trước khi dùng.',
+    hint: 'Nội dung này do một ứng dụng AI đã kết nối ghi, dưới tên người đã kết nối nó. Hãy kiểm tra trước khi dùng; nhãn này không cho biết đã có ai duyệt hay chưa.',
+    hintEdited: 'Một ứng dụng AI đã kết nối đã ghi hoặc sửa phần chữ của mục này, dưới tên người đã kết nối nó. Hãy kiểm tra trước khi dùng; nhãn này không cho biết đã có ai duyệt hay chưa.',
   },
   oauthConsent: {
     title: 'Kết nối ứng dụng AI với Ludy',

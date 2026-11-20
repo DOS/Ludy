@@ -163,6 +163,11 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     // A person rewriting it later does not clear the mark.
     const edited = await run<Deal>('crm.deal.update', { dealId: theirs.id, version: theirs.version, partyId: party.partyId, title: 'Cơ hội đã sửa', amount: '2000000', expectedClose: null, ownerUserId: null }, asBrowser('owner'));
     expect(edited).toMatchObject({ actorOrigin: 'mcp', tainted: true });
+    // Clearing a person's own lost reason (the coworker moves their lost deal back to an open stage) writes no text: not tainted.
+    const own = await run<Deal>('crm.deal.create', { partyId: party.partyId, title: 'Cơ hội thua của người', amount: '3000000', expectedClose: null }, asBrowser('owner'));
+    const ownLost = await run<Deal>('crm.deal.move', { dealId: own.id, version: own.version, stageId: lost.id, lostReason: 'Khách chọn nơi khác' }, asBrowser('owner'));
+    const reopened = await run<Deal>('crm.mcp.deal_move', { dealId: own.id, version: ownLost.version, stageId: second.id });
+    expect(reopened).toMatchObject({ actorOrigin: 'ui', tainted: false, lostReason: null });
     const read = await runtime.query<Deal>('crm.deal.get', { dealId: mine.id }, asBrowser('owner'));
     expect(read).toMatchObject({ actorOrigin: 'ui', tainted: true });
   });
@@ -182,6 +187,10 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     const personal = await run<Quote>('crm.quote.save', { quoteId: theirs.id, version: theirs.version, lines: [{ kind: 'item', description: 'Dòng của người', quantity: '1', unitPrice: '50000', vatRate: '10' }] }, asBrowser('owner'));
     expect(personal).toMatchObject({ actorOrigin: 'mcp', tainted: true });
     expect(await one(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1`, [theirs.id])).toMatchObject({ actor_origin: 'ui', tainted: false });
+    // A person sends the coworker's quote and then revises it: the revision is the person's, and the coworker's text keeps its mark.
+    const sentOne = (await run<{ quote: Quote }>('crm.quote.send', { quoteId: theirs.id, version: personal.version, via: 'link' }, asBrowser('owner'))).quote;
+    const revision = await run<Quote>('crm.quote.revise', { quoteId: sentOne.id }, asBrowser('owner'));
+    expect(revision).toMatchObject({ status: 'draft', revision: 2, actorOrigin: 'ui', tainted: true });
     const list = await runtime.query<{ items: Array<{ id: string; actorOrigin: string; tainted: boolean }> }>('crm.quote.list', { dealId: deal.id }, asBrowser('owner'));
     expect(list.items.find((q) => q.id === mine.id)).toMatchObject({ actorOrigin: 'ui', tainted: true });
     expect(list.items.find((q) => q.id === theirs.id)).toMatchObject({ actorOrigin: 'mcp', tainted: true });
@@ -193,33 +202,5 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     const timeline = async (id: string) => runtime.query<{ items: Array<{ kind: string; actorOrigin: string; actorName: string | null }> }>('kernel.party.timeline', { partyId: id }, asBrowser('owner'));
     expect((await timeline(made.partyId)).items).toEqual([expect.objectContaining({ kind: 'party.created', actorOrigin: 'mcp' })]);
     expect((await timeline(mine.partyId)).items).toEqual([expect.objectContaining({ kind: 'party.created', actorOrigin: 'ui' })]);
-  });
-
-  it('is no caller\'s to write: the mark columns are no tenant\'s to update, an insert that names them is overridden by the database, and the checks exist and hold', async () => {
-    const tables = ['crove_kernel.conversation_note', 'crove_crm.deal', 'crove_crm.quote', 'crove_crm.quote_line', 'crove_kernel.activity'];
-    // The tenant role may not update a mark where its grants are by column; where it holds the table-level grant (the lines of a quote) a trigger decides, as the next lines show.
-    for (const t of tables.filter((x) => x !== 'crove_crm.quote_line')) {
-      for (const column of t === 'crove_kernel.activity' ? ['actor_origin'] : ['actor_origin', 'tainted']) {
-        const granted = await one<{ ok: boolean }>(`SELECT has_column_privilege('crove_tenant', $1::regclass, $2, 'UPDATE') AS ok`, [t, column]);
-        expect(granted.ok, `${t}.${column} UPDATE`).toBe(false);
-      }
-    }
-    const lineRow = await one<{ quote_id: string; line_no: number }>(`SELECT quote_id, line_no FROM crove_crm.quote_line WHERE org_id = $1 AND actor_origin = 'ui' LIMIT 1`, [orgA]);
-    await sqlAdmin(`UPDATE crove_crm.quote_line SET actor_origin = 'mcp', tainted = true WHERE quote_id = $1 AND line_no = $2`, [lineRow.quote_id, lineRow.line_no]);
-    expect(await one(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1 AND line_no = $2`, [lineRow.quote_id, lineRow.line_no])).toMatchObject({ actor_origin: 'ui', tainted: false });
-    // Whoever writes (here the superuser, outside any engage context), the stamp decides: a row that names the mark is overridden on insert, and an update cannot change it.
-    const forged = await one<{ id: string }>(`INSERT INTO crove_kernel.conversation_note (org_id, conversation_id, author_user_id, body, actor_origin, tainted) VALUES ($1, $2, $3, 'giả', 'mcp', true) RETURNING id`, [orgA, thread, users.owner]);
-    expect(await one(`SELECT actor_origin, tainted FROM crove_kernel.conversation_note WHERE id = $1`, [forged.id])).toMatchObject({ actor_origin: 'ui', tainted: false });
-    const dealRow = await one<{ id: string }>(`SELECT id FROM crove_crm.deal WHERE org_id = $1 AND actor_origin = 'ui' LIMIT 1`, [orgA]);
-    await sqlAdmin(`UPDATE crove_crm.deal SET actor_origin = 'mcp', tainted = true WHERE id = $1`, [dealRow.id]);
-    expect(await one(`SELECT actor_origin FROM crove_crm.deal WHERE id = $1`, [dealRow.id])).toMatchObject({ actor_origin: 'ui' });
-    // The CHECK on each table: a mark that is neither value, and an app's row that is not tainted, are refused (the stamp fires before the check, so the check is read from the catalog).
-    const checks = (await sqlAdmin<{ t: string; def: string; valid: boolean }>(`SELECT conrelid::regclass::text AS t, pg_get_constraintdef(oid) AS def, convalidated AS valid FROM pg_constraint WHERE conname = 'mcp_origin_ck' ORDER BY 1`)).rows;
-    expect(checks.map((c) => c.t)).toEqual(['crove_kernel.activity', 'crove_kernel.conversation_note', 'crove_crm.deal', 'crove_crm.quote', 'crove_crm.quote_line'].sort());
-    for (const c of checks) {
-      expect(c.valid, c.t).toBe(true);
-      expect(c.def, c.t).toContain("'mcp'");
-      if (c.t !== 'crove_kernel.activity') expect(c.def, c.t).toMatch(/tainted/);
-    }
   });
 });

@@ -13,6 +13,8 @@ export function AiWrittenBadge({ actorOrigin, tainted = false, className }: { ac
   return (
     <Badge variant="proposal" className={className} title={t('hint')} data-testid="ai-written-badge">
       {wrote ? t('label') : t('labelEdited')}
+      {/* The hint also as text a screen reader and a phone reach (a title shows on hover only). */}
+      <span className="sr-only">{`. ${wrote ? t('hint') : t('hintEdited')}`}</span>
     </Badge>
   );
 }

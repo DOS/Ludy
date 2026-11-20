@@ -20,7 +20,8 @@ ALTER TABLE crove_crm.quote_line ADD COLUMN IF NOT EXISTS actor_origin text NOT 
 ALTER TABLE crove_kernel.conversation_note ADD COLUMN IF NOT EXISTS actor_origin text NOT NULL DEFAULT 'ui', ADD COLUMN IF NOT EXISTS tainted boolean NOT NULL DEFAULT false;
 ALTER TABLE crove_kernel.activity ADD COLUMN IF NOT EXISTS actor_origin text NOT NULL DEFAULT 'ui';
 
--- The checks, added NOT VALID and validated after (no existing row can fail them: every row took the defaults).
+-- The checks, added NOT VALID (they bind every new or changed row at once); the next migration validates them in a transaction of its own, so the scan of each table does not run under the lock the added
+-- columns take (no existing row can fail them: every row took the defaults).
 DO $$
 DECLARE
   t text;
@@ -30,13 +31,11 @@ BEGIN
       EXECUTE pg_catalog.format('ALTER TABLE %s ADD CONSTRAINT mcp_origin_ck CHECK (actor_origin IN (''ui'', ''mcp'') AND (actor_origin <> ''mcp'' OR tainted)) NOT VALID', t);
     EXCEPTION WHEN duplicate_object THEN NULL;
     END;
-    EXECUTE pg_catalog.format('ALTER TABLE %s VALIDATE CONSTRAINT mcp_origin_ck', t);
   END LOOP;
   BEGIN
     ALTER TABLE crove_kernel.activity ADD CONSTRAINT mcp_origin_ck CHECK (actor_origin IN ('ui', 'mcp')) NOT VALID;
   EXCEPTION WHEN duplicate_object THEN NULL;
   END;
-  ALTER TABLE crove_kernel.activity VALIDATE CONSTRAINT mcp_origin_ck;
 END $$;
 
 -- ---------------------------------------------------------------------------
@@ -52,6 +51,13 @@ BEGIN
   ELSE
     NEW.actor_origin := 'ui';
     NEW.tainted := false;
+    -- A person's revision of a quote copies its text: it is the person's quote, and the text keeps the mark of the quote it came from (a coworker's text stays marked through a revision).
+    IF TG_TABLE_NAME = 'quote' THEN
+      -- A nested test: plpgsql may evaluate both sides of an AND, and only a quote has revises_id.
+      IF NEW.revises_id IS NOT NULL THEN
+        NEW.tainted := COALESCE((SELECT q.tainted FROM crove_crm.quote q WHERE q.org_id = NEW.org_id AND q.id = NEW.revises_id), false);
+      END IF;
+    END IF;
   END IF;
   RETURN NEW;
 END $$;
@@ -68,7 +74,8 @@ BEGIN
   NEW.tainted := OLD.tainted;
   IF crove_kernel.ctx_mcp_engage_write() THEN
     IF TG_TABLE_NAME = 'deal' THEN
-      v_text_changed := NEW.title IS DISTINCT FROM OLD.title OR NEW.lost_reason IS DISTINCT FROM OLD.lost_reason;
+      -- Clearing a lost reason (a deal moved back to an open stage) writes no text; a new or changed one does.
+      v_text_changed := NEW.title IS DISTINCT FROM OLD.title OR (NEW.lost_reason IS NOT NULL AND NEW.lost_reason IS DISTINCT FROM OLD.lost_reason);
     ELSE
       v_text_changed := true;
     END IF;

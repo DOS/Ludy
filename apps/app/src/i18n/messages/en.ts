@@ -9023,7 +9023,8 @@ export const en = {
   aiWritten: {
     label: 'Written by an AI coworker',
     labelEdited: 'Text changed by an AI coworker',
-    hint: 'A connected AI app wrote this, under the name of the person who connected it. It is text to read, not something anyone approved: check it before you rely on it.',
+    hint: 'A connected AI app wrote this, under the name of the person who connected it. Check it before you rely on it; this mark does not say whether anyone has approved it.',
+    hintEdited: 'A connected AI app wrote or changed the text of this item, under the name of the person who connected it. Check it before you rely on it; this mark does not say whether anyone has approved it.',
   },
   oauthConsent: {
     title: 'Connect an AI app to Ludy',
