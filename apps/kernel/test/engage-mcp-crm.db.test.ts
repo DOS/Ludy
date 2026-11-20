@@ -30,8 +30,8 @@ const DIRTY = '​‮';
 const DECIMAL = /^-?\d+(\.\d+)?$/;
 
 // Every deal, quote and booking says `tainted: true`: its text is typed by people or visitors and reaches the client as data.
-const DEAL_KEYS = ['amount', 'closedAt', 'createdAt', 'currency', 'expectedClose', 'followUp', 'id', 'lostReason', 'ownerUserId', 'partyId', 'partyName', 'stageId', 'stageKind', 'tainted', 'title', 'updatedAt'].sort();
-const QUOTE_KEYS = ['createdAt', 'dealId', 'dealTitle', 'expired', 'firstViewedAt', 'id', 'lineCount', 'number', 'partyId', 'partyName', 'revision', 'sentAt', 'sentVia', 'status', 'subtotal', 'tainted', 'total', 'updatedAt', 'validUntil', 'vatAmount'].sort();
+const DEAL_KEYS = ['amount', 'closedAt', 'createdAt', 'currency', 'expectedClose', 'followUp', 'id', 'lostReason', 'ownerUserId', 'partyId', 'partyName', 'stageId', 'stageKind', 'tainted', 'title', 'updatedAt', 'version'].sort();
+const QUOTE_KEYS = ['createdAt', 'dealId', 'dealTitle', 'expired', 'firstViewedAt', 'id', 'lineCount', 'number', 'partyId', 'partyName', 'revision', 'sentAt', 'sentVia', 'status', 'subtotal', 'tainted', 'total', 'updatedAt', 'validUntil', 'vatAmount', 'version'].sort();
 const QUOTE_FULL_KEYS = [...QUOTE_KEYS, 'buyer', 'lines', 'notes', 'terms'].sort();
 const LINE_KEYS = ['amount', 'description', 'discountPercent', 'kind', 'lineNo', 'quantity', 'unit', 'unitPrice', 'vatAmount', 'vatRate'];
 const BOOKING_KEYS = ['deal', 'endsAt', 'eventType', 'guest', 'id', 'meetingState', 'partyId', 'sourceTrust', 'startsAt', 'status', 'tainted', 'timeZone'].sort();
@@ -330,6 +330,16 @@ suite('the CRM MCP reads (#3860)', () => {
       expect(dealKeys(await deals('admin', 'company'))).toEqual(['d4', 'd3', 'd2', 'd1']);
     });
 
+    it('says what a write tool needs to name: the version of a deal, the pipeline\'s stages with the closing ones, and the id of the open next step (#3861)', async () => {
+      const listed = await deals('owner', 'company');
+      for (const d of listed.deals) expect(Number.isInteger((d as unknown as { version: number }).version), d.id).toBe(true);
+      const stages = (listed as unknown as { stages: Array<{ id: string; name: string; kind: string; position: number }> }).stages;
+      expect(stages.map((st) => st.id)).toEqual(expect.arrayContaining([stage.open, stage.won, stage.lost]));
+      expect(stages.find((st) => st.id === stage.won)).toMatchObject({ kind: 'won' });
+      expect(stages.find((st) => st.id === stage.lost)).toMatchObject({ kind: 'lost' });
+      for (const st of stages) expect(Object.keys(st).sort(), st.id).toEqual(['id', 'kind', 'name', 'position']);
+    });
+
     it('returns exactly the keys of a deal and none of the app\'s internals; the amount is a decimal string in VND', async () => {
       const listed = await deals('owner', 'company');
       for (const d of listed.deals) {
@@ -340,7 +350,7 @@ suite('the CRM MCP reads (#3860)', () => {
         expect(d.tainted, d.id).toBe(true);
       }
       const json = JSON.stringify(listed);
-      for (const leak of ['created_by', 'createdBy', 'version', 'canDelete', 'partyDuplicateOf']) expect(json, leak).not.toContain(leak);
+      for (const leak of ['created_by', 'createdBy', 'canDelete', 'partyDuplicateOf']) expect(json, leak).not.toContain(leak);
       expect(Number(listed.deals.find((d) => d.id === deal.d2)?.amount)).toBe(7500000.5);
       expect(listed.deals.find((d) => d.id === deal.d1)).toMatchObject({ stageKind: 'open', stageId: stage.open, partyId: party.a1, followUp: null, closedAt: null, lostReason: null });
       expect(listed.deals.find((d) => d.id === deal.d3)).toMatchObject({ stageKind: 'won', stageId: stage.won });
@@ -424,7 +434,7 @@ suite('the CRM MCP reads (#3860)', () => {
       expect(one).toEqual((await deals('owner', 'company')).deals.find((d) => d.id === deal.d4));
       expect(await oneDeal('admin', 'company', { dealId: deal.d4 })).toEqual(one);
       const json = JSON.stringify(one);
-      for (const leak of ['created_by', 'createdBy', 'version', 'canDelete', 'partyDuplicateOf']) expect(json, leak).not.toContain(leak);
+      for (const leak of ['created_by', 'createdBy', 'canDelete', 'partyDuplicateOf']) expect(json, leak).not.toContain(leak);
     });
 
     it('answers not found for a deal of another org, or one that does not exist, the same', async () => {
@@ -479,7 +489,7 @@ suite('the CRM MCP reads (#3860)', () => {
       const draft = listed.quotes.find((q) => q.id === quote.q1) as McpQuote;
       expect(draft).toMatchObject({ status: 'draft', number: null, sentAt: null, sentVia: null, dealTitle: 'Gói kế toán năm', partyName: 'Công ty ABC', lineCount: 2 });
       const json = JSON.stringify(listed);
-      for (const leak of ['links', 'token', 'views', 'lines', 'buyer', 'created_by', 'createdBy', 'version', linkToken, linkId]) expect(json, leak).not.toContain(leak);
+      for (const leak of ['links', 'token', 'views', 'lines', 'buyer', 'created_by', 'createdBy', linkToken, linkId]) expect(json, leak).not.toContain(leak);
       for (const q of listed.quotes) noHidden(q.dealTitle as string, q.partyName as string);
     });
 

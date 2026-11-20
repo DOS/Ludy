@@ -4,11 +4,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Runtime, UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
+import { McpWriteBudget } from '../src/mcp-write-limit.ts';
 import { toolsFor, visibleTools } from '../src/mcp-endpoint.ts';
 
 const company: UserActor = { type: 'user', userId: 'u1', aal: 'aal1', mcp: { grantId: 'g1', clientId: 'c', clientName: 'Test', scopes: ['ludy.read'], kind: 'company' } };
 const member: UserActor = { type: 'user', userId: 'u2', aal: 'aal1', mcp: { grantId: 'g2', clientId: 'c', clientName: 'Test', scopes: ['ludy.read'], kind: 'member' } };
-const listed = (actor: UserActor) => toolsFor({} as unknown as Runtime, actor, 'org', new DraftBudget());
+const listed = (actor: UserActor) => toolsFor({} as unknown as Runtime, actor, 'org', new DraftBudget(), new McpWriteBudget());
 
 // The tools of E1 and the query each one runs.
 const ENGAGE: Record<string, string> = {

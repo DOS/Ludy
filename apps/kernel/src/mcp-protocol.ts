@@ -39,11 +39,11 @@ export interface ToolDescriptor {
   description: string;
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
-  // The MCP annotations mirror the risk tier of what the tool runs: a read, or the one write (a Social draft for a person to review: not read only, never destructive, and a second call
-  // makes a second draft, so not idempotent).
+  // The MCP annotations mirror the risk tier of what the tool runs: a read, a Social draft for a person to review (not read only, never destructive, and a second call makes a second draft, so not
+  // idempotent), or one of the Engage R1 writes (E2, #3861), which may overwrite what it changes (a draft quote's lines, a thread's assignee) and says so with `destructiveHint`.
   annotations:
     | { readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false }
-    | { readOnlyHint: false; destructiveHint: false; idempotentHint: false; openWorldHint: false };
+    | { readOnlyHint: false; destructiveHint: boolean; idempotentHint: false; openWorldHint: false };
   // What the tool accepts, checked here before anything runs: strict (an unknown key is refused), so a client cannot smuggle a field a query does not declare.
   argsSchema: z.ZodType<Record<string, unknown>>;
   // The app the tool reads or writes (ADR-0053, slice e); none for a kernel tool, which is never off. A tool of an app the org switched off is left out of the list and
@@ -130,7 +130,7 @@ export async function handleMcp(input: HandleInput): Promise<McpReply> {
         protocolVersion: version,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: SERVER_NAME, version: input.serverVersion },
-        instructions: 'Ludy, the business OS for small companies. Most tools here only read. A tool that writes says so in its description: it makes a draft that a person reviews in Ludy, and approves, schedules, publishes or deletes nothing.',
+        instructions: 'Ludy, the business OS for small companies. Most tools here only read. A tool that writes says so in its description: it makes a draft for a person to review in Ludy, or does one routine internal step (assign a thread, add a note, link a contact, create or move a deal, save a draft quote, mark a next step); it never sends a message, spends money, approves, schedules, publishes or deletes anything. What goes out to a customer or costs money is for a person to approve in Ludy.',
       }),
     };
   }
@@ -173,7 +173,7 @@ export async function handleMcp(input: HandleInput): Promise<McpReply> {
           supportedVersions: [...SUPPORTED_VERSIONS],
           capabilities: { tools: {} },
           _meta: { 'io.modelcontextprotocol/serverInfo': { name: SERVER_NAME, version: input.serverVersion } },
-          instructions: 'Ludy, the business OS for small companies. Most tools here only read. A tool that writes says so in its description: it makes a draft that a person reviews in Ludy, and approves, schedules, publishes or deletes nothing.',
+          instructions: 'Ludy, the business OS for small companies. Most tools here only read. A tool that writes says so in its description: it makes a draft for a person to review in Ludy, or does one routine internal step (assign a thread, add a note, link a contact, create or move a deal, save a draft quote, mark a next step); it never sends a message, spends money, approves, schedules, publishes or deletes anything. What goes out to a customer or costs money is for a person to approve in Ludy.',
           ttlMs: 3_600_000,
           cacheScope: 'public',
         }),

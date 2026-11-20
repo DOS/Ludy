@@ -222,44 +222,47 @@ export const createParty = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: ['owner', 'admin', 'member'],
-  handler: async (ctx, input): Promise<{ partyId: string; version: number }> => {
-    const { name, address, email, phone, taxCode } = normalizedFields(input);
-    if (taxCode) {
-      const other = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('tax_code', '=', taxCode).executeTakeFirst();
-      if (other) throw new DomainError('PARTY_TAX_CODE_TAKEN', 409, `Mã số thuế ${taxCode} đã thuộc về ${other.name}`, { partyId: other.id, name: other.name });
-    }
-    // The id is given here and the row inserted without RETURNING: once party carries its legal-entity policy (#1538) a
-    // RETURNING check could not see the link the party_link_new trigger adds in the same statement (#1280).
-    const created = { id: randomUUID(), version: 1 };
-    await ctx.trx
-      .insertInto('crove_kernel.party')
-      .values({ id: created.id, org_id: ctx.orgId, kind: input.kind, name, tax_code: taxCode, address, email, phone, source_trust: 'user', created_at: ctx.now, updated_at: ctx.now })
-      .execute()
-      .catch((error: unknown) => {
-        // Another transaction took the tax code after the check above (the unique index decides).
-        if ((error as { code?: string }).code === '23505' && taxCode) {
-          throw new DomainError('PARTY_TAX_CODE_TAKEN', 409, `Mã số thuế ${taxCode} đã thuộc về một liên hệ khác`);
-        }
-        throw error;
-      });
-    // The names of the fields that were given, never their values (the markers below stand for the classified ones).
-    const given = ['name'];
-    if (taxCode !== null) given.push('taxCode');
-    if (address !== null) given.push('address');
-    if (email !== null) given.push('email');
-    if (phone !== null) given.push('phone');
-    ctx.audit({
-      partyId: created.id,
-      kind: input.kind,
-      fields: given,
-      name: auditValue(PARTY, 'name', name),
-      taxCode: auditValue(PARTY, 'tax_code', taxCode),
-      address: auditValue(PARTY, 'address', address),
-    });
-    await ctx.activity('kernel.party', created.id, 'party.created', 'Thêm liên hệ');
-    return { partyId: created.id, version: created.version };
-  },
+  handler: (ctx, input): Promise<{ partyId: string; version: number }> => createPartyAs(ctx, input, 'user'),
 });
+
+// The create itself, for the person's own command ('user': their entry) and for the one an MCP grant runs (kernel.mcp.party_create, 'external': a value nobody at the company vouched for).
+export async function createPartyAs(ctx: CommandContext, input: z.infer<typeof zPartyCreate>, trust: 'user' | 'external'): Promise<{ partyId: string; version: number }> {
+  const { name, address, email, phone, taxCode } = normalizedFields(input);
+  if (taxCode) {
+    const other = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('tax_code', '=', taxCode).executeTakeFirst();
+    if (other) throw new DomainError('PARTY_TAX_CODE_TAKEN', 409, `Mã số thuế ${taxCode} đã thuộc về ${other.name}`, { partyId: other.id, name: other.name });
+  }
+  // The id is given here and the row inserted without RETURNING: once party carries its legal-entity policy (#1538) a
+  // RETURNING check could not see the link the party_link_new trigger adds in the same statement (#1280).
+  const created = { id: randomUUID(), version: 1 };
+  await ctx.trx
+    .insertInto('crove_kernel.party')
+    .values({ id: created.id, org_id: ctx.orgId, kind: input.kind, name, tax_code: taxCode, address, email, phone, source_trust: trust, created_at: ctx.now, updated_at: ctx.now })
+    .execute()
+    .catch((error: unknown) => {
+      // Another transaction took the tax code after the check above (the unique index decides).
+      if ((error as { code?: string }).code === '23505' && taxCode) {
+        throw new DomainError('PARTY_TAX_CODE_TAKEN', 409, `Mã số thuế ${taxCode} đã thuộc về một liên hệ khác`);
+      }
+      throw error;
+    });
+  // The names of the fields that were given, never their values (the markers below stand for the classified ones).
+  const given = ['name'];
+  if (taxCode !== null) given.push('taxCode');
+  if (address !== null) given.push('address');
+  if (email !== null) given.push('email');
+  if (phone !== null) given.push('phone');
+  ctx.audit({
+    partyId: created.id,
+    kind: input.kind,
+    fields: given,
+    name: auditValue(PARTY, 'name', name),
+    taxCode: auditValue(PARTY, 'tax_code', taxCode),
+    address: auditValue(PARTY, 'address', address),
+  });
+  await ctx.activity('kernel.party', created.id, 'party.created', 'Thêm liên hệ');
+  return { partyId: created.id, version: created.version };
+}
 
 // Marking a duplicate (#887; plan §6, "Deduplication is the R1 command 'mark duplicate'"). The duplicate points at the
 // party kept; nothing is deleted or moved. Lists and search show only the kept party, and per-party ledger reports add

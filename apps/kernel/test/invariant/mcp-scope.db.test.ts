@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What an MCP grant can reach once it is past the HTTP edge (ADR-0051 decision 2, ADR-0032, issue #2975), through the runtime every command and query runs on:
-// - only the commands WRITES and ENGAGE_WRITES name run for a grant (the Social draft command of #3227, owner decision 2026-11-14, and the Engage R1 twins of #3861), each pinned to its scope and to the narrow shape
+// - exactly the commands WRITES and ENGAGE_WRITES run for a grant (the Social draft command of #3227, owner decision 2026-11-14, and the thirteen Engage R1 twins of #3861), each pinned to its scope and to the narrow shape
 //   the sealed write context runs (R1, internal, owners and admins, no permission, extension, agent or member-mode declaration), and a grant runs no other command, whatever the command declares; the only other
 //   commands that carry `mcp` are the 14 proposal-only Engage twins of E4 (#3863), each declared `{ scope, mode: 'proposal' }`: a call to one never runs it, it leaves a pending proposal a person approves
 //   (pinned below, and in mcp-proposals.db.test.ts);
@@ -121,16 +121,15 @@ const ENGAGE_WAKE_READS: readonly string[] = ['kernel.wake.conversations:ludy.re
 // with exactly this scope: a second command that carries `mcp`, or this one with another scope, fails, and so does its absence.
 const WRITES = ['social.mcp.draft_create:ludy.social.draft'];
 // The R1 write twins of the Engage coworkers (epic #3857, E2, issue #3861; ADR-0051 decisions 10 and 11, owner decision 2026-11-19): each runs the same steps a person's click runs for the app's own
-// command (assign, resolve, reopen, note, link a contact, follow up, new contact, new deal, move a deal, save or revise a draft quote, mark a next step done or snoozed, save an ads draft), under
-// `ludy.engage.write` (the ads draft under `ludy.ads.draft`). Like the finance reads above, this list lets a name in and does not require it (step 1 of 2, a tests-only landing: the commands
-// arrive with their sealed write context in the next change, which then pins the list exactly). A name outside it, or one of these with another scope, still fails.
+// command (assign, resolve, reopen, note, link a contact, new contact, new deal, move a deal, save or revise a draft quote, mark a next step done or snoozed, save an ads draft), under
+// `ludy.engage.write` (the ads draft under `ludy.ads.draft`), each in its own sealed write context (test/invariant/mcp-engage-write.db.test.ts pins the database side). This list is exact: all thirteen
+// carry `mcp`, none else does, and each with the scope named here. (`kernel.conversation.follow_up` has no twin: its task is an event and wakes an agent, which the sealed context does not allow.)
 const ENGAGE_WRITES: readonly string[] = [
   'kernel.mcp.conversation_assign:ludy.engage.write',
   'kernel.mcp.conversation_resolve:ludy.engage.write',
   'kernel.mcp.conversation_reopen:ludy.engage.write',
   'kernel.mcp.conversation_note:ludy.engage.write',
   'kernel.mcp.conversation_link_contact:ludy.engage.write',
-  'kernel.mcp.conversation_follow_up:ludy.engage.write',
   'kernel.mcp.party_create:ludy.engage.write',
   'crm.mcp.deal_create:ludy.engage.write',
   'crm.mcp.deal_move:ludy.engage.write',
@@ -144,12 +143,11 @@ const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ..
 const queries = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...socialQueries, ...adsQueries, ...crmQueries, ...hrQueries, ...notesQueries];
 
 describe('which definitions an MCP grant can reach (#2975)', () => {
-  it('has no command that runs for a grant but the Social draft command and the Engage twins the lists name, with their scope, and each is R1, internal and for owners and admins', () => {
+  it('has exactly the commands that run for a grant that WRITES and ENGAGE_WRITES name, with their scope, and each is R1, internal and for owners and admins', () => {
     // A command of mode 'proposal' (the 14 proposal-only twins of E4, #3863) never runs for a grant: it is pinned in the test below and in mcp-proposals.db.test.ts.
     const carrying = commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined && (c as { mcp: { mode?: string } }).mcp.mode !== 'proposal');
     const named = carrying.map((c) => `${c.name}:${(c as { mcp: { scope: string } }).mcp.scope}`).sort();
-    // The Social draft command is always there; an Engage twin may be (step 1 of 2 of E2: the list lets the names in, the next change adds the commands and then requires them).
-    expect(named.filter((n) => !ENGAGE_WRITES.includes(n))).toEqual([...WRITES].sort());
+    expect(named).toStrictEqual([...WRITES, ...ENGAGE_WRITES].sort());
     for (const c of carrying) {
       expect([c.risk, c.sideEffect, c.access], c.name).toEqual(['R1', 'internal', ['owner', 'admin']]);
       const scope = (c as { mcp: { scope: string } }).mcp.scope;
@@ -203,7 +201,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
   it('pins the queries that carry `mcp`, and none is sensitive, streamed, role-less or open to member mode or an extension token', () => {
     const carrying = queries.filter((q) => (q as { mcp?: unknown }).mcp !== undefined);
     const names = carrying.map((q) => `${q.name}:${(q as { mcp: { scope: string } }).mcp.scope}`).sort();
-    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n) && !ENGAGE_WAKE_READS.includes(n))).toEqual([...REACHABLE].sort());
+    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n) && !ENGAGE_WAKE_READS.includes(n))).toStrictEqual([...REACHABLE].sort());
     for (const q of carrying) {
       expect(Array.isArray(q.access), q.name).toBe(true);
       expect(q.sensitive === true, q.name).toBe(false);
