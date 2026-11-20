@@ -15648,6 +15648,7 @@ export const vi = {
           set: 'Bật hoặc tắt việc cho thành viên tự kết nối ứng dụng AI',
         },
         parties: 'Cho ứng dụng AI xem danh sách khách hàng, nhà cung cấp và liên hệ',
+        proposal_notify: 'Báo cho người có quyền duyệt khi một ứng dụng AI gửi đề xuất',
         propose: 'Ghi lại điều một ứng dụng AI yêu cầu thành đề xuất chờ một người duyệt',
         signals: 'Cho ứng dụng AI xem các việc cần chú ý giữa các ứng dụng (deal thắng chưa có hóa đơn, công nợ quá hạn còn deal mở)',
         wake: {

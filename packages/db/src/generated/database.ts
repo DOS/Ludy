@@ -3036,6 +3036,7 @@ export interface KernelProposalTable {
   requested_by_grant: string | null;
   mcp_client_name: string | null;
   mcp_client_host: string | null;
+  approvers_told_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_kernel.record_le */
