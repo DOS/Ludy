@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, setMeetingPlatformVideoImport, upsertIdentity } from '@crove/kernel';
+import { meetingsQueries } from '@crove/mod-meetings';
 import { vietnamToday, type MeetingPlatformConnectionView, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
 import { DomainError, Runtime, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -73,6 +74,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let api: Runtime;
+  let apiWithoutMeetings: Runtime;
   let worker: Runtime;
   let personDb: ReturnType<typeof createDb>;
 
@@ -185,8 +187,10 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     personDb = createDb(appPool);
-    const defs = { commands: [...kernelCommands, begin, imported, rawReplace], queries: [...kernelQueries({ inboundDomain: null }), recordingRows] };
+    const kernelDefs = { commands: [...kernelCommands, begin, imported, rawReplace], queries: [...kernelQueries({ inboundDomain: null }), recordingRows] };
+    const defs = { commands: kernelDefs.commands, queries: [...kernelDefs.queries, ...meetingsQueries] };
     api = new Runtime(personDb, { manifests: TEST_MANIFESTS }).register(defs);
+    apiWithoutMeetings = new Runtime(personDb, { manifests: TEST_MANIFESTS }).register(kernelDefs);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(defs);
   }, 300_000);
 
@@ -810,6 +814,11 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect((await rowsByExt()).get('rec-vis-hid')?.matchedMeeting).toBeNull();
     await o.exec(o.owner, 'kernel.org.set_app', { module: 'meetings', enabled: true });
     expect((await rowsByExt()).get('rec-vis-hid')?.matchedMeeting).toEqual({ meetingId: mVisible });
+
+    // 6b. When the deployment omits the meetings module (ctx.installed('meetings') is false), matching stays disabled.
+    const uninstalledRows = await apiWithoutMeetings.query<MeetingPlatformRecordingView[]>('kernel.meeting_platform.recordings', {}, { actor: asUser(o.lan), orgId: o.orgId });
+    const visHidRow = (await rowOf('rec-vis-hid', c.connectionId)) as { id: string };
+    expect(uninstalledRows.find((r) => r.id === visHidRow.id)?.matchedMeeting).toBeNull();
 
     // 7. A member demoted to viewer still lists their own connection rows but cannot see any meeting (meeting_read denies viewer).
     await sqlAdmin("UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.lan]);

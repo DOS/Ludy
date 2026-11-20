@@ -557,7 +557,7 @@ async function matchedMeetingsForSuggestions(
   rows: ReadonlyArray<{ id: string; status: string; started_at: Date; length_seconds: number | null }>,
 ): Promise<ReadonlyMap<string, string>> {
   const suggested = rows.filter((r) => r.status === 'suggested');
-  if (suggested.length === 0) return new Map();
+  if (suggested.length === 0 || !ctx.installed('meetings')) return new Map();
   if ((await offAppsOf(ctx.trx, ctx.orgId)).includes('meetings')) return new Map();
 
   const recIds: string[] = [];
