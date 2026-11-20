@@ -7670,7 +7670,7 @@ export const en = {
     defaultSave: 'Keep as default',
     defaultClear: 'Clear the default',
     salesItem: 'AMIS sales item code',
-    salesStock: 'Warehouse code sales lines leave (MISA ASP)',
+    salesStock: 'Warehouse for sales lines (MISA ASP), applies once kept',
     purposeLabel: 'Purpose of the purchase',
     purpose: {
       '1': 'Used only for taxable business',

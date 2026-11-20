@@ -7666,7 +7666,7 @@ export const vi = {
     defaultSave: 'Lưu làm mặc định',
     defaultClear: 'Bỏ mã mặc định',
     salesItem: 'Mã hàng bán trong AMIS',
-    salesStock: 'Mã kho xuất của dòng bán hàng (MISA ASP)',
+    salesStock: 'Mã kho xuất của dòng bán hàng (MISA ASP), có hiệu lực sau khi lưu mặc định',
     purposeLabel: 'Mục đích mua vào',
     purpose: {
       '1': 'Dùng riêng cho sản xuất kinh doanh chịu thuế',

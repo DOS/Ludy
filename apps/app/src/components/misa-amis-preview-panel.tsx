@@ -56,7 +56,7 @@ export function MisaAmisPreviewPanel({
   const [salesStockCode, setSalesStockCode] = useState(defaults?.salesStock ?? '');
   const [purpose, setPurpose] = useState<Purpose>('1');
   const id = useId();
-  const asked = `${kind}|${from}|${to}|${serviceItemCode}|${salesItemCode}|${purpose}|${legalEntityId}`;
+  const asked = `${kind}|${from}|${to}|${serviceItemCode}|${salesItemCode}|${defaults?.salesStock ?? ''}|${purpose}|${legalEntityId}`;
   const askedRef = useRef(asked);
   askedRef.current = asked;
   const ask = {
@@ -178,7 +178,7 @@ export function MisaAmisPreviewPanel({
             <label htmlFor={`${id}-sales-stock`} className="text-xs text-muted-foreground">
               {t('salesStock')}
             </label>
-            <Input id={`${id}-sales-stock`} className="min-w-40" maxLength={50} autoComplete="off" value={salesStockCode} onChange={(e) => setSalesStockCode(e.target.value)} />
+            <Input id={`${id}-sales-stock`} className="min-w-40" maxLength={50} autoComplete="off" readOnly={checkConnectionId === undefined} value={salesStockCode} onChange={(e) => setSalesStockCode(e.target.value)} />
             <MisaAmisDefaultItem connectionId={push.connectionId} role="sales_stock" typed={salesStockCode} saved={defaults?.salesStock ?? null} canManage={checkConnectionId !== undefined} />
           </div>
         )}
