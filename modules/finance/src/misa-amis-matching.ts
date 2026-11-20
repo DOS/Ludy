@@ -69,16 +69,20 @@ export function matchParties(wanted: Iterable<string>, catalogue: readonly Catal
 
 /** Each wanted item code against the active catalogue entries with exactly that code (case and spelling as MISA has it). */
 export function matchItems(wanted: Iterable<string>, catalogue: readonly CatalogueItem[]): MisaAmisMatchResult[] {
-  return matchByCode('item', wanted, catalogue);
+  return matchByCode('item', wanted, catalogue, false);
 }
 
-function matchByCode(kind: 'item' | 'stock', wanted: Iterable<string>, catalogue: readonly CatalogueItem[]): MisaAmisMatchResult[] {
+/** `needId`: the entry's id is written on a line (a stock), so a single entry without a usable id is not a match; it still counts toward `ambiguous`. */
+function matchByCode(kind: 'item' | 'stock', wanted: Iterable<string>, catalogue: readonly CatalogueItem[], needId: boolean): MisaAmisMatchResult[] {
   const byCode = new Map<string, CatalogueItem[]>();
   for (const entry of catalogue) {
     if (!entry.active) continue;
     byCode.set(entry.code, [...(byCode.get(entry.code) ?? []), entry]);
   }
-  return [...new Set(wanted)].sort().map((code) => result(kind, code, byCode.get(code) ?? []));
+  return [...new Set(wanted)].sort().map((code) => {
+    const found = byCode.get(code) ?? [];
+    return result(kind, code, needId && found.length === 1 && found[0]?.id === null ? [] : found);
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -138,8 +142,7 @@ export function matchUnits(wanted: Iterable<string>, catalogue: readonly Catalog
 
 /** Each wanted stock code against the active catalogue stocks with exactly that code. */
 export function matchStocks(wanted: Iterable<string>, catalogue: readonly CatalogueItem[]): MisaAmisMatchResult[] {
-  // A stock whose id is not a usable id cannot be written on a line: it is as good as not there.
-  return matchByCode('stock', wanted, catalogue.map((e) => (e.id === null ? { ...e, active: false } : e)));
+  return matchByCode('stock', wanted, catalogue, true);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
