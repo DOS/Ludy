@@ -118,6 +118,17 @@ describe('listing the accounts', () => {
   });
 });
 
+describe('testing a credential', () => {
+  it('is one call for a page of one account, and refuses a credential Tingee does not accept', async () => {
+    const account: FakeAccount = { accountNumber: '0011223344', vaAccountNumber: VA, bankBin: '970418', bankName: 'BIDV', accountName: 'CONG TY ABC', status: 'active' };
+    const { adapter, fake } = setup({ accounts: [account, { ...account, vaAccountNumber: '8888000002' }, { ...account, vaAccountNumber: '8888000003' }], accountPageCap: 1 });
+    await adapter.check?.(credential());
+    expect(fake.requests).toHaveLength(1);
+    expect(fake.requests[0]).toMatchObject({ path: '/v1/get-va-paging', body: { skipCount: 0, maxResultCount: 1 } });
+    expect(await failure(() => adapter.check?.(credential('another-secret-token')) as Promise<void>)).toMatchObject({ kind: 'credentials', tingeeCode: '97' });
+  });
+});
+
 describe('refusals', () => {
   it('names a wrong secret or an unknown client as a credential problem, and never echoes the secret', async () => {
     const { adapter } = setup({ accounts: [] });

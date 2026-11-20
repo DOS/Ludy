@@ -71,6 +71,8 @@ export interface BankFeedProvider {
   readonly id: BankFeedProviderId;
   // The hosts this adapter's fetch is bound to.
   readonly hosts: readonly string[];
+  // A cheap test of a credential at connect time (one read call), for an adapter whose account list takes more than one: it throws when the provider refuses the credential. Without it the caller lists the accounts.
+  check?(secret: string): Promise<void>;
   accounts(secret: string): Promise<BankFeedAccount[]>;
   pull(secret: string, externalAccountId: string, cursor: string | null): Promise<BankFeedPull>;
   // Checks a notice's signature before anything else and returns the provider's ids of the accounts it names, never

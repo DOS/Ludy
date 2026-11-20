@@ -4,6 +4,7 @@ import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
 import { TingeeError, sandboxBankFeed, type BankFeedProvider } from '@crove/bank-feed';
+import { RateLimiter } from './rate-limit.ts';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
@@ -438,6 +439,10 @@ export function createRpcHandler(
   signAiReader: SignAi['reader'] = null,
 ) {
   const os = implement(contract).$context<RpcContext>();
+  // Connecting a Tingee account makes one signed read call from this server's address, and Tingee allows 20 calls in 10 seconds per address (#2045): an org may try a few times a minute, and the whole
+  // deployment a few more, so a loop of made-up credentials cannot use up the budget the workers' syncs share.
+  const tingeeConnectsPerOrg = new RateLimiter({ perMinute: 5 });
+  const tingeeConnectsAll = new RateLimiter({ perMinute: 30, maxKeys: 1 });
   // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
   const briefs = new DraftBudget();
   // "Tuần này" has a rate limit of its own, apart from the brief's, so the two cards of Home never make each other wait.
@@ -3989,8 +3994,11 @@ export function createRpcHandler(
           const provider = hosted.bank_tingee as BankFeedProvider;
           // The org's own credential, as the one value the worker opens (the adapter reads it back). One read call tests it before anything is sealed; its answer is dropped, the worker lists the accounts.
           const secret = JSON.stringify({ clientId: input.clientId, secretToken: input.secretToken });
+          const ticket = [tingeeConnectsPerOrg.take(orgId), tingeeConnectsAll.take('all')].find((t) => !t.allowed);
+          if (ticket) throw new DomainError('RATE_LIMITED', 429, 'Đã thử kết nối Tingee nhiều lần trong phút này, hãy đợi một lát rồi thử lại', { retryAfterSeconds: ticket.retryAfterSeconds });
           try {
-            await provider.accounts(secret);
+            // One cheap read call (a page of one account) when the adapter has one, else its account list.
+            await (provider.check ? provider.check(secret) : provider.accounts(secret));
           } catch (error) {
             throw tingeeConnectError(error);
           }

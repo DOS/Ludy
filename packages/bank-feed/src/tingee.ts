@@ -217,6 +217,12 @@ export function tingeeBankFeed(options: TingeeOptions): BankFeedProvider {
     id: 'bank_tingee',
     hosts: TINGEE_HOSTS,
 
+    // One call: a page of one account. It proves the Client ID and Secret Token sign correctly (code 00), and nothing more: Tingee's answer says nothing of which product groups the credential holds.
+    async check(secret: string): Promise<void> {
+      const data = await call(parseTingeeSecret(secret), ACCOUNTS_PATH, { skipCount: 0, maxResultCount: 1 });
+      if (!Array.isArray(data.items)) throw new TingeeError('upstream', 'tingee: the account list has an unexpected shape');
+    },
+
     async accounts(secret: string): Promise<BankFeedAccount[]> {
       const credential = parseTingeeSecret(secret);
       const found = new Map<string, BankFeedAccount>();

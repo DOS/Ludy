@@ -1444,5 +1444,21 @@ suite('bank statement import (#326)', () => {
       expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE $2`, [orgId, `%${TINGEE_SECRET}%`])).rows)).toEqual([]);
       expect((await rpc('channels/list', await tokenFor(owner), {}, slug, tingeeApp)).body.map((c: { id: string }) => c.id)).not.toContain(connectionId);
     });
+
+    it('limits how often an org may try a credential, before any call to Tingee', async () => {
+      const good = { clientId: TINGEE_CLIENT, secretToken: TINGEE_SECRET };
+      const before = tingeeFake.requests.length;
+      let refused: { status: number; body: any } | null = null;
+      for (let i = 0; i < 12 && refused === null; i++) {
+        const answer = await connect(owner, good);
+        if (answer.status === 429) refused = answer;
+      }
+      expect(refused).toMatchObject({ status: 429, body: { code: 'RATE_LIMITED' } });
+      // Each try that was let through made one call, the refused one none.
+      const calls = tingeeFake.requests.length - before;
+      expect(calls).toBeGreaterThanOrEqual(1);
+      expect(calls).toBeLessThanOrEqual(5);
+      expect(tingeeFake.requests.slice(before).every((r) => r.path === '/v1/get-va-paging' && r.body.maxResultCount === 1)).toBe(true);
+    });
   });
 });
