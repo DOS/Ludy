@@ -75,6 +75,10 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
     modules: ['ads', 'crm', 'social'],
     why: "the Inbox card of an Engage proposal (E4 #3863) says what the proposal is about, read as the approver: a booking and its event type (crm), a quote and its customer (crm), a post and its variants (social) and a live ad launch with its draft and account (ads). The kernel cannot import a module and the card shows the thing to be changed, so it reads those rows by plain SQL, only for the commands of the twin list, in the approver's own context (RLS applies) and only for an owner or an admin",
   },
+  'packages/kernel/src/meeting-platform.ts': {
+    modules: ['meetings'],
+    why: 'kernel.meeting_platform.recordings checks crove_meetings.meeting for a single overlapping visible meeting (#4123 Step 3) only when meetings is installed (ctx.installed) and enabled (apps_off), in the caller transaction under meeting_read RLS',
+  },
   'packages/kernel/src/member-vy.ts': {
     modules: ['meetings'],
     why: "the recorder's own Vy reads the recorder's own recording through the audited kernel.member_vy.meeting_audio.open, which calls the definer crove_meetings.audio_for_member_vy (#2578): a run exists only after meetings.transcript.start (a meetings command, registered only when meetings is installed), and the definer refuses anything but that run's own meeting",
