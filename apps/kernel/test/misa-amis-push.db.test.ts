@@ -659,13 +659,13 @@ suite('MISA AMIS push (#3902)', () => {
       await rows("INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id, product, last_test_state, last_tested_at) VALUES ($1, $2, $3, $4, 'asp', 'works', pg_catalog.now())", [orgId, aspConnection, entity, channel]);
     });
 
-    it('holds an ASP confirmation to the same fresh check as AMIS: refused with MISA_AMIS_CHECK_REQUIRED until a check of the batch exists (ASP checks come with #4152), and past that gate with a done check seeded (a wrong digest is STALE) (#4113)', async () => {
+    it('holds an ASP confirmation to the same fresh check as AMIS: refused with MISA_AMIS_CHECK_REQUIRED until a check of the batch exists, and past that gate with a done check seeded (a wrong digest is STALE) (#4113)', async () => {
       // No source vouchers: the gates before the digest (blockers, too many) have nothing to say, so a wrong digest is what answers once the check gate is passed.
       vouchers = [];
       const confirm = () => api.execute('finance.misa_amis.push', { connectionId: aspConnection, ...ASK, digest: 'a'.repeat(64) }, asUser('owner'));
       await rows('DELETE FROM crove_finance.misa_amis_match_check WHERE connection_id = $1', [aspConnection]);
       await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_CHECK_REQUIRED', status: 409 });
-      // A done check seeded the way the S3a tests seed one (the route that asks for it is refused for ASP, the command is not).
+      // A done check seeded the way the S3a tests seed one (through the command and the worker's record, without the job reading a catalogue).
       await api.execute('finance.misa_amis_match.request_check', { id: aspConnection, ask: ASK }, asUser('owner'));
       const [stored] = await rows<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE connection_id = $1', [aspConnection]);
       await worker.execute('finance.misa_amis_match.record_check', { connectionId: aspConnection, requestedAt: new Date(stored?.requested_at as Date).toISOString(), state: 'done', failure: null, results: [] }, SYSTEM());

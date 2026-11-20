@@ -3619,11 +3619,11 @@ export function createRpcHandler(
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được chứng từ với danh mục MISA');
             // The check job reads the catalogue with the client of the connection's product and opens only an access code sealed for that product (misa-amis-match-job.ts, #4152): a connection whose product the
             // deployment holds no ClientID for answers the same 404 as a deployment without the connector, so the check is never queued to fail. The connection is looked up here for its product; an id the org does
-            // not hold falls to the AMIS gate and the command answers its own not found. Ids are compared without case, as the command does.
+            // not hold needs either product on, and the command then answers its own not found. Ids are compared without case, as the command does.
             const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
             const wanted = input.id.toLowerCase();
             const product = rows.find((r) => r.id.toLowerCase() === wanted)?.product;
-            if (!channels || !(product === 'asp' ? channels.misaAsp : channels.misaAmis)) throw new DomainError('MISA_AMIS_DISABLED', 404, product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+            if (!channels || !(product === 'asp' ? channels.misaAsp : product === 'amis' ? channels.misaAmis : channels.misaAmis || channels.misaAsp)) throw new DomainError('MISA_AMIS_DISABLED', 404, product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
             return runtime.execute<{ queued: boolean; running: boolean }>('finance.misa_amis_match.request_check', input, { actor, orgId });
           }),
         ),

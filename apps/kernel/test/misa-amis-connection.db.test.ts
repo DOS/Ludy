@@ -606,6 +606,8 @@ suite('MISA AMIS connections (#3875)', () => {
     await expect(call('matches/check', owner, { id: String(asp?.id), ask: askOf(asp) }, app)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
     await expect(call('matches/check', owner, { id: String(amis?.id), ask: askOf(amis) }, aspOnlyApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
     await expect(call('matches/check', owner, { id: String(asp?.id), ask: askOf(asp) }, aspApp)).resolves.toMatchObject({ status: 200, body: { queued: true, running: false } });
+    // The worker is handed the connection's product with the waiting check, so its job picks the ASP client and the ASP-sealed code.
+    expect(await worker.query('finance.misa_amis_match.check_target', { id: String(asp?.id) }, { actor: system, orgId })).toMatchObject({ action: 'check', id: String(asp?.id), product: 'asp' });
     await expect(call('matches/check', owner, { id: String(asp?.id).toUpperCase(), ask: askOf(asp) }, aspApp)).resolves.toMatchObject({ status: 200, body: { queued: false, running: true } });
   });
 
