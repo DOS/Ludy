@@ -37,6 +37,7 @@ import { channelCommands } from './channels.ts';
 import { extensionCommands } from './extension.ts';
 import { mcpCommands } from './mcp.ts';
 import { conversationCommands } from './conversations.ts';
+import { engageWakeCommands } from './engage-wake.ts';
 import { mcpEngageWriteCommands } from './mcp-write.ts';
 import {
   actorRef,
@@ -1244,6 +1245,7 @@ const otherKernelCommands = [
   ...extensionCommands,
   ...mcpCommands,
   ...conversationCommands,
+  ...engageWakeCommands,
   ...mcpEngageWriteCommands,
   setTaxCode,
   setVatFilingPeriod,
