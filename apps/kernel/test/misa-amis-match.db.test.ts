@@ -235,7 +235,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
 
   it('hands the worker the waiting check with its batch, and the worker alone: a user is refused the target and the record', async () => {
     const target = await worker.query('finance.misa_amis_match.check_target', { id: connectionId }, { actor: SYSTEM, orgId });
-    expect(target).toMatchObject({ action: 'check', id: connectionId, legalEntityId: entityId, ask: { kind: 'purchase_services', serviceItemCode: 'DV_CHUNG', legalEntityId: entityId } });
+    expect(target).toMatchObject({ action: 'check', id: connectionId, product: 'amis', legalEntityId: entityId, ask: { kind: 'purchase_services', serviceItemCode: 'DV_CHUNG', legalEntityId: entityId } });
     await expect(api.query('finance.misa_amis_match.check_target', { id: connectionId }, { actor: asUser(owner), orgId })).rejects.toMatchObject({ status: 403 });
     await expect(api.execute('finance.misa_amis_match.record_check', { connectionId, requestedAt: new Date().toISOString(), state: 'done', failure: null, results: [] }, { actor: asUser(owner), orgId })).rejects.toMatchObject({ status: 403 });
     expect((await checkRow())?.state).toBe('requested');

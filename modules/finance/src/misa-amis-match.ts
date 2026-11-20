@@ -20,6 +20,7 @@ import {
   type MisaAmisNameDecided,
   type MisaAmisNameProposal,
   type MisaAmisPreviewAsk,
+  type MisaAmisProduct,
 } from '@crove/kernel-contract';
 import type { Database, MemberRole } from '@crove/db';
 import { sql, type Transaction } from 'kysely';
@@ -122,7 +123,7 @@ export const misaAmisMatchRequestCheck = defineCommand({
 export type MisaAmisMatchTarget =
   | { action: 'none'; reason: 'not_found' | 'not_active' | 'not_requested' }
   // `confirmed`: the parties a person confirmed by name (S3b): the worker checks their codes are still in the catalogue and active.
-  | { action: 'check'; id: string; channelConnectionId: string; orgCompanyCode: string; legalEntityId: string; ask: MisaAmisPreviewAsk; requestedAt: string; confirmed: Array<{ partyId: string; code: string }> };
+  | { action: 'check'; id: string; product: MisaAmisProduct; channelConnectionId: string; orgCompanyCode: string; legalEntityId: string; ask: MisaAmisPreviewAsk; requestedAt: string; confirmed: Array<{ partyId: string; code: string }> };
 
 export const misaAmisMatchCheckTarget = defineQuery({
   name: 'finance.misa_amis_match.check_target',
@@ -133,7 +134,7 @@ export const misaAmisMatchCheckTarget = defineQuery({
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .leftJoin('crove_finance.misa_amis_match_check as k', (join) => join.onRef('k.org_id', '=', 'c.org_id').onRef('k.connection_id', '=', 'c.id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'ch.status', 'k.state as check_state', 'k.params', 'k.requested_at'])
+      .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'ch.status', 'k.state as check_state', 'k.params', 'k.requested_at'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
       .executeTakeFirst();
@@ -158,6 +159,7 @@ export const misaAmisMatchCheckTarget = defineQuery({
     return {
       action: 'check',
       id: row.id,
+      product: row.product,
       channelConnectionId: row.channel_connection_id,
       orgCompanyCode: row.org_company_code,
       legalEntityId: row.legal_entity_id,

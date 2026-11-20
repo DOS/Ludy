@@ -5557,7 +5557,7 @@ export const vi = {
     connectTitleAsp: 'Kết nối MISA ASP',
     accessCodeAsp: 'Mã kết nối lấy từ MISA ASP',
     accessCodeNoteAsp: 'Mã kết nối do người có quyền quản trị dữ liệu kết nối trong MISA ASP tạo. Mã vừa nhập được mã hóa khi lưu và không hiển thị lại. Một pháp nhân chỉ nối với một phần mềm MISA.',
-    aspLater: 'Kết nối MISA ASP đã dùng được và kiểm tra được. Việc gửi chứng từ sang MISA ASP chưa có, sẽ làm ở bước sau.',
+    aspLater: 'Kết nối MISA ASP đã dùng được, kiểm tra được và chứng từ có thể đối chiếu với danh mục MISA. Việc gửi chứng từ sang MISA ASP chưa có, sẽ làm ở bước sau.',
     intro:
       'Kết nối dữ liệu AMIS Kế toán của công ty để sau này gửi chứng từ sang AMIS dưới dạng đề nghị sinh chứng từ; người của bạn trong AMIS vẫn là người lập chứng từ. Bạn có thể kiểm tra kết nối (chỉ đọc thông tin công ty); chưa có chứng từ nào được gửi sang AMIS.',
     off: 'Bộ kết nối MISA AMIS đang tắt trên hệ thống này.',
@@ -7757,7 +7757,6 @@ export const vi = {
     settleYes: 'Xác nhận',
     outcome: { in_amis: 'có trong MISA', not_in_amis: 'không có trong MISA' },
     checkFirst: 'Trước khi gửi, hãy bấm kiểm tra với danh mục MISA; lần kiểm tra phải mới trong 15 phút gần đây.',
-    checkLater: 'Gửi sang MISA ASP cần kiểm tra với danh mục MISA ASP trước. Phần kiểm tra này chưa có, nên lô này tạm thời chưa gửi được.',
     refusedNote: 'Lý do của MISA:',
     reasons: {
       MATCH_STALE: 'Danh mục MISA đã đổi so với lần kiểm tra; chưa gửi gì. Hãy kiểm tra lại với danh mục rồi gửi lại.',

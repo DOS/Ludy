@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The check of a connection's vouchers against the firm's MISA catalogue, the worker's half (#4112, S3a of #4103; ADR-0025), run as the system for one connection when an owner or admin asked
 // (finance.misa_amis_match.request_check). The access code is opened here and nowhere else (the API only seals it). The job finds the parties (by tax code) and items (by code) of the batch the person was
-// looking at, reads the catalogue pages that hold them through the client, matches them in memory (modules/finance misa-amis-matching.ts) and records only what it found: for each party and item whether one active
+// looking at, reads the catalogue pages that hold them through the client of the connection's product (MISA AMIS Kế toán or MISA ASP, #4152), matches them in memory (modules/finance misa-amis-matching.ts) and records only what it found: for each party and item whether one active
 // entry matched (and its code and id), none did, or several did. The catalogue pages live in this function's variables and nowhere else: no name, address or tax code of a catalogue entry is recorded, put in a
 // job's output, an audit row or an error, or logged. The log carries the connection's first eight characters, the state and the adapter's error kind.
 import { AmisError, type AmisClient, type AmisConnection } from '@crove/misa-amis';
 import { MISA_AMIS_PREVIEW_LIMIT, type MisaAmisMatchResult } from '@crove/kernel-contract';
-import { amisContextOf, loadAmisEntries, MISA_AMIS_CHANNEL_PROVIDER, type MisaAmisMatchTarget } from '@crove/mod-finance';
+import { amisContextOf, loadAmisEntries, misaChannelProvider, type MisaAmisMatchTarget } from '@crove/mod-finance';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { matchCatalogue, TooLarge } from './misa-amis-catalogue.ts';
 
@@ -21,7 +21,9 @@ export interface MisaAmisMatchJob {
 export interface MisaAmisMatchDeps {
   runtime: Runtime;
   broker: CredentialBroker;
-  client: AmisClient;
+  // The client of each product, null where the deployment holds no ClientID for it: a connection of that product is left alone (the check stays requested).
+  client: AmisClient | null;
+  aspClient?: AmisClient | null;
 }
 
 type Failure = 'credentials' | 'unreachable' | 'invalid_response' | 'catalogue_too_large';
@@ -43,6 +45,8 @@ export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMat
   const options = { actor: SYSTEM, orgId: job.orgId };
   const target = await deps.runtime.query<MisaAmisMatchTarget>('finance.misa_amis_match.check_target', { id: job.connectionId }, options);
   if (target.action === 'none') return { state: 'skipped', reason: target.reason };
+  const client = target.product === 'asp' ? (deps.aspClient ?? null) : deps.client;
+  if (!client) return { state: 'skipped', reason: 'product_off' };
   const fail = async (failure: Failure, kind: string) => {
     console.warn(`[misa-amis] match ${job.connectionId.slice(0, 8)}: failed (${failure}, ${kind})`);
     const written = await deps.runtime.execute<{ recorded?: boolean }>('finance.misa_amis_match.record_check', { connectionId: job.connectionId, requestedAt: target.requestedAt, state: 'failed', failure, results: [] }, options);
@@ -53,8 +57,8 @@ export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMat
   let accessCode: string;
   try {
     const sealed = await deps.runtime.query<SealedChannelCredential>('kernel.channel.credential', { connectionId: target.channelConnectionId }, options);
-    // Only an access code sealed for this connector is opened here: a channel connection of another provider is never read as one.
-    if (sealed.provider !== MISA_AMIS_CHANNEL_PROVIDER) return fail('credentials', 'other_provider');
+    // Only an access code sealed for this connection's product is opened here: a channel connection of another provider (the other MISA product's included) is never read as one.
+    if (sealed.provider !== misaChannelProvider(target.product)) return fail('credentials', 'other_provider');
     accessCode = String(deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, { orgId: job.orgId, provider: sealed.provider, externalAccountId: sealed.externalAccountId }));
   } catch (error) {
     if (error instanceof DomainError && (error.code === 'CHANNEL_OWNER_LEFT' || error.code === 'CHANNEL_NOT_ACTIVE')) {
@@ -73,7 +77,7 @@ export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMat
   try {
     // A party a person already confirmed by name is checked (its code still in the catalogue), not asked again.
     const confirmedIds = new Set(target.confirmed.map((c) => c.partyId));
-    const found = await matchCatalogue(deps.client, connection, { ...wanted, names: wanted.names.filter((n) => !confirmedIds.has(n.partyId)), confirmed: target.confirmed });
+    const found = await matchCatalogue(client, connection, { ...wanted, names: wanted.names.filter((n) => !confirmedIds.has(n.partyId)), confirmed: target.confirmed });
     // Only the verdicts that change something are recorded: a confirmed name that still holds is a row that stays, so it is not a result (and does not count toward the results a record may hold).
     results = found.filter((r) => !(r.kind === 'party_name' && r.state === 'confirmed'));
   } catch (error) {
