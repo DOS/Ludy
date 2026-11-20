@@ -2,7 +2,7 @@
 // The callback reader (#3854): the signature is MISA's HMAC-SHA256 over the `data` string with the ClientID as key, checked before `data` is parsed; only `data` is signed, so the reader hands back what the
 // envelope says about the organisation as a hint and nothing more.
 import { describe, expect, it } from 'vitest';
-import { readCallback, parseCallbackResults, signCallbackData } from '../src/index.ts';
+import { readCallback, readCallbackAny, parseCallbackResults, signCallbackData } from '../src/index.ts';
 
 const CLIENT = '0e0a14cf-9e4b-4af9-875b-c490f34a581b';
 const REF = 'AB80B9D2-9747-4583-AA60-8286244ECA49';
@@ -110,5 +110,70 @@ describe('parseCallbackResults', () => {
     // The cap counts what is left, not what was sent.
     const long = parseCallbackResults(JSON.stringify([entry({ error_message: `${'\u0000'.repeat(400)}${'a'.repeat(600)}` })])) ?? [];
     expect(long[0]?.errorMessage).toBe('a'.repeat(500));
+  });
+});
+
+describe('readCallbackAny: the deployment holds one ClientID per product (#4103)', () => {
+  const OTHER = '7c1b6f3e-1d2a-4f0e-9a58-3e5b8d2f41aa';
+  const AMIS = { product: 'amis', clientId: CLIENT } as const;
+  const ASP = { product: 'asp', clientId: OTHER } as const;
+  const signedBy = (clientId: string, over: Record<string, unknown> = {}) => {
+    const data = JSON.stringify([entry({ success: true, error_code: null, error_message: '' })]);
+    return JSON.stringify({ success: true, app_id: clientId, error_code: '', error_message: '', signature: signCallbackData(data, clientId), data_type: 1, org_company_code: 'ludy-abc', data, ...over });
+  };
+
+  it('accepts a message that verifies under any held key, whatever its place in the list, reads it as readCallback would, and says which product signed', () => {
+    for (const keys of [[AMIS, ASP], [ASP, AMIS]]) {
+      for (const sender of [AMIS, ASP]) {
+        const body = signedBy(sender.clientId);
+        const read = readCallbackAny(body, keys);
+        expect(read).toEqual({ ...readCallback(body, sender.clientId), products: [sender.product] });
+      }
+    }
+    expect(readCallbackAny(signedBy(CLIENT), [AMIS])).toMatchObject({ ok: true, products: ['amis'] });
+  });
+
+  it('where MISA issued one ClientID for both products every product matches and all are returned, once each, whatever the order', () => {
+    const same = { product: 'asp', clientId: CLIENT } as const;
+    expect(readCallbackAny(signedBy(CLIENT), [AMIS, same])).toMatchObject({ ok: true, products: ['amis', 'asp'] });
+    expect(readCallbackAny(signedBy(CLIENT), [same, AMIS])).toMatchObject({ ok: true, products: ['asp', 'amis'] });
+    expect(readCallbackAny(signedBy(CLIENT), [AMIS, same, AMIS])).toMatchObject({ ok: true, products: ['amis', 'asp'] });
+    // A third key of another value does not join them.
+    expect(readCallbackAny(signedBy(CLIENT), [AMIS, same, { product: 'asp', clientId: OTHER }])).toMatchObject({ ok: true, products: ['amis', 'asp'] });
+  });
+
+  it('refuses a message no held key signed, and one signed by a key but carrying another app_id, the same way: `signature`', () => {
+    expect(readCallbackAny(signedBy('a-key-nobody-holds'), [AMIS, ASP])).toEqual({ ok: false, reason: 'signature' });
+    // Signed with ASP's key, but the envelope says it is AMIS's: the same refusal, not a hint of which key was close.
+    expect(readCallbackAny(signedBy(OTHER, { app_id: CLIENT }), [AMIS, ASP])).toEqual({ ok: false, reason: 'signature' });
+    expect(readCallbackAny(signedBy(CLIENT), [])).toEqual({ ok: false, reason: 'signature' });
+    // A deployment that holds one product's key does not take the other's messages.
+    expect(readCallbackAny(signedBy(OTHER), [AMIS])).toEqual({ ok: false, reason: 'signature' });
+  });
+
+  it('keeps the failures no key decides: a body that is not an envelope, and a good signature on a `data` that is not a list of results', () => {
+    expect(readCallbackAny('not json', [AMIS, ASP])).toEqual({ ok: false, reason: 'malformed' });
+    const data = 'not a list';
+    const body = JSON.stringify({ app_id: OTHER, data_type: 1, org_company_code: 'x', data, signature: signCallbackData(data, OTHER) });
+    expect(readCallbackAny(body, [AMIS, ASP])).toEqual({ ok: false, reason: 'data' });
+  });
+
+  it('tries every key even after one has matched: nothing short-circuits on a match', () => {
+    // A key list whose map counts the entries it visits: every entry is visited for a message the first key signed.
+    let visited = 0;
+    const keys = new Proxy([AMIS, ASP, { product: 'amis', clientId: 'a-third-key' } as const], {
+      get(target, property, receiver) {
+        if (property === 'map') {
+          return (fn: (value: (typeof target)[number], index: number) => unknown) =>
+            target.map((value, index) => {
+              visited += 1;
+              return fn(value, index);
+            });
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    expect(readCallbackAny(signedBy(CLIENT), keys).ok).toBe(true);
+    expect(visited).toBe(3);
   });
 });

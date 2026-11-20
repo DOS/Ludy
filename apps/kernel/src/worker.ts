@@ -548,6 +548,8 @@ export interface WorkerDeps {
     misaAsp?: AmisClient;
     // The push to MISA AMIS (S3b, #3902) is on only when the deployment says so (MISA_AMIS_PUSH=on); until the sandbox check has confirmed what the push assumes, no org's vouchers go to MISA.
     misaAmisPush?: boolean;
+    // The push to MISA ASP is switched on too (MISA_ASP_PUSH=on, #4113): its own switch, so ASP's push can stay off while AMIS's runs.
+    misaAspPush?: boolean;
     // The ad platform adapters this deployment offers (ADR-0040, #2217), by provider id: read-only, the worker alone uses
     // them, with the credentials it opens.
     adPlatforms?: Readonly<Record<string, AdPlatform>>;
@@ -1648,10 +1650,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
 
   // MISA AMIS Kế toán (#3854, S3b, #3902): the push of the vouchers a person confirmed, queued by the relay below. One run sends the queued batches and asks MISA for the results of the rows it took; while
   // rows wait for MISA's answer it queues itself again a little later (a separate key, so it may be queued while this run is active; the table's states keep two runs from sending a row twice).
-  if (finance && misaAmisClient && marketplaceBroker && deps.channels?.misaAmisPush) {
+  // The job serves both products (#4113, S4 of #4103); each product's client is handed over only where that product's own push switch is on, so a connection of a product whose push is off is left alone.
+  const amisPushClient = deps.channels?.misaAmisPush ? (misaAmisClient ?? null) : null;
+  const aspPushClient = deps.channels?.misaAspPush ? (misaAspClient ?? null) : null;
+  if (finance && marketplaceBroker && (amisPushClient || aspPushClient)) {
     await boss.work<MisaAmisPushJob>(QUEUES.misaAmisPush, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
-      const done = await runMisaAmisPush({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient }, job.data);
+      const done = await runMisaAmisPush({ runtime: deps.runtime, broker: marketplaceBroker, client: amisPushClient, aspClient: aspPushClient }, job.data);
       // The follow-up has a key of its own round: a send under the key of a queued or ACTIVE job is dropped by the exclusive queue.
       const again = pushFollowUp(job.data, done);
       if (again) {
@@ -2884,7 +2889,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 });
               }
               // An owner or admin confirmed a push of vouchers to MISA AMIS (#3902): its job sends them and asks for the results. Ids only in the job. Only where the deployment turned the push on.
-              if (finance && deps.channels?.misaAmis && deps.channels.misaAmisPush && deps.channels.broker && row.type === 'finance.misa_amis.push_requested') {
+              if (finance && ((deps.channels?.misaAmis && deps.channels.misaAmisPush) || (deps.channels?.misaAsp && deps.channels.misaAspPush)) && deps.channels.broker && row.type === 'finance.misa_amis.push_requested') {
                 const connectionId = String(row.payload.connection_id);
                 await boss.send(QUEUES.misaAmisPush, { orgId: row.org_id, connectionId } satisfies MisaAmisPushJob, {
                   // One job per press, never one per connection: a job dropped because another press's was active could leave this press's rows waiting (#4041, N1). The table's states keep two runs from sending a row twice.
