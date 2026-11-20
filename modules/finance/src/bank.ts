@@ -147,14 +147,15 @@ async function check(ctx: QueryContext, input: BankStatementImport, legalEntityI
   const { lines, keys } = readStatement(input);
   const { stored, chain } = await storedAround(ctx, legalEntityId, input.bankAccount, lines, keys);
   const checked = checkStatement(input, stored, chain);
-  const cutover = await feedCutover(ctx, legalEntityId, input.bankAccount);
+  // Only once the feed has pulled: before that nothing it supplies is in the books, and its first pull may start later than the day set (the day then moves up), so a file's lines are kept.
+  const cutover = await feedCutover(ctx, legalEntityId, input.bankAccount, true);
   return cutover ? skipFedLines(checked, cutover) : checked;
 }
 
 // The day a bank feed takes over an account from statement files (#4218): the earliest cut-over of its mappings whose
 // connection is still active, so a feed that stopped (expired or revoked) never leaves lines in neither source. Null when
 // there is none: files and the feed are only deduplicated.
-export async function feedCutover(ctx: QueryContext, legalEntityId: string, bankAccountCode: string): Promise<string | null> {
+export async function feedCutover(ctx: QueryContext, legalEntityId: string, bankAccountCode: string, syncedOnly = false): Promise<string | null> {
   const row = await ctx.trx
     .selectFrom('crove_finance.bank_feed_account as a')
     .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
@@ -163,6 +164,7 @@ export async function feedCutover(ctx: QueryContext, legalEntityId: string, bank
     .where('a.legal_entity_id', '=', legalEntityId)
     .where('a.bank_account', '=', bankAccountCode)
     .where('c.status', '=', 'active')
+    .$if(syncedOnly, (q) => q.where('a.cursor', 'is not', null))
     .executeTakeFirst();
   return row?.feed_from ?? null;
 }

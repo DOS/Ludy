@@ -558,6 +558,12 @@ suite('bank statement import (#326)', () => {
     const mapped = await map({ feedFrom: cut });
     expect(mapped.status).toBe(200);
     expect(((await feed('accounts', viewer)).body as Array<{ feedFrom: string | null }>).map((a) => a.feedFrom)).toEqual([cut]);
+    // Before the feed has pulled, nothing it supplies is in the books: a file keeps all its lines (the first pull may start later than the day set and the day then moves up).
+    const early = [row(dayOf(-6), '100000', '', '', 'EARLY-A'), row(dayOf(-1), '100000', '', '', 'EARLY-B')];
+    expect((await preview(early, '1121.CUT')).body.feed).toBeUndefined();
+    expect((await preview(early, '1121.CUT')).body.counts).toMatchObject({ new: 2, duplicate: 0 });
+    // Pulled once (the cursor is set; the sandbox's pull is not run here so the account holds only the file's lines): from the day on the feed supplies.
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-4)]));
     const rows = [row(dayOf(-6), '100000', '', '', 'CUT-A'), row(dayOf(-4), '200000', '', '', 'CUT-B'), row(cut, '300000', '', '', 'CUT-C'), row(dayOf(-1), '400000', '', '', 'CUT-D')];
     const shown = await preview(rows, '1121.CUT');
     expect(shown.status).toBe(200);
