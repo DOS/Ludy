@@ -261,7 +261,9 @@ export interface BoostFacts {
   days: number;
   budget: string;
 }
-export async function saveCampaignDraft(ctx: CommandContext, input: AdsCampaignDraftSave, boost: BoostFacts | null = null): Promise<AdsCampaignDraftView> {
+// `origin` 'ai' is the draft an AI app made over MCP (ads.mcp.campaign_draft_save): a new draft only, marked as the AI's with the plan fields it set (a person's edit then takes a field out of that list, as
+// the database's draft guard allows, and never puts one in).
+export async function saveCampaignDraft(ctx: CommandContext, input: AdsCampaignDraftSave, boost: BoostFacts | null = null, origin: 'human' | 'ai' = 'human'): Promise<AdsCampaignDraftView> {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới lưu được bản nháp chiến dịch');
   const userId = ctx.actor.userId;
   const adAccountId = input.adAccountId.toLowerCase();
@@ -269,6 +271,7 @@ export async function saveCampaignDraft(ctx: CommandContext, input: AdsCampaignD
   const { days, ...columns } = columnsOf(input.plan);
   await refuseUnknownReferences(ctx, input.plan);
   let draftId = input.draftId?.toLowerCase();
+  if (origin === 'ai' && draftId) throw new DomainError('ADS_DRAFT_AI_NEW_ONLY', 422, 'Ứng dụng AI chỉ tạo bản nháp mới, không sửa bản nháp có sẵn');
   if (draftId) {
     const [current] = await rows(ctx, { id: draftId }, true).execute();
     if (!current) throw draftMissing();
@@ -292,7 +295,15 @@ export async function saveCampaignDraft(ctx: CommandContext, input: AdsCampaignD
     const maxSpend = merged.dailyBudget && days ? maxSpendOf(merged.dailyBudget, days) : null;
     const inserted = await ctx.trx
       .insertInto('crove_ads.ad_campaign_draft')
-      .values({ org_id: ctx.orgId, ad_account_id: adAccountId, legal_entity_id: account.legalEntityId, ...columns, max_spend: maxSpend, created_by: userId })
+      .values({
+        org_id: ctx.orgId,
+        ad_account_id: adAccountId,
+        legal_entity_id: account.legalEntityId,
+        ...columns,
+        max_spend: maxSpend,
+        created_by: userId,
+        ...(origin === 'ai' ? { origin: 'ai' as const, ai_fields: Object.entries(input.plan).filter(([, v]) => v !== undefined).map(([k]) => k) } : {}),
+      })
       .returning('id')
       .executeTakeFirstOrThrow();
     draftId = inserted.id;
