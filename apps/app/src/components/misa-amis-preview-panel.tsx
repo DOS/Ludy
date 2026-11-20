@@ -187,7 +187,7 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
       )}
       {result && <MisaAmisPreviewResult result={result} notes={notes.data ?? null} />}
       {result && checkConnectionId && <MisaAmisCheckButton state={result.matchCheck.state} pending={check.isPending} waiting={waiting} slow={slow && result.matchCheck.state === 'requested'} error={check.error} onAsk={askCheck} />}
-      {result && checkConnectionId && result.matchCheck.state === 'done' && (
+      {result && checkConnectionId && result.matchCheck.checkedAt !== null && (
         <MisaAmisNameProposals
           key={result.matchCheck.checkedAt ?? 'none'}
           connectionId={checkConnectionId}

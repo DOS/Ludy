@@ -1165,7 +1165,8 @@ export const personalDataErase = defineCommand({
          WHERE org_id = ${ctx.orgId}::uuid AND kind = 'party_name' AND match_key = ANY(${parties.map((p) => p.id)}::text[])
          RETURNING candidate_name IS NOT NULL AS proposal`.execute(ctx.trx);
       add('crove_finance.misa_amis_match.candidate_name', nameMatches.filter((r) => r.proposal).length);
-      if (nameMatches.length > 0) await sql`UPDATE crove_finance.misa_amis_match_check SET requested_at = pg_catalog.clock_timestamp() WHERE org_id = ${ctx.orgId}::uuid AND state = 'requested'`.execute(ctx.trx);
+      // Always, not only when a row went: a job may have read the party's name and not yet recorded a proposal for it, and that proposal is exactly what must not land after this erasure.
+      await sql`UPDATE crove_finance.misa_amis_match_check SET requested_at = pg_catalog.clock_timestamp() WHERE org_id = ${ctx.orgId}::uuid AND state = 'requested'`.execute(ctx.trx);
     }
 
     // Bookings the visitor made on a public booking page (#1318), matched by their email or phone: the visitor's name,

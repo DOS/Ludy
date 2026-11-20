@@ -1134,6 +1134,14 @@ suite('finding a person in the org (#923)', () => {
     // No row of the org holds the candidate's name any more, and the waiting check is moved on so a job that read the name cannot put it back.
     expect((await admin((c) => c.query("SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1 AND candidate_name IS NOT NULL", [orgId]))).rows).toEqual([]);
     expect(await askedAt()).toBeGreaterThan(before);
+
+    // A party with NO name match yet is erased while a check waits: the job may have read its name and not recorded a proposal for it, which is what must not land afterwards. The waiting check is moved on all the same.
+    const racing = `hoa-cuc-${randomUUID().slice(0, 8)}@example.vn`;
+    await party('Hộ kinh doanh Hoa Cúc', racing);
+    await admin((c) => c.query("UPDATE crove_finance.misa_amis_match_check SET requested_at = pg_catalog.now() - interval '5 minutes' WHERE org_id = $1", [orgId]));
+    const beforeRace = await askedAt();
+    await erase(racing);
+    expect(await askedAt()).toBeGreaterThan(beforeRace);
   });
 
   // Only the erase command reaches the clearing: an owner's own context, never an admin's, a member's or a raw tenant call.

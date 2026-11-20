@@ -7708,6 +7708,8 @@ export const en = {
     row: 'The party "{party}" has the same name as the entry "{candidate}" (code {code}) in the MISA catalogue',
     confirm: 'Yes, confirm',
     reject: 'Not the same',
+    allDecided: 'All proposals are decided.',
+    titleDone: 'Name matches against the MISA catalogue',
     confirmLabel: 'Confirm {party} as the entry in the MISA catalogue',
     rejectLabel: 'Reject the proposal for {party}',
   },

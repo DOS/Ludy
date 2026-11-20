@@ -30,6 +30,7 @@ const { MisaAmisNameProposals, ProposalRow } = await import('../src/components/m
 
 const ID = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5d';
 const proposal = (over: Partial<MisaAmisNameProposal> = {}): MisaAmisNameProposal => ({
+  id: '0192f0a1-2b3c-7d4e-8f50-6172839a4b60',
   partyId: ID,
   partyName: 'Hộ kinh doanh Hoa Sen',
   candidateName: 'Hoa Sen (HKD)',
@@ -60,7 +61,7 @@ describe('the name proposals of a check (#4124)', () => {
   });
 
   it('lists each proposal with the two names and the code, a confirm and a reject button that name the party, and says that nothing is matched until the person confirms', () => {
-    const html = listed([proposal(), proposal({ partyId: '0192f0a1-2b3c-7d4e-8f50-6172839a4b5e', partyName: 'Hộ kinh doanh Hoa Mai', candidateName: 'Hoa Mai', candidateCode: 'KH_HM' })]);
+    const html = listed([proposal(), proposal({ id: '0192f0a1-2b3c-7d4e-8f50-6172839a4b61', partyId: '0192f0a1-2b3c-7d4e-8f50-6172839a4b5e', partyName: 'Hộ kinh doanh Hoa Mai', candidateName: 'Hoa Mai', candidateCode: 'KH_HM' })]);
     expect(html).toContain('data-testid="misa-amis-names"');
     expect(html.match(/data-testid="misa-amis-name-proposal"/g)).toHaveLength(2);
     expect(html).toContain('2 parties without a tax code need your confirmation against the MISA catalogue');

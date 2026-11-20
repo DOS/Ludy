@@ -55,6 +55,8 @@ export type MisaAmisMatchRecordCheck = z.infer<typeof zMisaAmisMatchRecordCheck>
 
 // The proposals a person looks at to confirm or reject (S3b, #4124): a party of Ludy with no tax code and the one active catalogue entry of the same name the last check found. Owners and admins only.
 export const zMisaAmisNameProposal = z.strictObject({
+  // The row the person is looking at: a decision names it and the candidate's code, so it is about this proposal and no other.
+  id: zId,
   partyId: zId,
   // The party as Ludy has it, and the entry as the catalogue has it: both are names, shown as text and never logged.
   partyName: z.string(),
@@ -66,8 +68,9 @@ export type MisaAmisNameProposal = z.infer<typeof zMisaAmisNameProposal>;
 export const zMisaAmisNameProposalsAsk = z.strictObject({ connectionId: zId });
 export type MisaAmisNameProposalsAsk = z.infer<typeof zMisaAmisNameProposalsAsk>;
 
-// A person confirms the proposal for a party (it becomes the party's code in AMIS and the proposal's name is forgotten) or rejects it (the row is deleted; the next check may propose it again).
-export const zMisaAmisNameDecision = z.strictObject({ connectionId: zId, partyId: zId });
+// A person confirms the proposal for a party (it becomes the party's code in AMIS and the proposal's name is forgotten) or rejects it (the row is deleted; the next check may propose it again). The decision is about the
+// row the person saw (its id) and the candidate on it (its code): a row that is gone, was replaced by a newer check or no longer is a proposal is refused, so a different candidate than the one on screen is never confirmed.
+export const zMisaAmisNameDecision = z.strictObject({ connectionId: zId, partyId: zId, proposalId: zId, candidateCode: z.string().min(1).max(100) });
 export type MisaAmisNameDecision = z.infer<typeof zMisaAmisNameDecision>;
 export const zMisaAmisNameDecided = z.strictObject({ decided: z.boolean() });
 export type MisaAmisNameDecided = z.infer<typeof zMisaAmisNameDecided>;

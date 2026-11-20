@@ -43,6 +43,9 @@ export interface MisaAmisMatchResults {
 
 export const NO_MATCH_RESULTS: MisaAmisMatchResults = { connectionId: null, status: { state: 'none', failure: null, requestedAt: null, checkedAt: null }, partyCodes: null, itemCodes: null, partyNameCodes: null };
 
+// How many confirmed names one check verifies (the oldest checked first): the verdicts are part of the results, which are bounded, and a confirmation not reached here is still checked by the re-read before every send.
+const MISA_AMIS_CONFIRMED_VERIFY_MAX = 500;
+
 // A check asked this recently and still waiting is the running one; later than that a press asks again (a lost job must not block the connection for ever).
 const RUNNING_MS = 10 * 60 * 1000;
 
@@ -147,6 +150,9 @@ export const misaAmisMatchCheckTarget = defineQuery({
       .where('connection_id', '=', input.id)
       .where('kind', '=', 'party_name')
       .where('state', '=', 'confirmed')
+      .orderBy('checked_at')
+      .orderBy('match_key')
+      .limit(MISA_AMIS_CONFIRMED_VERIFY_MAX)
       .execute();
     return {
       action: 'check',
@@ -311,12 +317,15 @@ export const misaAmisMatchConfirmName = defineCommand({
       .select(['id', 'legal_entity_id', 'catalogue_code', 'catalogue_id', 'checked_at'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
+      .where('id', '=', input.proposalId)
       .where('kind', '=', 'party_name')
       .where('match_key', '=', input.partyId)
       .where('state', '=', 'name_proposal')
+      .where('catalogue_code', '=', input.candidateCode)
       .forUpdate()
       .executeTakeFirst();
-    // A newer check replaced the proposal (or someone decided it): the person looks again.
+    // The row the person saw is gone (a newer check replaced it, someone decided it), is not a proposal any more, or holds another candidate than the one on screen: the person looks again.
+    // Bound to the row and its code, never to "the party's proposal", so a confirmation can only be of what was shown.
     if (!proposal || proposal.catalogue_code === null) throw new DomainError('MISA_AMIS_NAME_PROPOSAL_GONE', 409, 'Đề xuất này không còn; hãy xem lại danh sách đề xuất');
     // The row is replaced, not updated: a result is never changed in place, and the candidate's name goes with the proposal row, so a confirmed row keeps the code and the entry's id only.
     await ctx.trx.deleteFrom('crove_finance.misa_amis_match').where('org_id', '=', ctx.orgId).where('id', '=', proposal.id).execute();
@@ -355,10 +364,12 @@ export const misaAmisMatchRejectName = defineCommand({
     const deleted = await ctx.trx
       .deleteFrom('crove_finance.misa_amis_match')
       .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.proposalId)
       .where('connection_id', '=', input.connectionId)
       .where('kind', '=', 'party_name')
       .where('match_key', '=', input.partyId)
       .where('state', '=', 'name_proposal')
+      .where('catalogue_code', '=', input.candidateCode)
       .executeTakeFirst();
     const decided = Number(deleted.numDeletedRows) > 0;
     if (!decided) throw new DomainError('MISA_AMIS_NAME_PROPOSAL_GONE', 409, 'Đề xuất này không còn; hãy xem lại danh sách đề xuất');
@@ -375,7 +386,7 @@ export const misaAmisMatchProposalsQuery = defineQuery({
   handler: async (ctx, input): Promise<MisaAmisNameProposal[]> => {
     const rows = await ctx.trx
       .selectFrom('crove_finance.misa_amis_match')
-      .select(['match_key', 'catalogue_code', 'candidate_name', 'checked_at'])
+      .select(['id', 'match_key', 'catalogue_code', 'candidate_name', 'checked_at'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
       .where('kind', '=', 'party_name')
@@ -396,7 +407,7 @@ export const misaAmisMatchProposalsQuery = defineQuery({
       const partyName = nameOf.get(r.match_key);
       // A proposal for a party that no longer exists says nothing a person can act on.
       if (partyName === undefined || r.catalogue_code === null || r.candidate_name === null) return [];
-      return [{ partyId: r.match_key, partyName, candidateName: r.candidate_name, candidateCode: r.catalogue_code, checkedAt: iso(r.checked_at) }];
+      return [{ id: r.id, partyId: r.match_key, partyName, candidateName: r.candidate_name, candidateCode: r.catalogue_code, checkedAt: iso(r.checked_at) }];
     });
   },
 });

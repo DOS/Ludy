@@ -3,6 +3,7 @@
 // name. Nothing is matched until a person confirms (the party then goes on the vouchers with that entry's code) or rejects (the proposal is deleted; a later check may propose it again). The names are text, never
 // markup. The coworker has no part in it: no model reads a name, and no agent path confirms.
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { MisaAmisNameProposal } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
@@ -13,24 +14,36 @@ import { ErrorText } from './ui.tsx';
 export function MisaAmisNameProposals({ connectionId, onDecided }: { connectionId: string; onDecided: () => void }) {
   const t = useTranslations('misaAmisNames');
   const proposals = useQuery(orpc.misaAmis.matches.proposals.queryOptions({ input: { connectionId } }));
-  const decide = useMutation<unknown, Error, { partyId: string; confirm: boolean }>({
-    mutationFn: ({ partyId, confirm }) => (confirm ? client.misaAmis.matches.confirmName({ connectionId, partyId }) : client.misaAmis.matches.rejectName({ connectionId, partyId })),
+  // A decision is about the row the person saw and the candidate on it (its code), never about "the party's proposal": a row a newer check replaced is refused by the server.
+  const decide = useMutation<unknown, Error, { proposal: MisaAmisNameProposal; confirm: boolean }>({
+    mutationFn: ({ proposal, confirm }) => {
+      const input = { connectionId, partyId: proposal.partyId, proposalId: proposal.id, candidateCode: proposal.candidateCode };
+      return confirm ? client.misaAmis.matches.confirmName(input) : client.misaAmis.matches.rejectName(input);
+    },
     onSettled: async () => {
       await proposals.refetch();
+      setDecisions((n) => n + 1);
       onDecided();
     },
   });
+  // After a decision the row that held the keyboard focus is gone: focus moves to the section, which says what is left (or that nothing is).
+  const [decisions, setDecisions] = useState(0);
+  const section = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (decisions > 0) section.current?.focus();
+  }, [decisions]);
   const list = proposals.data ?? [];
-  if (list.length === 0) return null;
+  if (list.length === 0 && decisions === 0) return null;
   return (
-    <section className="mt-3 rounded-md border border-border p-2" aria-labelledby="misa-amis-names-title" data-testid="misa-amis-names">
+    <section ref={section} tabIndex={-1} className="mt-3 rounded-md border border-border p-2 outline-none" aria-labelledby="misa-amis-names-title" data-testid="misa-amis-names">
       <h4 id="misa-amis-names-title" className="font-medium text-foreground">
-        {t('title', { count: String(list.length) })}
+        {list.length > 0 ? t('title', { count: String(list.length) }) : t('titleDone')}
       </h4>
-      <p className="mt-1 text-xs text-muted-foreground">{t('hint')}</p>
+      {list.length > 0 && <p className="mt-1 text-xs text-muted-foreground">{t('hint')}</p>}
+      <div role="status">{list.length === 0 && <p className="mt-2 text-foreground" data-testid="misa-amis-names-done">{t('allDecided')}</p>}</div>
       <ul className="mt-2 divide-y divide-border">
         {list.map((p) => (
-          <ProposalRow key={p.partyId} proposal={p} busy={decide.isPending} onDecide={(confirm) => decide.mutate({ partyId: p.partyId, confirm })} />
+          <ProposalRow key={p.id} proposal={p} busy={decide.isPending} onDecide={(confirm) => decide.mutate({ proposal: p, confirm })} />
         ))}
       </ul>
       {decide.error && (

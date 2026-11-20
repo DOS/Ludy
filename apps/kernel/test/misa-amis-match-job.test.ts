@@ -277,10 +277,8 @@ describe('the name proposals of the check (#4124)', () => {
     const amis = fakeAmis({ parties: [entry('KH_HOA_SEN', 'Tên đã đổi trong danh mục'), entry('KH_MOI', NAME), entry('KH_CU', 'Một Tên Khác', { inactive: true })] });
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
     await run(h, amis);
-    expect(recordedResults(h).filter((r) => r.kind === 'party_name')).toEqual([
-      { kind: 'party_name', ref: PARTY1, state: 'confirmed', code: 'KH_HOA_SEN', entryId: null },
-      { kind: 'party_name', ref: PARTY2, state: 'unknown', code: null, entryId: null },
-    ]);
+    // Only the verdict that changes something is recorded: PARTY1's row stays as it is (nothing to say, and no proposal although another entry has its name), PARTY2's goes.
+    expect(recordedResults(h).filter((r) => r.kind === 'party_name')).toEqual([{ kind: 'party_name', ref: PARTY2, state: 'unknown', code: null, entryId: null }]);
   });
 
   it('reads the party catalogue for a confirmed name even when no voucher has a tax code to look up, and writes no name or entry detail into the log', async () => {

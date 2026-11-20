@@ -7704,6 +7704,8 @@ export const vi = {
     row: 'Đối tượng "{party}" trùng tên với mục "{candidate}" (mã {code}) trong danh mục MISA',
     confirm: 'Đúng, xác nhận',
     reject: 'Không phải',
+    allDecided: 'Đã xử lý hết các đề xuất.',
+    titleDone: 'Khớp theo tên với danh mục MISA',
     confirmLabel: 'Xác nhận {party} là mục trong danh mục MISA',
     rejectLabel: 'Từ chối đề xuất cho {party}',
   },

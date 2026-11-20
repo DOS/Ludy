@@ -333,6 +333,9 @@ suite('MISA AMIS catalogue match (#4112)', () => {
         [orgId],
       );
     const proposal = (ref: string, code: string, candidateName: string) => ({ kind: 'party_name', ref, state: 'name_proposal', code, entryId: entry, candidateName });
+    // What a person's decision carries: the row on screen and the code of the candidate on it.
+    const rowOf = async (partyId: string) => String((await rows<{ id: string }>("SELECT id FROM crove_finance.misa_amis_match WHERE org_id = $1 AND kind = 'party_name' AND match_key = $2", [orgId, partyId]))[0]?.id);
+    const decision = async (partyId: string, candidateCode: string, over: Record<string, unknown> = {}) => ({ connectionId, partyId, proposalId: await rowOf(partyId), candidateCode, ...over });
 
     it('records what a name match found: a proposal with its name on that row alone, several as ambiguous, and nothing for none; a proposal is no match', async () => {
       for (const name of ['Hộ kinh doanh Hoa Sen', 'Hộ kinh doanh Hoa Mai', 'Hộ kinh doanh Hoa Lan', 'Hộ kinh doanh Hoa Cúc']) {
@@ -394,25 +397,40 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       for (const who of [owner, adminUser]) {
         const listed = await call('matches/proposals', who, { connectionId });
         expect(listed.status).toBe(200);
-        expect(listed.body).toEqual([{ partyId: p1, partyName: 'Hộ kinh doanh Hoa Sen', candidateName: 'Hoa Sen (HKD)', candidateCode: 'KH_HS', checkedAt: expect.any(String) }]);
+        expect(listed.body).toEqual([{ id: await rowOf(p1), partyId: p1, partyName: 'Hộ kinh doanh Hoa Sen', candidateName: 'Hoa Sen (HKD)', candidateCode: 'KH_HS', checkedAt: expect.any(String) }]);
       }
       expect((await call('matches/proposals', owner, { connectionId }, offApp)).status).toBe(404);
     });
 
     it('confirms a proposal: the code stays, the candidate name goes, who and when are kept, the party then has its code; it takes an owner or admin and a proposal that is still there', async () => {
       const [p1, p2] = partyIds as [string, string];
-      for (const who of [member, viewer]) expect((await call('matches/confirmName', who, { connectionId, partyId: p1 })).status).toBe(403);
+      for (const who of [member, viewer]) expect((await call('matches/confirmName', who, await decision(p1, 'KH_HS'))).status).toBe(403);
       expect(await nameRows()).toHaveLength(2);
+      const gone = { status: 409, body: { code: 'MISA_AMIS_NAME_PROPOSAL_GONE' } };
       // An ambiguous row, a party with no row and a connection that is not there are not proposals to confirm.
-      expect(await call('matches/confirmName', owner, { connectionId, partyId: p2 })).toMatchObject({ status: 409, body: { code: 'MISA_AMIS_NAME_PROPOSAL_GONE' } });
-      expect(await call('matches/confirmName', owner, { connectionId, partyId: randomUUID() })).toMatchObject({ status: 409, body: { code: 'MISA_AMIS_NAME_PROPOSAL_GONE' } });
-      expect(await call('matches/confirmName', owner, { connectionId: randomUUID(), partyId: p1 })).toMatchObject({ status: 404, body: { code: 'MISA_AMIS_CONNECTION_NOT_FOUND' } });
-      expect(await call('matches/confirmName', adminUser, { connectionId, partyId: p1 })).toMatchObject({ status: 200, body: { decided: true } });
+      expect(await call('matches/confirmName', owner, await decision(p2, 'KH_HS'))).toMatchObject(gone);
+      expect(await call('matches/confirmName', owner, { connectionId, partyId: randomUUID(), proposalId: randomUUID(), candidateCode: 'KH_HS' })).toMatchObject(gone);
+      expect(await call('matches/confirmName', owner, { ...(await decision(p1, 'KH_HS')), connectionId: randomUUID() })).toMatchObject({ status: 404, body: { code: 'MISA_AMIS_CONNECTION_NOT_FOUND' } });
+      // A decision is of the row and the candidate the person saw: another row id, another candidate's code, or another party's id is refused, and nothing changes.
+      expect(await call('matches/confirmName', owner, await decision(p1, 'KH_KHAC'))).toMatchObject(gone);
+      expect(await call('matches/confirmName', owner, await decision(p1, 'KH_HS', { proposalId: randomUUID() }))).toMatchObject(gone);
+      expect(await call('matches/confirmName', owner, await decision(p1, 'KH_HS', { proposalId: await rowOf(p2) }))).toMatchObject(gone);
+      expect(await call('matches/rejectName', owner, await decision(p1, 'KH_KHAC'))).toMatchObject(gone);
+      expect((await nameRows()).find((r) => r.match_key === p1)).toMatchObject({ state: 'name_proposal', catalogue_code: 'KH_HS' });
+      // The row the person saw is replaced by a newer check that proposes ANOTHER candidate for the same party: the old confirmation, for the old row and code, is refused.
+      const seen = await decision(p1, 'KH_HS');
+      await askAgain();
+      await record({ state: 'done', failure: null, results: [proposal(p1, 'KH_MOI', 'Hoa Sen (mới)'), { kind: 'party_name', ref: p2, state: 'ambiguous', code: null, entryId: null }] });
+      expect(await call('matches/confirmName', owner, seen)).toMatchObject(gone);
+      expect((await nameRows()).find((r) => r.match_key === p1)).toMatchObject({ state: 'name_proposal', catalogue_code: 'KH_MOI' });
+      await askAgain();
+      await record({ state: 'done', failure: null, results: [proposal(p1, 'KH_HS', 'Hoa Sen (HKD)'), { kind: 'party_name', ref: p2, state: 'ambiguous', code: null, entryId: null }] });
+      expect(await call('matches/confirmName', adminUser, await decision(p1, 'KH_HS'))).toMatchObject({ status: 200, body: { decided: true } });
       expect((await nameRows()).find((r) => r.match_key === p1)).toMatchObject({ state: 'confirmed', catalogue_code: 'KH_HS', candidate_name: null, confirmed_by: adminUser.userId, confirmed_at: expect.any(Date) });
       for (const who of [owner, member, viewer]) expect((await results(who)).partyNameCodes).toEqual(new Map([[p1, 'KH_HS']]));
       expect((await call('matches/proposals', owner, { connectionId })).body).toEqual([]);
       // Deciding twice finds nothing to decide; the name of the candidate is nowhere any more.
-      expect(await call('matches/confirmName', owner, { connectionId, partyId: p1 })).toMatchObject({ status: 409, body: { code: 'MISA_AMIS_NAME_PROPOSAL_GONE' } });
+      expect(await call('matches/confirmName', owner, { connectionId, partyId: p1, proposalId: randomUUID(), candidateCode: 'KH_HS' })).toMatchObject(gone);
       expect(await rows("SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1 AND candidate_name IS NOT NULL", [orgId])).toEqual([]);
       const audit = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.misa_amis_match.confirm_name'", [orgId]);
       expect(audit.length).toBeGreaterThan(0);
@@ -423,10 +441,11 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       const [, , p3] = partyIds as [string, string, string];
       await askAgain();
       await record({ state: 'done', failure: null, results: [proposal(p3, 'KH_HM', 'Hoa Mai (HKD)')] });
-      for (const who of [member, viewer]) expect((await call('matches/rejectName', who, { connectionId, partyId: p3 })).status).toBe(403);
-      expect(await call('matches/rejectName', owner, { connectionId, partyId: p3 })).toMatchObject({ status: 200, body: { decided: true } });
+      for (const who of [member, viewer]) expect((await call('matches/rejectName', who, await decision(p3, 'KH_HM'))).status).toBe(403);
+      const seen = await decision(p3, 'KH_HM');
+      expect(await call('matches/rejectName', owner, seen)).toMatchObject({ status: 200, body: { decided: true } });
       expect((await nameRows()).filter((r) => r.match_key === p3)).toEqual([]);
-      expect(await call('matches/rejectName', owner, { connectionId, partyId: p3 })).toMatchObject({ status: 409, body: { code: 'MISA_AMIS_NAME_PROPOSAL_GONE' } });
+      expect(await call('matches/rejectName', owner, seen)).toMatchObject({ status: 409, body: { code: 'MISA_AMIS_NAME_PROPOSAL_GONE' } });
       await askAgain();
       await record({ state: 'done', failure: null, results: [proposal(p3, 'KH_HM', 'Hoa Mai (HKD)')] });
       expect((await nameRows()).filter((r) => r.match_key === p3).map((r) => r.state)).toEqual(['name_proposal']);
@@ -458,7 +477,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       const [p1] = partyIds as [string];
       await askAgain();
       await record({ state: 'done', failure: null, results: [proposal(p1, 'KH_HS', 'Hoa Sen (HKD)')] });
-      expect(await call('matches/confirmName', owner, { connectionId, partyId: p1 })).toMatchObject({ body: { decided: true } });
+      expect(await call('matches/confirmName', owner, await decision(p1, 'KH_HS'))).toMatchObject({ body: { decided: true } });
       await askAgain();
       await record({ state: 'failed', failure: 'unreachable', results: [] });
       expect((await results(owner)).partyNameCodes).toEqual(new Map([[p1, 'KH_HS']]));
