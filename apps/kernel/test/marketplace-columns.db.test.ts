@@ -226,6 +226,9 @@ suite('Marketplace column check (#4036)', () => {
     expect(await events(fileId)).toHaveLength(2);
     expect(await checkRow(fileId)).toMatchObject({ state: 'requested', platform: 'shopee', assignments: MAPPING.assignments, requested_by: owner.userId });
     expect(await rows('SELECT 1 FROM crove_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [orgId, fileId])).toHaveLength(1);
+    // The same mapping pressed again while it waits returns the waiting one: the stored jsonb keeps its keys in its own order, so the mappings are compared field by field.
+    expect(await call('columnsCheck', adminUser, { fileId, mapping: MAPPING, idempotencyKey: randomUUID() })).toMatchObject({ status: 200, body: { queued: false, running: true } });
+    expect(await events(fileId)).toHaveLength(2);
   });
 
   it('asks again once the waiting check is older than ten minutes (a lost job must not block the file for ever)', async () => {
@@ -300,6 +303,15 @@ suite('Marketplace column check (#4036)', () => {
     expect(await checkRow(old)).toBeUndefined();
     expect((await checkRow(fileId))?.state).toBe(recent);
     await expect(workerPool.query('SELECT crove_finance.marketplace_column_check_prune(0)')).rejects.toThrow(/RETENTION_DAYS/);
+    // A check asked again today keeps its old finish time (the guard allows no other move), and the prune looks at the later of the two: the waiting request is not deleted for an old finish.
+    const again = await fileOf(orgId, { method: 'unsupported', result: null });
+    expect((await call('columnsCheck', owner, { fileId: again, idempotencyKey: randomUUID() })).status).toBe(200);
+    expect(await record(again, { state: 'done', sheet: SHEET, refusal: null, preview: null })).toMatchObject({ recorded: true });
+    await rows("UPDATE crove_finance.marketplace_column_check SET finished_at = now() - interval '8 days', requested_at = now() - interval '8 days' WHERE org_id = $1 AND file_id = $2", [orgId, again]);
+    expect((await call('columnsCheck', owner, { fileId: again, mapping: MAPPING, idempotencyKey: randomUUID() })).status).toBe(200);
+    expect(await checkRow(again)).toMatchObject({ state: 'requested' });
+    await workerPool.query('SELECT crove_finance.marketplace_column_check_prune(7)');
+    expect((await checkRow(again))?.state).toBe('requested');
   });
 
   it('deletes the check whose preview quotes a person when an owner erases that person, and keeps the others', async () => {

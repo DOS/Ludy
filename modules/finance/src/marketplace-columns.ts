@@ -37,10 +37,13 @@ export const MARKETPLACE_COLUMN_CHECK_REQUESTED = 'finance.marketplace_column_ch
 const iso = (value: Date | string): string => new Date(value).toISOString();
 const notFound = () => new DomainError('MARKETPLACE_COLUMNS_NOT_FOUND', 404, 'Không tìm thấy báo cáo chưa nhận ra này');
 
-/** Whether a stored request is for the mapping asked: the platform and every assignment, in order. */
+/** Whether a stored request is for the mapping asked: the platform and every assignment, in order. Compared field by field: the database stores a jsonb object with its keys in its own order, so the text of
+ * the stored array is never the text of the parsed input. */
 export function sameMapping(stored: { platform: string | null; assignments: unknown }, asked: MarketplaceColumnMapping | undefined): boolean {
   if ((stored.platform ?? null) !== (asked?.platform ?? null)) return false;
-  return JSON.stringify(stored.assignments ?? []) === JSON.stringify(asked?.assignments ?? []);
+  const have = Array.isArray(stored.assignments) ? (stored.assignments as Array<{ index?: unknown; field?: unknown }>) : [];
+  const want = asked?.assignments ?? [];
+  return have.length === want.length && want.every((a, i) => have[i]?.index === a.index && have[i]?.field === a.field);
 }
 
 // The org's own spreadsheet that no reader of the worker took, with its original still there; null for any other file (an invoice, a bank statement, a recognised report, a file of another org).

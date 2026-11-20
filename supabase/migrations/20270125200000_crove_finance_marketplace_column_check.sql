@@ -48,8 +48,6 @@ CREATE TABLE IF NOT EXISTS crove_finance.marketplace_column_check (
   CONSTRAINT marketplace_column_check_member_fk FOREIGN KEY (org_id, requested_by) REFERENCES crove_kernel.tenant_member (org_id, user_id) ON DELETE SET NULL (requested_by)
 );
 CREATE INDEX IF NOT EXISTS marketplace_column_check_requested_by_idx ON crove_finance.marketplace_column_check (org_id, requested_by) WHERE requested_by IS NOT NULL;
--- The nightly retention lists the checks that finished more than seven days ago.
-CREATE INDEX IF NOT EXISTS marketplace_column_check_finished_idx ON crove_finance.marketplace_column_check (finished_at) WHERE finished_at IS NOT NULL;
 SELECT crove_kernel.apply_tenant_rls('crove_finance.marketplace_column_check');
 REVOKE UPDATE ON crove_finance.marketplace_column_check FROM crove_tenant;
 GRANT UPDATE (platform, assignments, state, failure, refusal, requested_by, requested_at, finished_at, sheet, preview) ON crove_finance.marketplace_column_check TO crove_tenant;
@@ -137,7 +135,8 @@ BEGIN
     RAISE EXCEPTION 'MARKETPLACE_COLUMN_CHECK_RETENTION_DAYS' USING ERRCODE = '22023';
   END IF;
   DELETE FROM crove_finance.marketplace_column_check c
-   WHERE COALESCE(c.finished_at, c.requested_at) < pg_catalog.now() - pg_catalog.make_interval(days => p_days);
+   -- The row's last move: a new request keeps the earlier finish time, so the later of the two is the age, and a check asked again today is never pruned for an old finish.
+   WHERE GREATEST(c.requested_at, COALESCE(c.finished_at, c.requested_at)) < pg_catalog.now() - pg_catalog.make_interval(days => p_days);
   GET DIAGNOSTICS v_deleted = ROW_COUNT;
   RETURN v_deleted;
 END $$;
