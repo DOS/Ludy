@@ -9,6 +9,8 @@ export const MARKETPLACE_COLUMN_PLATFORMS = ['shopee', 'tiktok_shop', 'lazada'] 
 export const MARKETPLACE_COLUMN_FIELDS = ['orderNo', 'lineKey', 'orderedAt', 'shippedAt', 'deliveredAt', 'status', 'returnStatus', 'sku', 'itemName', 'variation', 'quantity', 'unitPrice', 'amount'] as const;
 export const MARKETPLACE_COLUMN_REFUSALS = ['no_header', 'bad_column', 'buyer_column', 'field_twice', 'column_twice', 'no_order_no', 'no_line', 'nothing_read', 'row_stops_file', 'too_many_rows', 'rows_without_order', 'return_without_status', 'quantity_exceeds_amount', 'dates_swapped', 'buyer_text'] as const;
 export const MARKETPLACE_COLUMN_FAILURES = ['not_a_sheet', 'too_large', 'unavailable', 'unreadable'] as const;
+// A check asked this long ago and still waiting is read as lost: the server then lets a press ask again, and the screen stops waiting and says so (a lost job must not block the file for ever).
+export const MARKETPLACE_COLUMN_RUNNING_MINUTES = 10;
 // The lines a member sees before anything is saved: no more than this many.
 export const MARKETPLACE_COLUMN_PREVIEW_LINES = 20;
 // A check, its masked sheet and its preview (personal data) are deleted by the nightly retention this many days after the check finished.
@@ -68,6 +70,16 @@ export const zMarketplaceColumnPreview = z.strictObject({
   skipped: z.number().int().min(0).max(1_048_576),
 });
 export type MarketplaceColumnPreview = z.infer<typeof zMarketplaceColumnPreview>;
+
+// The org's unrecognised spreadsheets the screen offers a column check for: newest first, at most this many, each with where its check stands (`none` before anyone asked).
+export const MARKETPLACE_COLUMN_FILES_LIMIT = 10;
+export const zMarketplaceColumnsFile = z.strictObject({
+  fileId: zId,
+  filename: z.string().max(255),
+  createdAt: z.string(),
+  state: z.enum(['none', 'requested', 'done', 'failed']),
+});
+export type MarketplaceColumnsFile = z.infer<typeof zMarketplaceColumnsFile>;
 
 // What the worker found for a file: `none` before anyone asked. `sheet` is kept across requests; `refusal` and `preview` belong to the mapping asked last.
 export const zMarketplaceColumnsStatus = z.strictObject({

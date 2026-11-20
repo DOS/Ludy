@@ -291,6 +291,34 @@ suite('Marketplace column check (#4036)', () => {
     expect(await status(owner, other)).toMatchObject({ status: 200, body: { state: 'done', refusal: 'buyer_text', preview: null, sheet: SHEET } });
   });
 
+  it('lists the unrecognised spreadsheets of the org newest first with where each check stands, no more than ten, and nothing else', async () => {
+    const files = async (who: Account) => call('columnsFiles', who, {});
+    // A recognised report, a PDF, and a file of another org are not offered; a new unrecognised spreadsheet is, first, with no check yet.
+    const recognised = await fileOf(orgId, { method: 'unsupported', result: { kind: 'marketplace_orders' } });
+    const pdf = await fileOf(orgId, { method: 'unsupported', result: null }, 'application/pdf');
+    const otherOrg = await fileOf(otherOrgId, { method: 'unsupported', result: null });
+    const fresh = await fileOf(orgId, { method: 'unsupported', result: null });
+    for (const who of [owner, adminUser, member]) {
+      const answer = await files(who);
+      expect(answer.status, who.email).toBe(200);
+      const list = answer.body as Array<{ fileId: string; filename: string; createdAt: string; state: string }>;
+      expect(list.length).toBeLessThanOrEqual(10);
+      expect(list[0], who.email).toMatchObject({ fileId: fresh, state: 'none' });
+      const ids = list.map((f) => f.fileId);
+      for (const hidden of [recognised, pdf, otherOrg]) expect(ids).not.toContain(hidden);
+      // Names and states only: nothing of a sheet or a preview.
+      expect(Object.keys(list[0] ?? {}).sort()).toEqual(['createdAt', 'fileId', 'filename', 'state']);
+    }
+    // Once asked, the file says where its check stands.
+    expect((await call('columnsCheck', owner, { fileId: fresh, idempotencyKey: randomUUID() })).status).toBe(200);
+    expect(((await files(owner)).body as Array<{ fileId: string; state: string }>)[0]).toMatchObject({ fileId: fresh, state: 'requested' });
+    expect(await record(fresh, { state: 'done', sheet: SHEET, refusal: null, preview: null })).toMatchObject({ recorded: true });
+    expect(((await files(owner)).body as Array<{ fileId: string; state: string }>)[0]).toMatchObject({ fileId: fresh, state: 'done' });
+    // A viewer and an outsider are refused.
+    expect((await files(viewer)).status).toBe(403);
+    expect((await files(outsider)).status).not.toBe(200);
+  });
+
   // A person's own context writes SQL as the tenant role: the policies let an importer write a row, so the guard alone must stop a person from typing a result (a forged passed check must never reach #4037's
   // confirm). Each statement runs in a transaction that is rolled back; the answer is the error, or `ok` and what the row held.
   const asPerson = (who: Account, statement: string, values: unknown[] = []) =>
