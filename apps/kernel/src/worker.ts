@@ -39,7 +39,7 @@ import { runPushJob, type PushSender } from './web-push.ts';
 import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging, sweepTmpBlobs } from './retention.ts';
-import { runMarketplaceRetention } from './marketplace-retention.ts';
+import { pruneMarketplaceColumnChecks, runMarketplaceRetention } from './marketplace-retention.ts';
 import { runMeetingsTranscribe, type MeetingsTranscribeDeps, type MeetingsTranscribeJob } from './meetings-transcribe.ts';
 import { runMeetingsLiveNotes, type MeetingsLiveNotesDeps, type MeetingsLiveNotesJob } from './meetings-live-notes.ts';
 import { createShredRefSync, replayShreds, runMeetingsRetention, sweepMeetingMedia } from './meetings-retention.ts';
@@ -76,6 +76,7 @@ import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
 import { runMarketplacePoll, type MarketplacePollJob } from './marketplace-poll-job.ts';
+import { runMarketplaceColumns, type MarketplaceColumnsJob } from './marketplace-columns-job.ts';
 import { runMisaAmisMatch, type MisaAmisMatchJob } from './misa-amis-match-job.ts';
 import { runMisaAmisTest, type MisaAmisTestJob } from './misa-amis-test-job.ts';
 import { pushFollowUp, pushGiveUp, pushPressKeyTail, runMisaAmisPush, type MisaAmisPushJob } from './misa-amis-push-job.ts';
@@ -459,6 +460,8 @@ const MARKETPLACE_POLL_RETRY_LIMIT = 3;
 const MISA_AMIS_TEST_RETRY_LIMIT = 2;
 // How many more times a catalogue check runs in the same job when its record was dropped because the request was filed again meanwhile (#4124).
 const MISA_AMIS_MATCH_SUPERSEDED_RUNS = 2;
+// The same for the column check of an unrecognised order report (#4036): a record the request time did not match was dropped, and the job runs again a few times at most.
+const MARKETPLACE_COLUMNS_SUPERSEDED_RUNS = 2;
 // A push run that fails is tried again with backoff; rows begun and never answered are asked about, never sent twice (the ledger and the table's states say so).
 const MISA_AMIS_PUSH_RETRY_LIMIT = 2;
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
@@ -1135,6 +1138,10 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         await runMarketplaceRetention({ runtime: deps.runtime, workerDb: deps.workerDb, store: deps.store }).catch((error: unknown) => {
           opsAlert('[marketplace-retention] ALERT the nightly deletion failed; the error is in the worker log', error);
         });
+        // The column checks of unrecognised order reports older than a week, with their previews (#4036): personal data kept seven days at most.
+        await pruneMarketplaceColumnChecks({ workerDb: deps.workerDb }).catch((error: unknown) => {
+          opsAlert('[marketplace-retention] ALERT the nightly deletion of column checks failed; the error is in the worker log', error);
+        });
       }
       await sweepStaging(deps.store);
       await sweepInboundBlobs(deps.store, deps.workerDb);
@@ -1654,6 +1661,22 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       console.log(`[misa-amis] match ${job.data.connectionId.slice(0, 8)}: ${done.state}`);
       // Still superseded after the runs above (the request was filed again every time): fail the job so the queue runs it again after its retry delay, instead of leaving the check waiting.
       if ('superseded' in done && done.superseded) throw new Error('misa-amis match: the request was filed again during every run');
+    });
+  }
+
+  // The check of a column mapping on a marketplace order report no profile fits (#4036, slice 1c of #3850), queued by the relay below when a member asks. The API cannot reach the extract sandbox: this job reads
+  // the file from the blob store, sends it to the sandbox's `marketplace_columns` kind and records the masked sheet and the verdict. Ids only in the job.
+  if (finance) {
+    await boss.work<MarketplaceColumnsJob>(QUEUES.marketplaceColumns, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const columnsDeps = { runtime: deps.runtime, store: deps.store, extract: deps.extract };
+      let done = await runMarketplaceColumns(columnsDeps, job.data);
+      // A record the request time did not match was dropped: the request was filed again while this run read the file, and the new one has no job of its own (this run holds the key). Run again, a few times at most.
+      for (let again = 0; again < MARKETPLACE_COLUMNS_SUPERSEDED_RUNS && 'superseded' in done && done.superseded; again++) {
+        done = await runMarketplaceColumns(columnsDeps, job.data);
+      }
+      console.log(`[marketplace-columns] ${job.data.fileId.slice(0, 8)}: ${done.state}`);
+      if ('superseded' in done && done.superseded) throw new Error('marketplace columns: the request was filed again during every run');
     });
   }
 
@@ -2893,6 +2916,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 const connectionId = String(row.payload.connection_id);
                 await boss.send(QUEUES.misaAmisMatch, { orgId: row.org_id, connectionId } satisfies MisaAmisMatchJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.misaAmisMatch, connectionId),
+                  retryLimit: MISA_AMIS_TEST_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // A member asked for the check of a column mapping on an unrecognised order report (#4036): its job reads the file through the extract sandbox and records the masked sheet and the verdict. Ids only in the job.
+              if (finance && row.type === 'finance.marketplace_column_check.requested') {
+                const fileId = String(row.payload.file_id);
+                await boss.send(QUEUES.marketplaceColumns, { orgId: row.org_id, fileId } satisfies MarketplaceColumnsJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.marketplaceColumns, fileId),
                   retryLimit: MISA_AMIS_TEST_RETRY_LIMIT,
                   retryDelay: 30,
                   retryBackoff: true,

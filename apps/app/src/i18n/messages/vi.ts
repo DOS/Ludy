@@ -14777,6 +14777,10 @@ export const vi = {
         staged: 'Xem các báo cáo đơn hàng chờ nhập',
         unassigned: 'Xem các dòng đơn hàng của sàn chưa gán mặt hàng',
         suggest_source: 'Đọc tên sản phẩm và SKU của các dòng đơn sàn chưa gán để gợi ý mặt hàng',
+        columns_check: 'Yêu cầu đọc các cột của báo cáo đơn hàng sàn chưa nhận ra và kiểm tra cách ghép cột trên tệp',
+        columns_record: 'Ghi lại kết quả kiểm tra cột của báo cáo đơn hàng sàn chưa nhận ra',
+        columns_target: 'Đọc báo cáo đơn hàng sàn chưa nhận ra mà tiến trình nền cần kiểm tra',
+        columns: 'Xem kết quả kiểm tra cột của báo cáo đơn hàng sàn chưa nhận ra',
       },
       marketplace_income: {
         confirm: 'Nhập báo cáo thu nhập của sàn',

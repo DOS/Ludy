@@ -645,6 +645,21 @@ export type MisaAmisPushTable = Refine<
   },
   'legal_entity_id'
 >;
+// The check of a column mapping on an unrecognised marketplace order report (#4036, slice 1c of #3850): the last request per file, and what the worker found (the masked sheet, the check's refusal, a preview).
+export const MARKETPLACE_COLUMN_CHECK_STATES = ['requested', 'done', 'failed'] as const;
+export type MarketplaceColumnCheckState = (typeof MARKETPLACE_COLUMN_CHECK_STATES)[number];
+export const MARKETPLACE_COLUMN_CHECK_FAILURES = ['not_a_sheet', 'too_large', 'unavailable', 'unreadable'] as const;
+export type MarketplaceColumnCheckFailure = (typeof MARKETPLACE_COLUMN_CHECK_FAILURES)[number];
+export const MARKETPLACE_COLUMN_CHECK_REFUSALS = ['no_header', 'bad_column', 'buyer_column', 'field_twice', 'column_twice', 'no_order_no', 'no_line', 'nothing_read', 'row_stops_file', 'too_many_rows', 'rows_without_order', 'return_without_status', 'quantity_exceeds_amount', 'dates_swapped', 'buyer_text'] as const;
+export type MarketplaceColumnCheckRefusal = (typeof MARKETPLACE_COLUMN_CHECK_REFUSALS)[number];
+export type MarketplaceColumnCheckTable = Refine<
+  G.FinanceMarketplaceColumnCheckTable,
+  {
+    state: Generated<MarketplaceColumnCheckState>;
+    failure: MarketplaceColumnCheckFailure | null;
+    refusal: MarketplaceColumnCheckRefusal | null;
+  }
+>;
 // The check of a connection's vouchers against the firm's MISA catalogue (#4112, S3a of #4103): the last request, and what the worker found for each party (by tax code) and item (by code).
 export const MISA_AMIS_MATCH_CHECK_STATES = ['requested', 'done', 'failed'] as const;
 export type MisaAmisMatchCheckState = (typeof MISA_AMIS_MATCH_CHECK_STATES)[number];
@@ -1525,6 +1540,7 @@ type Refined = Tables<{
   'crove_finance.einvoice_draft': EInvoiceDraftTable;
   'crove_finance.einvoice_connection': EInvoiceConnectionTable;
   'crove_finance.einvoice_notice': EInvoiceNoticeTable;
+  'crove_finance.marketplace_column_check': MarketplaceColumnCheckTable;
   'crove_finance.marketplace_connection': MarketplaceConnectionTable;
   'crove_finance.misa_amis_connection': MisaAmisConnectionTable;
   'crove_finance.misa_amis_match': MisaAmisMatchTable;

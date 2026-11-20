@@ -46,6 +46,7 @@ export const financeManifest = defineModule({
       journal_line: columns(['org_id', 'entry_id', 'line_no', 'account_code', 'debit', 'credit', 'party_id', 'legal_entity_id'], { memo: 'pii' }),
       journal_voucher: columns(['org_id', 'id', 'number', 'voucher_date', 'proposal_id', 'created_by', 'created_at', 'closing_year', 'stock_closing_month', 'stock_count_id', 'payroll_run_id', 'settlement_id', 'payout_settlement_id', 'payout_bank_line_id', 'settlement_month', 'fee_document_id', 'surplus_count_id', 'legal_entity_id', 'number_period', 'number_allocation_id'], { description: 'pii' }),
       legal_entity_books: columns(['org_id', 'id', 'legal_entity_id', 'regime', 'chart_version', 'effective_from', 'created_by', 'created_at']),
+      marketplace_column_check: columns(['org_id', 'id', 'file_id', 'platform', 'assignments', 'state', 'failure', 'refusal', 'requested_by', 'requested_at', 'finished_at', 'sheet'], { preview: 'pii' }),
       marketplace_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'platform', 'last_test_state', 'last_tested_at', 'poll_cursor', 'last_polled_at', 'last_poll_state', 'orders_waiting', 'created_by', 'created_at']),
       marketplace_party: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'party_id', 'created_by', 'created_at']),
       misa_amis_callback_pending: columns(['seq', 'org_refid', 'voucher_type', 'org_company_code', 'success', 'error_code', 'received_at', 'claimed_at', 'product'], { error_message: 'sensitive' }),
