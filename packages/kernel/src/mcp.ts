@@ -12,12 +12,15 @@
 // - kernel.mcp.parties: `ludy_parties_list` (slice 1b), the party register as the contacts screen shows it to an owner or admin; its comment is its privacy review.
 // No command of the kernel declares `mcp`. The one command an MCP grant may run, the Social draft (#3227), is declared in modules/social, and a test pins that it is the only one.
 // - kernel.mcp.propose: what an MCP grant's call to an R2 or R3 command becomes (ADR-0051 decision 10, #3858 slice d): a pending proposal, never an execution.
+// - kernel.mcp.proposal_notify: the worker's step after it (E5, #4180): the people who may approve that proposal are told, once, in their notifications.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MCP_SCOPE_IDS, plainLine, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMemberGrantsView, type McpGrantView } from '@crove/kernel-contract';
+import { MCP_SCOPE_IDS, plainLine, zId, zMcpGrantRevoke, zMcpMemberGrantsSet, zMcpMemberGrantsView, type McpGrantView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, MCP_PROPOSE_COMMAND, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
 import { hasApprovalPolicy } from './approval.ts';
+import { APPROVAL_WAITING, notifyMembers } from './notifications.ts';
+import { approversNow } from './proposal-reminders.ts';
 import { PROPOSAL_PREPARERS } from './proposal-resubmit.ts';
 import { mcpConversationQueries } from './mcp-conversations.ts';
 import { mcpSignals } from './mcp-signals.ts';
@@ -359,5 +362,46 @@ export const mcpPropose = defineCommand({
   },
 });
 
-export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpMemberGrantsSet, mcpPropose, ...mcpWakeCommands];
+// Telling the approvers (E5, #4180, owner decision 2026-11-19, "Cho làm, việc lớn chờ duyệt"): a proposal of an AI coworker waits for an owner or an admin, and nothing else would tell them it is there.
+// kernel.mcp.propose cannot do it itself: it runs in the sealed proposal context, which writes that one proposal row and no event and no notification. The worker's sweep (mcp-proposal-notice.ts, every
+// 30 seconds) finds the pending proposals of a grant that were not told yet (crove_kernel.mcp_proposals_to_tell) and runs this, under the proposal's lock: the people who could approve it now (the snapshot at
+// the ask, still holding an approving role, and not held back by four-eyes: with two owners the person who connected the AI app is not told, a sole owner is) get one kernel.approval_waiting notification
+// each, the one a person's or an org-chart agent's proposal already makes, so it turns on and off with that kind, opens the Inbox card and reads as settled once the proposal is decided (the list reads
+// the proposal's state). It holds no text: the card's title, which the database built from the client's name and the kind (marked as an AI app's), is read when it is shown, and nothing the call
+// supplied (a customer-facing reply, a payload) is ever read here. One per proposal: the notification's key is the proposal's, and the proposal is stamped (approvers_told_at) even when nobody had to
+// be told, so a second pass, a retry and a replay write nothing. A proposal decided or expired before the sweep got to it is left alone.
+export const mcpProposalNotify = defineCommand({
+  name: 'kernel.mcp.proposal_notify',
+  input: z.strictObject({ proposalId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.proposal', id: input.proposalId }),
+  handler: async (ctx, input) => {
+    const proposal = await ctx.trx
+      .selectFrom('crove_kernel.proposal')
+      .select(['id', 'command', 'status', 'eligible_approvers', 'authors', 'co_authors', 'legal_entity_id', 'requested_by_grant', 'approvers_told_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.proposalId)
+      .forUpdate()
+      .executeTakeFirst();
+    // Only the pending proposal of a grant that was not told yet; a person's or an agent's proposal has its own event.
+    if (!proposal || proposal.status !== 'pending' || proposal.requested_by_grant === null || proposal.approvers_told_at !== null) return { sent: 0 };
+    const approvers = await approversNow(ctx, proposal);
+    const sent = await notifyMembers(ctx, {
+      kind: APPROVAL_WAITING,
+      users: approvers,
+      key: `proposal:${proposal.id}`,
+      subject: { type: 'kernel.proposal', id: proposal.id },
+      legalEntityId: proposal.legal_entity_id,
+      detail: {},
+    });
+    await ctx.trx.updateTable('crove_kernel.proposal').set({ approvers_told_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', proposal.id).execute();
+    // Counts only: who was told is the notification table's, and the proposal's content is never read here.
+    ctx.audit({ approvers: approvers.length, sent });
+    return { sent };
+  },
+});
+
+export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpMemberGrantsSet, mcpPropose, mcpProposalNotify, ...mcpWakeCommands];
 export const mcpQueries = [mcpGrantList, mcpMemberGrantsGet, mcpAbout, mcpParties, mcpSignals, ...mcpConversationQueries, ...mcpWakeQueries];
