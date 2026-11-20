@@ -264,7 +264,7 @@ export async function importStatement(ctx: CommandContext, input: BankStatementI
     ...preview.counts,
     breaks: preview.breaks.length,
     // The lines the feed's cut-over day kept out (#4218), counted among the duplicates above.
-    ...(preview.feed ? { feedFrom: preview.feed.from, feedSkipped: preview.feed.skipped } : {}),
+    ...(preview.feed ? { feedFrom: preview.feed.from, feedSkipped: preview.feed.leftOut } : {}),
     ...(fileId ? { fileId, source: 'file' } : {}),
   });
   await ctx.activity(

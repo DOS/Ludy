@@ -262,13 +262,13 @@ describe('skipFedLines (#4218)', () => {
     expect(skipped.preview.rows.map((r) => r.status)).toEqual(['new', 'duplicate', 'duplicate']);
     expect(skipped.preview.counts).toMatchObject({ new: 1, duplicate: 2 });
     expect(skipped.lines.map((l) => l.date)).toEqual(['2026-10-10']);
-    expect(skipped.preview.feed).toEqual({ from: '2026-10-15', skipped: 2 });
+    expect(skipped.preview.feed).toEqual({ from: '2026-10-15', leftOut: 2 });
   });
 
   it('leaves a file wholly before the day as it was, and says nothing was skipped', () => {
     const skipped = skipFedLines(checked(), '2026-11-01');
     expect(skipped.preview.counts).toMatchObject({ new: 3, duplicate: 0 });
     expect(skipped.lines).toHaveLength(3);
-    expect(skipped.preview.feed).toEqual({ from: '2026-11-01', skipped: 0 });
+    expect(skipped.preview.feed).toEqual({ from: '2026-11-01', leftOut: 0 });
   });
 });

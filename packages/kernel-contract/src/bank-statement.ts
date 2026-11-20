@@ -97,8 +97,8 @@ export const zBankImportPreview = z.object({
   // No row has an error: the import can go ahead.
   ok: z.boolean(),
   // Set when the account is fed from a cut-over day on (#4218): the file's lines on or after `from` are skipped (shown as
-  // duplicates), `skipped` of them.
-  feed: z.object({ from: zLocalDate, skipped: z.number().int().nonnegative() }).optional(),
+  // duplicates), `leftOut` of them.
+  feed: z.object({ from: zLocalDate, leftOut: z.number().int().nonnegative() }).optional(),
 });
 export type BankImportPreview = z.infer<typeof zBankImportPreview>;
 

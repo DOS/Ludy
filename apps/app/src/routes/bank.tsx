@@ -186,9 +186,9 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
                   <AlertDescription className="text-warning">{t('conflictNote', { count: data.counts.conflict })}</AlertDescription>
                 </Alert>
               )}
-              {data.feed && data.feed.skipped > 0 && (
+              {data.feed && data.feed.leftOut > 0 && (
                 <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
-                  <AlertDescription className="text-warning">{t('feedSkipped', { count: data.feed.skipped, from: f.date(data.feed.from) })}</AlertDescription>
+                  <AlertDescription className="text-warning">{t('feedSkipped', { count: data.feed.leftOut, from: f.date(data.feed.from) })}</AlertDescription>
                 </Alert>
               )}
               {data.breaks.length > 0 && (

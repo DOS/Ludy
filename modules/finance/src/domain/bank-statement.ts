@@ -254,19 +254,19 @@ export interface StatementCheck {
 // they would have shown go with them. Lines before the day are checked and stored as ever. The preview says how many
 // were skipped, so the screen can warn.
 export function skipFedLines(checked: StatementCheck, from: string): StatementCheck {
-  let skipped = 0;
+  let leftOut = 0;
   const counts = { ...checked.preview.counts };
   const rows = checked.preview.rows.map((row) => {
     if (row.date === null || row.date < from || row.status === null || row.status === 'duplicate') return row;
     counts[row.status]--;
     counts.duplicate++;
-    skipped++;
+    leftOut++;
     return { ...row, status: 'duplicate' as const, clash: null };
   });
   return {
     ...checked,
     lines: checked.lines.filter((l) => l.date < from),
-    preview: { ...checked.preview, rows, counts, breaks: checked.preview.breaks.filter((b) => b.date < from), feed: { from, skipped } },
+    preview: { ...checked.preview, rows, counts, breaks: checked.preview.breaks.filter((b) => b.date < from), feed: { from, leftOut } },
   };
 }
 

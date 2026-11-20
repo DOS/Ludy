@@ -568,7 +568,7 @@ suite('bank statement import (#326)', () => {
     const shown = await preview(rows, '1121.CUT');
     expect(shown.status).toBe(200);
     expect(shown.body.counts).toMatchObject({ new: 2, duplicate: 2 });
-    expect(shown.body.feed).toEqual({ from: cut, skipped: 2 });
+    expect(shown.body.feed).toEqual({ from: cut, leftOut: 2 });
     expect(shown.body.rows.map((r: { status: string }) => r.status)).toEqual(['new', 'new', 'duplicate', 'duplicate']);
     // Imported, only the days before the cut-over are stored; the same file again stores nothing.
     expect(await importFile(rows, '1121.CUT')).toMatchObject({ status: 200, body: { counts: { new: 2, duplicate: 2 } } });
@@ -589,7 +589,7 @@ suite('bank statement import (#326)', () => {
     await setStatus('expired');
     expect((await preview(rows, '1121.CUT')).body.feed).toBeUndefined();
     await setStatus('active');
-    expect((await preview(rows, '1121.CUT')).body.feed).toEqual({ from: cut, skipped: 2 });
+    expect((await preview(rows, '1121.CUT')).body.feed).toEqual({ from: cut, leftOut: 2 });
     // A first pull that runs later than the day set (here: the day is set in SQL to before the pull's window, as a delay across midnight would leave it) moves the day up to where the pull really starts.
     const feedFromOf = async () => (await admin((c) => c.query<{ feed_from: string }>(`SELECT to_char(feed_from, 'YYYY-MM-DD') AS feed_from FROM crove_finance.bank_feed_account WHERE org_id = $1 AND id = $2`, [orgId, mapped.body.feedAccountId]))).rows[0]?.feed_from;
     await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET feed_from = $3, cursor = NULL, last_synced_at = NULL WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-9)]));
