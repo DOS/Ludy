@@ -301,7 +301,8 @@ function base(ctx: Reader) {
       'q.created_at',
       'q.updated_at',
       'q.actor_origin',
-      'q.tainted',
+      // The quote's text is tainted when the quote is, and when any of its lines is (a line a person saved with a tainted text, #4149).
+      sql<boolean>`(q.tainted OR EXISTS (SELECT 1 FROM crove_crm.quote_line tl WHERE tl.org_id = q.org_id AND tl.quote_id = q.id AND tl.tainted))`.as('tainted'),
       'q.sent_at',
       'q.sent_via',
       'q.first_viewed_at',

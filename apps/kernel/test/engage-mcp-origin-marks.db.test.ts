@@ -196,6 +196,38 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     expect(list.items.find((q) => q.id === theirs.id)).toMatchObject({ actorOrigin: 'mcp', tainted: true });
   });
 
+  it('lets the taint follow the text of a quote line: a person\'s copy of the coworker\'s line keeps it, a line they type does not, and a revision keeps the lines it copies', async () => {
+    const party = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'organization', name: 'Công ty dòng báo giá' });
+    const deal = await run<Deal>('crm.deal.create', { partyId: party.partyId, title: 'Cơ hội dòng', amount: '1000000', expectedClose: null }, asBrowser('owner'));
+    const lines = (text: string) => [{ kind: 'item' as const, description: text, quantity: '1', unitPrice: '100000', vatRate: '10' }];
+    const dy = await run<Quote>('crm.mcp.quote_save', { dealId: deal.id, lines: [] });
+    const filled = await run<Quote>('crm.mcp.quote_save', { quoteId: dy.id, version: dy.version, lines: lines('Gói Dy đề xuất') });
+    // A person copies that line into their own quote (the picker saves it as a new line): same text, still tainted; the row stays the person's.
+    const own = await run<Quote>('crm.quote.save', { dealId: deal.id, lines: [] }, asBrowser('owner'));
+    expect(own).toMatchObject({ actorOrigin: 'ui', tainted: false });
+    const copied = await run<Quote>('crm.quote.save', { quoteId: own.id, version: own.version, lines: lines('Gói Dy đề xuất') }, asBrowser('owner'));
+    expect(await one(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1`, [own.id])).toMatchObject({ actor_origin: 'ui', tainted: true });
+    // The quote says it carries tainted text though its own row is clean.
+    expect(copied).toMatchObject({ actorOrigin: 'ui', tainted: true });
+    expect(await one(`SELECT tainted FROM crove_crm.quote WHERE id = $1`, [own.id])).toMatchObject({ tainted: false });
+    // A line the person types, or rewrites, is theirs.
+    const typed = await run<Quote>('crm.quote.save', { quoteId: own.id, version: copied.version, lines: lines('Gói do người nhập') }, asBrowser('owner'));
+    expect(await one(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1`, [own.id])).toMatchObject({ actor_origin: 'ui', tainted: false });
+    expect(typed).toMatchObject({ tainted: false });
+    // A revision of the coworker's sent quote copies its lines with their mark.
+    const sent = (await run<{ quote: Quote }>('crm.quote.send', { quoteId: dy.id, version: filled.version, via: 'link' }, asBrowser('owner'))).quote;
+    const revision = await run<Quote>('crm.quote.revise', { quoteId: sent.id }, asBrowser('owner'));
+    expect(await one(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1`, [revision.id])).toMatchObject({ actor_origin: 'ui', tainted: true });
+  });
+
+  it('marks the contact a coworker adds, in the contact list, and not a person\'s own', async () => {
+    const theirs = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'person', name: 'Liên hệ do Dy thêm' });
+    const mine = await run<{ partyId: string }>('kernel.party.create', { kind: 'person', name: 'Liên hệ của người' }, asBrowser('owner'));
+    const list = await runtime.query<{ items: Array<{ id: string; actorOrigin: string; tainted: boolean }> }>('crm.contact.list', {}, asBrowser('owner'));
+    expect(list.items.find((c) => c.id === theirs.partyId)).toMatchObject({ actorOrigin: 'mcp', tainted: true });
+    expect(list.items.find((c) => c.id === mine.partyId)).toMatchObject({ actorOrigin: 'ui', tainted: false });
+  });
+
   it('marks the timeline rows a coworker makes and the contact\'s timeline says so, a person\'s rows are unmarked', async () => {
     const made = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'person', name: 'Khách dòng thời gian' });
     const mine = await run<{ partyId: string }>('kernel.party.create', { kind: 'person', name: 'Khách của người' }, asBrowser('owner'));

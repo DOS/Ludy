@@ -10,4 +10,5 @@ ALTER TABLE crove_crm.quote VALIDATE CONSTRAINT mcp_origin_ck;
 -- migration-lint: cross-module see above.
 ALTER TABLE crove_crm.quote_line VALIDATE CONSTRAINT mcp_origin_ck;
 ALTER TABLE crove_kernel.conversation_note VALIDATE CONSTRAINT mcp_origin_ck;
+ALTER TABLE crove_kernel.party VALIDATE CONSTRAINT mcp_origin_ck;
 ALTER TABLE crove_kernel.activity VALIDATE CONSTRAINT mcp_origin_ck;

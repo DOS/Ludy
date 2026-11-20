@@ -155,6 +155,14 @@ suite('the origin and taint marks of the sealed write contexts (#4149)', () => {
     }, true);
     for (const [table, id] of [['crove_kernel.conversation_note', made.note], ['crove_crm.deal', made.deal], ['crove_crm.quote', made.quote]] as const) expect(await mark(table, id), table).toEqual({ actor_origin: 'mcp', tainted: true });
     expect(await mark('crove_kernel.activity', made.activity)).toEqual({ actor_origin: 'mcp' });
+    // A contact the coworker adds is marked too, and a person's later edit of it (the app's own update sets its trust to a person's) leaves the mark.
+    const contact = randomUUID();
+    await inWrite(g, ENGAGE, async (attempt) => {
+      expect(await attempt(`INSERT INTO crove_kernel.party (org_id, id, kind, name, source_trust) VALUES ($1, $2, 'person', 'Dy thêm', 'external')`, [orgId, contact])).toBeNull();
+    }, true);
+    expect(await mark('crove_kernel.party', contact)).toEqual({ actor_origin: 'mcp', tainted: true });
+    await q(`UPDATE crove_kernel.party SET name = 'Người sửa', source_trust = 'user', actor_origin = 'ui', tainted = false WHERE id = $1`, [contact]);
+    expect(await mark('crove_kernel.party', contact)).toEqual({ actor_origin: 'mcp', tainted: true });
     expect((await q(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1`, [made.quote])).rows[0]).toEqual({ actor_origin: 'mcp', tainted: true });
   });
 
@@ -202,6 +210,11 @@ suite('the origin and taint marks of the sealed write contexts (#4149)', () => {
     expect(await mark('crove_kernel.conversation_note', note.rows[0]?.id as string)).toEqual({ actor_origin: 'ui', tainted: false });
     const act = await q<{ id: string }>(`INSERT INTO crove_kernel.activity (org_id, record_type, record_id, kind, summary, actor_id, actor_origin) VALUES ($1, 'kernel.party', $2, 'party.updated', 'Sửa', $3, 'mcp') RETURNING id`, [orgId, s.party, users.owner]);
     expect(await mark('crove_kernel.activity', act.rows[0]?.id as string)).toEqual({ actor_origin: 'ui' });
+    // A note and a timeline row never change their mark either (nothing in the engage context updates them; this is the defence in depth).
+    await q(`UPDATE crove_kernel.conversation_note SET actor_origin = 'mcp', tainted = true WHERE id = $1`, [note.rows[0]?.id]);
+    expect(await mark('crove_kernel.conversation_note', note.rows[0]?.id as string)).toEqual({ actor_origin: 'ui', tainted: false });
+    await q(`UPDATE crove_kernel.activity SET actor_origin = 'mcp' WHERE id = $1`, [act.rows[0]?.id]);
+    expect(await mark('crove_kernel.activity', act.rows[0]?.id as string)).toEqual({ actor_origin: 'ui' });
     await q(`UPDATE crove_crm.deal SET actor_origin = 'mcp', tainted = true WHERE id = $1`, [deal]);
     expect(await mark('crove_crm.deal', deal)).toEqual({ actor_origin: 'ui', tainted: false });
     // A person's line stays a person's under a forged update (the lines have a table-level UPDATE grant, so a trigger decides), and the coworker's line stays the coworker's.
@@ -213,6 +226,7 @@ suite('the origin and taint marks of the sealed write contexts (#4149)', () => {
   });
 
   it('is no tenant\'s to update where the grants are by column, has its checks validated, and its stamp functions are no PUBLIC\'s to call', async () => {
+    // (The contact and the quote lines hold a table-level UPDATE grant: a trigger decides there, as the forged updates above show.)
     for (const t of ['crove_kernel.conversation_note', 'crove_crm.deal', 'crove_crm.quote', 'crove_kernel.activity']) {
       for (const column of t === 'crove_kernel.activity' ? ['actor_origin'] : ['actor_origin', 'tainted']) {
         const granted = await q<{ ok: boolean }>(`SELECT has_column_privilege('crove_tenant', $1::regclass, $2, 'UPDATE') AS ok`, [t, column]);
@@ -220,18 +234,26 @@ suite('the origin and taint marks of the sealed write contexts (#4149)', () => {
       }
     }
     const checks = (await q<{ t: string; valid: boolean; def: string }>(`SELECT conrelid::regclass::text AS t, convalidated AS valid, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'mcp_origin_ck' ORDER BY 1`)).rows;
-    expect(checks.map((c) => c.t)).toEqual(['crove_crm.deal', 'crove_crm.quote', 'crove_crm.quote_line', 'crove_kernel.activity', 'crove_kernel.conversation_note']);
+    expect(checks.map((c) => c.t)).toEqual(['crove_crm.deal', 'crove_crm.quote', 'crove_crm.quote_line', 'crove_kernel.activity', 'crove_kernel.conversation_note', 'crove_kernel.party']);
     for (const c of checks) {
       expect(c.valid, c.t).toBe(true);
       expect(c.def, c.t).toContain("'mcp'");
       if (c.t !== 'crove_kernel.activity') expect(c.def, c.t).toContain('tainted');
     }
-    for (const fn of ['crove_kernel.mcp_origin_stamp_insert()', 'crove_kernel.mcp_origin_stamp_update()']) {
+    for (const fn of ['crove_kernel.mcp_origin_stamp_insert()', 'crove_kernel.mcp_origin_stamp_update()', 'crove_kernel.mcp_origin_keep_update()']) {
       expect((await q<{ ok: boolean }>(`SELECT has_function_privilege('public', $1, 'EXECUTE') AS ok`, [fn])).rows[0]?.ok, fn).toBe(false);
       expect((await q<{ cfg: string[] | null }>(`SELECT proconfig AS cfg FROM pg_proc WHERE oid = $1::regprocedure`, [fn])).rows[0]?.cfg, fn).toEqual(['search_path=pg_catalog, pg_temp']);
     }
     // The stamps fire after the write guard (alphabetical), so the guard judges the statement the command wrote, not the mark.
     const names = (await q<{ t: string; n: string }>(`SELECT tgrelid::regclass::text AS t, tgname AS n FROM pg_trigger WHERE tgname IN ('agent_write_guard', 'mcp_origin_stamp', 'mcp_origin_stamp_update') AND tgrelid = 'crove_crm.deal'::regclass ORDER BY tgname`)).rows.map((r) => r.n);
     expect(names).toEqual(['agent_write_guard', 'mcp_origin_stamp', 'mcp_origin_stamp_update']);
+    // Every stamp trigger is ENABLE ALWAYS (a replica session does not skip it), on the six tables, insert and update where the table has both.
+    const enabled = (await q<{ t: string; n: string; e: string }>(`SELECT tgrelid::regclass::text AS t, tgname AS n, tgenabled::text AS e FROM pg_trigger WHERE tgname LIKE 'mcp_origin_stamp%' AND NOT tgisinternal ORDER BY 1, 2`)).rows;
+    expect(enabled.map((r) => `${r.t}:${r.n}`)).toEqual([
+      'crove_crm.deal:mcp_origin_stamp', 'crove_crm.deal:mcp_origin_stamp_update', 'crove_crm.quote:mcp_origin_stamp', 'crove_crm.quote:mcp_origin_stamp_update',
+      'crove_crm.quote_line:mcp_origin_stamp', 'crove_crm.quote_line:mcp_origin_stamp_update', 'crove_kernel.activity:mcp_origin_stamp_update',
+      'crove_kernel.conversation_note:mcp_origin_stamp', 'crove_kernel.conversation_note:mcp_origin_stamp_update', 'crove_kernel.party:mcp_origin_stamp', 'crove_kernel.party:mcp_origin_stamp_update',
+    ]);
+    for (const r of enabled) expect(r.e, `${r.t}:${r.n}`).toBe('A');
   });
 });

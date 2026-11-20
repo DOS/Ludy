@@ -22,8 +22,6 @@ function document(number: string | null): QuoteDocument {
   return {
     quote: {
       id: '00000000-0000-4000-8000-000000000001',
-    actorOrigin: 'ui',
-    tainted: false,
       dealId: '00000000-0000-4000-8000-000000000002',
       dealTitle: 'Gói kế toán năm',
       partyId: '00000000-0000-4000-8000-000000000003',
@@ -42,6 +40,8 @@ function document(number: string | null): QuoteDocument {
       createdBy: 'u',
       createdAt: '2026-11-15T02:00:00.000Z',
       updatedAt: '2026-11-15T02:00:00.000Z',
+      actorOrigin: 'ui',
+      tainted: false,
       notes: null,
       terms: null,
       // The send's facts (Q2, #2694).
