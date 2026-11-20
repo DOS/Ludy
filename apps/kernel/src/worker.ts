@@ -1638,12 +1638,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     });
   }
 
-  // MISA AMIS Kế toán (#4112, S3a of #4103): the check of a connection's vouchers against the firm's catalogue, queued by the relay below when an owner or admin asks. It reads catalogue pages in memory and
-  // records only what it matched.
-  if (finance && misaAmisClient && marketplaceBroker) {
+  // MISA AMIS Kế toán (#4112, S3a of #4103) and MISA ASP (#4152): the check of a connection's vouchers against the firm's catalogue, queued by the relay below when an owner or admin asks. It reads catalogue
+  // pages in memory with the client of the connection's product and records only what it matched; a product the deployment holds no ClientID for is left alone.
+  if (finance && (misaAmisClient || misaAspClient) && marketplaceBroker) {
     await boss.work<MisaAmisMatchJob>(QUEUES.misaAmisMatch, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
-      const done = await runMisaAmisMatch({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient }, job.data);
+      const done = await runMisaAmisMatch({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient ?? null, aspClient: misaAspClient ?? null }, job.data);
       console.log(`[misa-amis] match ${job.data.connectionId.slice(0, 8)}: ${done.state}`);
     });
   }
@@ -2878,8 +2878,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   retryBackoff: true,
                 });
               }
-              // An owner or admin asked for the check of a MISA AMIS connection's vouchers against the firm's catalogue (#4112): its job reads the catalogue in memory and records what it matched. Ids only in the job.
-              if (finance && deps.channels?.misaAmis && deps.channels.broker && row.type === 'finance.misa_amis_match.check_requested') {
+              // An owner or admin asked for the check of a MISA connection's vouchers against the firm's catalogue (#4112, #4152): its job reads the catalogue in memory with the client of the connection's product and
+              // records what it matched. Ids only in the job.
+              if (finance && (deps.channels?.misaAmis || deps.channels?.misaAsp) && deps.channels.broker && row.type === 'finance.misa_amis_match.check_requested') {
                 const connectionId = String(row.payload.connection_id);
                 await boss.send(QUEUES.misaAmisMatch, { orgId: row.org_id, connectionId } satisfies MisaAmisMatchJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.misaAmisMatch, connectionId),

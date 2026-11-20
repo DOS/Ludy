@@ -600,10 +600,13 @@ suite('MISA AMIS connections (#3875)', () => {
     await expect(press(aspApp, amis)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_PUSH_DISABLED' } });
     // A capital letter in the id (the contract accepts it) does not slip the gate: the AMIS connection of an ASP-only push answers the same 404.
     await expect(press(aspPushApp, { id: String(amis?.id).toUpperCase(), legal_entity_id: String(amis?.legal_entity_id) })).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_PUSH_DISABLED' } });
-    // The catalogue check is the AMIS job's (it opens only an AMIS code with the AMIS client): a MISA ASP connection answers 404 and nothing is queued, in either case of the id.
-    for (const id of [String(asp?.id), String(asp?.id).toUpperCase()]) {
-      await expect(call('matches/check', owner, { id, ask: { kind: 'purchase_services', legalEntityId: String(asp?.legal_entity_id) } }, aspApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
-    }
+    // The catalogue check follows the connection's product too (#4152): the job reads with that product's client and opens only a code sealed for it. A connection whose product the deployment holds no ClientID for
+    // answers the same 404 as a deployment without the connector and nothing is queued; with the ClientID the check is queued, in either case of the id (the second press is the same batch, already running).
+    const askOf = (row: { legal_entity_id: string } | undefined) => ({ kind: 'purchase_services', legalEntityId: String(row?.legal_entity_id) });
+    await expect(call('matches/check', owner, { id: String(asp?.id), ask: askOf(asp) }, app)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
+    await expect(call('matches/check', owner, { id: String(amis?.id), ask: askOf(amis) }, aspOnlyApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
+    await expect(call('matches/check', owner, { id: String(asp?.id), ask: askOf(asp) }, aspApp)).resolves.toMatchObject({ status: 200, body: { queued: true, running: false } });
+    await expect(call('matches/check', owner, { id: String(asp?.id).toUpperCase(), ask: askOf(asp) }, aspApp)).resolves.toMatchObject({ status: 200, body: { queued: false, running: true } });
   });
 
   // The insert guard fails closed and cannot be skipped (#4132, two LOW items of the security review of #4131).

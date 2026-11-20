@@ -106,10 +106,6 @@ describe('the offer to send a previewed batch (#3902)', () => {
     expect(note(withCheck(young))).toBe(false);
     // The button stays: a person may always try, and the server answers MISA_AMIS_CHECK_REQUIRED.
     expect(wrap(<MisaAmisPushConfirm result={withCheck(null)} ask={ask} connectionId={ID} offer="ready" />)).toContain('misa-amis-push-start');
-    // MISA ASP has no catalogue check yet (#4152): the note says so instead of asking for one, and still shows while the last check is old.
-    const asp = wrap(<MisaAmisPushConfirm result={withCheck(null)} ask={ask} connectionId={ID} offer="ready" checkAvailable={false} />);
-    expect(asp).toContain('misa-amis-push-check-first');
-    expect(asp).toContain('That check is not available yet');
   });
 
   it('rules: how young a check must be', () => {
