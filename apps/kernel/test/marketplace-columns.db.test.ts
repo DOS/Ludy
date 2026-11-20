@@ -120,6 +120,8 @@ suite('the confirmed column mapping (#4037)', () => {
   });
 
   it('adds nothing for the same mapping of the same header again, and a different one is a new row that wins', async () => {
+    // The original mapping is confirmed here too (a no-op after the first test), so this case does not depend on the profile another test left.
+    await confirm('shopee', [...mapping(), { index: 5, header: 'Product', field: 'itemName' }]);
     const before = await stored();
     const again = await confirm('shopee', [...mapping(), { index: 5, header: 'Product', field: 'itemName' }]);
     expect(again.added).toBe(false);
