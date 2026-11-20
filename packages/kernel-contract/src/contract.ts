@@ -346,6 +346,7 @@ import {
 import {
   zNote,
   zNoteAcceptSummary,
+  zNoteBacklinksInput,
   zNoteClip,
   zNoteCreate,
   zNoteFromMeetingSummary,
@@ -368,6 +369,12 @@ import {
   zNoteVyResults,
   zNoteVyStatus,
   zNoteWritten,
+  zNotebookCreate,
+  zNotebookDeleted,
+  zNotebookRef,
+  zNotebookUpdate,
+  zNotebookWritten,
+  zNotebooksResponse,
   zNotesExport,
   zMyWork,
   zMyWorkInput,
@@ -596,7 +603,7 @@ import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStates
 import { zAdsBudgetLowerCall, zAdsManageCancelCall, zAdsManageChanged, zAdsManageStateView, zAdsManageSuggestion, zAdsObjectCall, zAdsScheduleShortenCall } from './ads-manage.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdS2d, zHouseholdS2dGet, zHouseholdS2e, zHouseholdS2eGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
-import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
+import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectTingee, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -1171,6 +1178,7 @@ export const contract = {
   notes: {
     list: oc.input(zNoteList).output(z.array(zNoteSummary)),
     get: oc.input(zNoteRef).output(zNote),
+    backlinks: oc.input(zNoteBacklinksInput).output(z.array(zNoteSummary)),
     search: oc.input(zNoteSearch).output(z.array(zNoteSummary)),
     panel: oc.input(zNoteLinkTarget).output(zNoteRecordPanelView),
     create: oc.input(zNoteCreate).output(zNoteWritten),
@@ -1185,6 +1193,13 @@ export const contract = {
     delete: oc.input(zNoteRef).output(zNoteWritten),
     linkAdd: oc.input(zNoteLinkAdd).output(zNoteLinkWritten),
     linkRemove: oc.input(zNoteLinkRemove).output(zNoteLinkWritten),
+    // Notebooks and 2-level stacks (#3559): private to their author or shared with the org.
+    notebooks: {
+      list: oc.input(z.strictObject({})).output(zNotebooksResponse),
+      create: oc.input(zNotebookCreate).output(zNotebookWritten),
+      update: oc.input(zNotebookUpdate).output(zNotebookWritten),
+      delete: oc.input(zNotebookRef).output(zNotebookDeleted),
+    },
     // How many private notes each member has, for an owner or admin before removing one; no text.
     privateCounts: oc.input(z.strictObject({})).output(z.array(zNotePrivateCount)),
     // The caller's own notes and to-dos, whole, for their download (#1678): never anyone else's.
@@ -2958,6 +2973,9 @@ export const contract = {
     // The offline sandbox feed, when the deployment enables it (BANK_FEED_SANDBOX): a login of its own each time. The
     // worker lists the accounts it reaches (listed), to map.
     connectSandbox: oc.input(z.object({ displayName: z.string().trim().min(1).max(200) })).output(z.object({ connectionId: zId })),
+    // A Tingee account, when the deployment enables it (BANK_FEED_TINGEE): the org's own Client ID and Secret Token, tested with one read call, then sealed. Owners and admins. The worker lists the
+    // accounts it reaches (listed), to map. Read-only: Tingee's payment endpoints are never called.
+    connectTingee: oc.input(zBankFeedConnectTingee).output(z.object({ connectionId: zId })),
     // The accounts a connection reaches, as the worker last listed them.
     listed: oc
       .input(z.object({ connectionId: zId }))

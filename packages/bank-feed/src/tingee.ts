@@ -7,7 +7,8 @@
 import { createHmac } from 'node:crypto';
 import type { BankFeedAccount, BankFeedProvider, BankFeedPull, BankFeedTransaction, Fetch } from './index.ts';
 
-const PRODUCTION_HOST = 'open-api.tingee.vn';
+export const TINGEE_PRODUCTION_HOST = 'open-api.tingee.vn';
+const PRODUCTION_HOST = TINGEE_PRODUCTION_HOST;
 export const TINGEE_HOSTS: readonly string[] = [PRODUCTION_HOST];
 // The UAT host, used only for the UAT run (S5); never part of the production allowlist.
 export const TINGEE_UAT_HOST = 'uat-open-api.tingee.vn';
@@ -28,6 +29,8 @@ const OVERLAP_DAYS = 2;
 // Pages one window may take, so a loop that never ends stops.
 const MAX_PAGES = 100;
 const DEFAULT_SPACING_MS = 600;
+// The most bytes of an answer the adapter reads: a page is at most 200 items of a few hundred bytes, so a larger one is not Tingee's.
+const MAX_ANSWER_BYTES = 2_000_000;
 const DAY_MS = 86_400_000;
 const VIETNAM_OFFSET_MS = 7 * 3_600_000;
 
@@ -158,6 +161,35 @@ function toLine(item: unknown, index: number): BankFeedTransaction | null {
   };
 }
 
+// The text of an answer, read in pieces and refused past MAX_ANSWER_BYTES (a declared length too large is refused before reading).
+async function readAnswer(response: Response): Promise<string> {
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > MAX_ANSWER_BYTES) {
+    // The body is released, not left to hold the connection until the transport cleans up.
+    await response.body?.cancel().catch(() => undefined);
+    throw new TingeeError('upstream', 'tingee: the answer is too large');
+  }
+  if (!response.body) {
+    const text = await response.text();
+    if (text.length > MAX_ANSWER_BYTES) throw new TingeeError('upstream', 'tingee: the answer is too large');
+    return text;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_ANSWER_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw new TingeeError('upstream', 'tingee: the answer is too large');
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
+}
+
 export function tingeeBankFeed(options: TingeeOptions): BankFeedProvider {
   const now = options.now ?? (() => new Date());
   const spacingMs = options.spacingMs ?? DEFAULT_SPACING_MS;
@@ -194,8 +226,9 @@ export function tingeeBankFeed(options: TingeeOptions): BankFeedProvider {
     if (!response.ok) throw new TingeeError('upstream', `tingee: HTTP ${response.status}`);
     let answer: unknown;
     try {
-      answer = parseResponse(await response.text());
-    } catch {
+      answer = parseResponse(await readAnswer(response));
+    } catch (error) {
+      if (error instanceof TingeeError) throw error;
       throw new TingeeError('upstream', 'tingee: the answer is not JSON');
     }
     if (!isRecord(answer)) throw new TingeeError('upstream', 'tingee: the answer has an unexpected shape');
@@ -215,6 +248,12 @@ export function tingeeBankFeed(options: TingeeOptions): BankFeedProvider {
   return {
     id: 'bank_tingee',
     hosts: TINGEE_HOSTS,
+
+    // One call: a page of one account. It proves the Client ID and Secret Token sign correctly (code 00), and nothing more: Tingee's answer says nothing of which product groups the credential holds.
+    async check(secret: string): Promise<void> {
+      const data = await call(parseTingeeSecret(secret), ACCOUNTS_PATH, { skipCount: 0, maxResultCount: 1 });
+      if (!Array.isArray(data.items)) throw new TingeeError('upstream', 'tingee: the account list has an unexpected shape');
+    },
 
     async accounts(secret: string): Promise<BankFeedAccount[]> {
       const credential = parseTingeeSecret(secret);
