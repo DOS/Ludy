@@ -2765,6 +2765,9 @@ export const conversationEraseContact = defineCommand({
     if (subject) {
       // What the customer wrote in other people's comment threads goes too, wherever it is (a reply is stored with the thread, not with
       // its author).
+      // What an AI coworker proposed about those comments (a private reply to one, hiding one: E4 #3863) names them by message id, and goes with them.
+      await sql`
+        SELECT crove_kernel.engage_proposal_erase(ARRAY[]::uuid[], ARRAY(SELECT m.id FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.author_identity_id = ${subject}::uuid))`.execute(ctx.trx);
       const others = await sql<{ conversation_id: string }>`
         DELETE FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.author_identity_id = ${subject}::uuid RETURNING m.conversation_id`.execute(ctx.trx);
       erased.messages += others.rows.length;

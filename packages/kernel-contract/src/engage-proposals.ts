@@ -8,7 +8,15 @@
 import { z } from 'zod';
 
 // What every twin takes: the payload the proposal stored (the original command's own strict input), and what the approver chose at the approval, never a client (the runtime refuses an MCP call that sets it).
-export const zApprovedCall = <T extends z.ZodType>(payload: T) => z.strictObject({ payload, acceptFailedChecks: z.boolean().optional() });
+const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// An id a client wrote in capitals is the same id (z.uuid() accepts it): the payload is stored with every id in lower case, the form the database compares (the erasure of a thread finds the proposals that name it by it).
+function lowerUuids(value: unknown): unknown {
+  if (typeof value === 'string') return UUID_TEXT.test(value) ? value.toLowerCase() : value;
+  if (Array.isArray(value)) return value.map(lowerUuids);
+  if (typeof value === 'object' && value !== null) return Object.fromEntries(Object.entries(value).map(([key, v]) => [key, lowerUuids(v)]));
+  return value;
+}
+export const zApprovedCall = <T extends z.ZodType>(payload: T) => z.strictObject({ payload: payload.transform((v) => lowerUuids(v) as z.output<T>), acceptFailedChecks: z.boolean().optional() });
 
 // The rest of this file is names and kinds. The table is read by the kernel (the approval policy, the catalog test), the modules (each declares its twin) and the app (which Inbox card a kind gets).
 

@@ -24,10 +24,10 @@ suite('the Hộp thư proposal twins (#3863)', () => {
   });
 
   // A customer's comment on a post: its thread, and the comment message in it.
-  async function comment(text: string) {
+  async function comment(text: string, contactId = `u-${tick}`) {
     const threadId = `thread-${randomUUID().slice(0, 8)}`;
     const messageId = `m-${threadId}`;
-    const event: ConversationEvent = { kind: 'comment_thread', threadId, postId: 'post-1', messageId, direction: 'in', contact: { id: `u-${tick}`, name: 'Trần Thị Khách' }, text, at: new Date(Date.UTC(2026, 10, 2, 3, 0, tick++)).toISOString() };
+    const event: ConversationEvent = { kind: 'comment_thread', threadId, postId: 'post-1', messageId, direction: 'in', contact: { id: contactId, name: 'Trần Thị Khách' }, text, at: new Date(Date.UTC(2026, 10, 2, 3, 0, tick++)).toISOString() };
     await h.system<ConversationIngested>('conversations', 'kernel.conversation.ingest', { connectionId, events: [event] });
     const conversation = (await h.q<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND channel_connection_id = $2 AND external_thread_id = $3', [h.orgId, connectionId, threadId])).rows[0]?.id as string;
     const message = (await h.q<{ id: string }>('SELECT id FROM crove_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 AND direction = $3', [h.orgId, conversation, 'in'])).rows[0]?.id as string;
@@ -125,6 +125,51 @@ suite('the Hộp thư proposal twins (#3863)', () => {
     expect((await h.proposal(sent.proposalId)).status).toBe('executed');
     await expect(h.approve(pending.proposalId)).rejects.toBeDefined();
     expect(await h.executions('kernel.conversation.reply', pending.proposalId)).toBe(0);
+  });
+
+  it('finds the proposals of an erased thread whatever case their ids were written in: stored lower-cased, and a payload that was stored in capitals is blanked too', async () => {
+    const { conversation, message } = await comment('Số của mình 0987654321');
+    const { actor } = await h.grant();
+    // Capitals from the client: the stored payload holds the ids in lower case.
+    const made = await h.propose(actor, 'kernel.conversation.reply_approved', { conversationId: conversation.toUpperCase(), body: 'Em gọi 0987654321 nhé', lastSeenSeq: 1 });
+    expect((await h.proposal(made.proposalId)).payload).toMatchObject({ conversationId: conversation });
+    // And a payload that reached the table in capitals by any other way (an older row) is found by the erasure all the same.
+    const hide = await h.propose(actor, 'kernel.conversation.hide_approved', { messageId: message, hidden: true });
+    await h.q("UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{messageId}', to_jsonb(upper(payload ->> 'messageId'))) WHERE org_id = $1 AND id = $2", [h.orgId, hide.proposalId]);
+    expect(((await h.proposal(hide.proposalId)).payload as { messageId: string }).messageId).toBe(message.toUpperCase());
+    await h.runtime.execute('kernel.conversation.erase_contact', { conversationId: conversation, confirm: true }, { actor: h.person(h.owner, true), orgId: h.orgId });
+    for (const id of [made.proposalId, hide.proposalId]) {
+      const row = await h.proposal(id);
+      expect(row.payload, id).toEqual({ erased: true });
+      expect(row.status, id).toBe('rejected');
+    }
+  });
+
+  it('erases a proposal about a comment the erased customer wrote in another customer\'s thread (a private reply to it, hiding it)', async () => {
+    // Customer A's comment thread, with a comment of customer B in it; B has a thread of their own to be erased from.
+    const threadId = `thread-${randomUUID().slice(0, 8)}`;
+    const at = (n: number) => new Date(Date.UTC(2026, 10, 2, 4, 0, tick++ + n)).toISOString();
+    await h.system<ConversationIngested>('conversations', 'kernel.conversation.ingest', {
+      connectionId,
+      events: [
+        { kind: 'comment_thread', threadId, postId: 'post-9', messageId: `a-${threadId}`, direction: 'in', contact: { id: `ua-${threadId}`, name: 'Khách A' }, text: 'Bài này hay', at: at(0) },
+        { kind: 'comment_thread', threadId, postId: 'post-9', messageId: `b-${threadId}`, direction: 'in', contact: { id: `ub-${threadId}`, name: 'Khách B' }, text: 'Gọi mình 0911222333', at: at(1) },
+      ],
+    } satisfies { connectionId: string; events: ConversationEvent[] });
+    const own = await comment('Tin của khách B ở thread khác', `ub-${threadId}`);
+    const bMessage = (await h.q<{ id: string }>(`SELECT m.id FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation_identity i ON i.org_id = m.org_id AND i.id = m.author_identity_id WHERE m.org_id = $1 AND i.external_user_id = $2 AND m.external_message_id = $3`, [h.orgId, `ub-${threadId}`, `b-${threadId}`])).rows[0]?.id as string;
+    expect(bMessage).toBeTruthy();
+    const { actor } = await h.grant();
+    const hide = await h.propose(actor, 'kernel.conversation.hide_approved', { messageId: bMessage, hidden: true });
+    const privateReply = await h.propose(actor, 'kernel.conversation.reply_privately_approved', { messageId: bMessage, body: 'Em gọi 0911222333 ạ' });
+    await h.runtime.execute('kernel.conversation.erase_contact', { conversationId: own.conversation, confirm: true }, { actor: h.person(h.owner, true), orgId: h.orgId });
+    for (const id of [hide.proposalId, privateReply.proposalId]) {
+      const row = await h.proposal(id);
+      expect(row.payload, id).toEqual({ erased: true });
+      expect(row.status, id).toBe('rejected');
+      expect(JSON.stringify(row), id).not.toContain('0911222333');
+    }
+    expect(await h.executions('kernel.conversation.hide', hide.proposalId)).toBe(0);
   });
 
   it('shows the card the text and the asker (marked as an AI app\'s), and with a second owner the person who connected the app cannot approve their own coworker\'s ask', async () => {

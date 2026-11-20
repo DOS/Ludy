@@ -3,7 +3,8 @@
 // a strict payload over its original's own input in an R2 proposal-only command with its kind and scope, each has a four-eyes approval policy of owners and admins, and the originals the twins run still carry no
 // `mcp`. The database half (the catalog rows, the audit chain) is in engage-proposals-chain.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { ENGAGE_PROPOSALS } from '@crove/kernel-contract';
+import { z } from 'zod';
+import { ENGAGE_PROPOSALS, zApprovedCall } from '@crove/kernel-contract';
 import { PROPOSAL_PREPARERS, approvalPolicies, kernelCommands, liveApprovalCommands } from '@crove/kernel';
 import { adsCommands } from '@crove/mod-ads';
 import { crmCommands } from '@crove/mod-crm';
@@ -48,8 +49,6 @@ describe('the Engage twins in the registry (#3863)', () => {
       expect(twin?.input.safeParse({ payload: {}, smuggled: 1 }).success, p.command).toBe(false);
       expect(twin?.input.shape?.payload?.safeParse({ smuggled: 1 }).success, p.command).toBe(false);
       expect(twin?.input.safeParse({}).success, p.command).toBe(false);
-      // The twin's payload IS the original's input: the same schema object.
-      expect(twin?.input.shape?.payload, p.command).toBe(original?.input);
     }
   });
 
@@ -60,5 +59,11 @@ describe('the Engage twins in the registry (#3863)', () => {
       expect(policies.find((x) => x.command === p.command), p.command).toEqual({ command: p.command, roles: ['owner', 'admin'], permission: null, fourEyes: true, ledger: false, live: true });
       expect(live, p.command).toContain(p.command);
     }
+  });
+
+  it('stores every id of a payload in lower case, whatever case the client wrote (the database compares them in lower case when a thread is erased)', () => {
+    const call = zApprovedCall(z.strictObject({ id: z.uuid(), ids: z.array(z.uuid()), nested: z.strictObject({ at: z.string() }), body: z.string() }));
+    const parsed = call.parse({ payload: { id: 'ABCDEF01-2345-4678-9ABC-DEF012345678', ids: ['ABCDEF01-2345-4678-9ABC-DEF012345679'], nested: { at: '2026-11-20T01:00:00Z' }, body: 'Dạ ABCDEF01-2345-4678-9ABC-DEF012345678 ạ' } });
+    expect(parsed.payload).toEqual({ id: 'abcdef01-2345-4678-9abc-def012345678', ids: ['abcdef01-2345-4678-9abc-def012345679'], nested: { at: '2026-11-20T01:00:00Z' }, body: 'Dạ ABCDEF01-2345-4678-9ABC-DEF012345678 ạ' });
   });
 });

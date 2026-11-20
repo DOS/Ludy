@@ -29,6 +29,9 @@ describe('engageViewOf', () => {
     expect([...(field?.value ?? '')].some((ch) => ['\u202E', '\u2066', '\u2069', '\u200B', '\u0000', '\u007F'].includes(ch))).toBe(false);
     expect(view?.fields.map((f) => f.key)).toEqual(['body']);
     expect(engageViewOf(REPLY?.kind ?? '', REPLY?.command ?? '', { body: 'a\tb\nc' })?.fields[0]?.value).toBe('a\tb\nc');
+    // The set the database's title filter refuses: soft hyphen, Arabic letter mark, Mongolian vowel separator, line and paragraph separators, invisible operators, annotation marks, tag characters.
+    const odd = 'a\u00ADb\u061Cc\u180Ed\u2028e\u2029f\u206Ag\u206Fh\uFFF9i\uFFFBj\u{E0041}k';
+    expect(engageViewOf(REPLY?.kind ?? '', REPLY?.command ?? '', { body: odd })?.fields[0]?.value).toBe('a<U+00AD>b<U+061C>c<U+180E>d<U+2028>e<U+2029>f<U+206A>g<U+206F>h<U+FFF9>i<U+FFFB>j<U+E0041>k');
   });
 
   it('is nothing for another kind, or a payload that is not an object', () => {

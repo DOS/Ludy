@@ -728,9 +728,32 @@ export type InboxOriginal = z.infer<typeof zInboxOriginal>;
 // What an AI coworker asks for in the Engage lines (E4 #3863), as the card shows it: the twin's command and the stored payload's fields, in order, each a name and a text. Every value is the AI's and is not
 // trusted: the card marks it so and renders it as plain text. The proposal's own `requestedByMcp` says which app asked.
 export const zEngageProposalField = z.object({ key: z.string(), value: z.string(), long: z.boolean() });
-// `about` says who and what the ask is about, read from the records themselves (the channel, the customer, the customer's message), so an approver does not have to read ids.
-export const zEngageProposalAbout = z.object({ label: z.enum(['channel', 'contact', 'customerMessage']), value: z.string() });
-export const zEngageProposalView = z.object({ command: z.string(), fields: z.array(zEngageProposalField).max(40), about: z.array(zEngageProposalAbout).max(6) });
+// `about` says who and what the ask is about, read from the records themselves (the channel, the customer, the customer's message, the guest and time of a booking, the quote and its customer, the post and its channels, the launch and its budget), so an approver does not have to read ids.
+export const zEngageProposalAbout = z.object({
+  label: z.enum([
+    'channel',
+    'contact',
+    'customerMessage',
+    'guest',
+    'guestEmail',
+    'eventType',
+    'bookingTime',
+    'quote',
+    'quoteStatus',
+    'quoteTotal',
+    'party',
+    'partyEmail',
+    'post',
+    'channels',
+    'launch',
+    'adAccount',
+    'launchState',
+    'launchBudget',
+    'launchEnds',
+  ]),
+  value: z.string(),
+});
+export const zEngageProposalView = z.object({ command: z.string(), fields: z.array(zEngageProposalField).max(40), about: z.array(zEngageProposalAbout).max(10) });
 export type EngageProposalView = z.infer<typeof zEngageProposalView>;
 
 export const zInboxDetail = zInboxItem.extend({

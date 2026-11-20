@@ -40,6 +40,33 @@ const FIELD_KEYS = ['body', 'conversationId', 'lastSeenSeq', 'draftId', 'savedRe
 // A time the AI wrote as an ISO instant is shown in the reader's own clock beside what was written, so 09:00Z is not read as 09:00 in Vietnam.
 const TIME_KEYS = ['startsAt', 'at', 'slotAt'] as const;
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+// The words of the `about` lines (a label outside them cannot arrive: the contract's enum is the same list) and of the states a quote and a launch can be in (a state outside them shows as it is).
+const ABOUT_KEYS = [
+  'channel',
+  'contact',
+  'customerMessage',
+  'guest',
+  'guestEmail',
+  'eventType',
+  'bookingTime',
+  'quote',
+  'quoteStatus',
+  'quoteTotal',
+  'party',
+  'partyEmail',
+  'post',
+  'channels',
+  'launch',
+  'adAccount',
+  'launchState',
+  'launchBudget',
+  'launchEnds',
+] as const satisfies readonly EngageProposalView['about'][number]['label'][];
+// A label the contract adds and this list lacks fails the typecheck here, not on a card.
+const ABOUT_KEYS_ARE_ALL: EngageProposalView['about'][number]['label'] extends (typeof ABOUT_KEYS)[number] ? true : never = true;
+void ABOUT_KEYS_ARE_ALL;
+const STATE_KEYS = ['draft', 'sent', 'accepted', 'declined', 'superseded', 'queued', 'launching', 'live', 'needs_attention', 'stopped', 'failed', 'cancelled'] as const;
+const isStateKey = (value: string): value is (typeof STATE_KEYS)[number] => (STATE_KEYS as readonly string[]).includes(value);
 const isKindKey = (key: string): key is (typeof KIND_KEYS)[number] => (KIND_KEYS as readonly string[]).includes(key);
 const isFieldKey = (key: string): key is (typeof FIELD_KEYS)[number] => (FIELD_KEYS as readonly string[]).includes(key);
 
@@ -48,6 +75,12 @@ export function EngageProposalCard({ engage, kind, status, client, slug }: { eng
   const fmt = useFormat();
   const kindKey = kind.replaceAll('.', '_');
   const screen = screenOf(kind, engage.fields);
+  // A booking's current time is shown in the reader's own clock beside the instant, like the proposed time below; a state in words.
+  const aboutValue = (a: { label: string; value: string }): string => {
+    if (a.label === 'bookingTime' && ISO_INSTANT.test(a.value)) return `${fmt.dateTime(a.value)} (${a.value})`;
+    if ((a.label === 'quoteStatus' || a.label === 'launchState') && isStateKey(a.value)) return t(`engageAboutValue.${a.value}`);
+    return a.value;
+  };
   return (
     <Card className="block space-y-3 p-4" data-testid="engage-change">
       <p className="text-sm font-medium text-muted-foreground">{t('engageChange')}</p>
@@ -58,10 +91,12 @@ export function EngageProposalCard({ engage, kind, status, client, slug }: { eng
       <p className="text-sm text-muted-foreground">{t('engageTainted')}</p>
       {engage.about.length > 0 && (
         <dl className="space-y-2 rounded-md border border-border p-3" data-testid="engage-about">
-          {engage.about.map((a) => (
+          {engage.about.filter((a) => (ABOUT_KEYS as readonly string[]).includes(a.label)).map((a) => (
             <div key={a.label}>
               <dt className="text-sm text-muted-foreground">{t(`engageAbout.${a.label}`)}</dt>
-              <dd className="whitespace-pre-wrap break-words text-base text-foreground">{a.value}</dd>
+              <dd className="whitespace-pre-wrap break-words text-base text-foreground" data-testid={`engage-about-${a.label}`}>
+                {aboutValue(a)}
+              </dd>
             </div>
           ))}
         </dl>

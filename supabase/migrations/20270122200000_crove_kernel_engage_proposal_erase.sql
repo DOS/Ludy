@@ -35,8 +35,9 @@ BEGIN
   WHERE p.org_id = v_org
     AND p.command IN ('kernel.conversation.reply_approved', 'kernel.conversation.reply_privately_approved', 'kernel.conversation.hide_approved')
     AND p.payload IS DISTINCT FROM pg_catalog.jsonb_build_object('erased', true)
-    AND (p.payload ->> 'conversationId' = ANY (SELECT x::text FROM pg_catalog.unnest(COALESCE(p_conversations, ARRAY[]::uuid[])) x)
-      OR p.payload ->> 'messageId' = ANY (SELECT x::text FROM pg_catalog.unnest(COALESCE(p_messages, ARRAY[]::uuid[])) x));
+    -- An id is compared in lower case (the form uuid::text has): an id a client wrote in capitals is the same id, and the twins store ids lower-cased (zApprovedCall) as well.
+    AND (pg_catalog.lower(p.payload ->> 'conversationId') = ANY (SELECT x::text FROM pg_catalog.unnest(COALESCE(p_conversations, ARRAY[]::uuid[])) x)
+      OR pg_catalog.lower(p.payload ->> 'messageId') = ANY (SELECT x::text FROM pg_catalog.unnest(COALESCE(p_messages, ARRAY[]::uuid[])) x));
   GET DIAGNOSTICS v_n = ROW_COUNT;
   RETURN v_n;
 END $$;
