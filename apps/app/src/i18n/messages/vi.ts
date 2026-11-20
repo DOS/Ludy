@@ -7483,7 +7483,7 @@ export const vi = {
       stepUp: 'duyệt {count, number} chứng từ',
       retry: 'Thử lại',
       dismiss: 'Bỏ qua',
-      candidatesNote: 'Ly, trợ lý tài chính, viết câu này. Câu này không chọn gì: bạn chọn khoản khớp và duyệt chứng từ.',
+      candidatesNote: '{finance}, đồng nghiệp AI của bạn, viết câu này. Câu này không chọn gì: bạn chọn khoản khớp và duyệt chứng từ.',
       reason: {
         taxCodeInvoice: 'Gợi ý khớp: mã số thuế có trong nội dung chuyển khoản, và số tiền bằng hóa đơn {number}',
         taxCode: 'Gợi ý khớp: mã số thuế có trong nội dung chuyển khoản',
@@ -9519,7 +9519,7 @@ export const vi = {
       ads_campaign_draft: 'Soạn nội dung chiến dịch quảng cáo',
       finance_overview_explain: 'Viết một câu giải thích tổng quan Kế toán',
       finance_vat_late_explain: 'Viết một câu nêu các hóa đơn bán ra lập muộn trong bảng kê thuế GTGT',
-      finance_bank_match_explain: 'Giải thích vì sao một giao dịch ngân hàng có thể là khoản trả lương',
+      finance_bank_match_explain: 'Giải thích một giao dịch ngân hàng (khớp khoản trả lương, các lựa chọn khớp)',
       finance_marketplace_line: 'Diễn đạt điều đang chờ trên màn hình sàn thương mại điện tử',
       finance_marketplace_fee_note: 'Diễn đạt phí sàn đang chờ hóa đơn',
       finance_misa_check_line: 'Diễn đạt kết quả kiểm tra file xuất MISA',

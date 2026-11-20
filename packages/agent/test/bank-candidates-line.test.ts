@@ -6,6 +6,8 @@ import { InboxReader, bankCandidatesLineFactsText, bankCandidatesLineHasNews, ba
 
 const FACTS: BankCandidatesLineFacts = { language: 'vi', direction: 'in', date: '2026-11-05', amount: '4500000', candidates: 3 };
 const EN: BankCandidatesLineFacts = { ...FACTS, language: 'en' };
+const TWO: BankCandidatesLineFacts = { ...FACTS, candidates: 2 };
+const TWO_EN: BankCandidatesLineFacts = { ...TWO, language: 'en' };
 const check = (facts: BankCandidatesLineFacts, sentence: string) => checkBankCandidatesLineSentence(facts, { sentence });
 
 describe('checkBankCandidatesLineSentence', () => {
@@ -13,6 +15,10 @@ describe('checkBankCandidatesLineSentence', () => {
     expect(check(FACTS, 'Ngày 05/11/2026 có 3 ứng viên cho khoản 4.500.000 đồng, cần một người chọn.')).toMatchObject({ kind: 'sentence' });
     expect(check(EN, 'On 05/11/2026 there are 3 candidates for 4,500,000 dong, so a person needs to choose.')).toMatchObject({ kind: 'sentence' });
     expect(check(EN, 'Several candidates fit this line, so a person needs to choose.')).toMatchObject({ kind: 'sentence' });
+    expect(check(EN, 'Money in on 05/11/2026: more than one candidate fits this line, so a person needs to choose.')).toMatchObject({ kind: 'sentence' });
+    expect(check(EN, 'None of the 3 candidates stands out for 4,500,000 dong, so a person needs to look at this line.')).toMatchObject({ kind: 'sentence' });
+    expect(check(FACTS, 'Tiền vào ngày 05/11/2026 khớp với nhiều ứng viên, cần một người xem lại.')).toMatchObject({ kind: 'sentence' });
+    expect(check(FACTS, 'Có ba ứng viên cho khoản 4.500.000 đồng, cần một người xem lại.')).toMatchObject({ kind: 'sentence' });
   });
 
   it('refuses an empty answer, a long one and more than one sentence', () => {
@@ -27,7 +33,7 @@ describe('checkBankCandidatesLineSentence', () => {
     expect(check(EN, 'There are 4,500,000 candidates for this line.')).toEqual({ kind: 'none', code: 'BINDING' });
     expect(check(EN, 'The amount is 3 dong and several candidates fit.')).toEqual({ kind: 'none', code: 'BINDING' });
     expect(check(EN, 'Three candidates fit this line.')).toMatchObject({ kind: 'none' });
-    expect(check(FACTS, 'Có ba ứng viên cho dòng này.')).toMatchObject({ kind: 'none' });
+    expect(check(TWO, 'Có ba ứng viên cho dòng này.')).toMatchObject({ kind: 'none' });
     expect(check(EN, 'About 4.5 million dong came in, several candidates fit.')).toMatchObject({ kind: 'none' });
   });
 
@@ -40,6 +46,40 @@ describe('checkBankCandidatesLineSentence', () => {
     expect(check(FACTS, 'Dòng này đã được khớp với một khách hàng.')).toEqual({ kind: 'none', code: 'CLAIM' });
     expect(check(EN, 'You should pick the customer with the invoice.')).toEqual({ kind: 'none', code: 'ADVICE' });
     expect(check(EN, 'Несколько кандидатов подходят.')).toEqual({ kind: 'none', code: 'SCRIPT' });
+  });
+});
+
+describe('the text check refuses an ordinal, a ranking, an order, a name, an assertion and a wrong direction', () => {
+  const refused: Array<[BankCandidatesLineFacts, string]> = [
+    [TWO_EN, 'Candidate 2 fits this line'],
+    [TWO_EN, 'The second candidate fits the amount'],
+    [TWO, 'Ứng viên số 2 khớp số tiền'],
+    [TWO, 'Có 2 ứng viên, chọn ứng viên thứ nhất'],
+    [TWO, 'Ứng viên thứ hai phù hợp hơn'],
+    [TWO_EN, 'Candidate #2 fits better than the others'],
+    [TWO, 'Khách hàng Minh Phát hợp lý nhất'],
+    [TWO_EN, 'Pick the second one.'],
+    [TWO_EN, 'Choose the newer customer.'],
+    [TWO_EN, 'Approve the voucher for this line.'],
+    [TWO_EN, 'It is safe to approve this voucher.'],
+    [TWO_EN, 'Call your bank about this line.'],
+    [TWO, 'Có nhiều ứng viên, chọn công ty Minh Phát.'],
+    [TWO, 'Bạn duyệt chứng từ này đi.'],
+    [TWO_EN, 'This is fraud, call the police.'],
+    [TWO_EN, 'Nguyen Van A fits this line'],
+    [TWO, 'Công ty TNHH Minh Phát cần được chọn'],
+    [TWO, 'Có hai mươi ứng viên'],
+    [TWO, 'Có ba ứng viên cho dòng này'],
+    [TWO_EN, 'Money went out on 05/11/2026 and 2 candidates fit'],
+  ];
+  it.each(refused)('refuses %#: %s', (facts, sentence) => {
+    expect(check(facts, sentence).kind).toBe('none');
+  });
+
+  it('lets through the count as digits or as its Vietnamese word when it is the real count, beside the candidate word', () => {
+    expect(check(TWO, 'Có hai ứng viên cho dòng này, cần một người chọn.')).toMatchObject({ kind: 'sentence' });
+    expect(check(TWO, 'Có 2 ứng viên cho dòng này, cần một người chọn.')).toMatchObject({ kind: 'sentence' });
+    expect(check(TWO_EN, 'Money in on 05/11/2026 and 2 candidates fit, so a person needs to choose.')).toMatchObject({ kind: 'sentence' });
   });
 });
 

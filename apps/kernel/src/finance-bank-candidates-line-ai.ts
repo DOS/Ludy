@@ -27,6 +27,8 @@ export function bankCandidatesLineAi(reader: BankCandidatesLineAi['reader'], bud
   return { reader, budget, kept: new Map() };
 }
 
+// The look list on the screen comes from finance.bank.match_groups (withBalances=false), while this RPC rereads the line with finance.bank.line_voucher (withBalances=true), so the server's candidate count may differ
+// from the screen's: when it does and nothing is open to choice, the answer is `none` with no model call.
 /** The facts of the line, by code, or null when the matcher left nothing open to choice: the line is not open, it has no candidate, it has exactly one and that one is the suggestion, or its amount has
  * fractions of a dong (the amount is written whole). The candidates are counted as the matcher listed them. */
 export function bankCandidatesLineFacts(read: BankLineVoucher, language: 'vi' | 'en'): BankCandidatesLineFacts | null {

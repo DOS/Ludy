@@ -50,6 +50,7 @@ describe('the sentence under a line with several candidates', () => {
     const en = render({ ai: 'used', text: 'Three candidates fit this line, so a person needs to choose.' }, 'en');
     expect(en).toContain('data-testid="match-look-sentence"');
     expect(en).toContain('Three candidates fit this line');
+    expect(en).toContain('your AI coworker');
     expect(en).toContain('It chooses nothing');
     cache.current.clear();
     const vi_ = render({ ai: 'used', text: 'Có 3 ứng viên cho dòng này, cần một người chọn.' }, 'vi');
