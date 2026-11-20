@@ -37,6 +37,8 @@ export const zMisaAmisConnection = z.object({
   // The connection's default items (S3b, #4124): the item code a person keeps for service lines and for sales lines, as the firm's MISA catalogue spells it; null for none. The preview starts from them.
   defaultServiceItemCode: z.string().nullable().optional(),
   defaultSalesItemCode: z.string().nullable().optional(),
+  // MISA ASP only (#4125): the stock code a person keeps for the connection's sales lines, as the catalogue spells it; null for none.
+  defaultSalesStockCode: z.string().nullable().optional(),
 });
 export type MisaAmisConnection = z.infer<typeof zMisaAmisConnection>;
 
@@ -56,10 +58,12 @@ export const zMisaAmisConnectionRecordTest = z.strictObject({ id: zId, state: zM
 
 // A person keeps, or clears, the default item of a connection for one kind of line (S3b, #4124): `service` for a purchase of services, `sales` for a sale. The code is typed as the catalogue spells it (at most 50
 // characters, as the preview's own field); null clears it. It is not looked up here (the API cannot read the catalogue): the next check against the catalogue says when an item is not there.
-export const MISA_AMIS_DEFAULT_ITEM_ROLES = ['service', 'sales'] as const;
+// `sales_stock` (#4125, MISA ASP only): the stock a sales line leaves, a stock code typed as the catalogue spells it.
+export const MISA_AMIS_DEFAULT_ITEM_ROLES = ['service', 'sales', 'sales_stock'] as const;
 export const zMisaAmisDefaultItem = z.strictObject({
   id: zId,
   role: z.enum(MISA_AMIS_DEFAULT_ITEM_ROLES),
-  code: z.string().trim().min(1).max(50).nullable(),
+  // No control character (a NUL cannot be stored in text and would be a 500, not a refusal): a code is typed as the catalogue spells it.
+  code: z.string().trim().min(1).max(50).regex(/^[^\p{Cc}]+$/u).nullable(),
 });
 export type MisaAmisDefaultItem = z.infer<typeof zMisaAmisDefaultItem>;

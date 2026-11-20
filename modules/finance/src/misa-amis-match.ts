@@ -51,6 +51,8 @@ export interface MisaAmisMatchResults {
   itemIds?: ReadonlyMap<string, string> | null;
   /** The product of the checked connection; absent while there is no check. */
   product?: 'amis' | 'asp';
+  /** MISA ASP: the stock code kept for the connection's sales lines; null for none. */
+  salesStockCode?: string | null;
 }
 
 export const NO_MATCH_RESULTS: MisaAmisMatchResults = { connectionId: null, status: { state: 'none', failure: null, requestedAt: null, checkedAt: null }, partyCodes: null, partyAmbiguous: null, itemCodes: null, partyNameCodes: null };
@@ -133,7 +135,7 @@ export const misaAmisMatchRequestCheck = defineCommand({
 export type MisaAmisMatchTarget =
   | { action: 'none'; reason: 'not_found' | 'not_active' | 'not_requested' }
   // `confirmed`: the parties a person confirmed by name (S3b): the worker checks their codes are still in the catalogue and active.
-  | { action: 'check'; id: string; product: MisaAmisProduct; channelConnectionId: string; orgCompanyCode: string; legalEntityId: string; ask: MisaAmisPreviewAsk; requestedAt: string; confirmed: Array<{ partyId: string; code: string }> };
+  | { action: 'check'; id: string; product: MisaAmisProduct; channelConnectionId: string; orgCompanyCode: string; legalEntityId: string; ask: MisaAmisPreviewAsk; requestedAt: string; confirmed: Array<{ partyId: string; code: string }>; defaultSalesStockCode: string | null };
 
 export const misaAmisMatchCheckTarget = defineQuery({
   name: 'finance.misa_amis_match.check_target',
@@ -144,7 +146,7 @@ export const misaAmisMatchCheckTarget = defineQuery({
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .leftJoin('crove_finance.misa_amis_match_check as k', (join) => join.onRef('k.org_id', '=', 'c.org_id').onRef('k.connection_id', '=', 'c.id'))
-      .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'ch.status', 'k.state as check_state', 'k.params', 'k.requested_at'])
+      .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'c.default_sales_stock_code', 'ch.status', 'k.state as check_state', 'k.params', 'k.requested_at'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.id)
       .executeTakeFirst();
@@ -176,6 +178,8 @@ export const misaAmisMatchCheckTarget = defineQuery({
       ask: parsed.data,
       requestedAt: iso(row.requested_at),
       confirmed: confirmed.flatMap((r) => (r.catalogue_code === null ? [] : [{ partyId: r.match_key, code: r.catalogue_code }])),
+      // MISA ASP (#4125): the stock a person keeps for the sales lines, checked against the catalogue with the batch's own stock codes.
+      defaultSalesStockCode: row.product === 'asp' ? row.default_sales_stock_code : null,
     };
   },
 });
@@ -278,8 +282,9 @@ export const misaAmisMatchResultsQuery = defineQuery({
       requestedAt: iso(check.requested_at),
       checkedAt: check.state === 'done' && check.finished_at ? iso(check.finished_at) : null,
     };
-    const connection = await ctx.trx.selectFrom('crove_finance.misa_amis_connection').select(['product']).where('org_id', '=', ctx.orgId).where('id', '=', check.connection_id).executeTakeFirst();
+    const connection = await ctx.trx.selectFrom('crove_finance.misa_amis_connection').select(['product', 'default_sales_stock_code']).where('org_id', '=', ctx.orgId).where('id', '=', check.connection_id).executeTakeFirst();
     const product = connection?.product;
+    const salesStockCode = product === 'asp' ? (connection?.default_sales_stock_code ?? null) : null;
     const rows = await ctx.trx
       .selectFrom('crove_finance.misa_amis_match')
       .select(['kind', 'match_key', 'state', 'catalogue_code', 'catalogue_id'])
@@ -288,7 +293,7 @@ export const misaAmisMatchResultsQuery = defineQuery({
       .execute();
     // While a re-check waits, or after one failed, the results of the last done check still stand (a block it raised is not lifted by asking again); with none stored there is nothing to judge against.
     // A connection that was checked once (a done check finished) and has no stored result (its batch needed none) is still checked: the sets are empty, not null.
-    if (check.state !== 'done' && rows.length === 0 && check.finished_at === null) return { connectionId: check.connection_id, status, partyCodes: null, partyAmbiguous: null, itemCodes: null, partyNameCodes: null, ...(product === undefined ? {} : { product }) };
+    if (check.state !== 'done' && rows.length === 0 && check.finished_at === null) return { connectionId: check.connection_id, status, partyCodes: null, partyAmbiguous: null, itemCodes: null, partyNameCodes: null, salesStockCode, ...(product === undefined ? {} : { product }) };
     const partyCodes = new Map<string, string>();
     const partyAmbiguous = new Set<string>();
     const itemCodes = new Set<string>();
@@ -316,7 +321,7 @@ export const misaAmisMatchResultsQuery = defineQuery({
         }
       }
     }
-    return { connectionId: check.connection_id, status, partyCodes, partyAmbiguous, itemCodes, partyNameCodes, unitIds, unitAmbiguous, stockIds, itemIds, ...(product === undefined ? {} : { product }) };
+    return { connectionId: check.connection_id, status, partyCodes, partyAmbiguous, itemCodes, partyNameCodes, unitIds, unitAmbiguous, stockIds, itemIds, salesStockCode, ...(product === undefined ? {} : { product }) };
   },
 });
 

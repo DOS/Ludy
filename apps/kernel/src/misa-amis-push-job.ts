@@ -216,7 +216,9 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
         const { entries, wanted } = await loadAmisEntries(query, ask, amisContextOf(ask, branchId, matches), MISA_AMIS_PREVIEW_LIMIT + 1);
         parts = new Map(amisPartRows(entries).map((p) => [p.orgRefid, p]));
         // The entries those matches rely on, read again unless a read for the same ones is young enough.
-        const verify = relied(matches, wanted);
+        // The stock kept for sales lines is relied on like the lines' own (a sales batch of an ASP connection).
+        const reliedWanted = ask.kind === 'sales' && matches.salesStockCode != null ? { ...wanted, stockCodes: [...new Set([...wanted.stockCodes, matches.salesStockCode])].sort() } : wanted;
+        const verify = relied(matches, reliedWanted);
         if (verify.taxCodes.length > 0 || verify.itemCodes.length > 0 || verify.confirmed.length > 0 || verify.unitNames.length > 0 || verify.stockCodes.length > 0) {
           const key = JSON.stringify(verify);
           if (unreadable === key) throw new TooLarge();

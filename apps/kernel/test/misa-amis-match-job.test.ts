@@ -80,7 +80,7 @@ interface Harness {
   executed: Array<{ name: string; input: unknown }>;
   opened: unknown[];
 }
-function harness(options: { target?: unknown; vouchers?: unknown[]; credential?: () => unknown; recorded?: boolean; product?: 'amis' | 'asp' } = {}): Harness {
+function harness(options: { target?: unknown; vouchers?: unknown[]; credential?: () => unknown; recorded?: boolean; product?: 'amis' | 'asp'; sales?: unknown[] } = {}): Harness {
   const queries: Harness['queries'] = [];
   const executed: Harness['executed'] = [];
   const opened: unknown[] = [];
@@ -91,6 +91,7 @@ function harness(options: { target?: unknown; vouchers?: unknown[]; credential?:
       if (name === 'finance.misa_amis_match.check_target') return target;
       if (name === 'kernel.channel.credential') return options.credential ? options.credential() : { provider: options.product === 'asp' ? 'accounting_misa_asp' : 'accounting_misa_amis', externalAccountId: 'entity', keyId: 'k1', envelope: Buffer.from('sealed').toString('base64') };
       if (name === 'finance.vouchers.purchases') return options.vouchers ?? [purchase('0101234564'), purchase('0312345678'), purchase('0999999999')];
+      if (name === 'finance.vouchers.sales') return options.sales ?? [];
       throw new Error(`unexpected query ${name}`);
     },
     execute: async (name: string, input: unknown) => {
@@ -382,6 +383,20 @@ describe('the MISA ASP match check (#4152)', () => {
     expect(await runAsp(h, fakeAmis({ prefix: '/asp/v1' }))).toMatchObject({ state: 'failed', failure: 'catalogue_too_large' });
     expect(recorded(h)).toMatchObject([{ state: 'failed', failure: 'catalogue_too_large', results: [] }]);
     log.mockRestore();
+  });
+
+  it('looks the connection\'s kept sales stock up with a sales batch, even when no line names a stock, and ignores it for other batches (#4125)', async () => {
+    const salesAsk = { kind: 'sales', from: '2026-10-01', to: '2026-10-31', legalEntityId: ENTITY, salesItemCode: 'DV_CHUNG' };
+    const target = (ask: unknown) => ({ action: 'check', id: CONNECTION, product: 'asp', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY, ask, requestedAt: REQUESTED, confirmed: [], defaultSalesStockCode: 'KHO1' });
+    const aspFake = fakeAmis({ prefix: '/asp/v1' });
+    const h = harness({ product: 'asp', target: target(salesAsk), sales: [] });
+    expect(await runAsp(h, aspFake)).toMatchObject({ state: 'done' });
+    expect(recorded(h)).toMatchObject([{ results: expect.arrayContaining([{ kind: 'stock', ref: 'KHO1', state: 'matched', code: 'KHO1', entryId: ENTRY1 }]) }]);
+    // A purchase batch of the same connection does not ask for it.
+    const other = fakeAmis({ prefix: '/asp/v1' });
+    const h2 = harness({ product: 'asp', target: target(ASK) });
+    await runAsp(h2, other);
+    expect(recorded(h2)).toMatchObject([{ results: expect.not.arrayContaining([expect.objectContaining({ kind: 'stock' })]) }]);
   });
 
   it('does not touch the AMIS client for an ASP connection, and the other way round', async () => {

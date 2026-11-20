@@ -75,6 +75,14 @@ describe('the default item of a connection (#4124)', () => {
     expect(member).not.toContain('<button');
   });
 
+  it('keeps the warehouse of an ASP connection\'s sales lines the same way (#4125)', () => {
+    const stock = item({ role: 'sales_stock', saved: 'KHO1', typed: 'KHO2' });
+    expect(stock).toContain('data-testid="misa-amis-default-sales_stock-state"');
+    expect(stock).toContain('Default code: KHO1');
+    expect(stock).toContain('data-testid="misa-amis-default-sales_stock-save"');
+    expect(item({ role: 'sales_stock', canManage: false, saved: 'KHO1' })).not.toContain('<button');
+  });
+
   it('rules: what the buttons offer for the code in the field', () => {
     expect(defaultItemOffer('', null)).toEqual({ canSave: false, canClear: false });
     expect(defaultItemOffer('   ', null)).toEqual({ canSave: false, canClear: false });
