@@ -156,7 +156,7 @@ function stripWikiLinksLinear(line: string): string {
   while (i < line.length) {
     if (line[i] === '[' && line[i + 1] === '[') {
       const close = line.indexOf(']]', i + 2);
-      if (close !== -1) {
+      if (close !== -1 && close - (i + 2) <= 260) {
         const parsed = parseWikiLinkToken(line.slice(i + 2, close));
         if (parsed) {
           out += parsed.title || parsed.noteId || '';

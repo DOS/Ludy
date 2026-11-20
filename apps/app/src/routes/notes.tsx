@@ -119,6 +119,7 @@ function Editor({
   const [wikiIndex, setWikiIndex] = useState(0);
   const locked = applyingSummary || summarySyncError;
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+  const wikiListboxId = `note-wiki-listbox-${note.id}`;
   // Bound to the note's org: a save that runs as the editor closes, after the user switched org, still goes to its own.
   const api = useRef(clientForOrg(slug)).current;
   const saver = useRef(
@@ -486,6 +487,9 @@ function Editor({
                 rows={14}
                 maxLength={NOTE_BODY_MAX}
                 disabled={locked}
+                aria-controls={wikiOpen !== null ? wikiListboxId : undefined}
+                aria-expanded={wikiOpen !== null ? true : undefined}
+                aria-activedescendant={wikiOpen !== null && wikiFiltered.length > 0 ? `${wikiListboxId}-opt-${safeWikiIndex}` : undefined}
                 onChange={(e) => {
                   const nextPos = e.target.selectionStart ?? e.target.value.length;
                   setCursorPos(nextPos);
@@ -533,6 +537,7 @@ function Editor({
               />
               {wikiOpen !== null && (
                 <NoteWikiAutocomplete
+                  listboxId={wikiListboxId}
                   query={wikiOpen.query}
                   candidates={autocompletePool}
                   activeIndex={safeWikiIndex}

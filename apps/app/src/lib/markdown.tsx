@@ -92,7 +92,7 @@ export function renderInline(text: string, keyPrefix = 'i', resolveWikiLink?: Wi
     if (ch === '[' && text[i + 1] === '[') {
       const nl = text.indexOf('\n', i + 2);
       const close = text.indexOf(']]', i + 2);
-      if (close !== -1 && (nl === -1 || close < nl)) {
+      if (close !== -1 && (nl === -1 || close < nl) && close - (i + 2) <= 260) {
         const inner = text.slice(i + 2, close);
         const parsed = parseWikiLinkToken(inner);
         if (parsed !== null) {

@@ -426,15 +426,38 @@ export const noteSetVisibility = defineCommand({
     assertAuthor(before, userId);
     if (before.visibility === input.visibility) return written(before);
     if (input.visibility === 'org' && before.notebook_id !== null && before.notebook_id !== peek.notebook_id) {
-      await resolveNotebookForNote(ctx, before.notebook_id, before.author_user_id, 'org');
+      // Do not acquire a new notebook lock while already holding note FOR UPDATE (canonical lock order is notebook -> note);
+      // verify accessibility without locking and rely on b_note_notebook_integrity to enforce cross-visibility atomically.
+      const movedNb = await ctx.trx
+        .selectFrom('crove_notes.notebook')
+        .select(['id', 'author_user_id', 'visibility'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', before.notebook_id)
+        .executeTakeFirst();
+      if (!movedNb || (movedNb.visibility === 'private' && movedNb.author_user_id !== before.author_user_id)) {
+        throw notebookNotFound();
+      }
+      if (movedNb.visibility === 'private') throw sharedNotePrivateNotebook();
     }
-    const row = await ctx.trx
-      .updateTable('crove_notes.note')
-      .set({ visibility: input.visibility, revision: before.revision + 1, updated_at: ctx.now })
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.noteId)
-      .returning(['id', 'revision'])
-      .executeTakeFirstOrThrow();
+    let row: { id: string; revision: number };
+    try {
+      row = await ctx.trx
+        .updateTable('crove_notes.note')
+        .set({ visibility: input.visibility, revision: before.revision + 1, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.noteId)
+        .returning(['id', 'revision'])
+        .executeTakeFirstOrThrow();
+    } catch (err) {
+      const pgErr = err as { code?: string; message?: string } | null;
+      if (pgErr?.code === '23514' && pgErr.message?.includes('NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK')) {
+        throw sharedNotePrivateNotebook();
+      }
+      if (pgErr?.code === '42501' && pgErr.message?.includes('NOTES_NOTEBOOK_NOT_ACCESSIBLE')) {
+        throw notebookNotFound();
+      }
+      throw err;
+    }
     ctx.audit({ noteId: row.id, visibility: input.visibility, previousVisibility: before.visibility });
     return written(row);
   },

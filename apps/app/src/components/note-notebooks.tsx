@@ -214,7 +214,7 @@ export function NotebooksSidebar({
               }}
               aria-label={`${t('notebooks.deleteBtn')}: ${nb.name}`}
               data-testid="notebook-delete-btn"
-              className="px-1.5 text-subtle-foreground hover:text-foreground"
+              className="px-1.5 text-subtle-foreground hover:text-foreground max-md:min-w-11"
             >
               ×
             </Button>
@@ -365,7 +365,7 @@ export function NotebooksSidebar({
             >
               {t('notebooks.deleteBtn')}
             </Button>
-            <Button type="button" variant="ghost" size="xs" onClick={() => setDeleting(null)}>
+            <Button type="button" variant="ghost" size="xs" autoFocus onClick={() => setDeleting(null)}>
               {t('notebooks.cancelBtn')}
             </Button>
           </div>
@@ -495,11 +495,13 @@ export function NoteNotebookPicker({
 }
 
 export function NoteWikiAutocomplete({
+  listboxId,
   query,
   candidates,
   activeIndex,
   onPick,
 }: {
+  listboxId?: string;
   query: string;
   candidates: readonly NoteSummary[];
   activeIndex: number;
@@ -523,6 +525,7 @@ export function NoteWikiAutocomplete({
 
   return (
     <div
+      id={listboxId}
       role="listbox"
       aria-label={t('wikiLinks.suggestionsLabel')}
       data-testid="note-wiki-autocomplete"
@@ -539,6 +542,7 @@ export function NoteWikiAutocomplete({
             return (
               <li key={item.id}>
                 <button
+                  id={listboxId ? `${listboxId}-opt-${idx}` : undefined}
                   type="button"
                   role="option"
                   aria-selected={selected}

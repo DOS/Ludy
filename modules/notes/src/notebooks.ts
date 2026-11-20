@@ -146,23 +146,25 @@ export function extractWikiLinks(body: string): ParsedWikiLink[] {
       if (ch === '[' && line[i + 1] === '[') {
         const closeIdx = line.indexOf(']]', i + 2);
         if (closeIdx === -1) break;
-        const inner = line.slice(i + 2, closeIdx);
-        if (inner.length > 0 && inner.length <= WIKI_TOKEN_MAX && !inner.includes('[')) {
-          const pipeIdx = inner.indexOf('|');
-          if (pipeIdx !== -1) {
-            const left = inner.slice(0, pipeIdx).trim();
-            const right = inner.slice(pipeIdx + 1).trim();
-            if (isUuidString(left)) {
-              out.push({ noteId: left.toLowerCase(), title: right.slice(0, NOTE_TITLE_MAX) });
-            } else if (left.length > 0 && left.length <= NOTE_TITLE_MAX) {
-              out.push({ title: left });
-            }
-          } else {
-            const trimmed = inner.trim();
-            if (isUuidString(trimmed)) {
-              out.push({ noteId: trimmed.toLowerCase(), title: '' });
-            } else if (trimmed.length > 0 && trimmed.length <= NOTE_TITLE_MAX) {
-              out.push({ title: trimmed });
+        if (closeIdx - (i + 2) <= WIKI_TOKEN_MAX) {
+          const inner = line.slice(i + 2, closeIdx);
+          if (inner.length > 0 && !inner.includes('[')) {
+            const pipeIdx = inner.indexOf('|');
+            if (pipeIdx !== -1) {
+              const left = inner.slice(0, pipeIdx).trim();
+              const right = inner.slice(pipeIdx + 1).trim();
+              if (isUuidString(left)) {
+                out.push({ noteId: left.toLowerCase(), title: right.slice(0, NOTE_TITLE_MAX) });
+              } else if (left.length > 0 && left.length <= NOTE_TITLE_MAX) {
+                out.push({ title: left });
+              }
+            } else {
+              const trimmed = inner.trim();
+              if (isUuidString(trimmed)) {
+                out.push({ noteId: trimmed.toLowerCase(), title: '' });
+              } else if (trimmed.length > 0 && trimmed.length <= NOTE_TITLE_MAX) {
+                out.push({ title: trimmed });
+              }
             }
           }
         }
@@ -504,21 +506,30 @@ export const notebookUpdate = defineCommand({
       ...(before.sort_key !== nextSortKey ? ['sortKey'] : []),
     ];
 
-    const row = await ctx.trx
-      .updateTable('crove_notes.notebook')
-      .set({
-        name: nextName,
-        stack_name: nextStack,
-        visibility: nextVisibility,
-        pinned: nextPinned,
-        sort_key: nextSortKey,
-        revision: before.revision + 1,
-        updated_at: ctx.now,
-      })
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', before.id)
-      .returning(['id', 'revision'])
-      .executeTakeFirstOrThrow();
+    let row: { id: string; revision: number };
+    try {
+      row = await ctx.trx
+        .updateTable('crove_notes.notebook')
+        .set({
+          name: nextName,
+          stack_name: nextStack,
+          visibility: nextVisibility,
+          pinned: nextPinned,
+          sort_key: nextSortKey,
+          revision: before.revision + 1,
+          updated_at: ctx.now,
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', before.id)
+        .returning(['id', 'revision'])
+        .executeTakeFirstOrThrow();
+    } catch (err) {
+      const pgErr = err as { code?: string; message?: string } | null;
+      if (pgErr?.code === '23514' && pgErr.message?.includes('NOTES_NOTEBOOK_HAS_SHARED_NOTES')) {
+        throw notebookHasSharedNotes();
+      }
+      throw err;
+    }
 
     ctx.audit({
       notebookId: row.id,
