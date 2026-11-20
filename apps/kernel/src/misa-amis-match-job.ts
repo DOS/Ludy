@@ -72,12 +72,14 @@ export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMat
   // What to look up: the tax codes of the batch's parties and the item codes its lines are written with, found by the same path the preview and the push use.
   const query = <T>(name: string, input: unknown): Promise<T> => deps.runtime.query<T>(name, input, options);
   const { wanted } = await loadAmisEntries(query, target.ask, amisContextOf(target.ask), MISA_AMIS_PREVIEW_LIMIT + 1);
+  // MISA ASP: the stock a person keeps for the sales lines is looked up with the batch's own stock codes, so a sales batch is checked against it.
+  const stockCodes = target.ask.kind === 'sales' && target.defaultSalesStockCode != null ? [...new Set([...wanted.stockCodes, target.defaultSalesStockCode])].sort() : wanted.stockCodes;
 
   let results: MisaAmisMatchResult[];
   try {
     // A party a person already confirmed by name is checked (its code still in the catalogue), not asked again.
     const confirmedIds = new Set(target.confirmed.map((c) => c.partyId));
-    const found = await matchCatalogue(client, connection, { taxCodes: wanted.taxCodes, itemCodes: wanted.itemCodes, ...(target.product === 'asp' ? { unitNames: wanted.unitNames, stockCodes: wanted.stockCodes } : {}), names: wanted.names.filter((n) => !confirmedIds.has(n.partyId)), confirmed: target.confirmed });
+    const found = await matchCatalogue(client, connection, { taxCodes: wanted.taxCodes, itemCodes: wanted.itemCodes, ...(target.product === 'asp' ? { unitNames: wanted.unitNames, stockCodes } : {}), names: wanted.names.filter((n) => !confirmedIds.has(n.partyId)), confirmed: target.confirmed });
     // Only the verdicts that change something are recorded: a confirmed name that still holds is a row that stays, so it is not a result (and does not count toward the results a record may hold).
     results = found.filter((r) => !(r.kind === 'party_name' && r.state === 'confirmed'));
   } catch (error) {

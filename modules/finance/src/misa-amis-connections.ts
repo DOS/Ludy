@@ -213,7 +213,7 @@ export const misaAmisConnectionList = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.legal_entity_id', 'c.created_at', 'c.last_test_state', 'c.last_tested_at', 'c.default_service_item_code', 'c.default_sales_item_code', 'ch.display_name', 'ch.status'])
+      .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.legal_entity_id', 'c.created_at', 'c.last_test_state', 'c.last_tested_at', 'c.default_service_item_code', 'c.default_sales_item_code', 'c.default_sales_stock_code', 'ch.display_name', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .orderBy('c.created_at')
       .orderBy('c.id')
@@ -230,6 +230,7 @@ export const misaAmisConnectionList = defineQuery({
       lastTestedAt: r.last_tested_at ? new Date(r.last_tested_at).toISOString() : null,
       defaultServiceItemCode: r.default_service_item_code,
       defaultSalesItemCode: r.default_sales_item_code,
+      defaultSalesStockCode: r.default_sales_stock_code,
     }));
   },
 });
@@ -244,9 +245,15 @@ export const misaAmisConnectionSetDefaultItem = defineCommand({
   access: MANAGERS,
   target: (input) => ({ type: 'finance.misa_amis_connection', id: input.id }),
   handler: async (ctx, input): Promise<{ saved: boolean }> => {
+    // A stock is MISA ASP's (a sales line of AMIS leaves none): refused for an AMIS connection, and the table's own check says the same.
+    if (input.role === 'sales_stock') {
+      const connection = await ctx.trx.selectFrom('crove_finance.misa_amis_connection').select(['product']).where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+      if (!connection) throw notFound();
+      if (connection.product !== 'asp' && input.code !== null) throw new DomainError('MISA_AMIS_STOCK_NOT_ASP', 422, 'Chỉ kết nối MISA ASP mới có kho mặc định cho dòng bán hàng');
+    }
     const updated = await ctx.trx
       .updateTable('crove_finance.misa_amis_connection')
-      .set(input.role === 'service' ? { default_service_item_code: input.code } : { default_sales_item_code: input.code })
+      .set(input.role === 'service' ? { default_service_item_code: input.code } : input.role === 'sales' ? { default_sales_item_code: input.code } : { default_sales_stock_code: input.code })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
       .executeTakeFirst();
