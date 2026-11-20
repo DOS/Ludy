@@ -21,6 +21,11 @@ export const zMarketplaceBalanceRow = z.object({
   paidOut: zMoney,
   awaitingPayout: zMoney,
   feesAwaitingInvoice: zMoney,
+  // How old the fees waiting on 331 are (#3711 slice 2, research A3): the date of the oldest fee debit no invoice has cleared (invoices clear the oldest first), the days from it to today, and whether that is
+  // more than one settlement cycle (45 days, MARKETPLACE_FEE_CYCLE_DAYS), so the screen can flag a balance that should have been invoiced or paid. Null and false when no fee is waiting.
+  oldestFeeDate: zLocalDate.nullable(),
+  feesAgeDays: z.number().int().min(0).nullable(),
+  feesOverdue: z.boolean(),
 });
 export type MarketplaceBalanceRow = z.infer<typeof zMarketplaceBalanceRow>;
 
@@ -153,3 +158,15 @@ export const zMarketplaceWorklist = z.object({
   accrualReversals: z.array(zMarketplaceFeeAccrualReversal),
 });
 export type MarketplaceWorklist = z.infer<typeof zMarketplaceWorklist>;
+
+// The finance coworker's notes under the Sàn table (#3711 slice 7): a second read that loads the balance again on the server (so the model is told what the books say, never what the caller says) and, for each
+// platform with fees waiting on its 331, answers one plain note on what they mean and what to do, or why there are none: `off` (no model), `busy` (too frequent), `budget` (the AI budget is spent), `failed`
+// (the call failed or every note was dropped by the checks; the reason is logged as a code, never the words) or `none` (no platform has fees waiting). A note is keyed by the platform's row (its entity and
+// platform); the model is told neither. The notes never change a figure or a flag and post nothing.
+export const zMarketplaceFeeNotesAsk = z.strictObject({ legalEntityId: zId.optional(), lang: z.enum(['vi', 'en']).optional() });
+export type MarketplaceFeeNotesAsk = z.infer<typeof zMarketplaceFeeNotesAsk>;
+export const zMarketplaceFeeNotes = z.strictObject({
+  ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']),
+  notes: z.array(z.strictObject({ legalEntityId: zId, platform: z.string().max(40), text: z.string().max(480) })).max(200),
+});
+export type MarketplaceFeeNotes = z.infer<typeof zMarketplaceFeeNotes>;

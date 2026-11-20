@@ -50,6 +50,9 @@ export const meetingsManifest = defineModule({
       chat_post: columns(['org_id', 'id', 'meeting_id', 'channel_id', 'user_id', 'facts_key', 'text_hash', 'state', 'attempts', 'http_status', 'code', 'created_at', 'handed_at', 'sending_at', 'settled_at']),
       // The message of a queued post (B4, #3168): definer-only, deleted when the post settles. The body is the meeting's text, personal data.
       chat_post_body: columns(['org_id', 'id', 'post_id', 'created_at'], { body: 'pii' }),
+      // The glossary an org's owner or admin keeps (#4043): terms (a product, an acronym, jargon) Vy spells the org's way. Plain text the org wrote; the settings screen asks for no people's names
+      // or personal details, and the command refuses an email or web address and a number. Nothing here is a meeting's own text.
+      glossary_term: columns(['org_id', 'id', 'term', 'created_by', 'created_at', 'updated_at']),
       // One event of a member's minutes webhook (member_hook, A6, #3164): the body holds the text the recorder approved and is set to NULL the moment the delivery settles, so afterwards the row is ids, a status and times.
       hook_delivery: columns(['org_id', 'id', 'hook_id', 'meeting_id', 'type', 'status', 'attempts', 'last_code', 'created_at', 'handed_at', 'sent_at'], { body: 'pii' }),
       // The pieces of about 15 seconds a recorder sends while a live-notes meeting runs (ADR-0052 L4a, #3109): order, the ciphertext's file row, size and the recorder's own length. No key, no text.
@@ -93,6 +96,8 @@ export const meetingsManifest = defineModule({
           'minutes_template_name',
           'minutes_template_sections',
           'minutes_template_hash',
+          // True while the draft is a platform's transcript that was cut (#3922): a flag, never text.
+          'platform_transcript_cut',
           'created_at',
           'updated_at',
         ],
@@ -120,6 +125,8 @@ export const meetingsManifest = defineModule({
       // The minutes templates an org's owner or admin writes (#3578): a name and 1 to 8 sections (title, hint for Vy). Layout the org wrote, not personal data; the settings screen asks for no
       // names or personal details in a template. The meeting's own copy of one is on the meeting row.
       minutes_template: columns(['org_id', 'id', 'name', 'sections', 'archived_at', 'created_by', 'created_at', 'updated_at']),
+      // A member's own opt-in to the morning notice of the day's meetings (#3955): a time of day, their time zone and the language of the mail. One row per member, theirs alone; no title, name or text of a meeting is in it.
+      morning_notice: columns(['org_id', 'id', 'user_id', 'send_minute', 'time_zone', 'language', 'created_at', 'updated_at']),
       // The transcript (#2578): what was said, who it is attributed to, when. Text and speaker label are personal data.
       transcript_segment: columns(
         ['org_id', 'id', 'meeting_id', 'start_seconds', 'end_seconds', 'stage', 'corrected', 'tainted', 'source_run_id', 'source', 'created_at', 'updated_at'],
@@ -131,6 +138,8 @@ export const meetingsManifest = defineModule({
   },
   permissions: [],
   entities: [
+    // A term of the org's glossary (#4043): the target of its update and remove commands.
+    { type: 'meetings.glossary_term', table: 'glossary_term', legalEntityScoped: false, audit: 'command' },
     { type: 'meetings.meeting', table: 'meeting', legalEntityScoped: false, audit: 'command' },
     // A minutes template the org wrote (#3578): the target of its update and archive commands.
     { type: 'meetings.minutes_template', table: 'minutes_template', legalEntityScoped: false, audit: 'command' },

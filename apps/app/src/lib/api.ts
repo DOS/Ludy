@@ -281,6 +281,19 @@ export async function claimImportedMedia(meetingId: string, recordingId: string)
   return (await response.json()) as { fileId: string };
 }
 
+// Claims the transcript Ludy's worker read from a meeting platform for a recording that has nothing else (C2, #3174): the server takes the staged lines, writes them as the recorder's draft (tainted, labelled
+// with the platform) and ends the meeting. Like claimImportedMedia, a row that is not staged, or is another member's, is refused there.
+export async function claimImportedTranscript(meetingId: string, recordingId: string): Promise<{ meetingId: string; stored: number }> {
+  const response = await retryWhileBusy(() =>
+    apiFetch(`/api/meetings/${encodeURIComponent(meetingId)}/transcript-import`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ importId: recordingId }),
+    }),
+  );
+  return (await response.json()) as { meetingId: string; stored: number };
+}
+
 // One piece of the audio of a live-notes meeting (ADR-0052 L4a, #3109): the raw bytes as the body, the seq and the length in
 // the query. Not retried here (the live sender retries by the error's status, which an ApiError carries) and no busy wait: a
 // failed piece may be dropped, the recording uploaded at the end is the one that counts.

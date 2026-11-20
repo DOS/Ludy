@@ -506,4 +506,146 @@ describe('sign.envelope.completed outbox event (#3512)', () => {
     expect(failRes).toMatchObject({ sealStatus: 'failed' });
     expect(emittedFailed).toEqual([]);
   });
+
+  it('sends completion copies to CC and link-mode recipients on standard envelopes while blocking unverified direct-link relays (#3774)', async () => {
+    const sealedSha = 'b'.repeat(64);
+    const certSha = 'c'.repeat(64);
+    const runSeal = async (opts: {
+      directLinkId: string | null;
+      originActorLabel: string;
+      recipients: Array<{ signer_role: string; email: string | null; delivery_mode: string }>;
+    }): Promise<string[]> => {
+      const queuedTo: string[] = [];
+      const emitted: Array<{ type: string; payload: Record<string, unknown> }> = [];
+      const { trx } = createFakeTrx((compiled) => {
+        const sqlLower = compiled.sql.toLowerCase();
+        if (sqlLower.includes('select * from "crove_sign"."envelope"') && sqlLower.includes('for update')) {
+          return {
+            rows: [
+              {
+                id: ENV_1,
+                org_id: ORG_ID,
+                title: 'Hop dong dich vu',
+                status: 'completed',
+                seal_status: null,
+                source_kind: 'standalone',
+                source_id: null,
+                direct_link_id: opts.directLinkId,
+                source_file_id: SOURCE_FILE_ID,
+                source_sha256: 'a'.repeat(64),
+                completed_at: new Date('2026-11-16T09:59:00.000Z'),
+                version: 3,
+                created_by: USER_ID,
+              },
+            ],
+          };
+        }
+        if (sqlLower.includes('from "crove_kernel"."file"')) {
+          const fileId = compiled.parameters[1];
+          return {
+            rows: [
+              fileId === SEALED_FILE_ID
+                ? { id: SEALED_FILE_ID, source: 'sign_sealed', storage_key: 's/doc.pdf', generation: 'g1', sha256: sealedSha }
+                : { id: CERT_FILE_ID, source: 'sign_certificate', storage_key: 's/cert.json', generation: 'g2', sha256: certSha },
+            ],
+          };
+        }
+        if (sqlLower.includes('from "crove_sign"."envelope"')) {
+          return { rows: [{ id: ENV_1 }] };
+        }
+        if (sqlLower.includes('select "actor_label" from "crove_sign"."signing_event"')) {
+          return { rows: [{ actor_label: opts.originActorLabel }] };
+        }
+        if (sqlLower.includes('from "crove_sign"."signing_event"')) {
+          return { rows: [{ seq: 3, event_hash: 'd'.repeat(64) }] };
+        }
+        if (sqlLower.includes('insert into "crove_sign"."signing_event"')) {
+          return {
+            rows: [
+              {
+                id: '01900000-0000-7000-8000-000000000801',
+                seq: 4,
+                prev_event_hash: 'd'.repeat(64),
+                event_hash: 'e'.repeat(64),
+                occurred_at: new Date('2026-11-16T10:00:00.000Z'),
+              },
+            ],
+          };
+        }
+        if (sqlLower.includes('from "crove_sign"."signer"')) {
+          return { rows: opts.recipients };
+        }
+        if (sqlLower.includes('member_emails')) {
+          return { rows: [{ email: 'sender@example.com' }] };
+        }
+        if (sqlLower.includes('from "crove_kernel"."tenant"')) {
+          return { rows: [{ name: 'Cong ty Co phan ABC' }] };
+        }
+        if (sqlLower.includes('mail_address_hash')) {
+          return { rows: [{ hash: 'f'.repeat(64) }] };
+        }
+        if (sqlLower.includes('mail_suppression') || sqlLower.includes('from "crove_kernel"."mail_event"')) {
+          return { rows: [] };
+        }
+        if (sqlLower.includes('insert into "crove_kernel"."mail_message"')) {
+          const toParam = compiled.parameters.find(
+            (p): p is string => typeof p === 'string' && p.includes('@') && !p.startsWith('<'),
+          );
+          if (toParam) queuedTo.push(toParam);
+          return { rows: [{ id: '01900000-0000-7000-8000-000000000802' }] };
+        }
+        return { rows: [{ id: '01900000-0000-7000-8000-000000000802' }] };
+      });
+
+      await envelopeSealComplete.handler(makeCommandCtx(trx, emitted), {
+        envelopeId: ENV_1,
+        outcome: 'sealed',
+        certificateCode: 'CS-ABCD-EFGH-1234',
+        sealedFileId: SEALED_FILE_ID,
+        certificateFileId: CERT_FILE_ID,
+      });
+      return queuedTo.sort();
+    };
+
+    // Standard tenant envelope: link-mode CC + link-mode signer + email-mode signer all receive completion copies.
+    const standardRecipients = await runSeal({
+      directLinkId: null,
+      originActorLabel: `user:${USER_ID}`,
+      recipients: [
+        { signer_role: 'signer', email: 'zalo-signer@example.com', delivery_mode: 'link' },
+        { signer_role: 'cc', email: 'cc-archive@example.com', delivery_mode: 'link' },
+        { signer_role: 'approver', email: 'approver@example.com', delivery_mode: 'email' },
+        { signer_role: 'cc', email: null, delivery_mode: 'link' },
+      ],
+    });
+    expect(standardRecipients).toEqual([
+      'approver@example.com',
+      'cc-archive@example.com',
+      'sender@example.com',
+      'zalo-signer@example.com',
+    ]);
+
+    // Direct-link envelope: unverified link-mode signer gets ZERO mail; OTP-verified email-mode signer gets mail.
+    const directUnverified = await runSeal({
+      directLinkId: '01900000-0000-7000-8000-000000000901',
+      originActorLabel: 'system:sign-direct-link',
+      recipients: [{ signer_role: 'signer', email: 'victim@example.com', delivery_mode: 'link' }],
+    });
+    expect(directUnverified).toEqual(['sender@example.com']);
+
+    const directOtpVerified = await runSeal({
+      directLinkId: '01900000-0000-7000-8000-000000000901',
+      originActorLabel: 'system:sign-direct-link',
+      recipients: [{ signer_role: 'signer', email: 'verified@example.com', delivery_mode: 'email' }],
+    });
+    expect(directOtpVerified).toEqual(['sender@example.com', 'verified@example.com']);
+
+    // Defense in depth: pruned direct-link row (direct_link_id IS NULL via ON DELETE SET NULL) still blocks relay.
+    const directPruned = await runSeal({
+      directLinkId: null,
+      originActorLabel: 'system:sign-direct-link',
+      recipients: [{ signer_role: 'signer', email: 'pruned-victim@example.com', delivery_mode: 'link' }],
+    });
+    expect(directPruned).toEqual(['sender@example.com']);
+  });
 });

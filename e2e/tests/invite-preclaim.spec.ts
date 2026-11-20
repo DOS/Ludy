@@ -29,6 +29,7 @@ test('an invited address signs up only from its accept link, and the invitee joi
   await openSettingsTab(page, 'members');
 
   const member = newEmail('preclaim-member');
+  await page.getByRole('button', { name: 'Mời thành viên' }).click();
   await page.getByPlaceholder('email@congty.vn').fill(member);
   await page.getByRole('button', { name: 'Mời', exact: true }).click();
   const created = page.getByRole('status').filter({ hasText: `Đã tạo lời mời cho ${member}` });

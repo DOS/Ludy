@@ -225,8 +225,32 @@ describe('the risk of the commands of running ads (#2294)', () => {
     expect(byName().get('ads.launch.cancel')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner', 'admin'] });
   });
 
+  // Managing a running ad (W4, #3835): what can start or raise spend (a resume, a raise, an extension) is an R3 financial proposal command approved like a launch and asked
+  // for through an R1 preparer; what only reduces or stops spend (a pause, an archive, a lower budget, a shorter schedule) and the cancel of a change never begun are the
+  // owner's or an admin's own R2 external commands; the job's two commands are the system's.
+  const MANAGE_APPROVED = ['ads.object.resume', 'ads.budget.raise', 'ads.schedule.extend'];
+  const MANAGE_PREPARERS = ['ads.object.prepare_resume', 'ads.budget.prepare_raise', 'ads.schedule.prepare_extend'];
+  const MANAGE_REDUCING = ['ads.object.pause', 'ads.object.archive', 'ads.budget.lower', 'ads.schedule.shorten', 'ads.manage.cancel'];
+
+  it('keeps a resume, a raise and an extension of a running ad (W4, #3835) R3 financial proposal commands, never a direct one', () => {
+    for (const name of MANAGE_APPROVED) expect(byName().get(name), name).toMatchObject({ risk: 'R3', sideEffect: 'financial', access: 'proposal' });
+  });
+
+  it('asks for each of them through an R1 internal preparer of owners and admins, which writes nothing', () => {
+    for (const name of MANAGE_PREPARERS) expect(byName().get(name), name).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner', 'admin'] });
+  });
+
+  it('keeps a pause, an archive, a lower budget, a shorter schedule and the cancel of a change never begun R2 external, owners and admins', () => {
+    for (const name of MANAGE_REDUCING) expect(byName().get(name), name).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner', 'admin'] });
+  });
+
+  it('keeps the manage job’s begin an R2 external command and its record an R1 internal one, both the system’s alone', () => {
+    expect(byName().get('ads.manage.begin')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: 'system' });
+    expect(byName().get('ads.manage.record')).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: 'system' });
+  });
+
   it('lets no agent run any of them', () => {
-    for (const name of [...OPENING, ...PREPARERS, 'ads.write.disable', 'ads.account.disable_write', 'ads.pause_all', 'ads.cap.lower', 'ads.account.link_write', 'ads.account.disconnect', 'ads.account.forget_write', 'ads.launch.cancel']) {
+    for (const name of [...OPENING, ...PREPARERS, 'ads.write.disable', 'ads.account.disable_write', 'ads.pause_all', 'ads.cap.lower', 'ads.account.link_write', 'ads.account.disconnect', 'ads.account.forget_write', 'ads.launch.cancel', ...MANAGE_APPROVED, ...MANAGE_PREPARERS, ...MANAGE_REDUCING, 'ads.manage.begin', 'ads.manage.record']) {
       expect(byName().get(name)?.agent, name).toBeUndefined();
     }
   });

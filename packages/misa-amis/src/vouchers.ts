@@ -36,7 +36,6 @@ export interface AmisVoucher {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const isOrgRefId = (value: unknown): value is string => typeof value === 'string' && UUID.test(value);
 
-/** Refuses, before anything is sent, a voucher MISA would not take: an unknown type, an id that is not a UUID, no line, more than 500 lines (never cut: cutting a voucher changes what it says) or an amount that is not exact. */
 /** The shape rules of a voucher (type, reference, 1 to 500 lines), on plain data: also used on the voucher read back from the JSON text that is about to be sent, so what is checked is what is sent. */
 export function checkVoucherShape(voucher: { voucher_type?: unknown; org_refid?: unknown; detail?: unknown }): void {
   if (!isKnownVoucherType(voucher.voucher_type)) throw new AmisError('invalid_request', { reason: 'bad_voucher_type' });
@@ -45,6 +44,7 @@ export function checkVoucherShape(voucher: { voucher_type?: unknown; org_refid?:
   if (voucher.detail.length > AMIS_MAX_VOUCHER_LINES) throw new AmisError('invalid_request', { reason: 'too_many_lines' });
 }
 
+/** Refuses, before anything is sent, a voucher MISA would not take: an unknown type, an id that is not a UUID, no line, more than 500 lines (never cut: cutting a voucher changes what it says) or an amount that is not exact. */
 export function checkVoucher(voucher: AmisVoucher): void {
   checkVoucherShape(voucher);
   // A value that cannot be written exactly (a JS number that is not a safe integer) is refused now, before a token is asked for.

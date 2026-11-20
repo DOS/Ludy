@@ -4,8 +4,10 @@ import { useTranslations } from 'use-intl';
 import { buttonVariants } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { ConversationRetentionCard } from '../../components/conversation-retention.tsx';
+import { EngageWakeRulesCard } from '../../components/engage-wake-rules.tsx';
 import { ExtensionDevices } from '../../components/extension-devices.tsx';
 import { MeetingPlatforms } from '../../components/meeting-platforms.tsx';
+import { GlossaryCard } from '../../components/glossary-card.tsx';
 import { MinutesTemplatesCard } from '../../components/minutes-templates.tsx';
 import { OrgAppsCard } from '../../components/org-apps.tsx';
 import { OrgExtensionDevices } from '../../components/org-extension-devices.tsx';
@@ -26,10 +28,11 @@ import { WorkingHoursCard } from '../working-hours.tsx';
 import { AddressField, ContactEmailField, ProposalRemindersField, RotateInboundAddress, TaxCalendarField, TaxCodeField, VatFilingPeriodField } from './fields.tsx';
 import { Anchor, SettingsFrame } from './frame.tsx';
 import { MembersCard } from './members-card.tsx';
+import { NotificationPreferences } from './notifications-card.tsx';
 import { Offboarding } from './offboarding.tsx';
 import { SETTINGS_CARD } from './tabs.ts';
 
-// The ten tabs of Settings (ST-1, #3589), one screen each. A tab lists its cards in one column and stays under 1200 px at 1440 wide, which decides what sits together. The cards owned by another
+// The eleven tabs of Settings (ST-1, #3589; #3592), one screen each. A tab lists its cards in one column and stays under 1200 px at 1440 wide, which decides what sits together. The cards owned by another
 // app (the booking and quote cards of Engage, the minutes templates of the meetings) have tabs of their own or sit under "Ứng dụng" until a later issue moves them into their own app's settings.
 // A new card is one line in the page of its tab.
 
@@ -127,6 +130,8 @@ export function SettingsAppsPage() {
           {modules.includes('social') && canManage && <ConversationRetentionCard key={`conversation-retention:${org.slug}`} />}
           {/* The minutes templates the org writes (#3578): owners and admins write them, every member picks one in a meeting. */}
           {modules.includes('meetings') && canManage && <MinutesTemplatesCard key={`minutes-templates:${org.slug}`} />}
+          {/* The org's own terms (#4043): owners and admins keep them; nobody else reads the list. */}
+          {modules.includes('meetings') && canManage && <GlossaryCard key={`glossary:${org.slug}`} />}
         </>
       )}
     </SettingsFrame>
@@ -163,6 +168,8 @@ export function SettingsSalesPage() {
           )}
           {/* The deal board's stages and the reminder for forgotten deals (#3647), with the crm module; owners and admins. */}
           {modules.includes('crm') && canManage && <SalesProcessCard key={`sales-process:${org.slug}`} />}
+          {/* When the inbox and the CRM raise work (Engage's wake rules, #3862): the hours and days after which Home and an AI coworker are told; owners and admins. Here, with the other follow-up rules, not on the crowded Apps tab (the tabs stay under 1200 px). */}
+          {(modules.includes('social') || modules.includes('crm')) && canManage && <EngageWakeRulesCard key={`engage-wake-rules:${org.slug}`} />}
         </>
       )}
     </SettingsFrame>
@@ -232,6 +239,15 @@ export function SettingsConnectionsPage() {
           )}
         </>
       )}
+    </SettingsFrame>
+  );
+}
+
+// Thông báo của tôi (NT-1, #3592): which notices the member gets and the daily brief by email, theirs alone; moved from the bottom of the bell's screen.
+export function SettingsNotificationsPage() {
+  return (
+    <SettingsFrame>
+      {({ org }) => <NotificationPreferences key={`notification-preferences:${org.slug}`} />}
     </SettingsFrame>
   );
 }

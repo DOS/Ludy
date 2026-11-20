@@ -213,14 +213,19 @@ test('the agents screen with its legal-entity pickers passes the 360px and axe w
   await signInNewUser(page, newEmail('layout-a11y-entities'));
   const slug = await createOrg(page, 'Công ty Hai pháp nhân');
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('button', { name: 'Thêm pháp nhân' }).click();
   const add = page.getByRole('form', { name: 'Thêm pháp nhân' });
   await add.getByLabel('Tên pháp nhân').fill('Chi nhánh Đà Nẵng');
   await add.getByRole('button', { name: 'Thêm', exact: true }).click();
   await expect(page.getByRole('main').getByText('Chi nhánh Đà Nẵng').first()).toBeVisible();
   await page.goto(`/o/${slug}/agents`);
-  await expect(page.getByRole('main').getByRole('group', { name: 'Pháp nhân', exact: true })).toBeVisible();
+  // Add position is a dialog behind a button (#3608); its options hold the entity picker.
+  await page.getByRole('main').getByRole('button', { name: 'Thêm vị trí' }).click();
+  const addPosition = page.getByRole('dialog', { name: 'Thêm vị trí' });
+  await addPosition.getByRole('button', { name: 'Tùy chọn khác' }).click();
+  await expect(addPosition.getByRole('group', { name: 'Pháp nhân', exact: true })).toBeVisible();
   // Both pickers start on the default entity: the new branch is not chosen in either.
-  const branch = page.getByRole('main').getByRole('checkbox', { name: 'Chi nhánh Đà Nẵng' });
+  const branch = page.getByRole('checkbox', { name: 'Chi nhánh Đà Nẵng' });
   await expect(branch.first()).toBeVisible();
   for (const box of await branch.all()) await expect(box).not.toBeChecked();
   expect(await phoneWidthProblems(page, [`/o/${slug}/agents`])).toEqual([]);

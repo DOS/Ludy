@@ -280,3 +280,54 @@ describe('vatPercent', () => {
     expect(vatPercent('abc')).toBe(0);
   });
 });
+
+describe('a sale that lowers revenue under Circular 99 (#3712 slice 4)', () => {
+  type Lines = Parameters<typeof buildSalesJournal>[0];
+  const credit = [{ lineNo: 1, debitAccount: '5111', amount: '-1000000' }] as Lines;
+  const shape = (journal: ReturnType<typeof buildSalesJournal>) => journal.map((j) => [j.accountCode, j.debit, j.credit]);
+
+  it('debits the reduction to 521 and keeps the output VAT on 3331', () => {
+    const journal = buildSalesJournal(credit, '-100000', 'HĐ điều chỉnh giảm', 'tt99');
+    // The receivable comes first, then the revenue lines (here the 521 deduction), then the output VAT.
+    expect(shape(journal)).toEqual([
+      ['131', '0', '1100000'],
+      ['521', '1000000', '0'],
+      ['3331', '100000', '0'],
+    ]);
+    expect(journal.some((j) => j.accountCode === '5111')).toBe(false);
+    expect(journalIsBalanced(journal)).toBe(true);
+  });
+
+  it('keeps the revenue account under Circular 133 and when no regime is given', () => {
+    for (const regime of ['tt133', undefined]) {
+      const journal = buildSalesJournal(credit, '-100000', 'HĐ điều chỉnh giảm', regime);
+      expect(journal.find((j) => j.accountCode === '5111')).toMatchObject({ debit: '1000000', credit: '0' });
+      expect(journal.some((j) => j.accountCode === '521')).toBe(false);
+      expect(journalIsBalanced(journal)).toBe(true);
+    }
+  });
+
+  it('moves only the account whose net is below zero, as one 521 line, and leaves a net credit alone', () => {
+    const mixed = [
+      { lineNo: 1, debitAccount: '5113', amount: '3000000' },
+      { lineNo: 2, debitAccount: '5111', amount: '-400000' },
+      { lineNo: 3, debitAccount: '5112', amount: '-100000' },
+      { lineNo: 4, debitAccount: '5113', amount: '-500000' },
+    ] as Lines;
+    const journal = buildSalesJournal(mixed, '200000', 'HĐ', 'tt99');
+    expect(journal.filter((j) => j.accountCode === '521')).toHaveLength(1);
+    expect(journal.find((j) => j.accountCode === '521')).toMatchObject({ debit: '500000', credit: '0' });
+    // 5113 nets to a credit of 2500000 and stays a credit; 5111 and 5112 left no line of their own.
+    expect(journal.find((j) => j.accountCode === '5113')).toMatchObject({ debit: '0', credit: '2500000' });
+    expect(journal.some((j) => j.accountCode === '5111' || j.accountCode === '5112')).toBe(false);
+    expect(journalIsBalanced(journal)).toBe(true);
+  });
+
+  it('does not touch an ordinary sale, nor a reduction of an account that is not sales revenue', () => {
+    const sale = [{ lineNo: 1, debitAccount: '5111', amount: '1000000' }] as Lines;
+    expect(buildSalesJournal(sale, '100000', 'HĐ', 'tt99')).toEqual(buildSalesJournal(sale, '100000', 'HĐ'));
+    const other = [{ lineNo: 1, debitAccount: '515', amount: '-50000' }] as Lines;
+    expect(buildSalesJournal(other, '0', 'HĐ', 'tt99').some((j) => j.accountCode === '521')).toBe(false);
+  });
+});
+

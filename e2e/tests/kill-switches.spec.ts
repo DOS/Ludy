@@ -78,13 +78,13 @@ test('the org switch on the Agents page and the deployment ai switch refuse agen
   const positionId = await test.step('an owner installs an agent, with a second factor (R3)', async () => {
     await page.getByRole('navigation').getByRole('link', { name: 'Ludy AI', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Đội ngũ AI' }).click();
-    await expect(page.getByRole('heading', { name: 'Sơ đồ tổ chức và tác tử AI' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Đội ngũ AI' })).toBeVisible();
     await page.getByTestId('template').first().getByRole('button', { name: 'Cài', exact: true }).click();
     await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
-    await expect(page.getByText('Đã cài tác tử AI và vị trí của nó.')).toBeVisible();
+    await expect(page.getByText('Đã cài đồng nghiệp AI và vị trí của nó.')).toBeVisible();
     const [position] = sql<{ id: string }>(
       `SELECT p.id FROM crove_kernel.position p JOIN crove_kernel.tenant t USING (org_id)
         WHERE t.slug = :'slug' AND p.holder_agent_id IS NOT NULL AND p.status = 'active'`,

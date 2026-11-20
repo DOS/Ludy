@@ -121,6 +121,11 @@ export const EXPORT_TABLES = {
   'finance.marketplace_connection': { from: 'crove_finance.marketplace_connection', omit: ['poll_cursor'] },
   // The code AMIS is told for this connection is a routing id of the deployment, not the org's data; the access code is sealed in crove_kernel.credential, which is never exported.
   'finance.misa_amis_connection': { from: 'crove_finance.misa_amis_connection', omit: ['org_company_code'] },
+  // What was pushed to AMIS and where it stands: ids, codes, dates and states (MISA's own text for a refusal is the reason column). No voucher body is stored.
+  'finance.misa_amis_push': { from: 'crove_finance.misa_amis_push', omit: [] },
+  // The last check of a connection's vouchers against the firm's MISA catalogue (#4112): the batch asked about, its state and times, and per party (its tax code) or item (its code) whether one entry matched, with that entry's code and id. No catalogue name or address is stored.
+  'finance.misa_amis_match': { from: 'crove_finance.misa_amis_match', omit: [] },
+  'finance.misa_amis_match_check': { from: 'crove_finance.misa_amis_match_check', omit: [] },
   'finance.marketplace_party': { from: 'crove_finance.marketplace_party', omit: [] },
   'finance.stock_item': { from: 'crove_finance.stock_item', omit: [] },
   'finance.stock_alias': { from: 'crove_finance.stock_alias', omit: [] },
@@ -247,6 +252,8 @@ export const EXPORT_TABLES = {
   'ads.ad_campaign_request': { from: 'crove_ads.ad_campaign_request', omit: [] },
   'ads.ad_flag_setting': { from: 'crove_ads.ad_flag_setting', omit: [] },
   'ads.ad_launch': { from: 'crove_ads.ad_launch', omit: [] },
+  // The changes of a running ad (#3835, W4): what was asked and where it stands, ids, amounts, dates and codes only.
+  'ads.ad_manage_change': { from: 'crove_ads.ad_manage_change', omit: [] },
   'ads.ad_object': { from: 'crove_ads.ad_object', omit: [] },
   'ads.ad_org_setting': { from: 'crove_ads.ad_org_setting', omit: [] },
   'ads.ad_spend_cap': { from: 'crove_ads.ad_spend_cap', omit: [] },
@@ -467,6 +474,9 @@ export const OWNER_RUN_EXPORT_TABLES = {
   // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
   'hr.job_opening': { from: 'crove_hr.job_opening', omit: [] },
   'hr.candidate': { from: 'crove_hr.candidate', omit: [] },
+  // The glossary the org keeps for Vy's spelling (#4043): plain text an owner or admin wrote (no personal data by its rules). Its owner_admin policy shows the system actor nothing, so the snapshot would
+  // export an empty table: the owner's own session reads it here.
+  'meetings.glossary_term': { from: 'crove_meetings.glossary_term', omit: [] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 export type OwnerRunExportTable = keyof typeof OWNER_RUN_EXPORT_TABLES;
 export const OWNER_RUN_EXPORT_TABLE_NAMES = Object.keys(OWNER_RUN_EXPORT_TABLES) as [OwnerRunExportTable, ...OwnerRunExportTable[]];
@@ -490,7 +500,7 @@ export const exportPeople = defineQuery({
   handler: async (ctx, input, sink) => {
     if (!sink) throw new DomainError('STREAM_ONLY', 400, 'Truy vấn này chỉ đọc theo luồng');
     const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('status').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
-    if (tenant.status !== 'offboarding') throw new DomainError(ORG_NOT_OFFBOARDING, 409, 'Chỉ tải được danh sách nhân sự khi tổ chức đang được đóng');
+    if (tenant.status !== 'offboarding') throw new DomainError(ORG_NOT_OFFBOARDING, 409, 'Chỉ tải được các tệp này khi tổ chức đang được đóng');
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Truy vấn này chỉ dành cho người dùng', { rule: 'sensitive_user_only' });
     const spec = OWNER_RUN_EXPORT_TABLES[input.table];
     // spec.from is one of the constant names above, never input.

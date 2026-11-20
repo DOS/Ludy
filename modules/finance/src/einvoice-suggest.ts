@@ -40,6 +40,8 @@ export interface EInvoiceSuggestSource {
   orgRates: RateCount[];
   // The lines of the issued invoice the person picked as part of the source (#2721), written as text for the model; null when none was picked.
   invoice: { text: string } | null;
+  // The VAT rates of the earlier drafts to the customer the form already names (#2713), with how many lines each; null when the form names none (or one that is not a customer of the org).
+  formBuyerRates: RateCount[] | null;
 }
 
 type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
@@ -75,12 +77,34 @@ export function nameWords(text: string): string[] {
   return [...new Set(words)].slice(0, WORDS_MAX);
 }
 
+// The VAT rates of the lines of the earlier drafts to each of `ids`, with how many lines each (one row per customer and rate).
+async function rateRowsOf(ctx: Ctx, ids: readonly string[]): Promise<Array<{ party_id: string; vat_rate: string; n: number }>> {
+  if (ids.length === 0) return [];
+  return (
+    await sql<{ party_id: string; vat_rate: string; n: number }>`
+      SELECT d.buyer_party_id AS party_id, l.vat_rate, count(*)::int AS n
+      FROM crove_finance.einvoice_draft d
+      JOIN crove_finance.einvoice_draft_line l ON l.org_id = d.org_id AND l.draft_id = d.id
+      WHERE d.org_id = ${ctx.orgId} AND d.buyer_party_id IN (${sql.join(ids)})
+      GROUP BY d.buyer_party_id, l.vat_rate`.execute(ctx.trx)
+  ).rows;
+}
+
+// The rate history of the customer the form names (#2713), or null when it is none of the org's customers (another org's id, a merged duplicate and an unknown id all read as none).
+async function formBuyerRatesOf(ctx: Ctx, partyId: string | undefined): Promise<RateCount[] | null> {
+  if (partyId === undefined) return null;
+  const known = await sql<{ id: string }>`SELECT p.id FROM crove_kernel.party p WHERE p.org_id = ${ctx.orgId} AND p.id = ${partyId} AND p.duplicate_of IS NULL`.execute(ctx.trx);
+  if (known.rows.length === 0) return null;
+  return (await rateRowsOf(ctx, [partyId])).map((r) => ({ vatRate: r.vat_rate, n: r.n }));
+}
+
 export const einvoiceDraftSuggestSource = defineQuery({
   name: 'finance.einvoice_draft.suggest_source',
   input: zEInvoiceSuggestInput,
   access: EDITORS,
   handler: async (ctx, input): Promise<EInvoiceSuggestSource> => {
     const words = nameWords(input.text);
+    const formBuyerRates = await formBuyerRatesOf(ctx, input.formBuyerPartyId);
     let invoice: EInvoiceSuggestSource['invoice'] = null;
     if (input.invoiceDraftId !== undefined && input.buyerPartyId !== undefined) {
       const entity = await resolveLegalEntity(ctx, input.legalEntityId);
@@ -94,7 +118,7 @@ export const einvoiceDraftSuggestSource = defineQuery({
       WHERE l.org_id = ${ctx.orgId}
       GROUP BY l.vat_rate`.execute(ctx.trx);
     const orgRates = orgRatesRows.rows.map((r) => ({ vatRate: r.vat_rate, n: r.n }));
-    if (words.length === 0) return { parties: [], orgRates, invoice };
+    if (words.length === 0) return { parties: [], orgRates, invoice, formBuyerRates };
     // The score of a customer is the number of the text's words its name holds; the best come first, and a customer none of them fits is not offered.
     const score = sql.join(words.map((word) => sql`(pg_catalog.strpos(pg_catalog.lower(normalize(p.name, NFC)), ${word}) > 0)::int`), sql` + `);
     const partyRows = await sql<{ id: string; kind: 'organization' | 'person'; name: string; tax_code: string | null; address: string | null; email: string | null }>`
@@ -104,17 +128,7 @@ export const einvoiceDraftSuggestSource = defineQuery({
       ORDER BY (${score}) DESC, p.name, p.id
       LIMIT ${SUGGEST_PARTIES_MAX}`.execute(ctx.trx);
     const ids = partyRows.rows.map((p) => p.id);
-    const rateRows =
-      ids.length === 0
-        ? []
-        : (
-            await sql<{ party_id: string; vat_rate: string; n: number }>`
-              SELECT d.buyer_party_id AS party_id, l.vat_rate, count(*)::int AS n
-              FROM crove_finance.einvoice_draft d
-              JOIN crove_finance.einvoice_draft_line l ON l.org_id = d.org_id AND l.draft_id = d.id
-              WHERE d.org_id = ${ctx.orgId} AND d.buyer_party_id IN (${sql.join(ids)})
-              GROUP BY d.buyer_party_id, l.vat_rate`.execute(ctx.trx)
-          ).rows;
+    const rateRows = await rateRowsOf(ctx, ids);
     const parties = partyRows.rows.map((p) => ({
       id: p.id,
       kind: p.kind,
@@ -124,7 +138,7 @@ export const einvoiceDraftSuggestSource = defineQuery({
       email: p.email,
       rates: rateRows.filter((r) => r.party_id === p.id).map((r) => ({ vatRate: r.vat_rate, n: r.n })),
     }));
-    return { parties, orgRates, invoice };
+    return { parties, orgRates, invoice, formBuyerRates };
   },
 });
 

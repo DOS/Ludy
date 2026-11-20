@@ -282,6 +282,28 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'keep_legal',
     reason: 'The reason written on a journal voucher is part of the accounting voucher, append-only and kept by law (Accounting Law 88/2015, Art. 41)',
   },
+  // MISA AMIS's own text for a voucher it refused (#4015): untrusted, at most 500 characters, and it may quote a party's name, tax code or an invoice number. An erasure clears the whole text of a refused row that
+  // mentions the value and keeps the row and its state (crove_finance.personal_data_clear_misa_amis_push_reason); a short number is left and listed, as in the activity lines.
+  'crove_finance.misa_amis_push.reason': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "MISA AMIS's own words for a voucher it refused, which may quote a party or an invoice; an erasure clears the text of a refused row that mentions the value and keeps the row's state",
+  },
+  // The tax code a MISA catalogue check looked a party up by (#4112): the key of one stored result (matched, unknown or ambiguous) per party of a connection's batch. An erasure deletes the party's rows
+  // whole (the row holds nothing but the key, the state and the matched entry's code and id), and the next check files them anew. Item rows hold an item code and are not matched.
+  'crove_finance.misa_amis_match.match_key': {
+    kind: 'tax_code',
+    handling: 'erase',
+    reason: "The tax code a check of a MISA AMIS connection looked a party up by; an erasure deletes the party's stored results and the next check makes them anew",
+  },
+  // The name of the catalogue entry a MISA catalogue check proposed for a party with no tax code (#4124): it can be a person's name (a household business), so it is kept on the proposal row alone, cleared when a
+  // person confirms it (the row is replaced by one that holds the code only) and deleted with the party it was proposed for when an erasure reaches that party (a name is never a probe); the next check proposes the
+  // entry anew if the books still carry the party.
+  'crove_finance.misa_amis_match.candidate_name': {
+    kind: 'name',
+    handling: 'erase',
+    reason: "The name of the MISA catalogue entry proposed for a party with no tax code; an erasure that reaches the party deletes its name matches and the next check makes them anew",
+  },
   // More free text (#1961): a task's title and description, which members and agents write, are replaced where they
   // quote the value; a bank statement line and a journal line's memo are kept.
   'crove_kernel.task.title': {
@@ -954,6 +976,9 @@ const SHORT_NUMBER_MEETING_COLUMNS = new Set([
   'crove_meetings.meeting_note.body',
   'crove_meetings.meeting_chapter.title',
 ]);
+// The same for MISA AMIS's refusal text on a pushed voucher (#4015): a short number there may be an amount or an invoice number MISA quoted.
+export const MISA_PUSH_REASON_SHORT_NUMBER_REASON =
+  "A number of fewer than 10 digits may also be an amount or an invoice number in MISA AMIS's refusal text, so the erasure does not clear it there; check these rows and tell the person, or ask for a longer value";
 export const ACTIVITY_SHORT_NUMBER_REASON =
   'A number of fewer than 10 digits may also be an amount or a voucher number in a timeline line or a task, so the erasure does not replace it there; check these rows and tell the person, or ask for a longer value';
 
@@ -1149,6 +1174,17 @@ export const personalDataErase = defineCommand({
          WHERE org_id = ${ctx.orgId}::uuid AND party_id = ANY(${parties.map((p) => p.id)}::uuid[])
          RETURNING id`.execute(ctx.trx);
       add('crove_finance.bank_party_rule.key_hash', rules.length);
+      // The name matches of those parties (#4124): a proposal holds the name of a catalogue entry that was found because it is the party's name, and a confirmation says the entry is that party. They go whole, documented
+      // party or not (the next check proposes again for a party the books still carry). A name is never a probe, so this is where the proposal's name is erased: with the party it belongs to. The checks are locked first and
+      // the waiting ones moved on, as for a tax code above, so a job that read the party's name before this erasure cannot put the proposal back.
+      await sql`SELECT 1 FROM crove_finance.misa_amis_match_check WHERE org_id = ${ctx.orgId}::uuid FOR UPDATE`.execute(ctx.trx);
+      const { rows: nameMatches } = await sql<{ proposal: boolean }>`
+        DELETE FROM crove_finance.misa_amis_match
+         WHERE org_id = ${ctx.orgId}::uuid AND kind = 'party_name' AND match_key = ANY(${parties.map((p) => p.id)}::text[])
+         RETURNING candidate_name IS NOT NULL AS proposal`.execute(ctx.trx);
+      add('crove_finance.misa_amis_match.candidate_name', nameMatches.filter((r) => r.proposal).length);
+      // Always, not only when a row went: a job may have read the party's name and not yet recorded a proposal for it, and that proposal is exactly what must not land after this erasure.
+      await sql`UPDATE crove_finance.misa_amis_match_check SET requested_at = pg_catalog.clock_timestamp() WHERE org_id = ${ctx.orgId}::uuid AND state = 'requested'`.execute(ctx.trx);
     }
 
     // Bookings the visitor made on a public booking page (#1318), matched by their email or phone: the visitor's name,
@@ -1211,6 +1247,25 @@ export const personalDataErase = defineCommand({
       add('crove_crm.import_row.phone', Number(r.phone));
       add('crove_crm.import_row.tax_code', Number(r.tax_code));
       add('crove_crm.import_row.address', Number(r.address));
+    }
+
+    // The stored results of a MISA catalogue check (#4112), keyed by the party's tax code: the rows of a party matching the probe are deleted whole (an item row's key is an item code, so only party rows are looked at).
+    // Through the command's own transaction: the delete policy of the table lets an owner's context delete. A short tax code (fewer than 10 digits) is never matched here, as the stored keys are 10 or 13 digits.
+    const matchKey = match('tax_code', 'm.match_key');
+    if (matchKey) {
+      // The checks are locked first (record_check locks its row too): a record that is writing results finishes before the delete looks, or waits and then finds its request moved on.
+      await sql`SELECT 1 FROM crove_finance.misa_amis_match_check WHERE org_id = ${ctx.orgId}::uuid FOR UPDATE`.execute(ctx.trx);
+      const { rows: misaMatches } = await sql<{ n: number }>`
+        WITH gone AS (
+          DELETE FROM crove_finance.misa_amis_match m
+           WHERE m.org_id = ${ctx.orgId}::uuid AND m.kind = 'party' AND ${matchKey}
+           RETURNING 1)
+        SELECT count(*)::int AS n FROM gone`.execute(ctx.trx);
+      add('crove_finance.misa_amis_match.match_key', Number(misaMatches[0]?.n ?? 0));
+      // A check that waits may have read the tax code before this erasure: its time is moved on, so a job that took the old time has its record ignored (record_check compares it) and cannot put the code back. The
+      // check stays waiting until its ten minutes pass or a person asks again. Known limit (decided in #4128, noted for #4124): a job that only starts after this erasure takes the new time and may record a match
+      // again for a tax code the books still carry (the vouchers keep their party's tax code under the legal hold); the match is derived data and the next erasure deletes it.
+      await sql`UPDATE crove_finance.misa_amis_match_check SET requested_at = pg_catalog.clock_timestamp() WHERE org_id = ${ctx.orgId}::uuid AND state = 'requested'`.execute(ctx.trx);
     }
 
     if (probe.kind === 'email') {
@@ -1464,6 +1519,12 @@ export const personalDataErase = defineCommand({
         SELECT crove_kernel.personal_data_redact_activity(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
       add('crove_kernel.activity.summary', Number(redacted[0]?.rows ?? 0));
 
+      // MISA AMIS's refusal text on a pushed voucher (#4015): cleared on the refused rows that quote the value, through the owner-only definer (the table's guard lets a tenant role move a row only along its graph);
+      // the row and its state stay.
+      const { rows: misaReasons } = await sql<{ rows: number }>`
+        SELECT crove_finance.personal_data_clear_misa_amis_push_reason(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+      add('crove_finance.misa_amis_push.reason', Number(misaReasons[0]?.rows ?? 0));
+
       // Tasks that quote the person (#1961): the value is replaced in the title and the description, as the owner (an
       // owner's update passes the task guards, which hold agents; taint, lease, status and entity stay as they are, and
       // updated_at moves to now). Through the command's own transaction: the tenant role may update tasks, so no definer
@@ -1584,13 +1645,15 @@ export const personalDataErase = defineCommand({
     for (const m of after.matches) {
       const reason = !shortNumber
         ? m.reason
-        : SHORT_NUMBER_COLUMNS.has(m.column)
-          ? ACTIVITY_SHORT_NUMBER_REASON
-          : SHORT_NUMBER_MEETING_COLUMNS.has(m.column)
-            ? MEETING_TEXT_SHORT_NUMBER_REASON
-            : m.column === 'crove_kernel.mail_message.payload'
-              ? PROJECT_WEEKLY_MAIL_SHORT_NUMBER_REASON
-              : m.reason;
+        : m.column === 'crove_finance.misa_amis_push.reason'
+          ? MISA_PUSH_REASON_SHORT_NUMBER_REASON
+          : SHORT_NUMBER_COLUMNS.has(m.column)
+            ? ACTIVITY_SHORT_NUMBER_REASON
+            : SHORT_NUMBER_MEETING_COLUMNS.has(m.column)
+              ? MEETING_TEXT_SHORT_NUMBER_REASON
+              : m.column === 'crove_kernel.mail_message.payload'
+                ? PROJECT_WEEKLY_MAIL_SHORT_NUMBER_REASON
+                : m.reason;
       const group = `${m.column}\n${reason}`;
       const k = kept.get(group) ?? { column: m.column, rows: 0, reason };
       k.rows += 1;

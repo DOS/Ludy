@@ -195,11 +195,14 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
-import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisStatus } from './misa-amis-connections.ts';
+import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisDefaultItem, zMisaAmisStatus, zMisaAmisUnitAlias, zMisaAmisUnitRow, zMisaAmisUnitsAsk } from './misa-amis-connections.ts';
+import { zMisaAmisMatchCheckQueued, zMisaAmisNameDecided, zMisaAmisNameDecision, zMisaAmisNameProposal, zMisaAmisNameProposalsAsk } from './misa-amis-match.ts';
+import { zMisaAmisPushConfirm, zMisaAmisPushConfirmed, zMisaAmisPushListAsk, zMisaAmisPushResolveAsk, zMisaAmisPushRow } from './misa-amis-push.ts';
 import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './misa-check.ts';
-import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
-import { zMarketplaceSuggestInput, zMarketplaceSuggested, zMarketplaceFeeClearingRequest, zMarketplacePayoutRequest, zMarketplaceSettlementRequest, zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
-import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggestInput, zStockSuggested, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
+import { zMisaAmisPreview, zMisaAmisBlockerNotes, zMisaAmisBlockerNotesAsk, zMisaAmisPreviewAsk } from './misa-amis-preview.ts';
+import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceFeeNotes, zMarketplaceFeeNotesAsk, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
+import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceFeeClearingRequest, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePayoutRequest, zMarketplacePreview, zMarketplaceSettlementRequest, zMarketplaceStaged, zMarketplaceSuggested, zMarketplaceSuggestInput, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
+import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseCheck, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zSupplierBankAccount, zSupplierBankAccountAdd, zSupplierBankAccountErase, zSupplierBankAccountErased, zSupplierBankAccountList, zSupplierBankAccountListInput, zSupplierBankAccountReplace, zSupplierBankAccountRetire } from './supplier-bank.ts';
 import { zBankSupplierMatch, zSupplierPayableLine, zSupplierPayableLineAsk, zSupplierPayableList, zSupplierPayment, zSupplierPaymentCancel, zSupplierPaymentConfirm, zSupplierPaymentList, zSupplierPaymentListInput, zSupplierPaymentPrepare, zSupplierPaymentSettlePrepare } from './supplier-payment.ts';
 import { zEInvoiceNotice, zEInvoiceNoticeList, zEInvoiceNoticeListInput, zEInvoiceNoticeOpen, zEInvoiceNoticeStep } from './einvoice-notice.ts';
@@ -268,6 +271,7 @@ import {
   zSavedReplyUpdate,
   zConversationAddress,
 } from './conversations.ts';
+import { zEngageWakeRules, zEngageWakeRulesView } from './engage-wake.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
 import { zDepreciationRequest, zJournalVoucherRequest, zSurplusResolutionRequest, zYearClosingRequest } from './journal-voucher.ts';
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
@@ -492,6 +496,7 @@ import {
   zTranscriptTranslationStatus,
   zTranscriptTranslationView,
   zTranslationRef,
+  zTranscriptTranslationRef,
   zTranslationStatus,
   zTranslations,
   zSummaryRef,
@@ -499,6 +504,7 @@ import {
   zSummaryCopied,
   zSummaryCopy,
 } from './meetings.ts';
+import { zGlossaryAdd, zGlossaryDone, zGlossaryList, zGlossaryRemove, zGlossaryTerms, zGlossaryUpdate } from './meeting-glossary.ts';
 import {
   zMinutesTemplateArchive,
   zMinutesTemplateCreate,
@@ -509,6 +515,13 @@ import {
 } from './meeting-minutes-templates.ts';
 import { zAskAnswer, zAskEmpty, zAskInput, zAskStatus } from './meeting-ask.ts';
 import { zBriefAnswer, zBriefEmpty, zBriefFacts, zBriefStatus, zBriefTarget } from './meeting-brief.ts';
+import { zMeetingRename, zMeetingRenamed, zTitleAnswer } from './meeting-title.ts';
+import { zCommitmentsAnswer } from './meeting-commitments.ts';
+import { zDigestAnswer, zDigestAsk, zDigestFacts, zDigestStatus } from './meeting-digest.ts';
+import { zMeetingsTodayFacts } from './meeting-today.ts';
+import { zMorningEmpty, zMorningSet, zMorningState } from './meeting-morning.ts';
+import { zAssigneeAnswer, zAssigneeAsk, zAssigneeStatus } from './meeting-assignee.ts';
+import { zAdherenceAgenda, zAdherenceAnswer, zAdherenceAsk, zAdherenceRef, zAdherenceStatus } from './meeting-adherence.ts';
 import { zAgendaLink, zAgendaLinked, zAgendaList, zAgendaListInput, zAgendaNext, zAgendaNextInput, zAgendaReadEventsSet, zAgendaSetReadEvents, zAgendaSuggestInput, zAgendaSuggestion } from './meeting-agenda.ts';
 import {
   zMeetingHookCleared,
@@ -582,8 +595,9 @@ import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoi
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsCommitted, zAdsCommittedInput, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
 import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStatesInput, zAdsBoostStateView } from './ads-boost.ts';
+import { zAdsBudgetLowerCall, zAdsManageCancelCall, zAdsManageChanged, zAdsManageStateView, zAdsManageSuggestion, zAdsObjectCall, zAdsScheduleShortenCall } from './ads-manage.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
-import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
+import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdS2d, zHouseholdS2dGet, zHouseholdS2e, zHouseholdS2eGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -1235,6 +1249,8 @@ export const contract = {
     recordingStopped: oc.input(zMeetingRecordingStopped).output(zMeetingRecordingStoppedDone),
     // The calling member's meeting the extension is recording right now, for the app's recording chip (A1, #3159).
     recordingNow: oc.input(zMeetingRecordingNowInput).output(zMeetingRecordingNow),
+    // The recorder's own new title for a meeting (#3947): a pick from Vy's suggestions or a title they typed; audited, ids only.
+    rename: oc.input(zMeetingRename).output(zMeetingRenamed),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),
     ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
     // The owner's compliance list (#2703): every meeting of the org as metadata only, no title or text, a page at a time; audited per call.
@@ -1283,6 +1299,13 @@ export const contract = {
       update: oc.input(zMinutesTemplateUpdate).output(zMinutesTemplateDone),
       archive: oc.input(zMinutesTemplateArchive).output(zMinutesTemplateDone),
     },
+    // The org's glossary (#4043): terms Vy spells the way the org does. Owner and admin only, for the list too. GLOSSARY_TERM_TAKEN (409), GLOSSARY_TERM_NOT_FOUND (404), GLOSSARY_MAX (422).
+    glossary: {
+      list: oc.input(zGlossaryList).output(zGlossaryTerms),
+      add: oc.input(zGlossaryAdd).output(zGlossaryDone),
+      update: oc.input(zGlossaryUpdate).output(zGlossaryDone),
+      remove: oc.input(zGlossaryRemove).output(zGlossaryDone),
+    },
     // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
     settings: {
       get: oc.input(zMeetingSettingsGet).output(zMeetingSettings),
@@ -1317,6 +1340,50 @@ export const contract = {
       facts: oc.input(zBriefTarget).output(zBriefFacts),
       status: oc.input(zBriefEmpty).output(zBriefStatus),
       write: oc.input(zBriefTarget).output(zBriefAnswer),
+    },
+    // The recorder's Vy suggesting a title from the transcript (#3947): `status` is the button (the same answer as the chapters'), `suggest` the click that has the recorder's own Vy write up to three candidates.
+    // The candidates go back to the browser and are stored nowhere; the recorder's pick is `meetings.rename`.
+    title: {
+      status: oc.input(zSummaryRef).output(zSummaryStatus),
+      suggest: oc.input(zSummaryRef).output(zTitleAnswer),
+    },
+    // What each speaker committed to or decided (#3954): `status` is the button (the same answer as the chapters'), `list` the click that has the recorder's own Vy list, from the transcript, each speaker's commitments
+    // and decisions with the second of the line each rests on. The lines go back to the browser and are stored nowhere; nothing is published or made a task from here.
+    commitments: {
+      status: oc.input(zSummaryRef).output(zSummaryStatus),
+      list: oc.input(zSummaryRef).output(zCommitmentsAnswer),
+    },
+    // This week's decisions and what is still open, across the meetings the member reads (#3949): `facts` are read by code as the member (published decisions and open action items of the meetings that started in the
+    // last 7, 14 or 30 days) and work with AI off; `status` is the button (may Vy be used now, the cost of one recap), `recap` the click that has the member's own Vy write two or three sentences from those facts. Nothing
+    // is stored or sent.
+    digest: {
+      facts: oc.input(zDigestAsk).output(zDigestFacts),
+      status: oc.input(zBriefEmpty).output(zDigestStatus),
+      recap: oc.input(zDigestAsk).output(zDigestAnswer),
+    },
+    // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read by code as the member in one call and working with AI off. Vy's sentences stay the brief's own click.
+    today: {
+      facts: oc.input(zBriefEmpty).output(zMeetingsTodayFacts),
+    },
+    // The opt-in morning notice of the day's meetings (#3955, part B): the member's own setting (off until they turn it on, a time of day in their own zone); the worker sends one in-app notice and one mail a day with
+    // the count of the day's meetings and a link, never a title.
+    morning: {
+      get: oc.input(zMorningEmpty).output(zMorningState),
+      set: oc.input(zMorningSet).output(zMorningState),
+    },
+    // Who an action item belongs to, by Vy, when code found nobody (#3921, step 2): `status` is the button (may Vy be used now), `suggest` the click that has the member's own Vy pick one of the people they may give
+    // the work to from the name said in the meeting, or nobody. The model sees names only; the answer is a number the route maps to a person; nothing is stored, and a person still picks the seat and makes the task.
+    assignee: {
+      status: oc.input(zBriefEmpty).output(zAssigneeStatus),
+      suggest: oc.input(zAssigneeAsk).output(zAssigneeAnswer),
+    },
+    // Agenda adherence (#3959): after a meeting with a transcript the recorder may click once and have their own Vy compare the agenda (the series' open items and up to eight typed lines) with the transcript. `agenda` is the
+    // list the recorder sees before clicking (with AI off too), `status` the button (may Vy be used now), `check` the click. Per agenda line: covered with the transcript lines it cites, or not heard; no score, nothing per
+    // person, nothing stored.
+    adherence: {
+      agenda: oc.input(zAdherenceRef).output(zAdherenceAgenda),
+      status: oc.input(zAdherenceRef).output(zAdherenceStatus),
+      check: oc.input(zAdherenceAsk).output(zAdherenceAnswer),
     },
     // A member's own Google Calendar meetings, read to suggest "record this meeting" (B1, #3165): no model; code matches by time and a person confirms. `list` is today's meetings, `suggest` the event
     // a recording overlaps, `setReadEvents` the member's switch (the cache is deleted when it goes off), `link` the click that attaches a recorded meeting to its event.
@@ -1381,10 +1448,10 @@ export const contract = {
       get: oc.input(zMeetingRef).output(zTranslations),
       // The same for the transcript (E2, #3185): the member's own Vy translates the lines they read a few chunks at a time, in the request. `transcriptTranslate` is the click (the page asks
       // again while it is open), `transcriptStop` ends the member's own run, `transcriptStatus` is the button and the progress, and `transcriptGet` is the member's parts beside the lines.
-      transcriptStatus: oc.input(zMeetingRef).output(zTranscriptTranslationStatus),
-      transcriptTranslate: oc.input(zMeetingRef).output(zTranscriptTranslated),
+      transcriptStatus: oc.input(zTranscriptTranslationRef).output(zTranscriptTranslationStatus),
+      transcriptTranslate: oc.input(zTranscriptTranslationRef).output(zTranscriptTranslated),
       transcriptStop: oc.input(zMeetingRef).output(zTranscriptTranslateStopped),
-      transcriptGet: oc.input(zMeetingRef).output(zTranscriptTranslationView),
+      transcriptGet: oc.input(zTranscriptTranslationRef).output(zTranscriptTranslationView),
     },
     actionItems: {
       create: oc.input(zActionItemCreate).output(zActionItemCreated),
@@ -2308,6 +2375,9 @@ export const contract = {
     // admins, with a fresh second factor).
     retention: oc.input(z.strictObject({})).output(zConversationRetention),
     setRetention: oc.input(zConversationRetentionSet).output(zConversationRetention),
+    // Engage's wake rules (#3862): the org's N for the three rules that have one (every member reads, owners and admins set; set in Settings, never on the inbox screen).
+    wakeRules: oc.input(z.strictObject({})).output(zEngageWakeRulesView),
+    setWakeRules: oc.input(zEngageWakeRules).output(zEngageWakeRulesView),
     eraseContact: oc.input(zConversationEraseContact.extend({ idempotencyKey: zId })).output(zConversationErased),
     // Deleting a disconnected channel's conversations too (#3299): the counts the confirmation names, then the erasure (owners and admins, a fresh
     // second factor; the channel must be disconnected first).
@@ -2351,6 +2421,14 @@ export const contract = {
     misaCheck: oc.input(zMisaCheckAsk).output(zMisaCheck),
     // The finance coworker's one line above that list (#3848 slice B): the check run again on the server and one metered sentence about its counts when there is a model. A read; it changes no voucher.
     misaCheckLine: oc.input(zMisaCheckLineAsk).output(zMisaCheckLine),
+    // What would be sent to MISA AMIS Kế toán for a period and a voucher kind (#3901): the vouchers as the push would write them, with the blockers that keep one from being sent. A read; nothing is sent.
+    misaAmisPreview: oc.input(zMisaAmisPreviewAsk).output(zMisaAmisPreview),
+    // The accounting coworker's note on each kind of blocker on the AMIS preview (#3904): a read that runs the preview again on the server; the list decides, the notes only explain it.
+    misaAmisBlockerNotes: oc.input(zMisaAmisBlockerNotesAsk).output(zMisaAmisBlockerNotes),
+    // A person confirms a previewed batch for MISA AMIS (#3902, S3b): the requests are queued and the worker sends them. Owner or admin, never an agent. MISA_AMIS_PUSH_DISABLED (404) while the deployment has not
+    // switched the push on, MISA_AMIS_NOT_TESTED, CHANNEL_NOT_ACTIVE, MISA_AMIS_CONNECTION_NOT_FOUND (404), MISA_AMIS_ENTITY_MISMATCH, MISA_AMIS_PUSH_TOO_MANY, MISA_AMIS_PUSH_EMPTY (422), MISA_AMIS_PUSH_BLOCKED and
+    // MISA_AMIS_PUSH_STALE (409: the data changed since the preview; nothing is queued), MISA_AMIS_CHECK_REQUIRED (409: no check of this batch against the catalogue in the last 15 minutes, #4124), FORBIDDEN (403).
+    misaAmisPush: oc.input(zMisaAmisPushConfirm).output(zMisaAmisPushConfirmed),
   },
   // Opening balances from Excel (#320), owners and admins. preview checks a trial balance read from the template and
   // writes nothing; post checks it again and posts it as the org's one opening entry (R3: fresh MFA). A retry with the
@@ -2415,6 +2493,10 @@ export const contract = {
     s2b: oc.input(zHouseholdS2bGet).output(zHouseholdS2b),
     // S2c-HKD, the revenue and expense detail of a household that pays PIT on income: expenses by the dated account-to-group map, unmapped ones apart (#2517 slice 2b); labelled provisional while its rows are unconfirmed.
     s2c: oc.input(zHouseholdS2cGet).output(zHouseholdS2c),
+    // S2d-HKD, the goods book of a household that pays PIT on income: per item the quantity and value in, out and on hand for one month, from the stock data of #2513 (#2517 slice 2d); the cost is provisional until the month is closed.
+    s2d: oc.input(zHouseholdS2dGet).output(zHouseholdS2d),
+    // S2e-HKD, the cash and bank book of a household that pays PIT on income: per account of 111 and 112 the opening balance, the lines and the closing balance (#2517 slice 2e); labelled provisional while its layout row is unconfirmed.
+    s2e: oc.input(zHouseholdS2eGet).output(zHouseholdS2e),
   },
   // A supplier's bank accounts and the history of their changes (#3113 S1). Owners and admins only; a change needs a fresh second factor (STEP_UP_REQUIRED otherwise). The full number is sealed
   // and never returned: an account is its bank and its last four digits. SUPPLIER_NOT_FOUND, SUPPLIER_BANK_ACCOUNT_NOT_FOUND (404), SUPPLIER_BANK_NUMBER_INVALID (422),
@@ -2582,6 +2664,8 @@ export const contract = {
     worklist: oc.input(zMarketplaceBalanceInput.optional()).output(zMarketplaceWorklist),
     // The finance coworker's one line on the Sàn screen: the facts always, and one checked sentence when a model is on, within the AI budget. Read only: it stores nothing and posts nothing.
     line: oc.input(zMarketplaceLineAsk).output(zMarketplaceLine),
+    // The finance coworker's note under the Sàn table for each platform with fees waiting on its 331 (#3711 slice 7): how old they are and what to do, from the books read again on the server. Read only: it posts nothing and changes no figure.
+    feeNotes: oc.input(zMarketplaceFeeNotesAsk).output(zMarketplaceFeeNotes),
   },
   // An entity's connection to MISA AMIS Kế toán (#3875, S2 of #3854). `status` says whether this deployment offers the connector (it does only when it holds the integrator's ClientID; the value is
   // never in any answer). The customer's access code is sealed in the kernel at the edge and never in an answer, a log or an audit row: the screen shows only "connected since". Every role reads the
@@ -2593,6 +2677,36 @@ export const contract = {
       // MISA_AMIS_DISABLED (404) when this deployment does not offer the connector, MISA_AMIS_CONNECTION_EXISTS (409), FORBIDDEN (403) unless owner or admin.
       connect: oc.input(zMisaAmisConnect).output(z.object({ id: zId })),
       disconnect: oc.input(z.object({ id: zId })).output(z.object({ removed: z.boolean() })),
+      // Asks the worker to test the connection (S2b, #3885): it opens the sealed access code, asks AMIS for a token and the company's information, and records only a state (works, wrong_credentials,
+      // unreachable) and a time, which the list then shows. Owner or admin. MISA_AMIS_DISABLED (404) when this deployment does not offer the connector, MISA_AMIS_CONNECTION_NOT_FOUND (404),
+      // CHANNEL_NOT_ACTIVE (409), FORBIDDEN (403).
+      test: oc.input(z.object({ id: zId })).output(z.object({ queued: z.boolean() })),
+      // Keeps (or, with a null code, clears) the default item of the connection for service lines or sales lines (S3b, #4124): a code typed as the MISA catalogue spells it, which the next check validates against
+      // the catalogue. Owner or admin. MISA_AMIS_CONNECTION_NOT_FOUND (404), FORBIDDEN (403); not gated by the connector's switch (nothing is sent).
+      setDefaultItem: oc.input(zMisaAmisDefaultItem).output(z.object({ saved: z.boolean() })),
+      // Keeps (or, with a null name, clears) the MISA name of one unit of Ludy on a MISA ASP connection (#4125): typed as the catalogue spells it, matched exactly by the next check. Owner or admin.
+      // MISA_AMIS_CONNECTION_NOT_FOUND (404), MISA_AMIS_UNIT_NOT_ASP (422), MISA_AMIS_UNIT_INVALID (422), MISA_AMIS_UNIT_ALIASES_FULL (422), FORBIDDEN (403).
+      setUnitAlias: oc.input(zMisaAmisUnitAlias).output(z.object({ saved: z.boolean() })),
+    },
+    // The check of a connection's vouchers against the firm's own MISA catalogue (S3a, #4112 of #4103): the worker opens the sealed access code, reads the catalogue pages in its memory, matches the parties
+    // (by tax code) and items (by code) of the batch and records only what it found, which the preview then shows ("checked at"). Owner or admin; a second press while a check waits returns it. The ask is the
+    // preview's own. MISA_AMIS_DISABLED (404), MISA_AMIS_CONNECTION_NOT_FOUND (404), CHANNEL_NOT_ACTIVE (409), MISA_AMIS_MATCH_ENTITY (422) when the ask names another entity, FORBIDDEN (403).
+    matches: {
+      check: oc.input(z.strictObject({ id: zId, ask: zMisaAmisPreviewAsk })).output(zMisaAmisMatchCheckQueued),
+      // The proposals of the last check (S3b, #4124): a party with no tax code and the one active catalogue entry of its name. Owner or admin. Confirming makes the entry's code the party's code on the vouchers (the
+      // preview then changes); rejecting deletes the proposal. MISA_AMIS_NAME_PROPOSAL_GONE (409) when a newer check replaced it, MISA_AMIS_CONNECTION_NOT_FOUND (404), FORBIDDEN (403).
+      proposals: oc.input(zMisaAmisNameProposalsAsk).output(z.array(zMisaAmisNameProposal)),
+      // The units of the last check of a MISA ASP connection that have no match (or a name typed) (#4125). Owner or admin.
+      units: oc.input(zMisaAmisUnitsAsk).output(z.array(zMisaAmisUnitRow)),
+      confirmName: oc.input(zMisaAmisNameDecision).output(zMisaAmisNameDecided),
+      rejectName: oc.input(zMisaAmisNameDecision).output(zMisaAmisNameDecided),
+    },
+    // The vouchers pushed through a connection, with their state (#3902, S3b-2). Every role reads; a row's reason is MISA's own text (untrusted).
+    pushes: {
+      list: oc.input(zMisaAmisPushListAsk).output(z.array(zMisaAmisPushRow)),
+      // An owner or admin settles a row MISA never answered for (a `sent` one after 24 hours, an `ambiguous` one after three days): nothing is sent. MISA_AMIS_PUSH_STATE (409) when the row cannot be settled now,
+      // FORBIDDEN (403).
+      resolve: oc.input(zMisaAmisPushResolveAsk).output(z.object({ resolved: z.boolean() })),
     },
   },
   // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.
@@ -2637,6 +2751,8 @@ export const contract = {
     // Closes a month that has no cost to post, with no entry and so with no approval (owners and admins; R3, a closed month is not reopened). A month with cost goes through inbox.request
     // (finance.stock.close_period). STOCK_CLOSE_NOT_ENDED, STOCK_CLOSE_NEGATIVE, STOCK_CLOSE_UNPRICED (422), STOCK_CLOSE_DONE, STOCK_CLOSE_ORDER, STOCK_CLOSE_HAS_COST (409).
     closeEmpty: oc.input(zStockCloseRequest).output(zStockCloseEmptyResult),
+    // What to know before closing a month (#3712 slice 3): the 1381 balance and whether Circular 99 asks it to be expensed at the reporting date. A read, a warning only; never blocks a close.
+    closeCheck: oc.input(zStockCloseRequest).output(zStockCloseCheck),
     // The finance coworker on stock (#2514), all read-only. suggest: the item each unassigned line is most likely about (the model sees the line's description and unit and the
     // entity's item codes, names and units, nothing else; a person still assigns, which teaches the name); ai says why there is none. low: the items whose stock will not last the lead
     // days at the pace of the last eight weeks, with the supplier they were last bought from. reorderDraft: the message to that supplier (the model's, or the fixed template when there is
@@ -2649,6 +2765,8 @@ export const contract = {
     // books nowhere, with nothing to post. A count with differences is confirmed through inbox.request (finance.stock.count_confirm).
     counts: {
       list: oc.input(zStockCountListInput.optional()).output(z.array(zStockCount)),
+      // Where the surplus of a confirmed count stands and the coworker's words about it (#3712 slice 2b).
+      surplusNote: oc.input(zStockSurplusNoteInput).output(zStockSurplusNote),
       preview: oc.input(zStockCountPreviewInput).output(z.array(zStockCountPreviewRow)),
       create: oc.input(zStockCountCreate).output(z.object({ id: zId })),
       cancel: oc.input(zStockCountIdInput).output(z.object({ id: zId })),
@@ -2907,6 +3025,16 @@ export const contract = {
     // Runs a launch that needs attention again (W2-4b): owners and admins. The request is stamped and the launch job takes it, with the next attempt: it first looks at what the
     // earlier attempts left unsettled at the platform, then creates what is missing, then switches the objects on if the approved launch is still in force.
     retryLaunch: oc.input(zAdsLaunchRetryCall).output(z.object({ launchId: zId, requested: z.boolean() })),
+    // Managing a running ad (W4, #3835): owners and admins. A pause, an archive, a lower budget and a shorter schedule only reduce spend, so they are their own commands; each is
+    // queued and the platform is called afterwards, from the queue (never in this request). A resume, a raise and an extension are proposals (requestChange). Members read the state.
+    pauseObject: oc.input(zAdsObjectCall).output(zAdsManageChanged),
+    archiveObject: oc.input(zAdsObjectCall).output(zAdsManageChanged),
+    lowerBudget: oc.input(zAdsBudgetLowerCall).output(zAdsManageChanged),
+    shortenSchedule: oc.input(zAdsScheduleShortenCall).output(zAdsManageChanged),
+    cancelChange: oc.input(zAdsManageCancelCall).output(z.object({ changeId: zId, cancelled: z.literal(true) })),
+    manageState: oc.input(z.strictObject({ launchId: zId })).output(zAdsManageStateView),
+    // What the AI coworker suggests for a campaign that spends with poor results: a pause or a lower budget for a person to apply, never a raise (owners and admins).
+    manageSuggestions: oc.input(z.strictObject({ adAccountId: zId.optional() })).output(z.array(zAdsManageSuggestion)),
     // Asking the AI coworker for a draft (W1b, #2295): a request the worker answers with a draft or a visible reason why there is none; the model call
     // is rationed by the member's draft budget (RATE_LIMITED over it) and the org's AI budget (the job records AI_BUDGET), and the core works with AI off.
     campaignRequests: oc.input(z.strictObject({ adAccountId: zId.optional() })).output(z.array(zAdsCampaignRequestView)),

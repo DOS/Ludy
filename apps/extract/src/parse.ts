@@ -3,7 +3,7 @@
 // leaves, so the worker never sees a shape it does not expect.
 import PostalMime from 'postal-mime';
 import type { Address } from 'postal-mime';
-import { EXTRACT_LIMITS, PdfEmbedCmsInputError, PdfSealInputError, zExtractSuccess, type ExtractFailure, type ExtractKind, type ExtractResponse, type ExtractSuccess } from '@crove/extract-contract';
+import { EXTRACT_LIMITS, MarketplaceColumnsInputError, PdfEmbedCmsInputError, PdfSealInputError, zExtractSuccess, type ExtractFailure, type ExtractKind, type ExtractResponse, type ExtractSuccess } from '@crove/extract-contract';
 import { embedPdfCms } from './cms.ts';
 import { DsnError, readDsn } from './dsn.ts';
 import { DocxError, readDocxText } from './docx-text.ts';
@@ -13,6 +13,7 @@ import { FeedError, readFeed } from './feed.ts';
 import { PortalListError, readPortalList } from './portal-list.ts';
 import { ArchiveError, readZip } from './zip.ts';
 import { readBankStatement } from './bank-statement.ts';
+import { readMarketplaceColumns } from './marketplace-columns.ts';
 import { readMarketplaceIncome } from './marketplace-income.ts';
 import { readMarketplaceOrders } from './marketplace-orders.ts';
 import { extractPageDeterministicTags, parseDeterministicTagToken } from './pdf-tags.ts';
@@ -214,6 +215,9 @@ async function parseKind(kind: ExtractKind, bytes: Uint8Array): Promise<ExtractS
     case 'marketplace_income':
       // A Shopee or TikTok Shop income report (#2516): .xlsx or CSV, the per-order table found on one of the first sheets and read through the platform's profile; only the allow-listed columns come back.
       return { ok: true, kind, income: readMarketplaceIncome(bytes) };
+    case 'marketplace_columns':
+      // A report no platform profile fits (#4035): the masked sheet for the column proposal, or the check of a confirmed mapping on the real file; the request is a JSON envelope.
+      return { ok: true, kind, columns: readMarketplaceColumns(bytes) };
   }
 }
 
@@ -233,6 +237,7 @@ const UNREADABLE: Record<ExtractKind, string> = {
   bank_statement: 'Không đọc được sao kê ngân hàng',
   marketplace_orders: 'Không đọc được báo cáo đơn hàng của sàn',
   marketplace_income: 'Không đọc được báo cáo thu nhập của sàn',
+  marketplace_columns: 'Không đọc được các cột của báo cáo đơn hàng của sàn',
 };
 
 export async function parse(kind: ExtractKind, bytes: Uint8Array): Promise<ExtractResponse> {
@@ -251,7 +256,8 @@ export async function parse(kind: ExtractKind, bytes: Uint8Array): Promise<Extra
       error instanceof FeedError ||
       error instanceof PdfSignError ||
       error instanceof PdfSealInputError ||
-      error instanceof PdfEmbedCmsInputError
+      error instanceof PdfEmbedCmsInputError ||
+      error instanceof MarketplaceColumnsInputError
     ) {
       return failure('invalid', error.message);
     }

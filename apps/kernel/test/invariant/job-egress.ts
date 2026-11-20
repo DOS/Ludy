@@ -115,6 +115,14 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   'channels.einvoiceProviders': ['provider:einvoice'],
   // The marketplace providers of modules/finance (#2519): the offline sandbox reaches no host, a real adapter calls its platform through guardedRequest. Only the poll job reaches the field.
   'channels.marketplaceProviders': ['provider:marketplace'],
+  // The MISA AMIS Kế toán client (@crove/misa-amis, #3854 S2b, #3885): one client built from the deployment's integrator ClientID over a transport bound to developer.misa.vn by the egress guard
+  // (guardedRequest, https and that host only). Only the connection-test job reaches the field (a later slice's push job adds itself). Classified before the field exists (step 0, the base copy of
+  // this suite must know it when the field lands).
+  'channels.misaAmis': ['provider:misa_amis'],
+  // The MISA ASP client (the same adapter on ASP's paths, #4103 S2, #4111): built from the deployment's own ClientID for that product over the same transport, so the same host (developer.misa.vn) and the
+  // same guard. Only the connection-test job reaches the field so far (a later slice's push job adds itself). Classified before the field exists (step 0, as for `channels.misaAmis`: the base copy of
+  // this suite must know it when the field lands).
+  'channels.misaAsp': ['provider:misa_amis'],
   // The outside calendar adapters (#2123): Google's OAuth and Calendar hosts, through @crove/channel.
   'channels.calendars': ['provider:channel'],
   // The meeting platform adapters (meetings integrations C1, #3173): the offline sandbox reaches nothing, and a real adapter (Google Meet, Zoom, Teams: C2 to C4) its platform's own API hosts, each bound to them by its allowlisted
@@ -557,11 +565,11 @@ export function reachOf(root: N, sources: Sources): Set<Reach> {
         const target = importTarget(decl);
         const whole = decl.type === 'ImportNamespaceSpecifier';
         if (NETWORK_MODULES.test(target.module)) out.add('raw_network');
-        else if (target.module === '@crove/kernel-runtime' && (whole || GUARDS.has(target.name))) out.add('tenant_url');
-        else if (target.module === '@crove/channel') {
+        else if ((target.module === '@crove/kernel-runtime' || target.module === '@ludy/kernel-runtime') && (whole || GUARDS.has(target.name))) out.add('tenant_url');
+        else if (target.module === '@crove/channel' || target.module === '@ludy/channel') {
           const reach = whole ? 'provider:channel' : channelReach(target.name);
           if (reach) out.add(reach);
-        } else if (target.module === '@crove/agent' && (whole || AI_EXPORT.test(target.name))) out.add('provider:ai');
+        } else if ((target.module === '@crove/agent' || target.module === '@ludy/agent') && (whole || AI_EXPORT.test(target.name))) out.add('provider:ai');
         else if (target.path?.startsWith(`${KERNEL_SRC}/`)) {
           const there = exported(sources.get(target.path), target.name);
           if (!there) throw new Error(`${target.path} exports no ${target.name} (imported at ${at(id)})`);

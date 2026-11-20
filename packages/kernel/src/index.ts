@@ -47,4 +47,7 @@ export { setMeetingPlatformVideoImport, zMeetingPlatformConnect, type MeetingPla
 export * from './numbering.ts';
 export * from './manifest.ts';
 export { zMcpPartiesInput } from './mcp.ts';
-export { MCP_WAKE_PROVIDER, type McpWakeCredential, type McpWakeDeliveryRow, type McpWakeTargetRow } from './mcp-wake.ts';
+export { zMcpConversationsInput, zMcpConversationInput } from './mcp-conversations.ts';
+export { mcpConversationAssign, mcpConversationResolve, mcpConversationReopen, mcpConversationNote, mcpConversationLinkContact, mcpPartyCreate } from './mcp-write.ts';
+export { MCP_WAKE_PROVIDER, type McpWakeCredential, type McpWakeDeliveryRow, type McpWakeLinePlan, type McpWakeTargetRow } from './mcp-wake.ts';
+export { conversationProposalCommands, requireApprover } from './engage-proposals.ts';

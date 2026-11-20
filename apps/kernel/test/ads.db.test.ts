@@ -12,7 +12,7 @@ import { SignJWT } from 'jose';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { AdPlatformError, MetaAdsPlatform, SandboxAdWriter, adActivators, adLaunchWriters, adPausers, adPlatforms, adStateReaders, launchWriterOf, platformUserHash, revokerOf, sandboxWriteLogin, type AdPlatform, type AdStateReader, type LaunchWriter, type sandboxAdPlatform } from '@crove/ad-platform';
+import { AdPlatformError, MetaAdsPlatform, SandboxAdActivator, SandboxAdManager, SandboxAdWriter, adActivators, adLaunchWriters, adPausers, adPlatforms, adStateReaders, launchWriterOf, managerOf, platformUserHash, revokerOf, sandboxWriteLogin, type AdManager, type AdPlatform, type AdStateReader, type LaunchWriter, type sandboxAdPlatform } from '@crove/ad-platform';
 import { ConnectorError, type Fetch, type OAuthConnector } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
@@ -25,6 +25,7 @@ import { acceptAdsDeletion, adsDeletionStatus, runAdsDeletions } from '../src/ad
 import { runAdsActivate } from '../src/ads-activate.ts';
 import { runAdsStateSync } from '../src/ads-state.ts';
 import { runAdsLaunch } from '../src/ads-launch.ts';
+import { BEGIN_TO_CALL_MS, runAdsManage } from '../src/ads-manage.ts';
 import { runAdsPause } from '../src/ads-pause.ts';
 import { runAdsRevoke } from '../src/ads-revoke.ts';
 import { acceptMetaDeletion, metaDeletionStatus } from '../src/meta-deletion.ts';
@@ -223,7 +224,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     const registered = { commands: [...kernelCommands, ...adsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...adsQueries] };
     api = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(registered);
     vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
-    const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+    const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent', API_RATE_LIMIT_PER_MINUTE: '0' });
     app = createHttpApp({
       config,
       runtime: api,
@@ -1654,7 +1655,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.external_call WHERE org_id = $1`, [orgId]))[0]?.n).toBe('0');
           // The approval ran under the approval rules of version 4, judged on the people of the org now: two eligible people, so the approver is not the author.
           const approval = (await row<{ detail: { policy_version: number; eligible_approvers: number; self_approved: boolean; policy: Record<string, string> } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]))[0]?.detail;
-          expect(approval?.policy_version).toBe(16);
+          expect(approval?.policy_version).toBe(18);
           expect(approval).toMatchObject({ self_approved: false, policy: { P12: 'pass', P10: 'pass' } });
           expect(approval?.eligible_approvers).toBeGreaterThanOrEqual(2);
         });
@@ -2810,6 +2811,1079 @@ suite('ads on PostgreSQL (#2217)', () => {
             });
           });
 
+          // W4 (#3835): a person manages a live launch. What only reduces or stops spend is the owner's or an admin's own R2 command; what can start or raise it (a resume, a raise,
+          // an extension) is approved like a launch. The job makes the one platform call a change stands for, between `ads.manage.begin` and `ads.manage.record`.
+          describe('managing a running ad (W4)', () => {
+            // The manager of the sandbox writer, with its record of the changes it received (the frozen view the job is given has no way to read it).
+            const rigOf = (w: SandboxAdWriter) => {
+              const manager = new SandboxAdManager(w, new SandboxAdActivator(w));
+              const managers: Readonly<Record<string, AdManager>> = Object.freeze({ [w.provider]: managerOf(manager) });
+              return { manager, managers };
+            };
+            type Rig = ReturnType<typeof rigOf>;
+            const manage = (rig: Rig, changeId: string, runtime: Runtime = worker) => runAdsManage({ runtime, broker: vault, managers: rig.managers }, { orgId, changeId });
+            // The sweep's job for a change that ended unclear (#3898): a read of its object, never a call.
+            const settleRun = (rig: Rig, changeId: string, runtime: Runtime = worker) => runAdsManage({ runtime, broker: vault, managers: rig.managers }, { orgId, changeId, settle: true });
+            const activateRun = (w: SandboxAdWriter, launchId: string) => runAdsActivate({ runtime: worker, broker: vault, activators: adActivators({ sandbox: w }) }, { orgId, launchId });
+            // An account that can run ads, with the sandbox's write connection, an approved plan that began today, its objects created and switched on: a LIVE launch.
+            const liveOn = async (account: string, w: SandboxAdWriter, over: Record<string, unknown> = {}) => {
+              const done = await callAs(owner, 'ads/connectSandboxWrite', { adAccountId: account, idempotencyKey: key() });
+              expect(done.status, JSON.stringify(done.body)).toBe(200);
+              const page = await pageConnection();
+              const approved = await approvedPlan(account, { pageConnectionId: page.id, startOn: inDays(0), endOn: inDays(6), ...over });
+              expect(approved.answer.status, JSON.stringify(approved.answer.body)).toBe(200);
+              const launch = (await launchOf(approved.draft.id)) as NonNullable<Awaited<ReturnType<typeof launchOf>>>;
+              expect(await run(w, launch.id)).toMatchObject({ ended: 'paused' });
+              expect(await activateRun(w, launch.id)).toMatchObject({ ended: 'live' });
+              return { account, launch };
+            };
+            const live = async (name: string, w: SandboxAdWriter, over: Record<string, unknown> = {}) => liveOn(await ready(name), w, over);
+            const changesOf = (launchId: string) =>
+              row<{ id: string; kind: string; slot: string; state: string; code: string | null; from_budget: string | null; to_budget: string | null; from_end_on: string | null; to_end_on: string | null; proposal_id: string | null; settled_on: string | null }>(
+                `SELECT id, kind, slot, state, code, from_budget::text, to_budget::text, from_end_on::text, to_end_on::text, proposal_id, settled_on::text FROM crove_ads.ad_manage_change WHERE org_id = $1 AND launch_id = $2 ORDER BY seq`,
+                [orgId, launchId],
+              );
+            const lastChange = async (launchId: string) => (await changesOf(launchId)).at(-1) as NonNullable<Awaited<ReturnType<typeof changesOf>>[number]>;
+            const objectId = async (launchId: string, slot: string) => (await objectsOf(launchId)).find((o) => o.slot === slot)?.external_id as string;
+            const callOf = async (changeId: string) => (await row<{ state: string; calls: number; step: string; error_code: string | null }>(`SELECT state, calls, step, error_code FROM crove_kernel.external_call WHERE org_id = $1 AND key = $2`, [orgId, `ads.manage:${changeId}:apply`]))[0];
+            const hold = async (launchId: string) => (await row<{ daily_budget: string; end_on: string }>(`SELECT daily_budget::text, end_on::text FROM crove_ads.launch_hold($1, $2)`, [orgId, launchId]))[0];
+            // What the caps are judged against for this account's launch: the budget and the last day it commits.
+            // The commitments of the account's launch are segments (what ran under a budget counts at that budget): `commitAll` lists them, `commit` is the one that runs to the end.
+            const addDaysText = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+            const commitAll = async (account: string) =>
+              inContext('system', async (c) => (await c.query<{ ad_account_id: string; daily_budget: string; start_on: string; commit_until: string }>(`SELECT ad_account_id, daily_budget, start_on::text, commit_until::text FROM crove_ads.launch_commitments('VND', $1::date, $2::date)`, [inDays(-30), inDays(300)])).rows.filter((r) => r.ad_account_id === account));
+            const commit = async (account: string) => (await commitAll(account)).at(-1);
+            const queuedEvents = (changeId: string) => row<{ payload: Record<string, unknown> }>(`SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'ads.manage.queued' AND payload ->> 'changeId' = $2`, [orgId, changeId]);
+            // The clock of a call the job began, put back (a dead worker, a minute that passed).
+            const ageCall = (changeId: string, seconds: number) => row(`UPDATE crove_kernel.external_call SET updated_at = updated_at - make_interval(secs => $3) WHERE org_id = $1 AND key = $2`, [orgId, `ads.manage:${changeId}:apply`, seconds]);
+            const pause = (who: Account, launchId: string, slot: string) => callAs(who, 'ads/pauseObject', { launchId, slot, idempotencyKey: key() });
+            const archive = (who: Account, launchId: string, slot: string) => callAs(who, 'ads/archiveObject', { launchId, slot, idempotencyKey: key() });
+            const lower = (who: Account, launchId: string, dailyBudget: string) => callAs(who, 'ads/lowerBudget', { launchId, dailyBudget, idempotencyKey: key() });
+            const shorten = (who: Account, launchId: string, endOn: string) => callAs(who, 'ads/shortenSchedule', { launchId, endOn, idempotencyKey: key() });
+            const cancel = (who: Account, changeId: string) => callAs(who, 'ads/cancelChange', { changeId, idempotencyKey: key() });
+            const changeId = (made: { status: number; body: { changeId?: string } }) => {
+              expect(made.status, JSON.stringify(made.body)).toBe(200);
+              return made.body.changeId as string;
+            };
+            const askRaise = (launchId: string, dailyBudget: string, who: Account = owner) => ask(who, { change: 'budget_raise', launchId, dailyBudget });
+            const askExtend = (launchId: string, endOn: string, who: Account = owner) => ask(who, { change: 'schedule_extend', launchId, endOn });
+            const askResume = (launchId: string, slot: string, who: Account = owner) => ask(who, { change: 'object_resume', launchId, slot });
+            // An approved request: asked by the owner, approved by the admin behind a second factor; answers the change it queued.
+            const approved = async (asked: Awaited<ReturnType<typeof ask>>) => {
+              const id = proposalId(asked);
+              const answer = await approve(adminAccount, id);
+              expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+              return id;
+            };
+            // A cap the table's owner puts in (a cap lowered through the command cannot go below what is committed).
+            const putCap = async (account: string, period: 'daily' | 'monthly', amount: string) => {
+              const id = randomUUID();
+              await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, $2, 'account', $3, $4, $5, 'VND', $6)`, [orgId, id, account, period, amount, owner.userId]);
+              return id;
+            };
+            const dropCap = (id: string) => row(`DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND id = $2`, [orgId, id]);
+            // The org's daily cap is the newest row of its key, and the rows earlier tests of this file left are not this test's to depend on (one of them was sent with an id from the far
+            // future): the test sets the org's daily caps to exactly the ones it names, and puts the others back afterwards, whatever happens in between.
+            const withOrgDailyCaps = async (caps: ReadonlyArray<{ amount: string; currency: string }>, body: () => Promise<void>) => {
+              const saved = await row<{ id: string; amount: string; currency: string; set_by: string; set_at: Date }>(`SELECT id, amount::text, currency, set_by, set_at FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]);
+              await row(`DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]);
+              try {
+                for (const c of caps) await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by) VALUES ($1, crove_kernel.uuid_v7(), 'org', 'daily', $2, $3, $4)`, [orgId, c.amount, c.currency, owner.userId]);
+                await body();
+              } finally {
+                await row(`DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]);
+                for (const c of saved) await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by, set_at) VALUES ($1, $2, 'org', 'daily', $3, $4, $5, $6)`, [orgId, c.id, c.amount, c.currency, c.set_by, c.set_at]);
+              }
+            };
+            const stopLaunchAs = (who: Account, launchId: string) => callAs(who, 'ads/stopLaunch', { launchId, idempotencyKey: key() });
+            it('reads, never cancels, a change whose call was begun when the launch is stopped meanwhile: it lands (applied) or it did not (failed as stopped, nothing called again), and it is never stuck queued', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Dừng khi đang gọi', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              // The platform changed the budget and the answer was lost; then the owner stops the launch.
+              w.inject({ level: 'ad_set', when: 'status_after' });
+              const landedId = changeId(await lower(owner, launch.id, '70000'));
+              expect(await manage(rig, landedId)).toEqual({ steps: 1, ended: 'unknown' });
+              expect((await stopLaunchAs(owner, launch.id)).status).toBe(200);
+              await ageCall(landedId, 61);
+              // The change cannot be cancelled (a call was begun), so begin goes on to read the object: the budget is as asked, so it is applied, and no second call is made.
+              expect(await manage(rig, landedId)).toEqual({ steps: 1, ended: 'applied' });
+              expect(rig.manager.changes).toEqual([{ level: 'ad_set', id: adSet, set: 'budget', value: '70000' }]);
+              expect(await lastChange(launch.id)).toMatchObject({ id: landedId, state: 'applied' });
+              // A change whose call failed before it reached the platform: after the stop the read shows the object as it was, and the change FAILS as stopped (it is never called again).
+              const other = await live('Dừng khi đang gọi 2', w);
+              const rig2 = rigOf(w);
+              const set2 = await objectId(other.launch.id, 'ad_set');
+              w.inject({ level: 'ad_set', when: 'status', error: new AdPlatformError('transient', 'NETWORK') });
+              const lostId = changeId(await lower(owner, other.launch.id, '80000'));
+              expect(await manage(rig2, lostId)).toEqual({ steps: 1, ended: 'unknown' });
+              expect((await stopLaunchAs(owner, other.launch.id)).status).toBe(200);
+              await ageCall(lostId, 61);
+              expect(await manage(rig2, lostId)).toEqual({ steps: 1, ended: 'missing' });
+              expect(await lastChange(other.launch.id)).toMatchObject({ id: lostId, state: 'failed', code: 'stopped' });
+              expect(w.objects.get(set2)?.dailyBudget).toBe('100000');
+              expect(rig2.manager.changes).toEqual([]);
+            });
+
+            it('judges a raise from the day before today, so a lower budget confirmed today never releases today: the org cap holds (100 000 -> 60 000 today, then a raise to 140 000 over another launch of 50 000 ending today)', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const accountA = await ready('Hạ rồi tăng cùng ngày A');
+              const accountB = await ready('Hạ rồi tăng cùng ngày B');
+              const a = await liveOn(accountA, w);
+              const b = await liveOn(accountB, w, { dailyBudget: '50000', startOn: inDays(0), endOn: inDays(0) });
+              // An org cap of 150 000 a day: A at 100 000 and B at 50 000 fit it exactly today.
+              await withOrgDailyCaps([{ amount: '150000', currency: 'VND' }], async () => {
+                // A lower budget confirmed today: its new budget starts tomorrow in the commitments, today is still counted at 100 000.
+                expect((await manage(rig, changeId(await lower(owner, a.launch.id, '60000')))).ended).toBe('applied');
+                // A raise to 140 000 is judged from the day before today: today 140 000 + 50 000 of B is over 150 000, so it is refused, where judging it only from tomorrow would pass it
+                // while the raise could already run today.
+                expect(await askRaise(a.launch.id, '140000')).toMatchObject({ status: 409, body: { code: 'ADS_SPEND_CAP' } });
+                // A raise back to 100 000 fits today (100 000 + 50 000 = 150 000) and is accepted.
+                expect((await askRaise(a.launch.id, '100000')).status).toBe(200);
+                void b;
+              });
+            });
+
+            it('refuses a raise while a cap in another currency applies: nothing is converted, and "no compatible cap" never reads as within the cap (ADS_CAP_CURRENCY)', async () => {
+              const w = new SandboxAdWriter();
+              const { launch } = await live('Hạn mức khác đơn vị tiền', w);
+              await withOrgDailyCaps([{ amount: '9000', currency: 'USD' }], async () => {
+                expect(await askRaise(launch.id, '150000')).toMatchObject({ status: 409, body: { code: 'ADS_CAP_CURRENCY' } });
+                expect(await askExtend(launch.id, inDays(8))).toMatchObject({ status: 409, body: { code: 'ADS_CAP_CURRENCY' } });
+                // What only reduces spend is still allowed.
+                expect((await lower(owner, launch.id, '90000')).status).toBe(200);
+              });
+            });
+
+            it('judges a raise again before it is called once more after a lost answer: a cap lowered meanwhile fails it as cap_lowered, the platform is not asked again and nothing stays held', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch, account } = await live('Tăng ngân sách sau khi mất câu trả lời', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              await approved(await askRaise(launch.id, '150000'));
+              const raise = await lastChange(launch.id);
+              // The first call fails before it reaches the platform (nothing changed there): the row is unclear.
+              w.inject({ level: 'ad_set', when: 'status', error: new AdPlatformError('transient', 'NETWORK') });
+              expect(await manage(rig, raise.id)).toEqual({ steps: 1, ended: 'unknown' });
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+              // A cap is lowered under the raised budget; a minute later the read shows the budget as it was, and the call is NOT made again.
+              const lowered = await putCap(account, 'daily', '120000');
+              await ageCall(raise.id, 61);
+              expect(await manage(rig, raise.id)).toEqual({ steps: 1, ended: 'missing' });
+              expect(await lastChange(launch.id)).toMatchObject({ id: raise.id, state: 'failed', code: 'cap_lowered' });
+              expect(rig.manager.changes).toEqual([]);
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('100000');
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+              await dropCap(lowered);
+            });
+
+            it('never calls the platform for a begin that waited too long and records nothing for it: the row stays as begin left it, a later begin reads first, and a late worker cannot undo another one', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Worker bị treo sau khi begin', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              expect((await manage(rig, changeId(await pause(owner, launch.id, 'ad_set')))).ended).toBe('applied');
+              await approved(await askResume(launch.id, 'ad_set'));
+              const resume = (await changesOf(launch.id)).find((c) => c.kind === 'resume') as NonNullable<Awaited<ReturnType<typeof lastChange>>>;
+              // Worker A: begin is made at time 0, then the worker stalls and the next look at the clock, right before the call, is a minute and a second later.
+              let reads = 0;
+              const stalled = () => (reads++ === 0 ? 0 : BEGIN_TO_CALL_MS + 1000);
+              expect(await runAdsManage({ runtime: worker, broker: vault, managers: rig.managers, now: stalled }, { orgId, changeId: resume.id })).toEqual({ steps: 1, ended: 'stale_begin' });
+              // Nothing was sent, and NOTHING was recorded: the change is still queued (what it holds stays held), its row is the one begin made.
+              expect(rig.manager.changes.filter((c) => c.set === 'status' && c.value === 'active')).toEqual([]);
+              expect(w.objects.get(adSet)?.status).toBe('paused');
+              expect(await lastChange(launch.id)).toMatchObject({ id: resume.id, state: 'queued', code: null });
+              expect(await callOf(resume.id)).toMatchObject({ state: 'started', calls: 1 });
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+              // Worker B, when the job is delivered again: the row is old enough to be lost, so it READS the object (still paused), takes the row and sends the resume once.
+              await ageCall(resume.id, 3600);
+              expect(await manage(rig, resume.id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(rig.manager.changes.filter((c) => c.set === 'status' && c.value === 'active')).toHaveLength(1);
+              expect(w.objects.get(adSet)?.status).toBe('active');
+              // Worker A wakes up late: it has nothing to record and nothing to send (its job returned), so the change B settled stays applied.
+              expect(await lastChange(launch.id)).toMatchObject({ id: resume.id, state: 'applied' });
+              expect(await callOf(resume.id)).toMatchObject({ state: 'succeeded' });
+            });
+
+            it('a resume left stale by a stalled worker never lands after the launch was stopped and wound down: the later begin reads the object, finds it paused and fails the change as stopped', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Worker treo rồi dừng', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              expect((await manage(rig, changeId(await pause(owner, launch.id, 'ad_set')))).ended).toBe('applied');
+              await approved(await askResume(launch.id, 'ad_set'));
+              const resume = (await changesOf(launch.id)).find((c) => c.kind === 'resume') as NonNullable<Awaited<ReturnType<typeof lastChange>>>;
+              let reads = 0;
+              const stalled = () => (reads++ === 0 ? 0 : BEGIN_TO_CALL_MS + 1000);
+              expect((await runAdsManage({ runtime: worker, broker: vault, managers: rig.managers, now: stalled }, { orgId, changeId: resume.id })).ended).toBe('stale_begin');
+              expect((await stopLaunchAs(owner, launch.id)).status).toBe(200);
+              await ageCall(resume.id, 3600);
+              await runAdsPause({ runtime: worker, broker: vault, pausers: adPausers({ sandbox: w }) }, { orgId, launchId: launch.id });
+              expect(await manage(rig, resume.id)).toEqual({ steps: 1, ended: 'missing' });
+              expect(await lastChange(launch.id)).toMatchObject({ id: resume.id, state: 'failed', code: 'stopped' });
+              expect(w.objects.get(adSet)?.status).toBe('paused');
+              expect(rig.manager.changes.filter((c) => c.set === 'status' && c.value === 'active')).toEqual([]);
+            });
+
+            it('makes the pause of a stopped launch wait for a change of its objects that may still be in flight (a resume could switch an object on after it was paused)', async () => {
+              const w = new SandboxAdWriter();
+              const { launch } = await live('Dừng khi đang bật lại', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              const rig = rigOf(w);
+              expect((await manage(rig, changeId(await pause(owner, launch.id, 'ad_set')))).ended).toBe('applied');
+              const resumeAsked = await askResume(launch.id, 'ad_set');
+              const resumeId = await approved(resumeAsked);
+              const change = (await changesOf(launch.id)).find((c) => c.kind === 'resume') as NonNullable<Awaited<ReturnType<typeof lastChange>>>;
+              expect(change.state).toBe('queued');
+              void resumeId;
+              // The resume's call was begun (a row, started) and not settled; the launch is stopped meanwhile.
+              await row(`INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety, started_at) VALUES ($1, $2, 'ads', 'launch', 'manage_resume', 'idempotent', now())`, [orgId, `ads.manage:${change.id}:apply`]);
+              expect((await stopLaunchAs(owner, launch.id)).status).toBe(200);
+              const pausing = await runAdsPause({ runtime: worker, broker: vault, pausers: adPausers({ sandbox: w }) }, { orgId, launchId: launch.id });
+              expect(pausing).toMatchObject({ ended: 'manage_in_flight' });
+              expect(w.objects.get(adSet)?.status).toBe('paused');
+              // Once the row is old enough to be lost the pause goes on.
+              await ageCall(change.id, 3600);
+              expect((await runAdsPause({ runtime: worker, broker: vault, pausers: adPausers({ sandbox: w }) }, { orgId, launchId: launch.id })).ended).not.toBe('manage_in_flight');
+            });
+
+            it('does not make the pause of a stopped launch wait for an unclear change whose reads keep failing: no call is pending for it, and the sweep\'s reads only touch its clock (#3898)', async () => {
+              const w = new SandboxAdWriter();
+              const { launch } = await live('Dừng khi có thay đổi chưa rõ', w);
+              const { rig, raise } = await unclearRaise(w, launch.id, '150000', false);
+              expect((await stopLaunchAs(owner, launch.id)).status).toBe(200);
+              // The sweep's read of the unclear raise cannot be answered: it stays unclear and the ledger row's clock is touched (a read of the object, no call).
+              await ageCall(raise.id, 700);
+              w.inject({ level: 'ad_set', when: 'read' });
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 1, ended: 'unknowable' });
+              expect(await callOf(raise.id)).toMatchObject({ state: 'ambiguous' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'unclear' }]);
+              // The pause goes on at once, whatever the clock says: it is not held back as a call in flight.
+              const pausing = await runAdsPause({ runtime: worker, broker: vault, pausers: adPausers({ sandbox: w }) }, { orgId, launchId: launch.id });
+              expect(pausing.ended).not.toBe('manage_in_flight');
+              expect(pausing.ended).not.toBe('activation_in_flight');
+            });
+
+            // Writing and launches back to what the tests below expect: on, not blocked.
+            afterEach(async () => {
+              await open();
+            });
+
+            it('pauses an ad, an ad set and a campaign with no approval: one call at the platform each, nothing before the job runs, a second pause refused, the state shows it', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Tạm dừng', w, { variants: [variant(1), variant(2)] });
+              const ad = await objectId(launch.id, 'ad_2');
+              expect(w.objects.get(ad)?.status).toBe('active');
+              // An owner and an admin pause, a member and a viewer do not.
+              for (const who of [member, viewer]) expect((await pause(who, launch.id, 'ad_2')).status, who.email).toBe(403);
+              expect((await pause(owner, randomUUID(), 'ad_2')).status).toBe(404);
+              const made = await pause(adminAccount, launch.id, 'ad_2');
+              expect(made).toMatchObject({ status: 200, body: { launchId: launch.id, kind: 'pause', state: 'queued' } });
+              const id = changeId(made);
+              // The row is queued and nothing was approved; the event that queues the job carries ids only; the platform has not been called.
+              expect(await changesOf(launch.id)).toMatchObject([{ id, kind: 'pause', slot: 'ad_2', state: 'queued', code: null, proposal_id: null }]);
+              expect((await queuedEvents(id)).map((e) => Object.keys(e.payload).sort())).toEqual([['adAccountId', 'changeId', 'launchId']]);
+              expect(w.objects.get(ad)?.status).toBe('active');
+              expect(rig.manager.changes).toEqual([]);
+              // One change of an object at a time while it waits.
+              expect(await pause(owner, launch.id, 'ad_2')).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_OPEN' } });
+              expect(await manage(rig, id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(ad)?.status).toBe('paused');
+              expect(rig.manager.changes).toEqual([{ level: 'ad', id: ad, set: 'status', value: 'paused' }]);
+              expect(await changesOf(launch.id)).toMatchObject([{ id, state: 'applied', code: null }]);
+              expect(await callOf(id)).toEqual({ state: 'succeeded', calls: 1, step: 'manage_pause', error_code: null });
+              // A second run finds it done and calls nothing; a second pause of what is paused is refused.
+              expect(await manage(rig, id)).toEqual({ steps: 0, ended: 'settled' });
+              expect(rig.manager.changes).toHaveLength(1);
+              expect(await pause(owner, launch.id, 'ad_2')).toMatchObject({ status: 409, body: { code: 'ADS_OBJECT_STATE' } });
+              // The ad set and the campaign pause the same way; the objects not named stay on.
+              for (const slot of ['ad_set', 'campaign']) {
+                expect(await manage(rig, changeId(await pause(owner, launch.id, slot)))).toEqual({ steps: 1, ended: 'applied' });
+              }
+              expect([...w.objects.values()].filter((o) => o.level !== 'creative').map((o) => `${o.level}:${o.status}`).sort()).toEqual(['ad:active', 'ad:paused', 'ad_set:paused', 'campaign:paused']);
+              // The screen's state: members read it, and it says what each object is.
+              const shown = (await callAs(member, 'ads/manageState', { launchId: launch.id })).body;
+              expect(shown.objects.map((o: { slot: string; status: string; pending: string | null }) => [o.slot, o.status, o.pending])).toEqual([['campaign', 'paused', null], ['ad_set', 'paused', null], ['ad_1', 'active', null], ['ad_2', 'paused', null]]);
+              expect(shown).toMatchObject({ canChange: true, dailyBudget: '100000', heldDailyBudget: '100000' });
+            });
+
+            it('archives for good: an archived object is never paused or switched on again, and an archived ad set or campaign stops committing at the day it was applied', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch, account } = await live('Lưu trữ', w, { variants: [variant(1), variant(2)] });
+              expect(await commit(account)).toMatchObject({ daily_budget: '100000', commit_until: inDays(6) });
+              // An ad: its own status is permanent; the commitment of the launch is the ad set's, so it does not move.
+              const ad = await objectId(launch.id, 'ad_2');
+              expect(await manage(rig, changeId(await archive(adminAccount, launch.id, 'ad_2')))).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(ad)?.status).toBe('archived');
+              expect(await commit(account)).toMatchObject({ daily_budget: '100000', commit_until: inDays(6) });
+              expect(await archive(owner, launch.id, 'ad_2')).toMatchObject({ status: 409, body: { code: 'ADS_OBJECT_STATE' } });
+              expect(await pause(owner, launch.id, 'ad_2')).toMatchObject({ status: 409, body: { code: 'ADS_OBJECT_STATE' } });
+              expect(await askResume(launch.id, 'ad_2')).toMatchObject({ status: 409, body: { code: 'ADS_OBJECT_STATE' } });
+              expect((await archive(member, launch.id, 'ad_1')).status).toBe(403);
+              // The ad set archived: queued, it still commits to the last day; once the platform confirmed it, it commits up to the day it was applied (what ran counts).
+              const id = changeId(await archive(owner, launch.id, 'ad_set'));
+              expect(await commit(account)).toMatchObject({ commit_until: inDays(6) });
+              expect(await manage(rig, id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(await changesOf(launch.id)).toMatchObject([{ kind: 'archive', slot: 'ad_2', state: 'applied' }, { kind: 'archive', slot: 'ad_set', state: 'applied', settled_on: inDays(0) }]);
+              expect(await commit(account)).toMatchObject({ daily_budget: '100000', commit_until: inDays(0) });
+              expect([...w.objects.values()].find((o) => o.level === 'ad_set')?.status).toBe('archived');
+            });
+
+            it('ends the commitment of an archived campaign at the day it was applied too', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch, account } = await live('Lưu trữ chiến dịch', w);
+              expect(await manage(rig, changeId(await archive(owner, launch.id, 'campaign')))).toEqual({ steps: 1, ended: 'applied' });
+              expect(await commit(account)).toMatchObject({ commit_until: inDays(0) });
+            });
+
+            it('lowers the daily budget: the commitment is not released until the platform confirmed it, a refusal releases nothing, and it goes on from the confirmed budget', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch, account } = await live('Giảm ngân sách', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('100000');
+              // A budget that is not lower is refused (raising is an approved request), and so is a fraction a dong has no place for.
+              expect(await lower(owner, launch.id, '100000')).toMatchObject({ status: 422, body: { code: 'ADS_BUDGET_INVALID' } });
+              expect(await lower(owner, launch.id, '150000')).toMatchObject({ status: 422, body: { code: 'ADS_BUDGET_INVALID' } });
+              expect(await lower(owner, launch.id, '60000.5')).toMatchObject({ status: 422, body: { code: 'ADS_BUDGET_INVALID' } });
+              expect((await lower(member, launch.id, '60000')).status).toBe(403);
+              // The platform refuses the first one: the change fails, nothing was released, the budget at the platform is what it was.
+              w.inject({ level: 'ad_set', when: 'status', error: new AdPlatformError('bad_request', 'BUDGET_REFUSED') });
+              const refusedId = changeId(await lower(owner, launch.id, '70000'));
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+              expect(await manage(rig, refusedId)).toEqual({ steps: 1, ended: 'rejected' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: refusedId, kind: 'budget_lower', state: 'failed', code: 'BUDGET_REFUSED', from_budget: '100000', to_budget: '70000' }]);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('100000');
+              // The second one: queued, and the commitment is still the old budget; applied, and it is the new one.
+              const id = changeId(await lower(adminAccount, launch.id, '60000'));
+              expect(await lower(owner, launch.id, '50000')).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_OPEN' } });
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+              expect(await commit(account)).toMatchObject({ daily_budget: '100000' });
+              expect((await callAs(member, 'ads/manageState', { launchId: launch.id })).body).toMatchObject({ dailyBudget: '100000', heldDailyBudget: '100000', changes: [{ id, state: 'queued' }, { state: 'failed' }] });
+              expect(await manage(rig, id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('60000');
+              expect(rig.manager.changes.filter((c) => c.set === 'budget')).toEqual([{ level: 'ad_set', id: adSet, set: 'budget', value: '60000' }]);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '60000' });
+              expect(await commit(account)).toMatchObject({ daily_budget: '60000' });
+              // What ran at the old budget is still committed at it: the first segment keeps 100 000 up to the day the lower was confirmed, the new budget starts the day after.
+              const segments = await commitAll(account);
+              // (A launch with a change of the budget answers a row a day, at the highest budget that may have been running on it.)
+              expect([...new Set(segments.map((r) => r.daily_budget))]).toEqual(['100000', '60000']);
+              expect(segments.findIndex((r) => r.daily_budget === '60000')).toBeGreaterThan(0);
+              expect(segments.slice(0, segments.findIndex((r) => r.daily_budget === '60000')).every((r) => r.daily_budget === '100000')).toBe(true);
+              expect((await callAs(member, 'ads/manageState', { launchId: launch.id })).body).toMatchObject({ dailyBudget: '60000', heldDailyBudget: '60000' });
+              // The next change goes from the confirmed budget.
+              expect(await lower(owner, launch.id, '60000')).toMatchObject({ status: 422, body: { code: 'ADS_BUDGET_INVALID' } });
+              expect(await manage(rig, changeId(await lower(owner, launch.id, '45000')))).toEqual({ steps: 1, ended: 'applied' });
+              expect(await changesOf(launch.id)).toMatchObject([{ state: 'failed' }, { to_budget: '60000', state: 'applied' }, { from_budget: '60000', to_budget: '45000', state: 'applied' }]);
+            });
+
+            it('shortens the schedule: the last day committed does not move until the platform confirmed it, and it never goes into the past', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch, account } = await live('Rút ngắn lịch', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              expect(w.objects.get(adSet)?.endTime).toBe(`${inDays(7)}T00:00:00+0700`);
+              // Not earlier than the held end, and not before today (what ran counts).
+              expect(await shorten(owner, launch.id, inDays(6))).toMatchObject({ status: 422, body: { code: 'ADS_SCHEDULE_INVALID' } });
+              expect(await shorten(owner, launch.id, inDays(9))).toMatchObject({ status: 422, body: { code: 'ADS_SCHEDULE_INVALID' } });
+              expect(await shorten(owner, launch.id, inDays(-1))).toMatchObject({ status: 422, body: { code: 'ADS_SCHEDULE_INVALID' } });
+              expect((await shorten(member, launch.id, inDays(3))).status).toBe(403);
+              const id = changeId(await shorten(adminAccount, launch.id, inDays(3)));
+              expect(await shorten(owner, launch.id, inDays(2))).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_OPEN' } });
+              expect(await hold(launch.id)).toMatchObject({ end_on: inDays(6) });
+              expect(await commit(account)).toMatchObject({ commit_until: inDays(6) });
+              expect(await manage(rig, id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(adSet)?.endTime).toBe(`${inDays(4)}T00:00:00+0700`);
+              expect(rig.manager.changes.filter((c) => c.set === 'end_time')).toHaveLength(1);
+              expect(await hold(launch.id)).toMatchObject({ end_on: inDays(3) });
+              expect(await commit(account)).toMatchObject({ commit_until: inDays(3) });
+              expect((await callAs(member, 'ads/manageState', { launchId: launch.id })).body).toMatchObject({ endOn: inDays(3), heldEndOn: inDays(3) });
+              // Today is the earliest end.
+              expect(await manage(rig, changeId(await shorten(owner, launch.id, inDays(0))))).toEqual({ steps: 1, ended: 'applied' });
+              expect(await commit(account)).toMatchObject({ commit_until: inDays(0) });
+            });
+
+            it('cancels a change the job never begun, an owner or an admin only, and never one that was begun: it may have landed', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Hủy thay đổi', w);
+              const id = changeId(await lower(owner, launch.id, '70000'));
+              for (const who of [member, viewer]) expect((await cancel(who, id)).status, who.email).toBe(403);
+              expect((await cancel(owner, randomUUID())).status).toBe(404);
+              expect(await cancel(adminAccount, id)).toMatchObject({ status: 200, body: { changeId: id, cancelled: true } });
+              expect(await changesOf(launch.id)).toMatchObject([{ id, state: 'cancelled', code: 'cancelled' }]);
+              expect(await cancel(owner, id)).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_SETTLED' } });
+              // A cancelled change is never made, and the next one of its kind goes through.
+              expect(await manage(rig, id)).toEqual({ steps: 0, ended: 'settled' });
+              expect(rig.manager.changes).toEqual([]);
+              // Begun and not settled (the job's own begin, then nothing): the command and the database both refuse, and the change goes on being made.
+              const begun = changeId(await lower(owner, launch.id, '70000'));
+              await worker.execute('ads.manage.begin', { changeId: begun, providers: [w.provider] }, { actor: SYSTEM, orgId });
+              expect(await callOf(begun)).toMatchObject({ state: 'started', calls: 1 });
+              expect(await cancel(owner, begun)).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_BEGUN' } });
+              await expect(inContext(owner, (c) => c.query(`UPDATE crove_ads.ad_manage_change SET state = 'cancelled' WHERE org_id = $1 AND id = $2`, [orgId, begun]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_MANAGE_FORBIDDEN') });
+              expect((await changesOf(launch.id)).at(-1)).toMatchObject({ id: begun, state: 'queued' });
+            });
+
+            it('resumes a paused object only as an approved request: the owner or an admin asks, another person approves behind a second factor, then one call; nothing is switched on without it', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Bật lại', w, { variants: [variant(1), variant(2)] });
+              const ad = await objectId(launch.id, 'ad_1');
+              // What is on cannot be resumed; a member and a viewer cannot ask.
+              expect(await askResume(launch.id, 'ad_1')).toMatchObject({ status: 409, body: { code: 'ADS_OBJECT_STATE' } });
+              expect(await manage(rig, changeId(await pause(owner, launch.id, 'ad_1')))).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(ad)?.status).toBe('paused');
+              for (const who of [member, viewer]) expect((await askResume(launch.id, 'ad_1', who)).status, who.email).toBe(403);
+              const id = proposalId(await askResume(launch.id, 'ad_1', adminAccount));
+              expect(await askResume(launch.id, 'ad_1')).toMatchObject({ status: 409, body: { code: 'ADS_REQUEST_OPEN' } });
+              // The card: the object, the budget and the largest amount the launch can spend (100 000 a day for 7 days).
+              expect((await callAs(owner, 'ads/proposal', { id })).body).toMatchObject({ change: { change: 'object_resume', launchId: launch.id, slot: 'ad_1', currency: 'VND', dailyBudget: '100000', amount: '700000', previousAmount: '700000' } });
+              // Nothing is changed by asking; the author does not approve it, the approver needs a second factor, and a member is no approver.
+              expect(await changesOf(launch.id)).toHaveLength(1);
+              expect(await approve(adminAccount, id)).toMatchObject({ status: 403, body: { code: 'FOUR_EYES_REQUIRED' } });
+              expect(await approve(owner, id, { mfa: false })).toMatchObject({ status: 403 });
+              expect((await approve(member, id)).status).toBe(403);
+              expect(await changesOf(launch.id)).toHaveLength(1);
+              expect((await approve(owner, id)).status).toBe(200);
+              const resume = await lastChange(launch.id);
+              expect(resume).toMatchObject({ kind: 'resume', slot: 'ad_1', state: 'queued', proposal_id: id });
+              expect(w.objects.get(ad)?.status).toBe('paused');
+              expect(await manage(rig, resume.id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(ad)?.status).toBe('active');
+              expect(rig.manager.changes.at(-1)).toEqual({ level: 'ad', id: ad, set: 'status', value: 'active' });
+              expect((await callAs(member, 'ads/manageState', { launchId: launch.id })).body.objects.find((o: { slot: string }) => o.slot === 'ad_1')).toMatchObject({ status: 'active', pending: null });
+              // The approval is spent: a second request is a new one, and the old proposal is not a licence for another resume.
+              expect(await askResume(launch.id, 'ad_1')).toMatchObject({ status: 409, body: { code: 'ADS_OBJECT_STATE' } });
+            });
+
+            it('lets a one-person org approve its own resume, flagged', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Bật lại một người', w);
+              expect(await manage(rig, changeId(await pause(owner, launch.id, 'ad_1')))).toEqual({ steps: 1, ended: 'applied' });
+              const id = proposalId(await askResume(launch.id, 'ad_1'));
+              // With another eligible person the author is held back; with none left the owner approves, and the approval says so.
+              expect(await approve(owner, id)).toMatchObject({ status: 403, body: { code: 'FOUR_EYES_REQUIRED' } });
+              await row(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgId, adminAccount.userId]);
+              try {
+                expect((await approve(owner, id)).status).toBe(200);
+              } finally {
+                await row(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgId, adminAccount.userId]);
+              }
+              expect((await row<{ detail: { self_approved: boolean } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]))[0]?.detail).toMatchObject({ self_approved: true });
+              expect(await lastChange(launch.id)).toMatchObject({ kind: 'resume', state: 'queued', proposal_id: id });
+            });
+
+            it('raises the budget only as an approved request that fits every cap: refused at the request, at the approval and, after a cap was lowered, at the execution (cancelled cap_lowered, nothing called, nothing held)', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch, account } = await live('Tăng ngân sách', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              // At the request: the org's daily cap is 200 000, so 250 000 never fits; a budget that is not higher is no raise; a member and a viewer cannot ask.
+              expect(await askRaise(launch.id, '250000')).toMatchObject({ status: 409, body: { code: 'ADS_SPEND_CAP' } });
+              expect(await askRaise(launch.id, '100000')).toMatchObject({ status: 422, body: { code: 'ADS_BUDGET_INVALID' } });
+              expect(await askRaise(launch.id, '90000')).toMatchObject({ status: 422, body: { code: 'ADS_BUDGET_INVALID' } });
+              for (const who of [member, viewer]) expect((await askRaise(launch.id, '150000', who)).status, who.email).toBe(403);
+              // At the approval: a cap lowered after the request refuses it, and it stays waiting.
+              const asked = proposalId(await askRaise(launch.id, '150000'));
+              expect((await callAs(owner, 'ads/proposal', { id: asked })).body).toMatchObject({ change: { change: 'budget_raise', fromBudget: '100000', toBudget: '150000', amount: '1050000', previousAmount: '700000' } });
+              const tight = await putCap(account, 'daily', '120000');
+              expect(await approve(adminAccount, asked)).toMatchObject({ status: 409, body: { code: 'ADS_SPEND_CAP' } });
+              expect(await changesOf(launch.id)).toEqual([]);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+              await dropCap(tight);
+              // Approved: the change is queued and the budget is held at the raised figure BEFORE the platform is called (the commitment is written with the change).
+              expect((await approve(adminAccount, asked)).status).toBe(200);
+              const raise = await lastChange(launch.id);
+              expect(raise).toMatchObject({ kind: 'budget_raise', slot: 'ad_set', state: 'queued', from_budget: '100000', to_budget: '150000', proposal_id: asked });
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('100000');
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+              expect(await commit(account)).toMatchObject({ daily_budget: '150000' });
+              expect((await callAs(member, 'ads/manageState', { launchId: launch.id })).body).toMatchObject({ dailyBudget: '100000', heldDailyBudget: '150000' });
+              // A cap lowered after the approval: the job's begin judges it once more and cancels the change; nothing is called and nothing stays held.
+              const lowered = await putCap(account, 'daily', '120000');
+              expect(await manage(rig, raise.id)).toEqual({ steps: 0, ended: 'cap_lowered' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'cancelled', code: 'cap_lowered' }]);
+              expect(rig.manager.changes).toEqual([]);
+              expect(await callOf(raise.id)).toBeUndefined();
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('100000');
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+              expect(await commit(account)).toMatchObject({ daily_budget: '100000' });
+              await dropCap(lowered);
+              // A new request goes through, is made at the platform once, and holds the budget as confirmed. The audit has ids and amounts.
+              const second = await approved(await askRaise(launch.id, '130000'));
+              const made = await lastChange(launch.id);
+              expect(made).toMatchObject({ kind: 'budget_raise', state: 'queued', proposal_id: second });
+              expect(await manage(rig, made.id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('130000');
+              expect(rig.manager.changes).toEqual([{ level: 'ad_set', id: adSet, set: 'budget', value: '130000' }]);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '130000' });
+              const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.budget.raise' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]);
+              expect(audit[0]?.detail).toMatchObject({ changeId: made.id, launchId: launch.id, kind: 'budget_raise', fromBudget: '100000', toBudget: '130000' });
+              // A raise the platform refuses releases what it held.
+              w.inject({ level: 'ad_set', when: 'status', error: new AdPlatformError('permission', 'NOT_ALLOWED') });
+              await approved(await askRaise(launch.id, '160000'));
+              const refused = await lastChange(launch.id);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '160000' });
+              expect(await manage(rig, refused.id)).toEqual({ steps: 1, ended: 'rejected' });
+              expect(await lastChange(launch.id)).toMatchObject({ id: refused.id, state: 'failed', code: 'NOT_ALLOWED' });
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '130000' });
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('130000');
+            });
+
+            it('extends the schedule only as an approved request that fits every cap and keeps the flight within 90 days; a cap lowered after the approval cancels it (cap_lowered)', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch, account } = await live('Kéo dài lịch', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              // Not later, past the 90 days of a flight, and not asked by a member.
+              expect(await askExtend(launch.id, inDays(6))).toMatchObject({ status: 422, body: { code: 'ADS_SCHEDULE_INVALID' } });
+              expect(await askExtend(launch.id, inDays(3))).toMatchObject({ status: 422, body: { code: 'ADS_SCHEDULE_INVALID' } });
+              expect(await askExtend(launch.id, inDays(90))).toMatchObject({ status: 422, body: { code: 'ADS_SCHEDULE_INVALID' } });
+              expect((await askExtend(launch.id, inDays(10), member)).status).toBe(403);
+              // At the request: a cap of the account in the month the longer flight lands in.
+              const tight = await putCap(account, 'monthly', '450000');
+              expect(await askExtend(launch.id, inDays(10))).toMatchObject({ status: 409, body: { code: 'ADS_SPEND_CAP' } });
+              await dropCap(tight);
+              // The ninetieth day is the last one allowed: the request is made (and rejected, so the next can be asked).
+              const edge = proposalId(await askExtend(launch.id, inDays(89)));
+              expect((await callAs(owner, 'ads/proposal', { id: edge })).body).toMatchObject({ change: { change: 'schedule_extend', toEndOn: inDays(89), amount: '9000000' } });
+              expect((await reject(adminAccount, edge)).status).toBe(200);
+              // Approved and queued: the last day is held at the longer flight before the platform is called.
+              const id = proposalId(await askExtend(launch.id, inDays(10)));
+              expect((await callAs(owner, 'ads/proposal', { id })).body).toMatchObject({ change: { fromEndOn: inDays(6), toEndOn: inDays(10), amount: '1100000', previousAmount: '700000' } });
+              expect((await approve(adminAccount, id)).status).toBe(200);
+              const extend = await lastChange(launch.id);
+              expect(extend).toMatchObject({ kind: 'schedule_extend', state: 'queued', from_end_on: inDays(6), to_end_on: inDays(10), proposal_id: id });
+              expect(await hold(launch.id)).toMatchObject({ end_on: inDays(10) });
+              expect(await commit(account)).toMatchObject({ commit_until: inDays(10) });
+              expect(w.objects.get(adSet)?.endTime).toBe(`${inDays(7)}T00:00:00+0700`);
+              // A cap lowered after the approval cancels it: nothing is called, nothing stays held.
+              const lowered = await putCap(account, 'monthly', '450000');
+              expect(await manage(rig, extend.id)).toEqual({ steps: 0, ended: 'cap_lowered' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: extend.id, state: 'cancelled', code: 'cap_lowered' }]);
+              expect(rig.manager.changes).toEqual([]);
+              expect(await hold(launch.id)).toMatchObject({ end_on: inDays(6) });
+              await dropCap(lowered);
+              // A new one is made once and held as confirmed.
+              await approved(await askExtend(launch.id, inDays(8)));
+              const made = await lastChange(launch.id);
+              expect(await manage(rig, made.id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(adSet)?.endTime).toBe(`${inDays(9)}T00:00:00+0700`);
+              expect(await hold(launch.id)).toMatchObject({ end_on: inDays(8) });
+              expect(await commit(account)).toMatchObject({ commit_until: inDays(8) });
+            });
+
+            it('serialises two raises approved at the same moment on the org\'s lock: only one fits the cap, the other is refused ADS_SPEND_CAP, and the commitments never pass the cap', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const a = await ready('Đua tăng A');
+              const b = await ready('Đua tăng B');
+              const first = await liveOn(a, w, { dailyBudget: '80000' });
+              const second = await liveOn(b, w, { dailyBudget: '80000' });
+              // Each raise fits the org's daily cap of 200 000 next to the other launch (110 000 + 80 000), so both requests are made; both together do not (220 000).
+              const idA = proposalId(await askRaise(first.launch.id, '110000'));
+              const idB = proposalId(await askRaise(second.launch.id, '110000'));
+              const answers = await Promise.all([approve(adminAccount, idA), approve(adminAccount, idB)]);
+              expect(answers.map((r) => r.status).sort()).toEqual([200, 409]);
+              expect(answers.find((r) => r.status === 409)?.body).toMatchObject({ code: 'ADS_SPEND_CAP' });
+              const winners = [...(await changesOf(first.launch.id)), ...(await changesOf(second.launch.id))];
+              expect(winners).toHaveLength(1);
+              expect(winners[0]).toMatchObject({ kind: 'budget_raise', state: 'queued', to_budget: '110000' });
+              // The commitments of the org on any day: 110 000 + 80 000, never more than the cap.
+              const rows = await inContext('system', async (c) => (await c.query<{ daily_budget: string; start_on: string; commit_until: string }>(`SELECT daily_budget, start_on::text, commit_until::text FROM crove_ads.launch_commitments('VND', $1::date, $2::date)`, [inDays(-1), inDays(8)])).rows);
+              const perDay = new Map<string, number>();
+              for (const r of rows) for (let d = r.start_on; d <= r.commit_until; d = addDaysText(d, 1)) perDay.set(d, (perDay.get(d) ?? 0) + Number(r.daily_budget));
+              expect(Math.max(...perDay.values())).toBe(190000);
+              expect([...perDay.values()].every((v) => v <= 200000)).toBe(true);
+              // The refused one is still waiting, and the winner is made at the platform.
+              const winnerLaunch = (await changesOf(first.launch.id)).length === 1 ? first.launch.id : second.launch.id;
+              expect(await manage(rig, (await lastChange(winnerLaunch)).id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(await objectId(winnerLaunch, 'ad_set'))?.dailyBudget).toBe('110000');
+              const loser = answers[0]?.status === 409 ? idA : idB;
+              expect((await reject(adminAccount, loser)).status).toBe(200);
+            });
+
+            it('gives members the state of a launch and no command at all: not a pause, not a change, not the suggestions', async () => {
+              const w = new SandboxAdWriter();
+              const { launch } = await live('Thành viên chỉ xem', w);
+              expect((await callAs(member, 'ads/manageState', { launchId: launch.id })).status).toBe(200);
+              expect((await callAs(viewer, 'ads/manageState', { launchId: launch.id })).status).toBe(403);
+              expect((await callAs(outsider, 'ads/manageState', { launchId: launch.id })).status).toBeGreaterThanOrEqual(400);
+              expect((await callAs(member, 'ads/manageSuggestions', {})).status).toBe(403);
+              expect(await callAs(owner, 'ads/manageSuggestions', {})).toMatchObject({ status: 200 });
+              for (const name of ['ads.object.pause', 'ads.object.archive']) {
+                await expect(api.execute(name, { launchId: launch.id, slot: 'ad_1' }, { actor: { type: 'user', userId: member.userId, aal: 'aal1', sessionId: randomUUID() }, orgId })).rejects.toMatchObject({ status: 403 });
+              }
+              await expect(api.execute('ads.budget.lower', { launchId: launch.id, dailyBudget: '50000' }, { actor: { type: 'user', userId: member.userId, aal: 'aal1', sessionId: randomUUID() }, orgId })).rejects.toMatchObject({ status: 403 });
+              // The system and an agent run none of them either.
+              for (const [name, input] of [['ads.object.pause', { launchId: launch.id, slot: 'ad_1' }], ['ads.budget.lower', { launchId: launch.id, dailyBudget: '50000' }], ['ads.manage.cancel', { changeId: randomUUID() }], ['ads.object.prepare_resume', { launchId: launch.id, slot: 'ad_1' }]] as const) {
+                await expect(api.execute(name, input, { actor: SYSTEM, orgId })).rejects.toBeTruthy();
+              }
+              // The approved commands run only as an approved proposal.
+              await expect(api.execute('ads.budget.raise', { payload: {} }, { actor: asOwner(), orgId })).rejects.toBeTruthy();
+              // The job's two commands are the system's alone.
+              for (const who of [asOwner(), { type: 'user' as const, userId: adminAccount.userId, aal: 'aal1' as const, sessionId: randomUUID() }]) {
+                await expect(api.execute('ads.manage.begin', { changeId: randomUUID(), providers: [] }, { actor: who, orgId })).rejects.toMatchObject({ status: 403 });
+                await expect(api.execute('ads.manage.record', { changeId: randomUUID(), callKey: 'x', phase: 'call', result: { kind: 'accepted' } }, { actor: who, orgId })).rejects.toMatchObject({ status: 403 });
+              }
+            });
+
+            it('makes a change once even when the answer is lost: the row stays unclear, the next run asks the platform and finds it, and no second call is made (a budget, a status, a schedule)', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Mất câu trả lời khi quản lý', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              // A budget: made at the platform, the answer lost.
+              w.inject({ level: 'ad_set', when: 'status_after' });
+              const id = changeId(await lower(owner, launch.id, '70000'));
+              expect(await manage(rig, id)).toEqual({ steps: 1, ended: 'unknown' });
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('70000');
+              expect(await callOf(id)).toMatchObject({ state: 'ambiguous', calls: 1, error_code: 'NETWORK' });
+              expect((await changesOf(launch.id)).at(-1)).toMatchObject({ state: 'queued' });
+              // Still queued, so a commitment is not released; the platform has had no time to show it, so nothing is called.
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+              expect(await manage(rig, id)).toEqual({ steps: 0, ended: 'reconcile_wait' });
+              expect(rig.manager.changes).toHaveLength(1);
+              // A minute later: the next run READS the object, finds the budget as asked, records it applied. One change at the platform in all.
+              await ageCall(id, 61);
+              expect(await manage(rig, id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(rig.manager.changes).toEqual([{ level: 'ad_set', id: adSet, set: 'budget', value: '70000' }]);
+              expect(await callOf(id)).toMatchObject({ state: 'succeeded', calls: 1 });
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '70000' });
+              // A pause on an ad: the same, through the status (the sandbox says the change was made and loses the answer).
+              const ad = await objectId(launch.id, 'ad_1');
+              w.inject({ level: 'ad', when: 'status_after' });
+              const pauseId = changeId(await pause(owner, launch.id, 'ad_1'));
+              expect(await manage(rig, pauseId)).toEqual({ steps: 1, ended: 'unknown' });
+              expect(w.objects.get(ad)?.status).toBe('paused');
+              await ageCall(pauseId, 61);
+              expect(await manage(rig, pauseId)).toEqual({ steps: 1, ended: 'applied' });
+              expect(rig.manager.changes.filter((c) => c.set === 'status')).toEqual([{ level: 'ad', id: ad, set: 'status', value: 'paused' }]);
+              expect((await changesOf(launch.id)).at(-1)).toMatchObject({ kind: 'pause', state: 'applied' });
+              // The schedule: the same.
+              w.inject({ level: 'ad_set', when: 'status_after' });
+              const shortId = changeId(await shorten(owner, launch.id, inDays(4)));
+              expect(await manage(rig, shortId)).toEqual({ steps: 1, ended: 'unknown' });
+              await ageCall(shortId, 61);
+              expect(await manage(rig, shortId)).toEqual({ steps: 1, ended: 'applied' });
+              expect(rig.manager.changes.filter((c) => c.set === 'end_time')).toHaveLength(1);
+              expect(w.objects.get(adSet)?.endTime).toBe(`${inDays(5)}T00:00:00+0700`);
+            });
+
+            it('reconciles by reading when a call failed before it reached the platform: a read that finds the object as it was makes the call again, once', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Lỗi mạng khi quản lý', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              // The call fails with a network error and changes nothing: unclear, then the read says "still as it was", then the call is made once more.
+              w.inject({ level: 'ad_set', when: 'status' });
+              const id = changeId(await lower(owner, launch.id, '80000'));
+              expect(await manage(rig, id)).toEqual({ steps: 1, ended: 'unknown' });
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('100000');
+              expect(rig.manager.changes).toEqual([]);
+              await ageCall(id, 61);
+              expect(await manage(rig, id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('80000');
+              expect(rig.manager.changes).toEqual([{ level: 'ad_set', id: adSet, set: 'budget', value: '80000' }]);
+              expect(await callOf(id)).toMatchObject({ state: 'succeeded', calls: 2 });
+            });
+
+            it('reconciles a killed job: begin committed and no record, or the platform changed and the record never happened, and never calls twice', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Worker chết khi quản lý', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              // 1. The job died after begin (the row is committed as started) and before the platform was called.
+              const first = changeId(await lower(owner, launch.id, '90000'));
+              await worker.execute('ads.manage.begin', { changeId: first, providers: [w.provider] }, { actor: SYSTEM, orgId });
+              expect(await manage(rig, first)).toEqual({ steps: 0, ended: 'in_flight' });
+              expect(rig.manager.changes).toEqual([]);
+              await ageCall(first, 301);
+              expect(await manage(rig, first)).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('90000');
+              expect(rig.manager.changes).toHaveLength(1);
+              // 2. The platform made the change and the process was gone before the record: the next run reads and finds it, with no second call.
+              const dying = new Proxy(worker, {
+                get: (target, prop) => {
+                  if (prop === 'execute') {
+                    return async (name: string, input: never, options: never) => {
+                      if (name === 'ads.manage.record') throw new Error('process killed');
+                      return target.execute(name, input, options);
+                    };
+                  }
+                  const member = Reflect.get(target, prop, target) as unknown;
+                  return typeof member === 'function' ? (member as (...args: unknown[]) => unknown).bind(target) : member;
+                },
+              });
+              const second = changeId(await lower(owner, launch.id, '75000'));
+              await expect(manage(rig, second, dying)).rejects.toThrow('process killed');
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('75000');
+              expect(rig.manager.changes).toHaveLength(2);
+              expect(await callOf(second)).toMatchObject({ state: 'started', calls: 1 });
+              expect(await manage(rig, second)).toEqual({ steps: 0, ended: 'in_flight' });
+              await ageCall(second, 301);
+              expect(await manage(rig, second)).toEqual({ steps: 1, ended: 'applied' });
+              expect(rig.manager.changes).toHaveLength(2);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '75000' });
+            });
+
+            it('gives up on an answer it cannot tell: the change is unclear, a raise stays held against the caps, nothing is called again, and a lower budget is refused behind it', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch, account } = await live('Không rõ kết quả', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              await approved(await askRaise(launch.id, '150000'));
+              const raise = await lastChange(launch.id);
+              // The call fails and the read cannot be made either, again and again: unclear.
+              w.inject({ level: 'ad_set', when: 'status' });
+              expect(await manage(rig, raise.id)).toEqual({ steps: 1, ended: 'unknown' });
+              for (let i = 0; i < 2; i++) {
+                await ageCall(raise.id, 61);
+                w.inject({ level: 'ad_set', when: 'read' });
+                expect(await manage(rig, raise.id)).toEqual({ steps: 1, ended: 'unknowable' });
+              }
+              // Three calls asked (the call and two reads) is the limit: the next run says it stays unclear, makes no call, and the amount stays held.
+              await row(`UPDATE crove_kernel.external_call SET calls = 3, updated_at = updated_at - interval '61 seconds' WHERE org_id = $1 AND key = $2`, [orgId, `ads.manage:${raise.id}:apply`]);
+              expect(await manage(rig, raise.id)).toEqual({ steps: 0, ended: 'reconcile_unclear' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'unclear', code: 'reconcile_unclear' }]);
+              expect(rig.manager.changes).toEqual([]);
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('100000');
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+              expect(await commit(account)).toMatchObject({ daily_budget: '150000' });
+              // It is not cancellable (it may have landed), and it is not an OPEN change (only a queued one blocks a request of its family), but what the platform runs is not known:
+              // a lower budget, which needs no approval, could really be a raise (the budget may already be 150 000), so it is refused until a confirmed change settles it.
+              expect(await cancel(owner, raise.id)).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_SETTLED' } });
+              expect((await callAs(member, 'ads/manageState', { launchId: launch.id })).body).toMatchObject({ dailyBudget: '100000', heldDailyBudget: '150000', changes: [{ id: raise.id, state: 'unclear' }] });
+              expect(await lower(owner, launch.id, '120000')).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_UNCLEAR' } });
+              expect(await lower(owner, launch.id, '90000')).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_UNCLEAR' } });
+              expect(await changesOf(launch.id)).toHaveLength(1);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+              // A lower that was queued before (put in by the table's owner: no command can make one now) is refused again by begin: it is never called, whatever the platform runs.
+              const queuedLower = (await row<{ id: string }>(`INSERT INTO crove_ads.ad_manage_change (org_id, ad_account_id, legal_entity_id, launch_id, kind, slot, level, object_id, from_budget, to_budget, requested_by)
+                SELECT l.org_id, l.ad_account_id, l.legal_entity_id, l.id, 'budget_lower', 'ad_set', 'ad_set', $3, 150000, 120000, l.created_by FROM crove_ads.ad_launch l WHERE l.org_id = $1 AND l.id = $2 RETURNING id`, [orgId, launch.id, adSet]))[0]?.id as string;
+              expect(await manage(rig, queuedLower)).toEqual({ steps: 0, ended: 'unclear_family' });
+              expect((await changesOf(launch.id)).find((c) => c.id === queuedLower)).toMatchObject({ state: 'cancelled', code: 'unclear_family' });
+              expect(rig.manager.changes).toEqual([]);
+            });
+
+            // A raise whose call and whose reads failed again and again: the change is unclear and what it would add stays held (as the test above makes it).
+            const unclearRaise = async (w: SandboxAdWriter, launchId: string, dailyBudget: string, landed: boolean) => {
+              const rig = rigOf(w);
+              await approved(await askRaise(launchId, dailyBudget));
+              const raise = await lastChange(launchId);
+              // The call is made and its answer is lost (the raise landed at the platform), or it fails before it reaches the platform (nothing changed there).
+              w.inject({ level: 'ad_set', when: landed ? 'status_after' : 'status' });
+              expect(await manage(rig, raise.id)).toEqual({ steps: 1, ended: 'unknown' });
+              for (let i = 0; i < 2; i++) {
+                await ageCall(raise.id, 61);
+                w.inject({ level: 'ad_set', when: 'read' });
+                expect(await manage(rig, raise.id)).toEqual({ steps: 1, ended: 'unknowable' });
+              }
+              await row(`UPDATE crove_kernel.external_call SET calls = 3, updated_at = updated_at - interval '61 seconds' WHERE org_id = $1 AND key = $2`, [orgId, `ads.manage:${raise.id}:apply`]);
+              expect(await manage(rig, raise.id)).toEqual({ steps: 0, ended: 'reconcile_unclear' });
+              expect(await changesOf(launchId)).toMatchObject([{ id: raise.id, state: 'unclear' }]);
+              return { rig, raise };
+            };
+
+            it('settles an unclear change by reading its object, so a lower budget works again: the raise that landed is applied, and no call is made (#3898)', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await live('Đọc để xác nhận đã áp dụng', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              const { rig, raise } = await unclearRaise(w, launch.id, '150000', true);
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('150000');
+              const calls = rig.manager.changes.length;
+              // Held at the raise, and a lower budget is refused behind it.
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+              expect(await lower(owner, launch.id, '120000')).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_UNCLEAR' } });
+              // Too soon: the last touch of its call is a minute old, and a late landing must not be taken for a miss.
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 0, ended: 'too_soon' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'unclear' }]);
+              // Old enough, and the read cannot be made: it stays unclear and still counted (never under-counted), and its clock starts again.
+              await ageCall(raise.id, 700);
+              w.inject({ level: 'ad_set', when: 'read' });
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 1, ended: 'unknowable' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'unclear' }]);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+              expect(await commit(account)).toMatchObject({ daily_budget: '150000' });
+              expect(await lower(owner, launch.id, '120000')).toMatchObject({ status: 409, body: { code: 'ADS_CHANGE_UNCLEAR' } });
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 0, ended: 'too_soon' });
+              // The read works: the object shows the raise, so it is applied (the confirmed budget), and the lower budget goes from it.
+              await ageCall(raise.id, 700);
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'applied', code: null, settled_on: expect.any(String) }]);
+              expect(await callOf(raise.id)).toMatchObject({ state: 'succeeded' });
+              expect(rig.manager.changes).toHaveLength(calls);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+              const lowered = changeId(await lower(owner, launch.id, '120000'));
+              expect(await manage(rig, lowered)).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('120000');
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '120000' });
+              // A settled change is read no more.
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 0, ended: 'settled' });
+            });
+
+            it('settles an unclear change whose object is as it was as failed and releases what it held, and leaves one a newer change overtook alone (#3898)', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await live('Đọc để xác nhận không áp dụng', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              const { rig, raise } = await unclearRaise(w, launch.id, '150000', false);
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('100000');
+              expect(await commit(account)).toMatchObject({ daily_budget: '150000' });
+              // A newer raise, approved behind it (a raise is not held back by an unclear one), is what the platform shows next: a read says nothing of the older one.
+              await approved(await askRaise(launch.id, '160000'));
+              const newer = await lastChange(launch.id);
+              expect(newer.id).not.toBe(raise.id);
+              await ageCall(raise.id, 700);
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 0, ended: 'superseded' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'unclear' }, { id: newer.id, state: 'queued' }]);
+              // The newer one goes by (the object is as it was: refused), and the unclear one is settled now: not applied, and the budget it held is released.
+              w.inject({ level: 'ad_set', when: 'status', error: new AdPlatformError('bad_request', 'REFUSED') });
+              expect(await manage(rig, newer.id)).toEqual({ steps: 1, ended: 'rejected' });
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 1, ended: 'not_applied' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'failed', code: 'unclear_not_applied', settled_on: null }, { id: newer.id, state: 'failed' }]);
+              expect(await callOf(raise.id)).toMatchObject({ state: 'failed', error_code: 'UNCLEAR_NOT_APPLIED' });
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+              expect(await commit(account)).toMatchObject({ daily_budget: '100000' });
+              expect(w.objects.get(adSet)?.dailyBudget).toBe('100000');
+              expect(rig.manager.changes).toEqual([]);
+              // The lower budget the person wanted works again.
+              expect(await lower(owner, launch.id, '70000')).toMatchObject({ status: 200 });
+            });
+
+            it('does not fail an unclear change on a read that shows neither its value nor the old one: a third value, or no budget at all, leaves it unclear and counted (#3898)', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await live('Đọc ra giá trị thứ ba', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              const { rig, raise } = await unclearRaise(w, launch.id, '150000', false);
+              const object = w.objects.get(adSet) as NonNullable<ReturnType<typeof w.objects.get>>;
+              // The owner set another budget in the platform's own tools: the read says nothing of the raise.
+              for (const shown of ['180000', undefined]) {
+                if (shown === undefined) delete object.dailyBudget;
+                else object.dailyBudget = shown;
+                await ageCall(raise.id, 700);
+                expect(await settleRun(rig, raise.id), String(shown)).toEqual({ steps: 1, ended: 'unknowable' });
+                expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'unclear' }]);
+                expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+                expect(await commit(account)).toMatchObject({ daily_budget: '150000' });
+              }
+              // The object shows the old budget again: that is the answer, and the raise did not land.
+              object.dailyBudget = '100000';
+              await ageCall(raise.id, 700);
+              expect(await settleRun(rig, raise.id)).toEqual({ steps: 1, ended: 'not_applied' });
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+            });
+
+            it('settles an unclear pause the same way, reads nothing for a change that is not unclear, and never from a worker with no manager or no credential key (#3898)', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Đọc trạng thái và lịch', w);
+              const adSet = await objectId(launch.id, 'ad_set');
+              // A pause whose answer is lost and whose reads fail: unclear, though the object is paused.
+              const paused = changeId(await pause(owner, launch.id, 'ad_set'));
+              w.inject({ level: 'ad_set', when: 'status_after' });
+              expect(await manage(rig, paused)).toEqual({ steps: 1, ended: 'unknown' });
+              for (let i = 0; i < 2; i++) {
+                await ageCall(paused, 61);
+                w.inject({ level: 'ad_set', when: 'read' });
+                expect(await manage(rig, paused)).toEqual({ steps: 1, ended: 'unknowable' });
+              }
+              await row(`UPDATE crove_kernel.external_call SET calls = 3, updated_at = updated_at - interval '700 seconds' WHERE org_id = $1 AND key = $2`, [orgId, `ads.manage:${paused}:apply`]);
+              expect(await manage(rig, paused)).toEqual({ steps: 0, ended: 'reconcile_unclear' });
+              expect(w.objects.get(adSet)?.status).toBe('paused');
+              // No manager for its provider, no credential key: nothing is read.
+              expect(await runAdsManage({ runtime: worker, broker: vault, managers: {} }, { orgId, changeId: paused, settle: true })).toEqual({ steps: 0, ended: 'no_manager' });
+              expect(await runAdsManage({ runtime: worker, broker: { ...vault, id: 'none' } as unknown as typeof vault, managers: rig.managers }, { orgId, changeId: paused, settle: true })).toEqual({ steps: 0, ended: 'no_broker' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: paused, state: 'unclear' }]);
+              // The read finds the object paused: the pause is applied.
+              expect(await settleRun(rig, paused)).toEqual({ steps: 1, ended: 'applied' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: paused, kind: 'pause', state: 'applied' }]);
+              // A change that is queued, never begun, is not read: only an unclear one is (the begin of a queued change is the job's own).
+              const queued = changeId(await lower(owner, launch.id, '70000'));
+              expect(await settleRun(rig, queued)).toEqual({ steps: 0, ended: 'settled' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: paused }, { id: queued, state: 'queued' }]);
+              expect(rig.manager.changes).toHaveLength(1);
+            });
+
+            it('records nothing for a begin that waited too long even when the credential cannot be opened: the change stays queued and a later begin reads first (#3898)', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Treo rồi không mở được khóa', w);
+              const id = changeId(await pause(owner, launch.id, 'ad_set'));
+              // Worker A: begin at time 0, then it stalls, and the token cannot be opened (the connection closed just after another worker's call): the clock is a minute and a second on.
+              let reads = 0;
+              const stalled = () => (reads++ === 0 ? 0 : BEGIN_TO_CALL_MS + 1000);
+              const noKey = { ...vault, open: () => { throw new Error('no key'); } } as unknown as typeof vault;
+              expect(await runAdsManage({ runtime: worker, broker: noKey, managers: rig.managers, now: stalled }, { orgId, changeId: id })).toEqual({ steps: 1, ended: 'stale_begin' });
+              // Nothing was recorded, so a worker that landed the call meanwhile is not undone by a `blocked` of this one: the change is queued, the row is the one begin made.
+              expect(await changesOf(launch.id)).toMatchObject([{ id, state: 'queued', code: null }]);
+              expect(await callOf(id)).toMatchObject({ state: 'started', calls: 1 });
+              // The row is old enough to be lost: a later begin reads the object first, and a read that cannot ask records the answer as unknowable, never as a call that was not made.
+              await ageCall(id, 3600);
+              expect(await runAdsManage({ runtime: worker, broker: noKey, managers: rig.managers }, { orgId, changeId: id })).toMatchObject({ steps: 1, ended: 'CREDENTIAL_UNREADABLE' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id, state: 'queued' }]);
+              expect(await callOf(id)).toMatchObject({ state: 'ambiguous' });
+              expect(rig.manager.changes).toEqual([]);
+            });
+
+            it('lets a pause through whatever is switched off, and refuses every other change then (ADS_WRITE_OFF); a queued raise is cancelled by begin once writing went off', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch, account } = await live('Tắt chạy quảng cáo', w, { variants: [variant(1), variant(2)] });
+              const adSet = await objectId(launch.id, 'ad_set');
+              // A raise approved while writing is on, and a lower budget queued.
+              await approved(await askRaise(launch.id, '150000'));
+              const raise = await lastChange(launch.id);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '150000' });
+              // Writing switched off (the org's switch, with SQL as the owner's context does): the job's begin cancels the raise and releases what it held.
+              await closed();
+              expect(await manage(rig, raise.id)).toEqual({ steps: 0, ended: 'switch_off' });
+              expect(await changesOf(launch.id)).toMatchObject([{ id: raise.id, state: 'cancelled', code: 'switch_off' }]);
+              expect(rig.manager.changes).toEqual([]);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+              // Every command but a pause is refused, the requests too.
+              expect(await lower(owner, launch.id, '60000')).toMatchObject({ status: 409, body: { code: 'ADS_WRITE_OFF' } });
+              expect(await shorten(owner, launch.id, inDays(3))).toMatchObject({ status: 409, body: { code: 'ADS_WRITE_OFF' } });
+              expect(await archive(owner, launch.id, 'ad_2')).toMatchObject({ status: 409, body: { code: 'ADS_WRITE_OFF' } });
+              expect(await askRaise(launch.id, '150000')).toMatchObject({ status: 409, body: { code: 'ADS_WRITE_OFF' } });
+              expect(await askExtend(launch.id, inDays(9))).toMatchObject({ status: 409, body: { code: 'ADS_WRITE_OFF' } });
+              expect(await askResume(launch.id, 'ad_1')).toMatchObject({ status: 409, body: { code: 'ADS_WRITE_OFF' } });
+              expect((await callAs(member, 'ads/manageState', { launchId: launch.id })).body).toMatchObject({ canChange: false });
+              // The database refuses the same, whatever path writes: a lower budget and an archive for an owner's context with writing off.
+              await expect(
+                inContext(owner, (c) =>
+                  c.query(`INSERT INTO crove_ads.ad_manage_change (org_id, ad_account_id, launch_id, kind, slot, level, object_id, from_budget, to_budget) VALUES ($1, $2, $3, 'budget_lower', 'ad_set', 'ad_set', $4, 100000, 60000)`, [orgId, account, launch.id, adSet]),
+                ),
+              ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_MANAGE_FORBIDDEN') });
+              // A pause is allowed (stopping spend always is) and reaches the platform.
+              const ad = await objectId(launch.id, 'ad_2');
+              const id = changeId(await pause(adminAccount, launch.id, 'ad_2'));
+              expect(await manage(rig, id)).toEqual({ steps: 1, ended: 'applied' });
+              expect(w.objects.get(ad)?.status).toBe('paused');
+              expect(await manage(rig, changeId(await pause(owner, launch.id, 'campaign')))).toEqual({ steps: 1, ended: 'applied' });
+            });
+
+            it('lets a pause through while a launch needs attention, takes no other change then, and cannot reach a platform whose write connection was closed', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch, account } = await live('Cần chú ý', w);
+              // No path of the launch job moves a live launch to needs attention; the table's owner does, with the guard of the launch set aside for the statement.
+              const setState = (state: string) =>
+                admin(async (c) => {
+                  await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
+                  try {
+                    await c.query(`UPDATE crove_ads.ad_launch SET state = $3 WHERE org_id = $1 AND id = $2`, [orgId, launch.id, state]);
+                  } finally {
+                    await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+                  }
+                });
+              await setState('needs_attention');
+              expect(await lower(owner, launch.id, '70000')).toMatchObject({ status: 409, body: { code: 'ADS_MANAGE_NOT_LIVE' } });
+              expect(await archive(owner, launch.id, 'ad_1')).toMatchObject({ status: 409, body: { code: 'ADS_MANAGE_NOT_LIVE' } });
+              expect(await manage(rig, changeId(await pause(owner, launch.id, 'campaign')))).toEqual({ steps: 1, ended: 'applied' });
+              expect([...w.objects.values()].find((o) => o.level === 'campaign')?.status).toBe('paused');
+              // A change queued while it was live is cancelled by begin once it needs attention, and only a pause is kept.
+              await setState('live');
+              const queuedLower = changeId(await lower(owner, launch.id, '70000'));
+              await setState('needs_attention');
+              expect(await manage(rig, queuedLower)).toEqual({ steps: 0, ended: 'launch_needs_attention' });
+              expect((await changesOf(launch.id)).at(-1)).toMatchObject({ id: queuedLower, state: 'cancelled', code: 'launch_needs_attention' });
+              await setState('live');
+              // The write connection closed: a pause is accepted (stopping spend always is), but no token is left to make the call with.
+              const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0];
+              await api.execute('kernel.channel.disconnect', { connectionId: closing?.id }, { actor: asOwner(), orgId });
+              const afterClose = await pause(owner, launch.id, 'ad_1');
+              if (afterClose.status === 200) {
+                const ended = await manage(rig, changeId(afterClose));
+                expect(ended.steps).toBe(0);
+                expect(rig.manager.changes).toHaveLength(1);
+              } else {
+                expect(afterClose.status).toBeGreaterThanOrEqual(400);
+              }
+            });
+
+            it('stops what can start or raise spend while launches are blocked (ADS_LAUNCHES_BLOCKED) and still lets a lower budget, a pause, an archive and a shorter schedule through; a queued raise is cancelled by begin', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Chặn chạy mới', w, { variants: [variant(1), variant(2)] });
+              expect(await manage(rig, changeId(await pause(owner, launch.id, 'ad_1')))).toEqual({ steps: 1, ended: 'applied' });
+              await approved(await askRaise(launch.id, '150000'));
+              const raise = await lastChange(launch.id);
+              // Blocked: the kill switch's state, set the way the stop sets it.
+              await inContext(owner, (c) => c.query('UPDATE crove_ads.ad_org_setting SET launches_blocked = true WHERE org_id = $1', [orgId]), true);
+              expect(await manage(rig, raise.id)).toEqual({ steps: 0, ended: 'launches_blocked' });
+              expect(await changesOf(launch.id)).toMatchObject([{ kind: 'pause', state: 'applied' }, { id: raise.id, state: 'cancelled', code: 'launches_blocked' }]);
+              expect(await hold(launch.id)).toMatchObject({ daily_budget: '100000' });
+              expect(await askRaise(launch.id, '150000')).toMatchObject({ status: 409, body: { code: 'ADS_LAUNCHES_BLOCKED' } });
+              expect(await askExtend(launch.id, inDays(9))).toMatchObject({ status: 409, body: { code: 'ADS_LAUNCHES_BLOCKED' } });
+              expect(await askResume(launch.id, 'ad_1')).toMatchObject({ status: 409, body: { code: 'ADS_LAUNCHES_BLOCKED' } });
+              // What only reduces spend goes on.
+              expect(await manage(rig, changeId(await lower(owner, launch.id, '80000')))).toEqual({ steps: 1, ended: 'applied' });
+              expect(await manage(rig, changeId(await shorten(owner, launch.id, inDays(4))))).toEqual({ steps: 1, ended: 'applied' });
+              expect(await manage(rig, changeId(await pause(owner, launch.id, 'ad_2')))).toEqual({ steps: 1, ended: 'applied' });
+              expect(await manage(rig, changeId(await archive(owner, launch.id, 'ad_1')))).toEqual({ steps: 1, ended: 'applied' });
+            });
+
+            it('lets the stops win over a queued change: a stopped launch cancels it at begin (launch_stopped), a new one is refused, and pause-all still blocks a raise', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const a = await live('Dừng lần chạy', w);
+              const queuedLower = changeId(await lower(owner, a.launch.id, '70000'));
+              expect((await stopLaunchAs(owner, a.launch.id)).status).toBe(200);
+              expect(await manage(rig, queuedLower)).toEqual({ steps: 0, ended: 'launch_stopped' });
+              expect(await changesOf(a.launch.id)).toMatchObject([{ id: queuedLower, state: 'cancelled', code: 'launch_stopped' }]);
+              expect(rig.manager.changes).toEqual([]);
+              // A stopped launch never resumes and takes no change: a new plan and a new approval are the way.
+              expect(await lower(owner, a.launch.id, '60000')).toMatchObject({ status: 409, body: { code: 'ADS_MANAGE_NOT_LIVE' } });
+              expect(await pause(owner, a.launch.id, 'ad_1')).toMatchObject({ status: 409, body: { code: 'ADS_MANAGE_NOT_LIVE' } });
+              expect(await askResume(a.launch.id, 'ad_1')).toMatchObject({ status: 409 });
+              // The pause-all switch cancels a queued raise on another launch the same way, and the state it leaves is the one blocked launches have.
+              const b = await live('Dừng tất cả', w);
+              await approved(await askRaise(b.launch.id, '150000'));
+              const raise = await lastChange(b.launch.id);
+              expect((await callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() })).status).toBe(200);
+              const ended = await manage(rig, raise.id);
+              expect(ended.steps).toBe(0);
+              expect((await changesOf(b.launch.id)).at(-1)).toMatchObject({ id: raise.id, state: 'cancelled' });
+              expect(rig.manager.changes).toEqual([]);
+            });
+
+            it('cancels a queued resume of a launch that was stopped, and leaves the object paused', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Bật lại rồi dừng', w);
+              const ad = await objectId(launch.id, 'ad_1');
+              expect(await manage(rig, changeId(await pause(owner, launch.id, 'ad_1')))).toEqual({ steps: 1, ended: 'applied' });
+              await approved(await askResume(launch.id, 'ad_1'));
+              const resume = await lastChange(launch.id);
+              expect((await stopLaunchAs(owner, launch.id)).status).toBe(200);
+              expect(await manage(rig, resume.id)).toEqual({ steps: 0, ended: 'launch_stopped' });
+              expect(await changesOf(launch.id)).toMatchObject([{ kind: 'pause' }, { id: resume.id, state: 'cancelled', code: 'launch_stopped' }]);
+              expect(w.objects.get(ad)?.status).toBe('paused');
+              expect(rig.manager.changes).toHaveLength(1);
+            });
+
+            it('leaves a change queued for a worker that has no manager for its provider, and a worker with no credential key begins nothing', async () => {
+              const w = new SandboxAdWriter();
+              const rig = rigOf(w);
+              const { launch } = await live('Không có trình quản lý', w);
+              const id = changeId(await lower(owner, launch.id, '70000'));
+              expect(await runAdsManage({ runtime: worker, broker: vault, managers: {} }, { orgId, changeId: id })).toEqual({ steps: 0, ended: 'no_manager' });
+              expect(await runAdsManage({ runtime: worker, broker: { ...vault, id: 'none' } as unknown as typeof vault, managers: rig.managers }, { orgId, changeId: id })).toEqual({ steps: 0, ended: 'no_broker' });
+              expect(await callOf(id)).toBeUndefined();
+              expect(await changesOf(launch.id)).toMatchObject([{ id, state: 'queued' }]);
+              expect(await manage(rig, id)).toEqual({ steps: 1, ended: 'applied' });
+            });
+          });
+
           describe('the platform\'s object states (#3301)', () => {
             const readerOf = (w: SandboxAdWriter) => adStateReaders({ sandbox: w });
             const stateSync = async (w: SandboxAdWriter, account: string, readers: Readonly<Record<string, AdStateReader>> = readerOf(w)) => {
@@ -3257,6 +4331,38 @@ suite('ads on PostgreSQL (#2217)', () => {
               const again = await boosted(member, account, post, { budget: '150000' });
               expect(again.draft.id).not.toBe(made.draft.id);
               expect((await boostStates(member, [post]))[0]).toMatchObject({ state: 'draft', draftId: again.draft.id });
+            });
+
+            it('keeps a boost whose schedule was extended live, and refuses a second boost of its post: the day it holds is the extended one, applied or still unclear (#3898)', async () => {
+              // A flight that ran out ten days ago, extended: the launch row still says its first end, the changes say the day it holds now.
+              const extended = async (name: string, state: 'applied' | 'unclear', toDays: number) => {
+                const account = await ready(name);
+                const post = randomUUID();
+                const made = await boosted(member, account, post);
+                expect((await approve(adminAccount, proposalId(await submitBoost(owner, made.draft.id)))).status).toBe(200);
+                await setLaunch(`UPDATE crove_ads.ad_launch SET start_on = start_on - 10, end_on = end_on - 10, commit_until = commit_until - 10, state = 'live', step = 'live' WHERE org_id = $1 AND draft_id = $2`, [orgId, made.draft.id]);
+                expect((await boostStates(member, [post]))[0]).toMatchObject({ state: 'ended' });
+                // The change as the manage job leaves it (the table's owner puts it there: no command writes a settled change), a schedule extension to a day ahead.
+                await row(
+                  `INSERT INTO crove_ads.ad_manage_change (org_id, ad_account_id, launch_id, kind, slot, level, object_id, from_end_on, to_end_on, proposal_id, requested_by, state, settled_at, settled_on)
+                   SELECT l.org_id, l.ad_account_id, l.id, 'schedule_extend', 'ad_set', 'ad_set', 'set-extended', l.end_on, $3::date, gen_random_uuid(), l.created_by, $4::text, now(), CASE WHEN $4::text = 'applied' THEN current_date END
+                   FROM crove_ads.ad_launch l WHERE l.org_id = $1 AND l.draft_id = $2`,
+                  [orgId, made.draft.id, inDays(toDays), state],
+                );
+                return { account, post, made };
+              };
+              // Applied: the boost is still going (its launch is live), whatever its first end said, and the post cannot be boosted again.
+              const done = await extended('Đẩy bài đã gia hạn', 'applied', 5);
+              expect((await boostStates(member, [done.post]))[0]).toMatchObject({ state: 'live', draftId: done.made.draft.id });
+              expect(await boost(member, done.account, done.post)).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_EXISTS' } });
+              // Unclear (the platform's answer was never read): the day it may run to is held, so the boost is going too.
+              const unclear = await extended('Đẩy bài gia hạn chưa rõ', 'unclear', 5);
+              expect((await boostStates(member, [unclear.post]))[0]).toMatchObject({ state: 'live' });
+              expect(await boost(member, unclear.account, unclear.post)).toMatchObject({ status: 409, body: { code: 'ADS_BOOST_EXISTS' } });
+              // An extension that ends before today does not keep it going.
+              const short = await extended('Đẩy bài gia hạn vẫn đã qua', 'applied', -2);
+              expect((await boostStates(member, [short.post]))[0]).toMatchObject({ state: 'ended' });
+              expect(await boosted(member, short.account, short.post, { budget: '150000' })).toMatchObject({ edited: false });
             });
 
             it('does not offer an account whose time zone is not read yet, and refuses it: a launch cannot start without the zone', async () => {

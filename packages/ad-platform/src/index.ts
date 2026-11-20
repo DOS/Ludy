@@ -22,6 +22,8 @@ export * from './sandbox-write.ts';
 export * from './revokers.ts';
 export * from './pausers.ts';
 export * from './activators.ts';
+export * from './managers.ts';
+export * from './sandbox-manage.ts';
 export * from './sandbox-activate.ts';
 export * from './state-readers.ts';
 export * from './sandbox-state.ts';

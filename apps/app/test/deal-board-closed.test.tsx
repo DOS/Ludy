@@ -37,6 +37,8 @@ const { DealBoard } = await import('../src/components/deal-board.tsx');
 const stage = (id: string, name: string, kind: PipelineStage['kind'], position: number): PipelineStage => ({ id, name, kind, position });
 const card: Deal = {
   id: '00000000-0000-4000-8000-000000000001',
+  actorOrigin: 'ui',
+  tainted: false,
   partyId: '00000000-0000-4000-8000-000000000010',
   partyName: 'Công ty ABC',
   title: 'Gói kế toán năm',

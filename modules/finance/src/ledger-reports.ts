@@ -274,6 +274,12 @@ export async function periodLinesOf(ctx: QueryContext, period: string, legalEnti
   return { period: data.period, lines: data.lines, account: ledgerView(data, accountCode) };
 }
 
+// The chart, the opening balance and the period's lines of one legal entity from the single ledger statement, for a book that works on several accounts' own balances (the household's S2e cash book, #2517).
+export async function periodDataOf(ctx: QueryContext, period: string, legalEntityId: string): Promise<{ period: LedgerPeriod; chart: ChartAccount[]; opening: OpeningBalance[]; lines: PeriodLine[] }> {
+  const { period: p, chart, opening, lines } = await loadLedgerData(ctx, period, legalEntityId);
+  return { period: p, chart, opening, lines };
+}
+
 // The general ledger of one account (and its sub-accounts) of one legal entity for a period, for a book that is a view of it (the household's sales book, #2517): the same read as
 // finance.ledger.account, so the book and the ledger cannot disagree.
 export async function accountLedgerOf(ctx: QueryContext, period: string, legalEntityId: string, accountCode: string): Promise<AccountLedgerView> {

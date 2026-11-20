@@ -103,6 +103,8 @@ export const zMeetingDetail = zMeetingSummary.extend({
   consentNoticeVersion: z.string(),
   // Set when the recording stopped without the recorder's click; the stop time is `endedAt` (A1, #3159).
   recordingStopReason: zRecordingStopReason.nullable(),
+  // True while the draft is a platform's transcript that was cut (the platform sent more than Ludy reads or the draft takes, #3922): the page tells the recorder the draft stops early.
+  platformTranscriptCut: z.boolean(),
   readers: z.array(zId),
   videoRetentionDate: z.string().nullable(),
   isRecorder: z.boolean(),
@@ -483,9 +485,18 @@ export const zTranscriptSegment = z.strictObject({
 export type TranscriptSegment = z.infer<typeof zTranscriptSegment>;
 
 // The input of the import of a platform's transcript (C2, #3174): the lines the job staged, read again and bounded here (tainted input). It is no RPC input: only the import route runs the command.
+// A line of a platform's transcript, read again here (defense in depth: the job's `stageTranscript` already clamps the times and drops NUL bytes, so a staged line holds neither fault; this refuses
+// them if the staged bytes ever come from another path). A line that ends before it starts is no span of speech, and a NUL byte is no text: Postgres refuses it in a text column, which would fail the
+// whole import with a 500 instead of this refusal. Only the platform import asks for this: the draft transcript of a recording (`zTranscriptDraftStore`) keeps its own rules.
+const zImportedSegment = zTranscriptSegmentInput
+  .refine((line) => line.endSeconds >= line.startSeconds, { message: 'a line ends before it starts', path: ['endSeconds'] })
+  .refine((line) => !line.text.includes('\u0000'), { message: 'a line holds a NUL byte', path: ['text'] })
+  .refine((line) => !line.speakerLabel.includes('\u0000'), { message: 'a line holds a NUL byte', path: ['speakerLabel'] });
 export const zMeetingTranscriptImport = z.strictObject({
   meetingId: zId,
-  segments: z.array(zTranscriptSegmentInput).min(1).max(TRANSCRIPT_SEGMENTS_MAX),
+  segments: z.array(zImportedSegment).min(1).max(TRANSCRIPT_SEGMENTS_MAX),
+  // The platform's transcript was longer than the lines here (#3922): the staged file says so, the route passes it on, the meeting keeps it.
+  platformCut: z.boolean().default(false),
 });
 export type MeetingTranscriptImport = z.infer<typeof zMeetingTranscriptImport>;
 
@@ -656,6 +667,9 @@ export const zActionItemView = z.strictObject({
   // The seats the attendee holds now (a person picks one at accept); clean only with exactly one, a parsed date and no flag.
   positions: z.array(z.strictObject({ id: zId, title: z.string() })),
   clean: z.boolean(),
+  // Who the said name probably means (#3921), found by code when the item names nobody yet: the one attendee, else the one other member, whose name the said words match; null when none or
+  // when two or more match. Only a suggestion: nothing is stored until a person makes the task, and the seats are those the person holds now.
+  suggestion: z.strictObject({ userId: zId, name: z.string(), source: z.enum(['attendee', 'member']), positions: z.array(z.strictObject({ id: zId, title: z.string() })) }).nullable(),
 });
 export const zMeetingResults = z.strictObject({
   meetingId: zId,
@@ -926,6 +940,13 @@ export type MeetingLinkSuggested = z.infer<typeof zMeetingLinkSuggested>;
 // as "Bản dịch máy", tainted, and never the source of a task, mail, post, webhook, search hit or export. `stage` is the summary the member read: the published one (any reader) or
 // their own draft (the recorder).
 export const TRANSLATION_STAGES = ['draft', 'published'] as const;
+// The languages a translation can be made INTO (E3, #3186): a meeting is held in `vi` or `en` (MEETING_LANGUAGES), and Chinese (Simplified), Japanese and Korean are targets only. Each of the three is offered
+// only where the deployment has switched it on (MEETINGS_TRANSLATION_LANGUAGES), after a native reader's check of its quality; `vi` and `en` are always the other language of the pair.
+export const TRANSLATION_TARGETS = ['vi', 'en', 'zh', 'ja', 'ko'] as const;
+export type TranslationTarget = (typeof TRANSLATION_TARGETS)[number];
+export const zTranslationTarget = z.enum(TRANSLATION_TARGETS);
+export const TRANSLATION_FLAGGED_TARGETS = ['zh', 'ja', 'ko'] as const;
+export type TranslationFlaggedTarget = (typeof TRANSLATION_FLAGGED_TARGETS)[number];
 export const TRANSLATION_STATES = ['ok', 'warn', 'refused'] as const;
 // A fixed word for what code found: a refusal (MISSING, EMPTY, TOO_LONG, UNCHANGED, INVENTED_NUMBER, CONTACT_ADDED) or a warning (NUMBER_DROPPED, NAME_ADDED).
 export const TRANSLATION_CODES = ['MISSING', 'EMPTY', 'TOO_LONG', 'UNCHANGED', 'INVENTED_NUMBER', 'CONTACT_ADDED', 'NUMBER_DROPPED', 'NAME_ADDED'] as const;
@@ -947,20 +968,23 @@ export type TranslationSegment = z.infer<typeof zTranslationSegment>;
 export const zTranslationResult = z.strictObject({
   v: z.literal(1),
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
   stage: zTranslationStage,
   hash: zTranslationHash,
   segments: z.array(zTranslationSegment).min(1).max(TRANSLATION_SEGMENTS_MAX),
 });
 export type TranslationResult = z.infer<typeof zTranslationResult>;
 
-export const zTranslationRef = z.strictObject({ meetingId: zId, stage: zTranslationStage });
+// `to`: the language asked for; absent, the other language of the vi/en pair (what the screens did before the picker, #3186).
+export const zTranslationRef = z.strictObject({ meetingId: zId, stage: zTranslationStage, to: zTranslationTarget.optional() });
+// The same for the transcript, which has no stage in the request.
+export const zTranscriptTranslationRef = z.strictObject({ meetingId: zId, to: zTranslationTarget.optional() });
 // The text the caller reads and may translate: the original segments in the order the screen shows them, the language pair and the hash of the text (a changed original has another hash).
 export const zTranslationSource = z.strictObject({
   meetingId: zId,
   stage: zTranslationStage,
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
   hash: zTranslationHash,
   segments: z.array(z.strictObject({ key: zTranslationKey, text: z.string() })).min(1).max(TRANSLATION_SEGMENTS_MAX),
 });
@@ -991,7 +1015,9 @@ export const zTranslationStatus = z.strictObject({
   enabled: z.boolean(),
   reason: z.enum(['off', 'nothing']).nullable(),
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
+  // The languages the member may pick for this meeting: the other language of the pair, and each of Chinese, Japanese and Korean the deployment has switched on (#3186).
+  targets: z.array(zTranslationTarget).max(TRANSLATION_TARGETS.length).default([]),
   estimate: z.strictObject({ inputTokens: z.number().int().min(0), outputTokens: z.number().int().min(0), cost: z.string().regex(/^\d+(?:\.\d+)?$/).nullable() }).nullable(),
 });
 export type TranslationStatus = z.infer<typeof zTranslationStatus>;
@@ -999,12 +1025,13 @@ export type TranslationStatus = z.infer<typeof zTranslationStatus>;
 export const zTranslationView = z.strictObject({
   stage: zTranslationStage,
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
   stale: z.boolean(),
   createdAt: z.string(),
   segments: z.array(zTranslationSegment),
 });
-export const zTranslations = z.strictObject({ meetingId: zId, translations: z.array(zTranslationView).max(TRANSLATION_STAGES.length) });
+// One per stage and language the member asked for.
+export const zTranslations = z.strictObject({ meetingId: zId, translations: z.array(zTranslationView).max(TRANSLATION_STAGES.length * TRANSLATION_TARGETS.length) });
 export type Translations = z.infer<typeof zTranslations>;
 
 // The machine translation of a meeting's transcript (meetings integrations E2, #3185, plan section 7a). The member's own Vy translates the lines the member reads, a few chunks at a time, in
@@ -1032,7 +1059,7 @@ export const zTranscriptTranslationResult = z.strictObject({
   v: z.literal(1),
   kind: z.literal('transcript'),
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
   stage: zTranslationStage,
   parts: z.array(zTranscriptPart).min(1).max(TRANSCRIPT_TRANSLATE_LINES_MAX),
 });
@@ -1047,7 +1074,9 @@ export const zTranscriptTranslationStatus = z.strictObject({
   enabled: z.boolean(),
   reason: z.enum(['off', 'nothing']).nullable(),
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
+  // The languages the member may pick for this meeting (as the summary's status says).
+  targets: z.array(zTranslationTarget).max(TRANSLATION_TARGETS.length).default([]),
   // Lines of the transcript the member reads, and those with a current translation (a refused line counts: it will not be asked again), those stale, and those still to translate.
   lines: z.number().int().min(0),
   translated: z.number().int().min(0),
@@ -1080,7 +1109,7 @@ export const zTranscriptStarted = z.strictObject({
   runId: zId,
   stage: zTranslationStage,
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
   remaining: z.number().int().min(1),
   lineIds: z.array(zId).min(1).max(TRANSCRIPT_TRANSLATE_LINES_MAX),
 });
@@ -1095,7 +1124,7 @@ export const zTranscriptTranslationView = z.strictObject({
   meetingId: zId,
   stage: zTranslationStage.nullable(),
   from: zMeetingLanguage,
-  to: zMeetingLanguage,
+  to: zTranslationTarget,
   parts: z.array(z.strictObject({ lineId: zId, text: z.string(), state: z.enum(TRANSLATION_STATES), codes: z.array(z.enum(TRANSLATION_CODES)), stale: z.boolean() })).max(TRANSCRIPT_TRANSLATE_LINES_MAX),
 });
 export type TranscriptTranslationView = z.infer<typeof zTranscriptTranslationView>;
@@ -1164,6 +1193,28 @@ export const zMcpOpenActionsInput = z.strictObject({
 export const zMcpSeriesOpenItemsInput = z.strictObject({
   meetingId: zId.describe('The id of a meeting from ludy_meetings_list. The items of every meeting in the same series as this one are listed.'),
   limit: z.number().int().min(1).max(MCP_OPEN_ACTIONS_MAX).default(MCP_OPEN_ACTIONS_DEFAULT).describe(`How many items to return (1 to ${MCP_OPEN_ACTIONS_MAX}, default ${MCP_OPEN_ACTIONS_DEFAULT}).`),
+});
+
+// The published decisions of the meetings of the last 7, 14 or 30 days (#4016): the window counts from the meeting's start, at most MCP_OPEN_ACTIONS_MAX decisions, the newest meeting first.
+export const MCP_DECISIONS_DAYS = [7, 14, 30] as const;
+export const MCP_DECISIONS_DAYS_DEFAULT = 14;
+export const zMcpDecisionsInput = z.strictObject({
+  days: z.literal([...MCP_DECISIONS_DAYS]).default(MCP_DECISIONS_DAYS_DEFAULT).describe(`How far back to look, counted from now: ${MCP_DECISIONS_DAYS.join(', ')} days (default ${MCP_DECISIONS_DAYS_DEFAULT}). A meeting counts by its start.`),
+  limit: z.number().int().min(1).max(MCP_OPEN_ACTIONS_MAX).default(MCP_OPEN_ACTIONS_DEFAULT).describe(`How many decisions to return (1 to ${MCP_OPEN_ACTIONS_MAX}, default ${MCP_OPEN_ACTIONS_DEFAULT}).`),
+});
+
+// A search over the published minutes (#4030): the typed words are folded in code (lower case, Vietnamese marks and đ removed) and never reach the database; at most MCP_SEARCH_WORDS_MAX words, each the
+// start of a word of ONE line (the title, a summary line, a decision or an action item title) of a meeting the grant may already read; at most MCP_SEARCH_MEETINGS_MAX of the newest such meetings are searched.
+export const MCP_SEARCH_QUERY_MAX = 200;
+export const MCP_SEARCH_WORDS_MAX = 8;
+export const MCP_SEARCH_DEFAULT = 10;
+export const MCP_SEARCH_MAX = 50;
+export const MCP_SEARCH_MEETINGS_MAX = 200;
+export const MCP_SNIPPET_MAX = 200;
+export const MCP_SEARCH_FIELDS = ['title', 'decision', 'summary', 'action'] as const;
+export const zMcpSearchInput = z.strictObject({
+  q: z.string().trim().min(2).max(MCP_SEARCH_QUERY_MAX).describe(`The words to look for (2 to ${MCP_SEARCH_QUERY_MAX} characters). Case and Vietnamese marks do not matter ("chiet khau" finds "chiết khấu"). Every word must start a word of the same line; at most ${MCP_SEARCH_WORDS_MAX} words count.`),
+  limit: z.number().int().min(1).max(MCP_SEARCH_MAX).default(MCP_SEARCH_DEFAULT).describe(`How many meetings to return (1 to ${MCP_SEARCH_MAX}, default ${MCP_SEARCH_DEFAULT}).`),
 });
 
 

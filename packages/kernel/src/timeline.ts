@@ -56,8 +56,8 @@ export const proposalTimeline = defineQuery({
       if (typeof id === 'string' && UUID.test(id)) add(type, id.toLowerCase());
     }
     const list = [...records.values()];
-    const { rows } = await sql<{ id: string; record_type: string; kind: string; summary: string; actor_id: string | null; agent_id: string | null; occurred_at: Date }>`
-      SELECT a.id, a.record_type, a.kind, a.summary, a.actor_id, a.agent_id, a.occurred_at
+    const { rows } = await sql<{ id: string; record_type: string; kind: string; summary: string; actor_id: string | null; agent_id: string | null; occurred_at: Date; actor_origin: 'ui' | 'mcp' }>`
+      SELECT a.id, a.record_type, a.kind, a.summary, a.actor_id, a.agent_id, a.occurred_at, a.actor_origin
       FROM crove_kernel.activity a
       JOIN unnest(${list.map((r) => r.type)}::text[], ${list.map((r) => r.id)}::uuid[]) AS r(record_type, record_id)
         ON a.record_type = r.record_type AND a.record_id = r.record_id
@@ -76,6 +76,7 @@ interface ActivityRow {
   actor_id: string | null;
   agent_id: string | null;
   occurred_at: Date;
+  actor_origin: 'ui' | 'mcp';
 }
 
 // The newest TIMELINE_LIMIT of the rows (newest first, one more than the limit to know whether there are more), oldest
@@ -104,6 +105,7 @@ async function timelineOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, rows: readon
       summary: r.summary,
       actorType: r.agent_id ? 'agent' : r.actor_id ? 'user' : 'system',
       actorName: names.get(r.agent_id ?? r.actor_id ?? '') ?? null,
+      actorOrigin: r.actor_origin,
     })),
     more: rows.length > TIMELINE_LIMIT,
   };
@@ -121,7 +123,7 @@ export const partyTimeline = defineQuery({
     const party = await ctx.trx.selectFrom('crove_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.partyId).executeTakeFirst();
     if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy liên hệ');
     const { rows } = await sql<ActivityRow>`
-      SELECT a.id, a.record_type, a.kind, a.summary, a.actor_id, a.agent_id, a.occurred_at
+      SELECT a.id, a.record_type, a.kind, a.summary, a.actor_id, a.agent_id, a.occurred_at, a.actor_origin
       FROM crove_kernel.activity a
       WHERE a.org_id = ${ctx.orgId}::uuid AND a.record_type = 'kernel.party' AND a.record_id = ${party.id}::uuid
       ORDER BY a.occurred_at DESC, a.id DESC

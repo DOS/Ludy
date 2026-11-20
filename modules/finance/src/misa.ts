@@ -35,6 +35,8 @@ import { pace, streamWorkbook, type StreamedWorkbook } from './xlsx-stream.ts';
 // Inputs
 
 export interface VoucherParty {
+  // The party's id in Ludy (S3b, #4124): the key a name match is stored under for a party with no tax code. Never written to a file or sent: only the exports' own fields are.
+  id?: string | null;
   name: string;
   taxCode: string | null;
   address: string | null;
@@ -61,6 +63,8 @@ export interface VoucherLine {
 
 /** An approved purchase document with its journal entry, in VND (a foreign-currency invoice is booked in VND, #918). */
 export interface PurchaseVoucher {
+  /** The purchase document's id: stable across revisions of its journal entry, so the key of a push to an accounting system (#3901). */
+  sourceId: string;
   entryId: string;
   /** Journal entry date, YYYY-MM-DD. */
   entryDate: string;
@@ -74,6 +78,8 @@ export interface PurchaseVoucher {
 
 /** An approved sales document (issue #313) with its journal entry, loaded by finance.vouchers.sales. */
 export interface SalesVoucher {
+  /** The sales document's id (see PurchaseVoucher.sourceId). */
+  sourceId: string;
   entryId: string;
   entryDate: string;
   description: string;
@@ -93,6 +99,8 @@ export interface SalesVoucher {
  * Each type has its own MISA template.
  */
 export interface CashVoucher {
+  /** The cash voucher's id (see PurchaseVoucher.sourceId). */
+  sourceId: string;
   type: VoucherType;
   /** Crove's voucher code, PT00001, PC00001, BC00001 or BN00001. */
   code: string;

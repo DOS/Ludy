@@ -53,15 +53,20 @@ export interface MeetingChaptersResult {
 // invisible fillers, zero-width and directional marks, line and paragraph separators, bidi isolates, the Braille blank, the byte order mark, interlinear annotation and tag characters.
 // The combining grapheme joiner is outside the class: a combining mark inside one is a lint warning (no-misleading-character-class).
 // oxlint-disable-next-line no-control-regex
-const STRIP = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\u2800\u3164\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]|\u034f/gu;
+const STRIP = /[\u0001-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180b-\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\u2800\u3164\uffa0\ufeff\ufff9-\ufffb\u{1d173}-\u{1d17a}\u{e0000}-\u{e007f}]|\u034f/gu;
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
 // oxlint-disable-next-line no-control-regex
 const NUL = /\u0000/g;
 
-/** A title as the model wrote it, one line: the characters above removed (a line break becomes a space), spaces folded, trimmed, cut at the limit without splitting a pair. */
+/** A title as the model wrote it, one line, before any cut: the characters above removed (a line break, a tab, a vertical tab or a form feed becomes a space, as the rename's cleanTemplateText does), lone surrogates and NUL dropped, spaces folded, trimmed. */
+export function foldTitleText(raw: string): string {
+  const spaced = raw.replace(/[\r\n\t\v\f\u2028\u2029]+/g, ' ').replace(NUL, '').replace(LONE_SURROGATE, '').replace(STRIP, '');
+  return spaced.replace(/\s+/g, ' ').trim();
+}
+
+/** A title as the model wrote it, one line: folded (see foldTitleText), then cut at the limit without splitting a pair. */
 export function cleanChapterTitle(raw: string): string {
-  const spaced = raw.replace(/[\r\n\u2028\u2029]+/g, ' ').replace(NUL, '').replace(LONE_SURROGATE, '').replace(STRIP, '');
-  const folded = spaced.replace(/\s+/g, ' ').trim();
+  const folded = foldTitleText(raw);
   // At the limit in UTF-16 units (what the contract and the database count), never through a pair.
   let out = '';
   for (const char of folded) {
