@@ -6,10 +6,11 @@ import type { ChartAccount } from './accounts.ts';
 
 // A bank feed adapter this deployment offers (`/api/config` bankFeeds): none, and the card is not drawn at all, so
 // `docker compose up` shows nothing about banks.
-export const bankFeedOffered = (config: { bankFeeds?: { sandbox: boolean } | undefined }): boolean => Boolean(config.bankFeeds?.sandbox);
+type BankFeedConfig = { sandbox: boolean; tingee?: boolean | undefined };
+export const bankFeedOffered = (config: { bankFeeds?: BankFeedConfig | undefined }): boolean => Boolean(config.bankFeeds?.sandbox || config.bankFeeds?.tingee);
 
 // Whether Settings draws the card: the finance module is on and the deployment offers a feed.
-export const showsBankFeeds = (config: { modules: readonly string[]; bankFeeds?: { sandbox: boolean } | undefined }): boolean => config.modules.includes('finance') && bankFeedOffered(config);
+export const showsBankFeeds = (config: { modules: readonly string[]; bankFeeds?: BankFeedConfig | undefined }): boolean => config.modules.includes('finance') && bankFeedOffered(config);
 
 // The org's bank accounts a feed can fill: TT133 accounts under 112 and their sub-accounts (the 112 group itself holds
 // none), those in use, plus the one already mapped even if it was deactivated since, so the picker is never blank.

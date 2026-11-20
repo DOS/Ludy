@@ -30,6 +30,103 @@ interface Connection {
   status: ConnectionStatus;
 }
 
+// What this deployment offers to connect (`/api/config` bankFeeds): the test feed, Tingee (each business registers its own
+// Tingee account, #2045), or both.
+export interface FeedOffers {
+  sandbox: boolean;
+  tingee: boolean;
+}
+
+// Tingee: the business's own read credential. The guidance comes first because the permission groups are chosen in
+// Tingee's portal, not here: only the account and transaction groups, never payouts, direct debit or refunds. The secret
+// is sent once, sealed by the server, and never shown again; the field is cleared as soon as it has been sent.
+function ConnectTingeeForm() {
+  const t = useTranslations('bankFeeds');
+  const [clientId, setClientId] = useState('');
+  const [secretToken, setSecretToken] = useState('');
+  const [name, setName] = useState('');
+  const clientIdId = useId();
+  const secretId = useId();
+  const fields = useFieldErrors<'clientId' | 'secretToken'>((field) => {
+    if (field === 'clientId') return clientId.trim() ? null : t('tingee.clientIdNeeded');
+    return secretToken.trim() ? null : t('tingee.secretNeeded');
+  });
+  const connect = useMutation(
+    orpc.bankFeeds.connectTingee.mutationOptions({
+      onSuccess: async () => {
+        setClientId('');
+        setSecretToken('');
+        setName('');
+        fields.reset();
+        await refreshConnections();
+      },
+    }),
+  );
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!fields.checkAll(['clientId', 'secretToken'])) {
+      focusFirstInvalid(event.currentTarget);
+      return;
+    }
+    connect.mutate({ clientId: clientId.trim(), secretToken: secretToken.trim(), ...(name.trim() ? { displayName: name.trim() } : {}) });
+  };
+  return (
+    <form className="mt-4 space-y-3" onSubmit={submit} aria-label={t('tingee.title')} noValidate>
+      <p className="text-xs font-medium text-muted-foreground">{t('tingee.title')}</p>
+      <p className="text-xs text-subtle-foreground">{t('tingee.intro')}</p>
+      <div className="rounded-md border p-3 text-xs text-muted-foreground">
+        <p className="font-medium text-foreground">{t('tingee.guideTitle')}</p>
+        <ol className="mt-1 list-decimal space-y-1 pl-4">
+          <li>{t('tingee.guideCreate')}</li>
+          <li>{t('tingee.guideGroups')}</li>
+          <li>{t('tingee.guideNever')}</li>
+          <li>{t('tingee.guideSecret')}</li>
+        </ol>
+      </div>
+      <div className="space-y-2">
+        <Input
+          {...fieldControl(clientIdId, { error: Boolean(fields.of('clientId')) })}
+          className="min-h-11"
+          maxLength={200}
+          autoComplete="off"
+          spellCheck={false}
+          aria-label={t('tingee.clientIdLabel')}
+          placeholder={t('tingee.clientIdLabel')}
+          value={clientId}
+          onChange={(e) => {
+            setClientId(e.target.value);
+            fields.edit('clientId');
+          }}
+          onBlur={(e) => fields.blur('clientId', e.target.value)}
+        />
+        <FieldError id={clientIdId}>{fields.of('clientId')}</FieldError>
+        <Input
+          {...fieldControl(secretId, { error: Boolean(fields.of('secretToken')) })}
+          className="min-h-11"
+          type="password"
+          maxLength={200}
+          autoComplete="off"
+          spellCheck={false}
+          aria-label={t('tingee.secretLabel')}
+          placeholder={t('tingee.secretLabel')}
+          value={secretToken}
+          onChange={(e) => {
+            setSecretToken(e.target.value);
+            fields.edit('secretToken');
+          }}
+          onBlur={(e) => fields.blur('secretToken', e.target.value)}
+        />
+        <FieldError id={secretId}>{fields.of('secretToken')}</FieldError>
+        <Input className="min-h-11" maxLength={200} aria-label={t('tingee.nameLabel')} placeholder={t('tingee.nameLabel')} value={name} onChange={(e) => setName(e.target.value)} />
+      </div>
+      <Button loading={connect.isPending} type="submit" variant="outline" className="min-h-11">
+        {t('tingee.connect')}
+      </Button>
+      {connect.error && <ErrorText>{errorMessage(connect.error)}</ErrorText>}
+    </form>
+  );
+}
+
 function ConnectForm() {
   const t = useTranslations('bankFeeds');
   const [name, setName] = useState('');
@@ -286,7 +383,7 @@ function ReadOnlyList({ accounts }: { accounts: readonly BankFeedAccountView[] }
 }
 
 // The caller draws it only when the deployment offers a bank feed (lib/bank-feeds.ts bankFeedOffered).
-export function BankFeedsCard({ role }: { role: Role }) {
+export function BankFeedsCard({ role, offers = { sandbox: true, tingee: false } }: { role: Role; offers?: FeedOffers }) {
   const t = useTranslations('bankFeeds');
   const canManage = role === 'owner' || role === 'admin';
   // A mapped account is pulled by the worker a moment after it is mapped, so ask again for two minutes while one has not
@@ -335,7 +432,8 @@ export function BankFeedsCard({ role }: { role: Role }) {
         </>
       )}
       {/* It needs only the connect call, so it stays when a read above failed. */}
-      {!loading && <ConnectForm />}
+      {!loading && offers.tingee && <ConnectTingeeForm />}
+      {!loading && offers.sandbox && <ConnectForm />}
     </Card>
   );
 }
