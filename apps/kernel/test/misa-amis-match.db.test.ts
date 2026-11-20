@@ -530,9 +530,11 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       await askAgain();
       await record({ state: 'done', failure: null, results: [proposal(p1, 'KH_HS', 'Hoa Sen (HKD)')] });
       await askAgain();
+      // Even a request time ahead of the clock moves forward: a record of the run that took it can never match the new one.
+      await rows("UPDATE crove_finance.misa_amis_match_check SET requested_at = now() + interval '1 hour' WHERE org_id = $1", [orgId]);
       const taken = await requestedAt();
       expect(await call('matches/confirmName', owner, await decision(p1, 'KH_HS'))).toMatchObject({ body: { decided: true } });
-      expect(await requestedAt()).not.toBe(taken);
+      expect(new Date(await requestedAt()).getTime()).toBeGreaterThan(new Date(taken).getTime());
       // The run that took the earlier request records late: it read the confirmed names before this one existed, so its record is dropped.
       expect(await worker.execute('finance.misa_amis_match.record_check', { connectionId, requestedAt: taken, state: 'done', failure: null, results: [] }, { actor: SYSTEM, orgId })).toMatchObject({ recorded: false });
       expect(await rows("SELECT state FROM crove_finance.misa_amis_match_check WHERE org_id = $1", [orgId])).toEqual([{ state: 'requested' }]);

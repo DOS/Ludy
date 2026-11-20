@@ -456,6 +456,8 @@ const MARKETPLACE_POLL_CRON = '*/15 * * * *';
 const MARKETPLACE_POLL_RETRY_LIMIT = 3;
 // A MISA AMIS connection's test (#3885): queued by the relay when an owner or admin asks, nothing else queues it. The job records its own outcomes, so a retry is for a database failure only.
 const MISA_AMIS_TEST_RETRY_LIMIT = 2;
+// How many more times a catalogue check runs in the same job when its record was dropped because the request was filed again meanwhile (#4124).
+const MISA_AMIS_MATCH_SUPERSEDED_RUNS = 2;
 // A push run that fails is tried again with backoff; rows begun and never answered are asked about, never sent twice (the ledger and the table's states say so).
 const MISA_AMIS_PUSH_RETRY_LIMIT = 2;
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
@@ -1639,7 +1641,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   if (finance && misaAmisClient && marketplaceBroker) {
     await boss.work<MisaAmisMatchJob>(QUEUES.misaAmisMatch, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
-      const done = await runMisaAmisMatch({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient }, job.data);
+      let done = await runMisaAmisMatch({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient }, job.data);
+      // A record the request time did not match was dropped: the request was filed again while this run read the catalogue, and the new one has no job of its own (this run holds the key). Run again, a few times at most.
+      for (let again = 0; again < MISA_AMIS_MATCH_SUPERSEDED_RUNS && 'superseded' in done && done.superseded; again++) {
+        done = await runMisaAmisMatch({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient }, job.data);
+      }
       console.log(`[misa-amis] match ${job.data.connectionId.slice(0, 8)}: ${done.state}`);
     });
   }

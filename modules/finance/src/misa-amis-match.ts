@@ -22,7 +22,7 @@ import {
   type MisaAmisPreviewAsk,
 } from '@crove/kernel-contract';
 import type { Database, MemberRole } from '@crove/db';
-import type { Transaction } from 'kysely';
+import { sql, type Transaction } from 'kysely';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 
@@ -347,11 +347,11 @@ export const misaAmisMatchConfirmName = defineCommand({
         checked_at: proposal.checked_at,
       })
       .execute();
-    // A check that is waiting or running read the confirmed names before this one existed, so it cannot say whether this code is still in the catalogue; moving its request time makes that run's record a no-op
-    // and the next run verifies the new confirmation (the same step erasure takes). A done or failed check is left as it is.
+    // A check that is waiting or running read the confirmed names before this one existed, so it cannot say whether this code is still in the catalogue; moving its request time (always forward, even by a millisecond) makes that run's record a no-op
+    // and the next run, which the worker starts when it sees the record dropped, verifies the new confirmation (the same step erasure takes). A done or failed check is left as it is.
     await ctx.trx
       .updateTable('crove_finance.misa_amis_match_check')
-      .set({ requested_at: ctx.now })
+      .set({ requested_at: sql<Date>`GREATEST(${ctx.now}::timestamptz, requested_at + interval '1 millisecond')` })
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
       .where('state', '=', 'requested')

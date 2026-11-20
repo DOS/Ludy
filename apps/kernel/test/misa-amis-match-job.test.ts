@@ -72,7 +72,7 @@ interface Harness {
   executed: Array<{ name: string; input: unknown }>;
   opened: unknown[];
 }
-function harness(options: { target?: unknown; vouchers?: unknown[]; credential?: () => unknown } = {}): Harness {
+function harness(options: { target?: unknown; vouchers?: unknown[]; credential?: () => unknown; recorded?: boolean } = {}): Harness {
   const queries: Harness['queries'] = [];
   const executed: Harness['executed'] = [];
   const opened: unknown[] = [];
@@ -87,7 +87,7 @@ function harness(options: { target?: unknown; vouchers?: unknown[]; credential?:
     },
     execute: async (name: string, input: unknown) => {
       executed.push({ name, input });
-      return {};
+      return options.recorded === undefined ? {} : { recorded: options.recorded };
     },
   } as unknown as Runtime;
   const broker = {
@@ -149,6 +149,13 @@ describe('the MISA AMIS match check job', () => {
     expect(everything).not.toContain(PLANTED_ADDRESS);
     expect(everything).not.toContain(ACCESS_CODE);
     expect(everything).not.toContain(CLIENT_ID);
+  });
+
+  it('says a record was dropped (the request was filed again while it read) so the worker runs it again, and says nothing when the record was taken', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await run(harness({ recorded: false }), fakeAmis())).toMatchObject({ state: 'done', superseded: true });
+    expect(await run(harness({ recorded: true }), fakeAmis())).not.toHaveProperty('superseded');
+    log.mockRestore();
   });
 
   it('asks only for the catalogue a batch needs: no tax code and no item code, no call at all', async () => {

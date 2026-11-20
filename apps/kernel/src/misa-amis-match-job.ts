@@ -28,8 +28,9 @@ type Failure = 'credentials' | 'unreachable' | 'invalid_response' | 'catalogue_t
 export type MisaAmisMatchOutcome =
   // The connection is left alone (gone, no longer active, or no check is waiting): nothing was asked and nothing is recorded.
   | { state: 'skipped'; reason: string }
-  | { state: 'done'; results: number }
-  | { state: 'failed'; failure: Failure };
+  // `superseded`: the record was dropped because the request was filed again while this run read the catalogue (a newer batch, or a confirmation that run could not have checked); the job runs again.
+  | { state: 'done'; results: number; superseded?: true }
+  | { state: 'failed'; failure: Failure; superseded?: true };
 
 interface SealedChannelCredential {
   provider: string;
@@ -44,8 +45,8 @@ export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMat
   if (target.action === 'none') return { state: 'skipped', reason: target.reason };
   const fail = async (failure: Failure, kind: string) => {
     console.warn(`[misa-amis] match ${job.connectionId.slice(0, 8)}: failed (${failure}, ${kind})`);
-    await deps.runtime.execute('finance.misa_amis_match.record_check', { connectionId: job.connectionId, requestedAt: target.requestedAt, state: 'failed', failure, results: [] }, options);
-    return { state: 'failed', failure } satisfies MisaAmisMatchOutcome;
+    const written = await deps.runtime.execute<{ recorded?: boolean }>('finance.misa_amis_match.record_check', { connectionId: job.connectionId, requestedAt: target.requestedAt, state: 'failed', failure, results: [] }, options);
+    return { state: 'failed', failure, ...(written?.recorded === false ? { superseded: true as const } : {}) } satisfies MisaAmisMatchOutcome;
   };
 
   // The access code: opened from the sealed copy, and refused once the member who connected it may no longer use it or the connection is no longer active.
@@ -84,7 +85,7 @@ export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMat
     const failure: Failure = kind === 'credentials' && code !== 'InvalidAPPID' ? 'credentials' : kind === 'invalid_response' ? 'invalid_response' : 'unreachable';
     return fail(failure, `${kind}${code ? `, ${code}` : ''}`);
   }
-  await deps.runtime.execute('finance.misa_amis_match.record_check', { connectionId: job.connectionId, requestedAt: target.requestedAt, state: 'done', failure: null, results }, options);
+  const written = await deps.runtime.execute<{ recorded?: boolean }>('finance.misa_amis_match.record_check', { connectionId: job.connectionId, requestedAt: target.requestedAt, state: 'done', failure: null, results }, options);
   console.log(`[misa-amis] match ${job.connectionId.slice(0, 8)}: done (${results.length})`);
-  return { state: 'done', results: results.length };
+  return { state: 'done', results: results.length, ...(written?.recorded === false ? { superseded: true as const } : {}) };
 }

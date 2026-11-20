@@ -195,8 +195,17 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
           connectionId={checkConnectionId}
           onDecided={() => {
             // The refresh is labelled with the ask it is sent with, read when it starts, not the one a render before captured.
+            // A promise of its own, so a preview the person started meanwhile keeps its own completion handler (a per-call callback of `mutate` runs only for the latest call); an answer for an ask that is no longer on screen is dropped.
             const startedFor = askedRef.current;
-            preview.mutate(undefined, { onSuccess: (data) => { setAnsweredFor(startedFor); setLast({ asked: startedFor, data }); setRuns((n) => n + 1); } });
+            preview.mutateAsync(undefined).then(
+              (data) => {
+                if (askedRef.current !== startedFor) return;
+                setAnsweredFor(startedFor);
+                setLast({ asked: startedFor, data });
+                setRuns((n) => n + 1);
+              },
+              () => undefined, // the error is on screen through `preview.error`
+            );
           }}
         />
       )}
