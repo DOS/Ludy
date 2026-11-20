@@ -220,6 +220,23 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     expect(await one(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1`, [revision.id])).toMatchObject({ actor_origin: 'ui', tainted: true });
   });
 
+  it('keeps the taint of a line a person re-saves unchanged, though the draft save deletes its lines and inserts them again and no other tainted line is left', async () => {
+    const party = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'organization', name: 'Công ty lưu lại dòng' });
+    const deal = await run<Deal>('crm.deal.create', { partyId: party.partyId, title: 'Cơ hội lưu lại', amount: '1000000', expectedClose: null }, asBrowser('owner'));
+    const lines = (text: string) => [{ kind: 'item' as const, description: text, quantity: '1', unitPrice: '100000', vatRate: '10' }];
+    const dy = await run<Quote>('crm.mcp.quote_save', { dealId: deal.id, lines: [] });
+    await run<Quote>('crm.mcp.quote_save', { quoteId: dy.id, version: dy.version, lines: lines('Gói chỉ còn một dòng') });
+    const own = await run<Quote>('crm.quote.save', { dealId: deal.id, lines: [] }, asBrowser('owner'));
+    const copied = await run<Quote>('crm.quote.save', { quoteId: own.id, version: own.version, lines: lines('Gói chỉ còn một dòng') }, asBrowser('owner'));
+    // The coworker's own draft goes away: the copy is now the only tainted line with that text.
+    await run('crm.quote.delete_draft', { quoteId: dy.id }, asBrowser('owner'));
+    expect(await one(`SELECT count(*)::int AS n FROM crove_crm.quote_line WHERE tainted AND description = $1`, ['Gói chỉ còn một dòng'])).toMatchObject({ n: 1 });
+    // The person saves the draft again with the same text: the lines are deleted and inserted again in one transaction, and the line is still tainted, so is the quote.
+    const again = await run<Quote>('crm.quote.save', { quoteId: own.id, version: copied.version, lines: lines('Gói chỉ còn một dòng') }, asBrowser('owner'));
+    expect(await one(`SELECT actor_origin, tainted FROM crove_crm.quote_line WHERE quote_id = $1`, [own.id])).toMatchObject({ actor_origin: 'ui', tainted: true });
+    expect(again).toMatchObject({ actorOrigin: 'ui', tainted: true });
+  });
+
   it('marks the contact a coworker adds, in the contact list, and not a person\'s own', async () => {
     const theirs = await run<{ partyId: string }>('kernel.mcp.party_create', { kind: 'person', name: 'Liên hệ do Dy thêm' });
     const mine = await run<{ partyId: string }>('kernel.party.create', { kind: 'person', name: 'Liên hệ của người' }, asBrowser('owner'));

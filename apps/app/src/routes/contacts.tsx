@@ -137,7 +137,7 @@ function ContactPanel({ contact, canEdit, columns }: { contact: Contact; canEdit
           <EditParty party={contact} ns="contacts" kind={contact.kind} onDone={() => setEditing(false)} />
         ) : (
           <>
-            <AiWrittenBadge actorOrigin={contact.actorOrigin} tainted={contact.tainted} className="w-fit" />
+            <AiWrittenBadge actorOrigin={contact.actorOrigin} tainted={contact.tainted} showHint />
             <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
               {(['address', 'email', 'phone', 'taxCode'] as const).map((key) => (
                 <div key={key} className="flex gap-2">

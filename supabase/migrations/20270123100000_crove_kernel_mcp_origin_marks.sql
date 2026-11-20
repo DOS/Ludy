@@ -65,12 +65,34 @@ BEGIN
     ELSIF TG_TABLE_NAME = 'quote_line' THEN
       -- The taint follows the text: a line whose text (description and unit) is the text of a tainted line of the org (a line copied into a revision, picked from an earlier quote or taken from a hint, all of
       -- which a person saves as a new line) is tainted, though a person saves it; a line they type or rewrite is not. The row stays the person's (origin 'ui').
-      NEW.tainted := EXISTS (SELECT 1 FROM crove_crm.quote_line l WHERE l.org_id = NEW.org_id AND l.tainted AND l.description = NEW.description AND l.unit IS NOT DISTINCT FROM NEW.unit);
+      NEW.tainted := EXISTS (SELECT 1 FROM crove_crm.quote_line l WHERE l.org_id = NEW.org_id AND l.tainted AND l.description = NEW.description AND l.unit IS NOT DISTINCT FROM NEW.unit)
+        -- A draft's save deletes its lines and inserts the replacements in one transaction, so the tainted line a person saves unchanged is gone from the table by now: its text was kept by the delete trigger.
+        OR pg_catalog.strpos(',' || COALESCE(pg_catalog.current_setting('crove.tainted_line_keys', true), '') || ',',
+                             ',' || pg_catalog.md5(NEW.description || pg_catalog.chr(1) || COALESCE(NEW.unit, '')) || ',') > 0;
     END IF;
   END IF;
   RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION crove_kernel.mcp_origin_stamp_insert() FROM PUBLIC;
+
+-- A tainted line that is deleted leaves the key of its text in a setting that lives to the end of the transaction, so a replacement inserted in that transaction with the same text (the person's save of a draft
+-- quote replaces its lines whole) stays tainted. The key only ever adds taint (a hash of the text, no text), and a setting a session writes itself can only make a line more marked, never less.
+CREATE OR REPLACE FUNCTION crove_kernel.mcp_origin_keep_line_taint() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_key text;
+  v_keys text := COALESCE(pg_catalog.current_setting('crove.tainted_line_keys', true), '');
+BEGIN
+  IF OLD.tainted THEN
+    v_key := pg_catalog.md5(OLD.description || pg_catalog.chr(1) || COALESCE(OLD.unit, ''));
+    IF pg_catalog.strpos(',' || v_keys || ',', ',' || v_key || ',') = 0 THEN
+      PERFORM pg_catalog.set_config('crove.tainted_line_keys', v_keys || ',' || v_key, true);
+    END IF;
+  END IF;
+  RETURN OLD;
+END $$;
+REVOKE ALL ON FUNCTION crove_kernel.mcp_origin_keep_line_taint() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION crove_kernel.mcp_origin_keep_line_taint() TO crove_tenant;
 
 -- An update never changes where a row came from and never lowers the taint. A deal the engage context changes becomes tainted when its text changes (the title or the lost reason; a move of stage
 -- or order writes no text); a quote it changes becomes tainted whatever it changes (every change of a draft quote is a save of its text, terms, lines or totals).
@@ -147,13 +169,18 @@ CREATE TRIGGER mcp_origin_stamp_update BEFORE UPDATE ON crove_kernel.party FOR E
 DROP TRIGGER IF EXISTS mcp_origin_stamp_update ON crove_kernel.activity;
 CREATE TRIGGER mcp_origin_stamp_update BEFORE UPDATE ON crove_kernel.activity FOR EACH ROW EXECUTE FUNCTION crove_kernel.mcp_origin_keep_update();
 
+-- migration-lint: cross-module see above.
+DROP TRIGGER IF EXISTS mcp_origin_keep_taint ON crove_crm.quote_line;
+-- migration-lint: cross-module see above (a BEFORE DELETE row trigger: it keeps the text of a tainted line for the inserts of the same transaction).
+CREATE TRIGGER mcp_origin_keep_taint BEFORE DELETE ON crove_crm.quote_line FOR EACH ROW EXECUTE FUNCTION crove_kernel.mcp_origin_keep_line_taint();
+
 -- Always on, whatever session_replication_role a session runs under (a replica session must not skip a stamp), as quote_guard is.
 DO $$
 DECLARE
   r record;
 BEGIN
   FOR r IN SELECT c.oid::regclass AS t, g.tgname FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class c ON c.oid = g.tgrelid
-           WHERE g.tgname IN ('mcp_origin_stamp', 'mcp_origin_stamp_update') AND NOT g.tgisinternal LOOP
+           WHERE g.tgname IN ('mcp_origin_stamp', 'mcp_origin_stamp_update', 'mcp_origin_keep_taint') AND NOT g.tgisinternal LOOP
     EXECUTE pg_catalog.format('ALTER TABLE %s ENABLE ALWAYS TRIGGER %I', r.t, r.tgname);
   END LOOP;
 END $$;

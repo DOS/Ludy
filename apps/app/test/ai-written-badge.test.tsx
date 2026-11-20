@@ -26,6 +26,17 @@ describe('the AI-written mark', () => {
     expect(render({ actorOrigin: 'mcp' })).toContain('data-testid="ai-written-badge"');
   });
 
+  it('shows the hint as visible text in a detail view, and keeps it for a screen reader only in a list row', () => {
+    const detail = render({ actorOrigin: 'mcp', tainted: true, showHint: true });
+    expect(detail).toContain('data-testid="ai-written-hint"');
+    expect(detail).not.toContain('sr-only');
+    expect(detail).toContain('kiểm tra trước khi dùng');
+    const row = render({ actorOrigin: 'mcp', tainted: true });
+    expect(row).toContain('sr-only');
+    expect(row).not.toContain('ai-written-hint');
+    expect(render({ actorOrigin: 'ui', showHint: true })).toBe('');
+  });
+
   it('shows nothing on a person\'s own row', () => {
     expect(render({ actorOrigin: 'ui' })).toBe('');
     expect(render({ actorOrigin: 'ui', tainted: false }, 'en')).toBe('');

@@ -44,7 +44,7 @@ export function DealSheet({ target, members, canEdit, onClose }: { target: DealS
       <SheetContent closeLabel={common('close')} className="sm:max-w-2xl" data-testid="deal-sheet">
         <SheetHeader>
           <SheetTitle>{deal ? deal.title : t('form.newTitle')}</SheetTitle>
-          {deal && <AiWrittenBadge actorOrigin={deal.actorOrigin} tainted={deal.tainted} className="w-fit" />}
+          {deal && <AiWrittenBadge actorOrigin={deal.actorOrigin} tainted={deal.tainted} showHint />}
           <SheetDescription>
             {deal ? [deal.partyName, stageName, formatMoney(deal.amount, locale, deal.currency)].filter(Boolean).join(' · ') : t('sheet.newHint')}
           </SheetDescription>
