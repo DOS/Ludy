@@ -2,7 +2,7 @@
 // The Tingee bank feed adapter (ADR-0039, #2045 S1), built from Tingee's public documentation (https://developers.tingee.vn/docs/, read 2026-11-20) and nothing else.
 // Each customer registers its own Tingee account, so the credential is the customer's Client ID and Secret Token (sealed by the kernel, opened by the worker only).
 // It reads two endpoints: the accounts a credential reaches and the transactions of one account in a window. It calls nothing else: the interface has no capability that
-// moves money, and this file names no path for Tingee's disbursement ("Chi ho"), direct debit, refund, account linking or QR endpoints (a test reads this source to keep it so).
+// moves money, and this file names no path of any other Tingee product (a test reads this source to keep it so; it is a guard rail, and review is what holds the line).
 // Every call goes through the fetch it is given, which the caller binds to the hosts below (allowlistedFetch(TINGEE_HOSTS)).
 import { createHmac } from 'node:crypto';
 import type { BankFeedAccount, BankFeedProvider, BankFeedPull, BankFeedTransaction, Fetch } from './index.ts';
@@ -140,6 +140,8 @@ function toLine(item: unknown, index: number): BankFeedTransaction | null {
   digits = digits.replace(/^0+(?=\d)/, '');
   if (/^0(\.0*)?$/.test(digits)) return null;
   if (/\.\d{3,}$/.test(digits)) return bad('an amount with more than 2 decimals');
+  // The most integer digits the ledger's money takes (zMoney).
+  if (digits.split('.')[0]!.length > 16) return bad('an amount with more than 16 digits');
   const stamp = typeof item.transactionDate === 'string' ? item.transactionDate : '';
   if (parseStamp(stamp) === null) return bad('an unreadable date');
   const code = typeof item.code === 'string' ? item.code.trim() : '';
@@ -166,9 +168,11 @@ export function tingeeBankFeed(options: TingeeOptions): BankFeedProvider {
 
   // One signed POST; the `data` of an answer whose code is "00".
   async function call(credential: Credential, path: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const wait = lastCall + spacingMs - now().getTime();
+    // The slot is taken before waiting, so two calls in flight at once are spaced from each other too.
+    const slot = Math.max(now().getTime(), lastCall + spacingMs);
+    const wait = slot - now().getTime();
+    lastCall = slot;
     if (wait > 0) await sleep(wait);
-    lastCall = now().getTime();
     const body = JSON.stringify(payload);
     const timestamp = vietnamStamp(now(), true);
     let response: Response;
@@ -230,8 +234,8 @@ export function tingeeBankFeed(options: TingeeOptions): BankFeedProvider {
           if (!found.has(id)) found.set(id, { externalAccountId: id, displayName: displayName.slice(0, 200) });
         }
         skip += items.length;
-        const total = typeof data.totalCount === 'number' ? data.totalCount : skip;
-        if (items.length === 0 || skip >= total) return [...found.values()];
+        if (typeof data.totalCount !== 'number') throw new TingeeError('upstream', 'tingee: the account list has no total');
+        if (items.length === 0 || skip >= data.totalCount) return [...found.values()];
       }
       throw new TingeeError('upstream', 'tingee: the account list never ended');
     },
@@ -274,7 +278,8 @@ export function tingeeBankFeed(options: TingeeOptions): BankFeedProvider {
             ordered.push({ at: String(row.transactionDate), id: typeof row.transactionId === 'string' ? row.transactionId : '', line });
           }
           skip += items.length;
-          const total = typeof data.totalCount === 'number' ? data.totalCount : skip;
+          if (typeof data.totalCount !== 'number') throw new TingeeError('upstream', 'tingee: the transaction list has no total');
+          const total = data.totalCount;
           if (total > MAX_LINES_PER_PULL) tooMany = true;
           if (tooMany || items.length === 0 || skip >= total) break;
           if (page === MAX_PAGES - 1) throw new TingeeError('upstream', 'tingee: the transaction list never ended');

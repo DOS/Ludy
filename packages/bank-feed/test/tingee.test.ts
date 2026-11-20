@@ -228,14 +228,14 @@ describe('pulling transactions', () => {
   });
 
   it('keeps an amount beyond 2^53 as the digits Tingee wrote, signs a debit, and reads the Vietnam day', async () => {
-    const big = tx('20261110235959', '12345678901234567890');
+    const big = tx('20261110235959', '9999999999999999');
     const fraction = tx('20261111000001', '1500000.50');
     const debit = tx('20261112080000', '250000', 'debit');
     const whole = tx('20261113080000', '7000');
     const { adapter } = setup({ transactions: [big, fraction, debit, whole] });
     const { lines } = await pullAll(adapter);
     const byRef = Object.fromEntries(lines.map((l) => [l.reference, l]));
-    expect(byRef[big.code]).toMatchObject({ amount: '12345678901234567890', date: '2026-11-10', balance: null });
+    expect(byRef[big.code]).toMatchObject({ amount: '9999999999999999', date: '2026-11-10', balance: null });
     expect(byRef[fraction.code]).toMatchObject({ amount: '1500000.5', date: '2026-11-11' });
     expect(byRef[debit.code]).toMatchObject({ amount: '-250000', date: '2026-11-12' });
     expect(byRef[whole.code]).toMatchObject({ amount: '7000' });
@@ -261,6 +261,7 @@ describe('pulling transactions', () => {
     expect((await pullAll(setup({ transactions: [zero, ok] }).adapter)).lines).toHaveLength(1);
     const cases: Array<[string, Partial<FakeTransaction>, string]> = [
       ['an unreadable amount', { amount: '1e6' }, 'an unreadable amount'],
+      ['more than 16 digits', { amount: '12345678901234567890' }, 'more than 16 digits'],
       ['more than 2 decimals', { amount: '10.001' }, 'more than 2 decimals'],
       ['a negative credit', { amount: '-5000' }, 'a negative credit'],
       ['no known type', { type: 'transfer' as unknown as 'credit' }, 'no known type'],
@@ -297,28 +298,48 @@ describe('pulling transactions', () => {
 });
 
 describe('the adapter keeps to what it is for', () => {
-  // The source without comments: what the adapter can call.
-  const source = readFileSync(new URL('../src/tingee.ts', import.meta.url), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n')
-    .map((line) => line.replace(/(^|\s)\/\/.*$/, ''))
-    .join('\n');
+  // The whole source, comments included: nothing here names another path or host, so a scan of the raw text cannot be hidden by a comment trick.
+  const source = readFileSync(new URL('../src/tingee.ts', import.meta.url), 'utf8').replace('https://developers.tingee.vn/docs/', '');
 
   it('names no path but the two read ones, and no host but Tingee\'s production and UAT hosts', () => {
-    const paths = [...new Set([...source.matchAll(/['"`](\/v\d[\w/_-]*)['"`]/g)].map((m) => m[1]))].sort();
+    const paths = [...new Set([...source.matchAll(/\/v\d\/[\w/_-]+/g)].map((m) => m[0]))].sort();
     expect(paths).toEqual(['/v1/get-va-paging', '/v1/transaction/get-paging']);
     const hosts = [...new Set([...source.matchAll(/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.tingee\.vn/g)].map((m) => m[0]))].sort();
     expect(hosts).toEqual(['open-api.tingee.vn', 'uat-open-api.tingee.vn']);
   });
 
-  it('never reaches for the global fetch or a Node network module, and has no endpoint that moves money', () => {
+  it('calls only through the two path constants, so a path cannot be built from pieces', () => {
+    const calls = [...source.matchAll(/\bcall\(\s*credential\s*,\s*([^,]+),/g)].map((m) => (m[1] as string).trim());
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls.every((c) => c === 'ACCOUNTS_PATH' || c === 'TRANSACTIONS_PATH')).toBe(true);
+    expect(source).toMatch(/const ACCOUNTS_PATH = '\/v1\/get-va-paging';/);
+    expect(source).toMatch(/const TRANSACTIONS_PATH = '\/v1\/transaction\/get-paging';/);
+  });
+
+  it('never reaches for the global fetch or a Node network module, and names no other Tingee product', () => {
     expect(source).not.toMatch(/(?<![.\w])fetch\s*\(/);
     expect(source).not.toMatch(/from 'node:(https?|net|tls|http2|dgram)'/);
-    expect(source).not.toMatch(/create-va|confirm-va|delete-va|register-notify|create-debit|direct-link|direct-debit|refund|disburse|payment-gateway|\/qr\b/i);
+    expect(source).not.toMatch(/create-va|confirm-va|delete-va|register-notify|create-debit|direct-link|direct-debit|refund|disburs|chi ho|payment-gateway|\/qr\b/i);
   });
 
   it('keeps the money out of JS numbers: no parse of an amount into a number', () => {
     expect(source).not.toMatch(/(parseFloat|parseInt|Number)\s*\(\s*(raw|digits|item\.amount|line\.amount)/);
     expect(source).not.toMatch(/parseFloat/);
+  });
+});
+
+describe('an answer without a total', () => {
+  it('is refused rather than read as one short page', async () => {
+    const clock = { now: new Date(NOW) };
+    const fake = new FakeTingee(clock, { [CLIENT]: SECRET }, [], [tx('20261110090000', '1000')]);
+    const noTotal: typeof fake.fetch = async (input, init) => {
+      const answer = await fake.fetch(input, init);
+      const body = (await answer.json()) as { data?: Record<string, unknown> };
+      if (body.data) delete body.data.totalCount;
+      return new Response(JSON.stringify(body), { status: 200 });
+    };
+    const adapter = tingeeBankFeed({ fetch: noTotal, now: () => clock.now, sleep: async (ms) => void (clock.now = new Date(clock.now.getTime() + ms)) });
+    expect(await failure(() => adapter.pull(credential(), VA, null))).toMatchObject({ kind: 'upstream' });
+    expect(await failure(() => adapter.accounts(credential()))).toMatchObject({ kind: 'upstream' });
   });
 });
