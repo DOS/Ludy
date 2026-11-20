@@ -101,11 +101,14 @@ function AccountRow({
   entities: readonly LegalEntity[];
 }) {
   const t = useTranslations('bankFeeds');
+  const f = useFormat();
   const mapped = row.mapped;
   const defaultEntity = entities.find((e) => e.isDefault) ?? entities[0];
   const [bankAccount, setBankAccount] = useState(mapped?.bankAccount ?? '');
   const [legalEntityId, setLegalEntityId] = useState(mapped?.legalEntityId ?? defaultEntity?.id ?? '');
+  const [feedFrom, setFeedFrom] = useState(mapped?.feedFrom ?? '');
   const bankId = useId();
+  const feedFromId = useId();
   const fields = useFieldErrors<'bankAccount'>(() => (bankAccount ? null : t('bankAccountNeeded')));
   const several = entities.length > 1;
   const choices = bankAccountChoices(bankAccounts, mapped?.bankAccount);
@@ -128,6 +131,7 @@ function AccountRow({
       connectionId: connection.id,
       externalAccountId: row.externalAccountId,
       bankAccount,
+      feedFrom: feedFrom || null,
       ...(several && legalEntityId ? { legalEntityId } : {}),
       idempotencyKey: crypto.randomUUID(),
     });
@@ -142,6 +146,7 @@ function AccountRow({
       {mapped && (
         <p className="text-xs text-subtle-foreground">
           {t('mappedTo', { account: mapped.bankAccount })} · <LastSynced account={mapped} />
+          {mapped.feedFrom && ` · ${t('feedFromOn', { date: f.date(mapped.feedFrom) })}`}
         </p>
       )}
       {row.gone && (
@@ -184,6 +189,15 @@ function AccountRow({
             </Button>
           </div>
           <FieldError id={bankId}>{fields.of('bankAccount')}</FieldError>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor={feedFromId} className="text-xs text-muted-foreground">
+              {t('feedFromLabel')}
+            </label>
+            <Input id={feedFromId} type="date" className="min-h-11 w-auto" aria-describedby={`${feedFromId}-hint`} value={feedFrom} disabled={!active} onChange={(e) => setFeedFrom(e.target.value)} />
+          </div>
+          <p id={`${feedFromId}-hint`} className="text-xs text-subtle-foreground">
+            {t('feedFromHint')}
+          </p>
           {choices.length === 0 && <p className="text-xs text-subtle-foreground">{t('noBankAccounts')}</p>}
         </form>
       )}

@@ -39,7 +39,7 @@ import { resolveLegalEntity } from './legal-entity.ts';
 import { Decimal } from '@crove/l10n-vn';
 import { chartAccounts } from './accounts.ts';
 import { bankLineStates } from './bank-match.ts';
-import { checkLines, checkStatement, readFeedLines, readStatement, type StatementCheck, type StoredChainLine, type StoredDateAmount, type StoredFacts } from './domain/bank-statement.ts';
+import { checkLines, checkStatement, readFeedLines, readStatement, skipFedLines, type StatementCheck, type StoredChainLine, type StoredDateAmount, type StoredFacts } from './domain/bank-statement.ts';
 import { ledgerPeriod } from './domain/ledger-reports.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -146,7 +146,16 @@ async function storedAround(
 async function check(ctx: QueryContext, input: BankStatementImport, legalEntityId: string): Promise<StatementCheck> {
   const { lines, keys } = readStatement(input);
   const { stored, chain } = await storedAround(ctx, legalEntityId, input.bankAccount, lines, keys);
-  return checkStatement(input, stored, chain);
+  const checked = checkStatement(input, stored, chain);
+  // An account a feed supplies from a day on (#4218) takes no statement line from that day: the earliest such day of its mappings.
+  const cutover = await ctx.trx
+    .selectFrom('crove_finance.bank_feed_account')
+    .select((eb) => eb.fn.min('feed_from').as('feed_from'))
+    .where('org_id', '=', ctx.orgId)
+    .where('legal_entity_id', '=', legalEntityId)
+    .where('bank_account', '=', input.bankAccount)
+    .executeTakeFirst();
+  return cutover?.feed_from ? skipFedLines(checked, cutover.feed_from) : checked;
 }
 
 // Stores the lines a check found new or ambiguous as one import of the account, under the account's lock (the caller

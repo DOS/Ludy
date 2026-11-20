@@ -96,6 +96,9 @@ export const zBankImportPreview = z.object({
   to: zLocalDate.nullable(),
   // No row has an error: the import can go ahead.
   ok: z.boolean(),
+  // Set when the account is fed from a cut-over day on (#4218): the file's lines on or after `from` are skipped (shown as
+  // duplicates), `skipped` of them.
+  feed: z.object({ from: zLocalDate, skipped: z.number().int().nonnegative() }).optional(),
 });
 export type BankImportPreview = z.infer<typeof zBankImportPreview>;
 
@@ -357,6 +360,9 @@ export const zBankFeedMap = z.strictObject({
   externalAccountId: z.string().trim().min(1).max(200),
   bankAccount: zAccountCode,
   legalEntityId: zId.optional(),
+  // The day the feed takes over from statement files for this account (#4218): a file's lines on or after it are
+  // skipped. Absent leaves the date as it is on a remap; null clears it.
+  feedFrom: zLocalDate.nullable().optional(),
 });
 export type BankFeedMap = z.infer<typeof zBankFeedMap>;
 
@@ -370,6 +376,8 @@ export const zBankFeedAccountView = z.object({
   bankAccount: z.string(),
   legalEntityId: zId,
   lastSyncedAt: z.string().nullable(),
+  // The cut-over day (#4218), or null when statement files and the feed are only deduplicated.
+  feedFrom: zLocalDate.nullable(),
 });
 export type BankFeedAccountView = z.infer<typeof zBankFeedAccountView>;
 

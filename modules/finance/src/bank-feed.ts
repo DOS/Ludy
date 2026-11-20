@@ -90,7 +90,10 @@ export const bankFeedMap = defineCommand({
     if (existing) {
       // Its lines are already in that entity's books: another entity takes an unmap first.
       if (existing.legal_entity_id !== legalEntityId) throw accountMapped();
-      await ctx.trx.updateTable('crove_finance.bank_feed_account').set({ bank_account: input.bankAccount }).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
+      await ctx.trx
+        .updateTable('crove_finance.bank_feed_account')
+        .set({ bank_account: input.bankAccount, ...(input.feedFrom !== undefined ? { feed_from: input.feedFrom } : {}) })
+        .where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
       feedAccountId = existing.id;
     } else {
       // Under the account's lock the lookup above has seen every mapping the caller may read. A conflict here is a
@@ -104,6 +107,7 @@ export const bankFeedMap = defineCommand({
           channel_connection_id: connection.id,
           external_account_id: input.externalAccountId,
           bank_account: input.bankAccount,
+          feed_from: input.feedFrom ?? null,
           created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
         })
         .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id', 'external_account_id']).doNothing())
@@ -112,7 +116,7 @@ export const bankFeedMap = defineCommand({
       if (!inserted) throw accountMapped();
       feedAccountId = inserted.id;
     }
-    ctx.audit({ feedAccountId, connectionId: connection.id, provider: connection.provider, bankAccount: input.bankAccount, legalEntityId, remapped: Boolean(existing) });
+    ctx.audit({ feedAccountId, connectionId: connection.id, provider: connection.provider, bankAccount: input.bankAccount, legalEntityId, remapped: Boolean(existing), ...(input.feedFrom !== undefined ? { feedFrom: input.feedFrom } : {}) });
     // The worker pulls the newly mapped account (part 2b).
     await ctx.emit('finance.bank_feed.sync_requested', { connection_id: connection.id });
     return { feedAccountId };
@@ -146,7 +150,7 @@ export const bankFeedAccounts = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_finance.bank_feed_account as a')
       .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
-      .select(['a.id', 'a.channel_connection_id', 'c.provider', 'c.display_name', 'c.status', 'a.external_account_id', 'a.bank_account', 'a.legal_entity_id', 'a.last_synced_at'])
+      .select(['a.id', 'a.channel_connection_id', 'c.provider', 'c.display_name', 'c.status', 'a.external_account_id', 'a.bank_account', 'a.legal_entity_id', 'a.last_synced_at', 'a.feed_from'])
       .where('a.org_id', '=', ctx.orgId)
       .orderBy('c.display_name')
       .orderBy('a.external_account_id')
@@ -161,6 +165,7 @@ export const bankFeedAccounts = defineQuery({
       bankAccount: r.bank_account,
       legalEntityId: r.legal_entity_id,
       lastSyncedAt: r.last_synced_at ? new Date(r.last_synced_at).toISOString() : null,
+      feedFrom: r.feed_from,
     }));
   },
 });

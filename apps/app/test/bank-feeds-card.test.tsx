@@ -46,6 +46,7 @@ const account = (id: string, externalAccountId: string, over: Partial<BankFeedAc
   bankAccount: '1121',
   legalEntityId: 'e1',
   lastSyncedAt: null,
+  feedFrom: null,
   ...over,
 });
 
@@ -122,6 +123,17 @@ describe('BankFeedsCard for an owner or admin', () => {
     expect(html).toContain(`>${en.bankFeeds.unmap}<`);
     // The other account is not mapped yet, and has not been synced.
     expect(html.match(new RegExp(`>${en.bankFeeds.map}<`, 'g'))).toHaveLength(1);
+  });
+
+  it('offers the cut-over day on each account, with its hint, and names it once set', () => {
+    const html = card('owner');
+    expect(html).toContain(en.bankFeeds.feedFromLabel);
+    expect(html).toContain(en.bankFeeds.feedFromHint);
+    expect(html).toContain('type="date"');
+    expect(html).not.toContain('The feed supplies lines from');
+    const set = card('owner', { mapped: [account('m1', 'SBX-001', { feedFrom: '2026-10-15' })] });
+    expect(set).toContain('value="2026-10-15"');
+    expect(set).toContain('The feed supplies lines from');
   });
 
   it('says a mapped account never pulled has not been synced', () => {

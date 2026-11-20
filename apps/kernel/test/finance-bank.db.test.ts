@@ -543,6 +543,39 @@ suite('bank statement import (#326)', () => {
     expect(await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).toMatchObject({ status: 404, body: { code: 'BANK_FEED_ACCOUNT_NOT_FOUND' } });
   });
 
+  it('skips the statement lines on or after the day a feed takes over, with a warning, and keeps the earlier ones (#4218)', async () => {
+    expect((await rpc('accounts/create', await tokenFor(owner), { parentCode: '1121', code: '1121.CUT', name: 'Cut-over' })).status).toBe(200);
+    const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng cut-over' })).body.connectionId);
+    await sync(connectionId);
+    const map = (input: Record<string, unknown>) => feed('map', owner, { connectionId, externalAccountId: 'SBX-001', bankAccount: '1121.CUT', idempotencyKey: randomUUID(), ...input });
+    // Not a day: refused by the contract.
+    expect((await map({ feedFrom: '15/10/2026' })).status).toBe(400);
+    const mapped = await map({ feedFrom: '2026-10-15' });
+    expect(mapped.status).toBe(200);
+    expect(((await feed('accounts', viewer)).body as Array<{ feedFrom: string | null }>).map((a) => a.feedFrom)).toEqual(['2026-10-15']);
+    const rows = [row('2026-10-10', '100000', '', '', 'CUT-A'), row('2026-10-14', '200000', '', '', 'CUT-B'), row('2026-10-15', '300000', '', '', 'CUT-C'), row('2026-10-20', '400000', '', '', 'CUT-D')];
+    const shown = await preview(rows, '1121.CUT');
+    expect(shown.status).toBe(200);
+    expect(shown.body.counts).toMatchObject({ new: 2, duplicate: 2 });
+    expect(shown.body.feed).toEqual({ from: '2026-10-15', skipped: 2 });
+    expect(shown.body.rows.map((r: { status: string }) => r.status)).toEqual(['new', 'new', 'duplicate', 'duplicate']);
+    // Imported, only the days before the cut-over are stored; the same file again stores nothing.
+    expect(await importFile(rows, '1121.CUT')).toMatchObject({ status: 200, body: { counts: { new: 2, duplicate: 2 } } });
+    expect((await stored('1121.CUT')).map((l: { bank_ref: string }) => l.bank_ref)).toEqual(['CUT-A', 'CUT-B']);
+    expect(await importFile(rows, '1121.CUT')).toMatchObject({ status: 200, body: { counts: { new: 0, duplicate: 4 } } });
+    // Another bank account has no cut-over and takes the same lines; clearing the day on this one lifts the skip.
+    expect(await importFile(rows, '1121.VCB')).toMatchObject({ status: 200, body: { counts: { new: 4 } } });
+    expect((await map({ feedFrom: null })).status).toBe(200);
+    const cleared = await preview(rows, '1121.CUT');
+    expect(cleared.body.feed).toBeUndefined();
+    expect(cleared.body.counts).toMatchObject({ new: 2, duplicate: 2 });
+    // A remap with no feedFrom leaves the day as it is.
+    expect((await map({ feedFrom: '2026-10-15' })).status).toBe(200);
+    expect((await map({})).status).toBe(200);
+    expect(((await feed('accounts', viewer)).body as Array<{ feedFrom: string | null }>).map((a) => a.feedFrom)).toEqual(['2026-10-15']);
+    expect((await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).status).toBe(200);
+  });
+
   it('maps only a bank feed connection, and only an active one', async () => {
     const social = await admin(
       async (c) =>

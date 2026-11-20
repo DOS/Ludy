@@ -16,6 +16,7 @@ const mapped = (externalAccountId: string, connectionId = 'c1'): BankFeedAccount
   bankAccount: '1121',
   legalEntityId: 'e1',
   lastSyncedAt: null,
+  feedFrom: null,
 });
 
 describe('bank feed gate', () => {
