@@ -110,7 +110,7 @@ function ConnectionItem({ connection, entities, canManage, pushOffered }: { conn
       {test.error && <ErrorText>{errorMessage(test.error)}</ErrorText>}
       {/* The preview and the push belong to AMIS Kế toán: the push to MISA ASP is a later slice (#4103), so an ASP connection is connected and tested here and nothing more. */}
       {connection.status === 'active' && connection.product === 'amis' && (
-        <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} {...(canManage ? { checkConnectionId: connection.id } : {})} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }) }} />
+        <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} {...(canManage ? { checkConnectionId: connection.id } : {})} defaults={{ service: connection.defaultServiceItemCode ?? null, sales: connection.defaultSalesItemCode ?? null }} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }) }} />
       )}
       {connection.status === 'active' && connection.product === 'amis' && <MisaAmisPushList connectionId={connection.id} canManage={canManage} />}
       {connection.status === 'active' && connection.product === 'asp' && (

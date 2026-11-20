@@ -195,7 +195,7 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
-import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisStatus } from './misa-amis-connections.ts';
+import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisDefaultItem, zMisaAmisStatus } from './misa-amis-connections.ts';
 import { zMisaAmisMatchCheckQueued } from './misa-amis-match.ts';
 import { zMisaAmisPushConfirm, zMisaAmisPushConfirmed, zMisaAmisPushListAsk, zMisaAmisPushResolveAsk, zMisaAmisPushRow } from './misa-amis-push.ts';
 import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './misa-check.ts';
@@ -2670,6 +2670,9 @@ export const contract = {
       // unreachable) and a time, which the list then shows. Owner or admin. MISA_AMIS_DISABLED (404) when this deployment does not offer the connector, MISA_AMIS_CONNECTION_NOT_FOUND (404),
       // CHANNEL_NOT_ACTIVE (409), FORBIDDEN (403).
       test: oc.input(z.object({ id: zId })).output(z.object({ queued: z.boolean() })),
+      // Keeps (or, with a null code, clears) the default item of the connection for service lines or sales lines (S3b, #4124): a code typed as the MISA catalogue spells it, which the next check validates against
+      // the catalogue. Owner or admin. MISA_AMIS_DISABLED (404), MISA_AMIS_CONNECTION_NOT_FOUND (404), FORBIDDEN (403).
+      setDefaultItem: oc.input(zMisaAmisDefaultItem).output(z.object({ saved: z.boolean() })),
     },
     // The check of a connection's vouchers against the firm's own MISA catalogue (S3a, #4112 of #4103): the worker opens the sealed access code, reads the catalogue pages in its memory, matches the parties
     // (by tax code) and items (by code) of the batch and records only what it found, which the preview then shows ("checked at"). Owner or admin; a second press while a check waits returns it. The ask is the
