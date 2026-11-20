@@ -365,6 +365,7 @@ export const PERSONAL_DATA_COLUMNS = {
     reason: 'Extracted text of a note attachment: on a shared note, the erasure deletes the attachment and queues its blob; on a private note, counted per author and deleted once the author was told',
     privateRows: 'unless_shared',
   },
+  'crove_notes.attachment.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a note attachment's filename and extracted text, rebuilt from them" },
   'crove_notes.todo.title': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.details': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.checklist': { kind: 'free_text', handling: 'erase', reason: 'Steps of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
