@@ -153,7 +153,7 @@ suite('the Hộp thư proposal twins (#3863)', () => {
       connectionId,
       events: [
         { kind: 'comment_thread', threadId, postId: 'post-9', messageId: `a-${threadId}`, direction: 'in', contact: { id: `ua-${threadId}`, name: 'Khách A' }, text: 'Bài này hay', at: at(0) },
-        { kind: 'comment_thread', threadId, postId: 'post-9', messageId: `b-${threadId}`, direction: 'in', contact: { id: `ub-${threadId}`, name: 'Khách B' }, text: 'Gọi mình 0911222333', at: at(1) },
+        { kind: 'comment_thread', threadId, postId: 'post-9', messageId: `b-${threadId}`, direction: 'in', contact: { id: `ub-${threadId}`, name: 'Khách B' }, text: 'Gọi mình 0900000111', at: at(1) },
       ],
     } satisfies { connectionId: string; events: ConversationEvent[] });
     const own = await comment('Tin của khách B ở thread khác', `ub-${threadId}`);
@@ -161,13 +161,13 @@ suite('the Hộp thư proposal twins (#3863)', () => {
     expect(bMessage).toBeTruthy();
     const { actor } = await h.grant();
     const hide = await h.propose(actor, 'kernel.conversation.hide_approved', { messageId: bMessage, hidden: true });
-    const privateReply = await h.propose(actor, 'kernel.conversation.reply_privately_approved', { messageId: bMessage, body: 'Em gọi 0911222333 ạ' });
+    const privateReply = await h.propose(actor, 'kernel.conversation.reply_privately_approved', { messageId: bMessage, body: 'Em gọi 0900000111 ạ' });
     await h.runtime.execute('kernel.conversation.erase_contact', { conversationId: own.conversation, confirm: true }, { actor: h.person(h.owner, true), orgId: h.orgId });
     for (const id of [hide.proposalId, privateReply.proposalId]) {
       const row = await h.proposal(id);
       expect(row.payload, id).toEqual({ erased: true });
       expect(row.status, id).toBe('rejected');
-      expect(JSON.stringify(row), id).not.toContain('0911222333');
+      expect(JSON.stringify(row), id).not.toContain('0900000111');
     }
     expect(await h.executions('kernel.conversation.hide', hide.proposalId)).toBe(0);
   });
