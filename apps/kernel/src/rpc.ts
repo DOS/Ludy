@@ -3624,6 +3624,13 @@ export function createRpcHandler(
             return runtime.execute<{ queued: boolean }>('finance.misa_amis_connection.request_test', { id: input.id }, { actor, orgId });
           }),
         ),
+        // The default item of a connection for service lines or sales lines (S3b, #4124): kept as typed, or cleared; the next check validates it against the catalogue. Owner or admin; no switch gates it (nothing is sent).
+        setDefaultItem: os.misaAmis.connections.setDefaultItem.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới đặt được mặt hàng mặc định của kết nối MISA');
+            return runtime.execute<{ saved: boolean }>('finance.misa_amis_connection.set_default_item', input, { actor, orgId });
+          }),
+        ),
       },
       // The check of a connection's vouchers against the firm's own catalogue is the worker's too (S3a, #4112): the command files the request and queues the job; the preview shows the result when it lands.
       matches: {

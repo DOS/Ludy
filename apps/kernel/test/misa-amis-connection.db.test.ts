@@ -655,4 +655,65 @@ suite('MISA AMIS connections (#3875)', () => {
     });
     expect(replica).toMatch(/MISA_AMIS_CONNECTION_PROVIDER/);
   });
+  // The default item of a connection (#4124, S3b of #4103): two columns on the connection row, kept as typed by an owner or admin.
+  it('keeps and clears the default item of a connection for an owner or admin only, as typed, and nothing else of the row can be written by a tenant role', async () => {
+    const entity = await newEntity('Chi nhánh mã mặc định');
+    const channel = randomUUID();
+    await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'Thử', $4)", [orgId, channel, entity, owner.userId]);
+    await rows('INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3)', [orgId, entity, channel]);
+    const id = String((await rows<{ id: string }>('SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity]))[0]?.id);
+    const mine = async (who: Account = owner) => ((await call('connections/list', who)).body as Array<Record<string, unknown>>).find((c) => c.id === id);
+    expect(await mine()).toMatchObject({ defaultServiceItemCode: null, defaultSalesItemCode: null });
+
+    // Owner or admin only; another org's user is not a member here.
+    for (const who of [member, viewer]) expect((await call('connections/setDefaultItem', who, { id, role: 'service', code: 'DV_CHUNG' })).status, who.email).toBe(403);
+    expect((await call('connections/setDefaultItem', outsider, { id, role: 'service', code: 'DV_CHUNG' })).status).not.toBe(200);
+    expect(await mine()).toMatchObject({ defaultServiceItemCode: null });
+
+    // Kept as typed, trimmed; every member reads it; the two roles are independent.
+    expect(await call('connections/setDefaultItem', owner, { id, role: 'service', code: '  DV_CHUNG ' })).toMatchObject({ status: 200, body: { saved: true } });
+    expect(await call('connections/setDefaultItem', adminUser, { id, role: 'sales', code: 'BH_CHUNG' })).toMatchObject({ status: 200, body: { saved: true } });
+    for (const who of [owner, adminUser, member, viewer]) expect(await mine(who), who.email).toMatchObject({ defaultServiceItemCode: 'DV_CHUNG', defaultSalesItemCode: 'BH_CHUNG' });
+    // A null code clears one role and leaves the other.
+    expect(await call('connections/setDefaultItem', owner, { id, role: 'service', code: null })).toMatchObject({ status: 200 });
+    expect(await mine()).toMatchObject({ defaultServiceItemCode: null, defaultSalesItemCode: 'BH_CHUNG' });
+
+    // Malformed asks are refused before anything is written; a connection that is not there (or another org's) is a 404.
+    for (const bad of [{ id, role: 'service', code: '' }, { id, role: 'service', code: 'x'.repeat(51) }, { id, role: 'other', code: 'A' }, { id, role: 'service', code: 'A', extra: 1 }]) {
+      expect((await call('connections/setDefaultItem', owner, bad)).status, JSON.stringify(bad)).toBeGreaterThanOrEqual(400);
+    }
+    expect(await call('connections/setDefaultItem', owner, { id: randomUUID(), role: 'sales', code: 'A' })).toMatchObject({ status: 404, body: { code: 'MISA_AMIS_CONNECTION_NOT_FOUND' } });
+    expect((await call('connections/setDefaultItem', outsider, { id, role: 'sales', code: 'A' }, app, otherSlug)).body).toMatchObject({ code: 'MISA_AMIS_CONNECTION_NOT_FOUND' });
+    expect(await mine()).toMatchObject({ defaultSalesItemCode: 'BH_CHUNG' });
+
+    // The audit row says the role and whether a code was kept, not the code.
+    const audit = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.misa_amis_connection.set_default_item'", [orgId]);
+    expect(audit.length).toBeGreaterThan(0);
+    expect(JSON.stringify(audit)).not.toMatch(/DV_CHUNG|BH_CHUNG/);
+
+    // The table holds the bound too; a tenant role may write these two columns and no other column of the row (the company code, the entity, the channel stay as they were made).
+    await expect(rows('UPDATE crove_finance.misa_amis_connection SET default_sales_item_code = $3 WHERE org_id = $1 AND id = $2', [orgId, id, 'x'.repeat(51)])).rejects.toThrow(/misa_amis_connection_default_items_ck/);
+    await expect(rows("UPDATE crove_finance.misa_amis_connection SET default_service_item_code = '' WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toThrow(/misa_amis_connection_default_items_ck/);
+    const asTenant = (statement: string, who: Account = owner) =>
+      admin(async (c) => {
+        await c.query('BEGIN');
+        try {
+          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(who.userId, orgId)]);
+          await c.query('SET LOCAL ROLE crove_tenant');
+          const result = await c.query(statement, [orgId, id]);
+          return `updated ${result.rowCount}`;
+        } catch (error) {
+          return String((error as Error).message);
+        } finally {
+          await c.query('ROLLBACK');
+        }
+      });
+    expect(await asTenant("UPDATE crove_finance.misa_amis_connection SET default_sales_item_code = 'KHAC' WHERE org_id = $1 AND id = $2")).toBe('updated 1');
+    // A member or a viewer who reached the table with the tenant role (no command, no route) updates no row: the update policy hides the row from them.
+    for (const who of [member, viewer]) expect(await asTenant("UPDATE crove_finance.misa_amis_connection SET default_sales_item_code = 'KHAC' WHERE org_id = $1 AND id = $2", who), who.email).toBe('updated 0');
+    expect(await asTenant("UPDATE crove_finance.misa_amis_connection SET org_company_code = 'ludy-00000000000000000000000000000000' WHERE org_id = $1 AND id = $2")).toMatch(/permission denied/);
+    expect(await asTenant("UPDATE crove_finance.misa_amis_connection SET legal_entity_id = legal_entity_id WHERE org_id = $1 AND id = $2")).toMatch(/permission denied/);
+    // The trigger that fixes the product and the channel connection still does, for anyone.
+    await expect(rows("UPDATE crove_finance.misa_amis_connection SET product = 'asp' WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toThrow(/MISA_AMIS_CONNECTION_FIXED/);
+  });
 });
