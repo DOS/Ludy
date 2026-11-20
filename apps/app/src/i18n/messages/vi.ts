@@ -13768,6 +13768,7 @@ export const vi = {
       MISA_AMIS_MATCH_ENTITY: 'Kết nối MISA AMIS này thuộc pháp nhân khác với chứng từ đang xem.',
       MISA_AMIS_CHECK_REQUIRED: 'Hãy kiểm tra chứng từ với danh mục MISA (trong 15 phút gần đây) rồi mới gửi.',
       MISA_AMIS_NAME_PROPOSAL_GONE: 'Đề xuất này không còn, có thể một lần kiểm tra mới đã thay nó; hãy xem lại danh sách đề xuất.',
+      MISA_AMIS_STOCK_NOT_ASP: 'Chỉ kết nối MISA ASP mới có kho mặc định cho dòng bán hàng.',
       MISA_AMIS_PUSH_BLOCKED: 'Có chứng từ chưa đủ điều kiện gửi sang MISA AMIS; hãy xem lại bản xem trước.',
       MISA_AMIS_PUSH_EMPTY: 'Không có chứng từ nào để gửi sang MISA AMIS.',
       MISA_AMIS_PUSH_DISABLED: 'Việc gửi chứng từ sang MISA chưa được bật trên hệ thống này.',

@@ -13755,6 +13755,7 @@ export const en = {
       MISA_AMIS_MATCH_ENTITY: 'This MISA AMIS connection belongs to a different legal entity than the vouchers you are viewing.',
       MISA_AMIS_CHECK_REQUIRED: 'Check the vouchers against the MISA catalogue (within the last 15 minutes), then send.',
       MISA_AMIS_NAME_PROPOSAL_GONE: 'This proposal is gone, perhaps a new check replaced it; look at the list of proposals again.',
+      MISA_AMIS_STOCK_NOT_ASP: 'Only a MISA ASP connection keeps a default warehouse for sales lines.',
       MISA_AMIS_PUSH_BLOCKED: 'Some vouchers are not ready to send to MISA AMIS; check the preview again.',
       MISA_AMIS_PUSH_EMPTY: 'There are no vouchers to send to MISA AMIS.',
       MISA_AMIS_PUSH_DISABLED: 'Sending vouchers to MISA is not turned on in this system.',
