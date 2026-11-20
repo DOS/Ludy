@@ -17,6 +17,7 @@ import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
+import { contextToken } from './invariant/fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -288,6 +289,85 @@ suite('Marketplace column check (#4036)', () => {
     expect((await call('columnsCheck', owner, { fileId: other, mapping: MAPPING, idempotencyKey: randomUUID() })).status).toBe(200);
     expect(await record(other, { state: 'done', sheet: SHEET, refusal: 'buyer_text', preview: null })).toMatchObject({ recorded: true });
     expect(await status(owner, other)).toMatchObject({ status: 200, body: { state: 'done', refusal: 'buyer_text', preview: null, sheet: SHEET } });
+  });
+
+  // A person's own context writes SQL as the tenant role: the policies let an importer write a row, so the guard alone must stop a person from typing a result (a forged passed check must never reach #4037's
+  // confirm). Each statement runs in a transaction that is rolled back; the answer is the error, or `ok` and what the row held.
+  const asPerson = (who: Account, statement: string, values: unknown[] = []) =>
+    admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(who.userId, orgId)]);
+        await c.query('SET LOCAL ROLE crove_tenant');
+        await c.query(statement, values);
+        return 'ok';
+      } catch (error) {
+        return String((error as Error).message);
+      } finally {
+        await c.query('ROLLBACK');
+      }
+    });
+  const asSystem = async (statement: string) => {
+    const c = await workerPool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      await c.query(statement);
+      return 'ok';
+    } catch (error) {
+      return String((error as Error).message);
+    } finally {
+      await c.query('ROLLBACK').catch(() => {});
+      c.release();
+    }
+  };
+
+  it('lets no person type a result: owner, admin and member contexts cannot move a check to done or failed, nor write the failure, the refusal, the sheet, the preview or the finish time', async () => {
+    const waiting = await fileOf(orgId, { method: 'unsupported', result: null });
+    expect((await call('columnsCheck', owner, { fileId: waiting, mapping: MAPPING, idempotencyKey: randomUUID() })).status).toBe(200);
+    const where = `WHERE org_id = '${orgId}' AND file_id = '${waiting}'`;
+    const forged = [
+      `UPDATE crove_finance.marketplace_column_check SET state = 'done', finished_at = now() ${where}`,
+      `UPDATE crove_finance.marketplace_column_check SET state = 'failed', failure = 'unavailable' ${where}`,
+      `UPDATE crove_finance.marketplace_column_check SET state = 'done', finished_at = now(), sheet = '{"headerRow":1,"columns":[]}'::jsonb, preview = '{"lines":[],"total":0,"skipped":0}'::jsonb ${where}`,
+      `UPDATE crove_finance.marketplace_column_check SET refusal = 'no_header' ${where}`,
+      `UPDATE crove_finance.marketplace_column_check SET sheet = '{"headerRow":1,"columns":[]}'::jsonb ${where}`,
+      `UPDATE crove_finance.marketplace_column_check SET preview = '{"lines":[],"total":0,"skipped":0}'::jsonb ${where}`,
+      `UPDATE crove_finance.marketplace_column_check SET finished_at = now() ${where}`,
+      `UPDATE crove_finance.marketplace_column_check SET failure = 'too_large' ${where}`,
+    ];
+    for (const who of [owner, adminUser, member]) {
+      for (const statement of forged) expect(await asPerson(who, statement), `${who.email}: ${statement}`).toMatch(/MARKETPLACE_COLUMN_CHECK_STATE|marketplace_column_check_state_ck/);
+    }
+    // An insert of a check that says it is done is made a plain request: the guard clears every result column (the row is checked inside the same transaction, then rolled back).
+    const fresh = await fileOf(orgId, { method: 'unsupported', result: null });
+    for (const who of [owner, adminUser, member]) {
+      const seen = await admin(async (c) => {
+        await c.query('BEGIN');
+        try {
+          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(who.userId, orgId)]);
+          await c.query('SET LOCAL ROLE crove_tenant');
+          await c.query(`INSERT INTO crove_finance.marketplace_column_check (org_id, file_id, state, finished_at, refusal, sheet, preview) VALUES ($1, $2, 'done', now(), 'no_header', '{"headerRow":1,"columns":[]}'::jsonb, '{"lines":[],"total":0,"skipped":0}'::jsonb)`, [orgId, fresh]);
+          const { rows: made } = await c.query<{ state: string; failure: string | null; refusal: string | null; sheet: unknown; preview: unknown; finished_at: Date | null }>('SELECT state, failure, refusal, sheet, preview, finished_at FROM crove_finance.marketplace_column_check WHERE org_id = $1 AND file_id = $2', [orgId, fresh]);
+          return made[0];
+        } catch (error) {
+          return String((error as Error).message);
+        } finally {
+          await c.query('ROLLBACK');
+        }
+      });
+      expect(seen, who.email).toEqual({ state: 'requested', failure: null, refusal: null, sheet: null, preview: null, finished_at: null });
+    }
+    // What a person may do: ask again (the platform, the mapping, who and when change together; the verdict is cleared).
+    for (const who of [owner, adminUser, member]) {
+      expect(await asPerson(who, `UPDATE crove_finance.marketplace_column_check SET platform = 'lazada', assignments = '[{"index":0,"field":"orderNo"}]'::jsonb, requested_by = '${who.userId}', requested_at = now(), state = 'requested', failure = NULL, refusal = NULL, preview = NULL ${where}`), who.email).toBe('ok');
+    }
+    // The worker's system context records a result, and never changes what was asked.
+    expect(await asSystem(`UPDATE crove_finance.marketplace_column_check SET platform = 'tiktok_shop' ${where}`)).toMatch(/MARKETPLACE_COLUMN_CHECK_STATE/);
+    expect(await asSystem(`UPDATE crove_finance.marketplace_column_check SET assignments = '[]'::jsonb ${where}`)).toMatch(/MARKETPLACE_COLUMN_CHECK_STATE/);
+    expect(await asSystem(`UPDATE crove_finance.marketplace_column_check SET state = 'done', finished_at = now() ${where}`)).toBe('ok');
+    // Nothing above changed the row: it still waits, as the person last asked.
+    expect(await checkRow(waiting)).toMatchObject({ state: 'requested', failure: null, refusal: null, sheet: null, preview: null, finished_at: null, platform: 'shopee' });
   });
 
   it('prunes the checks that finished more than the days ago, for the worker alone', async () => {
