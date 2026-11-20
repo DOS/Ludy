@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The tools an AI app uses to ASK for an Engage step that needs a person (epic #3857, E4 #3863; ADR-0051 decision 10, owner decision 2026-11-19, "Cho làm, việc lớn chờ duyệt"): a reply to a customer, a
-// private reply, hiding a comment, sending a quote, moving or cancelling a booking, sending a post to review, scheduling it, and the ads that only stop or reduce spend. Each tool runs the proposal-only
+// private reply, hiding a comment, sending a quote, moving or cancelling a booking, sending a post to review, scheduling it, and the ads that only stop or reduce spend (the four that start or raise spend are not offered, by decision: a person launches from Ludy). Each tool runs the proposal-only
 // twin of its command (`<command>_approved`) as the grant: the runtime never runs it, it runs kernel.mcp.propose in its place, which leaves ONE pending proposal marked tainted and naming the grant, the
 // client and its host. A person approves it in Ludy (the Inbox); only then does the original command run, as that person, with every check it has (the reply window, the platform's limits, the caps, the kill
 // switch). The tool answers `{ proposalId, status: 'pending' }`: asked, not done. The arguments are the original command's own strict input, checked here before anything runs.
@@ -32,17 +32,8 @@ interface ToolSpec {
   module?: string;
 }
 
-// Eight of the fourteen twins have a tool. The other six need an id an AI app cannot read yet: a quote's `version` (the read of a quote leaves versions out, E1 #3860) and the id of a live ad launch (no read lists
-// launches). Their twins are declared and approved like the rest; each gets its tool with the read it needs (follow-up #4147), so no tool is listed that a client cannot use.
-const NO_TOOL_YET: readonly string[] = [
-  'crm.quote.send_approved',
-  'ads.launch.stop_approved',
-  'ads.object.pause_approved',
-  'ads.object.archive_approved',
-  'ads.budget.lower_approved',
-  'ads.schedule.shorten_approved',
-];
-export const ENGAGE_PROPOSAL_COMMANDS_WITHOUT_TOOL = NO_TOOL_YET;
+// Every twin of ENGAGE_PROPOSALS has a tool (a test pins it). A tool is listed only when the client can read the ids it needs: a quote's `version` is in ludy_quote (E1, #4150) and a launch's ids are in
+// ludy_ads_launches (E4b, #4147).
 
 const SPECS: readonly ToolSpec[] = [
   {
@@ -65,6 +56,14 @@ const SPECS: readonly ToolSpec[] = [
     tool: 'ludy_conversation_hide',
     title: 'Propose hiding or showing a comment',
     description: 'Proposes hiding (hidden: true) or showing again (hidden: false) a customer\'s comment on the platform (messageId: the id of the comment message from ludy_conversation).' + HOW,
+  },
+  {
+    command: 'crm.quote.send_approved',
+    tool: 'ludy_quote_send',
+    title: 'Propose sending a quote',
+    description:
+      'Proposes sending a DRAFT quote to the customer (quoteId and `version` from ludy_quote: the version you read, so a quote someone changed since is refused; via: "email" mails it to `to`, or to the customer\'s email on file when `to` is left out, and "link" makes a link a person shares). Customer-facing: the customer reads the quote exactly as it stands when a person approves. A quote with no item, a total of zero, a validity day in the past or no valid email for "email" refuses it then.' + HOW,
+    module: 'crm',
   },
   {
     command: 'crm.booking.move_approved',
@@ -102,6 +101,41 @@ const SPECS: readonly ToolSpec[] = [
     tool: 'ludy_ads_pause_all',
     title: 'Propose stopping all ads',
     description: 'Proposes the kill switch: blocks new ad launches for the organization, cancels the ones not started and stops the ones running. It only ever reduces spend; a person must open launches again to run ads.' + HOW,
+    module: 'ads',
+  },
+  {
+    command: 'ads.launch.stop_approved',
+    tool: 'ludy_ads_launch_stop',
+    title: 'Propose stopping an ad launch',
+    description: 'Proposes stopping ONE ad launch that has started (launchId from ludy_ads_launches): its objects at the platform are paused and its commitment against the spend caps is released at the end of its commitment period. It only ever reduces spend; running it again takes a new launch.' + HOW,
+    module: 'ads',
+  },
+  {
+    command: 'ads.object.pause_approved',
+    tool: 'ludy_ads_object_pause',
+    title: 'Propose pausing an ad',
+    description: 'Proposes pausing one object of a live ad launch (launchId and the object\'s `slot` from ludy_ads_launches: the campaign, the ad set or the ad). It only reduces spend; starting it again is a spend-raising step that a person does in Ludy.' + HOW,
+    module: 'ads',
+  },
+  {
+    command: 'ads.object.archive_approved',
+    tool: 'ludy_ads_object_archive',
+    title: 'Propose archiving an ad',
+    description: 'Proposes archiving one object of a live ad launch (launchId and the object\'s `slot` from ludy_ads_launches). It only reduces spend and cannot be started again.' + HOW,
+    module: 'ads',
+  },
+  {
+    command: 'ads.budget.lower_approved',
+    tool: 'ludy_ads_budget_lower',
+    title: 'Propose lowering an ad\'s daily budget',
+    description: 'Proposes a LOWER daily budget for a live ad launch (launchId from ludy_ads_launches; dailyBudget: the new amount as a decimal string in the launch\'s own currency, below the current `dailyBudget`). A budget that is not lower is refused when a person approves.' + HOW,
+    module: 'ads',
+  },
+  {
+    command: 'ads.schedule.shorten_approved',
+    tool: 'ludy_ads_schedule_shorten',
+    title: 'Propose ending an ad earlier',
+    description: 'Proposes an EARLIER last day for a live ad launch (launchId from ludy_ads_launches; endOn: YYYY-MM-DD, before the current `endOn` and not before today in the account\'s time zone). A day that is not earlier is refused when a person approves.' + HOW,
     module: 'ads',
   },
 ];
