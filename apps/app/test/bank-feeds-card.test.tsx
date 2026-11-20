@@ -187,11 +187,14 @@ describe('BankFeedsCard Tingee connect form', () => {
     const html = card('owner', {}, { sandbox: false, tingee: true });
     expect(html).toContain(`aria-label="${en.bankFeeds.tingee.title}"`);
     for (const key of ['guideCreate', 'guideGroups', 'guideNever', 'guideSecret'] as const) expect(html).toContain(en.bankFeeds.tingee[key]);
-    expect(html).toContain('type="password"');
-    expect(html).toContain('autoComplete="off"');
-    expect(html).toContain(`aria-label="${en.bankFeeds.tingee.clientIdLabel}"`);
-    expect(html).toContain(`aria-label="${en.bankFeeds.tingee.secretLabel}"`);
-    expect(html).toContain('min-h-11');
+    // The secret input itself is the hidden one, and each Tingee control carries the 44 px height.
+    const input = (label: string) => html.match(new RegExp(`<input[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? '';
+    const secret = input(en.bankFeeds.tingee.secretLabel);
+    expect(secret).toContain('type="password"');
+    expect(secret).toContain('autoComplete="new-password"');
+    expect(secret).toContain('min-h-11');
+    expect(input(en.bankFeeds.tingee.clientIdLabel)).not.toContain('type="password"');
+    expect(input(en.bankFeeds.tingee.clientIdLabel)).toContain('min-h-11');
     // The test feed's form is not drawn when it is not offered, and the Tingee one is not drawn when it is not.
     expect(html).not.toContain(`aria-label="${en.bankFeeds.connectTitle}"`);
     expect(card('owner', {}, { sandbox: true, tingee: false })).not.toContain(`aria-label="${en.bankFeeds.tingee.title}"`);

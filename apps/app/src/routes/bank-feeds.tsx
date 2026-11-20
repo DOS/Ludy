@@ -58,6 +58,8 @@ function ConnectTingeeForm() {
         setSecretToken('');
         setName('');
         fields.reset();
+        // The mutation keeps the variables it was given: drop them so the secret is not left in the client's cache.
+        connect.reset();
         await refreshConnections();
       },
     }),
@@ -105,7 +107,7 @@ function ConnectTingeeForm() {
           className="min-h-11"
           type="password"
           maxLength={200}
-          autoComplete="off"
+          autoComplete="new-password"
           spellCheck={false}
           aria-label={t('tingee.secretLabel')}
           placeholder={t('tingee.secretLabel')}
