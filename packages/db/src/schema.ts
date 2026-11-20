@@ -660,7 +660,7 @@ export type MisaAmisMatchCheckTable = Refine<
   'legal_entity_id'
 >;
 // `party_name` (S3b, #4124): a party with no tax code, keyed by its id in Ludy and found by name.
-export const MISA_AMIS_MATCH_KINDS = ['party', 'item', 'party_name'] as const;
+export const MISA_AMIS_MATCH_KINDS = ['party', 'item', 'party_name', 'unit', 'stock'] as const;
 export type MisaAmisMatchKind = (typeof MISA_AMIS_MATCH_KINDS)[number];
 export const MISA_AMIS_MATCH_STATES = ['matched', 'unknown', 'ambiguous', 'name_proposal', 'confirmed'] as const;
 export type MisaAmisMatchState = (typeof MISA_AMIS_MATCH_STATES)[number];
