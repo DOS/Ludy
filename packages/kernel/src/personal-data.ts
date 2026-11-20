@@ -319,6 +319,8 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_finance.bank_feed_webhook_notice.body': {
     kind: 'free_text',
     handling: 'erase',
+    // A machinery table closed to the tenant role: the finder does not read it, and the erasure goes through crove_finance.personal_data_erase_bank_feed_notice.
+    machinery: true,
     reason: "The raw body of a bank feed provider's signed notice, which carries the transfer content and the payer's name: kept only until the worker verifies it and at most ten minutes, deleted by an erasure whose value its text mentions, and with the connection and the org",
   },
   // More free text (#1961): a task's title and description, which members and agents write, are replaced where they
