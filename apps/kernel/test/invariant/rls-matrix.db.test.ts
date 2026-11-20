@@ -1551,25 +1551,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // #4037 (slice 2 of #3850): the confirmed mapping of an org's marketplace report columns (the header texts of the mapped columns and the standard field of each, never a cell value or a buyer
-  // column), one platform per row, append-only, the latest of an org and platform wins. Tenant roles read and insert (owners and admins, or the system context); nothing updates or deletes a row.
-  // The org-level table: no legal entity.
-  'crove_finance.marketplace_column_profile': {
-    make: (o) => ({
-      row: {
-        org_id: o.id,
-        id: randomUUID(),
-        platform: 'shopee',
-        header_row: 2,
-        columns: JSON.stringify([
-          { index: 0, header: 'Order ID', field: 'orderNo' },
-          { index: 3, header: 'Quantity', field: 'quantity' },
-        ]),
-        header_digest: randomUUID().replaceAll('-', '').repeat(2),
-        confirmed_by: o.owner,
-      },
-    }),
-  },
   // The accountant's marks on input invoices that need proof of non-cash payment (#917): append-only, the latest mark of
   // a document wins (paid by bank, optionally with its bank voucher, not deductible, or cleared). Tenant roles read and
   // insert; nothing updates or deletes a mark.
@@ -1615,6 +1596,25 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // default entity), so each row gets its own year.
   'crove_finance.legal_entity_books': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), regime: 'tt133', chart_version: '2026.1', effective_from: `${legalEntityBooksYear++}-01-01`, created_by: o.owner } }),
+  },
+  // #4037 (slice 2 of #3850): the confirmed mapping of an org's marketplace report columns (the header texts of the mapped columns and the standard field of each, never a cell value or a buyer
+  // column), one platform per row, append-only, the latest of an org and platform wins. Tenant roles read and insert (owners and admins, or the system context); nothing updates or deletes a row.
+  // The org-level table: no legal entity.
+  'crove_finance.marketplace_column_profile': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        platform: 'shopee',
+        header_row: 2,
+        columns: JSON.stringify([
+          { index: 0, header: 'Order ID', field: 'orderNo' },
+          { index: 3, header: 'Quantity', field: 'quantity' },
+        ]),
+        header_digest: randomUUID().replaceAll('-', '').repeat(2),
+        confirmed_by: o.owner,
+      },
+    }),
   },
   // #2519: an org's connection to a marketplace (ADR-0045 point 7, plan section 8.7): the channel connection that holds the sealed credential, the platform and the entity it
   // imports for (the org's default, by its trigger). Tenant roles update only the last test and the poll's progress (a column grant), so the update probes assign the state to itself.
