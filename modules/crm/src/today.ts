@@ -112,13 +112,27 @@ export const crmToday = defineQuery({
 
     // The member's own bookings today that have not ended: the types they lead or hold on their calendar.
     const from = new Date(`${today}T00:00:00${VIETNAM_OFFSET}`);
-    const bookings = await bookingsOfDay(ctx, me, from, new Date(from.getTime() + DAY_MS));
+    const to = new Date(from.getTime() + DAY_MS);
+    const bookings = await bookingsOfDay(ctx, me, from, to);
     for (const booking of bookings.slice(0, BOOKING_ITEMS)) {
       items.push({
         kind: 'deadline',
         app: 'crm',
         id: `booking:${booking.id}`,
         title: { key: 'crm.booking', params: { time: clockTime(new Date(booking.startsAt)) } },
+        dueAt: booking.startsAt,
+        href: '/bookings',
+      });
+    }
+    // The member's own bookings tomorrow (Engage's wake rule "a booking tomorrow", #3862: the same rule tells a coworker, with a day's notice).
+    const tomorrowFrom = to;
+    const tomorrow = await bookingsOfDay(ctx, me, tomorrowFrom, new Date(tomorrowFrom.getTime() + DAY_MS));
+    for (const booking of tomorrow.slice(0, BOOKING_ITEMS)) {
+      items.push({
+        kind: 'deadline',
+        app: 'crm',
+        id: `booking-tomorrow:${booking.id}`,
+        title: { key: 'crm.bookingTomorrow', params: { time: clockTime(new Date(booking.startsAt)) } },
         dueAt: booking.startsAt,
         href: '/bookings',
       });

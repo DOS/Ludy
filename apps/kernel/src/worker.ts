@@ -47,6 +47,7 @@ import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCr
 import { MEMBER_VY_SWEEP_CRON, MEMBER_VY_SWEEP_EXPIRE_SECONDS, MEMBER_VY_SWEEP_TZ, sweepMemberVyFormerMembers, sweepMemberVyResults } from './member-vy-worker.ts';
 import { WAKE_JOB_EXPIRE_SECONDS, WAKE_RETRY_DELAY_SECONDS, WAKE_RETRY_LIMIT, runWakeDelivery, type WakeJob } from './mcp-wake.ts';
 import { MCP_WAKE_SWEEP_CRON, MCP_WAKE_SWEEP_EXPIRE_SECONDS, runWakeSweep } from './mcp-wake-sweep.ts';
+import { engageWakeFeed } from './mcp-wake-engage.ts';
 import { runMeetingHookDelivery, type MeetingHookJob } from './meeting-hook.ts';
 import { MEETINGS_MORNING_CRON, runMeetingsMorningSweep } from './meetings-morning.ts';
 import { MEETINGS_SERIES_NUDGE_CRON, runMeetingsSeriesNudgeSweep } from './meetings-series-nudge.ts';
@@ -1416,11 +1417,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       const done = await runWakeSweep({
         runtime: deps.runtime,
         workerDb: deps.workerDb,
+        feeds: [engageWakeFeed(deps.runtime)],
         send: (job: WakeJob) =>
           boss.send(QUEUES.mcpWake, job, { singletonKey: jobKey(job.orgId, QUEUES.mcpWake, job.id), retryLimit: WAKE_RETRY_LIMIT, retryDelay: WAKE_RETRY_DELAY_SECONDS, retryBackoff: true, expireInSeconds: WAKE_JOB_EXPIRE_SECONDS }),
       });
-      if (done.handedOver + done.expired + done.schedules + done.signals + done.failures > 0) {
-        console.log(`[mcp-wake-sweep] handed over ${done.handedOver}, expired ${done.expired}, schedules ${done.schedules}, signals ${done.signals}, failures ${done.failures}`);
+      if (done.handedOver + done.expired + done.schedules + done.signals + done.lines + done.failures > 0) {
+        console.log(`[mcp-wake-sweep] handed over ${done.handedOver}, expired ${done.expired}, schedules ${done.schedules}, signals ${done.signals}, lines ${done.lines}, failures ${done.failures}`);
       }
     });
     await boss.schedule(QUEUES.mcpWakeSweep, MCP_WAKE_SWEEP_CRON, null, { tz: MEMBER_VY_SWEEP_TZ, missed: 'once', expireInSeconds: MCP_WAKE_SWEEP_EXPIRE_SECONDS });

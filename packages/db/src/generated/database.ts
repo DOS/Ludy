@@ -2422,6 +2422,9 @@ export interface KernelConversationSettingTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   auto_draft: Generated<boolean>;
+  wake_unanswered_hours: Generated<number>;
+  wake_reply_window_hours: Generated<number>;
+  wake_quote_days: Generated<number>;
 }
 
 /** crove_kernel.conversation */
