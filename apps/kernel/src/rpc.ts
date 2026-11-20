@@ -3132,7 +3132,7 @@ export function createRpcHandler(
           const preview = await misaAmisPreview((name, query) => runtime.query(name, query, { actor, orgId }), ask);
           // The wording follows the product of the connection of the entity the ask names (MISA ASP's catalogue cannot be changed from Ludy, so the fix reads differently, #4114); an ask that names none reads as AMIS.
           const connections = ask.legalEntityId === undefined ? [] : await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
-          const product = connections.find((c) => c.legalEntityId === ask.legalEntityId)?.product ?? 'amis';
+          const product = connections.find((c) => c.legalEntityId.toLowerCase() === ask.legalEntityId?.toLowerCase())?.product ?? 'amis';
           return explainMisaAmisBlockers(financeMisaAmisBlockerNotesAi, orgId, actor.userId, preview, lang ?? 'vi', product);
         }),
       ),

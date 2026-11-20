@@ -47,9 +47,9 @@ const MEANING = (product: MisaAmisNotesProduct): Readonly<Record<MisaAmisBlocker
     // MISA ASP's catalogue cannot be changed from Ludy (it has no write), so what is missing is added in MISA ASP itself, with the tax code the party has in Ludy.
     party_code_unknown:
       product === 'asp'
-        ? 'A supplier or customer on the voucher has no matching code in MISA ASP: add the party in MISA ASP with the tax code it has in Ludy, then check against the catalogue again.'
+        ? 'A supplier or customer on the voucher has no matching code in MISA ASP (a party is matched by its tax code): add the party in MISA ASP with its tax code, then check against the catalogue again.'
         : 'A supplier or customer on the voucher has no matching code in AMIS: create it in AMIS or match it to the AMIS code.',
-    party_code_ambiguous: `More than one active party in ${name} has the tax code of a supplier or customer on the voucher, so Ludy cannot pick one: make all but one of them inactive in ${name}, then check against the catalogue again.`,
+    party_code_ambiguous: `More than one active party in ${name} has the tax code of a supplier or customer on the voucher, so Ludy cannot pick one: keep one of them active and make the others inactive in ${name}, then check against the catalogue again.`,
     item_code_unknown: `A voucher line has no ${name} item code: give the line a ${name} item code, by typing the ${name} service or sales item code in the preview or by setting the item's ${name} code in Ludy.`,
     stock_missing: `A goods purchase line has no ${name} warehouse code: set the warehouse code of the item in Ludy.`,
     vat_rate_unmapped: `The VAT rate of an invoice line is not one ${name} takes: fix the VAT rate of that line in Ludy.`,

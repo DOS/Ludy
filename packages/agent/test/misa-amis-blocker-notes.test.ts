@@ -39,7 +39,8 @@ describe('what the model is told', () => {
     expect(amis).not.toContain('MISA ASP');
     const asp = misaAmisBlockerNotesFactsText({ language: 'en', product: 'asp', kinds: ['party_code_unknown', 'party_code_ambiguous', 'item_code_unknown'] });
     expect(asp).toContain('add the party in MISA ASP');
-    expect(asp).toContain('make all but one of them inactive in MISA ASP');
+    expect(asp).toContain('keep one of them active and make the others inactive in MISA ASP');
+    expect(asp).toContain('a party is matched by its tax code');
     expect(asp).toContain('has no MISA ASP item code');
     expect(asp).not.toContain('AMIS');
     // Both name what the problem is and the one fix, and neither carries a figure (the checks refuse a number in a note).
