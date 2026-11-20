@@ -188,7 +188,7 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
         parts = new Map(amisPartRows(entries).map((p) => [p.orgRefid, p]));
         // The entries those matches rely on, read again unless a read for the same ones is young enough.
         const verify = relied(matches, wanted);
-        if (verify.taxCodes.length > 0 || verify.itemCodes.length > 0) {
+        if (verify.taxCodes.length > 0 || verify.itemCodes.length > 0 || verify.confirmed.length > 0) {
           const key = JSON.stringify(verify);
           if (unreadable === key) throw new TooLarge();
           readKey = key;

@@ -12,6 +12,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage } from '../lib/api.ts';
+import { MisaAmisNameProposals } from './misa-amis-name-proposals.tsx';
 import { MisaAmisPushConfirm } from './misa-amis-push-panel.tsx';
 import { CHECK_POLL_MS, CHECK_WAIT_MS, checkTick, pickResult } from '../lib/misa-amis-match-check.ts';
 import type { PushOffer } from '../lib/misa-amis-push.ts';
@@ -186,6 +187,13 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
       )}
       {result && <MisaAmisPreviewResult result={result} notes={notes.data ?? null} />}
       {result && checkConnectionId && <MisaAmisCheckButton state={result.matchCheck.state} pending={check.isPending} waiting={waiting} slow={slow && result.matchCheck.state === 'requested'} error={check.error} onAsk={askCheck} />}
+      {result && checkConnectionId && result.matchCheck.state === 'done' && (
+        <MisaAmisNameProposals
+          key={result.matchCheck.checkedAt ?? 'none'}
+          connectionId={checkConnectionId}
+          onDecided={() => preview.mutate(undefined, { onSuccess: (data) => { setAnsweredFor(asked); setLast({ asked, data }); setRuns((n) => n + 1); } })}
+        />
+      )}
       {result && push && <MisaAmisPushConfirm key={`${runs}:${result.digest}`} result={result} ask={ask} connectionId={push.connectionId} offer={push.offer} />}
     </details>
   );

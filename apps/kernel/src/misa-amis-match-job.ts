@@ -70,7 +70,9 @@ export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMat
 
   let results: MisaAmisMatchResult[];
   try {
-    results = await matchCatalogue(deps.client, connection, wanted);
+    // A party a person already confirmed by name is checked (its code still in the catalogue), not asked again.
+    const confirmedIds = new Set(target.confirmed.map((c) => c.partyId));
+    results = await matchCatalogue(deps.client, connection, { ...wanted, names: wanted.names.filter((n) => !confirmedIds.has(n.partyId)), confirmed: target.confirmed });
   } catch (error) {
     if (error instanceof TooLarge) return fail('catalogue_too_large', 'too_large');
     // Only the adapter's own kind is kept: its message and whatever else a failure carries are neither stored nor logged.

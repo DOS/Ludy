@@ -1099,6 +1099,43 @@ suite('finding a person in the org (#923)', () => {
     expect(await askedAt(other.orgId)).toBe(theirsBefore);
   });
 
+  // A name is never a probe, so the name a catalogue entry was proposed under is erased with the party it was proposed for (#4124).
+  it('deletes the name matches of an erased party, its proposal with the candidate name, and leaves another party\'s; it moves a waiting check on', async () => {
+    const orgId = org.orgId;
+    const entity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))).rows[0]?.id);
+    let connectionId = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity]))).rows[0]?.id;
+    if (connectionId === undefined) {
+      const channel = randomUUID();
+      connectionId = randomUUID();
+      await admin(async (c) => {
+        await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [orgId, channel, entity, org.owner]);
+        await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3, $4)', [orgId, connectionId, entity, channel]);
+      });
+    }
+    const email = `hoa-sen-${randomUUID().slice(0, 8)}@example.vn`;
+    const party = async (name: string, mail: string | null) => String((await admin((c) => c.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, email, source_trust) VALUES ($1, $2, $3, 'external') RETURNING id", [orgId, name, mail]))).rows[0]?.id);
+    const erasedParty = await party('Hộ kinh doanh Hoa Sen', email);
+    const keptParty = await party('Hộ kinh doanh Hoa Mai', `hoa-mai-${randomUUID().slice(0, 8)}@example.vn`);
+    await admin(async (c) => {
+      await c.query(
+        "INSERT INTO crove_finance.misa_amis_match_check (org_id, legal_entity_id, connection_id, params, state, requested_at) VALUES ($1, $2, $3, '{}'::jsonb, 'requested', pg_catalog.now() - interval '5 minutes') ON CONFLICT (org_id, connection_id) DO UPDATE SET state = 'requested', failure = NULL, requested_at = pg_catalog.now() - interval '5 minutes'",
+        [orgId, entity, connectionId],
+      );
+      await c.query("DELETE FROM crove_finance.misa_amis_match WHERE org_id = $1 AND kind = 'party_name'", [orgId]);
+      await c.query("INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code, candidate_name) VALUES ($1, $2, $3, 'party_name', $4, 'name_proposal', 'KH_HS', 'Hoa Sen (HKD)')", [orgId, entity, connectionId, erasedParty]);
+      await c.query("INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code) VALUES ($1, $2, $3, 'party_name', $4, 'confirmed', 'KH_HM')", [orgId, entity, connectionId, keptParty]);
+    });
+    const askedAt = async () => new Date((await admin((c) => c.query<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))).rows[0]!.requested_at).getTime();
+    const before = await askedAt();
+    const erased = await erase(email);
+    expect(erased.erased.find((e) => e.column === 'crove_finance.misa_amis_match.candidate_name')?.rows).toBe(1);
+    const left = (await admin((c) => c.query<{ match_key: string }>("SELECT match_key FROM crove_finance.misa_amis_match WHERE org_id = $1 AND kind = 'party_name'", [orgId]))).rows;
+    expect(left.map((r) => r.match_key)).toEqual([keptParty]);
+    // No row of the org holds the candidate's name any more, and the waiting check is moved on so a job that read the name cannot put it back.
+    expect((await admin((c) => c.query("SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1 AND candidate_name IS NOT NULL", [orgId]))).rows).toEqual([]);
+    expect(await askedAt()).toBeGreaterThan(before);
+  });
+
   // Only the erase command reaches the clearing: an owner's own context, never an admin's, a member's or a raw tenant call.
   it("clears MISA AMIS's refusal text only in an owner context (#4015)", async () => {
     const app = new URL(adminUrl);

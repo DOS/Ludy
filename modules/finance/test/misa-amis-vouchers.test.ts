@@ -301,6 +301,24 @@ describe('blockers: what AMIS needs that was not given', () => {
     expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: null })).blockers).toEqual([]);
   });
 
+  it('writes a party with no tax code with the code a person confirmed for its name (#4124), and blocks it while the name is only proposed or the confirmation is of another party', () => {
+    const PARTY = '77777777-7777-4777-8777-777777777777';
+    const person = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode: null, address: null } });
+    const confirmed = ctx({ partyCodes: new Map(), partyNameCodes: new Map([[PARTY, 'KH_NVA']]) });
+    expect(purchaseServiceAmisVouchers(person, confirmed).blockers).toEqual([]);
+    expect(JSON.stringify(purchaseServiceAmisVouchers(person, confirmed))).toContain('KH_NVA');
+    // Not confirmed (a proposal is not a match): blocked as before. A confirmation for another party does not count. A party with no id cannot be named.
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: new Map(), partyNameCodes: new Map() })).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: new Map(), partyNameCodes: new Map([['88888888-8888-4888-8888-888888888888', 'KH_KHAC']]) })).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    const noId = purchase({ vendor: { name: 'Nguyễn Văn A', taxCode: null, address: null } });
+    expect(purchaseServiceAmisVouchers(noId, confirmed).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    // A tax code that is not 10 or 13 digits cannot be matched by it, so the party is looked at by name like one with none.
+    const short = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode: '12345', address: null } });
+    expect(purchaseServiceAmisVouchers(short, confirmed).blockers).toEqual([]);
+    // No check done: nothing is judged, as before.
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: null })).blockers).toEqual([]);
+  });
+
   it('names an item code the catalogue does not have, by line, once a check is done; with no check it judges nothing', () => {
     const checked = ctx({ itemCodes: new Set(['KHAC']) });
     expect(purchaseServiceAmisVouchers(purchase(), checked).blockers.map((b) => [b.code, b.lineNo])).toEqual([

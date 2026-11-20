@@ -2,7 +2,7 @@
 // The matching of a connection's vouchers against the firm's own MISA catalogue (#4112, S3a of #4103), pure: no database, no network. A party is looked up by its tax code ONLY (never by name), an item by its
 // exact code; one active catalogue entry is `matched`, none is `unknown`, several are `ambiguous` and nothing picks one. The catalogue's names, addresses and tax codes are read here and go no further: what a
 // caller keeps is the matched entry's code and id. The check itself (request, record, results) is misa-amis-match.ts.
-import type { MisaAmisMatchResult } from '@crove/kernel-contract';
+import { MISA_AMIS_CANDIDATE_NAME_MAX, type MisaAmisMatchResult } from '@crove/kernel-contract';
 
 /** A party's tax code as the catalogue and the vouchers compare it: digits only, 10 (a business) or 13 (a branch) of them; anything else cannot be matched. */
 export function normalizeTaxCode(raw: string | null | undefined): string | null {
@@ -15,6 +15,8 @@ export interface CatalogueParty {
   code: string;
   id: string | null;
   taxCode: string | null;
+  // The entry's name, held in the worker's memory for a name match (S3b, #4124) and kept only on a proposal row.
+  name: string | null;
   active: boolean;
 }
 export interface CatalogueItem {
@@ -28,12 +30,13 @@ const idOf = (value: unknown): string | null => (typeof value === 'string' && UU
 const codeOf = (value: unknown): string | null => (typeof value === 'string' && value.trim().length > 0 && value.trim().length <= 100 ? value.trim() : null);
 // MISA's `inactive` is "stopped being followed"; an entry that does not say it is inactive is active.
 const activeOf = (value: unknown): boolean => value !== true;
+const nameOf = (value: unknown): string | null => (typeof value === 'string' && value.trim().length > 0 ? value.trim() : null);
 
 /** The catalogue's party rows (get_dictionary data_type 1) as the matcher reads them; a row without a code cannot be matched to. */
 export function catalogueParties(rows: ReadonlyArray<Readonly<Record<string, unknown>>>): CatalogueParty[] {
   return rows.flatMap((row) => {
     const code = codeOf(row.account_object_code);
-    return code === null ? [] : [{ code, id: idOf(row.account_object_id), taxCode: normalizeTaxCode(typeof row.company_tax_code === 'string' ? row.company_tax_code : null), active: activeOf(row.inactive) }];
+    return code === null ? [] : [{ code, id: idOf(row.account_object_id), taxCode: normalizeTaxCode(typeof row.company_tax_code === 'string' ? row.company_tax_code : null), name: nameOf(row.account_object_name), active: activeOf(row.inactive) }];
   });
 }
 /** The catalogue's item rows (get_dictionary data_type 2). */
@@ -70,6 +73,55 @@ export function matchItems(wanted: Iterable<string>, catalogue: readonly Catalog
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Names (S3b, #4124). A party WITHOUT a tax code cannot be looked up by it, so it is looked up by name and the answer is a proposal a person confirms: never matched on its own. The comparison is of names the way a
+// person reads them the same (Unicode composed, lower case, one space between words); nothing looser: "Công ty A" and "Cong ty A" are two names, and a person decides.
+
+/** A name as the comparison reads it; null for a name too short to say anything (under three characters). */
+export function normalizeName(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  const name = raw.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
+  return name.length >= 3 ? name : null;
+}
+
+/** A party of Ludy with no tax code (its id and its name as Ludy has it) and what a check asks of the catalogue about it. */
+export interface WantedName {
+  partyId: string;
+  name: string;
+}
+
+/**
+ * Each wanted party against the ACTIVE catalogue entries of the same name: one is a `name_proposal` (the entry's code, id and name, kept on that row only), several are `ambiguous`, none says nothing (no row:
+ * the party stays blocked as one the catalogue does not have). A party a person already confirmed is never asked here (it is checked by `confirmedStillHold`).
+ */
+export function matchNames(wanted: readonly WantedName[], catalogue: readonly CatalogueParty[]): MisaAmisMatchResult[] {
+  const byName = new Map<string, CatalogueParty[]>();
+  for (const entry of catalogue) {
+    const key = entry.active ? normalizeName(entry.name) : null;
+    if (key !== null) byName.set(key, [...(byName.get(key) ?? []), entry]);
+  }
+  const results: MisaAmisMatchResult[] = [];
+  const seen = new Set<string>();
+  for (const { partyId, name } of [...wanted].sort((a, b) => a.partyId.localeCompare(b.partyId))) {
+    if (seen.has(partyId)) continue;
+    seen.add(partyId);
+    const key = normalizeName(name);
+    const found = key === null ? [] : (byName.get(key) ?? []);
+    const [only] = found;
+    if (found.length === 1 && only && only.name !== null) results.push({ kind: 'party_name', ref: partyId, state: 'name_proposal', code: only.code, entryId: only.id, candidateName: only.name.slice(0, MISA_AMIS_CANDIDATE_NAME_MAX) });
+    else if (found.length > 1) results.push({ kind: 'party_name', ref: partyId, state: 'ambiguous', code: null, entryId: null });
+  }
+  return results;
+}
+
+/** A name a person confirmed keeps standing only while its code is in the catalogue and active: `confirmed` (keep the row) or `unknown` (the row goes and the party is blocked again). */
+export function confirmedStillHold(confirmed: ReadonlyArray<{ partyId: string; code: string }>, catalogue: readonly CatalogueParty[]): MisaAmisMatchResult[] {
+  const active = new Set(catalogue.filter((e) => e.active).map((e) => e.code));
+  return [...confirmed]
+    .sort((a, b) => a.partyId.localeCompare(b.partyId))
+    .map(({ partyId, code }) => (active.has(code) ? { kind: 'party_name' as const, ref: partyId, state: 'confirmed' as const, code, entryId: null } : { kind: 'party_name' as const, ref: partyId, state: 'unknown' as const, code: null, entryId: null }));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Sent only fresh (#4124, S3b of #4103; the Accounting PO's M2 on #4128). A stored match is a view of the catalogue at the time of a check: before a person confirms a push the check must be this young, and
 // before the worker sends it reads the entries it relies on once more and refuses what changed in MISA since.
 
@@ -89,13 +141,24 @@ export interface StoredMatches {
   partyCodes: ReadonlyMap<string, string> | null;
   /** The item codes that matched; null when no check has been made. */
   itemCodes: ReadonlySet<string> | null;
+  /** A party's id to the code a person confirmed for it by name (S3b); absent or null when none. */
+  partyNameCodes?: ReadonlyMap<string, string> | null;
 }
 
 /** The stored matches a send relies on, to be re-read: the tax codes and item codes of the batch that a check matched. A reference that did not match is a blocker and is never sent, so it is not looked at. */
-export function relied(stored: StoredMatches, wanted: { taxCodes: readonly string[]; itemCodes: readonly string[] }): { taxCodes: string[]; itemCodes: string[] } {
+export function relied(
+  stored: StoredMatches,
+  wanted: { taxCodes: readonly string[]; itemCodes: readonly string[]; names?: readonly WantedName[] },
+): { taxCodes: string[]; itemCodes: string[]; confirmed: Array<{ partyId: string; code: string }> } {
+  const confirmed: Array<{ partyId: string; code: string }> = [];
+  for (const { partyId } of wanted.names ?? []) {
+    const code = stored.partyNameCodes?.get(partyId);
+    if (code !== undefined) confirmed.push({ partyId, code });
+  }
   return {
     taxCodes: wanted.taxCodes.filter((taxCode) => stored.partyCodes?.has(taxCode) === true),
     itemCodes: wanted.itemCodes.filter((code) => stored.itemCodes?.has(code) === true),
+    confirmed,
   };
 }
 
@@ -109,6 +172,11 @@ export function staleMatches(stored: StoredMatches, fresh: readonly MisaAmisMatc
   for (const code of stored.itemCodes ?? []) {
     const found = now.get(`item:${code}`);
     if (found !== undefined && found.state !== 'matched') return true;
+  }
+  // A name a person confirmed holds while its code is still in the catalogue and active.
+  for (const [partyId, code] of stored.partyNameCodes ?? []) {
+    const found = now.get(`party_name:${partyId}`);
+    if (found !== undefined && !(found.state === 'confirmed' && found.code === code)) return true;
   }
   return false;
 }

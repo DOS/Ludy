@@ -62,6 +62,8 @@ export interface AmisContext {
   defaultUnitName: string;
   /** Party tax code (digits only, see normalizeTaxCode) -> the party's code in AMIS; null when no check against the catalogue is done, which is not the same as "no match". */
   partyCodes: ReadonlyMap<string, string> | null;
+  /** A party of Ludy with no tax code, by its id, to the code a person confirmed for it by name (S3b, #4124); absent or null when none. */
+  partyNameCodes?: ReadonlyMap<string, string> | null;
   /** The item codes the catalogue has (active, exactly one entry); null when no check is done. A line whose item code is not in it is blocked (`item_code_unknown`). */
   itemCodes: ReadonlySet<string> | null;
 }
@@ -165,15 +167,15 @@ function vatFields(vat: MisaVatRate): Record<string, unknown> | null {
  * The AMIS party code of a party, by tax code; undefined when the dictionary says there is none; null when it was not read.
  * Before a catalogue check a party with no tax code (a private person) is null: it is sent by name and address without a code
  * and is no blocker (whether AMIS accepts that is UNCONFIRMED, see the top of this file). After a check it is undefined, a
- * blocker like any party the catalogue does not have: there is nothing to match it on, and matching it by name as a proposal
- * a person confirms is S3b (#4124), so until then the check does not let it through unjudged.
+ * blocker like any party the catalogue does not have, unless a person confirmed the catalogue entry a name match proposed for it
+ * (S3b, #4124): then it is that entry's code. A proposal not yet confirmed is a blocker too.
  */
 function partyCode(party: VoucherParty, ctx: AmisContext): string | null | undefined {
   if (ctx.partyCodes === null) return null;
-  if (party.taxCode === null) return undefined;
-  // The catalogue is matched on the tax code's digits: a tax code that is not 10 or 13 digits cannot be matched, so it is as unknown as one the catalogue does not have.
+  // The catalogue is matched on the tax code's digits: a tax code that is not 10 or 13 digits cannot be matched by it, so such a party is looked at by name like one with no tax code.
   const key = normalizeTaxCode(party.taxCode);
-  return key === null ? undefined : ctx.partyCodes.get(key);
+  if (key === null) return party.id ? ctx.partyNameCodes?.get(party.id) : undefined;
+  return ctx.partyCodes.get(key);
 }
 
 /** Whether the catalogue has this item code (true while no check is done: nothing is known against it). */
