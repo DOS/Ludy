@@ -199,13 +199,14 @@ describe('the product of a connection (#4111, S2 of #4103)', () => {
     expect(html).toContain('type="password"');
   });
 
-  it('shows an ASP connection with its product, its own test sentences and the note that sending is not there yet, and no preview or push panel', () => {
+  it('shows an ASP connection with its product, its own test sentences and the note that sending is not there yet, with the preview (where the check against the catalogue is asked) but no push of its own', () => {
     for (const state of ['wrong_credentials', 'unreachable'] as const) {
       const html = card('owner', { aspOffered: true, connections: [asp({ lastTestState: state, lastTestedAt: at })] });
       expect(html).toContain(en.misaAmisConnections.testStateAsp[state]);
       expect(html).not.toContain(en.misaAmisConnections.testState[state]);
       expect(html).toContain('data-testid="misa-asp-later"');
       expect(html).toContain(en.misaAmisConnections.aspLater);
+      expect(html).toContain('data-testid="misa-amis-preview"');
     }
     const html = card('owner', { aspOffered: true, connections: [asp()] });
     expect(html).toMatch(/data-testid="misa-amis-product"[^>]*>MISA ASP</);
@@ -215,13 +216,13 @@ describe('the product of a connection (#4111, S2 of #4103)', () => {
     expect(amis).toMatch(/data-testid="misa-amis-product"[^>]*>MISA AMIS Kế toán</);
   });
 
-  it('draws the preview and the push list for an ASP connection only where the push to ASP is switched on, and then not the note that sending is not there', () => {
+  it('draws the preview, where the catalogue check is asked, for an ASP connection whatever the push switch says, and the note that sending is not there only while the push to ASP is off', () => {
     const on = card('owner', { aspOffered: true, aspPushOffered: true, connections: [asp({ lastTestState: 'works', lastTestedAt: at })] });
     expect(on).toContain('data-testid="misa-amis-preview"');
     expect(on).not.toContain('data-testid="misa-asp-later"');
     // AMIS's push switch (pushOffered) does not turn ASP's on, and ASP's does not show on an AMIS connection.
     const off = card('owner', { aspOffered: true, connections: [asp({ lastTestState: 'works', lastTestedAt: at })] });
-    expect(off).not.toContain('data-testid="misa-amis-preview"');
+    expect(off).toContain('data-testid="misa-amis-preview"');
     expect(off).toContain('data-testid="misa-asp-later"');
     // What was pushed stays listed, and its rows settleable, whether the switch is on or off: an ASP row still `sent` has no polling to end it.
     expect(on).toContain('data-testid="misa-amis-pushes"');

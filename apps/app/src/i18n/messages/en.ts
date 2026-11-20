@@ -5560,7 +5560,7 @@ export const en = {
     connectTitleAsp: 'Connect MISA ASP',
     accessCodeAsp: 'Connection code from MISA ASP',
     accessCodeNoteAsp: 'The connection code is made in MISA ASP by someone with rights over the connection data. What you type is encrypted when it is saved and is never shown again. A legal entity connects to one MISA product only.',
-    aspLater: 'The MISA ASP connection works and can be tested. Sending vouchers to MISA ASP is not available yet; it comes in a later step.',
+    aspLater: 'The MISA ASP connection works and can be tested, and its vouchers can be checked against the MISA catalogue. Sending vouchers to MISA ASP is not available yet; it comes in a later step.',
     intro:
       'Connect the company\'s AMIS Kế toán data so that vouchers can later be sent to AMIS as requests to generate a voucher; your people in AMIS still make the voucher. You can test the connection (it only reads the company\'s information); no voucher is sent to AMIS yet.',
     off: 'The MISA AMIS connector is turned off in this system.',
@@ -7749,7 +7749,6 @@ export const en = {
     settleYes: 'Confirm',
     outcome: { in_amis: 'is in MISA', not_in_amis: 'is not in MISA' },
     checkFirst: 'Before sending, check against the MISA catalogue; the check must be from the last 15 minutes.',
-    checkLater: 'Sending to MISA ASP needs a check against the MISA ASP catalogue first. That check is not available yet, so this batch cannot be sent for now.',
     refusedNote: 'MISA\'s reason:',
     reasons: {
       MATCH_STALE: 'The MISA catalogue changed since the check; nothing was sent. Check against the catalogue again, then send again.',
