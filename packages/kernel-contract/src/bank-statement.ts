@@ -351,6 +351,25 @@ export const zBankFeedConnectTingee = z.strictObject({
 });
 export type BankFeedConnectTingee = z.infer<typeof zBankFeedConnectTingee>;
 
+// The webhook hook key of a bank feed connection (#4203, Tingee S3, ADR-0039 as amended): a provider that signs its notices with each customer's own secret posts them to an address that carries a key of the connection's
+// own. `hookSet` makes the hook or replaces its key (the old address stops at once) and answers the key ONCE: 128 random bits, 22 characters, the path to paste is /api/bank-feed/<provider>/webhook/<key>. Only its SHA-256
+// is kept. `hook` is the status, never the key.
+export const zBankFeedHookSet = z.strictObject({ connectionId: zId });
+export type BankFeedHookSet = z.infer<typeof zBankFeedHookSet>;
+export const BANK_FEED_HOOK_KEY_LENGTH = 22;
+export const zBankFeedHookCreated = z.strictObject({ provider: z.string().regex(/^bank_[a-z0-9_]{1,27}$/), key: z.string().length(BANK_FEED_HOOK_KEY_LENGTH).regex(/^[A-Za-z0-9_-]+$/), created: z.boolean() });
+export type BankFeedHookCreated = z.infer<typeof zBankFeedHookCreated>;
+export const zBankFeedHookStatus = z.strictObject({
+  exists: z.boolean(),
+  createdAt: z.string().nullable(),
+  rotatedAt: z.string().nullable(),
+  lastSeenAt: z.string().nullable(),
+  // Notices the worker refused in the current hour; ten stop the hook until it is rotated.
+  rejectedCount: z.number().int().min(0),
+  stopped: z.boolean(),
+});
+export type BankFeedHookStatus = z.infer<typeof zBankFeedHookStatus>;
+
 // Maps an account a bank feed connection reaches to one of the org's bank accounts in one legal entity (#2044).
 export const zBankFeedMap = z.strictObject({
   connectionId: zId,

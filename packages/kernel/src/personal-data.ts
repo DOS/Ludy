@@ -307,6 +307,13 @@ export const PERSONAL_DATA_COLUMNS = {
   // The preview of a column check on an unrecognised marketplace order report (#4036): at most 20 parsed lines (order no, line key, SKU, item name, variation, quantity, amount, status) a member looks at before
   // anything is saved. A line can carry a buyer's text when an unflagged column is mapped to a text field (the limit stated in #4178). An erasure deletes the check whose preview quotes the value (the file stays; the
   // person asks again); the preview is also deleted with its file, with the org, and by the nightly retention seven days after the check finished.
+  // The raw body of a bank feed provider's signed notice waiting for the worker (#4203, Tingee S3): the transfer content and the payer's name as the provider sent them. It is kept only until the worker verifies it (the claim
+  // deletes it), at most ten minutes whatever its state (the sweep), is never logged, is deleted by an erasure that its text mentions, and goes with the hook, the connection and the org.
+  'crove_finance.bank_feed_webhook_notice.body': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The raw body of a bank feed provider's signed notice, which carries the transfer content and the payer's name: kept only until the worker verifies it and at most ten minutes, deleted by an erasure whose value its text mentions, and with the connection and the org",
+  },
   'crove_finance.marketplace_column_check.preview': {
     kind: 'free_text',
     handling: 'erase',
@@ -1503,6 +1510,11 @@ export const personalDataErase = defineCommand({
          WHERE c.org_id = ${ctx.orgId}::uuid AND c.preview IS NOT NULL AND coalesce(${previewMatch}, false)
          RETURNING c.id`.execute(ctx.trx);
       add('crove_finance.marketplace_column_check.preview', previewRows.length);
+
+      // The raw body of a bank feed notice that waits for the worker (#4203): a notice whose text mentions the value is deleted (it is only a hint to pull, and lives ten minutes at most). Through the owner-only definer: the table has no login role grant.
+      const { rows: hookNotices } = await sql<{ rows: number }>`
+        SELECT crove_finance.personal_data_erase_bank_feed_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+      add('crove_finance.bank_feed_webhook_notice.body', Number(hookNotices[0]?.rows ?? 0));
 
       // Tasks that quote the person (#1961): the value is replaced in the title and the description, as the owner (an
       // owner's update passes the task guards, which hold agents; taint, lease, status and entity stay as they are, and

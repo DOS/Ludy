@@ -14,10 +14,11 @@
 // - finance.bank_feed.record_accounts: the accounts the provider lists for a connection, replacing the last listing;
 // - finance.bank_feed.record_pull: one page of a mapped account's transactions, stored as the entity's bank lines
 //   through the import's path (ingestFeedLines), and the cursor and sync time moved in the same transaction.
+import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
-import { isBankFeedProviderId, zBankFeedMap, zBankFeedRecordAccounts, zBankFeedRecordPull, zId, type BankFeedAccountView, type BankFeedConnectionView, type BankFeedListedAccount, type BankImportResult } from '@crove/kernel-contract';
+import { isBankFeedProviderId, zBankFeedHookSet, zBankFeedMap, zBankFeedRecordAccounts, zBankFeedRecordPull, zId, type BankFeedAccountView, type BankFeedHookCreated, type BankFeedHookStatus, type BankFeedConnectionView, type BankFeedListedAccount, type BankImportResult } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { accountNumberDigits, feedAccountDigits } from './account-number.ts';
 import { bankAccount, ingestFeedLines } from './bank.ts';
@@ -310,5 +311,50 @@ export const bankFeedRecordPull = defineCommand({
   },
 });
 
-export const bankFeedCommands = [bankFeedMap, bankFeedUnmap, bankFeedRecordAccounts, bankFeedRecordPull];
-export const bankFeedQueries = [bankFeedAccounts, bankFeedConnections, bankFeedListed, bankFeedPullDue, bankFeedConnection];
+// The webhook hook key of a connection (#4203, Tingee S3): 128 random bits as 22 base64url characters, shown once; the database keeps its SHA-256 only, in a definer-only table, through
+// crove_finance.bank_feed_hook_set (owners and admins, checked there too). A second call replaces the key, so the old address stops at once and a hook stopped by refused notices takes notices again.
+export const bankFeedHookKey = () => randomBytes(16).toString('base64url');
+export const bankFeedHookKeyHash = (key: string) => createHash('sha256').update(key, 'utf8').digest('hex');
+
+export const bankFeedHookSet = defineCommand({
+  name: 'finance.bank_feed.hook_set',
+  input: zBankFeedHookSet,
+  // A row of Crove that makes an address valid or stops the old one; it posts nothing, reaches no provider and moves no money. The key leaves only in the answer to the owner or admin: callers send no idempotency
+  // key, so no replay hands it out again, and the audit row keeps the input and a flag, never the key.
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  handler: async (ctx, input): Promise<BankFeedHookCreated> => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tạo được địa chỉ nhận thông báo của nguồn giao dịch');
+    const connection = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['provider', 'status'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .executeTakeFirst();
+    if (!connection || !isBankFeedProviderId(connection.provider)) throw new DomainError('BANK_FEED_NOT_FOUND', 404, 'Không tìm thấy kết nối nguồn giao dịch ngân hàng');
+    if (connection.status !== 'active') throw new DomainError('BANK_FEED_INACTIVE', 422, 'Kết nối nguồn giao dịch ngân hàng không còn hoạt động; hãy kết nối lại');
+    const key = bankFeedHookKey();
+    const { rows } = await sql<{ made: boolean }>`SELECT crove_finance.bank_feed_hook_set(${input.connectionId}::uuid, ${bankFeedHookKeyHash(key)}) AS made`.execute(ctx.trx);
+    const created = rows[0]?.made === true;
+    ctx.audit({ created });
+    return { provider: connection.provider, key, created };
+  },
+});
+
+export const bankFeedHook = defineQuery({
+  name: 'finance.bank_feed.hook',
+  input: zBankFeedHookSet,
+  access: MANAGERS,
+  handler: async (ctx, input): Promise<BankFeedHookStatus> => {
+    const { rows } = await sql<{ created_at: Date | string; rotated_at: Date | string | null; last_seen_at: Date | string | null; rejected_count: number; stopped: boolean }>`
+      SELECT created_at, rotated_at, last_seen_at, rejected_count, stopped FROM crove_finance.bank_feed_hook_status(${input.connectionId}::uuid)`.execute(ctx.trx);
+    const row = rows[0];
+    if (!row) return { exists: false, createdAt: null, rotatedAt: null, lastSeenAt: null, rejectedCount: 0, stopped: false };
+    const iso = (v: Date | string | null) => (v === null ? null : new Date(v).toISOString());
+    return { exists: true, createdAt: iso(row.created_at), rotatedAt: iso(row.rotated_at), lastSeenAt: iso(row.last_seen_at), rejectedCount: Number(row.rejected_count), stopped: row.stopped };
+  },
+});
+
+export const bankFeedCommands = [bankFeedMap, bankFeedUnmap, bankFeedRecordAccounts, bankFeedRecordPull, bankFeedHookSet];
+export const bankFeedQueries = [bankFeedAccounts, bankFeedConnections, bankFeedListed, bankFeedPullDue, bankFeedConnection, bankFeedHook];

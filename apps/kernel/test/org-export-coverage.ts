@@ -27,6 +27,8 @@ export const NOT_EXPORTED: Readonly<Record<string, string>> = {
   'crove_kernel.calendar_connection': "private to its member: a member's own connected calendar account is readable by that member alone",
   'crove_kernel.meeting_platform_connection': "private to its member: a member's own connected meeting platform account is readable by that member alone",
   'crove_crm.booking_feed': "a member's calendar feed token (hash): a credential",
+  'crove_finance.bank_feed_hook': "a bank feed connection's webhook hook key (hash): a credential, definer-only",
+  'crove_finance.bank_feed_webhook_notice': "a signed provider notice waiting for the worker (a raw body: personal data) and deleted within ten minutes: machinery, definer-only",
   // Credentials: sealed or hashed, useless outside this deployment.
   'crove_ads.ad_token_seal': 'sealed ad platform tokens: a credential',
   'crove_social.calendar_feed': "a calendar feed's token (hash): a credential, the row says nothing without it",
