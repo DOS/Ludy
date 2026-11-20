@@ -6,10 +6,11 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { notifyMembers, uploaderEntity } from '@crove/kernel';
-import { NOTE_TRASH_DAYS, zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { auditValue, NOTE_ATTACHMENT_EXTRACTED_TEXT_MAX, NOTE_TRASH_DAYS, zId } from '@crove/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { notesManifest } from './manifest.ts';
 
-function assertSystem(ctx: CommandContext): void {
+function assertSystem(ctx: Pick<CommandContext | QueryContext, 'actor'>): void {
   if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
 }
 
@@ -106,4 +107,62 @@ export const todoRemind = defineCommand({
   },
 });
 
-export const systemCommands = [trashEmpty, memberItemsPurge, todoRemind];
+export interface NoteAttachmentExtractSource {
+  id: string;
+  storageKey: string;
+  contentType: string;
+}
+
+export const attachmentExtractSource = defineQuery({
+  name: 'notes.attachment.extract_source',
+  input: z.strictObject({ attachmentId: zId }),
+  access: 'system',
+  handler: async (ctx, input): Promise<NoteAttachmentExtractSource | null> => {
+    assertSystem(ctx);
+    const { rows } = await sql<{ org_id: string; id: string; storage_key: string; content_type: string }>`
+      SELECT org_id, id, storage_key, content_type
+        FROM crove_notes.attachment_for_extract(${input.attachmentId}::uuid)
+    `.execute(ctx.trx);
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      id: row.id,
+      storageKey: row.storage_key,
+      contentType: row.content_type,
+    };
+  },
+});
+
+export const attachmentExtractRecord = defineCommand({
+  name: 'notes.attachment.extract_record',
+  input: z.strictObject({
+    attachmentId: zId,
+    status: z.enum(['done', 'skipped', 'failed']),
+    extractedText: z.string().max(NOTE_ATTACHMENT_EXTRACTED_TEXT_MAX).nullable(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'notes.attachment', id: input.attachmentId }),
+  handler: async (ctx, input): Promise<{ updated: boolean }> => {
+    assertSystem(ctx);
+    const { rows } = await sql<{ updated: boolean }>`
+      SELECT crove_notes.attachment_record_extract(
+        ${input.attachmentId}::uuid,
+        ${input.status}::text,
+        ${input.extractedText}::text
+      ) AS updated
+    `.execute(ctx.trx);
+    const updated = rows[0]?.updated === true;
+    ctx.audit({
+      attachmentId: input.attachmentId,
+      status: input.status,
+      extractedText: auditValue(notesManifest.tables.crove_notes.attachment, 'extracted_text', input.extractedText),
+      updated,
+    });
+    return { updated };
+  },
+});
+
+export const systemCommands = [trashEmpty, memberItemsPurge, todoRemind, attachmentExtractRecord];
+export const systemQueries = [attachmentExtractSource];

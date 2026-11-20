@@ -18,6 +18,7 @@ import { Runtime } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { aiRunFeature } from './fixtures/ai-run-feature.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -439,19 +440,169 @@ suite('private notes on PostgreSQL (#1671, ADR-0037)', () => {
   });
 
   it('keeps the worker definers to the worker login in the system context', async () => {
+    const sampleAttachmentId = randomUUID();
     const calls: Array<[string, unknown[]]> = [
       ['SELECT * FROM crove_notes.trash_due(now(), 10)', []],
       ['SELECT crove_notes.trash_empty(now())', []],
       ['SELECT crove_notes.member_items_purge($1::uuid)', [users.author]],
+      ['SELECT * FROM crove_notes.attachment_for_extract($1::uuid)', [sampleAttachmentId]],
+      ['SELECT crove_notes.attachment_record_extract($1::uuid, $2::text, $3::text)', [sampleAttachmentId, 'done', 'ok']],
+      ['SELECT * FROM crove_notes.attachment_blob_claim(10)', []],
+      ['SELECT crove_notes.attachment_blob_done(ARRAY[]::text[])', []],
+      ['SELECT * FROM crove_notes.attachment_extract_due(10)', []],
     ];
     for (const [text, values] of calls) {
       for (const actor of [author, member('an owner', () => users.owner), agentActor]) {
         expect(await outcome(run(actor, (c) => c.query(text, values))), `${actor.name}: ${text}`).toMatchObject({ ok: false, code: '42501' });
       }
     }
-    // The worker login outside the system context: the two that act on an org refuse.
-    for (const [text, values] of calls.slice(1)) {
+    // The worker login outside the system context: the org-scoped definers refuse.
+    for (const [text, values] of calls.slice(1, 5)) {
       expect(await outcome(inContext(workerUrl, async () => {}, (c) => c.query(text, values))), `no context: ${text}`).toMatchObject({ ok: false, code: '42501' });
+    }
+  });
+
+  it('isolates private note attachments across every non-author role, Member Vy, agents and system context, without touching crove_kernel.file (#3561)', async () => {
+    const privAtt = randomUUID();
+    const sharedAtt = randomUUID();
+    const privSha = '1'.repeat(64);
+    const sharedSha = '2'.repeat(64);
+    const vyOtherAgent = randomUUID();
+    const vyOtherRun = randomUUID();
+    const vyAuthorAgent = randomUUID();
+    const vyAuthorRun = randomUUID();
+    const filesBefore = (await admin((c) => c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.file WHERE org_id = $1', [orgId]))).rows[0]?.n ?? 0;
+
+    await admin(async (c) => {
+      const feat = await aiRunFeature(c);
+      const featSqlCols = feat.cols;
+      const featValsClause = feat.vals;
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by)
+         VALUES ($1, $2, 'kernel.member_vy', 'Vy member', 'member_vy', $3, $3),
+                ($1, $4, 'kernel.member_vy', 'Vy author', 'member_vy', $5, $5)`,
+        [orgId, vyOtherAgent, users.member, vyAuthorAgent, users.author],
+      );
+      await c.query(
+        `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, status, started_at, expires_at${featSqlCols})
+         VALUES ($1, $2, $3, 'notes', 'running', now(), now() + interval '1 hour'${featValsClause}),
+                ($1, $4, $5, 'notes', 'running', now(), now() + interval '1 hour'${featValsClause})`,
+        [orgId, vyOtherRun, vyOtherAgent, vyAuthorRun, vyAuthorAgent],
+      );
+      await c.query('COMMIT');
+      await c.query(
+        `INSERT INTO crove_notes.attachment (org_id, id, note_id, author_user_id, filename, content_type, size_bytes, sha256, storage_key, extracted_text, extract_status)
+         VALUES ($1, $2, $3, $4, 'hop-dong-rieng.pdf', 'application/pdf', 512, $5, $6, 'Biên bản đối soát ngân quỹ nội bộ', 'done'),
+                ($1, $7, $8, $4, 'tai-lieu-chung.pdf', 'application/pdf', 256, $9, $10, 'Lịch họp chung toàn công ty', 'done')`,
+        [
+          orgId,
+          privAtt,
+          notes.private,
+          users.author,
+          privSha,
+          `notes/${orgId}/${privAtt}`,
+          sharedAtt,
+          notes.shared,
+          sharedSha,
+          `notes/${orgId}/${sharedAtt}`,
+        ],
+      );
+    });
+
+    // The note search of notes.note.search: a note by its own words or by one of its attachments' (#3561).
+    const noteSearchSql = (q: string) =>
+      `SELECT n.id FROM crove_notes.note n WHERE n.search @@ crove_kernel.search_query('${q}')
+          OR EXISTS (SELECT 1 FROM crove_notes.attachment a WHERE a.org_id = n.org_id AND a.note_id = n.id AND a.search @@ crove_kernel.search_query('${q}'))`;
+    const memberVyOther: Actor = {
+      name: 'Member Vy of another member',
+      url: () => workerUrl,
+      enter: (c) => c.query('SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [orgId, vyOtherAgent, vyOtherRun]),
+    };
+    const memberVyAuthor: Actor = {
+      name: 'Member Vy of the author',
+      url: () => workerUrl,
+      enter: (c) => c.query('SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [orgId, vyAuthorAgent, vyAuthorRun]),
+    };
+
+    try {
+      const filesAfter = (await admin((c) => c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.file WHERE org_id = $1', [orgId]))).rows[0]?.n ?? 0;
+      expect(filesAfter, 'crove_kernel.file must stay untouched').toBe(filesBefore);
+
+      // Author reads both attachments and finds the private note via unaccented attachment extracted_text search.
+      const authorSeen = await run(author, async (c) => ({
+        ids: (await c.query<{ id: string }>('SELECT id FROM crove_notes.attachment ORDER BY id')).rows.map((r) => r.id),
+        bySearch: (await c.query<{ id: string }>(noteSearchSql('ngan quy noi bo'))).rows.map((r) => r.id),
+        byFilename: (await c.query<{ id: string }>(noteSearchSql('hop dong rieng'))).rows.map((r) => r.id),
+        // The note's own vector holds none of its attachments' words, so a Member Vy that reads the note learns none of them.
+        byNoteVector: (await c.query(`SELECT id FROM crove_notes.note WHERE search @@ crove_kernel.search_query('ngan quy noi bo')`)).rowCount,
+      }));
+      expect(authorSeen.ids).toEqual([privAtt, sharedAtt].sort());
+      expect(authorSeen.bySearch).toEqual([notes.private]);
+      expect(authorSeen.byFilename).toEqual([notes.private]);
+      expect(authorSeen.byNoteVector).toBe(0);
+
+      // Every non-author actor (and both Member Vy contexts) cannot read, probe by sha256, search, update or delete the private attachment.
+      const probes: Array<{ actor: Actor; readsSharedAttachment: boolean; canDeleteShared: boolean }> = [
+        ...others.map((o) => ({
+          actor: o.actor,
+          readsSharedAttachment: o.readsShared,
+          canDeleteShared: managers().includes(o.actor),
+        })),
+        { actor: memberVyOther, readsSharedAttachment: false, canDeleteShared: false },
+        { actor: memberVyAuthor, readsSharedAttachment: false, canDeleteShared: false },
+      ];
+
+      for (const { actor, readsSharedAttachment, canDeleteShared } of probes) {
+        const seen = await run(actor, async (c) => ({
+          ids: (await c.query<{ id: string }>('SELECT id FROM crove_notes.attachment')).rows.map((r) => r.id),
+          byId: (await c.query('SELECT id FROM crove_notes.attachment WHERE id = $1', [privAtt])).rowCount,
+          bySha: (await c.query('SELECT id FROM crove_notes.attachment WHERE sha256 = $1', [privSha])).rowCount,
+          byExtractedSearch: (await c.query(noteSearchSql('ngan quy noi bo'))).rowCount,
+          byFilenameSearch: (await c.query(noteSearchSql('hop dong rieng'))).rowCount,
+        }));
+        expect(seen.byId, `${actor.name} reading private attachment by id`).toBe(0);
+        expect(seen.bySha, `${actor.name} probing private attachment by sha256`).toBe(0);
+        expect(seen.byExtractedSearch, `${actor.name} searching private attachment extracted_text`).toBe(0);
+        expect(seen.byFilenameSearch, `${actor.name} searching private attachment filename`).toBe(0);
+        expect(seen.ids, `${actor.name} visible attachments`).toEqual(readsSharedAttachment ? [sharedAtt] : []);
+
+        // UPDATE privilege is revoked from crove_tenant and crove_worker.
+        const updated = await outcome(run(actor, (c) => c.query(`UPDATE crove_notes.attachment SET filename = 'hack.pdf' WHERE id = $1`, [privAtt])));
+        expect(updated.ok, `${actor.name} updating private attachment`).toBe(false);
+
+        const deletedPriv = await outcome(run(actor, (c) => c.query('DELETE FROM crove_notes.attachment WHERE id = $1', [privAtt])));
+        if (deletedPriv.ok) expect(deletedPriv.value.rowCount, `${actor.name} deleting private attachment`).toBe(0);
+        else expect(deletedPriv, `${actor.name} deleting private attachment`).toMatchObject({ code: '42501' });
+
+        const sweptDelete = await outcome(run(actor, (c) => c.query('DELETE FROM crove_notes.attachment')));
+        if (sweptDelete.ok) expect(sweptDelete.value.rowCount, `${actor.name} sweeping attachment delete`).toBe(canDeleteShared ? 1 : 0);
+        else expect(sweptDelete, `${actor.name} sweeping attachment delete`).toMatchObject({ code: '42501' });
+
+        const forgedInsert = await outcome(
+          run(actor, (c) =>
+            c.query(
+              `INSERT INTO crove_notes.attachment (org_id, id, note_id, author_user_id, filename, content_type, size_bytes, sha256, storage_key)
+               VALUES ($1, $2, $3, $4, 'gia.pdf', 'application/pdf', 10, $5, $6)`,
+              [orgId, randomUUID(), notes.private, users.author, '3'.repeat(64), `notes/${orgId}/${randomUUID()}`],
+            ),
+          ),
+        );
+        expect(forgedInsert, `${actor.name} inserting into private note`).toMatchObject({ ok: false, code: '42501' });
+      }
+    } finally {
+      await admin(async (c) => {
+        await c.query('DELETE FROM crove_notes.attachment WHERE org_id = $1 AND id = ANY($2)', [orgId, [privAtt, sharedAtt]]);
+        await c.query('DELETE FROM crove_notes.attachment_blob_doomed WHERE storage_key = ANY($1)', [
+          [`notes/${orgId}/${privAtt}`, `notes/${orgId}/${sharedAtt}`],
+        ]);
+        await c.query('BEGIN');
+        await c.query('SET LOCAL session_replication_role = replica');
+        await c.query('DELETE FROM crove_kernel.ai_run WHERE org_id = $1 AND id = ANY($2)', [orgId, [vyOtherRun, vyAuthorRun]]);
+        await c.query('DELETE FROM crove_kernel.agent WHERE org_id = $1 AND id = ANY($2)', [orgId, [vyOtherAgent, vyAuthorAgent]]);
+        await c.query('COMMIT');
+      });
     }
   });
 

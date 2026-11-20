@@ -24,6 +24,7 @@ import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
+import { NoteAttachments, useNoteAttachmentUploader } from '../components/note-attachments.tsx';
 import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
 import { NoteBacklinks, NoteNotebookPicker, NoteWikiAutocomplete, NotebooksSidebar } from '../components/note-notebooks.tsx';
 import { NoteTaskProposals } from '../components/note-task-proposals.tsx';
@@ -141,6 +142,7 @@ function Editor({
   const inTrash = note.deletedAt !== null;
   const editable = note.mine && writer && !inTrash;
   const canMakeTodo = writer && !inTrash;
+  const attachmentUploader = useNoteAttachmentUploader({ noteId: note.id, slug, enabled: editable && !locked });
 
   // A change made elsewhere (another tab, the stream's refetch) replaces the text while nothing waits to save.
   useEffect(() => {
@@ -490,6 +492,7 @@ function Editor({
                 aria-controls={wikiOpen !== null ? wikiListboxId : undefined}
                 aria-expanded={wikiOpen !== null ? true : undefined}
                 aria-activedescendant={wikiOpen !== null && wikiFiltered.length > 0 ? `${wikiListboxId}-opt-${safeWikiIndex}` : undefined}
+                onPaste={attachmentUploader.onEditorPaste}
                 onChange={(e) => {
                   const nextPos = e.target.selectionStart ?? e.target.value.length;
                   setCursorPos(nextPos);
@@ -591,6 +594,16 @@ function Editor({
       )}
       {todoLineError && <ErrorText>{todoLineError}</ErrorText>}
       {makeTodo.error && <ErrorText>{errorMessage(makeTodo.error)}</ErrorText>}
+
+      {!inTrash && (
+        <NoteAttachments
+          attachments={note.attachments ?? []}
+          slug={slug}
+          canUpload={editable && !locked}
+          canDelete={mayManage && !locked}
+          uploader={attachmentUploader}
+        />
+      )}
 
       <NoteLinks
         links={note.links}

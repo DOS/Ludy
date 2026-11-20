@@ -58,7 +58,7 @@ import { meetingPlatformRefreshCommand } from './meeting-platform-credential.ts'
 import { MEETINGS_IMPORT_SWEEP_CRON, MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS, runMeetingsImportSweep } from './meetings-import-sweep.ts';
 import { CHAT_JOB_EXPIRE_SECONDS, CHAT_RETRY_DELAY_SECONDS, CHAT_RETRY_LIMIT, runMeetingChat, type ChatJob } from './meeting-chat-job.ts';
 import { MEETING_CHAT_SWEEP_CRON, MEETING_CHAT_SWEEP_EXPIRE_SECONDS, runMeetingChatSweep } from './meeting-chat-sweep.ts';
-import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
+import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNoteAttachmentExtract, queueNotesMemberPurge, requestDueNoteAttachmentExtracts, runNoteAttachmentExtract, runNotesMemberPurge, sweepNoteAttachmentBlobs, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesAttachmentExtractJob, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { SIGN_CLEANUP_CRON, SIGN_EXPIRE_SWEEP_CRON, SIGN_JOB_RETRY_LIMIT, isSignTemplateInspectJob, runSignPdfInspectJob, runSignPdfSealJob, sweepSignCleanup, sweepSignExpire, sweepSignPendingWork, type SignEnvelopeJob, type SignPdfInspectJob, type SignTemplateInspectJob } from './sign-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
@@ -1327,14 +1327,34 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // Then the former members whose removal queued no purge (#1733).
       const purged = await sweepNotesFormerMembers({ runtime: deps.runtime, workerDb: deps.workerDb });
       if (purged > 0) console.log(`[notes-member-purge] swept ${purged}`);
+      await sweepNoteAttachmentBlobs({ workerDb: deps.workerDb, store: deps.store, force: true });
     });
     await boss.schedule(QUEUES.notesTrash, NOTES_TRASH_CRON, null, { tz: NOTES_TRASH_TZ, missed: 'once' });
     // To-do reminders (#1675): every 5 minutes; a missed tick needs no catching up, the next one claims what is due.
     await boss.work(QUEUES.notesRemind, { batchSize: 1 }, async () => {
       const sent = await sweepNotesReminders({ runtime: deps.runtime, workerDb: deps.workerDb });
       if (sent > 0) console.log(`[notes-remind] sent ${sent}`);
+      // Attachments still waiting for their text (#3561), asked for again.
+      const asked = await requestDueNoteAttachmentExtracts({ runtime: deps.runtime, workerDb: deps.workerDb, boss });
+      if (asked > 0) console.log(`[notes-attachment-extract] asked again for ${asked}`);
     });
     await boss.schedule(QUEUES.notesRemind, NOTES_REMIND_CRON, null, { tz: NOTES_TRASH_TZ });
+    const notesExtractConcurrency = extractWorkers(deps.extract);
+    await boss.work<NotesAttachmentExtractJob>(
+      QUEUES.notesAttachmentExtract,
+      { batchSize: 1, localConcurrency: notesExtractConcurrency, pollingIntervalSeconds: EXTRACT_POLL_SECONDS },
+      async ([job]) => {
+        if (!job) return;
+        const done = await runNoteAttachmentExtract(
+          { runtime: deps.runtime, store: deps.store, extract: deps.extract },
+          job.data,
+          job.retryCount,
+        );
+        if (done.status !== 'skipped_not_pending' && done.status !== 'app_off') {
+          console.log(`[notes-attachment-extract] ${job.data.attachmentId.slice(0, 8)}: ${done.status}`);
+        }
+      },
+    );
   } else {
     // The member purges stay queued (they carry whose notes to purge) for when notes is installed again.
     await dropCron(QUEUES.notesTrash);
@@ -2867,6 +2887,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               }
               // A member who left (#1671): their private notes are removed 30 days later, beside the rest.
               if (notes) await queueNotesMemberPurge(boss, row);
+              if (notes && row.type === 'notes.attachment.extract_queued') {
+                await queueNoteAttachmentExtract(boss, row);
+              }
               if (sign && row.type === 'sign.envelope.inspect_queued') {
                 await enqueueSignInspect(boss, row.org_id, String(row.payload.envelopeId));
               }
@@ -3376,6 +3399,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (deps.conversationWriter) await requestDueConversationDrafts({ runtime: deps.runtime, workerDb: deps.workerDb });
       // The blobs whose images are gone (an erased customer, a purged thread, a removed message): deleted from the store, in every deployment.
       await sweepConversationBlobs({ workerDb: deps.workerDb, store: deps.store });
+      // Doomed note attachment blobs across all deletion paths (delete, trash_empty, member_items_purge, PDPL erase, org_purge): swept in every deployment.
+      await sweepNoteAttachmentBlobs({ workerDb: deps.workerDb, store: deps.store });
     } catch (error) {
       console.error('[relay]', error);
     } finally {
