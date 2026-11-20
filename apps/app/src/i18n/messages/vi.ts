@@ -7666,6 +7666,7 @@ export const vi = {
     defaultSave: 'Lưu làm mặc định',
     defaultClear: 'Bỏ mã mặc định',
     salesItem: 'Mã hàng bán trong AMIS',
+    salesStock: 'Mã kho xuất của dòng bán hàng (MISA ASP)',
     purposeLabel: 'Mục đích mua vào',
     purpose: {
       '1': 'Dùng riêng cho sản xuất kinh doanh chịu thuế',
@@ -14793,7 +14794,7 @@ export const vi = {
         list: 'Xem các kết nối MISA AMIS',
         record_test: 'Ghi kết quả kiểm tra kết nối MISA AMIS',
         request_test: 'Yêu cầu kiểm tra kết nối MISA AMIS',
-        set_default_item: 'Đặt mã mặt hàng mặc định của kết nối MISA',
+        set_default_item: 'Đặt mã mặt hàng hoặc kho bán hàng mặc định của kết nối MISA',
         target: 'Kiểm tra pháp nhân của kết nối MISA AMIS',
         test_target: 'Lấy thông tin kết nối MISA AMIS để kiểm tra',
         unlink: 'Ngắt kết nối MISA AMIS',

@@ -37,11 +37,14 @@ export function MisaAmisPreviewPanel({
   push,
   checkConnectionId,
   defaults,
+  product,
 }: {
   legalEntityId: string;
   push?: { connectionId: string; offer: PushOffer };
   checkConnectionId?: string;
-  defaults?: { service: string | null; sales: string | null };
+  defaults?: { service: string | null; sales: string | null; salesStock?: string | null };
+  /** MISA ASP (#4125): its sales lines leave a stock, which the connection keeps (not part of the ask: the server reads the kept one). */
+  product?: 'amis' | 'asp';
 }) {
   const t = useTranslations('misaAmisPreview');
   const lang = useLocale() === 'en' ? 'en' : 'vi';
@@ -50,6 +53,7 @@ export function MisaAmisPreviewPanel({
   const [to, setTo] = useState('');
   const [serviceItemCode, setServiceItemCode] = useState(defaults?.service ?? '');
   const [salesItemCode, setSalesItemCode] = useState(defaults?.sales ?? '');
+  const [salesStockCode, setSalesStockCode] = useState(defaults?.salesStock ?? '');
   const [purpose, setPurpose] = useState<Purpose>('1');
   const id = useId();
   const asked = `${kind}|${from}|${to}|${serviceItemCode}|${salesItemCode}|${purpose}|${legalEntityId}`;
@@ -167,6 +171,15 @@ export function MisaAmisPreviewPanel({
             </label>
             <Input id={`${id}-sales`} className="min-w-40" maxLength={50} autoComplete="off" value={salesItemCode} onChange={(e) => setSalesItemCode(e.target.value)} />
             {push && <MisaAmisDefaultItem connectionId={push.connectionId} role="sales" typed={salesItemCode} saved={defaults?.sales ?? null} canManage={checkConnectionId !== undefined} />}
+          </div>
+        )}
+        {kind === 'sales' && product === 'asp' && push && (
+          <div className="flex flex-col gap-1">
+            <label htmlFor={`${id}-sales-stock`} className="text-xs text-muted-foreground">
+              {t('salesStock')}
+            </label>
+            <Input id={`${id}-sales-stock`} className="min-w-40" maxLength={50} autoComplete="off" value={salesStockCode} onChange={(e) => setSalesStockCode(e.target.value)} />
+            <MisaAmisDefaultItem connectionId={push.connectionId} role="sales_stock" typed={salesStockCode} saved={defaults?.salesStock ?? null} canManage={checkConnectionId !== undefined} />
           </div>
         )}
         {(kind === 'purchase_services' || kind === 'purchase_goods' || kind === 'cash_payment' || kind === 'bank_debit') && (

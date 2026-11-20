@@ -611,6 +611,28 @@ suite('MISA AMIS connections (#3875)', () => {
     await expect(call('matches/check', owner, { id: String(asp?.id).toUpperCase(), ask: askOf(asp) }, aspApp)).resolves.toMatchObject({ status: 200, body: { queued: false, running: true } });
   });
 
+  it('keeps the default stock of an ASP connection for its sales lines (#4125): typed, owner or admin only, refused for AMIS, bounded in the table, and handed to the check with the connection', async () => {
+    const [asp] = await rows<{ id: string }>("SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND product = 'asp' ORDER BY created_at LIMIT 1", [orgId]);
+    const [amis] = await rows<{ id: string }>("SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND product = 'amis' ORDER BY created_at LIMIT 1", [orgId]);
+    const aspId = String(asp?.id);
+    const stockOf = async (id: string) => ((await call('connections/list', owner)).body as Array<{ id: string; defaultSalesStockCode?: string | null }>).find((c) => c.id === id)?.defaultSalesStockCode;
+    expect(await call('connections/setDefaultItem', owner, { id: aspId, role: 'sales_stock', code: ' KHO1 ' })).toMatchObject({ status: 200, body: { saved: true } });
+    expect(await stockOf(aspId)).toBe('KHO1');
+    // The worker is handed it with the waiting check, for an ASP connection only.
+    await call('matches/check', owner, { id: aspId, ask: { kind: 'sales', legalEntityId: String((await rows<{ legal_entity_id: string }>('SELECT legal_entity_id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, aspId]))[0]?.legal_entity_id) } }, aspApp);
+    expect(await worker.query('finance.misa_amis_match.check_target', { id: aspId }, { actor: system, orgId })).toMatchObject({ action: 'check', defaultSalesStockCode: 'KHO1' });
+    // Owner or admin only; a member and a viewer are refused.
+    for (const who of [member, viewer]) expect(await call('connections/setDefaultItem', who, { id: aspId, role: 'sales_stock', code: 'KHO2' })).toMatchObject({ status: 403 });
+    // An AMIS connection keeps none (its sales lines leave no stock), and clearing one is always allowed.
+    expect(await call('connections/setDefaultItem', owner, { id: String(amis?.id), role: 'sales_stock', code: 'KHO1' })).toMatchObject({ status: 422, body: { code: 'MISA_AMIS_STOCK_NOT_ASP' } });
+    expect(await call('connections/setDefaultItem', owner, { id: String(amis?.id), role: 'sales_stock', code: null })).toMatchObject({ status: 200 });
+    // The table holds the bound and the product too.
+    await expect(rows('UPDATE crove_finance.misa_amis_connection SET default_sales_stock_code = $3 WHERE org_id = $1 AND id = $2', [orgId, aspId, 'x'.repeat(51)])).rejects.toThrow(/misa_amis_connection_default_stock_ck/);
+    await expect(rows("UPDATE crove_finance.misa_amis_connection SET default_sales_stock_code = 'KHO1' WHERE org_id = $1 AND id = $2", [orgId, String(amis?.id)])).rejects.toThrow(/misa_amis_connection_default_stock_ck/);
+    expect(await call('connections/setDefaultItem', owner, { id: aspId, role: 'sales_stock', code: null })).toMatchObject({ status: 200 });
+    expect(await stockOf(aspId)).toBeNull();
+  });
+
   // The insert guard fails closed and cannot be skipped (#4132, two LOW items of the security review of #4131).
   it('files a connection only when the channel connection of its product is found, so a channel row the writer cannot see is refused, and the guard fires in replica mode too', async () => {
     const entity = await newEntity('Chi nhánh guard kín');

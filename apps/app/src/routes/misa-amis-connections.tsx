@@ -111,7 +111,7 @@ function ConnectionItem({ connection, entities, canManage, pushOffered }: { conn
       {/* The preview and the check against the MISA catalogue belong to a connection of either product (#4152): the check reads the catalogue with the connection's own client, whatever the push switch says, so
           an ASP connection can be checked before the push to ASP is ever switched on (MISA_ASP_PUSH, #4113). The send button follows `pushOffered`, the switch of the connection's own product. */}
       {connection.status === 'active' && (
-        <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} {...(canManage ? { checkConnectionId: connection.id } : {})} defaults={{ service: connection.defaultServiceItemCode ?? null, sales: connection.defaultSalesItemCode ?? null }} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }) }} />
+        <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} {...(canManage ? { checkConnectionId: connection.id } : {})} product={connection.product} defaults={{ service: connection.defaultServiceItemCode ?? null, sales: connection.defaultSalesItemCode ?? null, salesStock: connection.defaultSalesStockCode ?? null }} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }) }} />
       )}
       {/* What was pushed stays readable and settleable whatever the switch says (the routes are not gated by it): an ASP row still `sent` when the push is switched off has no result polling to end it, only the callback or this. */}
       {connection.status === 'active' && <MisaAmisPushList connectionId={connection.id} canManage={canManage} />}
