@@ -4,6 +4,7 @@
 // exists, nobody who is a member or a viewer), one per proposal whatever the passes, none for a refused call (the cap), none left over for a decided proposal, and no text of the call in it.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sweepMcpProposalNotices, upsertIdentity, type NotificationItem } from '@crove/kernel';
 import { ADMIN, startHarness, type Harness } from './engage-proposals-harness.ts';
@@ -109,6 +110,26 @@ suite('the notice of an AI coworker\'s proposal (#4180)', () => {
     await h.reject(quick.proposalId, admin);
     expect(await pass()).toBe(0);
     expect(await rows(quick.proposalId)).toEqual([]);
+  });
+
+  it('never keeps a stamp a sealed insert brought: the database starts every row of a grant not told, so a row cannot silence its own notice', async () => {
+    const { actor } = await h.grant();
+    const made = await h.propose(actor, REPLY, reply());
+    // The same row inserted again with the stamp set, as a writer that could set it would (the test's own login, so only the trigger is in the way).
+    const copy = randomUUID();
+    const c = new pg.Client({ connectionString: h.adminUrl });
+    await c.connect();
+    try {
+      await c.query('CREATE TEMP TABLE one AS SELECT * FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [h.orgId, made.proposalId]);
+      await c.query('UPDATE one SET id = $1, approvers_told_at = now()', [copy]);
+      await c.query('INSERT INTO crove_kernel.proposal SELECT * FROM one');
+    } finally {
+      await c.end();
+    }
+    expect(await told(copy)).toBeNull();
+    expect(await pass()).toBe(2);
+    expect(await told(copy)).not.toBeNull();
+    expect((await rows(copy)).length).toBeGreaterThan(0);
   });
 
   it('honours the kind the person turned off, and a refused call (the cap) makes no notification', async () => {
