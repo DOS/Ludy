@@ -95,6 +95,8 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
+  '/api/bank-feed/:provider/webhook/:hookKey':
+    "a bank feed provider's signed notice at the address of one connection (Tingee S3 of #2045, #4203, ADR-0039): the hook key in the path is looked up by its SHA-256 before anything is stored, the per-address limit and the 16 KB cap run first, and the worker verifies the provider's signature with the connection's sealed secret",
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
