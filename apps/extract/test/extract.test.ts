@@ -121,19 +121,28 @@ describe('crove-extract HTTP service', () => {
     expect(result.email.references).toEqual(['<r1@mau.test>', '<p1@mau.test>', '<p2@mau.test>']);
   });
 
-  it('reads a commented Precedence value, and sees a From that names more than one mailbox', async () => {
-    const mail = (extra: string[]) => ['To: x@in.test', 'Subject: Hoi gia', 'Message-ID: <a4@mau.test>', ...extra, 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Xin chao'].join('\r\n');
-    const read = async (extra: string[]) => {
-      const result = await answer(await post(createExtractApp(), 'mime', encode(mail(extra))));
-      if (!result.ok || result.kind !== 'mime') throw new Error(`unexpected ${JSON.stringify(result)}`);
-      return result.email;
-    };
-    expect((await read(['From: a@mau.test', 'Precedence: bulk (mailer)'])).automated).toBe(true);
-    expect((await read(['From: a@mau.test', 'Precedence: first-class'])).automated).toBe(false);
-    expect((await read(['From: a@x.test, b@y.test'])).multipleFrom).toBe(true);
-    expect((await read(['From: a@x.test', 'From: b@y.test'])).multipleFrom).toBe(true);
-    expect((await read(['From: "Hoa, Chi" <a@x.test>'])).multipleFrom).toBe(false);
-    expect((await read(['From: Hoa Chi <a@x.test> (a, comment)'])).multipleFrom).toBe(false);
+  // One case per mail: each read starts a parser process of its own (about half a second), so six reads in one case came to
+  // about three seconds on an idle machine and passed the 5 s limit under CI load (#4151). The assertions are the same.
+  const mailWith = (extra: string[]) => ['To: x@in.test', 'Subject: Hoi gia', 'Message-ID: <a4@mau.test>', ...extra, 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Xin chao'].join('\r\n');
+  const readMail = async (extra: string[]) => {
+    const result = await answer(await post(createExtractApp(), 'mime', encode(mailWith(extra))));
+    if (!result.ok || result.kind !== 'mime') throw new Error(`unexpected ${JSON.stringify(result)}`);
+    return result.email;
+  };
+  it.each([
+    { precedence: 'bulk (mailer)', automated: true },
+    { precedence: 'first-class', automated: false },
+  ])('reads a commented Precedence value: $precedence', async ({ precedence, automated }) => {
+    expect((await readMail(['From: a@mau.test', `Precedence: ${precedence}`])).automated).toBe(automated);
+  });
+
+  it.each([
+    { name: 'two mailboxes in one From', from: ['From: a@x.test, b@y.test'], multiple: true },
+    { name: 'two From headers', from: ['From: a@x.test', 'From: b@y.test'], multiple: true },
+    { name: 'a comma inside a quoted display name', from: ['From: "Hoa, Chi" <a@x.test>'], multiple: false },
+    { name: 'a comma inside a comment', from: ['From: Hoa Chi <a@x.test> (a, comment)'], multiple: false },
+  ])('sees a From that names more than one mailbox: $name', async ({ from, multiple }) => {
+    expect((await readMail(from)).multipleFrom).toBe(multiple);
   });
 
   it('never cuts a long Authentication-Results header: it is kept as its authserv-id and none', async () => {
