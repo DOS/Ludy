@@ -12,6 +12,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage } from '../lib/api.ts';
+import { MisaAmisNameProposals } from './misa-amis-name-proposals.tsx';
 import { MisaAmisPushConfirm } from './misa-amis-push-panel.tsx';
 import { CHECK_POLL_MS, CHECK_WAIT_MS, checkTick, pickResult } from '../lib/misa-amis-match-check.ts';
 import type { PushOffer } from '../lib/misa-amis-push.ts';
@@ -29,7 +30,7 @@ function kindsOnList(result: MisaAmisPreview): Set<string> {
 
 // `push` is given where the connection card can offer to send what the preview shows (an owner or admin, the push on, the connection tested): the preview itself stays a read.
 // `checkConnectionId` is given only to an owner or admin (the route refuses anyone else): it shows the button that asks for the check.
-export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }: { legalEntityId: string; push?: { connectionId: string; offer: PushOffer; checkAvailable?: boolean }; checkConnectionId?: string }) {
+export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }: { legalEntityId: string; push?: { connectionId: string; offer: PushOffer }; checkConnectionId?: string }) {
   const t = useTranslations('misaAmisPreview');
   const lang = useLocale() === 'en' ? 'en' : 'vi';
   const [kind, setKind] = useState<MisaAmisKind>(MISA_AMIS_KINDS[0]);
@@ -40,6 +41,8 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
   const [purpose, setPurpose] = useState<Purpose>('1');
   const id = useId();
   const asked = `${kind}|${from}|${to}|${serviceItemCode}|${salesItemCode}|${purpose}|${legalEntityId}`;
+  const askedRef = useRef(asked);
+  askedRef.current = asked;
   const ask = {
     kind,
     legalEntityId,
@@ -186,7 +189,27 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
       )}
       {result && <MisaAmisPreviewResult result={result} notes={notes.data ?? null} />}
       {result && checkConnectionId && <MisaAmisCheckButton state={result.matchCheck.state} pending={check.isPending} waiting={waiting} slow={slow && result.matchCheck.state === 'requested'} error={check.error} onAsk={askCheck} />}
-      {result && push && <MisaAmisPushConfirm key={`${runs}:${result.digest}`} result={result} ask={ask} connectionId={push.connectionId} offer={push.offer} checkAvailable={push.checkAvailable ?? true} />}
+      {result && checkConnectionId && (
+        <MisaAmisNameProposals
+          key={result.matchCheck.checkedAt ?? 'none'}
+          connectionId={checkConnectionId}
+          onDecided={() => {
+            // The refresh is labelled with the ask it is sent with, read when it starts, not the one a render before captured.
+            // A promise of its own, so a preview the person started meanwhile keeps its own completion handler (a per-call callback of `mutate` runs only for the latest call); an answer for an ask that is no longer on screen is dropped.
+            const startedFor = askedRef.current;
+            preview.mutateAsync(undefined).then(
+              (data) => {
+                if (askedRef.current !== startedFor) return;
+                setAnsweredFor(startedFor);
+                setLast({ asked: startedFor, data });
+                setRuns((n) => n + 1);
+              },
+              () => undefined, // the error is on screen through `preview.error`
+            );
+          }}
+        />
+      )}
+      {result && push && <MisaAmisPushConfirm key={`${runs}:${result.digest}`} result={result} ask={ask} connectionId={push.connectionId} offer={push.offer} />}
     </details>
   );
 }

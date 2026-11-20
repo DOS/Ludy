@@ -457,6 +457,8 @@ const MARKETPLACE_POLL_CRON = '*/15 * * * *';
 const MARKETPLACE_POLL_RETRY_LIMIT = 3;
 // A MISA AMIS connection's test (#3885): queued by the relay when an owner or admin asks, nothing else queues it. The job records its own outcomes, so a retry is for a database failure only.
 const MISA_AMIS_TEST_RETRY_LIMIT = 2;
+// How many more times a catalogue check runs in the same job when its record was dropped because the request was filed again meanwhile (#4124).
+const MISA_AMIS_MATCH_SUPERSEDED_RUNS = 2;
 // A push run that fails is tried again with backoff; rows begun and never answered are asked about, never sent twice (the ledger and the table's states say so).
 const MISA_AMIS_PUSH_RETRY_LIMIT = 2;
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
@@ -1638,13 +1640,20 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     });
   }
 
-  // MISA AMIS Kế toán (#4112, S3a of #4103): the check of a connection's vouchers against the firm's catalogue, queued by the relay below when an owner or admin asks. It reads catalogue pages in memory and
-  // records only what it matched.
-  if (finance && misaAmisClient && marketplaceBroker) {
+  // MISA AMIS Kế toán (#4112, S3a of #4103) and MISA ASP (#4152): the check of a connection's vouchers against the firm's catalogue, queued by the relay below when an owner or admin asks. It reads catalogue
+  // pages in memory with the client of the connection's product and records only what it matched; a product the deployment holds no ClientID for is left alone.
+  if (finance && (misaAmisClient || misaAspClient) && marketplaceBroker) {
     await boss.work<MisaAmisMatchJob>(QUEUES.misaAmisMatch, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
-      const done = await runMisaAmisMatch({ runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient }, job.data);
+      const matchDeps = { runtime: deps.runtime, broker: marketplaceBroker, client: misaAmisClient ?? null, aspClient: misaAspClient ?? null };
+      let done = await runMisaAmisMatch(matchDeps, job.data);
+      // A record the request time did not match was dropped: the request was filed again while this run read the catalogue, and the new one has no job of its own (this run holds the key). Run again, a few times at most.
+      for (let again = 0; again < MISA_AMIS_MATCH_SUPERSEDED_RUNS && 'superseded' in done && done.superseded; again++) {
+        done = await runMisaAmisMatch(matchDeps, job.data);
+      }
       console.log(`[misa-amis] match ${job.data.connectionId.slice(0, 8)}: ${done.state}`);
+      // Still superseded after the runs above (the request was filed again every time): fail the job so the queue runs it again after its retry delay, instead of leaving the check waiting.
+      if ('superseded' in done && done.superseded) throw new Error('misa-amis match: the request was filed again during every run');
     });
   }
 
@@ -2878,8 +2887,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   retryBackoff: true,
                 });
               }
-              // An owner or admin asked for the check of a MISA AMIS connection's vouchers against the firm's catalogue (#4112): its job reads the catalogue in memory and records what it matched. Ids only in the job.
-              if (finance && deps.channels?.misaAmis && deps.channels.broker && row.type === 'finance.misa_amis_match.check_requested') {
+              // An owner or admin asked for the check of a MISA connection's vouchers against the firm's catalogue (#4112, #4152): its job reads the catalogue in memory with the client of the connection's product and
+              // records what it matched. Ids only in the job.
+              if (finance && (deps.channels?.misaAmis || deps.channels?.misaAsp) && deps.channels.broker && row.type === 'finance.misa_amis_match.check_requested') {
                 const connectionId = String(row.payload.connection_id);
                 await boss.send(QUEUES.misaAmisMatch, { orgId: row.org_id, connectionId } satisfies MisaAmisMatchJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.misaAmisMatch, connectionId),

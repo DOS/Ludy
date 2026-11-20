@@ -51,7 +51,7 @@ export const financeManifest = defineModule({
       misa_amis_callback_pending: columns(['seq', 'org_refid', 'voucher_type', 'org_company_code', 'success', 'error_code', 'received_at', 'claimed_at', 'product'], { error_message: 'sensitive' }),
       misa_amis_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'org_company_code', 'last_test_state', 'last_tested_at', 'created_by', 'created_at', 'product']),
       // The check of a connection's vouchers against the firm's MISA catalogue (#4112): the last request, and what was found per party (its tax code) or item (its code). No catalogue name, address or tax code is kept.
-      misa_amis_match: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'kind', 'state', 'catalogue_code', 'catalogue_id', 'checked_at'], { match_key: 'national_id_if_individual' }),
+      misa_amis_match: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'kind', 'state', 'catalogue_code', 'catalogue_id', 'checked_at', 'confirmed_by', 'confirmed_at'], { match_key: 'national_id_if_individual', candidate_name: 'pii' }),
       misa_amis_match_check: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'params', 'state', 'failure', 'requested_by', 'requested_at', 'finished_at']),
       misa_amis_push: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'source_type', 'source_id', 'voucher_type', 'part', 'org_refid', 'org_refno', 'payload_digest', 'params', 'state', 'attempts', 'requested_by', 'requested_at', 'sent_at', 'answered_at', 'updated_at'], { reason: 'pii' }),
       misa_goods_code: columns(['org_id', 'id', 'account_code', 'item_code', 'warehouse_code', 'updated_by', 'updated_at']),

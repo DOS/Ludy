@@ -461,7 +461,7 @@ export function misaAmisClientOf(config: Pick<Config, 'MISA_AMIS_CLIENT_ID'>, tr
 }
 
 // The MISA ASP client (#4111, S2 of #4103): the same adapter on ASP's paths, there only where the deployment holds the ClientID for that product; the same transport, so the same egress guard and host.
-// It answers `unsupported` for what ASP does not have, before any token or send. Only the connection test uses it so far (the push to ASP is a later slice).
+// It answers `unsupported` for what ASP does not have, before any token or send. The connection test, the catalogue check (#4152) and the push job (#4113) use it.
 // The ClientIDs this deployment holds, one per product, for the callback route (#4113): MISA AMIS and MISA ASP post to one address, each signing with its own.
 export function misaCallbackKeys(config: Pick<Config, 'MISA_AMIS_CLIENT_ID' | 'MISA_ASP_CLIENT_ID'>): AmisCallbackKey[] {
   return [...(config.MISA_AMIS_CLIENT_ID ? [{ product: 'amis' as const, clientId: config.MISA_AMIS_CLIENT_ID }] : []), ...(config.MISA_ASP_CLIENT_ID ? [{ product: 'asp' as const, clientId: config.MISA_ASP_CLIENT_ID }] : [])];

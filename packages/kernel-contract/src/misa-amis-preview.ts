@@ -11,8 +11,8 @@ import { zMisaAmisMatchStatus } from './misa-amis-match.ts';
 export const MISA_AMIS_KINDS = ['purchase_services', 'purchase_goods', 'sales', 'cash_receipt', 'cash_payment', 'bank_credit', 'bank_debit'] as const;
 export type MisaAmisKind = (typeof MISA_AMIS_KINDS)[number];
 
-// branch_missing and party_code_unknown need AMIS's dictionary; the preview cannot raise them yet.
-export const MISA_AMIS_BLOCKERS = ['branch_missing', 'party_code_unknown', 'item_code_unknown', 'stock_missing', 'vat_rate_unmapped', 'voucher_number_too_long', 'no_lines'] as const;
+// branch_missing, party_code_unknown and party_code_ambiguous need the MISA dictionary (the branch read, the check against the catalogue); `party_code_ambiguous` is a party whose tax code more than one active entry carries (#4114).
+export const MISA_AMIS_BLOCKERS = ['branch_missing', 'party_code_unknown', 'party_code_ambiguous', 'item_code_unknown', 'stock_missing', 'vat_rate_unmapped', 'voucher_number_too_long', 'no_lines'] as const;
 export type MisaAmisBlockerCode = (typeof MISA_AMIS_BLOCKERS)[number];
 
 // A code of AMIS's item dictionary, as a person types it.
