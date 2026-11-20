@@ -7,7 +7,6 @@ import type { Runtime, UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { McpWriteBudget } from '../src/mcp-write-limit.ts';
 import { toolsFor } from '../src/mcp-endpoint.ts';
-import { ENGAGE_PROPOSAL_COMMANDS_WITHOUT_TOOL } from '../src/mcp-proposal-tools.ts';
 
 const grant = (scopes: string[], kind: 'company' | 'member' = 'company'): UserActor => ({ type: 'user', userId: 'u1', aal: 'aal1', mcp: { grantId: 'g1', clientId: 'c', clientName: 'Dy', scopes, kind } });
 const calls: Array<{ name: string; input: unknown }> = [];
@@ -23,20 +22,27 @@ const TOOLS: Record<string, string> = {
   ludy_conversation_reply: 'kernel.conversation.reply_approved',
   ludy_conversation_reply_privately: 'kernel.conversation.reply_privately_approved',
   ludy_conversation_hide: 'kernel.conversation.hide_approved',
+  ludy_quote_send: 'crm.quote.send_approved',
   ludy_booking_move: 'crm.booking.move_approved',
   ludy_booking_cancel: 'crm.booking.cancel_approved',
   ludy_post_submit: 'social.post.submit_approved',
   ludy_variant_schedule: 'social.variant.schedule_approved',
   ludy_ads_pause_all: 'ads.pause_all_approved',
+  ludy_ads_launch_stop: 'ads.launch.stop_approved',
+  ludy_ads_object_pause: 'ads.object.pause_approved',
+  ludy_ads_object_archive: 'ads.object.archive_approved',
+  ludy_ads_budget_lower: 'ads.budget.lower_approved',
+  ludy_ads_schedule_shorten: 'ads.schedule.shorten_approved',
 };
 const ENGAGE_TOOLS = Object.entries(TOOLS).filter(([, c]) => !c.startsWith('ads.')).map(([t]) => t);
 const ADS_TOOLS = Object.entries(TOOLS).filter(([, c]) => c.startsWith('ads.')).map(([t]) => t);
 const names = (actor: UserActor) => listed(actor).map((t) => t.name).filter((n) => n in TOOLS);
 
 describe('the Engage proposal tools (#3863)', () => {
-  it('has one tool for each twin of ENGAGE_PROPOSALS but the six that need an id a client cannot read yet, and none for another command', () => {
-    expect([...Object.values(TOOLS), ...ENGAGE_PROPOSAL_COMMANDS_WITHOUT_TOOL].sort()).toEqual(ENGAGE_PROPOSALS.map((p) => p.command).sort());
-    expect(ENGAGE_PROPOSAL_COMMANDS_WITHOUT_TOOL).toEqual(['crm.quote.send_approved', 'ads.launch.stop_approved', 'ads.object.pause_approved', 'ads.object.archive_approved', 'ads.budget.lower_approved', 'ads.schedule.shorten_approved']);
+  it('has one tool for each of the 14 twins of ENGAGE_PROPOSALS, and none for another command (the four ads commands that start or raise spend are not offered, by decision)', () => {
+    expect(Object.values(TOOLS).sort()).toEqual(ENGAGE_PROPOSALS.map((p) => p.command).sort());
+    expect(Object.values(TOOLS)).toHaveLength(14);
+    for (const raised of ['ads.campaign.launch', 'ads.object.resume', 'ads.budget.raise', 'ads.schedule.extend']) expect(Object.values(TOOLS).join(' ')).not.toContain(raised);
   });
 
   it('offers them by write scope: the Inbox, CRM and Social tools to ludy.engage.write, the ads tools to ludy.ads.draft, none to a read-only grant, and none to a member-bound grant', () => {
@@ -50,7 +56,7 @@ describe('the Engage proposal tools (#3863)', () => {
 
   it('makes each a write descriptor under its twin\'s scope, with a strict argument schema, a module where the app can be switched off, and a description that says it only asks', () => {
     const all = listed(grant(['ludy.read', 'ludy.engage.write', 'ludy.ads.draft'])).filter((t) => t.name in TOOLS);
-    expect(all.length).toBe(8);
+    expect(all.length).toBe(14);
     for (const tool of all) {
       const twin = ENGAGE_PROPOSALS.find((p) => p.command === TOOLS[tool.name]);
       expect(tool.writeScope, tool.name).toBe(twin?.scope);
@@ -63,6 +69,8 @@ describe('the Engage proposal tools (#3863)', () => {
     }
     const module = (name: string) => all.find((t) => t.name === name)?.module;
     expect(module('ludy_booking_move')).toBe('crm');
+    expect(module('ludy_quote_send')).toBe('crm');
+    for (const tool of ADS_TOOLS) expect(module(tool), tool).toBe('ads');
     expect(module('ludy_post_submit')).toBe('social');
     expect(module('ludy_ads_pause_all')).toBe('ads');
     expect(module('ludy_conversation_reply')).toBeUndefined();
