@@ -595,6 +595,11 @@ suite('bank statement import (#326)', () => {
     expect(await map({ feedFrom: dayOf(-5) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
     expect((await map({ feedFrom: dayOf(-1) })).status).toBe(200);
     expect((await map({ feedFrom: null })).status).toBe(200);
+    // Clearing the day does not open a way round the rule: with none set, a new day may not be earlier than the day the cursor has reached.
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-2)]));
+    expect(await map({ feedFrom: dayOf(-5) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
+    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-2));
+    expect((await map({ feedFrom: dayOf(-2) })).status).toBe(200);
     expect((await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).status).toBe(200);
   });
 

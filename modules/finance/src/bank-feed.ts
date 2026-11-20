@@ -35,6 +35,22 @@ function reachFrom(now: Date, provider: string): string {
   return new Date(Date.parse(`${vietnamToday(now)}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
 }
 
+// The earliest cut-over day a mapping may be given (#4218): not before the provider's first pull reaches and, once it has synced (cursor set), not before the day it holds now, or if none the day its cursor has reached (lines the feed stored before that are never fetched again, so a file's lines from there would be lost). Clearing the day stays allowed, and the rule applies to the next day set all the same.
+export function earliestFeedFrom(now: Date, provider: string, row: { cursor: string | null; feed_from: string | null } | null): string {
+  const reach = reachFrom(now, provider);
+  if (!row || row.cursor === null) return reach;
+  const floor = row.feed_from ?? cursorDay(row.cursor) ?? vietnamToday(now);
+  return floor > reach ? floor : reach;
+}
+
+// The day of a feed cursor: a day (`2026-11-20`, the sandbox's) or a stamp that starts with one (`20261120083000000`, Tingee's); null when it is neither.
+function cursorDay(cursor: string): string | null {
+  const iso = /^(\d{4}-\d{2}-\d{2})/.exec(cursor);
+  if (iso) return iso[1] as string;
+  const stamp = /^(\d{4})(\d{2})(\d{2})\d*$/.exec(cursor);
+  return stamp ? `${stamp[1]}-${stamp[2]}-${stamp[3]}` : null;
+}
+
 export const bankFeedMap = defineCommand({
   name: 'finance.bank_feed.map',
   input: zBankFeedMap,
@@ -94,10 +110,10 @@ export const bankFeedMap = defineCommand({
       .executeTakeFirst();
     // The cut-over day decides which lines the feed supplies, so it must be a day the feed reaches (#4218): not before its first pull's window, and, once the account has synced, never earlier than it was (the lines the feed left out before it are not fetched again).
     if (input.feedFrom) {
-      const reach = reachFrom(ctx.now, connection.provider);
-      if (input.feedFrom < reach) throw new DomainError('BANK_FEED_FROM_TOO_EARLY', 422, `Ngày nguồn tự động bắt đầu lấy giao dịch không được sớm hơn ${reach}, vì nguồn chỉ lấy lùi tới ngày đó`, { earliest: reach });
-      if (existing?.cursor != null && existing.feed_from !== null && input.feedFrom < existing.feed_from) {
-        throw new DomainError('BANK_FEED_FROM_MOVED_EARLIER', 422, 'Tài khoản này đã đồng bộ nên không thể lùi ngày bắt đầu sớm hơn; có thể đặt ngày muộn hơn hoặc bỏ ngày này', { current: existing.feed_from });
+      const earliest = earliestFeedFrom(ctx.now, connection.provider, existing ?? null);
+      if (input.feedFrom < earliest) {
+        if (existing?.cursor != null) throw new DomainError('BANK_FEED_FROM_MOVED_EARLIER', 422, `Tài khoản này đã đồng bộ nên ngày bắt đầu lấy giao dịch tự động không thể sớm hơn ${earliest}; hãy chọn ngày muộn hơn`, { earliest });
+        throw new DomainError('BANK_FEED_FROM_TOO_EARLY', 422, `Ngày nguồn tự động bắt đầu lấy giao dịch không được sớm hơn ${earliest}, vì nguồn chỉ lấy lùi tới ngày đó`, { earliest });
       }
     }
     let feedAccountId: string;
@@ -164,7 +180,7 @@ export const bankFeedAccounts = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_finance.bank_feed_account as a')
       .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
-      .select(['a.id', 'a.channel_connection_id', 'c.provider', 'c.display_name', 'c.status', 'a.external_account_id', 'a.bank_account', 'a.legal_entity_id', 'a.last_synced_at', 'a.feed_from'])
+      .select(['a.id', 'a.channel_connection_id', 'c.provider', 'c.display_name', 'c.status', 'a.external_account_id', 'a.bank_account', 'a.legal_entity_id', 'a.last_synced_at', 'a.feed_from', 'a.cursor'])
       .where('a.org_id', '=', ctx.orgId)
       .orderBy('c.display_name')
       .orderBy('a.external_account_id')
@@ -180,6 +196,7 @@ export const bankFeedAccounts = defineQuery({
       legalEntityId: r.legal_entity_id,
       lastSyncedAt: r.last_synced_at ? new Date(r.last_synced_at).toISOString() : null,
       feedFrom: r.feed_from,
+      feedFromEarliest: earliestFeedFrom(new Date(), r.provider, { cursor: r.cursor, feed_from: r.feed_from }),
     }));
   },
 });

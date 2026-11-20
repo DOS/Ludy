@@ -17,6 +17,7 @@ const mapped = (externalAccountId: string, connectionId = 'c1'): BankFeedAccount
   legalEntityId: 'e1',
   lastSyncedAt: null,
   feedFrom: null,
+  feedFromEarliest: '2026-11-13',
 });
 
 describe('bank feed gate', () => {
@@ -86,9 +87,7 @@ describe('feedFromMin (#4218)', () => {
     expect(feedFromMin('bank_tingee', null, now)).toBe('2026-10-20');
     expect(feedFromMin('bank_sandbox', null, now)).toBe('2026-11-13');
   });
-  it('never goes earlier than the day an already synced account has', () => {
-    const synced = { ...mapped('SBX-001'), lastSyncedAt: '2026-11-19T00:00:00.000Z', feedFrom: '2026-11-15' };
-    expect(feedFromMin('bank_sandbox', synced, now)).toBe('2026-11-15');
-    expect(feedFromMin('bank_sandbox', { ...synced, lastSyncedAt: null }, now)).toBe('2026-11-13');
+  it('takes the earliest day the server names for a mapped account', () => {
+    expect(feedFromMin('bank_sandbox', { ...mapped('SBX-001'), feedFromEarliest: '2026-11-18' }, now)).toBe('2026-11-18');
   });
 });

@@ -383,6 +383,8 @@ export const zBankFeedAccountView = z.object({
   lastSyncedAt: z.string().nullable(),
   // The cut-over day (#4218), or null when statement files and the feed are only deduplicated.
   feedFrom: zLocalDate.nullable(),
+  // The earliest day the cut-over may be set to now (#4218): what the date field takes as its minimum; the server refuses an earlier one.
+  feedFromEarliest: zLocalDate,
 });
 export type BankFeedAccountView = z.infer<typeof zBankFeedAccountView>;
 

@@ -47,6 +47,7 @@ const account = (id: string, externalAccountId: string, over: Partial<BankFeedAc
   legalEntityId: 'e1',
   lastSyncedAt: null,
   feedFrom: null,
+  feedFromEarliest: '2026-11-13',
   ...over,
 });
 

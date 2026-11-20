@@ -43,10 +43,10 @@ export function feedAccountRows(
 // The mappings of one connection, from the list of every mapping the caller reads.
 export const mappedOf = (mapped: readonly BankFeedAccountView[], connectionId: string): BankFeedAccountView[] => mapped.filter((m) => m.connectionId === connectionId);
 
-// The earliest day a cut-over may be set to (#4218), as the date input's `min`: no earlier than the provider's first pull reaches,
-// and once the account has synced never earlier than the day it already has. The server refuses the same.
+// The earliest day a cut-over may be set to (#4218), as the date input's `min`: what the server says for a mapped account, else the
+// day the provider's first pull reaches. The server refuses an earlier one either way.
 export function feedFromMin(provider: string, mapped: BankFeedAccountView | null, now: Date = new Date()): string {
+  if (mapped) return mapped.feedFromEarliest;
   const days = BANK_FEED_FIRST_PULL_DAYS[provider] ?? 0;
-  const reach = new Date(Date.parse(`${vietnamToday(now)}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
-  return mapped?.lastSyncedAt && mapped.feedFrom && mapped.feedFrom > reach ? mapped.feedFrom : reach;
+  return new Date(Date.parse(`${vietnamToday(now)}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
 }
