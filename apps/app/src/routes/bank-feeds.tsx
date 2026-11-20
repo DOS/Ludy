@@ -51,19 +51,20 @@ function ConnectTingeeForm() {
     if (field === 'clientId') return clientId.trim() ? null : t('tingee.clientIdNeeded');
     return secretToken.trim() ? null : t('tingee.secretNeeded');
   });
-  const connect = useMutation(
-    orpc.bankFeeds.connectTingee.mutationOptions({
+  const connect = useMutation({
+    ...orpc.bankFeeds.connectTingee.mutationOptions({
       onSuccess: async () => {
         setClientId('');
-        setSecretToken('');
         setName('');
         fields.reset();
-        // The mutation keeps the variables it was given: drop them so the secret is not left in the client's cache.
-        connect.reset();
         await refreshConnections();
       },
+      // Whatever the answer, the secret leaves the field: a refused one is typed again, never kept on screen.
+      onSettled: () => setSecretToken(''),
     }),
-  );
+    // The mutation holds the variables it was given: with no cache time it is dropped as soon as nothing watches it, so the secret does not linger in the client's memory.
+    gcTime: 0,
+  });
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!fields.checkAll(['clientId', 'secretToken'])) {
