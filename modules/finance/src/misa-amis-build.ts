@@ -45,6 +45,14 @@ export interface AmisMatches {
   itemCodes: ReadonlySet<string> | null;
   /** The codes a person confirmed for parties with no tax code, by party id (S3b, #4124). */
   partyNameCodes?: ReadonlyMap<string, string> | null;
+  /** MISA ASP (#4125): the connection's product and what its check matched in the item, unit and stock catalogues. */
+  product?: 'amis' | 'asp';
+  itemIds?: ReadonlyMap<string, string> | null;
+  unitIds?: ReadonlyMap<string, { name: string; id: string }> | null;
+  unitAmbiguous?: ReadonlySet<string> | null;
+  stockIds?: ReadonlyMap<string, string> | null;
+  /** The stock code a person picked for the connection's sales lines (part C of #4125). */
+  salesStockCode?: string | null;
 }
 
 /**
@@ -61,6 +69,10 @@ export const amisContextOf = (ask: AmisBuildAsk, branchId: string | null = AMIS_
   partyNameCodes: matches?.partyNameCodes ?? null,
   partyAmbiguous: matches?.partyAmbiguous ?? null,
   itemCodes: matches?.itemCodes ?? null,
+  asp:
+    matches?.product === 'asp'
+      ? { itemIds: matches.itemIds ?? null, unitIds: matches.unitIds ?? null, unitAmbiguous: matches.unitAmbiguous ?? null, stockIds: matches.stockIds ?? null, salesStockCode: matches.salesStockCode ?? null }
+      : null,
 });
 
 /** What a check has to look up for the vouchers of an ask: the tax codes of their parties (digits only) and the item codes they are written with. */

@@ -8,7 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AmisError, createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@crove/misa-amis';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { amisContextOf, amisPartRows, loadAmisEntries, NO_MATCH_RESULTS, PUSH_IN_FLIGHT_SECONDS, type CashVoucher, type MisaAmisMatchResults, type MisaAmisPushBegin } from '@crove/mod-finance';
-import { CATALOGUE_REREAD_MS, PUSH_PRESS_RECHECK_SECONDS, PUSH_RECHECK_SECONDS, PUSH_UNREACHABLE_ROUNDS, PUSH_WAIT_ROUNDS, pushFollowUp, pushGiveUp, pushPressKeyTail, runMisaAmisPush, type MisaAmisPushOutcome } from '../src/misa-amis-push-job.ts';
+import { readStockNames } from '../src/misa-amis-catalogue.ts';
+import { CATALOGUE_REREAD_MS, PUSH_PRESS_RECHECK_SECONDS, PUSH_RECHECK_SECONDS, PUSH_UNREACHABLE_ROUNDS, PUSH_WAIT_ROUNDS, pushFollowUp, pushGiveUp, pushPressKeyTail, runMisaAmisPush, stockIdsOf, withStockNames, type MisaAmisPushOutcome } from '../src/misa-amis-push-job.ts';
 
 const CLIENT_ID = 'planted-client-id-0123456789';
 const ACCESS_CODE = 'planted-access-code-abcdef';
@@ -824,5 +825,34 @@ describe('the MISA AMIS push job: a MISA ASP connection', () => {
     expect(asp.calls).toEqual([]);
     // Past the press's own one more look (round 1 has nothing left), the chain ends.
     expect(pushFollowUp({ orgId: ORG, connectionId: CONNECTION, round: 1 }, out)).toBeNull();
+  });
+});
+
+// ASP (#4125): `stock_name` goes beside each `stock_id`, read fresh right before the send, never kept in the digest or a log.
+describe('the stock names of an ASP send', () => {
+  const STOCK_A = '0194a1c2-8f3e-7b10-9d4a-1e2f3a4b5c02';
+  const part = (detail: unknown[]) => ({ sourceType: 'sales_document', sourceId: 's', voucherType: 13, part: 1, orgRefid: 'r', orgRefno: 'n', digest: 'd', voucher: { voucher_type: 13, org_refid: 'r', detail } }) as unknown as Parameters<typeof withStockNames>[0];
+
+  it('writes the fresh name beside each stock id, and refuses a part whose stock has no name now', () => {
+    const named = withStockNames(part([{ sort_order: 1, stock_id: STOCK_A, stock_code: 'KHO1' }, { sort_order: 2 }]), new Map([[STOCK_A, 'Kho chính']]));
+    expect(named?.voucher.detail).toEqual([{ sort_order: 1, stock_id: STOCK_A, stock_code: 'KHO1', stock_name: 'Kho chính' }, { sort_order: 2 }]);
+    expect(named?.digest).toBe('d');
+    expect(withStockNames(part([{ stock_id: STOCK_A }]), new Map())).toBeNull();
+    expect(stockIdsOf(part([{ stock_id: STOCK_A }, {}]).voucher)).toEqual([STOCK_A]);
+  });
+
+  it('reads the names of active stocks only, by id, from catalogue 3', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const transport: AmisTransport = async (request: AmisRequest) => {
+      const path = new URL(request.url).pathname.replace(/^\/apis/, '');
+      const body = JSON.parse(request.body) as Record<string, unknown>;
+      calls.push({ path, ...body });
+      if (path === '/asp/v1/token') return ok({ access_token: 'token-1', expired_time: '2027-01-19T20:00:00' });
+      return ok([{ stock_id: STOCK_A.toUpperCase(), stock_code: 'KHO1', stock_name: ' Kho chính ' }, { stock_id: '0194a1c2-8f3e-7b10-9d4a-1e2f3a4b5c09', stock_code: 'OFF', stock_name: 'Kho cũ', inactive: true }]);
+    };
+    const client = createAmisClient({ clientId: CLIENT_ID, product: 'asp', transport });
+    const names = await readStockNames(client, { accessCode: ACCESS_CODE, orgCompanyCode: COMPANY });
+    expect([...names]).toEqual([[STOCK_A, 'Kho chính']]);
+    expect(calls.filter((c) => c.path === '/asp/v1/get_dictionary').map((c) => c.data_type)).toEqual([3]);
   });
 });

@@ -9,7 +9,7 @@ import { claimsDone } from './misa-check-line.ts';
 import { statedFiguresProblem } from './overview.ts';
 
 // The blocker kinds of the AMIS mapper, as the preview names them (packages/kernel-contract misa-amis-preview.ts; a test keeps the two lists equal).
-export const MISA_AMIS_BLOCKER_KINDS = ['branch_missing', 'party_code_unknown', 'party_code_ambiguous', 'item_code_unknown', 'stock_missing', 'vat_rate_unmapped', 'voucher_number_too_long', 'no_lines'] as const;
+export const MISA_AMIS_BLOCKER_KINDS = ['branch_missing', 'party_code_unknown', 'party_code_ambiguous', 'item_code_unknown', 'stock_missing', 'stock_unknown', 'unit_unknown', 'unit_ambiguous', 'vat_rate_unmapped', 'voucher_number_too_long', 'no_lines'] as const;
 export type MisaAmisBlockerKind = (typeof MISA_AMIS_BLOCKER_KINDS)[number];
 
 export const MISA_AMIS_BLOCKER_NOTE_MAX = 240;
@@ -51,7 +51,13 @@ const MEANING = (product: MisaAmisNotesProduct): Readonly<Record<MisaAmisBlocker
         : 'A supplier or customer on the voucher has no matching code in AMIS: create it in AMIS or match it to the AMIS code.',
     party_code_ambiguous: `More than one active party in ${name} has the tax code of a supplier or customer on the voucher, so Ludy cannot pick one: keep one of them active and make the others inactive in ${name}, then check against the catalogue again.`,
     item_code_unknown: `A voucher line has no ${name} item code: give the line a ${name} item code, by typing the ${name} service or sales item code in the preview or by setting the item's ${name} code in Ludy.`,
-    stock_missing: `A goods purchase line has no ${name} warehouse code: set the warehouse code of the item in Ludy.`,
+    stock_missing:
+      product === 'asp'
+        ? 'A goods purchase line has no warehouse code (set the warehouse code of the item in Ludy), or a sales line has no MISA ASP warehouse to leave goods from (the warehouse is chosen for the connection).'
+        : `A goods purchase line has no ${name} warehouse code: set the warehouse code of the item in Ludy.`,
+    stock_unknown: `The warehouse a line uses is not in the ${name} warehouse list, or more than one active warehouse has its code: add it in ${name} (or keep one active), then check against the catalogue again.`,
+    unit_unknown: `The unit of a line is not in the ${name} unit list, matched by its exact name: add that unit in ${name} with the same name, then check against the catalogue again.`,
+    unit_ambiguous: `More than one active unit in ${name} has the name of a line's unit, so Ludy cannot pick one: keep one of them active and make the others inactive in ${name}, then check against the catalogue again.`,
     vat_rate_unmapped: `The VAT rate of an invoice line is not one ${name} takes: fix the VAT rate of that line in Ludy.`,
     voucher_number_too_long: `The voucher number is longer than ${name} allows and Ludy never cuts a number: the voucher needs a shorter number before it can be sent.`,
     no_lines: 'The voucher has no lines, so there is nothing to send: add its lines in Ludy or leave the voucher out.',

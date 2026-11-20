@@ -47,6 +47,10 @@ export interface MisaAmisMatchResults {
   unitIds?: ReadonlyMap<string, { name: string; id: string }> | null;
   unitAmbiguous?: ReadonlySet<string> | null;
   stockIds?: ReadonlyMap<string, string> | null;
+  /** MISA ASP only: the matched items by code (the entry's id), which an ASP line writes. */
+  itemIds?: ReadonlyMap<string, string> | null;
+  /** The product of the checked connection; absent while there is no check. */
+  product?: 'amis' | 'asp';
 }
 
 export const NO_MATCH_RESULTS: MisaAmisMatchResults = { connectionId: null, status: { state: 'none', failure: null, requestedAt: null, checkedAt: null }, partyCodes: null, partyAmbiguous: null, itemCodes: null, partyNameCodes: null };
@@ -274,6 +278,8 @@ export const misaAmisMatchResultsQuery = defineQuery({
       requestedAt: iso(check.requested_at),
       checkedAt: check.state === 'done' && check.finished_at ? iso(check.finished_at) : null,
     };
+    const connection = await ctx.trx.selectFrom('crove_finance.misa_amis_connection').select(['product']).where('org_id', '=', ctx.orgId).where('id', '=', check.connection_id).executeTakeFirst();
+    const product = connection?.product;
     const rows = await ctx.trx
       .selectFrom('crove_finance.misa_amis_match')
       .select(['kind', 'match_key', 'state', 'catalogue_code', 'catalogue_id'])
@@ -282,7 +288,7 @@ export const misaAmisMatchResultsQuery = defineQuery({
       .execute();
     // While a re-check waits, or after one failed, the results of the last done check still stand (a block it raised is not lifted by asking again); with none stored there is nothing to judge against.
     // A connection that was checked once (a done check finished) and has no stored result (its batch needed none) is still checked: the sets are empty, not null.
-    if (check.state !== 'done' && rows.length === 0 && check.finished_at === null) return { connectionId: check.connection_id, status, partyCodes: null, partyAmbiguous: null, itemCodes: null, partyNameCodes: null };
+    if (check.state !== 'done' && rows.length === 0 && check.finished_at === null) return { connectionId: check.connection_id, status, partyCodes: null, partyAmbiguous: null, itemCodes: null, partyNameCodes: null, ...(product === undefined ? {} : { product }) };
     const partyCodes = new Map<string, string>();
     const partyAmbiguous = new Set<string>();
     const itemCodes = new Set<string>();
@@ -290,6 +296,7 @@ export const misaAmisMatchResultsQuery = defineQuery({
     const unitIds = new Map<string, { name: string; id: string }>();
     const unitAmbiguous = new Set<string>();
     const stockIds = new Map<string, string>();
+    const itemIds = new Map<string, string>();
     for (const row of rows) {
       if (row.kind === 'party' && row.state === 'ambiguous') partyAmbiguous.add(row.match_key);
       if (row.kind === 'unit' && row.state === 'ambiguous') unitAmbiguous.add(row.match_key);
@@ -303,10 +310,13 @@ export const misaAmisMatchResultsQuery = defineQuery({
           if (row.catalogue_id !== null) unitIds.set(row.match_key, { name: row.catalogue_code, id: row.catalogue_id });
         } else if (row.kind === 'stock') {
           if (row.catalogue_id !== null) stockIds.set(row.match_key, row.catalogue_id);
-        } else itemCodes.add(row.match_key);
+        } else {
+          itemCodes.add(row.match_key);
+          if (row.catalogue_id !== null) itemIds.set(row.match_key, row.catalogue_id);
+        }
       }
     }
-    return { connectionId: check.connection_id, status, partyCodes, partyAmbiguous, itemCodes, partyNameCodes, unitIds, unitAmbiguous, stockIds };
+    return { connectionId: check.connection_id, status, partyCodes, partyAmbiguous, itemCodes, partyNameCodes, unitIds, unitAmbiguous, stockIds, itemIds, ...(product === undefined ? {} : { product }) };
   },
 });
 

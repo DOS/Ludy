@@ -23,6 +23,20 @@ export async function readCatalogue(client: AmisClient, connection: AmisConnecti
 }
 
 /**
+ * The names of the active stocks by their ids (ASP, #4125): a sales or goods line writes `stock_name` beside its `stock_id`, and the name is read here, in the worker's memory, right before the send; it is never stored
+ * or logged, and is not part of the digest a person confirms.
+ */
+export async function readStockNames(client: AmisClient, connection: AmisConnection): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  for (const row of await readCatalogue(client, connection, AMIS_DICTIONARIES.stock)) {
+    const id = typeof row.stock_id === 'string' ? row.stock_id.toLowerCase() : null;
+    const name = typeof row.stock_name === 'string' ? row.stock_name.trim() : '';
+    if (id !== null && row.inactive !== true && name.length > 0) names.set(id, name.slice(0, 128));
+  }
+  return names;
+}
+
+/**
  * What is asked of the catalogue: tax codes to look parties up by, names to look parties with no tax code up by (S3b, #4124), item codes, and the codes of names a person confirmed, which must still be there. Only
  * the kinds that have something to look up are read, and the party pages are read once for all three party questions.
  */
