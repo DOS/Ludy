@@ -91,32 +91,41 @@ suite('the module and coworker switches at an MCP grant entry (#4155)', () => {
       await call(e, g);
       const before = await e.count();
       const id = await stopModule(e.module);
-      const err = await refusal(call(e, g));
-      expect([err.code, err.status]).toEqual(['KILL_SWITCH_ON', 403]);
-      expect(await e.count()).toBe(before);
-      await audited(e.command, g.grantId);
-      // The switch of another module does not touch it.
       const other = await stopModule(e.module === 'crm' ? 'ads' : 'crm');
-      await release(id);
-      await call(e, g);
-      expect(await e.count()).toBe(before + 1);
-      await release(other);
+      try {
+        const err = await refusal(call(e, g));
+        expect([err.code, err.status]).toEqual(['KILL_SWITCH_ON', 403]);
+        expect(await e.count()).toBe(before);
+        await audited(e.command, g.grantId);
+        // The switch of another module does not touch it.
+        await release(id);
+        await call(e, g);
+        expect(await e.count()).toBe(before + 1);
+      } finally {
+        // A failed assertion must not leave a switch engaged for the next test (one active row per scope and target).
+        await h.q(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1 AND released_at IS NULL`, [h.orgId, h.owner]);
+      }
+      expect(other).toBeTruthy();
     });
 
     it(`stops ${e.label} when an agent switch names the grant, and only that grant`, async () => {
       const g = await h.grant([e.scope]);
       const sibling = await h.grant([e.scope]);
       const id = await stopGrant(g.grantId);
-      const before = await e.count();
-      const err = await refusal(call(e, g));
-      expect([err.code, err.status]).toEqual(['KILL_SWITCH_ON', 403]);
-      expect(await e.count()).toBe(before);
-      await audited(e.command, g.grantId);
-      await call(e, sibling);
-      expect(await e.count()).toBe(before + 1);
-      await releaseRow(id);
-      await call(e, g);
-      expect(await e.count()).toBe(before + 2);
+      try {
+        const before = await e.count();
+        const err = await refusal(call(e, g));
+        expect([err.code, err.status]).toEqual(['KILL_SWITCH_ON', 403]);
+        expect(await e.count()).toBe(before);
+        await audited(e.command, g.grantId);
+        await call(e, sibling);
+        expect(await e.count()).toBe(before + 1);
+        await releaseRow(id);
+        await call(e, g);
+        expect(await e.count()).toBe(before + 2);
+      } finally {
+        await releaseRow(id);
+      }
     });
 
     if (e.module !== 'kernel') {
