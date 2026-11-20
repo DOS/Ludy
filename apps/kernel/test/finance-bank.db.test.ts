@@ -21,7 +21,7 @@ import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { runBankFeedSync } from '../src/bank-feed-sync.ts';
-import { bankFeedProviders, signSandboxWebhook } from '@crove/bank-feed';
+import { TINGEE_HOSTS, TingeeError, bankFeedProviders, parseTingeeSecret, signSandboxWebhook, vietnamStamp, type BankFeedProvider, type BankFeedTransaction } from '@crove/bank-feed';
 import { RateLimiter } from '../src/rate-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -56,6 +56,9 @@ interface Account {
 
 const suite = ADMIN ? describe : describe.skip;
 const WEBHOOK_SECRET = 'bank-feed-webhook-secret-0123456789-abcdef';
+const TINGEE_CLIENT = 'tingee-client-id-for-the-test';
+const TINGEE_SECRET = 'tingee-secret-token-for-the-test-0123456789';
+const TINGEE_VA = '8888000001';
 
 suite('bank statement import (#326)', () => {
   const dbName = `crove_test_bank_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -67,6 +70,11 @@ suite('bank statement import (#326)', () => {
   // The same, with a tight limit on signed notices per address.
   let limitedApp: ReturnType<typeof createHttpApp>;
   let vault: CredentialVault;
+  // The Tingee bank feed (#2045): a stand-in provider that reads the sealed credential the way the adapter does (parseTingeeSecret) and answers like a Tingee that knows one Client ID (the adapter's own
+  // behaviour against a fake Tingee is tested in packages/bank-feed), the calls it was asked for, and an app that offers it.
+  let tingeeApp: ReturnType<typeof createHttpApp>;
+  let tingeeAdapter: BankFeedProvider;
+  const tingeeCalls: string[] = [];
   // The API's runtime, and the worker's, which runs feed jobs as the system.
   let api: Runtime;
   let worker: Runtime;
@@ -174,6 +182,35 @@ suite('bank statement import (#326)', () => {
     const feedDeps = { config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false, channels: { broker: vault, sandbox: false, bankFeedSandbox: true } };
     feedApp = createHttpApp({ ...feedDeps, bankFeedWebhooks: notices });
     limitedApp = createHttpApp({ ...feedDeps, bankFeedWebhooks: notices, bankFeedWebhookLimit: new RateLimiter({ perMinute: 2 }) });
+    // A stand-in that knows one Client ID, with a linked account and two transactions in the last days.
+    const day = (back: number) => vietnamStamp(new Date(Date.now() - back * 86_400_000)).slice(0, 8);
+    const tingeeLines = (): BankFeedTransaction[] => [
+      { date: `${day(3).slice(0, 4)}-${day(3).slice(4, 6)}-${day(3).slice(6, 8)}`, description: 'HD 0000123 thanh toan', amount: '1500000', balance: null, reference: 'FT26000001' },
+      { date: `${day(2).slice(0, 4)}-${day(2).slice(4, 6)}-${day(2).slice(6, 8)}`, description: 'Phi dich vu', amount: '-250000', balance: null, reference: 'FT26000002' },
+    ];
+    const known = (secret: string, call: string) => {
+      const credential = parseTingeeSecret(secret);
+      if (credential.clientId !== TINGEE_CLIENT || credential.secretToken !== TINGEE_SECRET) throw new TingeeError('credentials', 'tingee refused the credential (code 97)', '97');
+      tingeeCalls.push(call);
+    };
+    tingeeAdapter = {
+      id: 'bank_tingee',
+      hosts: TINGEE_HOSTS,
+      async check(secret) {
+        known(secret, 'check');
+      },
+      async accounts(secret) {
+        known(secret, 'accounts');
+        return [{ externalAccountId: TINGEE_VA, displayName: `BIDV ${TINGEE_VA} - CONG TY ABC` }];
+      },
+      // The same lines every time (an overlapping pull), at a cursor that does not move.
+      async pull(secret, externalAccountId) {
+        known(secret, 'pull');
+        if (externalAccountId !== TINGEE_VA) throw new TingeeError('config', 'tingee: unknown account');
+        return { transactions: tingeeLines(), cursor: `${day(2)}000000`, more: false };
+      },
+    };
+    tingeeApp = createHttpApp({ ...feedDeps, channels: { broker: vault, sandbox: false, bankFeedHosted: { bank_tingee: tingeeAdapter } } });
     const workerUrl = new URL(adminUrl);
     workerUrl.username = 'crove_worker';
     workerUrl.password = 'test-worker-pw';
@@ -1362,6 +1399,82 @@ suite('bank statement import (#326)', () => {
       await expect(worker.execute('finance.bank.statement_reject', { fileId }, { actor: WORKER, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
       await expect(worker.execute('kernel.extraction.statement_state', { fileId, state: 'imported' }, { actor: WORKER, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(await status(fileId)).toMatchObject({ status: 'staged' });
+    });
+  });
+
+  // The Tingee bank feed (ADR-0039, #2045 S2): the org's own Client ID and Secret Token, tested once through the adapter and sealed; the worker lists and pulls.
+  describe('the Tingee bank feed', () => {
+    const connect = async (who: Account, input: Record<string, unknown>, on: ReturnType<typeof createHttpApp> = tingeeApp) => rpc('bankFeeds/connectTingee', await tokenFor(who), input, slug, on);
+    const tingeeSync = (connectionId: string) => runBankFeedSync({ runtime: worker, broker: vault, providers: { bank_tingee: tingeeAdapter } }, { orgId, connectionId });
+
+    it('is offered only where the deployment turns it on, and only to owners and admins', async () => {
+      const good = { clientId: TINGEE_CLIENT, secretToken: TINGEE_SECRET };
+      expect(await connect(owner, good, feedApp)).toMatchObject({ status: 404, body: { code: 'BANK_FEED_TINGEE_DISABLED' } });
+      expect((await connect(member, good)).status).toBe(403);
+      expect((await connect(viewer, good)).status).toBe(403);
+      // Nothing was tested or sealed for any of them.
+      expect(tingeeCalls).toEqual([]);
+    });
+
+    it('refuses a credential Tingee does not accept, with a fixed sentence, and seals nothing', async () => {
+      const before = Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.credential WHERE org_id = $1', [orgId])).rows[0]?.n)));
+      const wrongSecret = await connect(owner, { clientId: TINGEE_CLIENT, secretToken: 'another-secret-token-0123456789' });
+      expect(wrongSecret).toMatchObject({ status: 422, body: { code: 'BANK_FEED_CREDENTIALS' } });
+      expect(await connect(owner, { clientId: 'nobody-by-this-id', secretToken: TINGEE_SECRET })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_CREDENTIALS' } });
+      // A control character is refused before any call.
+      expect((await connect(owner, { clientId: TINGEE_CLIENT, secretToken: 'a\u0000b' })).status).toBe(400);
+      expect(JSON.stringify(wrongSecret.body)).not.toContain('another-secret-token');
+      expect(Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.credential WHERE org_id = $1', [orgId])).rows[0]?.n)))).toBe(before);
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1 AND provider = 'bank_tingee'`, [orgId])).rows)).toEqual([]);
+    });
+
+    it('connects, then the worker lists the account, a mapped account is pulled once, and no secret is stored or shown in the clear', async () => {
+      const connected = await connect(owner, { clientId: TINGEE_CLIENT, secretToken: TINGEE_SECRET, displayName: 'Tingee BIDV' });
+      expect(connected.status).toBe(200);
+      const connectionId = String(connected.body.connectionId);
+      expect(JSON.stringify(connected.body)).not.toContain(TINGEE_SECRET);
+      const connections = (await feed('connections', owner)).body;
+      expect(connections).toContainEqual(expect.objectContaining({ id: connectionId, provider: 'bank_tingee', displayName: 'Tingee BIDV', status: 'active' }));
+      // The API made the one test call, and nothing else.
+      expect(tingeeCalls).toEqual(['check']);
+
+      expect(await tingeeSync(connectionId)).toMatchObject({ accounts: 1, pages: 0 });
+      expect((await feed('listed', owner, { connectionId })).body.map((a: { externalAccountId: string }) => a.externalAccountId)).toEqual([TINGEE_VA]);
+      const mapped = await feed('map', owner, { connectionId, externalAccountId: TINGEE_VA, bankAccount: '1121.VCB', idempotencyKey: randomUUID() });
+      expect(mapped.status).toBe(200);
+      const first = await tingeeSync(connectionId);
+      expect(first.pages).toBeGreaterThanOrEqual(1);
+      expect(first.stored).toBe(2);
+      const lines = await admin(async (c) =>
+        (await c.query<{ amount: string; reference: string; description: string }>(`SELECT amount::text AS amount, bank_ref AS reference, description FROM crove_finance.bank_line WHERE org_id = $1 AND bank_ref LIKE 'FT26%' ORDER BY bank_ref`, [orgId])).rows,
+      );
+      expect(lines.map((l) => [l.reference, Number(l.amount)])).toEqual([['FT26000001', 1_500_000], ['FT26000002', -250_000]]);
+      // Pulled again (the last days are read again), nothing is stored twice.
+      expect((await tingeeSync(connectionId)).stored).toBe(0);
+      expect([...new Set(tingeeCalls)].sort()).toEqual(['accounts', 'check', 'pull']);
+
+      // The credential is sealed: no row of the org holds the Secret Token, and no audit row mentions it.
+      expect(
+        await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.credential cr WHERE cr.org_id = $1 AND row_to_json(cr)::text LIKE $2`, [orgId, `%${TINGEE_SECRET}%`])).rows),
+      ).toEqual([]);
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE $2`, [orgId, `%${TINGEE_SECRET}%`])).rows)).toEqual([]);
+      expect((await rpc('channels/list', await tokenFor(owner), {}, slug, tingeeApp)).body.map((c: { id: string }) => c.id)).not.toContain(connectionId);
+    });
+
+    it('limits how often an org may try a credential, before any call to Tingee', async () => {
+      const good = { clientId: TINGEE_CLIENT, secretToken: TINGEE_SECRET };
+      const before = tingeeCalls.length;
+      let refused: { status: number; body: any } | null = null;
+      for (let i = 0; i < 12 && refused === null; i++) {
+        const answer = await connect(owner, good);
+        if (answer.status === 429) refused = answer;
+      }
+      expect(refused).toMatchObject({ status: 429, body: { code: 'RATE_LIMITED' } });
+      // Each try that was let through made one call, the refused one none.
+      const calls = tingeeCalls.slice(before);
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+      expect(calls.length).toBeLessThanOrEqual(5);
+      expect(calls.every((c) => c === 'check')).toBe(true);
     });
   });
 });

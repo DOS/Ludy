@@ -545,6 +545,9 @@ export interface WorkerDeps {
     publishers: Readonly<Record<string, Publisher>>;
     refreshers?: Readonly<Record<string, Refresher>>;
     bankFeeds?: Readonly<Record<string, BankFeedProvider>>;
+    // The real bank feed adapters this deployment offers (ADR-0039, #2045), by provider id: each reaches its own provider's hosts through a host-bound fetch. Apart from `bankFeeds` (the offline sandbox,
+    // which reaches nothing) so that what a worker reaches is classified field by field (DEPS_REACH). The worker alone uses them, with the credentials it opens.
+    bankFeedHosted?: Readonly<Record<string, BankFeedProvider>>;
     // The e-invoice provider adapters this deployment offers (ADR-0044, #2502), by adapter id; the worker alone uses them, with the credentials it opens.
     einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
     // The marketplace providers this deployment offers (ADR-0045 point 7, #2519), by adapter id; the worker alone uses them, with the credentials it opens.
@@ -1538,9 +1541,10 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
 
   // Bank feeds (ADR-0039, #2044): a connection's sync, queued by the relay above and, once a day, for every active
   // bank feed connection of an active org. The adapters are the deployment's; with none on, the sweep queues nothing.
-  const bankFeeds = deps.channels?.bankFeeds;
+  // The offline sandbox (reaches nothing) and the real adapters (each reaches its own provider's hosts, #2045) are two fields, so each is classified for what it can reach.
+  const bankFeeds = { ...deps.channels?.bankFeeds, ...deps.channels?.bankFeedHosted };
   const bankFeedBroker = deps.channels?.broker;
-  if (finance && bankFeeds && bankFeedBroker && Object.keys(bankFeeds).length > 0) {
+  if (finance && bankFeedBroker && Object.keys(bankFeeds).length > 0) {
     await boss.work<BankFeedSyncJob | { sweep: true }>(QUEUES.bankFeedSync, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
       if ('sweep' in job.data) {
@@ -2888,8 +2892,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               // pulls the mapped ones.
               if (
                 finance &&
-                deps.channels?.bankFeeds &&
-                Object.keys(deps.channels.bankFeeds).length > 0 &&
+                Object.keys({ ...deps.channels?.bankFeeds, ...deps.channels?.bankFeedHosted }).length > 0 &&
                 ((row.type === 'kernel.channel.connected' && String(row.payload.provider).startsWith('bank_')) || row.type === 'finance.bank_feed.sync_requested')
               ) {
                 const connectionId = String(row.payload.connection_id);
