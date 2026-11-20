@@ -12,8 +12,13 @@ export const notesManifest = defineModule({
     crove_notes: {
       link: columns(['org_id', 'id', 'note_id', 'todo_id', 'target_type', 'target_id', 'party_id', 'file_id', 'task_id', 'created_by', 'created_at']),
       note: columns(
-        ['org_id', 'id', 'author_user_id', 'visibility', 'pinned', 'tainted', 'summary_run_ids', 'revision', 'created_at', 'updated_at', 'archived_at', 'deleted_at'],
+        ['org_id', 'id', 'author_user_id', 'notebook_id', 'visibility', 'pinned', 'tainted', 'summary_run_ids', 'revision', 'created_at', 'updated_at', 'archived_at', 'deleted_at'],
         { title: 'pii', body: 'pii', tags: 'pii', search: 'pii' },
+      ),
+      // Notebooks and 2-level stacks (#3559), private to their author or shared with the org: name and stack_name are free text, so pii.
+      notebook: columns(
+        ['org_id', 'id', 'author_user_id', 'visibility', 'pinned', 'sort_key', 'revision', 'created_at', 'updated_at'],
+        { name: 'pii', stack_name: 'pii' },
       ),
       // A member's own to-do (#1673), always private: its title, details and checklist steps are free text, so pii.
       todo: columns(
@@ -36,6 +41,7 @@ export const notesManifest = defineModule({
   // Its entities (#1656): the note, the to-do and the to-do list, which every command names as its audit target.
   entities: [
     { type: 'notes.note', table: 'note', legalEntityScoped: false, audit: 'command' },
+    { type: 'notes.notebook', table: 'notebook', legalEntityScoped: false, audit: 'command' },
     { type: 'notes.todo', table: 'todo', legalEntityScoped: false, audit: 'command' },
     { type: 'notes.todo_list', table: 'todo_list', legalEntityScoped: false, audit: 'command' },
   ],

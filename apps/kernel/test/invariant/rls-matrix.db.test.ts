@@ -40,6 +40,10 @@ const RUNTIME_ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_defin
 // table owner read or write them. They need RLS enabled (so a later grant stays deny-all until a policy is
 // added) and must be listed here, so a new table cannot quietly become one.
 const MACHINERY = new Set([
+  // #4203 (Tingee S3 of #2045, ADR-0039): a bank feed connection's webhook hook key (only the SHA-256 of 128 random bits, never the key) and the signed notices waiting for the worker to verify (the raw body is
+  // personal data, deleted when it is verified and by the sweep after 10 minutes): reached only by definers, RLS enabled, no login role grant. Land before their tables (PENDING_TABLES).
+  'crove_finance.bank_feed_hook',
+  'crove_finance.bank_feed_webhook_notice',
   // The sealed copy of a closed ads connection's token (W2-1, #2296): read only by the revoke worker through a definer.
   'crove_ads.ad_token_seal',
   // #2975: the grant an owner or admin gave an MCP client (ADR-0051, ADR-0032): one org, the consenting user, a client, the scope `ludy.read`, R0. Definer-only, no login role grant.
@@ -94,6 +98,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_finance.bank_feed_hook',
+  'crove_finance.bank_feed_webhook_notice',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.marketplace_column_profile',
@@ -119,7 +125,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_notes.note',
   'crove_notes.note_template',
   'crove_notes.note_version',
-  'crove_notes.notebook',
   'crove_sign.ca_connection',
   'crove_sign.ca_signing_request',
 ]);
@@ -1351,6 +1356,17 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #4203 (Tingee S3 of #2045, ADR-0039): the webhook hook key of a bank feed connection, one per connection: the SHA-256 (hex) of 128 random bits that the route's URL carries, the dates it was made, rotated
+  // and last seen, and how many notices were refused in the current hour (ten stop the hook until it is rotated). Definer-only, in MACHINERY; it references a connection of the same org.
+  'crove_finance.bank_feed_hook': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'bank_tingee' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, key_sha256: hex64() },
+      };
+    },
+  },
   // The accounts a bank feed connection reaches, as the worker last listed them (ADR-0039, #2044 part 2b). Tenant roles
   // update only the name and when it was listed (a column grant), so the update probes assign the name to itself.
   'crove_finance.bank_feed_listed_account': {
@@ -1360,6 +1376,21 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
         row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, external_account_id: 'SBX-001', display_name: 'Sandbox Bank 001' },
+      };
+    },
+  },
+  // #4203: a signed notice waiting for the worker to verify: the request id, the provider's timestamp and signature as sent, and the raw body (personal data: transfer content and a payer's name). Definer-only, in
+  // MACHINERY; deleted when verified and by the sweep after 10 minutes. It references a hook of the same org.
+  'crove_finance.bank_feed_webhook_notice': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'bank_tingee' };
+      const hook = { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, key_sha256: hex64() };
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_finance.bank_feed_hook', values: hook },
+        ],
+        row: { org_id: o.id, id: randomUUID(), hook_id: hook.id, request_id: randomUUID(), notice_timestamp: '20261120120000000', signature: hex64(), body: '{"clientId":"rls-matrix"}' },
       };
     },
   },

@@ -346,6 +346,7 @@ import {
 import {
   zNote,
   zNoteAcceptSummary,
+  zNoteBacklinksInput,
   zNoteClip,
   zNoteCreate,
   zNoteFromMeetingSummary,
@@ -368,6 +369,12 @@ import {
   zNoteVyResults,
   zNoteVyStatus,
   zNoteWritten,
+  zNotebookCreate,
+  zNotebookDeleted,
+  zNotebookRef,
+  zNotebookUpdate,
+  zNotebookWritten,
+  zNotebooksResponse,
   zNotesExport,
   zMyWork,
   zMyWorkInput,
@@ -1171,6 +1178,7 @@ export const contract = {
   notes: {
     list: oc.input(zNoteList).output(z.array(zNoteSummary)),
     get: oc.input(zNoteRef).output(zNote),
+    backlinks: oc.input(zNoteBacklinksInput).output(z.array(zNoteSummary)),
     search: oc.input(zNoteSearch).output(z.array(zNoteSummary)),
     panel: oc.input(zNoteLinkTarget).output(zNoteRecordPanelView),
     create: oc.input(zNoteCreate).output(zNoteWritten),
@@ -1185,6 +1193,13 @@ export const contract = {
     delete: oc.input(zNoteRef).output(zNoteWritten),
     linkAdd: oc.input(zNoteLinkAdd).output(zNoteLinkWritten),
     linkRemove: oc.input(zNoteLinkRemove).output(zNoteLinkWritten),
+    // Notebooks and 2-level stacks (#3559): private to their author or shared with the org.
+    notebooks: {
+      list: oc.input(z.strictObject({})).output(zNotebooksResponse),
+      create: oc.input(zNotebookCreate).output(zNotebookWritten),
+      update: oc.input(zNotebookUpdate).output(zNotebookWritten),
+      delete: oc.input(zNotebookRef).output(zNotebookDeleted),
+    },
     // How many private notes each member has, for an owner or admin before removing one; no text.
     privateCounts: oc.input(z.strictObject({})).output(z.array(zNotePrivateCount)),
     // The caller's own notes and to-dos, whole, for their download (#1678): never anyone else's.
