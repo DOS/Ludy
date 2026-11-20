@@ -364,7 +364,7 @@ export const mcpPropose = defineCommand({
 
 // Telling the approvers (E5, #4180, owner decision 2026-11-19, "Cho làm, việc lớn chờ duyệt"): a proposal of an AI coworker waits for an owner or an admin, and nothing else would tell them it is there.
 // kernel.mcp.propose cannot do it itself: it runs in the sealed proposal context, which writes that one proposal row and no event and no notification. The worker's sweep (mcp-proposal-notice.ts, every
-// minute) finds the pending proposals of a grant that were not told yet (crove_kernel.mcp_proposals_to_tell) and runs this, under the proposal's lock: the people who could approve it now (the snapshot at
+// 30 seconds) finds the pending proposals of a grant that were not told yet (crove_kernel.mcp_proposals_to_tell) and runs this, under the proposal's lock: the people who could approve it now (the snapshot at
 // the ask, still holding an approving role, and not held back by four-eyes: with two owners the person who connected the AI app is not told, a sole owner is) get one kernel.approval_waiting notification
 // each, the one a person's or an org-chart agent's proposal already makes, so it turns on and off with that kind, opens the Inbox card and reads as settled once the proposal is decided (the list reads
 // the proposal's state). It holds no text: the card's title, which the database built from the client's name and the kind (marked as an AI app's), is read when it is shown, and nothing the call

@@ -95,7 +95,7 @@ suite('the notice of an AI coworker\'s proposal (#4180)', () => {
   });
 
   it('settles it with the decision: an approved or rejected proposal leaves no unread notice', async () => {
-    const admin = (await h.q<{ user_id: string }>("SELECT user_id FROM crove_kernel.tenant_member WHERE org_id = $1 AND role = 'admin' LIMIT 1", [h.orgId])).rows[0]?.user_id as string;
+    const admin = await person('admin');
     const { actor } = await h.grant();
     const made = await h.propose(actor, REPLY, reply());
     await pass();
@@ -112,6 +112,8 @@ suite('the notice of an AI coworker\'s proposal (#4180)', () => {
   });
 
   it('honours the kind the person turned off, and a refused call (the cap) makes no notification', async () => {
+    // Its own people, so the test stands alone: a second owner and an admin who are told, and an admin who turned the kind off.
+    const owner2 = await h.addOwner();
     const quiet = await person('admin');
     await h.runtime.execute('kernel.notification.mute', { kind: 'kernel.approval_waiting', muted: true }, { actor: h.person(quiet), orgId: h.orgId });
     const { grantId, actor } = await h.grant();
@@ -123,9 +125,11 @@ suite('the notice of an AI coworker\'s proposal (#4180)', () => {
     expect(pending).toBe(20);
     expect(await pass()).toBe(20);
     expect((await rows()).filter((r) => r.user_id === quiet)).toEqual([]);
-    for (const id of made) expect((await rows(id)).length, id).toBe(2);
-    const total = (await rows()).filter((r) => made.includes(r.subject_id)).length;
-    expect(total).toBe(40);
+    // Everyone who may approve and is not the grantor (held back) and did not turn the kind off: the same people for each of the 20.
+    const told = (await h.q<{ user_id: string }>("SELECT user_id FROM crove_kernel.tenant_member WHERE org_id = $1 AND role IN ('owner', 'admin') AND user_id NOT IN ($2, $3)", [h.orgId, h.owner, quiet])).rows.map((r) => r.user_id);
+    expect(told).toContain(owner2);
+    for (const id of made) expect((await rows(id)).map((r) => r.user_id).sort(), id).toEqual([...told].sort());
+    expect((await rows()).filter((r) => made.includes(r.subject_id))).toHaveLength(20 * told.length);
     // Nothing is left for the next pass.
     expect(await pass()).toBe(0);
   }, 120_000);

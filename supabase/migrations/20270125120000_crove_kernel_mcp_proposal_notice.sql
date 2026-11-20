@@ -5,7 +5,8 @@
 -- cannot tell anyone itself. The worker does, from outside that context, with the same notification the proposals of people and org-chart agents already use (kernel.approval_waiting):
 --   crove_kernel.proposal.approvers_told_at   when the approvers of a pending proposal of an MCP grant were told (stamped once by kernel.mcp.proposal_notify, even when nobody could be told).
 --   crove_kernel.mcp_proposals_to_tell        the worker's scan, across active orgs, of the pending proposals of a grant not told yet. Ids only. At most 100 pending proposals of grants
---                                             exist per org (the cap), so the scan is bounded; proposal_mcp_grant_pending_idx serves it.
+--                                             exist per org (the cap), so the scan is bounded: it reads the partial index proposal_mcp_grant_pending_idx
+--                                             (pending proposals of a grant) and filters on the stamp. A partial index on the unstamped ones is for when that is not enough.
 -- No policy, no grant of the sealed context and no guard changes: the proposal's insert shape is as it was (the column starts null and the context never writes it).
 SET LOCAL lock_timeout = '2s';
 
