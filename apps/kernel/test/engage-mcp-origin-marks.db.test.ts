@@ -10,8 +10,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { Deal, PipelineStage, Quote, QuoteSent } from '@crove/kernel-contract';
-import { DomainError, Runtime, type UserActor } from '@crove/kernel-runtime';
+import type { Deal, PipelineStage, Quote } from '@crove/kernel-contract';
+import { Runtime, type UserActor } from '@crove/kernel-runtime';
 import { adsCommands, adsQueries } from '@crove/mod-ads';
 import { crmCommands, crmQueries } from '@crove/mod-crm';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -20,7 +20,6 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const ENGAGE = 'ludy.engage.write';
-const ADS = 'ludy.ads.draft';
 
 suite('the origin and taint marks of what a connected coworker writes (#4149)', () => {
   const dbName = `crove_test_engage_mcp_marks_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -32,8 +31,6 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
   const users: Record<string, string> = {};
   const channel: Record<string, string> = {};
   let thread = '';
-  let threadB = '';
-  let identity = '';
   let adAccount = '';
 
   const browser = (who: string): UserActor => ({ type: 'user', userId: users[who] as string, aal: 'aal1' });
@@ -65,15 +62,6 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
       if (process.env.DEBUG_E2) console.error(name, (error as { cause?: unknown }).cause ?? error);
       throw error;
     });
-  async function refusal(promise: Promise<unknown>): Promise<DomainError> {
-    try {
-      await promise;
-    } catch (error) {
-      expect(error).toBeInstanceOf(DomainError);
-      return error as DomainError;
-    }
-    throw new Error('expected a refusal');
-  }
   const one = async <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => (await sqlAdmin<R>(text, params)).rows[0] as R;
 
   beforeAll(async () => {
@@ -127,8 +115,7 @@ suite('the origin and taint marks of what a connected coworker writes (#4149)', 
     };
     const a = await seed(orgA, channel.a1 as string, 'a');
     thread = a.id;
-    identity = a.ident;
-    threadB = (await seed(orgB, channel.b1 as string, 'b')).id;
+    await seed(orgB, channel.b1 as string, 'b');
     const connection = randomUUID();
     await sqlAdmin(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', 'act-1', 'Tài khoản QC', $3)`, [orgA, connection, users.owner]);
     adAccount = randomUUID();
