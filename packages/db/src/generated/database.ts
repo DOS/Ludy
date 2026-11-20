@@ -229,6 +229,7 @@ export interface CroveMeetingsSchema {
 export interface CroveNotesSchema {
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
+  'crove_notes.notebook': NotesNotebookTable;
   'crove_notes.todo': NotesTodoTable;
   'crove_notes.todo_list': NotesTodoListTable;
 }
@@ -3542,6 +3543,22 @@ export interface NotesNoteTable {
   archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   summary_run_ids: Generated<string[]>;
+  notebook_id: string | null;
+}
+
+/** crove_notes.notebook */
+export interface NotesNotebookTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  visibility: Generated<string>;
+  name: string;
+  stack_name: string | null;
+  pinned: Generated<boolean>;
+  sort_key: Generated<string>;
+  revision: Generated<number>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_notes.todo_list */

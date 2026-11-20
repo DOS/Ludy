@@ -1185,6 +1185,7 @@ export function createRpcHandler(
     notes: {
       list: os.notes.list.handler(notesQuery('notes.note.list')),
       get: os.notes.get.handler(notesQuery('notes.note.get')),
+      backlinks: os.notes.backlinks.handler(notesQuery('notes.note.backlinks')),
       search: os.notes.search.handler(notesQuery('notes.note.search')),
       panel: os.notes.panel.handler(notesQuery('notes.record.panel')),
       create: os.notes.create.handler(notesCommand('notes.note.create')),
@@ -1201,6 +1202,12 @@ export function createRpcHandler(
       delete: os.notes.delete.handler(notesCommand('notes.note.delete')),
       linkAdd: os.notes.linkAdd.handler(notesCommand('notes.link.add')),
       linkRemove: os.notes.linkRemove.handler(notesCommand('notes.link.remove')),
+      notebooks: {
+        list: os.notes.notebooks.list.handler(notesQuery('notes.notebook.list')),
+        create: os.notes.notebooks.create.handler(notesCommand('notes.notebook.create')),
+        update: os.notes.notebooks.update.handler(notesCommand('notes.notebook.update')),
+        delete: os.notes.notebooks.delete.handler(notesCommand('notes.notebook.delete')),
+      },
       privateCounts: os.notes.privateCounts.handler(notesQuery('notes.private_counts')),
       exportMine: os.notes.exportMine.handler(notesQuery('notes.mine.export')),
       vyStatus: os.notes.vyStatus.handler(({ context }) =>
