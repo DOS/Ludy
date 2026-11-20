@@ -63,7 +63,7 @@ const SHEET = {
   ],
 };
 const PREVIEW = {
-  lines: [{ rowNo: 3, orderNo: '9001', lineKey: `Bút|${BUYER_EMAIL}`, sku: null, itemName: 'Bút', quantity: '2', amount: '100000', status: 'Hoàn thành' }],
+  lines: [{ rowNo: 3, orderNo: '9001', lineKey: `Bút ${BUYER_EMAIL}`, sku: null, itemName: 'Bút', quantity: '2', amount: '100000', status: 'Hoàn thành' }],
   total: 1,
   skipped: 0,
 };
@@ -374,7 +374,7 @@ suite('Marketplace column check (#4036)', () => {
     const old = await fileOf(orgId, { method: 'unsupported', result: null });
     expect((await call('columnsCheck', owner, { fileId: old, idempotencyKey: randomUUID() })).status).toBe(200);
     expect(await record(old, { state: 'done', sheet: SHEET, refusal: null, preview: null })).toMatchObject({ recorded: true });
-    await rows("UPDATE crove_finance.marketplace_column_check SET finished_at = now() - interval '8 days' WHERE org_id = $1 AND file_id = $2", [orgId, old]);
+    await rows("UPDATE crove_finance.marketplace_column_check SET finished_at = now() - interval '8 days', requested_at = now() - interval '8 days' WHERE org_id = $1 AND file_id = $2", [orgId, old]);
     // The app role (the API) cannot call it; the worker can, and it removes the old check and keeps the recent one.
     await expect(pool.query('SELECT crove_finance.marketplace_column_check_prune(7)')).rejects.toThrow(/permission denied|WORKER_ONLY/);
     const recent = (await checkRow(fileId))?.state;
