@@ -595,6 +595,9 @@ suite('bank statement import (#326)', () => {
     await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET feed_from = $3, cursor = NULL, last_synced_at = NULL WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-9)]));
     await sync(connectionId);
     expect(await feedFromOf()).toBe(dayOf(-7));
+    // The move-up is on the trail, with the day it was and the day it became.
+    const moved = await admin((c) => c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND detail ? 'feedFromMovedTo' ORDER BY occurred_at DESC LIMIT 1`, [orgId]));
+    expect(moved.rows[0]?.detail).toMatchObject({ feedFromMovedTo: dayOf(-7), feedFromWas: dayOf(-9) });
     // The pull leaves out the lines the feed brings from before the day: nothing it stored is dated before it.
     const fed = (await stored('1121.CUT')).filter((l) => l.bank_ref !== null && !l.bank_ref.startsWith('CUT-'));
     expect(fed.every((l) => l.value_date >= (dayOf(-7)))).toBe(true);

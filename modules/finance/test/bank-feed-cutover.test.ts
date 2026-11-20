@@ -32,6 +32,8 @@ describe('earliestFeedFrom', () => {
     expect(earliestFeedFrom(now, 'bank_sandbox', row('2026-02-30'))).toBeNull();
     expect(earliestFeedFrom(now, 'bank_tingee', row('20261340120000'))).toBeNull();
     expect(earliestFeedFrom(now, 'bank_tingee', row('20261118246000'))).toBeNull();
+    expect(earliestFeedFrom(now, 'bank_tingee', row('20261118086000'))).toBeNull();
+    expect(earliestFeedFrom(now, 'bank_tingee', row('20261118083060'))).toBeNull();
     // Each provider reads only its own cursor: a 17-digit stamp or a day is not Tingee's, a stamp is not the sandbox's.
     expect(earliestFeedFrom(now, 'bank_tingee', row('20261118083000000'))).toBeNull();
     expect(earliestFeedFrom(now, 'bank_tingee', row('2026-11-18'))).toBeNull();
