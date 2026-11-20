@@ -11,7 +11,7 @@ import {
   AGENDA_LIST_MAX,
   AGENDA_NEXT_MAX,
   AGENDA_NEXT_MINUTES,
-  AGENDA_OVERLAP_MINUTES,
+  meetingOverlapWindow,
   zAgendaClear,
   zAgendaCleared,
   zAgendaLink,
@@ -169,13 +169,12 @@ export const agendaSuggest = defineQuery({
     const linked = await agendaOf(ctx.trx, ctx.orgId, userId).where('a.meeting_id', '=', input.meetingId).executeTakeFirst();
     if (linked) return zAgendaSuggestion.parse({ meetingId: input.meetingId, linked: toEvent(linked), suggestion: null });
     const startedAt = meeting.started_at;
-    const endedAt = meeting.ended_at ?? (startedAt && meeting.length_seconds ? new Date(startedAt.getTime() + Number(meeting.length_seconds) * 1000) : startedAt);
-    if (!startedAt || !endedAt) return zAgendaSuggestion.parse({ meetingId: input.meetingId, linked: null, suggestion: null });
-    const slack = AGENDA_OVERLAP_MINUTES * 60_000;
+    if (!startedAt) return zAgendaSuggestion.parse({ meetingId: input.meetingId, linked: null, suggestion: null });
+    const { windowStart, windowEnd } = meetingOverlapWindow({ startedAt, endedAt: meeting.ended_at, lengthSeconds: meeting.length_seconds });
     const rows = await agendaOf(ctx.trx, ctx.orgId, userId)
       .where('a.meeting_id', 'is', null)
-      .where('a.starts_at', '<', new Date(endedAt.getTime() + slack))
-      .where('a.ends_at', '>', new Date(startedAt.getTime() - slack))
+      .where('a.starts_at', '<', windowEnd)
+      .where('a.ends_at', '>', windowStart)
       .orderBy('a.starts_at')
       .limit(2)
       .execute();
