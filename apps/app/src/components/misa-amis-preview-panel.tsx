@@ -178,7 +178,7 @@ export function MisaAmisPreviewPanel({
             <label htmlFor={`${id}-sales-stock`} className="text-xs text-muted-foreground">
               {t('salesStock')}
             </label>
-            <Input id={`${id}-sales-stock`} className="min-w-40 max-md:min-h-11" maxLength={50} autoComplete="off" readOnly={checkConnectionId === undefined} value={salesStockCode} onChange={(e) => setSalesStockCode(e.target.value)} />
+            <Input id={`${id}-sales-stock`} className="min-w-40 max-md:min-h-11" maxLength={50} autoComplete="off" readOnly={checkConnectionId === undefined} value={checkConnectionId === undefined ? (defaults?.salesStock ?? '') : salesStockCode} onChange={(e) => setSalesStockCode(e.target.value)} />
             <MisaAmisDefaultItem connectionId={push.connectionId} role="sales_stock" typed={salesStockCode} saved={defaults?.salesStock ?? null} canManage={checkConnectionId !== undefined} />
           </div>
         )}
