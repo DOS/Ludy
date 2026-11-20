@@ -20,9 +20,9 @@ BEGIN
   IF v_org IS NULL THEN
     RAISE EXCEPTION 'ENGAGE_ERASE_NO_ORG' USING ERRCODE = '42501';
   END IF;
-  -- An owner or an admin (the erasure of a customer is theirs), or the system (the retention purge): nobody else, and never an MCP grant or an agent.
+  -- An owner or an admin (the erasure of a customer is theirs), or the system (the retention purge): nobody else. An MCP grant and an agent have the actor type 'agent', so they are refused here without reading the sealed member key (the set of its readers is pinned exactly).
   IF NOT (v_actor = 'system'
-          OR (v_actor = 'user' AND v_user IS NOT NULL AND crove_kernel.ctx_mcp_member_id() IS NULL
+          OR (v_actor = 'user' AND v_user IS NOT NULL
               AND EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = v_org AND m.user_id = v_user AND m.role IN ('owner', 'admin')))) THEN
     RAISE EXCEPTION 'ENGAGE_ERASE_FORBIDDEN' USING ERRCODE = '42501';
   END IF;

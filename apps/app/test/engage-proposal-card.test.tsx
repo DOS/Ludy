@@ -3,7 +3,7 @@
 // in both languages.
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { EngageProposalView } from '@crove/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
@@ -31,6 +31,16 @@ const render = (locale: 'vi' | 'en', status = 'pending', shown: EngageProposalVi
     </IntlProvider>,
   );
 const withAbout = (about: EngageProposalView['about']): EngageProposalView => ({ ...engage, about });
+
+// The card shows a time in the reader's own clock: the test reads it as Vietnam does, whatever zone the runner has.
+const RUNNER_TZ = process.env.TZ;
+beforeAll(() => {
+  process.env.TZ = 'Asia/Ho_Chi_Minh';
+});
+afterAll(() => {
+  if (RUNNER_TZ === undefined) delete process.env.TZ;
+  else process.env.TZ = RUNNER_TZ;
+});
 
 describe('the card of an AI coworker\'s ask', () => {
   it('shows the text as plain text, never as markup, with who asked and a plain statement that nothing happened yet', () => {
