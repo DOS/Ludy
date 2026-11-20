@@ -56,7 +56,7 @@ import { meetingPlatformRefreshCommand } from './meeting-platform-credential.ts'
 import { MEETINGS_IMPORT_SWEEP_CRON, MEETINGS_IMPORT_SWEEP_EXPIRE_SECONDS, runMeetingsImportSweep } from './meetings-import-sweep.ts';
 import { CHAT_JOB_EXPIRE_SECONDS, CHAT_RETRY_DELAY_SECONDS, CHAT_RETRY_LIMIT, runMeetingChat, type ChatJob } from './meeting-chat-job.ts';
 import { MEETING_CHAT_SWEEP_CRON, MEETING_CHAT_SWEEP_EXPIRE_SECONDS, runMeetingChatSweep } from './meeting-chat-sweep.ts';
-import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNoteAttachmentExtract, queueNotesMemberPurge, runNoteAttachmentExtract, runNotesMemberPurge, sweepNoteAttachmentBlobs, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesAttachmentExtractJob, type NotesMemberPurgeJob } from './notes-worker.ts';
+import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNoteAttachmentExtract, queueNotesMemberPurge, requestDueNoteAttachmentExtracts, runNoteAttachmentExtract, runNotesMemberPurge, sweepNoteAttachmentBlobs, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesAttachmentExtractJob, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { SIGN_CLEANUP_CRON, SIGN_EXPIRE_SWEEP_CRON, SIGN_JOB_RETRY_LIMIT, isSignTemplateInspectJob, runSignPdfInspectJob, runSignPdfSealJob, sweepSignCleanup, sweepSignExpire, sweepSignPendingWork, type SignEnvelopeJob, type SignPdfInspectJob, type SignTemplateInspectJob } from './sign-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
@@ -1293,6 +1293,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.work(QUEUES.notesRemind, { batchSize: 1 }, async () => {
       const sent = await sweepNotesReminders({ runtime: deps.runtime, workerDb: deps.workerDb });
       if (sent > 0) console.log(`[notes-remind] sent ${sent}`);
+      // Attachments still waiting for their text (#3561), asked for again.
+      const asked = await requestDueNoteAttachmentExtracts({ runtime: deps.runtime, workerDb: deps.workerDb, boss });
+      if (asked > 0) console.log(`[notes-attachment-extract] asked again for ${asked}`);
     });
     await boss.schedule(QUEUES.notesRemind, NOTES_REMIND_CRON, null, { tz: NOTES_TRASH_TZ });
     const notesExtractConcurrency = extractWorkers(deps.extract);

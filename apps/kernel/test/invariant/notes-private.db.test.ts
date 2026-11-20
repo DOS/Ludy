@@ -448,6 +448,7 @@ suite('private notes on PostgreSQL (#1671, ADR-0037)', () => {
       ['SELECT crove_notes.attachment_record_extract($1::uuid, $2::text, $3::text)', [sampleAttachmentId, 'done', 'ok']],
       ['SELECT * FROM crove_notes.attachment_blob_claim(10)', []],
       ['SELECT crove_notes.attachment_blob_done(ARRAY[]::text[])', []],
+      ['SELECT * FROM crove_notes.attachment_extract_due(10)', []],
     ];
     for (const [text, values] of calls) {
       for (const actor of [author, member('an owner', () => users.owner), agentActor]) {

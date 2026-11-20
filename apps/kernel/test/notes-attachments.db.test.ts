@@ -21,7 +21,7 @@ import { notesCommands, notesQueries } from '@crove/mod-notes';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
-import { runNoteAttachmentExtract, sweepNoteAttachmentBlobs } from '../src/notes-worker.ts';
+import { requestDueNoteAttachmentExtracts, runNoteAttachmentExtract, sweepNoteAttachmentBlobs } from '../src/notes-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -311,6 +311,30 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     expect(await search(o, o.author, 'noi dung moi')).toEqual([noteId]);
     // The worker definers hand back no note text and refuse any login but the worker's.
     await expect(rows('SELECT * FROM crove_notes.attachment_for_extract($1::uuid)', [a.id])).rejects.toThrow();
+  });
+
+  it('asks again for the text of an attachment still pending after 10 minutes, outside the trash, once per attachment', async () => {
+    const o = await org();
+    const kept = await createNote(o, o.author, 'private');
+    const trashed = await createNote(o, o.author, 'private');
+    const waiting = await attached(o, o.author, kept, pdf('cho'), 'cho.pdf');
+    const fresh = await attached(o, o.author, kept, pdf('moi'), 'moi.pdf');
+    const inTrash = await attached(o, o.author, trashed, pdf('rac'), 'rac.pdf');
+    await rt.execute('notes.note.delete', { noteId: trashed }, { actor: asUser(o.author.id), orgId: o.orgId });
+    await admin(async (c) => {
+      await c.query("SET session_replication_role = 'replica'");
+      await c.query("UPDATE crove_notes.attachment SET created_at = now() - interval '20 minutes' WHERE org_id = $1 AND id = ANY($2)", [o.orgId, [waiting.id, inTrash.id]]);
+    });
+    const sent: Array<{ name: string; data: unknown; key: unknown }> = [];
+    const boss = { send: async (name: string, data?: object | null, options?: { singletonKey?: string }) => (sent.push({ name, data, key: options?.singletonKey }), 'job') };
+    await requestDueNoteAttachmentExtracts({ runtime: worker, workerDb, boss: boss as never });
+    const mine = sent.filter((s) => (s.data as { orgId: string }).orgId === o.orgId);
+    expect(mine.map((s) => (s.data as { attachmentId: string }).attachmentId)).toEqual([waiting.id]);
+    expect(mine[0]?.name).toBe('notes-attachment-extract');
+    expect(mine[0]?.key).toEqual(expect.stringContaining(waiting.id));
+    expect(sent.some((s) => [fresh.id, inTrash.id].includes((s.data as { attachmentId: string }).attachmentId))).toBe(false);
+    // The app login may not list them.
+    await expect(admin((c) => c.query('SET ROLE crove_app').then(() => c.query('SELECT * FROM crove_notes.attachment_extract_due(10)')))).rejects.toThrow();
   });
 
   it('queues the blob on attachment delete, on the trash purge and on a note delete, and the sweep removes it from the store', async () => {

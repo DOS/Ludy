@@ -334,6 +334,30 @@ BEGIN
   RETURN v_n > 0;
 END $$;
 
+-- The attachments still waiting for their text 10 minutes after upload, outside the trash: the worker asks for them again
+-- (a job dropped while Notes was off, or while the note was in the trash, is never sent twice otherwise). Ids only.
+CREATE OR REPLACE FUNCTION crove_notes.attachment_extract_due(p_limit integer)
+RETURNS TABLE (org_id uuid, id uuid)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+#variable_conflict use_column
+BEGIN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') OR crove_kernel.ctx_org_id() IS NOT NULL THEN
+    RAISE EXCEPTION 'NOTES_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
+  RETURN QUERY
+    SELECT a.org_id, a.id
+      FROM crove_notes.attachment a
+      JOIN crove_notes.note n ON n.org_id = a.org_id AND n.id = a.note_id
+     WHERE a.extract_status = 'pending'
+       AND a.created_at < pg_catalog.now() - pg_catalog.make_interval(mins => 10)
+       AND n.deleted_at IS NULL
+     ORDER BY a.created_at, a.id
+     LIMIT LEAST(GREATEST(p_limit, 1), 500);
+END $$;
+REVOKE ALL ON FUNCTION crove_notes.attachment_extract_due(integer)
+  FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_notes.attachment_extract_due(integer) TO crove_worker;
+
 REVOKE ALL ON FUNCTION crove_notes.attachment_for_extract(uuid), crove_notes.attachment_record_extract(uuid, text, text)
   FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_notes.attachment_for_extract(uuid), crove_notes.attachment_record_extract(uuid, text, text)

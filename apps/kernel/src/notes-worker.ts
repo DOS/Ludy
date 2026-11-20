@@ -223,6 +223,26 @@ export async function runNoteAttachmentExtract(
   return { status: 'done' };
 }
 
+// The attachments whose extraction never ran (dropped while Notes was off or the note was in the trash): asked for again,
+// for the orgs that have Notes on, on the reminders' 5-minute tick. The singleton key keeps one job per attachment.
+export async function requestDueNoteAttachmentExtracts(deps: { runtime: Runtime; workerDb: Db; boss: JobSender }): Promise<number> {
+  const { rows } = await sql<{ org_id: string; id: string }>`
+    SELECT org_id, id FROM crove_notes.attachment_extract_due(200)
+  `.execute(deps.workerDb);
+  let sent = 0;
+  for (const row of rows) {
+    if (!(await deps.runtime.appOn(row.org_id, 'notes').catch(() => false))) continue;
+    await queueNoteAttachmentExtract(deps.boss, {
+      org_id: row.org_id,
+      event_id: row.id,
+      type: NOTE_ATTACHMENT_EXTRACT_QUEUED_EVENT,
+      payload: { attachmentId: row.id },
+    });
+    sent++;
+  }
+  return sent;
+}
+
 const BLOB_SWEEP_MS = 60_000;
 const BLOB_SWEEP_BATCH = 200;
 let lastNoteBlobSweep = 0;

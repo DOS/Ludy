@@ -87,7 +87,9 @@ function looksLikePlainUtf8(bytes: Uint8Array): string | null {
   if (sample.includes(0)) return null;
   let decoded: string;
   try {
-    decoded = new TextDecoder('utf-8', { fatal: true }).decode(sample);
+    // A sample cut inside a multi-byte character is still valid text: decode it as the start of a stream, so the
+    // incomplete last character is held back instead of refused.
+    decoded = new TextDecoder('utf-8', { fatal: true }).decode(sample, { stream: sample.byteLength < bytes.byteLength });
   } catch {
     return null;
   }

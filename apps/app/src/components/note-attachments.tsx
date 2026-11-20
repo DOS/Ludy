@@ -298,6 +298,11 @@ function PdfAttachmentPreview({ attachment, slug }: { attachment: NoteAttachment
   const [pageNumber, setPageNumber] = useState(1);
   const [pageCount, setPageCount] = useState(1);
   const [scale, setScale] = useState(1.0);
+  // Stable, so the viewer does not reopen the document (and jump back to page 1) on every page or zoom change.
+  const onPageCountDetected = useCallback((count: number) => {
+    setPageCount(count);
+    setPageNumber(1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -339,10 +344,7 @@ function PdfAttachmentPreview({ attachment, slug }: { attachment: NoteAttachment
         scale={scale}
         onPageChange={setPageNumber}
         onScaleChange={setScale}
-        onPageCountDetected={(count) => {
-          setPageCount(count);
-          setPageNumber(1);
-        }}
+        onPageCountDetected={onPageCountDetected}
       />
     </div>
   );
