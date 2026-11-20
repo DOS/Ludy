@@ -136,9 +136,9 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   // The sync of a bank feed connection (ADR-0039, #2045): the daily sweep and a retry queue the connections of active orgs, each connected by an owner or admin through
   // kernel.channel.connect, which declares an external effect.
   'finance-bank-feed-sync handler': { command: 'kernel.channel.connect' },
-  // The relay queues a sync when a bank feed is connected or one of its accounts is mapped: the account is mapped by an owner or admin through finance.bank_feed.map, which
-  // declares an external effect once the sync reaches a provider (#2045).
-  relay: { command: 'finance.bank_feed.map' },
+  // The signed-notice loop of the relay (the provider's notice for an account a connection lists, #2045) queues a sync of each connection that lists the account; such a connection
+  // exists only through kernel.channel.connect, which declares an external effect. (The relay's own events are checked by the emitter rule: finance.bank_feed.sync_requested.)
+  relay: { command: 'kernel.channel.connect' },
 };
 
 // Reviewed send sites that may be listed before the site exists, so the two steps of an invariant change can land apart (the PENDING_DEPS pattern): each names the issue that adds
