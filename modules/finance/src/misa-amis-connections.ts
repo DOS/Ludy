@@ -11,10 +11,11 @@
 // later slice's callback finds the organisation by) is not in any answer either.
 import { z } from 'zod';
 import { zChannelConnect } from '@crove/kernel';
-import { zId, zMisaAmisConnectionRecordTest, zMisaAmisDefaultItem, zMisaAmisProduct, type MisaAmisConnection, type MisaAmisProduct, type MisaAmisTestState } from '@crove/kernel-contract';
+import { MISA_AMIS_UNIT_ALIASES_MAX, zId, zMisaAmisConnectionRecordTest, zMisaAmisDefaultItem, zMisaAmisUnitAlias, zMisaAmisProduct, type MisaAmisConnection, type MisaAmisProduct, type MisaAmisTestState } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
+import { normalizeUnitName } from './misa-amis-matching.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -213,7 +214,7 @@ export const misaAmisConnectionList = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.legal_entity_id', 'c.created_at', 'c.last_test_state', 'c.last_tested_at', 'c.default_service_item_code', 'c.default_sales_item_code', 'c.default_sales_stock_code', 'ch.display_name', 'ch.status'])
+      .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.legal_entity_id', 'c.created_at', 'c.last_test_state', 'c.last_tested_at', 'c.default_service_item_code', 'c.default_sales_item_code', 'c.default_sales_stock_code', 'c.unit_aliases', 'ch.display_name', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .orderBy('c.created_at')
       .orderBy('c.id')
@@ -231,6 +232,7 @@ export const misaAmisConnectionList = defineQuery({
       defaultServiceItemCode: r.default_service_item_code,
       defaultSalesItemCode: r.default_sales_item_code,
       defaultSalesStockCode: r.default_sales_stock_code,
+      unitAliases: aliasesOf(r.unit_aliases),
     }));
   },
 });
@@ -264,5 +266,47 @@ export const misaAmisConnectionSetDefaultItem = defineCommand({
   },
 });
 
-export const misaAmisConnectionCommands = [misaAmisConnectionConnect, misaAmisConnectionUnlink, misaAmisConnectionRequestTest, misaAmisConnectionRecordTest, misaAmisConnectionSetDefaultItem];
+/** The aliases object as a plain record of text to text; anything else (a row changed outside the command) reads as none. */
+export function aliasesOf(value: unknown): Record<string, string> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+}
+
+// The MISA name of a unit of Ludy on a MISA ASP connection (#4125): kept per unit (folded the way the check folds it), or cleared with a null name. Typed as the catalogue spells it, not looked up here; the next check
+// matches it exactly. Owner or admin. The row is locked while one key changes, so two people's changes to different units both stay. Only an ASP connection holds any (the table's check says the same).
+export const misaAmisConnectionSetUnitAlias = defineCommand({
+  name: 'finance.misa_amis_connection.set_unit_alias',
+  input: zMisaAmisUnitAlias,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  target: (input) => ({ type: 'finance.misa_amis_connection', id: input.id }),
+  handler: async (ctx, input): Promise<{ saved: boolean }> => {
+    const key = normalizeUnitName(input.unit);
+    if (key === null) throw new DomainError('MISA_AMIS_UNIT_INVALID', 422, 'Tên đơn vị tính không hợp lệ');
+    const connection = await ctx.trx
+      .selectFrom('crove_finance.misa_amis_connection')
+      .select(['product', 'unit_aliases'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!connection) throw notFound();
+    if (connection.product !== 'asp') throw new DomainError('MISA_AMIS_UNIT_NOT_ASP', 422, 'Chỉ kết nối MISA ASP mới có tên đơn vị tính riêng');
+    const aliases = aliasesOf(connection.unit_aliases);
+    if (input.misaName === null) delete aliases[key];
+    else aliases[key] = input.misaName;
+    if (Object.keys(aliases).length > MISA_AMIS_UNIT_ALIASES_MAX) throw new DomainError('MISA_AMIS_UNIT_ALIASES_FULL', 422, `Mỗi kết nối chỉ giữ tối đa ${MISA_AMIS_UNIT_ALIASES_MAX} tên đơn vị tính`);
+    await ctx.trx
+      .updateTable('crove_finance.misa_amis_connection')
+      .set({ unit_aliases: JSON.stringify(aliases) })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .execute();
+    ctx.audit({ cleared: input.misaName === null });
+    return { saved: true };
+  },
+});
+
+export const misaAmisConnectionCommands = [misaAmisConnectionConnect, misaAmisConnectionUnlink, misaAmisConnectionRequestTest, misaAmisConnectionRecordTest, misaAmisConnectionSetDefaultItem, misaAmisConnectionSetUnitAlias];
 export const misaAmisConnectionQueries = [misaAmisConnectionList, misaAmisConnectionTarget, misaAmisConnectionTestTarget, misaAmisConnectionCanDisconnect];

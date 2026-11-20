@@ -14,6 +14,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage } from '../lib/api.ts';
 import { MisaAmisDefaultItem } from './misa-amis-default-item.tsx';
 import { MisaAmisNameProposals } from './misa-amis-name-proposals.tsx';
+import { MisaAmisUnitNames } from './misa-amis-unit-names.tsx';
 import { MisaAmisPushConfirm } from './misa-amis-push-panel.tsx';
 import { CHECK_POLL_MS, CHECK_WAIT_MS, checkTick, pickResult } from '../lib/misa-amis-match-check.ts';
 import type { PushOffer } from '../lib/misa-amis-push.ts';
@@ -216,6 +217,7 @@ export function MisaAmisPreviewPanel({
       )}
       {result && <MisaAmisPreviewResult result={result} notes={notes.data ?? null} />}
       {result && checkConnectionId && <MisaAmisCheckButton state={result.matchCheck.state} pending={check.isPending} waiting={waiting} slow={slow && result.matchCheck.state === 'requested'} error={check.error} onAsk={askCheck} />}
+      {result && checkConnectionId && product === 'asp' && <MisaAmisUnitNames key={result.matchCheck.checkedAt ?? 'none'} connectionId={checkConnectionId} />}
       {result && checkConnectionId && (
         <MisaAmisNameProposals
           key={result.matchCheck.checkedAt ?? 'none'}

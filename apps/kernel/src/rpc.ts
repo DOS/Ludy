@@ -3624,6 +3624,13 @@ export function createRpcHandler(
             return runtime.execute<{ queued: boolean }>('finance.misa_amis_connection.request_test', { id: input.id }, { actor, orgId });
           }),
         ),
+        // The MISA name of a unit of Ludy on a MISA ASP connection (#4125): typed as the catalogue spells it, or cleared; the next check validates it. Owner or admin; nothing is sent by it.
+        setUnitAlias: os.misaAmis.connections.setUnitAlias.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới đặt được tên đơn vị tính của kết nối MISA');
+            return runtime.execute<{ saved: boolean }>('finance.misa_amis_connection.set_unit_alias', input, { actor, orgId });
+          }),
+        ),
         // The default item of a connection for service lines or sales lines (S3b, #4124): kept as typed, or cleared; the next check validates it against the catalogue. Owner or admin; no switch gates it (nothing is sent).
         setDefaultItem: os.misaAmis.connections.setDefaultItem.handler(({ context, input }) =>
           inFinance(context, async (orgId, actor) => {
@@ -3648,6 +3655,13 @@ export function createRpcHandler(
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được các đề xuất khớp theo tên');
             await requireMisaConnectorOf(actor, orgId, input.connectionId);
             return runtime.query('finance.misa_amis_match.proposals', input, { actor, orgId });
+          }),
+        ),
+        units: os.misaAmis.matches.units.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được các đơn vị tính chưa khớp');
+            await requireMisaConnectorOf(actor, orgId, input.connectionId);
+            return runtime.query('finance.misa_amis_match.units', input, { actor, orgId });
           }),
         ),
         confirmName: os.misaAmis.matches.confirmName.handler(({ context, input }) =>

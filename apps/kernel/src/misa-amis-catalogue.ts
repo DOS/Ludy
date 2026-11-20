@@ -48,6 +48,8 @@ export interface CatalogueQuestion {
   /** MISA ASP only (#4125): the unit names and stock codes Ludy writes on lines, looked up in catalogues 4 and 3. */
   unitNames?: readonly string[];
   stockCodes?: readonly string[];
+  /** MISA ASP: the unit names a person typed, by the unit of Ludy (folded). */
+  unitAliases?: Readonly<Record<string, string>>;
 }
 
 /** The questions matched against the catalogue as it is now. */
@@ -61,7 +63,7 @@ export async function matchCatalogue(client: AmisClient, connection: AmisConnect
   }
   if (wanted.itemCodes.length > 0) results.push(...matchItems(wanted.itemCodes, catalogueItems(await readCatalogue(client, connection, AMIS_DICTIONARIES.inventoryItem))));
   const unitNames = wanted.unitNames ?? [];
-  if (unitNames.length > 0) results.push(...matchUnits(unitNames, catalogueUnits(await readCatalogue(client, connection, AMIS_DICTIONARIES.unit))));
+  if (unitNames.length > 0) results.push(...matchUnits(unitNames, catalogueUnits(await readCatalogue(client, connection, AMIS_DICTIONARIES.unit)), wanted.unitAliases));
   const stockCodes = wanted.stockCodes ?? [];
   if (stockCodes.length > 0) results.push(...matchStocks(stockCodes, catalogueStocks(await readCatalogue(client, connection, AMIS_DICTIONARIES.stock))));
   return results;

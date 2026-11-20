@@ -220,11 +220,13 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
         const reliedWanted = ask.kind === 'sales' && matches.salesStockCode != null ? { ...wanted, stockCodes: [...new Set([...wanted.stockCodes, matches.salesStockCode])].sort() } : wanted;
         const verify = relied(matches, reliedWanted);
         if (verify.taxCodes.length > 0 || verify.itemCodes.length > 0 || verify.confirmed.length > 0 || verify.unitNames.length > 0 || verify.stockCodes.length > 0) {
-          const key = JSON.stringify(verify);
+          // The units are read again with the names a person typed for them, as the check matched them.
+          const verifyAsked = { ...verify, unitAliases: matches.unitAliases ?? {} };
+          const key = JSON.stringify(verifyAsked);
           if (unreadable === key) throw new TooLarge();
           readKey = key;
           if (reread === null || reread.key !== key || now().getTime() - reread.at > CATALOGUE_REREAD_MS) {
-            reread = { key, at: now().getTime(), results: await matchCatalogue(client, connection, verify) };
+            reread = { key, at: now().getTime(), results: await matchCatalogue(client, connection, verifyAsked) };
           }
           matchStale = staleMatches(matches, reread.results);
         }
