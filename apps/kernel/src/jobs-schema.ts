@@ -99,6 +99,8 @@ export const QUEUES = {
   // Created by the MISA AMIS test queue migration (20270119130000): one MISA AMIS connection's test, a token and the company's information (#3885, S2b of #3854).
   misaAmisTest: 'finance-misa-amis-test',
   misaAmisMatch: 'finance-misa-amis-match',
+  // Created by the marketplace column check migration (20270125200000): one unrecognised order report's check of a column mapping through the extract sandbox (#4036, slice 1c of #3850).
+  marketplaceColumns: 'finance-marketplace-column-check',
   misaAmisPush: 'finance-misa-amis-push',
   // Created by the ads core migration (20261115120000): an ad account's sync (ADR-0040, #2217).
   adsSync: 'ads-sync',
@@ -237,6 +239,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The MISA AMIS client (channels.misaAmis, @crove/misa-amis): its transport is bound to developer.misa.vn by the egress guard (guardedRequest, https and that host only). The test job reads a token and the
   // company's information; a later slice's push job declares itself here too.
   [QUEUES.misaAmisTest]: ['provider:misa_amis'],
+  // The column check of an unrecognised order report reads a file from the blob store and calls the extract sandbox (which has no egress of its own); it reaches no provider and no tenant URL (#4036).
+  [QUEUES.marketplaceColumns]: 'none',
   [QUEUES.misaAmisMatch]: ['provider:misa_amis'],
   [QUEUES.misaAmisPush]: ['provider:misa_amis'],
   // The ad platform adapters (channels.adPlatforms, @crove/ad-platform): the offline sandbox reaches nothing, the real ones
