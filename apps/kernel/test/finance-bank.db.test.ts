@@ -597,9 +597,16 @@ suite('bank statement import (#326)', () => {
     expect((await map({ feedFrom: null })).status).toBe(200);
     // Clearing the day does not open a way round the rule: with none set, a new day may not be earlier than the day the cursor has reached.
     await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-2)]));
+    // The sandbox cursor is the last day pulled, so the first day still fetched is the next one: the cursor's day itself is refused.
     expect(await map({ feedFrom: dayOf(-5) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
-    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-2));
-    expect((await map({ feedFrom: dayOf(-2) })).status).toBe(200);
+    expect(await map({ feedFrom: dayOf(-2) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
+    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-1));
+    expect((await map({ feedFrom: dayOf(-1) })).status).toBe(200);
+    expect((await map({ feedFrom: null })).status).toBe(200);
+    // A cursor that cannot be read gives no day to vouch for: the day is refused and the view says so.
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, 'not-a-cursor']));
+    expect(await map({ feedFrom: dayOf(-1) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_UNKNOWN' } });
+    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBeNull();
     expect((await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).status).toBe(200);
   });
 

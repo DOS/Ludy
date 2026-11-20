@@ -35,21 +35,37 @@ function reachFrom(now: Date, provider: string): string {
   return new Date(Date.parse(`${vietnamToday(now)}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
 }
 
-// The earliest cut-over day a mapping may be given (#4218): not before the provider's first pull reaches and, once it has synced (cursor set), not before the day it holds now, or if none the day its cursor has reached (lines the feed stored before that are never fetched again, so a file's lines from there would be lost). Clearing the day stays allowed, and the rule applies to the next day set all the same.
-export function earliestFeedFrom(now: Date, provider: string, row: { cursor: string | null; feed_from: string | null } | null): string {
+// The earliest cut-over day a mapping may be given (#4218): not before the provider's first pull reaches and, once it has synced (cursor set), not before the day it holds now, or if none the first day the feed will still fetch (lines it stored or left out before that are never fetched again, so a file's lines from there would be lost). Clearing the day stays allowed, and the rule applies to the next day set all the same. Null: the cursor cannot be read, so no day can be vouched for.
+export function earliestFeedFrom(now: Date, provider: string, row: { cursor: string | null; feed_from: string | null } | null): string | null {
   const reach = reachFrom(now, provider);
   if (!row || row.cursor === null) return reach;
-  const floor = row.feed_from ?? cursorDay(row.cursor) ?? vietnamToday(now);
+  const floor = row.feed_from ?? firstDayStillFetched(row.cursor);
+  if (floor === null) return null;
   return floor > reach ? floor : reach;
 }
 
-// The day of a feed cursor: a day (`2026-11-20`, the sandbox's) or a stamp that starts with one (`20261120083000000`, Tingee's); null when it is neither.
-function cursorDay(cursor: string): string | null {
-  const iso = /^(\d{4}-\d{2}-\d{2})/.exec(cursor);
-  if (iso) return iso[1] as string;
-  const stamp = /^(\d{4})(\d{2})(\d{2})\d*$/.exec(cursor);
-  return stamp ? `${stamp[1]}-${stamp[2]}-${stamp[3]}` : null;
+// The first day a feed will still fetch after this cursor. The sandbox's cursor is the last day pulled (2026-11-20): the next pull starts the day after. Tingee's is a stamp (20261120083000000) the next pull reads from: lines of its day from that moment on are still fetched, earlier ones are not, so the floor is the next day, except for a stamp at midnight, where the whole day is. Null for anything else, or a day that is not on the calendar.
+function firstDayStillFetched(cursor: string): string | null {
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(cursor);
+  if (iso) {
+    const day = calendarDay(iso[1] as string, iso[2] as string, iso[3] as string);
+    return day === null ? null : addDay(day);
+  }
+  const stamp = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{3})$/.exec(cursor);
+  if (!stamp) return null;
+  const day = calendarDay(stamp[1] as string, stamp[2] as string, stamp[3] as string);
+  if (day === null) return null;
+  return stamp[4] === '00' && stamp[5] === '00' && stamp[6] === '00' && stamp[7] === '000' ? day : addDay(day);
 }
+
+// A day of the calendar as `YYYY-MM-DD`, or null for one that is not (2026-02-30).
+function calendarDay(y: string, m: string, d: string): string | null {
+  const text = `${y}-${m}-${d}`;
+  const parsed = new Date(`${text}T00:00:00Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text ? null : text;
+}
+
+const addDay = (day: string): string => new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
 export const bankFeedMap = defineCommand({
   name: 'finance.bank_feed.map',
@@ -111,6 +127,7 @@ export const bankFeedMap = defineCommand({
     // The cut-over day decides which lines the feed supplies, so it must be a day the feed reaches (#4218): not before its first pull's window, and, once the account has synced, never earlier than it was (the lines the feed left out before it are not fetched again).
     if (input.feedFrom) {
       const earliest = earliestFeedFrom(ctx.now, connection.provider, existing ?? null);
+      if (earliest === null) throw new DomainError('BANK_FEED_FROM_UNKNOWN', 422, 'Không đọc được điểm đồng bộ của tài khoản này nên chưa đặt được ngày bắt đầu; hãy bỏ ngày này hoặc thử lại sau lần đồng bộ kế tiếp');
       if (input.feedFrom < earliest) {
         if (existing?.cursor != null) throw new DomainError('BANK_FEED_FROM_MOVED_EARLIER', 422, `Tài khoản này đã đồng bộ nên ngày bắt đầu lấy giao dịch tự động không thể sớm hơn ${earliest}; hãy chọn ngày muộn hơn`, { earliest });
         throw new DomainError('BANK_FEED_FROM_TOO_EARLY', 422, `Ngày nguồn tự động bắt đầu lấy giao dịch không được sớm hơn ${earliest}, vì nguồn chỉ lấy lùi tới ngày đó`, { earliest });

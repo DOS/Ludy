@@ -161,7 +161,7 @@ function AccountRow({
             <label htmlFor={feedFromId} className="text-xs text-muted-foreground">
               {t('feedFromLabel')}
             </label>
-            <Input id={feedFromId} type="date" min={feedFromMin(connection.provider, mapped)} className="min-h-11 w-auto" aria-describedby={`${feedFromId}-hint`} value={feedFrom} disabled={!active} onChange={(e) => setFeedFrom(e.target.value)} />
+            <Input id={feedFromId} type="date" min={feedFromMin(connection.provider, mapped)} className="min-h-11 w-auto" aria-describedby={`${feedFromId}-hint`} value={feedFrom} disabled={!active || mapped?.feedFromEarliest === null} onChange={(e) => setFeedFrom(e.target.value)} />
           </div>
           <p id={`${feedFromId}-hint`} className="text-xs text-subtle-foreground">
             {t('feedFromHint')}
