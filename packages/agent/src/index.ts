@@ -22,6 +22,7 @@ export * from './marketplace-fee-note.ts';
 export * from './misa-check-line.ts';
 export * from './misa-amis-blocker-notes.ts';
 export * from './supplier-payable-line.ts';
+export * from './bank-candidates-line.ts';
 export * from './payroll-match.ts';
 export * from './payroll-coworker.ts';
 export * from './labor-coworker.ts';

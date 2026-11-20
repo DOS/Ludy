@@ -7483,6 +7483,7 @@ export const vi = {
       stepUp: 'duyệt {count, number} chứng từ',
       retry: 'Thử lại',
       dismiss: 'Bỏ qua',
+      candidatesNote: 'Ly, trợ lý tài chính, viết câu này. Câu này không chọn gì: bạn chọn khoản khớp và duyệt chứng từ.',
       reason: {
         taxCodeInvoice: 'Gợi ý khớp: mã số thuế có trong nội dung chuyển khoản, và số tiền bằng hóa đơn {number}',
         taxCode: 'Gợi ý khớp: mã số thuế có trong nội dung chuyển khoản',

@@ -7487,6 +7487,7 @@ export const en = {
       stepUp: 'approve {count, plural, one {# voucher} other {# vouchers}}',
       retry: 'Try again',
       dismiss: 'Dismiss',
+      candidatesNote: 'Ly, the finance coworker, wrote this sentence. It chooses nothing: you pick the match and approve any voucher.',
       reason: {
         taxCodeInvoice: 'Suggested match: the tax code is in the transfer text, and the amount equals invoice {number}',
         taxCode: 'Suggested match: the tax code is in the transfer text',
