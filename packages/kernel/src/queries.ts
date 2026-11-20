@@ -23,9 +23,11 @@ import {
   type JournalVoucherProposal,
   type PurchaseProposal,
   type SignatureStatus,
+  isEngageProposalKind,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { engageAboutOf, engageViewOf } from './engage-view.ts';
 import { EDITOR_ROLES, decideApproval, proposalEditable } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, executedButVoided, latestExtraction, voidedProposals } from './extraction.ts';
 import { archiveQueries } from './archives.ts';
@@ -470,6 +472,7 @@ export const inboxGet = defineQuery({
             .limit(20)
             .execute()
         : [];
+    const engage = (ctx.role === 'owner' || ctx.role === 'admin') && isEngageProposalKind(row.kind) ? engageViewOf(row.kind, row.command, row.payload, await engageAboutOf(ctx.trx, ctx.orgId, row.command, row.payload)) : null;
     return {
       ...toInboxItem(row, agent?.display_name ?? null),
       revision: row.revision,
@@ -477,6 +480,8 @@ export const inboxGet = defineQuery({
       reversal: parseReversal(row.kind, row.payload),
       voucher: parseVoucher(row.kind, row.payload),
       journalVoucher: parseJournalVoucher(row.kind, row.payload),
+      // The text an AI coworker proposes may be a reply in a thread this reader may not read (a private message, an email): only the people who approve it, owners and admins, who read every thread, see it.
+      engage: engage,
       error: null,
       file: file ? { id: file.id, filename: file.filename, contentType: file.content_type, sizeBytes: file.size_bytes } : null,
       decidedAt: row.decided_at ? row.decided_at.toISOString() : null,

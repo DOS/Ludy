@@ -39,6 +39,8 @@ export * from './launch-pause.ts';
 export * from './launch-pause-policy.ts';
 export * from './launch-run.ts';
 export * from './launch-steps.ts';
+export * from './engage-proposals.ts';
+import { adsEngageProposalCommands } from './engage-proposals.ts';
 export * from './manage.ts';
 export * from './manage-rules.ts';
 export * from './mcp.ts';
@@ -51,6 +53,6 @@ export * from './today.ts';
 export * from './weekly-note.ts';
 export * from './write.ts';
 
-export const adsCommands = [...accountCommands, ...syncCommands, ...writeConnectionCommands, ...tokenRevokeCommands, ...writeCommands, ...flagSettingCommands, ...campaignCommands, ...boostCommands, ...campaignRequestCommands, ...launchRunCommands, ...launchPauseCommands, ...launchActivateCommands, ...objectStateCommands, ...manageCommands, ...mcpAdsDraftCommands];
+export const adsCommands = [...adsEngageProposalCommands, ...accountCommands, ...syncCommands, ...writeConnectionCommands, ...tokenRevokeCommands, ...writeCommands, ...flagSettingCommands, ...campaignCommands, ...boostCommands, ...campaignRequestCommands, ...launchRunCommands, ...launchPauseCommands, ...launchActivateCommands, ...objectStateCommands, ...manageCommands, ...mcpAdsDraftCommands];
 export const adsQueries = [...accountQueries, ...syncQueries, ...summaryQueries, ...flagQueries, ...flagSettingQueries, ...todayQueries, ...weeklyNoteQueries, ...campaignQueries, ...boostQueries, ...campaignRequestQueries, ...writeConnectionQueries, ...writeQueries, ...committedQueries, ...launchPauseQueries, ...objectStateQueries, ...manageQueries, ...mcpAdsQueries];
 export { adsManifest } from './manifest.ts';

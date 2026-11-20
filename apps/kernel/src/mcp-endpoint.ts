@@ -27,6 +27,7 @@ import { zMcpBookingsInput, zMcpDealInput, zMcpDealsInput, zMcpQuoteInput, zMcpQ
 import { zMcpInvoicesInput, zMcpOpenBalancesInput, zMcpOverviewInput, zMcpPaymentReminderInput } from '@crove/mod-finance';
 import { zMcpDraftCreate, zMcpMetricsSummaryInput, zMcpMetricsTotalsInput, zMcpPostsInput, zMcpReviewQueueInput } from '@crove/mod-social';
 import { DraftBudget } from './ai-draft-limit.ts';
+import { engageProposalTools } from './mcp-proposal-tools.ts';
 import { engageWriteTools } from './mcp-engage-write.ts';
 import { McpWriteBudget } from './mcp-write-limit.ts';
 import type { AuthUser } from './auth.ts';
@@ -1073,6 +1074,8 @@ export function toolsFor(runtime: Runtime, actor: UserActor, orgId: string, draf
         ]),
     draftTool(runtime, actor, orgId, draftBudget),
     ...engageWriteTools(runtime, actor, orgId, writeBudget),
+    // What an AI app asks a person for (E4 #3863): each runs the proposal-only twin of an Engage command, which leaves a pending proposal and nothing else.
+    ...engageProposalTools(runtime, actor, orgId),
   ];
   return visibleTools(tools, actor);
 }

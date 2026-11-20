@@ -13,6 +13,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { AdsProposalCard } from '../components/ads-proposal-card.tsx';
+import { EngageProposalCard } from '../components/engage-proposal-card.tsx';
 import { EInvoiceIssueCard } from '../components/einvoice-issue-card.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DateInput } from '../components/date-input.tsx';
@@ -483,7 +484,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   };
   const partyName = () => (sale ? payload?.buyer.name : payload?.seller.name) || detail.data?.title || '';
   // An ads request posts nothing, and its title is the server's Vietnamese: its toasts name no one and no entry.
-  const approve = useMutation(orpc.inbox.approve.mutationOptions({ onSuccess: () => done(adsLaunch ? t(adsHeldOnly ? 'approvedCampaignHeldToast' : 'approvedCampaignToast', { name: visibleBidi(adsLaunch.plan.name), amount: f.money(adsLaunch.amount, adsLaunch.currency), from: f.date(adsLaunch.plan.startOn) }) : adsManage ? t('approvedAdsManageToast', { amount: f.money(adsManage.amount, adsManage.currency) }) : ads ? t('approvedAdsToast') : issue ? t('approvedIssueToast') : t('approvedToast', { name: partyName() })) }));
+  const approve = useMutation(orpc.inbox.approve.mutationOptions({ onSuccess: () => done(adsLaunch ? t(adsHeldOnly ? 'approvedCampaignHeldToast' : 'approvedCampaignToast', { name: visibleBidi(adsLaunch.plan.name), amount: f.money(adsLaunch.amount, adsLaunch.currency), from: f.date(adsLaunch.plan.startOn) }) : adsManage ? t('approvedAdsManageToast', { amount: f.money(adsManage.amount, adsManage.currency) }) : ads ? t('approvedAdsToast') : issue ? t('approvedIssueToast') : engage ? t('approvedEngageToast') : t('approvedToast', { name: partyName() })) }));
   const stepUp = isStepUpRequired(approve.error);
   // The dialog closes as soon as the approval is sent again, while the approve button is disabled and cannot take focus: once the request is over, and the page is
   // still here (an ordinary refusal), focus goes back to the button.
@@ -495,7 +496,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
       approveRef.current?.focus();
     }
   }, [stepUp, approve.isPending]);
-  const reject = useMutation(orpc.inbox.reject.mutationOptions({ onSuccess: () => done(ads || issue ? t(ads ? 'rejectedAdsToast' : 'rejectedIssueToast') : t('rejectedToast', { name: partyName() })) }));
+  const reject = useMutation(orpc.inbox.reject.mutationOptions({ onSuccess: () => done(ads || issue ? t(ads ? 'rejectedAdsToast' : 'rejectedIssueToast') : engage ? t('rejectedEngageToast') : t('rejectedToast', { name: partyName() })) }));
   // Saving an edit creates a new revision authored by this user; the page then reloads the server's decision.
   const edit = useMutation(
     orpc.inbox.edit.mutationOptions({
@@ -537,7 +538,9 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   // A general journal voucher (NVK, #888) is approved as shown too.
   const journalVoucher = item?.journalVoucher ?? null;
   const journalVoucherCode = (journalVoucher && item?.status === 'executed' && item.result?.voucherCode) || null;
-  const plain = reversal !== null || voucher !== null || journalVoucher !== null || ads || issue;
+  // What an AI coworker asks to do in an Engage line (E4 #3863): approved as shown, on its own card, like an ads change.
+  const engage = item?.engage ?? null;
+  const plain = reversal !== null || voucher !== null || journalVoucher !== null || ads || issue || engage !== null;
   const failed = payload?.checks.filter((c) => c.status === 'fail').length ?? 0;
   const blocked = payload?.checks.some((c) => c.status === 'fail' && BLOCKING_CHECK_IDS.includes(c.id)) ?? false;
   // As the kernel decides (kernel.proposal.approve): an XML invoice whose signature is not verified, including one read
@@ -754,6 +757,11 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
             {adsLaunch ? t(adsHeldOnly ? 'approveCampaignHeldOnly' : 'approveCampaignLaunch', { amount: f.money(adsLaunch.amount, adsLaunch.currency) }) : adsManage ? t('approveAdsManage', { amount: f.money(adsManage.amount, adsManage.currency) }) : t('approveAds')}
           </Button>
         )}
+        {item.canApprove && engage && (
+          <Button ref={approveRef} loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
+            {t('approveEngage')}
+          </Button>
+        )}
         {item.canApprove && issue && (
           <Button ref={approveRef} loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approveIssue')}
@@ -835,14 +843,16 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
                       ? t(adsLaunch ? (adsHeldOnly ? 'adsLaunchHeldSubtitle' : 'adsLaunchSubtitle') : adsManage ? 'adsManageSubtitle' : 'adsSubtitle')
                       : issue
                         ? t('issueSubtitle')
-                        : undefined
+                        : engage
+                          ? t('engageSubtitle')
+                          : undefined
           }
           actions={wide || !pending ? headerActions : undefined}
         />
       </div>
       <StepUpDialog
         open={stepUp}
-        action={reversal ? t('stepUpApproveReversal') : voucher ? t('stepUpApproveVoucher') : journalVoucher ? t('stepUpApproveJournalVoucher') : ads ? t('stepUpApproveAds') : issue ? t('stepUpApproveIssue') : t('stepUpApprove')}
+        action={reversal ? t('stepUpApproveReversal') : voucher ? t('stepUpApproveVoucher') : journalVoucher ? t('stepUpApproveJournalVoucher') : ads ? t('stepUpApproveAds') : issue ? t('stepUpApproveIssue') : engage ? t('stepUpApproveEngage') : t('stepUpApprove')}
         onVerified={retryApproval}
         onCancel={() => approve.reset()}
         returnFocus={() => approveRef.current}
@@ -922,6 +932,13 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
           {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('adsFourEyes')}</p>}
           {pending && !item.canApprove && item.approveReason === 'not_eligible' && <p className="mb-4 text-sm text-subtle-foreground">{t('adsNotEligible')}</p>}
           <AdsProposalCard id={item.id} title={item.title} slug={slug} />
+        </div>
+      )}
+      {engage && (
+        <div className="mb-6">
+          {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('engageFourEyes')}</p>}
+          {pending && !item.canApprove && item.approveReason === 'not_eligible' && <p className="mb-4 text-sm text-subtle-foreground">{t('engageNotEligible')}</p>}
+          <EngageProposalCard engage={engage} kind={item.kind} status={item.status} client={item.requestedByMcp ?? null} slug={slug} />
         </div>
       )}
       {issue && (
