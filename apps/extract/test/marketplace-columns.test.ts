@@ -123,8 +123,42 @@ describe('readMarketplaceColumns, with a mapping', () => {
     expect(refusal([...GOOD.assignments, { index: 8, field: 'quantity' }])).toEqual({ ok: false, reason: 'field_twice' });
     expect(refusal([...GOOD.assignments, { index: 6, field: 'sku' }])).toEqual({ ok: false, reason: 'column_twice' });
     expect(refusal(without)).toEqual({ ok: false, reason: 'no_order_no' });
-    // The order number taken from a column that holds a phone number reads, and a swapped pair of quantity and amount does not.
     for (const assignments of [[...GOOD.assignments, { index: 3, field: 'sku' as const }], without]) noBuyerIn(readMarketplaceColumns(envelope(buildXlsx(report()), { platform: 'shopee', assignments })));
+  });
+
+  it('refuses an unflagged column that holds an email or a phone number when it is mapped to a text field, so it does not come out as a line', () => {
+    // Column 9 holds "name email" and column 8 a phone number, under headers that name no buyer: mapped to the free-text fields they would be copied into the lines.
+    const toVariation = (index: number) => readMarketplaceColumns(envelope(buildXlsx(report()), { platform: 'shopee', assignments: [...GOOD.assignments, { index, field: 'variation' }] }));
+    for (const index of [8, 9]) {
+      const answer = toVariation(index);
+      expect(answer.check).toEqual({ ok: false, reason: 'buyer_text' });
+      noBuyerIn(answer);
+    }
+    // The status taken from the free column: the same refusal (an unknown status would also be listed by its label).
+    const asStatus = readMarketplaceColumns(envelope(buildXlsx(report()), { platform: 'shopee', assignments: [...GOOD.assignments.filter((a) => a.field !== 'status'), { index: 9, field: 'status' }] }));
+    expect(asStatus.check).toEqual({ ok: false, reason: 'buyer_text' });
+    noBuyerIn(asStatus);
+  });
+
+  it('can not tell a name from a product: a name column with no email or phone that a person maps to a text field is read, and the name comes back in the line key (the limit of the guarantee)', () => {
+    // The limit, stated by a test so that nobody reads the guarantee as wider than it is: the sandbox holds a buyer's header list and an email or phone in a text field, not a name. The variation joins the
+    // product in the line key, so a name column mapped to `variation` shows in `lineKey`. The person's confirm screen (#4036) shows the parsed lines before anything is saved; the model never sees a value.
+    const plain = (): XlsxCell[][] => [['Báo cáo'], ['Số hiệu đơn', 'Số lượng', 'Mô tả', 'Cột tự do'], ['9001', 2, 'Bút', BUYER.name], ['9002', 1, 'Vở', 'Lê Văn Mua']];
+    const answer = readMarketplaceColumns(
+      envelope(buildXlsx(plain()), {
+        platform: 'shopee',
+        assignments: [
+          { index: 0, field: 'orderNo' },
+          { index: 1, field: 'quantity' },
+          { index: 2, field: 'itemName' },
+          { index: 3, field: 'variation' },
+        ],
+      }),
+    );
+    if (!answer.check?.ok) throw new Error('expected a passing check');
+    expect(answer.check.orders.lines.map((l) => l.lineKey)).toEqual([`Bút|${BUYER.name}`, 'Vở|Lê Văn Mua']);
+    // The sheet itself never shows a name: only its shape.
+    expect(JSON.stringify(answer.sheet)).not.toContain(BUYER.name);
   });
 });
 

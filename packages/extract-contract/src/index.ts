@@ -840,7 +840,7 @@ export type ExtractFailure = z.infer<typeof zExtractFailure>;
 // marketplace_columns (#4035): the masked sheet of a report no platform profile fits, and the check of a column mapping on the real file. Nothing a buyer typed can be in the answer: a column
 // the headers mark as the buyer's is returned as an empty shell (no header, no samples), and the samples of every other column are SHAPES (a digit is 9, any other character that is not on the short
 // list below is a), which the schema enforces, so a value can not pass for one.
-export const COLUMN_REFUSAL_REASONS = ['no_header', 'bad_column', 'buyer_column', 'field_twice', 'column_twice', 'no_order_no', 'no_line', 'nothing_read', 'row_stops_file', 'too_many_rows', 'rows_without_order', 'return_without_status', 'quantity_exceeds_amount', 'dates_swapped'] as const;
+export const COLUMN_REFUSAL_REASONS = ['no_header', 'bad_column', 'buyer_column', 'field_twice', 'column_twice', 'no_order_no', 'no_line', 'nothing_read', 'row_stops_file', 'too_many_rows', 'rows_without_order', 'return_without_status', 'quantity_exceeds_amount', 'dates_swapped', 'buyer_text'] as const;
 const MAX_COLUMN_INDEX = 16_383;
 const zColumnIndex = z.number().int().min(0).max(MAX_COLUMN_INDEX);
 const zSampleShape = z
