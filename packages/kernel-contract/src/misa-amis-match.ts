@@ -26,7 +26,7 @@ export type MisaAmisMatchCheckQueued = z.infer<typeof zMisaAmisMatchCheckQueued>
 // `party` is looked up by its tax code and `item` by its code (S3a). `party_name` (S3b, #4124) is a party WITHOUT a tax code, keyed by its id in Ludy and looked up by name: one active entry of that name is a
 // `name_proposal` (the entry's code and name, a blocker until a person confirms it), several are `ambiguous`, none is `unknown`. For a party a person already confirmed the worker answers `confirmed` (the
 // code is still in the catalogue and active: the row stays) or `unknown` (it is not: the row goes and the party is blocked again).
-export const MISA_AMIS_MATCH_KINDS = ['party', 'item', 'party_name'] as const;
+export const MISA_AMIS_MATCH_KINDS = ['party', 'item', 'party_name', 'unit', 'stock'] as const;
 export const MISA_AMIS_MATCH_RESULT_STATES = ['matched', 'unknown', 'ambiguous', 'name_proposal', 'confirmed'] as const;
 export const MISA_AMIS_MATCH_RESULTS_MAX = 2000;
 // The longest name of a catalogue entry kept on a proposal; a longer one is cut by the worker.

@@ -6,6 +6,7 @@ import { createAmisClient, type AmisRequest, type AmisResponse, type AmisTranspo
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { zMisaAmisMatchRecordCheck } from '@crove/kernel-contract';
 import { runMisaAmisMatch } from '../src/misa-amis-match-job.ts';
+import { matchCatalogue } from '../src/misa-amis-catalogue.ts';
 
 const CLIENT_ID = 'planted-client-id-0123456789';
 const ACCESS_CODE = 'planted-access-code-abcdef';
@@ -29,11 +30,17 @@ const PARTIES = [
 ];
 const ITEMS = [{ inventory_item_id: ENTRY1, inventory_item_code: 'DV_CHUNG', inventory_item_name: PLANTED_NAME }, { inventory_item_code: 'HH_CU', inactive: true }];
 
-function fakeAmis(options: { parties?: unknown[]; items?: unknown[]; prefix?: string; behave?: (path: string, body: Record<string, unknown>) => AmisResponse | undefined } = {}) {
+// ASP's catalogues 4 (units) and 3 (stocks); a unit has a name and an id, a stock a code, a name and an id. The names are planted: a stock's name must never be recorded.
+const UNITS = [{ unit_id: ENTRY1, unit_name: 'Lần' }, { unit_name: 'Cái', inactive: true }];
+const STOCKS = [{ stock_id: ENTRY1, stock_code: 'KHO1', stock_name: PLANTED_NAME }];
+
+function fakeAmis(options: { parties?: unknown[]; items?: unknown[]; units?: unknown[]; stocks?: unknown[]; prefix?: string; behave?: (path: string, body: Record<string, unknown>) => AmisResponse | undefined } = {}) {
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
   const prefix = options.prefix ?? '/amiskt/v1';
   const parties = options.parties ?? PARTIES;
   const items = options.items ?? ITEMS;
+  const units = options.units ?? UNITS;
+  const stocks = options.stocks ?? STOCKS;
   const transport: AmisTransport = async (request: AmisRequest) => {
     const path = new URL(request.url).pathname.replace(/^\/apis/, '');
     const body = JSON.parse(request.body) as Record<string, unknown>;
@@ -44,7 +51,7 @@ function fakeAmis(options: { parties?: unknown[]; items?: unknown[]; prefix?: st
     if (path === `${prefix}/token`) return body.access_code === ACCESS_CODE ? ok({ access_token: 'token-1', expired_time: '2027-01-19T20:00:00' }) : fail('InvalidAccessToken');
     if (request.headers['X-MISA-AccessToken'] !== 'token-1') return fail('InvalidToken');
     if (path === `${prefix}/get_dictionary`) {
-      const rows = body.data_type === 1 ? parties : body.data_type === 2 ? items : [];
+      const rows = body.data_type === 1 ? parties : body.data_type === 2 ? items : body.data_type === 3 ? stocks : body.data_type === 4 ? units : [];
       return ok(rows.slice(Number(body.skip), Number(body.skip) + Number(body.take)));
     }
     return fail('InvalidParam');
@@ -317,10 +324,12 @@ describe('the MISA ASP match check (#4152)', () => {
     const h = harness({ product: 'asp' });
     const aspMisa = fakeAmis({ prefix: '/asp/v1' });
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    expect(await runAsp(h, aspMisa)).toEqual({ state: 'done', results: 4 });
-    expect(aspMisa.calls.map((c) => c.path)).toEqual(['/asp/v1/token', '/asp/v1/get_dictionary', '/asp/v1/get_dictionary']);
+    expect(await runAsp(h, aspMisa)).toEqual({ state: 'done', results: 5 });
+    expect(aspMisa.calls.map((c) => c.path)).toEqual(['/asp/v1/token', '/asp/v1/get_dictionary', '/asp/v1/get_dictionary', '/asp/v1/get_dictionary']);
     expect(aspMisa.calls[1]?.body).toMatchObject({ data_type: 1, skip: 0, take: 1000 });
     expect(aspMisa.calls[2]?.body).toMatchObject({ data_type: 2, skip: 0, take: 1000 });
+    // ASP names a line's unit by id, so the unit the lines carry (here the default one) is looked up too (#4125); no stock is on a services voucher.
+    expect(aspMisa.calls[3]?.body).toMatchObject({ data_type: 4, skip: 0, take: 1000 });
     expect(h.opened).toEqual([{ sealed: { keyId: 'k1', envelope: Buffer.from('sealed') }, binding: { orgId: ORG, provider: 'accounting_misa_asp', externalAccountId: 'entity' } }]);
     expect(recorded(h)).toEqual([
       {
@@ -333,11 +342,46 @@ describe('the MISA ASP match check (#4152)', () => {
           { kind: 'party', ref: '0312345678', state: 'ambiguous', code: null, entryId: null },
           { kind: 'party', ref: '0999999999', state: 'unknown', code: null, entryId: null },
           { kind: 'item', ref: 'DV_CHUNG', state: 'matched', code: 'DV_CHUNG', entryId: ENTRY1 },
+          { kind: 'unit', ref: 'lần', state: 'matched', code: 'Lần', entryId: ENTRY1 },
         ],
       },
     ]);
     const everything = JSON.stringify([h.executed, log.mock.calls]);
     for (const secret of [PLANTED_NAME, PLANTED_ADDRESS, ACCESS_CODE, CLIENT_ID]) expect(everything).not.toContain(secret);
+  });
+
+  it('matches units and stocks for ASP only: AMIS asks for neither catalogue and records no unit or stock', async () => {
+    const amisFake = fakeAmis();
+    expect(await run(harness(), amisFake)).toMatchObject({ state: 'done' });
+    expect(amisFake.calls.filter((c) => c.path.endsWith('get_dictionary')).map((c) => c.body.data_type)).toEqual([1, 2]);
+  });
+
+  it('looks stock codes up in catalogue 3 and unit names in catalogue 4, and records ids and codes only', async () => {
+    const aspFake = fakeAmis({ prefix: '/asp/v1' });
+    const client = asp(aspFake);
+    const found = await matchCatalogue(client, { accessCode: ACCESS_CODE, orgCompanyCode: COMPANY }, { taxCodes: [], itemCodes: [], unitNames: ['LẦN', 'Cái', 'Thùng'], stockCodes: ['KHO1', 'KHO9'] });
+    expect(found).toEqual([
+      { kind: 'unit', ref: 'cái', state: 'unknown', code: null, entryId: null },
+      { kind: 'unit', ref: 'lần', state: 'matched', code: 'Lần', entryId: ENTRY1 },
+      { kind: 'unit', ref: 'thùng', state: 'unknown', code: null, entryId: null },
+      { kind: 'stock', ref: 'KHO1', state: 'matched', code: 'KHO1', entryId: ENTRY1 },
+      { kind: 'stock', ref: 'KHO9', state: 'unknown', code: null, entryId: null },
+    ]);
+    expect(aspFake.calls.filter((c) => c.path.endsWith('get_dictionary')).map((c) => c.body.data_type)).toEqual([4, 3]);
+    expect(JSON.stringify(found)).not.toContain(PLANTED_NAME);
+    // Nothing asked: no catalogue read.
+    const quiet = fakeAmis({ prefix: '/asp/v1' });
+    expect(await matchCatalogue(asp(quiet), { accessCode: ACCESS_CODE, orgCompanyCode: COMPANY }, { taxCodes: [], itemCodes: [], unitNames: [], stockCodes: [] })).toEqual([]);
+    expect(quiet.calls).toEqual([]);
+  });
+
+  it('fails as catalogue_too_large, recording nothing found, when a batch has more results than a record holds', async () => {
+    const lines = Array.from({ length: 2100 }, (_, i) => ({ ...purchase('0101234564').lines[0]!, lineNo: i + 1, unit: `đv${i}` }));
+    const h = harness({ product: 'asp', vouchers: [{ ...purchase('0101234564'), lines }] });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await runAsp(h, fakeAmis({ prefix: '/asp/v1' }))).toMatchObject({ state: 'failed', failure: 'catalogue_too_large' });
+    expect(recorded(h)).toMatchObject([{ state: 'failed', failure: 'catalogue_too_large', results: [] }]);
+    log.mockRestore();
   });
 
   it('does not touch the AMIS client for an ASP connection, and the other way round', async () => {

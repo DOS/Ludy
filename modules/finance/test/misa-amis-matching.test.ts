@@ -3,7 +3,7 @@
 // unknown, several ambiguous, and nothing in the result that is not the matched entry's code and id. Plus (#4124, S3b) how young a check must be for a confirmation and when a stored match no longer holds.
 import { describe, expect, it } from 'vitest';
 import { sameBatch } from '../src/misa-amis-match.ts';
-import { catalogueItems, catalogueParties, checkIsFresh, confirmedStillHold, hasNoTaxCode, matchItems, matchNames, matchParties, MISA_AMIS_CHECK_MAX_AGE_MS, normalizeName, normalizeTaxCode, relied, staleMatches } from '../src/misa-amis-matching.ts';
+import { catalogueItems, catalogueParties, catalogueStocks, catalogueUnits, matchStocks, matchUnits, normalizeUnitName, checkIsFresh, confirmedStillHold, hasNoTaxCode, matchItems, matchNames, matchParties, MISA_AMIS_CHECK_MAX_AGE_MS, normalizeName, normalizeTaxCode, relied, staleMatches } from '../src/misa-amis-matching.ts';
 
 const ID1 = '0194a1c2-8f3e-7b10-9d4a-1e2f3a4b5c6d';
 const ID2 = '0194A1C2-8F3E-7B10-9D4A-1E2F3A4B5C6E';
@@ -203,5 +203,50 @@ describe('names (#4124)', () => {
     expect(staleMatches(stored, [{ ...still, state: 'unknown', code: null }])).toBe(true);
     expect(staleMatches(stored, [{ ...still, code: 'OTHER' }])).toBe(true);
     expect(staleMatches(stored, [])).toBe(false);
+  });
+});
+
+describe('units and stocks (MISA ASP, #4125)', () => {
+  const unit = (name: string, id: string | null, extra: Record<string, unknown> = {}) => ({ unit_name: name, unit_id: id, ...extra });
+
+  it('reads a unit name the way a person reads it the same, and nothing looser', () => {
+    expect(normalizeUnitName('  CÁI ')).toBe('cái');
+    expect(normalizeUnitName('Hộp   lớn')).toBe('hộp lớn');
+    // Decomposed (NFD) and composed spellings are one name; a name without its marks is another.
+    expect(normalizeUnitName('Ca\u0301i')).toBe(normalizeUnitName('Cái'));
+    expect(normalizeUnitName('Cai')).not.toBe(normalizeUnitName('Cái'));
+    for (const bad of ['', '   ', null, undefined, 'x'.repeat(65)]) expect(normalizeUnitName(bad), String(bad)).toBeNull();
+  });
+
+  it('matches a unit by its name to the one active catalogue unit, with its id; none is unknown and two are ambiguous', () => {
+    const catalogue = catalogueUnits([unit('Cái', ID1), unit('Hộp', ID2), unit('hộp ', ID1), unit('Kg', ID2, { inactive: true }), { unit_id: ID1 }]);
+    expect(matchUnits(['cái', 'CÁI ', 'Hộp', 'Kg', 'Thùng'], catalogue)).toEqual([
+      { kind: 'unit', ref: 'cái', state: 'matched', code: 'Cái', entryId: ID1 },
+      { kind: 'unit', ref: 'hộp', state: 'ambiguous', code: null, entryId: null },
+      { kind: 'unit', ref: 'kg', state: 'unknown', code: null, entryId: null },
+      { kind: 'unit', ref: 'thùng', state: 'unknown', code: null, entryId: null },
+    ]);
+  });
+
+  it('never matches a unit or a stock that has no usable id', () => {
+    expect(matchUnits(['cái'], catalogueUnits([unit('Cái', null)]))).toEqual([{ kind: 'unit', ref: 'cái', state: 'unknown', code: null, entryId: null }]);
+    expect(matchStocks(['KHO1'], catalogueStocks([{ stock_code: 'KHO1', stock_id: 'not-a-guid' }]))).toEqual([{ kind: 'stock', ref: 'KHO1', state: 'unknown', code: null, entryId: null }]);
+    // Two active stocks of one code are ambiguous even when one of them has no id.
+    expect(matchStocks(['KHO1'], catalogueStocks([{ stock_code: 'KHO1', stock_id: ID1 }, { stock_code: 'KHO1' }]))).toEqual([{ kind: 'stock', ref: 'KHO1', state: 'ambiguous', code: null, entryId: null }]);
+  });
+
+  it('matches a stock by its exact code among the active ones, with its id', () => {
+    const catalogue = catalogueStocks([
+      { stock_code: 'KHO1', stock_id: ID1, stock_name: 'Kho chính' },
+      { stock_code: 'KHO2', stock_id: ID2, inactive: true },
+      { stock_code: 'KHO3', stock_id: ID1 },
+      { stock_code: 'KHO3', stock_id: ID2 },
+    ]);
+    expect(matchStocks(['KHO3', 'KHO1', 'kho1', 'KHO2'], catalogue)).toEqual([
+      { kind: 'stock', ref: 'KHO1', state: 'matched', code: 'KHO1', entryId: ID1 },
+      { kind: 'stock', ref: 'KHO2', state: 'unknown', code: null, entryId: null },
+      { kind: 'stock', ref: 'KHO3', state: 'ambiguous', code: null, entryId: null },
+      { kind: 'stock', ref: 'kho1', state: 'unknown', code: null, entryId: null },
+    ]);
   });
 });

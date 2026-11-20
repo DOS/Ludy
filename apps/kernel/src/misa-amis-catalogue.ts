@@ -3,7 +3,7 @@
 // the caller's variables and nowhere else: nothing here logs, stores or returns a catalogue name, address or tax code beyond the rows themselves, which the caller matches and drops. A catalogue of 20 000 entries or
 // more of a kind is not read in part (a party past the cut would read as unknown): `TooLarge` says so and the caller gives a fixed reason.
 import { AMIS_DICTIONARIES, type AmisClient, type AmisConnection } from '@crove/misa-amis';
-import { catalogueItems, catalogueParties, confirmedStillHold, matchItems, matchNames, matchParties, type WantedName } from '@crove/mod-finance';
+import { catalogueItems, catalogueParties, catalogueStocks, catalogueUnits, confirmedStillHold, matchItems, matchNames, matchParties, matchStocks, matchUnits, type WantedName } from '@crove/mod-finance';
 import type { MisaAmisMatchResult } from '@crove/kernel-contract';
 
 const PAGE = 1000;
@@ -12,7 +12,7 @@ const MAX_PAGES = 20;
 export class TooLarge extends Error {}
 
 export type CatalogueRows = Array<Readonly<Record<string, unknown>>>;
-export async function readCatalogue(client: AmisClient, connection: AmisConnection, dataType: typeof AMIS_DICTIONARIES.accountObject | typeof AMIS_DICTIONARIES.inventoryItem): Promise<CatalogueRows> {
+export async function readCatalogue(client: AmisClient, connection: AmisConnection, dataType: typeof AMIS_DICTIONARIES.accountObject | typeof AMIS_DICTIONARIES.inventoryItem | typeof AMIS_DICTIONARIES.stock | typeof AMIS_DICTIONARIES.unit): Promise<CatalogueRows> {
   const all: CatalogueRows = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     const rows = await client.dictionary(connection, { dataType, skip: page * PAGE, take: PAGE, lastSyncTime: null, branchId: null });
@@ -31,6 +31,9 @@ export interface CatalogueQuestion {
   itemCodes: readonly string[];
   names?: readonly WantedName[];
   confirmed?: ReadonlyArray<{ partyId: string; code: string }>;
+  /** MISA ASP only (#4125): the unit names and stock codes Ludy writes on lines, looked up in catalogues 4 and 3. */
+  unitNames?: readonly string[];
+  stockCodes?: readonly string[];
 }
 
 /** The questions matched against the catalogue as it is now. */
@@ -43,5 +46,9 @@ export async function matchCatalogue(client: AmisClient, connection: AmisConnect
     results.push(...matchParties(wanted.taxCodes, parties), ...matchNames(names, parties), ...confirmedStillHold(confirmed, parties));
   }
   if (wanted.itemCodes.length > 0) results.push(...matchItems(wanted.itemCodes, catalogueItems(await readCatalogue(client, connection, AMIS_DICTIONARIES.inventoryItem))));
+  const unitNames = wanted.unitNames ?? [];
+  if (unitNames.length > 0) results.push(...matchUnits(unitNames, catalogueUnits(await readCatalogue(client, connection, AMIS_DICTIONARIES.unit))));
+  const stockCodes = wanted.stockCodes ?? [];
+  if (stockCodes.length > 0) results.push(...matchStocks(stockCodes, catalogueStocks(await readCatalogue(client, connection, AMIS_DICTIONARIES.stock))));
   return results;
 }

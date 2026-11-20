@@ -43,6 +43,10 @@ export interface MisaAmisMatchResults {
   itemCodes: ReadonlySet<string> | null;
   /** The codes a person confirmed for parties with no tax code, by the party's id (S3b, #4124); null with the others until a check is done. */
   partyNameCodes?: ReadonlyMap<string, string> | null;
+  /** MISA ASP only (#4125): the matched units by the normalized unit name (the catalogue's own name and its id), the unit names several active units carry, and the matched stocks by stock code (its id). */
+  unitIds?: ReadonlyMap<string, { name: string; id: string }> | null;
+  unitAmbiguous?: ReadonlySet<string> | null;
+  stockIds?: ReadonlyMap<string, string> | null;
 }
 
 export const NO_MATCH_RESULTS: MisaAmisMatchResults = { connectionId: null, status: { state: 'none', failure: null, requestedAt: null, checkedAt: null }, partyCodes: null, partyAmbiguous: null, itemCodes: null, partyNameCodes: null };
@@ -272,7 +276,7 @@ export const misaAmisMatchResultsQuery = defineQuery({
     };
     const rows = await ctx.trx
       .selectFrom('crove_finance.misa_amis_match')
-      .select(['kind', 'match_key', 'state', 'catalogue_code'])
+      .select(['kind', 'match_key', 'state', 'catalogue_code', 'catalogue_id'])
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', check.connection_id)
       .execute();
@@ -283,18 +287,26 @@ export const misaAmisMatchResultsQuery = defineQuery({
     const partyAmbiguous = new Set<string>();
     const itemCodes = new Set<string>();
     const partyNameCodes = new Map<string, string>();
+    const unitIds = new Map<string, { name: string; id: string }>();
+    const unitAmbiguous = new Set<string>();
+    const stockIds = new Map<string, string>();
     for (const row of rows) {
       if (row.kind === 'party' && row.state === 'ambiguous') partyAmbiguous.add(row.match_key);
+      if (row.kind === 'unit' && row.state === 'ambiguous') unitAmbiguous.add(row.match_key);
       if (row.catalogue_code === null) continue;
       // A party with no tax code has a code only once a person confirmed the catalogue entry proposed for its name; a proposal is not a match.
       if (row.kind === 'party_name') {
         if (row.state === 'confirmed') partyNameCodes.set(row.match_key, row.catalogue_code);
       } else if (row.state === 'matched') {
         if (row.kind === 'party') partyCodes.set(row.match_key, row.catalogue_code);
-        else itemCodes.add(row.match_key);
+        else if (row.kind === 'unit') {
+          if (row.catalogue_id !== null) unitIds.set(row.match_key, { name: row.catalogue_code, id: row.catalogue_id });
+        } else if (row.kind === 'stock') {
+          if (row.catalogue_id !== null) stockIds.set(row.match_key, row.catalogue_id);
+        } else itemCodes.add(row.match_key);
       }
     }
-    return { connectionId: check.connection_id, status, partyCodes, partyAmbiguous, itemCodes, partyNameCodes };
+    return { connectionId: check.connection_id, status, partyCodes, partyAmbiguous, itemCodes, partyNameCodes, unitIds, unitAmbiguous, stockIds };
   },
 });
 
