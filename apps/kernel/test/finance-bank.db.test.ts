@@ -566,7 +566,7 @@ suite('bank statement import (#326)', () => {
     expect(shown.body.rows.map((r: { status: string }) => r.status)).toEqual(['new', 'new', 'duplicate', 'duplicate']);
     // Imported, only the days before the cut-over are stored; the same file again stores nothing.
     expect(await importFile(rows, '1121.CUT')).toMatchObject({ status: 200, body: { counts: { new: 2, duplicate: 2 } } });
-    expect((await stored('1121.CUT')).map((l: { bank_ref: string }) => l.bank_ref)).toEqual(['CUT-A', 'CUT-B']);
+    expect((await stored('1121.CUT')).map((l) => l.bank_ref)).toEqual(['CUT-A', 'CUT-B']);
     expect(await importFile(rows, '1121.CUT')).toMatchObject({ status: 200, body: { counts: { new: 0, duplicate: 4 } } });
     // Another bank account has no cut-over and takes the same lines; clearing the day on this one lifts the skip.
     expect(await importFile(rows, '1121.VCB')).toMatchObject({ status: 200, body: { counts: { new: 4 } } });
