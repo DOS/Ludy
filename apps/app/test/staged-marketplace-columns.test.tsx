@@ -149,7 +149,7 @@ describe('the unrecognised report card', () => {
   it('keeps the pickers the same with the AI off, busy, over budget or failed, with the reason in words', () => {
     const used = pickers(card({ status: status(), proposal: proposal('used', [{ index: 0, field: 'orderNo' }]) }));
     expect(used).not.toBe('');
-    const reasons = { off: 'Trợ lý AI đang tắt', busy: 'Ly đang bận', budget: 'Ngân sách AI của tháng đã hết', failed: 'Ly chưa gợi ý được', none: 'quá ít cột' } as const;
+    const reasons = { off: 'AI đang tắt', busy: 'Ly đang bận', budget: 'Ngân sách AI của tháng đã hết', failed: 'Ly chưa gợi ý được', none: 'quá ít cột' } as const;
     for (const [ai, words] of Object.entries(reasons) as Array<[MarketplaceColumnsProposal['ai'], string]>) {
       const html = card({ status: status(), proposal: proposal(ai) });
       expect(pickers(html)).toBe(used);

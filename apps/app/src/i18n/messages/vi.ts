@@ -8103,7 +8103,7 @@ export const vi = {
       },
       ly: {
         used: 'Ly đã gợi ý cách ghép này từ tên cột và hình dạng giá trị. Đây chỉ là gợi ý đầu tiên: hãy kiểm tra các dòng đọc được trước khi dùng.',
-        off: 'Trợ lý AI đang tắt, hãy chọn cột bằng tay.',
+        off: 'AI đang tắt, hãy chọn cột bằng tay.',
         busy: 'Ly đang bận, hãy chọn cột bằng tay hoặc tải lại sau ít phút.',
         budget: 'Ngân sách AI của tháng đã hết, hãy chọn cột bằng tay.',
         failed: 'Ly chưa gợi ý được lần này, hãy chọn cột bằng tay.',
