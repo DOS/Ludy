@@ -104,6 +104,38 @@ describe('finding the header row', () => {
   });
 });
 
+describe('a buyer text in an unflagged column mapped to a text field', () => {
+  // Neither "Cột phụ", "Liên kết" nor "Tên" is a buyer header, so the columns are shown and can be mapped; their cells would be copied into the lines word for word.
+  const HEAD3 = ['Mã', 'Hàng', 'SL', 'Cột phụ', 'Liên kết', 'Tên'];
+  const r3 = (order: string, extra: string, link: string, name: string): string[] => [order, 'Bút', '2', extra, link, name];
+  const SHEET3 = grid([HEAD3, r3('A1', '0903 123 456', 'mua.thu@example.com', 'Trần Thị Mua Thử'), r3('A2', 'gói kỹ', 'x@example.com', 'Lê Văn Mua'), r3('A3', '', '', 'Phạm Thị C')]);
+  const BASE: ColumnAssignment[] = [
+    { index: 0, field: 'orderNo' },
+    { index: 1, field: 'itemName' },
+    { index: 2, field: 'quantity' },
+  ];
+  const check = (extra: ColumnAssignment) => checkColumnMapping(SHEET3, 'shopee', [...BASE, extra], 1000);
+
+  it('accepts the mapping without them', () => {
+    expect(checkColumnMapping(SHEET3, 'shopee', BASE, 1000).ok).toBe(true);
+  });
+
+  it('refuses a column with an email in any text field, a SKU included', () => {
+    for (const field of ['sku', 'variation', 'status'] as const) expect(check({ index: 4, field })).toEqual({ ok: false, reason: 'buyer_text' });
+    expect(checkColumnMapping(SHEET3, 'shopee', [{ index: 4, field: 'orderNo' }, BASE[2] as ColumnAssignment], 1000)).toEqual({ ok: false, reason: 'buyer_text' });
+  });
+
+  it('refuses a column with a phone number in a free-text field, however it is spaced, and lets a SKU be a long run of digits', () => {
+    expect(check({ index: 3, field: 'variation' })).toEqual({ ok: false, reason: 'buyer_text' });
+    expect(check({ index: 3, field: 'status' })).toEqual({ ok: false, reason: 'buyer_text' });
+    expect(check({ index: 3, field: 'sku' }).ok).toBe(true);
+  });
+
+  it('can not find a name, which has no mark: that is the confirm screen\'s to show (the limit of the sandbox\'s guarantee)', () => {
+    expect(check({ index: 5, field: 'variation' }).ok).toBe(true);
+  });
+});
+
 describe('a mapping that reads without stopping and still misreads', () => {
   const HEAD2 = ['Mã', 'Cột phụ', 'Hàng', 'SL', 'Tiền', 'Đặt', 'Giao'];
   const r = (order: string, note: string, qty: string, total: string, placed = '2026-10-01', shipped = '2026-10-03'): string[] => [order, note, 'Bút', qty, total, placed, shipped];

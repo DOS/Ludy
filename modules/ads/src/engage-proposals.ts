@@ -2,8 +2,7 @@
 // The proposal-only twins of the Ads commands that only stop or reduce spend, for an AI coworker that holds `ludy.ads.draft` (epic #3857, E4 #3863; ADR-0051 decision 10; docs/plan/ads-write.md
 // section 3.1): stopping a launch, the kill switch, and pausing, archiving, lowering the budget of or shortening a running ad. A grant's call never runs the command: it leaves a pending proposal
 // (tainted) that an owner or an admin approves in Ludy, and the approval runs the original as the approver, so every check the original has (the org's lock, the launch's state, the caps and the
-// kill switch, the app gate) runs then, on what stands then. The payload is the original's own strict input, so the card shows what will happen. What can START or RAISE spend (a launch, a resume,
-// a raise, an extension) is not here: those commands have a preparer that builds the plan the approver signs, and a client's raw payload would skip it (a later part of E4).
+// kill switch, the app gate) runs then, on what stands then. The payload is the original's own strict input, so the card shows what will happen. What can START or RAISE spend (a launch, a resume, a raise, an extension) is not here, by decision (Engage PO 2026-11-20): those commands have a preparer that builds the plan and the amount the approver signs, their database guards accept only a proposal of the original command, and a client's raw payload would skip both; a person launches from Ludy (docs/runbooks/mcp-endpoint.md).
 // The twins declare no `runsWhenOff` (the app gate's pinned list): with Ads switched off an approval is refused like any Ads command, and a person's own stop still runs.
 import { zApprovedCall } from '@crove/kernel-contract';
 import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
