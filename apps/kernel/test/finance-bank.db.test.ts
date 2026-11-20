@@ -21,8 +21,7 @@ import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { runBankFeedSync } from '../src/bank-feed-sync.ts';
-import { TINGEE_HOSTS, allowlistedFetch, bankFeedProviders, signSandboxWebhook, tingeeBankFeed, vietnamStamp, type BankFeedProvider } from '@crove/bank-feed';
-import { FakeTingee } from '../../../packages/bank-feed/test/tingee-fake.ts';
+import { TINGEE_HOSTS, TingeeError, bankFeedProviders, parseTingeeSecret, signSandboxWebhook, vietnamStamp, type BankFeedProvider, type BankFeedTransaction } from '@crove/bank-feed';
 import { RateLimiter } from '../src/rate-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -71,10 +70,11 @@ suite('bank statement import (#326)', () => {
   // The same, with a tight limit on signed notices per address.
   let limitedApp: ReturnType<typeof createHttpApp>;
   let vault: CredentialVault;
-  // The Tingee bank feed (#2045): a fake Tingee, the real adapter over it, and an app that offers it.
+  // The Tingee bank feed (#2045): a stand-in provider that reads the sealed credential the way the adapter does (parseTingeeSecret) and answers like a Tingee that knows one Client ID (the adapter's own
+  // behaviour against a fake Tingee is tested in packages/bank-feed), the calls it was asked for, and an app that offers it.
   let tingeeApp: ReturnType<typeof createHttpApp>;
   let tingeeAdapter: BankFeedProvider;
-  let tingeeFake: FakeTingee;
+  const tingeeCalls: string[] = [];
   // The API's runtime, and the worker's, which runs feed jobs as the system.
   let api: Runtime;
   let worker: Runtime;
@@ -182,18 +182,34 @@ suite('bank statement import (#326)', () => {
     const feedDeps = { config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false, channels: { broker: vault, sandbox: false, bankFeedSandbox: true } };
     feedApp = createHttpApp({ ...feedDeps, bankFeedWebhooks: notices });
     limitedApp = createHttpApp({ ...feedDeps, bankFeedWebhooks: notices, bankFeedWebhookLimit: new RateLimiter({ perMinute: 2 }) });
-    // A fake Tingee that knows one Client ID, with a linked account and two transactions in the last days, and the real adapter over it (its pause between calls kept short).
+    // A stand-in that knows one Client ID, with a linked account and two transactions in the last days.
     const day = (back: number) => vietnamStamp(new Date(Date.now() - back * 86_400_000)).slice(0, 8);
-    tingeeFake = new FakeTingee(
-      { get now() { return new Date(); } },
-      { [TINGEE_CLIENT]: TINGEE_SECRET },
-      [{ accountNumber: '0011223344', vaAccountNumber: TINGEE_VA, bankBin: '970418', bankName: 'BIDV', accountName: 'CONG TY ABC', status: 'active' }],
-      [
-        { transactionId: '00000000-0000-4000-8000-000000000001', code: 'FT26000001', amount: '1500000', type: 'credit', content: 'HD 0000123 thanh toan', accountNumber: '0011223344', vaAccountNumber: TINGEE_VA, transactionDate: `${day(3)}090000` },
-        { transactionId: '00000000-0000-4000-8000-000000000002', code: 'FT26000002', amount: '250000', type: 'debit', content: 'Phi dich vu', accountNumber: '0011223344', vaAccountNumber: TINGEE_VA, transactionDate: `${day(2)}101500` },
-      ],
-    );
-    tingeeAdapter = tingeeBankFeed({ fetch: allowlistedFetch(TINGEE_HOSTS, tingeeFake.fetch), spacingMs: 5 });
+    const tingeeLines = (): BankFeedTransaction[] => [
+      { date: `${day(3).slice(0, 4)}-${day(3).slice(4, 6)}-${day(3).slice(6, 8)}`, description: 'HD 0000123 thanh toan', amount: '1500000', balance: null, reference: 'FT26000001' },
+      { date: `${day(2).slice(0, 4)}-${day(2).slice(4, 6)}-${day(2).slice(6, 8)}`, description: 'Phi dich vu', amount: '-250000', balance: null, reference: 'FT26000002' },
+    ];
+    const known = (secret: string, call: string) => {
+      const credential = parseTingeeSecret(secret);
+      if (credential.clientId !== TINGEE_CLIENT || credential.secretToken !== TINGEE_SECRET) throw new TingeeError('credentials', 'tingee refused the credential (code 97)', '97');
+      tingeeCalls.push(call);
+    };
+    tingeeAdapter = {
+      id: 'bank_tingee',
+      hosts: TINGEE_HOSTS,
+      async check(secret) {
+        known(secret, 'check');
+      },
+      async accounts(secret) {
+        known(secret, 'accounts');
+        return [{ externalAccountId: TINGEE_VA, displayName: `BIDV ${TINGEE_VA} - CONG TY ABC` }];
+      },
+      // The same lines every time (an overlapping pull), at a cursor that does not move.
+      async pull(secret, externalAccountId) {
+        known(secret, 'pull');
+        if (externalAccountId !== TINGEE_VA) throw new TingeeError('config', 'tingee: unknown account');
+        return { transactions: tingeeLines(), cursor: `${day(2)}000000`, more: false };
+      },
+    };
     tingeeApp = createHttpApp({ ...feedDeps, channels: { broker: vault, sandbox: false, bankFeedHosted: { bank_tingee: tingeeAdapter } } });
     const workerUrl = new URL(adminUrl);
     workerUrl.username = 'crove_worker';
@@ -1397,7 +1413,7 @@ suite('bank statement import (#326)', () => {
       expect((await connect(member, good)).status).toBe(403);
       expect((await connect(viewer, good)).status).toBe(403);
       // Nothing was tested or sealed for any of them.
-      expect(tingeeFake.requests).toEqual([]);
+      expect(tingeeCalls).toEqual([]);
     });
 
     it('refuses a credential Tingee does not accept, with a fixed sentence, and seals nothing', async () => {
@@ -1419,8 +1435,8 @@ suite('bank statement import (#326)', () => {
       expect(JSON.stringify(connected.body)).not.toContain(TINGEE_SECRET);
       const connections = (await feed('connections', owner)).body;
       expect(connections).toContainEqual(expect.objectContaining({ id: connectionId, provider: 'bank_tingee', displayName: 'Tingee BIDV', status: 'active' }));
-      // Only the two read endpoints were called.
-      expect([...new Set(tingeeFake.requests.map((r) => r.path))].sort()).toEqual(['/v1/get-va-paging']);
+      // The API made the one test call, and nothing else.
+      expect(tingeeCalls).toEqual(['check']);
 
       expect(await tingeeSync(connectionId)).toMatchObject({ accounts: 1, pages: 0 });
       expect((await feed('listed', owner, { connectionId })).body.map((a: { externalAccountId: string }) => a.externalAccountId)).toEqual([TINGEE_VA]);
@@ -1435,7 +1451,7 @@ suite('bank statement import (#326)', () => {
       expect(lines.map((l) => [l.reference, Number(l.amount)])).toEqual([['FT26000001', 1_500_000], ['FT26000002', -250_000]]);
       // Pulled again (the last days are read again), nothing is stored twice.
       expect((await tingeeSync(connectionId)).stored).toBe(0);
-      expect([...new Set(tingeeFake.requests.map((r) => r.path))].sort()).toEqual(['/v1/get-va-paging', '/v1/transaction/get-paging']);
+      expect([...new Set(tingeeCalls)].sort()).toEqual(['accounts', 'check', 'pull']);
 
       // The credential is sealed: no row of the org holds the Secret Token, and no audit row mentions it.
       expect(
@@ -1447,7 +1463,7 @@ suite('bank statement import (#326)', () => {
 
     it('limits how often an org may try a credential, before any call to Tingee', async () => {
       const good = { clientId: TINGEE_CLIENT, secretToken: TINGEE_SECRET };
-      const before = tingeeFake.requests.length;
+      const before = tingeeCalls.length;
       let refused: { status: number; body: any } | null = null;
       for (let i = 0; i < 12 && refused === null; i++) {
         const answer = await connect(owner, good);
@@ -1455,10 +1471,10 @@ suite('bank statement import (#326)', () => {
       }
       expect(refused).toMatchObject({ status: 429, body: { code: 'RATE_LIMITED' } });
       // Each try that was let through made one call, the refused one none.
-      const calls = tingeeFake.requests.length - before;
-      expect(calls).toBeGreaterThanOrEqual(1);
-      expect(calls).toBeLessThanOrEqual(5);
-      expect(tingeeFake.requests.slice(before).every((r) => r.path === '/v1/get-va-paging' && r.body.maxResultCount === 1)).toBe(true);
+      const calls = tingeeCalls.slice(before);
+      expect(calls.length).toBeGreaterThanOrEqual(1);
+      expect(calls.length).toBeLessThanOrEqual(5);
+      expect(calls.every((c) => c === 'check')).toBe(true);
     });
   });
 });
