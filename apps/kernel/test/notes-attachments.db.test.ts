@@ -15,9 +15,11 @@ import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { ExtractClient, ExtractKind, ExtractResult } from '@crove/extract-contract';
+import type { PersonalDataErasure, PersonalDataNotice, PersonalDataResult } from '@crove/kernel-contract';
 import { NOTE_ATTACHMENT_MAX_BYTES, type Note, type NoteAttachment, type NoteSummary, type NoteWritten } from '@crove/kernel-contract';
 import { Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { notesCommands, notesQueries } from '@crove/mod-notes';
+import { hashExtensionSecret, newExtensionToken } from '../src/auth-extension.ts';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -78,6 +80,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
   const store = new MemoryStore();
   const extract = new FakeExtract();
 
+  const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const, sessionId: randomUUID() });
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: adminUrl });
@@ -244,6 +247,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     const notFound = await download(o, o.author, randomUUID());
     expect(notFound.status).toBe(404);
     expect(notFound.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(notFound.headers.get('cache-control')).toBe('private, no-store');
     const uniform = Buffer.from(notFound.bytes).toString('utf8');
     for (const who of [o.owner, o.admin, o.other, o.viewer]) {
       const r = await download(o, who, hidden.id);
@@ -364,5 +368,86 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     expect(await doomed(o)).toEqual([]);
     // A member may not ask for what the worker reads to extract.
     await expect(rt.query('notes.attachment.extract_source', { attachmentId: two.id }, { actor: asUser(o.author.id), orgId: o.orgId })).rejects.toBeTruthy();
+  });
+
+  it('refuses extension tokens (403) on note attachment upload, download and RPC', async () => {
+    const o = await org();
+    const noteId = await createNote(o, o.author, 'private');
+    const att = await attached(o, o.author, noteId, png(), 'anh.png');
+    const extToken = newExtensionToken();
+    const tokenId = randomUUID();
+    await rows(
+      `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+       VALUES ($1, $2, $3, $4, 'Clipper', ARRAY['notes'], now(), now() + interval '7 days', $3)`,
+      [o.orgId, tokenId, o.author.id, hashExtensionSecret(extToken.value)],
+    );
+    const extHeaders = { authorization: `Bearer ${extToken.value}`, 'x-crove-org': o.slug };
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array(png())], { type: 'image/png' }), 'ext.png');
+    const up = await app.request(`/api/notes/${noteId}/attachments`, { method: 'POST', body: form, headers: extHeaders });
+    expect(up.status).toBe(403);
+    const dl = await app.request(`/api/notes/attachments/${att.id}`, { headers: extHeaders });
+    expect(dl.status).toBe(403);
+    const extActor = { type: 'user' as const, userId: o.author.id, aal: 'aal1' as const, extension: { tokenId, scopes: ['notes'] as const } };
+    await expect(rt.query('notes.attachment.list', { noteId }, { actor: extActor, orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+    await expect(rt.execute('notes.attachment.delete', { attachmentId: att.id }, { actor: extActor, orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('queues private attachment blobs on member_items_purge and PDPL find/notify/erase without leaking private text', async () => {
+    const o = await org();
+    const privNote = await createNote(o, o.author, 'private', 'Ghi chú riêng');
+    const sharedNote = await createNote(o, o.author, 'org', 'Ghi chú chung');
+    const email = 'khach-hang@example.com';
+
+    const privAtt = await attached(o, o.author, privNote, pdf('rieng'), 'ho-so-khach-hang@example.com.pdf');
+    const sharedAtt = await attached(o, o.author, sharedNote, pdf('chung'), 'tai-lieu-chung.pdf');
+    extract.text = `Liên hệ ${email} để đối chiếu`;
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: privAtt.id });
+    await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: sharedAtt.id });
+
+    const found = await rt.execute<PersonalDataResult>('kernel.personal_data.find', { value: email }, { actor: asUser(o.owner.id), orgId: o.orgId });
+    expect(found.matches.map((m) => m.column).sort()).toEqual(['crove_notes.attachment.extracted_text']);
+    expect(found.privateItems).toEqual([{ authorUserId: o.author.id, notes: 1, todos: 0 }]);
+    expect(JSON.stringify(found)).not.toContain('ho-so-');
+
+    // First erase (before notice): removes shared attachment + queues its blob; keeps private attachment.
+    const firstErase = await rt.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
+    expect(firstErase.erased).toContainEqual({ column: 'crove_notes.attachment.extracted_text', rows: 1 });
+    expect(await doomed(o)).toEqual([`notes/${o.orgId}/${sharedAtt.id}`]);
+
+    // Notify + dispatch + age 25 hours, then second erase removes the private attachment + queues its blob.
+    await rt.execute<PersonalDataNotice>('kernel.personal_data.notify', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
+    const [notifiedEvent] = await rows<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`, [o.orgId]);
+    await worker.execute('kernel.notification.dispatch', { eventId: notifiedEvent?.id }, { actor: SYSTEM, orgId: o.orgId });
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [o.orgId]);
+      await c.query(`UPDATE crove_kernel.notification SET created_at = created_at - interval '25 hours' WHERE org_id = $1 AND kind = 'kernel.personal_data_notice'`, [o.orgId]);
+      await c.query('COMMIT');
+    });
+    await rt.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: asMfa(o.owner.id), orgId: o.orgId, idempotencyKey: randomUUID() });
+    expect(await doomed(o)).toEqual([`notes/${o.orgId}/${privAtt.id}`, `notes/${o.orgId}/${sharedAtt.id}`].sort());
+
+    // Now test member_items.purge cascading a remaining private attachment and keeping shared ones.
+    const privTwo = await createNote(o, o.author, 'private', 'Tệp thành viên rời');
+    const sharedTwo = await createNote(o, o.author, 'org', 'Tệp chung giữ lại');
+    const purgeAtt = await attached(o, o.author, privTwo, png(), 'roi-nhom.png');
+    const keptAtt = await attached(o, o.author, sharedTwo, png(), 'giu-lai.png');
+    await rt.execute('kernel.member.remove', { userId: o.author.id }, { actor: asMfa(o.owner.id), orgId: o.orgId });
+    const [removedEvt] = await rows<{ id: string }>(
+      `SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.removed' AND payload ->> 'userId' = $2 ORDER BY id DESC LIMIT 1`,
+      [o.orgId, o.author.id],
+    );
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '35 days' WHERE org_id = $1 AND command = 'kernel.member.remove'`, [o.orgId]);
+      await c.query('COMMIT');
+    });
+    expect(await worker.execute('notes.member_items.purge', { userId: o.author.id, eventId: removedEvt?.id }, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 2 });
+    expect(await doomed(o)).toEqual([`notes/${o.orgId}/${privAtt.id}`, `notes/${o.orgId}/${purgeAtt.id}`, `notes/${o.orgId}/${sharedAtt.id}`].sort());
+    await sweepNoteAttachmentBlobs({ workerDb, store, force: true });
+    expect(blobsOf(o)).toEqual([`notes/${o.orgId}/${keptAtt.id}`]);
   });
 });

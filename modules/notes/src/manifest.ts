@@ -12,7 +12,7 @@ export const notesManifest = defineModule({
     crove_notes: {
       attachment: columns(
         ['org_id', 'id', 'note_id', 'author_user_id', 'content_type', 'size_bytes', 'sha256', 'storage_key', 'extract_status', 'created_at'],
-        { filename: 'pii', extracted_text: 'pii' },
+        { filename: 'pii', extracted_text: 'pii', search: 'pii' },
       ),
       attachment_blob_doomed: columns(['storage_key', 'queued_at', 'not_before', 'claimed_until', 'attempts']),
       link: columns(['org_id', 'id', 'note_id', 'todo_id', 'target_type', 'target_id', 'party_id', 'file_id', 'task_id', 'created_by', 'created_at']),
@@ -40,8 +40,8 @@ export const notesManifest = defineModule({
   permissions: [],
   // Its entities (#1656): the note, the to-do and the to-do list, which every command names as its audit target.
   entities: [
-    { type: 'notes.note', table: 'note', legalEntityScoped: false, audit: 'command' },
     { type: 'notes.attachment', table: 'attachment', legalEntityScoped: false, audit: 'command' },
+    { type: 'notes.note', table: 'note', legalEntityScoped: false, audit: 'command' },
     { type: 'notes.todo', table: 'todo', legalEntityScoped: false, audit: 'command' },
     { type: 'notes.todo_list', table: 'todo_list', legalEntityScoped: false, audit: 'command' },
   ],

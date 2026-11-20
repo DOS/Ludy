@@ -4,7 +4,7 @@
 // inline raster image gallery + lightbox, inline PDF canvas preview, inline audio player,
 // download/delete actions, and crove-extract status badges.
 import { useMutation } from '@tanstack/react-query';
-import { useCallback, useEffect, useId, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { NOTE_ATTACHMENT_MAX_BYTES, type NoteAttachment } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -377,7 +377,7 @@ export function NoteAttachments({
   const t = useTranslations('notes.attachments');
   const inputId = useId();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const api = useRef(clientForOrg(slug)).current;
+  const api = useMemo(() => clientForOrg(slug), [slug]);
   const [dragActive, setDragActive] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);

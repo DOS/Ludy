@@ -2756,6 +2756,7 @@ export function createHttpApp(deps: HttpDeps) {
   });
 
   app.get('/api/notes/attachments/:id', async (c) => {
+    c.header('cache-control', 'private, no-store');
     try {
       const user = c.get('user');
       if (user.extension) {
