@@ -463,7 +463,7 @@ describe('job egress (#1653)', () => {
     ]);
   });
 
-  // Measured (#4151): two walks of the whole source tree, about 2 s each on an idle machine, so 5 s is too close under CI load.
+  // Measured (#4151): about 2 s on an idle machine, so the 5 s default is too close under CI load.
   it('follows nested runs to the command that runs them, and fails a planted R1 command that runs an emitter (#1698)', () => {
     const planted = new Sources({
       'modules/planted/src/a.ts': `
