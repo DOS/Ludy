@@ -216,13 +216,18 @@ export interface StoredMatches {
   itemCodes: ReadonlySet<string> | null;
   /** A party's id to the code a person confirmed for it by name (S3b); absent or null when none. */
   partyNameCodes?: ReadonlyMap<string, string> | null;
+  /** MISA ASP (#4125): the connection's product, and the ids of the matched items, units (by normalized name) and stocks (by code); the push relies on them and reads them again. */
+  product?: 'amis' | 'asp';
+  itemIds?: ReadonlyMap<string, string> | null;
+  unitIds?: ReadonlyMap<string, { name: string; id: string }> | null;
+  stockIds?: ReadonlyMap<string, string> | null;
 }
 
 /** The stored matches a send relies on, to be re-read: the tax codes and item codes of the batch that a check matched. A reference that did not match is a blocker and is never sent, so it is not looked at. */
 export function relied(
   stored: StoredMatches,
-  wanted: { taxCodes: readonly string[]; itemCodes: readonly string[]; names?: readonly WantedName[] },
-): { taxCodes: string[]; itemCodes: string[]; confirmed: Array<{ partyId: string; code: string }> } {
+  wanted: { taxCodes: readonly string[]; itemCodes: readonly string[]; names?: readonly WantedName[]; unitNames?: readonly string[]; stockCodes?: readonly string[] },
+): { taxCodes: string[]; itemCodes: string[]; confirmed: Array<{ partyId: string; code: string }>; unitNames: string[]; stockCodes: string[] } {
   const confirmed: Array<{ partyId: string; code: string }> = [];
   for (const { partyId } of wanted.names ?? []) {
     const code = stored.partyNameCodes?.get(partyId);
@@ -232,6 +237,9 @@ export function relied(
     taxCodes: wanted.taxCodes.filter((taxCode) => stored.partyCodes?.has(taxCode) === true),
     itemCodes: wanted.itemCodes.filter((code) => stored.itemCodes?.has(code) === true),
     confirmed,
+    // Units and stocks are relied on for ASP only (an AMIS check stores none).
+    unitNames: stored.product === 'asp' ? (wanted.unitNames ?? []).filter((name) => stored.unitIds?.has(normalizeUnitName(name) ?? '') === true) : [],
+    stockCodes: stored.product === 'asp' ? (wanted.stockCodes ?? []).filter((code) => stored.stockIds?.has(code) === true) : [],
   };
 }
 
@@ -245,6 +253,21 @@ export function staleMatches(stored: StoredMatches, fresh: readonly MisaAmisMatc
   for (const code of stored.itemCodes ?? []) {
     const found = now.get(`item:${code}`);
     if (found !== undefined && found.state !== 'matched') return true;
+  }
+  // ASP (#4125): the ids a line is written with must be the ones the catalogue has now (an entry deactivated, deleted or replaced by another id in MISA since the check).
+  if (stored.product === 'asp') {
+    for (const [key, unit] of stored.unitIds ?? []) {
+      const found = now.get(`unit:${key}`);
+      if (found !== undefined && !(found.state === 'matched' && found.entryId === unit.id)) return true;
+    }
+    for (const [code, id] of stored.stockIds ?? []) {
+      const found = now.get(`stock:${code}`);
+      if (found !== undefined && !(found.state === 'matched' && found.entryId === id)) return true;
+    }
+    for (const [code, id] of stored.itemIds ?? []) {
+      const found = now.get(`item:${code}`);
+      if (found !== undefined && !(found.state === 'matched' && found.entryId === id)) return true;
+    }
   }
   // A name a person confirmed holds while its code is still in the catalogue and active.
   for (const [partyId, code] of stored.partyNameCodes ?? []) {

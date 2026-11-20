@@ -11,11 +11,11 @@
 // Sent only fresh (#4124, S3b of #4103): right before a batch goes out the entries its stored matches rely on are read from the catalogue once more (parties by tax code, items by code), and a batch whose match
 // changed in MISA since the check (an entry gone, inactive, with another tax code, or now ambiguous) is `failed` with MATCH_STALE and nothing is sent; a person checks again and confirms again.
 // Nothing here logs or stores a credential, a party's name, an amount or MISA's own text other than the capped `reason` of a refused voucher: ids, codes and counts.
-import { AMIS_DICTIONARIES, AmisError, amisErrorText, isOrgRefId, type AmisCallbackResult, type AmisClient, type AmisConnection } from '@crove/misa-amis';
+import { AMIS_DICTIONARIES, AmisError, amisErrorText, isOrgRefId, type AmisCallbackResult, type AmisClient, type AmisConnection, type AmisVoucher } from '@crove/misa-amis';
 import { MISA_AMIS_PREVIEW_LIMIT, type MisaAmisMatchResult, type MisaAmisPreviewAsk } from '@crove/kernel-contract';
 import { amisContextOf, amisPartRows, loadAmisEntries, misaChannelProvider, relied, staleMatches, type AmisPartRow, type MisaAmisMatchResults, type MisaAmisPushBegin, type MisaAmisPushRecord, type MisaAmisPushTarget } from '@crove/mod-finance';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { matchCatalogue, TooLarge } from './misa-amis-catalogue.ts';
+import { matchCatalogue, readStockNames, TooLarge } from './misa-amis-catalogue.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.misa_amis' };
 
@@ -78,6 +78,24 @@ async function readBranch(client: AmisClient, connection: AmisConnection): Promi
     if (typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) ids.add(id.toLowerCase());
   }
   return ids.size === 1 ? [...ids][0] ?? null : null;
+}
+
+/** The stock ids a voucher's lines carry (ASP). */
+export const stockIdsOf = (voucher: AmisVoucher): string[] => voucher.detail.flatMap((line) => (typeof (line as { stock_id?: unknown }).stock_id === 'string' ? [(line as { stock_id: string }).stock_id] : []));
+/** The part with `stock_name` beside each `stock_id`, or null when a stock has no name in the fresh read. The part's digest is not recomputed: the name is not what a person confirmed. */
+export function withStockNames(part: AmisPartRow, names: ReadonlyMap<string, string>): AmisPartRow | null {
+  const detail: unknown[] = [];
+  for (const line of part.voucher.detail) {
+    const id = (line as { stock_id?: unknown }).stock_id;
+    if (typeof id !== 'string') {
+      detail.push(line);
+      continue;
+    }
+    const name = names.get(id.toLowerCase());
+    if (name === undefined) return null;
+    detail.push({ ...(line as Record<string, unknown>), stock_name: name });
+  }
+  return { ...part, voucher: { ...part.voucher, detail } };
 }
 
 export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJob): Promise<MisaAmisPushOutcome> {
@@ -189,6 +207,9 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
       let parts: Map<string, AmisPartRow>;
       let matchStale = false;
       let readKey: string | null = null;
+      // ASP (#4125): the names of the stocks the lines leave or enter, read fresh below and written beside their ids; null for AMIS and for a batch with no stock line.
+      let stockNames: Map<string, string> | null = null;
+      let nameStale = false;
       try {
         // The same matches the person's confirmation was made on (the stored result of the last check against the catalogue): a check made since changes the part, and the part is then `STALE`, never sent.
         const matches = await query<MisaAmisMatchResults>('finance.misa_amis_match.results', { legalEntityId: target.legalEntityId, ask });
@@ -196,7 +217,7 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
         parts = new Map(amisPartRows(entries).map((p) => [p.orgRefid, p]));
         // The entries those matches rely on, read again unless a read for the same ones is young enough.
         const verify = relied(matches, wanted);
-        if (verify.taxCodes.length > 0 || verify.itemCodes.length > 0 || verify.confirmed.length > 0) {
+        if (verify.taxCodes.length > 0 || verify.itemCodes.length > 0 || verify.confirmed.length > 0 || verify.unitNames.length > 0 || verify.stockCodes.length > 0) {
           const key = JSON.stringify(verify);
           if (unreadable === key) throw new TooLarge();
           readKey = key;
@@ -205,6 +226,7 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
           }
           matchStale = staleMatches(matches, reread.results);
         }
+        if (target.product === 'asp' && !matchStale && [...parts.values()].some((p) => stockIdsOf(p.voucher).length > 0)) stockNames = await readStockNames(client, connection);
       } catch (error) {
         if (error instanceof AmisError && (error.kind === 'credentials' || error.kind === 'token')) {
           // MISA refused the connection before the catalogue could be read: nothing was sent, the rows go back to the queue with the code on screen.
@@ -242,9 +264,17 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
         if (!part || part.digest !== row.digest || part.voucherType !== begun.voucherType || !isOrgRefId(part.orgRefid)) moves.push({ orgRefid: row.orgRefid, from: 'sending', to: 'failed', reason: 'STALE' });
         // A match the batch relies on changed in MISA since the check: nothing is sent (the rows whose own part changed say STALE above, the rest MATCH_STALE).
         else if (matchStale) moves.push({ orgRefid: row.orgRefid, from: 'sending', to: 'failed', reason: 'MATCH_STALE' });
-        else ready.push(part);
+        else {
+          const named = stockNames === null ? part : withStockNames(part, stockNames);
+          // A stock the catalogue no longer has (or has inactive) cannot be named: the part is stale, never sent without its name.
+          if (named === null) {
+            nameStale = true;
+            moves.push({ orgRefid: row.orgRefid, from: 'sending', to: 'failed', reason: 'MATCH_STALE' });
+          }
+          else ready.push(named);
+        }
       }
-      staleBatch = matchStale;
+      staleBatch = matchStale || nameStale;
     }
     let end: CallEnd;
     if (ready.length === 0) {
