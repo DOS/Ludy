@@ -7,10 +7,10 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
+import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { Runtime, type AgentActor } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -31,13 +31,19 @@ suite('the confirmed column mapping (#4037)', () => {
   const dbName = `crove_test_column_profile_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
+  let workerPool: pg.Pool;
   let rt: Runtime;
+  let worker: Runtime;
+  let member = '';
+  let viewer = '';
+  let agent: AgentActor;
   let owner = '';
   let orgId = '';
   let otherOwner = '';
   let otherOrg = '';
 
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
+  const asMfa = (userId: string) => ({ ...asUser(userId), aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
   const confirm = (platform: string, columns: unknown, who = owner, org = orgId, headerRow = 1, headerDigest = DIGEST) =>
     rt.execute<{ id: string; added: boolean }>('finance.marketplace.columns_confirm', { platform, headerRow, columns, headerDigest }, { actor: asUser(who), orgId: org });
   const latest = (platform: string, who = owner, org = orgId) => rt.query<null | { id: string; columns: Array<{ index: number; header: string; field: string }>; headerRow: number }>('finance.marketplace.columns_profile', { platform }, { actor: asUser(who), orgId: org });
@@ -63,19 +69,37 @@ suite('the confirmed column mapping (#4037)', () => {
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
     await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    const url = new URL(adminUrl);
-    url.username = 'crove_app';
-    url.password = 'test-app-pw';
-    pool = createPool({ connectionString: url.toString(), max: 4 });
-    rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
-    owner = await upsertIdentity(createDb(pool), { issuer: 'test', subject: randomUUID(), email: `owner-${randomUUID().slice(0, 8)}@columns.test`, name: null });
+    const login = (username: string, password: string) => {
+      const url = new URL(adminUrl);
+      url.username = username;
+      url.password = password;
+      return url.toString();
+    };
+    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    const register = (db: Db) => new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
+    rt = register(createDb(pool));
+    worker = register(createDb(workerPool));
+    const person = async (name: string) => upsertIdentity(createDb(pool), { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@columns.test`, name: null });
+    owner = await person('owner');
     orgId = (await createOrg(rt, asUser(owner), `Columns ${randomUUID().slice(0, 6)}`)).orgId;
-    otherOwner = await upsertIdentity(createDb(pool), { issuer: 'test', subject: randomUUID(), email: `other-${randomUUID().slice(0, 8)}@columns.test`, name: null });
+    otherOwner = await person('other');
     otherOrg = (await createOrg(rt, asUser(otherOwner), `Columns other ${randomUUID().slice(0, 6)}`)).orgId;
-  });
+    // A member and a viewer of the first org (the roles that may read but never confirm).
+    member = await person('member');
+    viewer = await person('viewer');
+    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]);
+    // A live agent of the first org: installed from the template, holding its own position, with a run started through a task that wakes it (so its actor is a real one, and the call reaches the command's own gate).
+    const { agentId, positionId } = await rt.execute<{ agentId: string; positionId: string }>('kernel.agent.template.install', { templateKey: 'finance.chief_accountant', reportsTo: null }, { actor: asMfa(owner), orgId });
+    await rt.execute('kernel.task.create', { title: 'Việc thử', assigneePositionId: positionId }, { actor: asUser(owner), orgId });
+    const started = await worker.execute<{ runId: string | null }>('kernel.agent.run.start', { agentId }, { actor: { type: 'system', component: 'kernel.agent' }, orgId });
+    if (!started.runId) throw new Error('the agent run did not start');
+    agent = { type: 'agent', agentId, runId: started.runId };
+  }, 300_000);
 
   afterAll(async () => {
     await pool?.end();
+    await workerPool?.end();
     if (!ADMIN) return;
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -129,8 +153,22 @@ suite('the confirmed column mapping (#4037)', () => {
     const before = await stored();
     const body = { platform: 'shopee', headerRow: 1, columns: mapping([{ index: 9, header: 'Another', field: 'sku' }]), headerDigest: 'b'.repeat(64) };
     await expect(rt.execute('finance.marketplace.columns_confirm', body, { actor: { type: 'system', component: 'test' }, orgId })).rejects.toMatchObject({ status: 403 });
-    await expect(rt.execute('finance.marketplace.columns_confirm', body, { actor: { type: 'agent', agentId: randomUUID(), runId: randomUUID() }, orgId })).rejects.toMatchObject({ status: 403 });
+    // A real agent of the org with a live run: the call gets past the agent context and meets a refusal of the command's own, not a refusal of a made-up run.
+    await expect(rt.execute('finance.marketplace.columns_confirm', body, { actor: agent, orgId })).rejects.toMatchObject({ status: 403 });
     expect(await stored()).toBe(before);
+  });
+
+  it('is refused for a member and a viewer of the org, which store nothing, and both still read the profile', async () => {
+    const before = await stored();
+    const body = { platform: 'shopee', headerRow: 1, columns: mapping([{ index: 12, header: 'Member tried', field: 'variation' }]), headerDigest: 'c'.repeat(64) };
+    for (const who of [member, viewer]) {
+      await expect(rt.execute('finance.marketplace.columns_confirm', body, { actor: asUser(who), orgId })).rejects.toMatchObject({ status: 403 });
+    }
+    expect(await stored()).toBe(before);
+    // Every member reads the latest profile (a viewer included).
+    const seen = await latest('shopee', viewer);
+    expect(seen).not.toBeNull();
+    expect((await latest('shopee', member))?.id).toBe(seen?.id);
   });
 
   it("keeps an org's profile to itself", async () => {
