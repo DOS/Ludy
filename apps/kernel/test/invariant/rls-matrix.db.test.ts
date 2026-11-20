@@ -41,7 +41,7 @@ const RUNTIME_ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_defin
 // added) and must be listed here, so a new table cannot quietly become one.
 const MACHINERY = new Set([
   // #4203 (Tingee S3 of #2045, ADR-0039): a bank feed connection's webhook hook key (only the SHA-256 of 128 random bits, never the key) and the signed notices waiting for the worker to verify (the raw body is
-  // personal data, deleted when it is verified and by the sweep after 10 minutes): reached only by definers, RLS enabled, no login role grant. Land before their tables (PENDING_TABLES).
+  // personal data, deleted when it is verified and by the sweep after 10 minutes): reached only by definers, RLS enabled, no login role grant.
   'crove_finance.bank_feed_hook',
   'crove_finance.bank_feed_webhook_notice',
   // The sealed copy of a closed ads connection's token (W2-1, #2296): read only by the revoke worker through a definer.
@@ -98,8 +98,6 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  'crove_finance.bank_feed_hook',
-  'crove_finance.bank_feed_webhook_notice',
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.marketplace_column_profile',
