@@ -30,6 +30,7 @@ const suite = ADMIN ? describe : describe.skip;
 const SECRET = 'test-only-jwt-secret-for-misa-amis-callback-0123456789';
 const ISSUER = 'crove-auth';
 const CLIENT = 'misa-client-id-0001';
+const ASP_CLIENT = 'misa-asp-client-id-0001';
 const PATH = '/api/webhooks/misa-amis';
 const REASON_TEXT = 'LOI-RIENG-CUA-MISA-0042';
 
@@ -57,9 +58,12 @@ suite('MISA AMIS callback (#3903)', () => {
   let worker: Runtime;
   let workerPool: pg.Pool;
   let app: ReturnType<typeof createHttpApp>;
+  let cfg: ReturnType<typeof loadConfig>;
   const users = { owner: '', outsider: '' };
   const A = { org: '', entity: '', connection: '', code: '' };
   const B = { org: '', entity: '', connection: '', code: '' };
+  // An organisation on MISA ASP (product asp), to prove a result signed under one product's key never settles the other product's row (#4113).
+  const C = { org: '', entity: '', connection: '', code: '' };
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: adminUrl });
@@ -88,12 +92,24 @@ suite('MISA AMIS callback (#3903)', () => {
     const data = JSON.stringify(items);
     return JSON.stringify({ success: true, app_id: CLIENT, error_code: '', error_message: '', signature: signCallbackData(data, CLIENT), data_type: 1, org_company_code: A.code, data, ...over });
   };
+  // The same message as an ASP result: signed and addressed with the ASP ClientID, for the ASP organisation (or another company code).
+  const aspMessage = (items: Item[], over: Record<string, unknown> = {}) => {
+    const data = JSON.stringify(items);
+    return JSON.stringify({ success: true, app_id: ASP_CLIENT, error_code: '', error_message: '', signature: signCallbackData(data, ASP_CLIENT), data_type: 1, org_company_code: C.code, data, ...over });
+  };
   const post = (text: string) => app.request(PATH, { method: 'POST', headers: { 'content-type': 'application/json' }, body: text });
   const enqueue = (company: string, results: Array<{ refid: string; type?: number; ok?: boolean; code?: string | null; text?: string | null }>) =>
     api.orgless(async (db) => {
       const { rows: out } = await sql<{ n: number }>`
         SELECT crove_finance.misa_amis_callback_enqueue(${company}, ${results.map((r) => r.refid)}::uuid[], ${results.map((r) => r.type ?? 1)}::integer[], ${results.map((r) => r.ok ?? true)}::boolean[],
           ${results.map((r) => r.code ?? null)}::text[], ${results.map((r) => r.text ?? null)}::text[]) AS n`.execute(db);
+      return Number(out[0]?.n);
+    });
+  const enqueueAsp = (company: string, results: Array<{ refid: string; type?: number; ok?: boolean }>) =>
+    api.orgless(async (db) => {
+      const { rows: out } = await sql<{ n: number }>`
+        SELECT crove_finance.misa_asp_callback_enqueue(${company}, ${results.map((r) => r.refid)}::uuid[], ${results.map((r) => r.type ?? 1)}::integer[], ${results.map((r) => r.ok ?? true)}::boolean[],
+          ${results.map(() => null)}::text[], ${results.map(() => null)}::text[]) AS n`.execute(db);
       return Number(out[0]?.n);
     });
   const claim = (limit = 100) =>
@@ -125,8 +141,8 @@ suite('MISA AMIS callback (#3903)', () => {
     });
     workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
-    const config = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
-    app = createHttpApp({ config, runtime: api, store: new MemoryStore(), authenticate: createAuthenticator(config, createDb(pool)), pool, aiEnabled: false, misaAmisCallback: { clientId: CLIENT } });
+    const config = (cfg = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' }));
+    app = createHttpApp({ config, runtime: api, store: new MemoryStore(), authenticate: createAuthenticator(config, createDb(pool)), pool, aiEnabled: false, misaAmisCallback: { keys: [{ product: 'amis', clientId: CLIENT }, { product: 'asp', clientId: ASP_CLIENT }] } });
     const token = async (email: string) =>
       new SignJWT({ role: 'authenticated', email, session_id: randomUUID(), aal: 'aal1', is_anonymous: false })
         .setProtectedHeader({ alg: 'HS256' })
@@ -150,16 +166,17 @@ suite('MISA AMIS callback (#3903)', () => {
     }
     A.org = String((await rpc('org/create', tokens.owner, { name: 'Công ty nhận callback', idempotencyKey: randomUUID() })).body?.orgId);
     B.org = String((await rpc('org/create', tokens.outsider, { name: 'Công ty khác', idempotencyKey: randomUUID() })).body?.orgId);
-    for (const [who, owner] of [[A, users.owner], [B, users.outsider]] as const) {
+    C.org = String((await rpc('org/create', tokens.owner, { name: 'Công ty dùng ASP', idempotencyKey: randomUUID() })).body?.orgId);
+    for (const [who, owner, product] of [[A, users.owner, 'amis'], [B, users.outsider, 'amis'], [C, users.owner, 'asp']] as const) {
       who.entity = String((await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [who.org]))[0]?.id);
       const channel = randomUUID();
-      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'AMIS thử', $4)", [who.org, channel, who.entity, owner]);
+      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $5, $3, 'MISA thử', $4)", [who.org, channel, who.entity, owner, `accounting_misa_${product}`]);
       who.connection = randomUUID();
       who.code = String(
         (
           await rows<{ org_company_code: string }>(
-            "INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id, last_test_state, last_tested_at) VALUES ($1, $2, $3, $4, 'works', pg_catalog.now()) RETURNING org_company_code",
-            [who.org, who.connection, who.entity, channel],
+            "INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id, product, last_test_state, last_tested_at) VALUES ($1, $2, $3, $4, $5, 'works', pg_catalog.now()) RETURNING org_company_code",
+            [who.org, who.connection, who.entity, channel, product],
           )
         )[0]?.org_company_code,
       );
@@ -207,6 +224,62 @@ suite('MISA AMIS callback (#3903)', () => {
           expect(got?.ok, `${role} ${privilege}`).toBe(false);
         }
       }
+    });
+
+    it('the private function behind both enqueues is not a definer, pins its search path and is granted to nobody, PUBLIC included; the ASP enqueue is a definer the API login alone runs (#4113)', async () => {
+      const inner = 'crove_finance.misa_callback_enqueue_for(text,text,uuid[],integer[],boolean[],text[],text[])';
+      const asp = 'crove_finance.misa_asp_callback_enqueue(text,uuid[],integer[],boolean[],text[],text[])';
+      const got = async (fn: string) => (await rows<{ secdef: boolean; config: string[] | null; acl: string | null }>('SELECT prosecdef AS secdef, proconfig AS config, proacl::text AS acl FROM pg_proc WHERE oid = $1::regprocedure', [fn]))[0];
+      const priv = await got(inner);
+      expect(priv?.secdef).toBe(false);
+      expect(priv?.config).toEqual(['search_path=pg_catalog, pg_temp']);
+      // The revoke from PUBLIC is written out (an ACL exists), not left to a default.
+      expect(priv?.acl).not.toBeNull();
+      expect(priv?.acl ?? '').not.toMatch(/(^|[{,])=X\//);
+      for (const role of ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) {
+        expect((await rows<{ ok: boolean }>("SELECT has_function_privilege($1, $2::regprocedure, 'EXECUTE') AS ok", [role, inner]))[0]?.ok, `${inner} ${role}`).toBe(false);
+      }
+      // A login that tries it directly is refused.
+      await expect(
+        api.orgless(async (db) => void (await sql`SELECT crove_finance.misa_callback_enqueue_for('asp', ${C.code}, ${[randomUUID()]}::uuid[], ${[1]}::integer[], ${[true]}::boolean[], ${[null]}::text[], ${[null]}::text[])`.execute(db))),
+      ).rejects.toBeDefined();
+      // (The refusal is pinned by the privilege checks above: has_function_privilege is false for every login and tenant role.)
+      expect(await pending()).toEqual([]);
+      const wrapper = await got(asp);
+      expect(wrapper?.secdef).toBe(true);
+      expect(wrapper?.config).toEqual(['search_path=pg_catalog, pg_temp']);
+      expect(wrapper?.acl ?? '').not.toMatch(/(^|[{,])=X\//);
+      const allowed: Record<string, boolean> = { crove_app: true, crove_worker: false, crove_tenant: false, crove_definer_tenant: false };
+      for (const [role, ok] of Object.entries(allowed)) {
+        expect((await rows<{ ok: boolean }>("SELECT has_function_privilege($1, $2::regprocedure, 'EXECUTE') AS ok", [role, asp]))[0]?.ok, `${asp} ${role}`).toBe(ok);
+      }
+    });
+
+    it('each enqueue writes its own product, and a replay is one row per product, so the other product\'s copy cannot take the place of the real one', async () => {
+      const refid = randomUUID();
+      expect(await enqueue(A.code, [{ refid }])).toBe(1);
+      expect(await enqueueAsp(C.code, [{ refid }])).toBe(1);
+      expect(await enqueueAsp(C.code, [{ refid }])).toBe(0);
+      expect(await rows<{ product: string }>('SELECT product FROM crove_finance.misa_amis_callback_pending ORDER BY product')).toEqual([{ product: 'amis' }, { product: 'asp' }]);
+      // The ASP enqueue holds the same limits as the AMIS one.
+      await expect(enqueueAsp('not a code!', [{ refid }])).rejects.toMatchObject({ code: 'INVALID' });
+      await expect(enqueueAsp(C.code, [])).rejects.toMatchObject({ code: 'INVALID' });
+    });
+
+    it('claim finds the stored row only through a connection of the product that signed the result: an AMIS result does not find an ASP row, an ASP result does not find an AMIS row', async () => {
+      const amisRow = randomUUID();
+      const aspRow = randomUUID();
+      await seed(A, amisRow, 'sent');
+      await seed(C, aspRow, 'sent');
+      await enqueue(A.code, [{ refid: amisRow }, { refid: aspRow }]);
+      await enqueueAsp(C.code, [{ refid: aspRow }, { refid: amisRow }]);
+      const got = await claim();
+      const find = (refid: string, product: 'amis' | 'asp') => got.filter((r) => r.org_refid === refid && (r.org_company_code === (product === 'amis' ? A.code : C.code)));
+      expect(find(amisRow, 'amis')[0]).toMatchObject({ m_org_id: A.org, m_state: 'sent' });
+      expect(find(aspRow, 'asp')[0]).toMatchObject({ m_org_id: C.org, m_state: 'sent' });
+      expect(find(aspRow, 'amis')[0]).toMatchObject({ m_org_id: null, m_state: null });
+      expect(find(amisRow, 'asp')[0]).toMatchObject({ m_org_id: null, m_state: null });
+      expect(Object.keys(got[0] ?? {}).sort()).toEqual(['error_code', 'error_message', 'm_attempts', 'm_connection_id', 'm_org_company_code', 'm_org_id', 'm_state', 'm_voucher_type', 'org_company_code', 'org_refid', 'seq', 'success', 'voucher_type']);
     });
 
     it('enqueue takes the signed results once (a replay is skipped), refuses malformed lists, and records nothing for a refid it knows nothing about', async () => {
@@ -410,6 +483,70 @@ suite('MISA AMIS callback (#3903)', () => {
         );
         expect(Number(hits[0]?.n), needle).toBe(0);
       }
+    });
+  });
+
+  describe('the product of the key that signed the result (#4113)', () => {
+    it('an ASP-signed result settles the ASP organisation\'s sent row, with the same states as AMIS', async () => {
+      const sent = randomUUID();
+      const lost = randomUUID();
+      await seed(C, sent, 'sent');
+      await seed(C, lost, 'ambiguous');
+      const response = await post(aspMessage([{ org_refid: sent, voucher_type: 1, success: true }, { org_refid: lost, voucher_type: 1, success: false, error_message: REASON_TEXT }]));
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ ok: true });
+      expect((await pending()).map((r) => r.org_refid).sort()).toEqual([sent, lost].sort());
+      expect(await relay()).toBe(2);
+      expect(await stateOf(C, sent)).toMatchObject({ state: 'accepted', reason: null });
+      expect(await stateOf(C, lost)).toMatchObject({ state: 'refused', reason: REASON_TEXT });
+      expect(await pending()).toEqual([]);
+    });
+
+    it('an AMIS-signed result for the ASP organisation\'s company code moves nothing, and an ASP-signed result for the AMIS organisation\'s row moves nothing; the route answers the same', async () => {
+      const aspRow = randomUUID();
+      const amisRow = randomUUID();
+      await seed(C, aspRow, 'sent');
+      await seed(A, amisRow, 'sent');
+      const bodies = [
+        // Signed and addressed with the AMIS ClientID, naming the ASP organisation's company code and its voucher.
+        await (await post(message([{ org_refid: aspRow, voucher_type: 1, success: true }], { org_company_code: C.code }))).text(),
+        // Signed and addressed with the ASP ClientID, naming the AMIS organisation's company code and its voucher.
+        await (await post(aspMessage([{ org_refid: amisRow, voucher_type: 1, success: true }], { org_company_code: A.code }))).text(),
+      ];
+      expect(new Set(bodies)).toEqual(new Set(['{"ok":true}']));
+      await relay();
+      expect((await stateOf(C, aspRow))?.state).toBe('sent');
+      expect((await stateOf(A, amisRow))?.state).toBe('sent');
+      expect(await pending()).toEqual([]);
+    });
+
+    it('where MISA issued one ClientID for both products, a result is stored for each product and only the real connection\'s row is settled', async () => {
+      const same = createHttpApp({ config: cfg, runtime: api, store: new MemoryStore(), authenticate: createAuthenticator(cfg, createDb(pool)), pool, aiEnabled: false, misaAmisCallback: { keys: [{ product: 'amis', clientId: CLIENT }, { product: 'asp', clientId: CLIENT }] } });
+      const aspRow = randomUUID();
+      const amisRow = randomUUID();
+      await seed(C, aspRow, 'sent');
+      await seed(A, amisRow, 'sent');
+      const send = (items: Item[], company: string) => same.request(PATH, { method: 'POST', headers: { 'content-type': 'application/json' }, body: message(items, { org_company_code: company }) });
+      expect((await send([{ org_refid: aspRow, voucher_type: 1, success: true }], C.code)).status).toBe(200);
+      expect((await send([{ org_refid: amisRow, voucher_type: 1, success: true }], A.code)).status).toBe(200);
+      // Each result is stored for both products; the claim finds each stored voucher through its own connection's product only.
+      expect(await pending()).toHaveLength(4);
+      await relay();
+      expect((await stateOf(C, aspRow))?.state).toBe('accepted');
+      expect((await stateOf(A, amisRow))?.state).toBe('accepted');
+      expect(await pending()).toEqual([]);
+    });
+
+    it('a result signed with one ClientID but carrying the other\'s app_id is refused as a bad signature, and neither key is logged', async () => {
+      const refid = randomUUID();
+      await seed(C, refid, 'sent');
+      const data = JSON.stringify([{ org_refid: refid, voucher_type: 1, success: true }]);
+      const bad = await post(JSON.stringify({ success: true, app_id: CLIENT, error_code: '', error_message: '', signature: signCallbackData(data, ASP_CLIENT), data_type: 1, org_company_code: C.code, data }));
+      expect(bad.status).toBe(401);
+      const other = await post(JSON.stringify({ success: true, app_id: ASP_CLIENT, error_code: '', error_message: '', signature: signCallbackData(data, CLIENT), data_type: 1, org_company_code: C.code, data }));
+      expect(other.status).toBe(401);
+      expect(await pending()).toEqual([]);
+      expect((await stateOf(C, refid))?.state).toBe('sent');
     });
   });
 });

@@ -73,7 +73,7 @@ describe('the offer to send a previewed batch (#3902)', () => {
   it('shows the button, the note that the data is re-checked, and sends nothing until it is pressed', () => {
     const html = wrap(<MisaAmisPushConfirm result={result()} ask={ask} connectionId={ID} offer="ready" />);
     expect(html).toContain('data-testid="misa-amis-push-confirm"');
-    expect(html).toContain('Send these 2 vouchers to MISA AMIS');
+    expect(html).toContain('Send these 2 vouchers to MISA');
     expect(html).toContain('Only owners and admins can send');
     // The second click is not drawn yet.
     expect(html).not.toContain('misa-amis-push-yes');
@@ -106,6 +106,10 @@ describe('the offer to send a previewed batch (#3902)', () => {
     expect(note(withCheck(young))).toBe(false);
     // The button stays: a person may always try, and the server answers MISA_AMIS_CHECK_REQUIRED.
     expect(wrap(<MisaAmisPushConfirm result={withCheck(null)} ask={ask} connectionId={ID} offer="ready" />)).toContain('misa-amis-push-start');
+    // MISA ASP has no catalogue check yet (#4152): the note says so instead of asking for one, and still shows while the last check is old.
+    const asp = wrap(<MisaAmisPushConfirm result={withCheck(null)} ask={ask} connectionId={ID} offer="ready" checkAvailable={false} />);
+    expect(asp).toContain('misa-amis-push-check-first');
+    expect(asp).toContain('That check is not available yet');
   });
 
   it('rules: how young a check must be', () => {
@@ -184,8 +188,8 @@ describe('what was sent to MISA AMIS (#3902)', () => {
     ];
     const owner = list(rows, true);
     expect(settle(owner)).toBe(2);
-    expect(owner).toContain('It is in AMIS');
-    expect(owner).toContain('It is not in AMIS');
+    expect(owner).toContain('It is in MISA');
+    expect(owner).toContain('It is not in MISA');
     expect(settle(list(rows, false))).toBe(0);
   });
 
@@ -201,6 +205,6 @@ describe('what was sent to MISA AMIS (#3902)', () => {
   it('is written in Vietnamese too', () => {
     const html = list([row({ state: 'accepted' })], true, 'vi');
     expect(html).toContain('MISA đã nhận');
-    expect(html).toContain('Chứng từ đã gửi sang MISA AMIS');
+    expect(html).toContain('Chứng từ đã gửi sang MISA');
   });
 });

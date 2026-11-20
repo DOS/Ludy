@@ -84,6 +84,63 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 const bodyOf = async (response: Response) => (await response.json()) as Record<string, unknown>;
 
+describe('the MISA AMIS callback route with a ClientID per product (#4103)', () => {
+  const ASP = 'asp-client-id-0123456789abcdef';
+  const both = () =>
+    fixture({
+      misaAmisCallback: {
+        keys: [
+          { product: 'amis', clientId: CLIENT },
+          { product: 'asp', clientId: ASP },
+        ],
+      },
+    });
+
+  it('takes a message signed by either held ClientID, with the app_id of the one that signed it, and hands it to the enqueue of that product', async () => {
+    const f = both();
+    expect((await f.post(message([item()], {}, CLIENT))).status).toBe(200);
+    expect((await f.post(message([item()], {}, ASP))).status).toBe(200);
+    expect(f.sqlSeen).toHaveLength(2);
+    expect(f.sqlSeen[0]?.sql).toContain('misa_amis_callback_enqueue');
+    expect(f.sqlSeen[1]?.sql).toContain('misa_asp_callback_enqueue');
+  });
+
+  it('where one ClientID is held for both products the message is stored once for each product, AMIS first, so the claim can settle the real connection\'s row', async () => {
+    const f = fixture({
+      misaAmisCallback: {
+        keys: [
+          { product: 'amis', clientId: CLIENT },
+          { product: 'asp', clientId: CLIENT },
+        ],
+      },
+    });
+    expect((await f.post(message([item()], {}, CLIENT))).status).toBe(200);
+    expect(f.sqlSeen).toHaveLength(2);
+    expect(f.sqlSeen[0]?.sql).toContain('misa_amis_callback_enqueue');
+    expect(f.sqlSeen[1]?.sql).toContain('misa_asp_callback_enqueue');
+    expect(f.sqlSeen[1]?.parameters).toEqual(f.sqlSeen[0]?.parameters);
+  });
+
+  it('refuses a message whose app_id is not the key that signed it, and one nobody holds, with the same fixed 401 and nothing logged about a key', async () => {
+    const f = both();
+    const wrongApp = await f.post(message([item()], { app_id: CLIENT }, ASP));
+    const unknown = await f.post(message([item()], {}, 'a-key-nobody-holds'));
+    for (const response of [wrongApp, unknown]) {
+      expect(response.status).toBe(401);
+      expect(await bodyOf(response)).toEqual({ code: 'WEBHOOK_SIGNATURE' });
+    }
+    expect(f.sqlSeen).toEqual([]);
+    const text = logs.join('\n');
+    for (const key of [CLIENT, ASP, 'a-key-nobody-holds']) expect(text).not.toContain(key);
+  });
+
+  it('still takes the old shape, one ClientID', async () => {
+    const f = fixture();
+    expect((await f.post(message([item()]))).status).toBe(200);
+    expect((await f.post(message([item()], {}, ASP))).status).toBe(401);
+  });
+});
+
 describe('the MISA AMIS callback route', () => {
   it('exists only with the ClientID and the Finance module, and is never behind a user session', async () => {
     const without = fixture({ misaAmisCallback: undefined } as unknown as Partial<HttpDeps>);
