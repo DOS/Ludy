@@ -351,14 +351,14 @@ export function OrgLayout() {
       <div role="status" aria-live="polite" data-route-announcer className="sr-only">
         <span key={screenName.seq}>{screenName.name}</span>
       </div>
-      <aside className="sticky top-0 hidden h-screen w-72 shrink-0 border-r bg-sidebar md:flex">{shellNav()}</aside>
+      <aside className="sticky top-0 hidden h-screen w-72 shrink-0 border-r bg-sidebar md:flex print:hidden">{shellNav()}</aside>
       <div className="min-w-0 flex-1">
         <PhoneHeader headerRef={phoneHeader} orgName={org?.name} attention={menuBadges.inbox !== null} onOpenMenu={() => setMenuOpen(true)} onOpenPalette={() => setPaletteOpen(true)} />
         <NavDrawer open={menuOpen} onOpenChange={setMenuOpen}>
           {shellNav(() => setMenuOpen(false))}
         </NavDrawer>
         {/* Focusable from code only: where the focus goes when the toast that held it leaves (#2026). */}
-        <main ref={main} id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-6 outline-none md:px-8 md:py-8">
+        <main ref={main} id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-6 outline-none md:px-8 md:py-8 print:max-w-none print:p-0">
           <OrgLeftNotice />
           <ScreenTabs slug={slug} installed={NAV} badges={tabBadges} />
           {me.isSuccess && !org ? <p className="text-sm text-destructive">{t('notMember')}</p> : <Outlet />}

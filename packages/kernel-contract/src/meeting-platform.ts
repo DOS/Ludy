@@ -98,6 +98,8 @@ export const zMeetingPlatformRecordingView = z.strictObject({
   status: z.enum(MEETING_PLATFORM_RECORDING_STATUSES),
   meetingId: zId.nullable(),
   errorCode: z.string().nullable(),
+  // Minimal safe match reference when a suggested recording matches strictly one Ludy meeting the member can read within the B1 15-minute window (#4123 Step 3). Never leaks hidden or ambiguous meetings.
+  matchedMeeting: z.strictObject({ meetingId: zId }).nullable(),
 });
 export type MeetingPlatformRecordingView = z.infer<typeof zMeetingPlatformRecordingView>;
 
