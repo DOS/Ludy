@@ -4,6 +4,7 @@ import { useTranslations } from 'use-intl';
 import { buttonVariants } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { ConversationRetentionCard } from '../../components/conversation-retention.tsx';
+import { EngageWakeRulesCard } from '../../components/engage-wake-rules.tsx';
 import { ExtensionDevices } from '../../components/extension-devices.tsx';
 import { MeetingPlatforms } from '../../components/meeting-platforms.tsx';
 import { GlossaryCard } from '../../components/glossary-card.tsx';
@@ -167,6 +168,8 @@ export function SettingsSalesPage() {
           )}
           {/* The deal board's stages and the reminder for forgotten deals (#3647), with the crm module; owners and admins. */}
           {modules.includes('crm') && canManage && <SalesProcessCard key={`sales-process:${org.slug}`} />}
+          {/* When the inbox and the CRM raise work (Engage's wake rules, #3862): the hours and days after which Home and an AI coworker are told; owners and admins. Here, with the other follow-up rules, not on the crowded Apps tab (the tabs stay under 1200 px). */}
+          {(modules.includes('social') || modules.includes('crm')) && canManage && <EngageWakeRulesCard key={`engage-wake-rules:${org.slug}`} />}
         </>
       )}
     </SettingsFrame>

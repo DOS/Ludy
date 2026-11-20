@@ -13,6 +13,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage } from '../lib/api.ts';
 import { MisaAmisDefaultItem } from './misa-amis-default-item.tsx';
+import { MisaAmisNameProposals } from './misa-amis-name-proposals.tsx';
 import { MisaAmisPushConfirm } from './misa-amis-push-panel.tsx';
 import { CHECK_POLL_MS, CHECK_WAIT_MS, checkTick, pickResult } from '../lib/misa-amis-match-check.ts';
 import type { PushOffer } from '../lib/misa-amis-push.ts';
@@ -52,6 +53,8 @@ export function MisaAmisPreviewPanel({
   const [purpose, setPurpose] = useState<Purpose>('1');
   const id = useId();
   const asked = `${kind}|${from}|${to}|${serviceItemCode}|${salesItemCode}|${purpose}|${legalEntityId}`;
+  const askedRef = useRef(asked);
+  askedRef.current = asked;
   const ask = {
     kind,
     legalEntityId,
@@ -200,6 +203,26 @@ export function MisaAmisPreviewPanel({
       )}
       {result && <MisaAmisPreviewResult result={result} notes={notes.data ?? null} />}
       {result && checkConnectionId && <MisaAmisCheckButton state={result.matchCheck.state} pending={check.isPending} waiting={waiting} slow={slow && result.matchCheck.state === 'requested'} error={check.error} onAsk={askCheck} />}
+      {result && checkConnectionId && (
+        <MisaAmisNameProposals
+          key={result.matchCheck.checkedAt ?? 'none'}
+          connectionId={checkConnectionId}
+          onDecided={() => {
+            // The refresh is labelled with the ask it is sent with, read when it starts, not the one a render before captured.
+            // A promise of its own, so a preview the person started meanwhile keeps its own completion handler (a per-call callback of `mutate` runs only for the latest call); an answer for an ask that is no longer on screen is dropped.
+            const startedFor = askedRef.current;
+            preview.mutateAsync(undefined).then(
+              (data) => {
+                if (askedRef.current !== startedFor) return;
+                setAnsweredFor(startedFor);
+                setLast({ asked: startedFor, data });
+                setRuns((n) => n + 1);
+              },
+              () => undefined, // the error is on screen through `preview.error`
+            );
+          }}
+        />
+      )}
       {result && push && <MisaAmisPushConfirm key={`${runs}:${result.digest}`} result={result} ask={ask} connectionId={push.connectionId} offer={push.offer} />}
     </details>
   );

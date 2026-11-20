@@ -7,7 +7,8 @@ import { zId } from './schemas.ts';
 // Whether this deployment offers the connector at all: it does only when the deployment holds the integrator's ClientID (never in any answer).
 // `pushOffered`: the push of vouchers is also switched on (MISA_AMIS_PUSH, after the sandbox check): without it the screen draws no confirm button and the route answers 404.
 // `aspOffered` (#4111, S2 of #4103): this deployment also holds a ClientID for MISA ASP (MISA_ASP_CLIENT_ID), so a connection may be made for that product. Each product is on only with its own ClientID.
-export const zMisaAmisStatus = z.object({ offered: z.boolean(), pushOffered: z.boolean(), aspOffered: z.boolean() });
+// `aspPushOffered` (#4113, S4 of #4103): the push to MISA ASP is switched on too (MISA_ASP_PUSH=on, with the ClientID): its own switch, apart from `pushOffered`.
+export const zMisaAmisStatus = z.object({ offered: z.boolean(), pushOffered: z.boolean(), aspOffered: z.boolean(), aspPushOffered: z.boolean() });
 export type MisaAmisStatus = z.infer<typeof zMisaAmisStatus>;
 
 // What a connection test came back with, as a state and never MISA's own text (the column's CHECK).

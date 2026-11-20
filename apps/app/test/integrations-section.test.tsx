@@ -107,7 +107,7 @@ describe('IntegrationsSection', () => {
 
   it('draws the MISA card where the deployment holds only the ASP ClientID (#4111), and not where it holds neither', () => {
     const qc = client.current;
-    const withMisa = (status: { offered: boolean; pushOffered: boolean; aspOffered: boolean }) => {
+    const withMisa = (status: { offered: boolean; pushOffered: boolean; aspOffered: boolean; aspPushOffered?: boolean }) => {
       qc.setQueryData(['misaAmis', 'status'], status);
       qc.setQueryData(['misaAmis', 'connections', 'list'], []);
       return section({ bank: false, providers: false });

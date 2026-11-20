@@ -635,4 +635,66 @@ suite('MISA AMIS push (#3902)', () => {
     expect((await rows('SELECT 1 FROM crove_kernel.external_call WHERE org_id = $1', [orgId])).length).toBeGreaterThan(0);
     expect((await rows('SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2', [orgId, 'finance.misa_amis.push'])).length).toBeGreaterThan(0);
   });
+
+  // MISA ASP (#4113, S4 of #4103): the same begin, with no result check and no waiting for a row MISA took, which only the callback or a person settles.
+  describe('a MISA ASP connection', () => {
+    let aspConnection = '';
+    const aspBegin = (opts: { branchKnown: boolean; checked: boolean }) => worker.execute<MisaAmisPushBegin>('finance.misa_amis.push_begin', { connectionId: aspConnection, ...opts }, SYSTEM());
+    const aspRow = async (state: string, extra = '') => {
+      const refid = randomUUID();
+      await rows(
+        `INSERT INTO crove_finance.misa_amis_push (org_id, legal_entity_id, connection_id, source_type, source_id, voucher_type, org_refid, org_refno, payload_digest, state${extra ? ', params' : ''})
+         SELECT $1, legal_entity_id, id, 'cash_voucher', $2, 1, $3, $4, $5, $6${extra ? ", '{\"kind\":\"cash_payment\",\"from\":\"2026-10-01\",\"to\":\"2026-10-31\",\"purchasePurpose\":\"1\"}'::jsonb" : ''} FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $7`,
+        [orgId, randomUUID(), refid, `PC${refid.slice(0, 8)}`, '0'.repeat(64), state, aspConnection],
+      );
+      return refid;
+    };
+
+    beforeAll(async () => {
+      const entity = randomUUID();
+      await rows("INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Chi nhánh ASP', 'branch', $3)", [orgId, entity, users.owner]);
+      const channel = randomUUID();
+      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_asp', $3, 'MISA ASP', $4)", [orgId, channel, entity, users.owner]);
+      aspConnection = randomUUID();
+      await rows("INSERT INTO crove_finance.misa_amis_connection (org_id, id, legal_entity_id, channel_connection_id, product, last_test_state, last_tested_at) VALUES ($1, $2, $3, $4, 'asp', 'works', pg_catalog.now())", [orgId, aspConnection, entity, channel]);
+    });
+
+    it('holds an ASP confirmation to the same fresh check as AMIS: refused with MISA_AMIS_CHECK_REQUIRED until a check of the batch exists, and past that gate with a done check seeded (a wrong digest is STALE) (#4113)', async () => {
+      // No source vouchers: the gates before the digest (blockers, too many) have nothing to say, so a wrong digest is what answers once the check gate is passed.
+      vouchers = [];
+      const confirm = () => api.execute('finance.misa_amis.push', { connectionId: aspConnection, ...ASK, digest: 'a'.repeat(64) }, asUser('owner'));
+      await rows('DELETE FROM crove_finance.misa_amis_match_check WHERE connection_id = $1', [aspConnection]);
+      await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_CHECK_REQUIRED', status: 409 });
+      // A done check seeded the way the S3a tests seed one (through the command and the worker's record, without the job reading a catalogue).
+      await api.execute('finance.misa_amis_match.request_check', { id: aspConnection, ask: ASK }, asUser('owner'));
+      const [stored] = await rows<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE connection_id = $1', [aspConnection]);
+      await worker.execute('finance.misa_amis_match.record_check', { connectionId: aspConnection, requestedAt: new Date(stored?.requested_at as Date).toISOString(), state: 'done', failure: null, results: [] }, SYSTEM());
+      await expect(confirm()).rejects.toMatchObject({ code: 'MISA_AMIS_PUSH_STALE', status: 409 });
+    });
+
+    it('is handed to the worker with its product, and the begin never asks MISA for results of rows it took or whose answer was lost: those wait for the callback or a person', async () => {
+      const target = await worker.query('finance.misa_amis.push_target', { connectionId: aspConnection }, SYSTEM());
+      expect(target).toMatchObject({ action: 'push', id: aspConnection, product: 'asp' });
+      const sent = await aspRow('sent');
+      const ambiguous = await aspRow('ambiguous');
+      // An AMIS connection would answer a `check` for these two rows; an ASP connection answers that there is nothing to do, and that nothing waits for a poll.
+      expect(await aspBegin({ branchKnown: true, checked: false })).toEqual({ action: 'none', reason: 'nothing', waiting: false });
+      expect((await rows<{ state: string }>('SELECT state FROM crove_finance.misa_amis_push WHERE org_refid = ANY($1) ORDER BY state', [[sent, ambiguous]])).map((r) => r.state)).toEqual(['ambiguous', 'sent']);
+    });
+
+    it('sends a queued row as for AMIS (the branch first, then the call committed to the ledger before the send), and the batch it is sending still counts as waiting so a lost answer is swept', async () => {
+      const queued = await aspRow('queued', 'params');
+      expect(await aspBegin({ branchKnown: false, checked: false })).toEqual({ action: 'need_branch' });
+      const sending = await aspBegin({ branchKnown: true, checked: false });
+      if (sending.action !== 'send') throw new Error(`expected a send, got ${sending.action}`);
+      expect(sending.rows.map((r) => r.orgRefid)).toEqual([queued]);
+      expect(sending.callKey).toContain(`misa_amis:save:${aspConnection}:`);
+      expect((await rows<{ state: string }>('SELECT state FROM crove_finance.misa_amis_push WHERE org_refid = $1', [queued]))[0]?.state).toBe('sending');
+      // While it is being sent the run waits (the next run sweeps it into `ambiguous` if its answer is lost): nothing else is queued, so there is nothing to send, and `waiting` stays true for the row in flight.
+      expect(await aspBegin({ branchKnown: true, checked: true })).toEqual({ action: 'none', reason: 'nothing', waiting: true });
+      await rows("UPDATE crove_finance.misa_amis_push SET updated_at = pg_catalog.now() - interval '10 minutes' WHERE org_refid = $1", [queued]);
+      expect(await aspBegin({ branchKnown: true, checked: false })).toEqual({ action: 'none', reason: 'nothing', waiting: false });
+      expect((await rows<{ state: string; reason: string }>('SELECT state, reason FROM crove_finance.misa_amis_push WHERE org_refid = $1', [queued]))[0]).toEqual({ state: 'ambiguous', reason: 'LOST_ANSWER' });
+    });
+  });
 });

@@ -18,7 +18,7 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MISA_AMIS_PREVIEW_LIMIT, zId, zMisaAmisPreviewAsk, type MisaAmisPreviewAsk } from '@crove/kernel-contract';
+import { MISA_AMIS_PREVIEW_LIMIT, zId, zMisaAmisPreviewAsk, type MisaAmisPreviewAsk, type MisaAmisProduct } from '@crove/kernel-contract';
 import type { MemberRole, MisaAmisPushSource, MisaAmisPushState } from '@crove/db';
 import { AMIS_SAVE_BATCH_MAX } from '@crove/misa-amis';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
@@ -137,8 +137,6 @@ export const misaAmisPush = defineCommand({
       .where('c.id', '=', input.connectionId)
       .executeTakeFirst();
     if (!connection) throw notFound();
-    // The push to MISA ASP is a later slice (S4 of #4103: its own switch, no polling of results): a connection of that product is connected and tested, never pushed to yet.
-    if (connection.product !== 'amis') throw new DomainError('MISA_ASP_PUSH_NOT_AVAILABLE', 409, 'Việc gửi chứng từ sang MISA ASP chưa có; hiện chỉ kết nối MISA AMIS Kế toán gửi được chứng từ');
     if (connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối này không còn hoạt động, hãy kết nối lại');
     // Only a connection whose last test worked (S2b): a wrong code or an unreachable AMIS is found by the test, not by a half-sent batch.
     if (connection.last_test_state !== 'works') throw new DomainError('MISA_AMIS_NOT_TESTED', 409, 'Hãy kiểm tra kết nối MISA AMIS thành công trước khi gửi');
@@ -152,6 +150,7 @@ export const misaAmisPush = defineCommand({
     const matches = await queryOf(ctx)<MisaAmisMatchResults>('finance.misa_amis_match.results', { legalEntityId: connection.legal_entity_id, ask: buildAsk });
     // A confirmation needs a check of this batch no older than 15 minutes (S3b, #4124): a match is a view of the catalogue at the time of the check, so a person confirms what was looked at a moment ago, and the
     // worker reads the entries it relies on again before it sends (apps/kernel misa-amis-push-job.ts). No check, one of another batch, one that never finished or an old one: nothing is queued.
+    // ASP is held to the same rule (a voucher never goes out unchecked, and ASP needs catalogue ids even more): its connection is checked by the same job with the ASP client (#4152).
     if (!checkIsFresh(matches.status.checkedAt, ctx.now)) throw new DomainError('MISA_AMIS_CHECK_REQUIRED', 409, 'Hãy kiểm tra chứng từ với danh mục MISA (trong 15 phút gần đây) rồi mới gửi');
     const { entries, loaded } = await loadAmisEntries(queryOf(ctx), buildAsk, amisContextOf(buildAsk, AMIS_PLACEHOLDER_BRANCH, matches), MISA_AMIS_PREVIEW_LIMIT + 1);
     if (loaded > MISA_AMIS_PREVIEW_LIMIT) throw new DomainError('MISA_AMIS_PUSH_TOO_MANY', 422, 'Kỳ này có quá nhiều chứng từ, hãy chọn khoảng ngắn hơn');
@@ -231,7 +230,8 @@ export const misaAmisPush = defineCommand({
 // ---------------------------------------------------------------------------------------------------------------
 // What the worker needs
 
-export type MisaAmisPushTarget = { action: 'none'; reason: 'not_found' | 'not_active' | 'other_product' } | { action: 'push'; id: string; channelConnectionId: string; orgCompanyCode: string; legalEntityId: string };
+// `product`: which MISA product the connection is for (#4113, S4 of #4103), so the worker uses that product's client and opens only an access code sealed for it.
+export type MisaAmisPushTarget = { action: 'none'; reason: 'not_found' | 'not_active' } | { action: 'push'; id: string; product: MisaAmisProduct; channelConnectionId: string; orgCompanyCode: string; legalEntityId: string };
 
 export const misaAmisPushTarget = defineQuery({
   name: 'finance.misa_amis.push_target',
@@ -246,10 +246,8 @@ export const misaAmisPushTarget = defineQuery({
       .where('c.id', '=', input.connectionId)
       .executeTakeFirst();
     if (!row) return { action: 'none', reason: 'not_found' };
-    // A MISA ASP connection is never pushed with the AMIS client (S4 of #4103 brings its own): the worker leaves it alone.
-    if (row.product !== 'amis') return { action: 'none', reason: 'other_product' };
     if (row.status !== 'active') return { action: 'none', reason: 'not_active' };
-    return { action: 'push', id: row.id, channelConnectionId: row.channel_connection_id, orgCompanyCode: row.org_company_code, legalEntityId: row.legal_entity_id };
+    return { action: 'push', id: row.id, product: row.product, channelConnectionId: row.channel_connection_id, orgCompanyCode: row.org_company_code, legalEntityId: row.legal_entity_id };
   },
 });
 
@@ -264,7 +262,7 @@ export interface PushRowRef {
 
 export type MisaAmisPushBegin =
   // `waiting`: rows MISA took (or may have) still await their result inside the window, so the job comes back later.
-  | { action: 'none'; reason: 'not_found' | 'not_active' | 'other_product' | 'nothing' | 'busy'; waiting: boolean }
+  | { action: 'none'; reason: 'not_found' | 'not_active' | 'nothing' | 'busy'; waiting: boolean }
   // The AMIS branch is read from AMIS's dictionary by the worker; the batch is not begun without it.
   | { action: 'need_branch' }
   | { action: 'send'; callKey: string; voucherType: number; params: PushParams; rows: PushRowRef[]; sourceType: MisaAmisPushSource }
@@ -291,7 +289,6 @@ export const misaAmisPushBegin = defineCommand({
       .forUpdate('c')
       .executeTakeFirst();
     if (!connection) return { action: 'none', reason: 'not_found', waiting: false };
-    if (connection.product !== 'amis') return { action: 'none', reason: 'other_product', waiting: false };
     if (connection.status !== 'active') return { action: 'none', reason: 'not_active', waiting: false };
 
     const table = 'crove_finance.misa_amis_push';
@@ -318,8 +315,9 @@ export const misaAmisPushBegin = defineCommand({
       .where('requested_at', '<', new Date(ctx.now.getTime() - PUSH_QUEUED_EXPIRY_DAYS * 24 * 3600 * 1000))
       .execute();
 
-    // 1. Rows MISA took, or whose answer was lost (a batch begun and never answered is `ambiguous` above): MISA is asked for their results once per run, before anything else is sent.
-    if (!input.checked) {
+    // 1. Rows MISA took, or whose answer was lost (a batch begun and never answered is `ambiguous` above): MISA is asked for their results once per run, before anything else is sent. Only for AMIS: MISA ASP has no
+    // call that lists results (#4103), so an ASP row that MISA took (`sent`) or whose answer was lost (`ambiguous`) is settled by MISA's callback or by a person (push_resolve), never asked about.
+    if (!input.checked && connection.product === 'amis') {
       const checkable = await ctx.trx
         .selectFrom(table)
         .select(['org_refid', 'state', 'attempts', 'sent_at', 'updated_at'])
@@ -407,13 +405,14 @@ export const misaAmisPushBegin = defineCommand({
       };
     }
 
-    // 3. Nothing to send: the job comes back later while rows wait for MISA's answer inside the window.
+    // 3. Nothing to send: the job comes back later while rows wait for MISA's answer inside the window. For ASP only a row being sent counts (the next run sweeps it if its answer was lost): a `sent` row waits for the
+    // callback or a person, and no run of the job polls for it.
     const waiting = await ctx.trx
       .selectFrom(table)
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
-      .where('state', 'in', ['sending', 'sent', 'ambiguous'])
+      .where('state', 'in', connection.product === 'amis' ? ['sending', 'sent', 'ambiguous'] : ['sending'])
       .where('updated_at', '>', windowStart)
       .limit(1)
       .executeTakeFirst();

@@ -7,7 +7,7 @@
 // The notes are read, never written: nothing here changes a voucher, a blocker or what is sent, and it is not a command. With no blocker there is no call (`none`). When there is no model, the AI budget is spent,
 // the member's calls are too frequent, the call fails or every note is dropped, the answer names the state (`ai`) with no notes and the screen shows the list alone. An answer is kept for a while by its kinds, so
 // reopening the preview does not pay for the same notes twice. A failure is named, never quoted: neither the kinds nor the model's answer is logged.
-import { AiBudgetExhaustedError, MISA_AMIS_BLOCKER_KINDS, misaAmisBlockerNotesFactsText, misaAmisBlockerNotesHaveNews, type InboxReader, type MisaAmisBlockerKind, type MisaAmisBlockerNotesFacts } from '@crove/agent';
+import { AiBudgetExhaustedError, MISA_AMIS_BLOCKER_KINDS, misaAmisBlockerNotesFactsText, misaAmisBlockerNotesHaveNews, type InboxReader, type MisaAmisBlockerKind, type MisaAmisBlockerNotesFacts, type MisaAmisNotesProduct } from '@crove/agent';
 import type { MisaAmisBlockerNotes, MisaAmisPreview } from '@crove/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
@@ -38,13 +38,15 @@ export async function explainMisaAmisBlockers(
   userId: string,
   preview: MisaAmisPreview,
   language: 'vi' | 'en',
+  // The MISA product of the connection the preview is for (its wording differs where the fix does); absent when the ask names no connection, which reads as AMIS as before.
+  product: MisaAmisNotesProduct = 'amis',
   now: () => number = Date.now,
 ): Promise<MisaAmisBlockerNotes> {
   const answer = (state: MisaAmisBlockerNotes['ai'], notes: MisaAmisBlockerNotes['notes'] = []): MisaAmisBlockerNotes => ({ ai: state, notes });
-  const told: MisaAmisBlockerNotesFacts = { language, kinds: misaAmisBlockerKinds(preview) };
+  const told: MisaAmisBlockerNotesFacts = { language, product, kinds: misaAmisBlockerKinds(preview) };
   if (!misaAmisBlockerNotesHaveNews(told)) return answer('none');
   if (!ai.reader) return answer('off');
-  const key = `${orgId}\n${language}\n${misaAmisBlockerNotesFactsText(told)}`;
+  const key = `${orgId}\n${language}\n${product}\n${misaAmisBlockerNotesFactsText(told)}`;
   const hit = ai.kept.get(key);
   if (hit && now() - hit.at < (hit.notes === null ? MISA_AMIS_BLOCKER_NOTES_REFUSED_KEEP_MS : MISA_AMIS_BLOCKER_NOTES_KEEP_MS)) return hit.notes === null ? answer('failed') : answer('used', hit.notes);
   const remember = (notes: MisaAmisBlockerNotes['notes'] | null) => {

@@ -1472,6 +1472,9 @@ export interface FinanceMisaAmisMatchTable {
   catalogue_code: ColumnType<string | null, string | null, NotGranted>;
   catalogue_id: ColumnType<string | null, string | null, NotGranted>;
   checked_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  candidate_name: ColumnType<string | null, string | null, NotGranted>;
+  confirmed_by: ColumnType<string | null, string | null, NotGranted>;
+  confirmed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
 }
 
 /** crove_finance.misa_amis_push */
@@ -2424,6 +2427,9 @@ export interface KernelConversationSettingTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   auto_draft: Generated<boolean>;
+  wake_unanswered_hours: Generated<number>;
+  wake_reply_window_hours: Generated<number>;
+  wake_quote_days: Generated<number>;
 }
 
 /** crove_kernel.conversation */

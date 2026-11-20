@@ -108,12 +108,14 @@ function ConnectionItem({ connection, entities, canManage, pushOffered }: { conn
       )}
       {disconnect.error && <ErrorText>{errorMessage(disconnect.error)}</ErrorText>}
       {test.error && <ErrorText>{errorMessage(test.error)}</ErrorText>}
-      {/* The preview and the push belong to AMIS Kế toán: the push to MISA ASP is a later slice (#4103), so an ASP connection is connected and tested here and nothing more. */}
-      {connection.status === 'active' && connection.product === 'amis' && (
+      {/* The preview and the check against the MISA catalogue belong to a connection of either product (#4152): the check reads the catalogue with the connection's own client, whatever the push switch says, so
+          an ASP connection can be checked before the push to ASP is ever switched on (MISA_ASP_PUSH, #4113). The send button follows `pushOffered`, the switch of the connection's own product. */}
+      {connection.status === 'active' && (
         <MisaAmisPreviewPanel legalEntityId={connection.legalEntityId} {...(canManage ? { checkConnectionId: connection.id } : {})} defaults={{ service: connection.defaultServiceItemCode ?? null, sales: connection.defaultSalesItemCode ?? null }} push={{ connectionId: connection.id, offer: pushOffer({ canManage, pushOffered, testState: connection.lastTestState }) }} />
       )}
-      {connection.status === 'active' && connection.product === 'amis' && <MisaAmisPushList connectionId={connection.id} canManage={canManage} />}
-      {connection.status === 'active' && connection.product === 'asp' && (
+      {/* What was pushed stays readable and settleable whatever the switch says (the routes are not gated by it): an ASP row still `sent` when the push is switched off has no result polling to end it, only the callback or this. */}
+      {connection.status === 'active' && <MisaAmisPushList connectionId={connection.id} canManage={canManage} />}
+      {connection.status === 'active' && connection.product === 'asp' && !pushOffered && (
         <p className="mt-2 text-xs text-subtle-foreground" data-testid="misa-asp-later">
           {t('aspLater')}
         </p>
@@ -239,7 +241,7 @@ export function MisaAmisConnectionsCard({ role }: { role: Role }) {
           ) : (
             <ul className="mt-3 divide-y">
               {list.map((c) => (
-                <ConnectionItem key={c.id} connection={c} entities={entities.data ?? []} canManage={canManage} pushOffered={status.data?.pushOffered === true} />
+                <ConnectionItem key={c.id} connection={c} entities={entities.data ?? []} canManage={canManage} pushOffered={c.product === 'asp' ? status.data?.aspPushOffered === true : status.data?.pushOffered === true} />
               ))}
             </ul>
           )}

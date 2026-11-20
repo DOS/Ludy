@@ -296,6 +296,14 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "The tax code a check of a MISA AMIS connection looked a party up by; an erasure deletes the party's stored results and the next check makes them anew",
   },
+  // The name of the catalogue entry a MISA catalogue check proposed for a party with no tax code (#4124): it can be a person's name (a household business), so it is kept on the proposal row alone, cleared when a
+  // person confirms it (the row is replaced by one that holds the code only) and deleted with the party it was proposed for when an erasure reaches that party (a name is never a probe); the next check proposes the
+  // entry anew if the books still carry the party.
+  'crove_finance.misa_amis_match.candidate_name': {
+    kind: 'name',
+    handling: 'erase',
+    reason: "The name of the MISA catalogue entry proposed for a party with no tax code; an erasure that reaches the party deletes its name matches and the next check makes them anew",
+  },
   // More free text (#1961): a task's title and description, which members and agents write, are replaced where they
   // quote the value; a bank statement line and a journal line's memo are kept.
   'crove_kernel.task.title': {
@@ -1148,6 +1156,17 @@ export const personalDataErase = defineCommand({
          WHERE org_id = ${ctx.orgId}::uuid AND party_id = ANY(${parties.map((p) => p.id)}::uuid[])
          RETURNING id`.execute(ctx.trx);
       add('crove_finance.bank_party_rule.key_hash', rules.length);
+      // The name matches of those parties (#4124): a proposal holds the name of a catalogue entry that was found because it is the party's name, and a confirmation says the entry is that party. They go whole, documented
+      // party or not (the next check proposes again for a party the books still carry). A name is never a probe, so this is where the proposal's name is erased: with the party it belongs to. The checks are locked first and
+      // the waiting ones moved on, as for a tax code above, so a job that read the party's name before this erasure cannot put the proposal back.
+      await sql`SELECT 1 FROM crove_finance.misa_amis_match_check WHERE org_id = ${ctx.orgId}::uuid FOR UPDATE`.execute(ctx.trx);
+      const { rows: nameMatches } = await sql<{ proposal: boolean }>`
+        DELETE FROM crove_finance.misa_amis_match
+         WHERE org_id = ${ctx.orgId}::uuid AND kind = 'party_name' AND match_key = ANY(${parties.map((p) => p.id)}::text[])
+         RETURNING candidate_name IS NOT NULL AS proposal`.execute(ctx.trx);
+      add('crove_finance.misa_amis_match.candidate_name', nameMatches.filter((r) => r.proposal).length);
+      // Always, not only when a row went: a job may have read the party's name and not yet recorded a proposal for it, and that proposal is exactly what must not land after this erasure.
+      await sql`UPDATE crove_finance.misa_amis_match_check SET requested_at = pg_catalog.clock_timestamp() WHERE org_id = ${ctx.orgId}::uuid AND state = 'requested'`.execute(ctx.trx);
     }
 
     // Bookings the visitor made on a public booking page (#1318), matched by their email or phone: the visitor's name,

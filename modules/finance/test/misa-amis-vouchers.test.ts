@@ -273,6 +273,22 @@ describe('blockers: what AMIS needs that was not given', () => {
     }
   });
 
+  it('names a party that several active catalogue entries carry apart from one the catalogue does not have (#4114): different fixes, both block, and a check that has none ambiguous changes nothing', () => {
+    // 0101234564 is the party of the purchase and the cash voucher, 0312345678 the customer of the sale: the check found two active entries with each (ambiguous), and 9999999999 is matched.
+    const ambiguous = ctx({ partyCodes: new Map([['9999999999', 'KH_KHAC']]), partyAmbiguous: new Set(['0101234564', '0312345678']) });
+    const blocker = [{ code: 'party_code_ambiguous', sourceId: SOURCE_ID, lineNo: null }];
+    expect(purchaseServiceAmisVouchers(purchase(), ambiguous).blockers).toEqual(blocker);
+    expect(salesAmisVouchers(sale(), ambiguous).blockers).toEqual(blocker);
+    expect(cashAmisVouchers(cash(), ambiguous).blockers).toEqual(blocker);
+    // A party the check found none for (unknown), or whose tax code is not the ambiguous one, stays `party_code_unknown`.
+    const elsewhere = ctx({ partyCodes: new Map([['9999999999', 'KH_KHAC']]), partyAmbiguous: new Set(['0555555555']) });
+    expect(purchaseServiceAmisVouchers(purchase(), elsewhere).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    expect(purchaseServiceAmisVouchers(purchase(), ctx({ partyCodes: new Map([['9999999999', 'KH_KHAC']]), partyAmbiguous: null })).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    // A matched party is not blocked, ambiguous set or not; with no check read nothing is blocked either.
+    expect(purchaseServiceAmisVouchers(purchase(), ctx({ partyCodes: new Map([['0101234564', 'NCC_ABC']]), partyAmbiguous: new Set(['0101234564']) })).blockers).toEqual([]);
+    expect(purchaseServiceAmisVouchers(purchase(), ctx({ partyCodes: null, partyAmbiguous: new Set(['0101234564']) })).blockers).toEqual([]);
+  });
+
   it('names a party the dictionary does not have, but does not block when the dictionary was not read', () => {
     const known = ctx({ partyCodes: new Map([['9999999999', 'KH_KHAC']]) });
     expect(purchaseServiceAmisVouchers(purchase(), known).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
@@ -298,6 +314,30 @@ describe('blockers: what AMIS needs that was not given', () => {
     const person = purchase({ vendor: { name: 'Nguyễn Văn A', taxCode: null, address: null } });
     const checked = ctx({ partyCodes: new Map([['0101234564', 'NCC_ABC']]) });
     expect(purchaseServiceAmisVouchers(person, checked).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: null })).blockers).toEqual([]);
+  });
+
+  it('writes a party with no tax code with the code a person confirmed for its name (#4124), and blocks it while the name is only proposed or the confirmation is of another party', () => {
+    const PARTY = '77777777-7777-4777-8777-777777777777';
+    const person = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode: null, address: null } });
+    const confirmed = ctx({ partyCodes: new Map(), partyNameCodes: new Map([[PARTY, 'KH_NVA']]) });
+    expect(purchaseServiceAmisVouchers(person, confirmed).blockers).toEqual([]);
+    expect(JSON.stringify(purchaseServiceAmisVouchers(person, confirmed))).toContain('KH_NVA');
+    // Not confirmed (a proposal is not a match): blocked as before. A confirmation for another party does not count. A party with no id cannot be named.
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: new Map(), partyNameCodes: new Map() })).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: new Map(), partyNameCodes: new Map([['88888888-8888-4888-8888-888888888888', 'KH_KHAC']]) })).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    const noId = purchase({ vendor: { name: 'Nguyễn Văn A', taxCode: null, address: null } });
+    expect(purchaseServiceAmisVouchers(noId, confirmed).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    // A tax code that is PRESENT but cannot be used (not 10 or 13 digits: a mistyped one) is never matched by name, whatever is confirmed: it stays a blocker for a person to fix. Only none, or a blank one, is a party with no tax code.
+    for (const taxCode of ['12345', '010123456', 'không có', '0101234564-0']) {
+      const unusable = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode, address: null } });
+      expect(purchaseServiceAmisVouchers(unusable, confirmed).blockers, taxCode).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    }
+    for (const taxCode of [null, '', '   ']) {
+      const blank = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode, address: null } });
+      expect(purchaseServiceAmisVouchers(blank, confirmed).blockers, String(taxCode)).toEqual([]);
+    }
+    // No check done: nothing is judged, as before.
     expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: null })).blockers).toEqual([]);
   });
 

@@ -196,7 +196,7 @@ import {
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
 import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisDefaultItem, zMisaAmisStatus } from './misa-amis-connections.ts';
-import { zMisaAmisMatchCheckQueued } from './misa-amis-match.ts';
+import { zMisaAmisMatchCheckQueued, zMisaAmisNameDecided, zMisaAmisNameDecision, zMisaAmisNameProposal, zMisaAmisNameProposalsAsk } from './misa-amis-match.ts';
 import { zMisaAmisPushConfirm, zMisaAmisPushConfirmed, zMisaAmisPushListAsk, zMisaAmisPushResolveAsk, zMisaAmisPushRow } from './misa-amis-push.ts';
 import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './misa-check.ts';
 import { zMisaAmisPreview, zMisaAmisBlockerNotes, zMisaAmisBlockerNotesAsk, zMisaAmisPreviewAsk } from './misa-amis-preview.ts';
@@ -271,6 +271,7 @@ import {
   zSavedReplyUpdate,
   zConversationAddress,
 } from './conversations.ts';
+import { zEngageWakeRules, zEngageWakeRulesView } from './engage-wake.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
 import { zDepreciationRequest, zJournalVoucherRequest, zSurplusResolutionRequest, zYearClosingRequest } from './journal-voucher.ts';
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
@@ -2367,6 +2368,9 @@ export const contract = {
     // admins, with a fresh second factor).
     retention: oc.input(z.strictObject({})).output(zConversationRetention),
     setRetention: oc.input(zConversationRetentionSet).output(zConversationRetention),
+    // Engage's wake rules (#3862): the org's N for the three rules that have one (every member reads, owners and admins set; set in Settings, never on the inbox screen).
+    wakeRules: oc.input(z.strictObject({})).output(zEngageWakeRulesView),
+    setWakeRules: oc.input(zEngageWakeRules).output(zEngageWakeRulesView),
     eraseContact: oc.input(zConversationEraseContact.extend({ idempotencyKey: zId })).output(zConversationErased),
     // Deleting a disconnected channel's conversations too (#3299): the counts the confirmation names, then the erasure (owners and admins, a fresh
     // second factor; the channel must be disconnected first).
@@ -2679,6 +2683,11 @@ export const contract = {
     // preview's own. MISA_AMIS_DISABLED (404), MISA_AMIS_CONNECTION_NOT_FOUND (404), CHANNEL_NOT_ACTIVE (409), MISA_AMIS_MATCH_ENTITY (422) when the ask names another entity, FORBIDDEN (403).
     matches: {
       check: oc.input(z.strictObject({ id: zId, ask: zMisaAmisPreviewAsk })).output(zMisaAmisMatchCheckQueued),
+      // The proposals of the last check (S3b, #4124): a party with no tax code and the one active catalogue entry of its name. Owner or admin. Confirming makes the entry's code the party's code on the vouchers (the
+      // preview then changes); rejecting deletes the proposal. MISA_AMIS_NAME_PROPOSAL_GONE (409) when a newer check replaced it, MISA_AMIS_CONNECTION_NOT_FOUND (404), FORBIDDEN (403).
+      proposals: oc.input(zMisaAmisNameProposalsAsk).output(z.array(zMisaAmisNameProposal)),
+      confirmName: oc.input(zMisaAmisNameDecision).output(zMisaAmisNameDecided),
+      rejectName: oc.input(zMisaAmisNameDecision).output(zMisaAmisNameDecided),
     },
     // The vouchers pushed through a connection, with their state (#3902, S3b-2). Every role reads; a row's reason is MISA's own text (untrusted).
     pushes: {

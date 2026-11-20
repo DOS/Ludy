@@ -83,6 +83,11 @@ const REACHABLE = [
   // test/invariant/mcp-conversation-reads.db.test.ts.
   'kernel.mcp.conversations:ludy.read',
   'kernel.mcp.conversation:ludy.read',
+  // The wake rules of Engage (#3862, E3 of epic #3857; ADR-0051 decision 13): the two reads the wake sweep runs as a company grant, in its sealed context, to tell an AI coworker there is work, and that Home runs as
+  // the member. Ids, a kind, instants, days and an amount, with exactly those keys, and none of the words a customer, a deal or a guest wrote; a company grant reads its own org's rows only and a member-bound grant
+  // is refused by both, the CRM read for a plain member too. Pinned in test/invariant/mcp-wake-engage-reach.db.test.ts and mcp-wake-engage.test.ts.
+  'kernel.wake.conversations:ludy.read',
+  'crm.wake.facts:ludy.read',
 ];
 // The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the kernel rules and the line reads they
 // call (a query run inside a query keeps the caller's identity, so a rule over MCP needs every read it calls to declare the scope as well). They are optional here so each can land
@@ -110,12 +115,6 @@ const SIGNALS = [
 // Must never be returned by any of them (each tool PR pins it under test/invariant/): a customer's email or phone, the org's bank account numbers or holders (the reminder read leaves out `payTo`), the lines of an invoice, anything from a query that is `sensitive`.
 const FINANCE_READS: readonly string[] = [
 ];
-
-// The wake rules of Engage (#3862, E3 of epic #3857; ADR-0051 decision 13): the two reads the wake sweep runs as a company grant, in its sealed context, to tell an AI coworker there is work, and that Home runs as the member
-// (kernel.wake.conversations: ids, a kind and instants of the threads that wait; crm.wake.facts: ids, a day and an amount of a quote follow-up and a booking tomorrow). They may join the set when that PR lands, each pinned
-// by its tests (nothing a person typed leaves in either answer); this list lets the names in and does not require them, as the lists above. A name outside the lists still fails, and so do the checks
-// below on every query that carries `mcp`.
-const ENGAGE_WAKE_READS: readonly string[] = ['kernel.wake.conversations:ludy.read', 'crm.wake.facts:ludy.read'];
 
 // The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Exactly this one,
 // with exactly this scope: a second command that carries `mcp`, or this one with another scope, fails, and so does its absence.
@@ -201,7 +200,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
   it('pins the queries that carry `mcp`, and none is sensitive, streamed, role-less or open to member mode or an extension token', () => {
     const carrying = queries.filter((q) => (q as { mcp?: unknown }).mcp !== undefined);
     const names = carrying.map((q) => `${q.name}:${(q as { mcp: { scope: string } }).mcp.scope}`).sort();
-    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n) && !ENGAGE_WAKE_READS.includes(n))).toStrictEqual([...REACHABLE].sort());
+    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n))).toStrictEqual([...REACHABLE].sort());
     for (const q of carrying) {
       expect(Array.isArray(q.access), q.name).toBe(true);
       expect(q.sensitive === true, q.name).toBe(false);
