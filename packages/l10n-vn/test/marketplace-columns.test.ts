@@ -108,7 +108,7 @@ describe('a buyer text in an unflagged column mapped to a text field', () => {
   // Neither "Cột phụ", "Liên kết" nor "Tên" is a buyer header, so the columns are shown and can be mapped; their cells would be copied into the lines word for word.
   const HEAD3 = ['Mã', 'Hàng', 'SL', 'Cột phụ', 'Liên kết', 'Tên'];
   const r3 = (order: string, extra: string, link: string, name: string): string[] => [order, 'Bút', '2', extra, link, name];
-  const SHEET3 = grid([HEAD3, r3('A1', '0903 123 456', 'mua.thu@example.com', 'Trần Thị Mua Thử'), r3('A2', 'gói kỹ', 'x@y.vn', 'Lê Văn Mua'), r3('A3', '', '', 'Phạm Thị C')]);
+  const SHEET3 = grid([HEAD3, r3('A1', '0903 123 456', 'mua.thu@example.com', 'Trần Thị Mua Thử'), r3('A2', 'gói kỹ', 'x@example.com', 'Lê Văn Mua'), r3('A3', '', '', 'Phạm Thị C')]);
   const BASE: ColumnAssignment[] = [
     { index: 0, field: 'orderNo' },
     { index: 1, field: 'itemName' },
