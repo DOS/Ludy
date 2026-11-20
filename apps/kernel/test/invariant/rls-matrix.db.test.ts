@@ -96,7 +96,7 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
-  'crove_finance.marketplace_column_check',
+  'crove_finance.marketplace_column_profile',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -393,6 +393,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_finance.channel_settlement_line',
   // The household profile of an entity (#2517): a change of tax group, method or trades is a new row from its effective date, never an edit of an earlier one.
   'crove_finance.household_profile',
+  // #4037 (slice 2 of #3850): a confirmed mapping of a marketplace report's columns is a new row per org and platform, the latest wins; an earlier one is never edited or deleted.
+  'crove_finance.marketplace_column_profile',
   // #3113 S1: a change of a supplier's bank account is a new row; the history is never edited or deleted.
   'crove_finance.supplier_bank_account_change',
   // #3330 / #3323 (eSign): hash-chained signing ledger per envelope (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
@@ -1610,6 +1612,25 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, id: randomUUID(), file_id: file.id, state: 'requested', requested_by: o.owner },
       };
     },
+  },
+  // #4037 (slice 2 of #3850): the confirmed mapping of an org's marketplace report columns (the header texts of the mapped columns and the standard field of each, never a cell value or a buyer
+  // column), one platform per row, append-only, the latest of an org and platform wins. Tenant roles read and insert (owners and admins, or the system context); nothing updates or deletes a row.
+  // The org-level table: no legal entity.
+  'crove_finance.marketplace_column_profile': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        platform: 'shopee',
+        header_row: 2,
+        columns: JSON.stringify([
+          { index: 0, header: 'Order ID', field: 'orderNo' },
+          { index: 3, header: 'Quantity', field: 'quantity' },
+        ]),
+        header_digest: randomUUID().replaceAll('-', '').repeat(2),
+        confirmed_by: o.owner,
+      },
+    }),
   },
   // #2519: an org's connection to a marketplace (ADR-0045 point 7, plan section 8.7): the channel connection that holds the sealed credential, the platform and the entity it
   // imports for (the org's default, by its trigger). Tenant roles update only the last test and the poll's progress (a column grant), so the update probes assign the state to itself.
