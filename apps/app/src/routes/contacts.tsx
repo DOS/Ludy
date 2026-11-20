@@ -37,6 +37,7 @@ import {
   type ContactFilterState,
   type Tri,
 } from '../lib/contact-filter.ts';
+import { AiWrittenBadge } from '../components/ai-written-badge.tsx';
 
 const SCOPE = 'crm.party';
 // The search waits for a pause in typing, so one request goes out per word and not per key.
@@ -113,6 +114,7 @@ function ContactTimeline({ partyId }: { partyId: string }) {
               </time>
               <span className="text-foreground">{e.summary}</span>
               {e.actorName && <span className="text-xs text-subtle-foreground">{e.actorName}</span>}
+              <AiWrittenBadge actorOrigin={e.actorOrigin} />
             </li>
           ))}
         </ol>
@@ -134,14 +136,17 @@ function ContactPanel({ contact, canEdit, columns }: { contact: Contact; canEdit
         {editing ? (
           <EditParty party={contact} ns="contacts" kind={contact.kind} onDone={() => setEditing(false)} />
         ) : (
-          <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
-            {(['address', 'email', 'phone', 'taxCode'] as const).map((key) => (
-              <div key={key} className="flex gap-2">
-                <dt className="text-subtle-foreground">{t(`fields.${key}`)}</dt>
-                <dd className="text-foreground">{contact[key] ?? t('none')}</dd>
-              </div>
-            ))}
-          </dl>
+          <>
+            <AiWrittenBadge actorOrigin={contact.actorOrigin} tainted={contact.tainted} showHint />
+            <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+              {(['address', 'email', 'phone', 'taxCode'] as const).map((key) => (
+                <div key={key} className="flex gap-2">
+                  <dt className="text-subtle-foreground">{t(`fields.${key}`)}</dt>
+                  <dd className="text-foreground">{contact[key] ?? t('none')}</dd>
+                </div>
+              ))}
+            </dl>
+          </>
         )}
         {canEdit && !editing && (
           <Button variant="outline" size="sm" onClick={() => setEditing(true)} aria-label={t('editOf', { name: contact.name })}>
@@ -324,7 +329,8 @@ export function ContactRows({ mode, contact, open, onToggle, canEdit, columns }:
           {/* The name opens the contact (#3649); its panel is the row below. */}
           <button type="button" onClick={onToggle} aria-expanded={open} aria-label={t('openOf', { name: contact.name })} className="rounded-sm text-left font-medium text-foreground outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
             {contact.name}
-          </button>
+          </button>{' '}
+          <AiWrittenBadge actorOrigin={contact.actorOrigin} tainted={contact.tainted} />
         </TableCell>
         {mode === 'companies' ? (
           <>

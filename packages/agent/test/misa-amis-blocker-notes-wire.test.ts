@@ -41,6 +41,24 @@ describe('what leaves for the model for the AMIS blocker notes (the bytes of the
     expect(messages[1]?.content).toBe(`Kinds of problem and their meaning:\n${misaAmisBlockerNotesFactsText(FACTS)}\n\nWrite one note for each kind.`);
   });
 
+  it('tells the model the product on the wire (#4114): MISA ASP is named in the instructions and the meaning of each kind, and AMIS Kế toán is not', async () => {
+    const bodies: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: unknown, init?: { body?: unknown }) => {
+        bodies.push(String(init?.body ?? ''));
+        return new Response(JSON.stringify(completion({ notes: [] })), { status: 200, headers: { 'content-type': 'application/json' } });
+      }),
+    );
+    const asp: MisaAmisBlockerNotesFacts = { language: 'en', product: 'asp', kinds: ['party_code_unknown', 'party_code_ambiguous'] };
+    await withAiScope({ orgId: 'org', meter }, () => reader().misaAmisBlockerNotes(asp));
+    const messages = (JSON.parse(bodies[0] as string) as { messages: { role: string; content: string }[] }).messages;
+    expect(messages[0]?.content).toBe(misaAmisBlockerNotesInstructions('en', 'asp'));
+    expect(messages[1]?.content).toBe(`Kinds of problem and their meaning:\n${misaAmisBlockerNotesFactsText(asp)}\n\nWrite one note for each kind.`);
+    expect(messages[1]?.content).toContain('add the party in MISA ASP');
+    expect(messages[0]?.content).not.toContain('AMIS Kế toán');
+  });
+
   it('drops a note the model writes with a number, and keeps the one that stands', async () => {
     vi.stubGlobal(
       'fetch',

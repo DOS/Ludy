@@ -659,9 +659,10 @@ export type MisaAmisMatchCheckTable = Refine<
   },
   'legal_entity_id'
 >;
-export const MISA_AMIS_MATCH_KINDS = ['party', 'item'] as const;
+// `party_name` (S3b, #4124): a party with no tax code, keyed by its id in Ludy and found by name.
+export const MISA_AMIS_MATCH_KINDS = ['party', 'item', 'party_name', 'unit', 'stock'] as const;
 export type MisaAmisMatchKind = (typeof MISA_AMIS_MATCH_KINDS)[number];
-export const MISA_AMIS_MATCH_STATES = ['matched', 'unknown', 'ambiguous'] as const;
+export const MISA_AMIS_MATCH_STATES = ['matched', 'unknown', 'ambiguous', 'name_proposal', 'confirmed'] as const;
 export type MisaAmisMatchState = (typeof MISA_AMIS_MATCH_STATES)[number];
 export type MisaAmisMatchTable = Refine<
   G.FinanceMisaAmisMatchTable,
@@ -1013,6 +1014,9 @@ export type ConversationDraftTable = Refine<
 >;
 // The inbox (#2306): the marker of a member typing a reply to a thread (its kind is the thread's), and a member's availability for new conversations.
 export const MEMBER_AVAILABILITY_STATUSES = ['available', 'away'] as const;
+// Where a row came from: a connected AI app in its sealed write context ('mcp'), or not ('ui': a person's own act, and also what the system or an org-chart agent writes), stamped by the database (#4149).
+export const ACTOR_ORIGINS = ['ui', 'mcp'] as const;
+export type ActivityTable = Refine<G.KernelActivityTable, { actor_origin: Generated<(typeof ACTOR_ORIGINS)[number]> }>;
 export type ConversationComposingTable = Refine<G.KernelConversationComposingTable, { kind: (typeof CONVERSATION_KINDS)[number] }>;
 export type MemberPermissionOverrideTable = Refine<G.KernelMemberPermissionOverrideTable, { permission: (typeof MEMBER_PERMISSION_OVERRIDE_PERMISSIONS)[number] }>;
 export type MemberVyTableTable = Refine<G.KernelMemberVyTableTable, { mode: (typeof MEMBER_VY_TABLE_MODES)[number] }>;
@@ -1497,6 +1501,7 @@ type Refined = Tables<{
   'crove_kernel.conversation_composing': ConversationComposingTable;
   'crove_kernel.conversation_draft': ConversationDraftTable;
   'crove_kernel.external_call': ExternalCallTable;
+  'crove_kernel.activity': ActivityTable;
   'crove_kernel.member_availability': MemberAvailabilityTable;
   'crove_kernel.member_permission_override': MemberPermissionOverrideTable;
   'crove_kernel.member_vy_result': MemberVyResultTable;

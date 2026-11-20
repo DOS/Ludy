@@ -11,7 +11,7 @@
 // later slice's callback finds the organisation by) is not in any answer either.
 import { z } from 'zod';
 import { zChannelConnect } from '@crove/kernel';
-import { zId, zMisaAmisConnectionRecordTest, zMisaAmisProduct, type MisaAmisConnection, type MisaAmisProduct, type MisaAmisTestState } from '@crove/kernel-contract';
+import { zId, zMisaAmisConnectionRecordTest, zMisaAmisDefaultItem, zMisaAmisProduct, type MisaAmisConnection, type MisaAmisProduct, type MisaAmisTestState } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -213,7 +213,7 @@ export const misaAmisConnectionList = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.legal_entity_id', 'c.created_at', 'c.last_test_state', 'c.last_tested_at', 'ch.display_name', 'ch.status'])
+      .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.legal_entity_id', 'c.created_at', 'c.last_test_state', 'c.last_tested_at', 'c.default_service_item_code', 'c.default_sales_item_code', 'ch.display_name', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .orderBy('c.created_at')
       .orderBy('c.id')
@@ -228,9 +228,34 @@ export const misaAmisConnectionList = defineQuery({
       connectedAt: new Date(r.created_at).toISOString(),
       lastTestState: r.last_test_state,
       lastTestedAt: r.last_tested_at ? new Date(r.last_tested_at).toISOString() : null,
+      defaultServiceItemCode: r.default_service_item_code,
+      defaultSalesItemCode: r.default_sales_item_code,
     }));
   },
 });
 
-export const misaAmisConnectionCommands = [misaAmisConnectionConnect, misaAmisConnectionUnlink, misaAmisConnectionRequestTest, misaAmisConnectionRecordTest];
+// The default item of a connection (S3b, #4124): kept, or cleared with a null code, for service lines or for sales lines. A typed code, as the catalogue spells it; nothing here reads the catalogue (the next check does,
+// and an item it does not have is a blocker by line). Owner or admin. The two columns are the only ones this writes, and the trigger that fixes the product and the channel connection is untouched.
+export const misaAmisConnectionSetDefaultItem = defineCommand({
+  name: 'finance.misa_amis_connection.set_default_item',
+  input: zMisaAmisDefaultItem,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  target: (input) => ({ type: 'finance.misa_amis_connection', id: input.id }),
+  handler: async (ctx, input): Promise<{ saved: boolean }> => {
+    const updated = await ctx.trx
+      .updateTable('crove_finance.misa_amis_connection')
+      .set(input.role === 'service' ? { default_service_item_code: input.code } : { default_sales_item_code: input.code })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .executeTakeFirst();
+    if (Number(updated.numUpdatedRows) === 0) throw notFound();
+    // The role and whether a code was kept: an item code names no one, but nothing about it needs to be in the audit trail.
+    ctx.audit({ role: input.role, cleared: input.code === null });
+    return { saved: true };
+  },
+});
+
+export const misaAmisConnectionCommands = [misaAmisConnectionConnect, misaAmisConnectionUnlink, misaAmisConnectionRequestTest, misaAmisConnectionRecordTest, misaAmisConnectionSetDefaultItem];
 export const misaAmisConnectionQueries = [misaAmisConnectionList, misaAmisConnectionTarget, misaAmisConnectionTestTarget, misaAmisConnectionCanDisconnect];

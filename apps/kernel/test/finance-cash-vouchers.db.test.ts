@@ -637,7 +637,8 @@ suite('cash and bank vouchers (#327)', () => {
         numberPeriod: '2026',
         date: '2026-11-03',
         cashAccount: '1111',
-        party: { name: await vendorName(), taxCode: expect.any(String), address: expect.toSatisfy((a: unknown) => a === null || typeof a === 'string') },
+        // The party's own id too: a push to MISA looks a party with no tax code up by it (#4124).
+        party: { id: expect.any(String), name: await vendorName(), taxCode: expect.any(String), address: expect.toSatisfy((a: unknown) => a === null || typeof a === 'string') },
         personName: 'Nguyễn Văn An',
         description: 'Trả tiền hàng HĐ 1234',
         lines: [

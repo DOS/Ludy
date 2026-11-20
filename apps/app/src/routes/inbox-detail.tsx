@@ -43,6 +43,7 @@ import { useReviewShortcuts, type ReviewHandlers } from '../lib/review-shortcuts
 import { useScrollRoom } from '../lib/scroll-room.ts';
 import { pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
+import { AiWrittenBadge } from '../components/ai-written-badge.tsx';
 
 const CHECK_TONE = { pass: 'success', warn: 'warning', fail: 'destructive' } as const;
 const CHECK_ICON = { pass: '✓', warn: '!', fail: '✕' } as const;
@@ -1286,13 +1287,14 @@ function ProposalTimeline({ id, documentId }: { id: string; documentId: string |
   const range = (from: string | null, to: string | null) =>
     from && to ? t('exportRange', { from: f.date(from), to: f.date(to) }) : from ? t('exportFrom', { from: f.date(from) }) : to ? t('exportTo', { to: f.date(to) }) : t('exportAll');
   const items = [
-    ...(timeline.data?.items ?? []).map((e) => ({ id: e.id, at: e.at, summary: e.summary, actorType: e.actorType, actorName: e.actorName })),
+    ...(timeline.data?.items ?? []).map((e) => ({ id: e.id, at: e.at, summary: e.summary, actorType: e.actorType, actorName: e.actorName, actorOrigin: e.actorOrigin })),
     ...(exports.data ?? []).map((e) => ({
       id: `export:${e.id}`,
       at: e.at,
       summary: t('exported', { file: t(`exportFormats.${e.format}`), range: range(e.from, e.to) }),
       actorType: 'user' as const,
       actorName: e.actorName,
+      actorOrigin: 'ui' as const,
     })),
   ].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
   return (
@@ -1314,6 +1316,7 @@ function ProposalTimeline({ id, documentId }: { id: string; documentId: string |
                 <p className="text-xs text-subtle-foreground">
                   {f.dateTime(e.at)} · {e.actorType === 'system' ? t('timelineSystem') : (e.actorName ?? t('timelineFormer'))}
                   {e.actorType === 'agent' ? ` (${t('timelineAgent')})` : ''}
+                  <AiWrittenBadge actorOrigin={e.actorOrigin} className="ml-1" />
                 </p>
               </li>
             ))}

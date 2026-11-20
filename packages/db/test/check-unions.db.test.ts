@@ -14,6 +14,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '../src/migrate.ts';
 import {
+  ACTOR_ORIGINS,
   ACTOR_TYPES,
   EVENT_TYPE_ASSIGNMENTS,
   EVENT_TYPE_LOCATION_KINDS,
@@ -381,6 +382,7 @@ const UNIONS = unions({
   'crove_sign.template_role.signer_role': SIGN_SIGNER_ROLES,
   'crove_sign.template_role.delivery_mode': SIGN_DELIVERY_MODES,
   'crove_sign.template_field.field_type': SIGN_FIELD_TYPES,
+  'crove_kernel.activity.actor_origin': ACTOR_ORIGINS,
   'crove_kernel.agent.max_risk': AGENT_RISKS,
   'crove_kernel.agent.runtime': AGENT_RUNTIMES,
   'crove_kernel.agent.kind': AGENT_KINDS,

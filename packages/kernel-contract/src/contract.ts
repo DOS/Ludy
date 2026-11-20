@@ -195,8 +195,8 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
-import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisStatus } from './misa-amis-connections.ts';
-import { zMisaAmisMatchCheckQueued } from './misa-amis-match.ts';
+import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisDefaultItem, zMisaAmisStatus } from './misa-amis-connections.ts';
+import { zMisaAmisMatchCheckQueued, zMisaAmisNameDecided, zMisaAmisNameDecision, zMisaAmisNameProposal, zMisaAmisNameProposalsAsk } from './misa-amis-match.ts';
 import { zMisaAmisPushConfirm, zMisaAmisPushConfirmed, zMisaAmisPushListAsk, zMisaAmisPushResolveAsk, zMisaAmisPushRow } from './misa-amis-push.ts';
 import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './misa-check.ts';
 import { zMisaAmisPreview, zMisaAmisBlockerNotes, zMisaAmisBlockerNotesAsk, zMisaAmisPreviewAsk } from './misa-amis-preview.ts';
@@ -2674,12 +2674,20 @@ export const contract = {
       // unreachable) and a time, which the list then shows. Owner or admin. MISA_AMIS_DISABLED (404) when this deployment does not offer the connector, MISA_AMIS_CONNECTION_NOT_FOUND (404),
       // CHANNEL_NOT_ACTIVE (409), FORBIDDEN (403).
       test: oc.input(z.object({ id: zId })).output(z.object({ queued: z.boolean() })),
+      // Keeps (or, with a null code, clears) the default item of the connection for service lines or sales lines (S3b, #4124): a code typed as the MISA catalogue spells it, which the next check validates against
+      // the catalogue. Owner or admin. MISA_AMIS_CONNECTION_NOT_FOUND (404), FORBIDDEN (403); not gated by the connector's switch (nothing is sent).
+      setDefaultItem: oc.input(zMisaAmisDefaultItem).output(z.object({ saved: z.boolean() })),
     },
     // The check of a connection's vouchers against the firm's own MISA catalogue (S3a, #4112 of #4103): the worker opens the sealed access code, reads the catalogue pages in its memory, matches the parties
     // (by tax code) and items (by code) of the batch and records only what it found, which the preview then shows ("checked at"). Owner or admin; a second press while a check waits returns it. The ask is the
     // preview's own. MISA_AMIS_DISABLED (404), MISA_AMIS_CONNECTION_NOT_FOUND (404), CHANNEL_NOT_ACTIVE (409), MISA_AMIS_MATCH_ENTITY (422) when the ask names another entity, FORBIDDEN (403).
     matches: {
       check: oc.input(z.strictObject({ id: zId, ask: zMisaAmisPreviewAsk })).output(zMisaAmisMatchCheckQueued),
+      // The proposals of the last check (S3b, #4124): a party with no tax code and the one active catalogue entry of its name. Owner or admin. Confirming makes the entry's code the party's code on the vouchers (the
+      // preview then changes); rejecting deletes the proposal. MISA_AMIS_NAME_PROPOSAL_GONE (409) when a newer check replaced it, MISA_AMIS_CONNECTION_NOT_FOUND (404), FORBIDDEN (403).
+      proposals: oc.input(zMisaAmisNameProposalsAsk).output(z.array(zMisaAmisNameProposal)),
+      confirmName: oc.input(zMisaAmisNameDecision).output(zMisaAmisNameDecided),
+      rejectName: oc.input(zMisaAmisNameDecision).output(zMisaAmisNameDecided),
     },
     // The vouchers pushed through a connection, with their state (#3902, S3b-2). Every role reads; a row's reason is MISA's own text (untrusted).
     pushes: {

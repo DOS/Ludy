@@ -35,6 +35,8 @@ import { pace, streamWorkbook, type StreamedWorkbook } from './xlsx-stream.ts';
 // Inputs
 
 export interface VoucherParty {
+  // The party's id in Ludy (S3b, #4124): the key a name match is stored under for a party with no tax code. Never written to a file or sent: only the exports' own fields are.
+  id?: string | null;
   name: string;
   taxCode: string | null;
   address: string | null;

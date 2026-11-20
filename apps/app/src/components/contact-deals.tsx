@@ -13,6 +13,7 @@ import { ErrorText } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
+import { AiWrittenBadge } from './ai-written-badge.tsx';
 
 export function ContactDeals({ contact, canEdit, openOnly = false }: { contact: Pick<Contact, 'id' | 'name' | 'kind' | 'taxCode'>; canEdit: boolean; openOnly?: boolean }) {
   const partyId = contact.id;
@@ -55,6 +56,7 @@ export function ContactDeals({ contact, canEdit, openOnly = false }: { contact: 
               <button type="button" data-testid="contact-deal-open" onClick={() => setSheet({ kind: 'deal', deal: d })} className="rounded-sm text-left font-medium text-foreground outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
                 {d.title}
               </button>
+              <AiWrittenBadge actorOrigin={d.actorOrigin} tainted={d.tainted} />
               <span className="text-xs text-muted-foreground">{stages.data?.find((s) => s.id === d.stageId)?.name ?? t(`deals.kind.${d.stageKind}`)}</span>
               <span className="tabular-nums text-muted-foreground">{formatMoney(d.amount, locale, d.currency)}</span>
               {d.expectedClose && <span className="text-xs text-subtle-foreground">{t('deals.close', { date: formatDate(d.expectedClose, locale) })}</span>}

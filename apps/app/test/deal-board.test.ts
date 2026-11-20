@@ -9,6 +9,8 @@ import { isDealOverdue, isEmptyBoard, moveCard, readDealView, showAllClosed, wit
 const stage = (id: string, kind: PipelineStage['kind'], position: number): PipelineStage => ({ id, name: id, kind, position });
 const deal = (id: string, stageId: string, stageKind: Deal['stageKind'] = 'open'): Deal => ({
   id,
+  actorOrigin: 'ui',
+  tainted: false,
   partyId: 'p',
   partyName: 'Công ty ABC',
   title: id,

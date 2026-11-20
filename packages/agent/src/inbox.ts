@@ -681,7 +681,7 @@ export class InboxReader {
   /** The finance coworker's notes on the kinds of blocker on the AMIS preview (#3904, S5 of #3854), from the set of kinds code found and nothing else, or why there is none: a note is dropped when it is for a kind that is
    * not on the list, has a number, a link, says something was done or promises a result (misa-amis-blocker-notes.ts). onUsage gets the tokens the call used. */
   async misaAmisBlockerNotes(facts: MisaAmisBlockerNotesFacts, onUsage?: (usage: AiUsage) => void): Promise<MisaAmisBlockerNotesResult> {
-    const { output, usage } = await this.generateMisaAmisBlockerNotes({ system: misaAmisBlockerNotesInstructions(facts.language), prompt: misaAmisBlockerNotesPrompt(facts) });
+    const { output, usage } = await this.generateMisaAmisBlockerNotes({ system: misaAmisBlockerNotesInstructions(facts.language, facts.product), prompt: misaAmisBlockerNotesPrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkMisaAmisBlockerNotes(facts, output);
   }

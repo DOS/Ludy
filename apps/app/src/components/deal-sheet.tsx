@@ -13,6 +13,7 @@ import { LinkedMeetings, meetingsInstalled } from './linked-meetings.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { orpc } from '../lib/api.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
+import { AiWrittenBadge } from './ai-written-badge.tsx';
 
 // What the sheet shows: a new deal (for a customer already chosen, from a contact's panel, or not), or a deal that exists.
 export type DealSheetTarget = { kind: 'new'; presetParty?: PartyChoice | null } | { kind: 'deal'; deal: Deal };
@@ -43,6 +44,7 @@ export function DealSheet({ target, members, canEdit, onClose }: { target: DealS
       <SheetContent closeLabel={common('close')} className="sm:max-w-2xl" data-testid="deal-sheet">
         <SheetHeader>
           <SheetTitle>{deal ? deal.title : t('form.newTitle')}</SheetTitle>
+          {deal && <AiWrittenBadge actorOrigin={deal.actorOrigin} tainted={deal.tainted} showHint />}
           <SheetDescription>
             {deal ? [deal.partyName, stageName, formatMoney(deal.amount, locale, deal.currency)].filter(Boolean).join(' · ') : t('sheet.newHint')}
           </SheetDescription>
