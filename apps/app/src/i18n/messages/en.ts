@@ -5608,7 +5608,7 @@ export const en = {
     readOnlyIntro: 'These bank accounts bring in transactions automatically. An owner or admin sets them up in Settings.',
     testNote: 'This is a test bank feed, with sample accounts and transactions to try the steps before a real bank is connected.',
     feedFromLabel: 'Feed supplies lines from (optional)',
-    feedFromHint: 'From this day on, a statement file imported for this bank account skips its lines, so none is booked twice.',
+    feedFromHint: 'From this day on, a statement file imported for this bank account skips its lines from that day on, and the feed skips its lines before it, so none is booked twice.',
     feedFromOn: 'The feed supplies lines from {date}',
     connectTitle: 'Connect a bank feed',
     nameLabel: 'Connection name',

@@ -20,7 +20,7 @@ import type { MemberRole } from '@crove/db';
 import { isBankFeedProviderId, zBankFeedMap, zBankFeedRecordAccounts, zBankFeedRecordPull, zId, type BankFeedAccountView, type BankFeedConnectionView, type BankFeedListedAccount, type BankImportResult } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { accountNumberDigits, feedAccountDigits } from './account-number.ts';
-import { bankAccount, ingestFeedLines } from './bank.ts';
+import { bankAccount, feedCutover, ingestFeedLines } from './bank.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -300,17 +300,19 @@ export const bankFeedRecordPull = defineCommand({
     if (mapped.status !== 'active') throw new DomainError('BANK_FEED_INACTIVE', 422, 'Kết nối nguồn giao dịch ngân hàng không còn hoạt động; hãy kết nối lại');
     // Under the row lock: another sync recorded a page since this one read the cursor, so this page is stale.
     if (mapped.cursor !== input.fromCursor) throw new DomainError('BANK_FEED_CURSOR_MOVED', 409, 'Một lần đồng bộ khác đã ghi tài khoản này trước; lần này dừng lại');
+    // From the cut-over day on the feed supplies the account (#4218): a line it brings from before that day (the first pull goes back a month) is the statement files', and is left out so one transaction is never booked under two keys.
+    const cutover = await feedCutover(ctx, mapped.legal_entity_id, mapped.bank_account);
+    const lines = cutover === null ? input.lines : input.lines.filter((l) => l.date >= cutover);
+    const skippedBefore = input.lines.length - lines.length;
     const result =
-      input.lines.length > 0
-        ? await ingestFeedLines(ctx, { bankAccount: mapped.bank_account, legalEntityId: mapped.legal_entity_id, source: mapped.provider, lines: input.lines })
-        : null;
+      lines.length > 0 ? await ingestFeedLines(ctx, { bankAccount: mapped.bank_account, legalEntityId: mapped.legal_entity_id, source: mapped.provider, lines }) : null;
     await ctx.trx
       .updateTable('crove_finance.bank_feed_account')
       .set({ cursor: input.cursor, last_synced_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', mapped.id)
       .execute();
-    if (!result) ctx.audit({ feedAccountId: mapped.id, lines: 0 });
+    if (!result) ctx.audit({ feedAccountId: mapped.id, lines: 0, ...(skippedBefore > 0 ? { feedFrom: cutover, skippedBeforeFeedFrom: skippedBefore } : {}) });
     return result ?? { importId: null };
   },
 });

@@ -573,6 +573,18 @@ suite('bank statement import (#326)', () => {
     expect((await map({ feedFrom: '2026-10-15' })).status).toBe(200);
     expect((await map({})).status).toBe(200);
     expect(((await feed('accounts', viewer)).body as Array<{ feedFrom: string | null }>).map((a) => a.feedFrom)).toEqual(['2026-10-15']);
+    // A feed that stopped supplies nothing, so it must not keep file lines out: an expired connection lifts the skip.
+    const setStatus = (status: string) => admin((c) => c.query('UPDATE crove_kernel.channel_connection SET status = $3 WHERE org_id = $1 AND id = $2', [orgId, connectionId, status]));
+    await setStatus('expired');
+    expect((await preview(rows, '1121.CUT')).body.feed).toBeUndefined();
+    await setStatus('active');
+    expect((await preview(rows, '1121.CUT')).body.feed).toEqual({ from: '2026-10-15', skipped: 2 });
+    // The other way: the pull leaves out the lines the feed brings from before the day (the sandbox's days are 2026-11-13 to 2026-11-20), keeping the cursor moving.
+    expect((await map({ feedFrom: '2026-11-19' })).status).toBe(200);
+    await sync(connectionId);
+    const fed = (await stored('1121.CUT')).filter((l) => l.bank_ref !== null && !l.bank_ref.startsWith('CUT-'));
+    expect(fed.length).toBeGreaterThan(0);
+    expect(fed.every((l) => l.value_date >= '2026-11-19')).toBe(true);
     expect((await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).status).toBe(200);
   });
 

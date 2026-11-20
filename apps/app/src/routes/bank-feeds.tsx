@@ -156,6 +156,15 @@ function AccountRow({
       )}
       {!row.gone && (
         <form className="mt-2 space-y-2" onSubmit={submit} aria-label={t('mapForm', { name: row.displayName })} noValidate>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor={feedFromId} className="text-xs text-muted-foreground">
+              {t('feedFromLabel')}
+            </label>
+            <Input id={feedFromId} type="date" className="min-h-11 w-auto" aria-describedby={`${feedFromId}-hint`} value={feedFrom} disabled={!active} onChange={(e) => setFeedFrom(e.target.value)} />
+          </div>
+          <p id={`${feedFromId}-hint`} className="text-xs text-subtle-foreground">
+            {t('feedFromHint')}
+          </p>
           <div className="flex flex-wrap gap-2">
             <NativeSelect
               {...fieldControl(bankId, { error: Boolean(fields.of('bankAccount')) })}
@@ -189,15 +198,6 @@ function AccountRow({
             </Button>
           </div>
           <FieldError id={bankId}>{fields.of('bankAccount')}</FieldError>
-          <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor={feedFromId} className="text-xs text-muted-foreground">
-              {t('feedFromLabel')}
-            </label>
-            <Input id={feedFromId} type="date" className="min-h-11 w-auto" aria-describedby={`${feedFromId}-hint`} value={feedFrom} disabled={!active} onChange={(e) => setFeedFrom(e.target.value)} />
-          </div>
-          <p id={`${feedFromId}-hint`} className="text-xs text-subtle-foreground">
-            {t('feedFromHint')}
-          </p>
           {choices.length === 0 && <p className="text-xs text-subtle-foreground">{t('noBankAccounts')}</p>}
         </form>
       )}
@@ -268,7 +268,7 @@ function ConnectionItem({
         <ul className="mt-1 divide-y">
           {rows.map((row) => (
             // Keyed by the mapping too, so the form starts from a mapping made or removed since.
-            <AccountRow key={`${row.externalAccountId}:${row.mapped?.id ?? ''}:${row.mapped?.bankAccount ?? ''}`} connection={connection} row={row} bankAccounts={bankAccounts} entities={entities} />
+            <AccountRow key={`${row.externalAccountId}:${row.mapped?.id ?? ''}:${row.mapped?.bankAccount ?? ''}:${row.mapped?.feedFrom ?? ''}`} connection={connection} row={row} bankAccounts={bankAccounts} entities={entities} />
           ))}
         </ul>
       )}

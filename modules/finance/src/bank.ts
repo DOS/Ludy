@@ -147,15 +147,24 @@ async function check(ctx: QueryContext, input: BankStatementImport, legalEntityI
   const { lines, keys } = readStatement(input);
   const { stored, chain } = await storedAround(ctx, legalEntityId, input.bankAccount, lines, keys);
   const checked = checkStatement(input, stored, chain);
-  // An account a feed supplies from a day on (#4218) takes no statement line from that day: the earliest such day of its mappings.
-  const cutover = await ctx.trx
-    .selectFrom('crove_finance.bank_feed_account')
-    .select((eb) => eb.fn.min('feed_from').as('feed_from'))
-    .where('org_id', '=', ctx.orgId)
-    .where('legal_entity_id', '=', legalEntityId)
-    .where('bank_account', '=', input.bankAccount)
+  const cutover = await feedCutover(ctx, legalEntityId, input.bankAccount);
+  return cutover ? skipFedLines(checked, cutover) : checked;
+}
+
+// The day a bank feed takes over an account from statement files (#4218): the earliest cut-over of its mappings whose
+// connection is still active, so a feed that stopped (expired or revoked) never leaves lines in neither source. Null when
+// there is none: files and the feed are only deduplicated.
+export async function feedCutover(ctx: QueryContext, legalEntityId: string, bankAccountCode: string): Promise<string | null> {
+  const row = await ctx.trx
+    .selectFrom('crove_finance.bank_feed_account as a')
+    .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+    .select((eb) => eb.fn.min('a.feed_from').as('feed_from'))
+    .where('a.org_id', '=', ctx.orgId)
+    .where('a.legal_entity_id', '=', legalEntityId)
+    .where('a.bank_account', '=', bankAccountCode)
+    .where('c.status', '=', 'active')
     .executeTakeFirst();
-  return cutover?.feed_from ? skipFedLines(checked, cutover.feed_from) : checked;
+  return row?.feed_from ?? null;
 }
 
 // Stores the lines a check found new or ambiguous as one import of the account, under the account's lock (the caller
@@ -252,6 +261,8 @@ export async function importStatement(ctx: CommandContext, input: BankStatementI
     to: preview.to,
     ...preview.counts,
     breaks: preview.breaks.length,
+    // The lines the feed's cut-over day kept out (#4218), counted among the duplicates above.
+    ...(preview.feed ? { feedFrom: preview.feed.from, feedSkipped: preview.feed.skipped } : {}),
     ...(fileId ? { fileId, source: 'file' } : {}),
   });
   await ctx.activity(

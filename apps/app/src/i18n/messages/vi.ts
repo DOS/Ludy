@@ -5605,7 +5605,7 @@ export const vi = {
     readOnlyIntro: 'Các tài khoản ngân hàng này tự đưa giao dịch vào. Chủ sở hữu hoặc quản trị viên thiết lập ở Cài đặt.',
     testNote: 'Đây là nguồn giao dịch thử, có sẵn tài khoản và giao dịch mẫu để làm thử các bước trước khi nối ngân hàng thật.',
     feedFromLabel: 'Nguồn tự động lấy giao dịch từ ngày (không bắt buộc)',
-    feedFromHint: 'Từ ngày này trở đi, sao kê nhập cho tài khoản ngân hàng này sẽ bỏ qua các dòng của ngày đó, để không ghi hai lần.',
+    feedFromHint: 'Từ ngày này trở đi, sao kê nhập cho tài khoản ngân hàng này sẽ bỏ qua các dòng từ ngày đó trở đi, để không ghi hai lần. Nguồn tự động cũng bỏ qua các dòng trước ngày đó.',
     feedFromOn: 'Nguồn tự động lấy giao dịch từ ngày {date}',
     connectTitle: 'Kết nối nguồn giao dịch',
     nameLabel: 'Tên kết nối',
