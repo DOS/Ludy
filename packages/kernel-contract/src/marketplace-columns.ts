@@ -1,51 +1,104 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The mapping of a marketplace report's columns that a person confirmed (#4037, slice 2 of #3850; plan stock-and-marketplaces.md section 8.6 "Columns"): what the confirm command takes and what the
-// read of the latest profile answers. Only the header texts of the mapped columns and the standard field of each: never a cell value, a sample or a buyer column (the field list has no buyer field).
+// The check of a column mapping on an unrecognised marketplace order report (#4036, slice 1c of #3850; plan stock-and-marketplaces.md section 8.6 "Columns"). The file is read by the worker in the extract
+// sandbox (the API has no access to it), so a member's request is a row and a job: `columnsCheck` files it, `columns` reads what the worker found, and `columnsProposal` asks the finance coworker (Ly) for a
+// first mapping from the masked sheet alone. Nothing is imported or saved from a mapping here; saving a confirmed mapping is #4037.
 import { z } from 'zod';
-import { zMarketplacePlatform } from './marketplace.ts';
 import { zId } from './schemas.ts';
 
-// The standard fields of an order line a column can be confirmed as: the same list as `ORDER_FIELDS` of @crove/l10n-vn (a test in modules/finance keeps the two equal) and the database's CHECK.
+export const MARKETPLACE_COLUMN_PLATFORMS = ['shopee', 'tiktok_shop', 'lazada'] as const;
 export const MARKETPLACE_COLUMN_FIELDS = ['orderNo', 'lineKey', 'orderedAt', 'shippedAt', 'deliveredAt', 'status', 'returnStatus', 'sku', 'itemName', 'variation', 'quantity', 'unitPrice', 'amount'] as const;
-export const zMarketplaceColumnField = z.enum(MARKETPLACE_COLUMN_FIELDS);
-export type MarketplaceColumnField = z.infer<typeof zMarketplaceColumnField>;
+export const MARKETPLACE_COLUMN_REFUSALS = ['no_header', 'bad_column', 'buyer_column', 'field_twice', 'column_twice', 'no_order_no', 'no_line', 'nothing_read', 'row_stops_file', 'too_many_rows', 'rows_without_order', 'return_without_status', 'quantity_exceeds_amount', 'dates_swapped', 'buyer_text'] as const;
+export const MARKETPLACE_COLUMN_FAILURES = ['not_a_sheet', 'too_large', 'unavailable', 'unreadable'] as const;
+// The lines a member sees before anything is saved: no more than this many.
+export const MARKETPLACE_COLUMN_PREVIEW_LINES = 20;
+// A check, its masked sheet and its preview (personal data) are deleted by the nightly retention this many days after the check finished.
+export const MARKETPLACE_COLUMN_CHECK_RETENTION_DAYS = 7;
 
-// How much of a header text is kept (as `columnSheet` cuts it) and how many columns a profile maps (one per standard field at most).
-export const MARKETPLACE_COLUMN_HEADER_MAX = 80;
-
-// One confirmed column: its place in the header row (0-based), the header text as the file words it and the standard field it is.
-export const zMarketplaceColumnEntry = z.strictObject({
-  index: z.number().int().min(0).max(999),
-  header: z.string().trim().min(1).max(MARKETPLACE_COLUMN_HEADER_MAX),
-  field: zMarketplaceColumnField,
+const zColumnIndex = z.number().int().min(0).max(16_383);
+export const zMarketplaceColumnAssignment = z.strictObject({ index: zColumnIndex, field: z.enum(MARKETPLACE_COLUMN_FIELDS) });
+export type MarketplaceColumnAssignment = z.infer<typeof zMarketplaceColumnAssignment>;
+// The platform is the person's pick, never the model's; one assignment per standard field at most.
+export const zMarketplaceColumnMapping = z.strictObject({
+  platform: z.enum(MARKETPLACE_COLUMN_PLATFORMS),
+  assignments: z.array(zMarketplaceColumnAssignment).min(1).max(MARKETPLACE_COLUMN_FIELDS.length),
 });
-export type MarketplaceColumnEntry = z.infer<typeof zMarketplaceColumnEntry>;
+export type MarketplaceColumnMapping = z.infer<typeof zMarketplaceColumnMapping>;
 
-// The digest of a whole header row: sha-256, hex, of the normalized texts of its non-empty cells in column order, joined by a line feed. A later file whose header row has another digest does not use
-// the profile. Computed where the file is read (the sandboxed extract step), never from a cell below the header.
-export const zMarketplaceHeaderDigest = z.string().regex(/^[0-9a-f]{64}$/);
+// A member asks for the sheet alone (no mapping) or for a mapping to be checked on the real file.
+export const zMarketplaceColumnsCheckAsk = z.strictObject({ fileId: zId, mapping: zMarketplaceColumnMapping.optional() });
+export type MarketplaceColumnsCheckAsk = z.infer<typeof zMarketplaceColumnsCheckAsk>;
+export const zMarketplaceColumnsCheckQueued = z.strictObject({ queued: z.boolean(), running: z.boolean() });
+export type MarketplaceColumnsCheckQueued = z.infer<typeof zMarketplaceColumnsCheckQueued>;
 
-// The confirmation a person makes. The kernel re-checks here what the header row alone decides (see the command); the checks that read the rows of the file run where the file is read.
-export const zMarketplaceColumnsConfirm = z.strictObject({
-  platform: zMarketplacePlatform,
-  headerRow: z.number().int().min(0).max(100_000),
-  columns: z.array(zMarketplaceColumnEntry).min(2).max(MARKETPLACE_COLUMN_FIELDS.length),
-  headerDigest: zMarketplaceHeaderDigest,
+// The masked sheet: header texts and the SHAPES of a few values (never a value), a buyer column an empty shell. The same rules as the sandbox's answer (packages/extract-contract marketplace_columns): a sample is
+// held to the character class a shape uses (9 for a digit, a for a letter, spaces and the marks of a date or an amount), so what the worker records, what the screen reads and what the model is told can only ever be
+// shapes, and a buyer column carries no header and no sample.
+const zSampleShape = z
+  .string()
+  .max(12)
+  .regex(/^[9a \-/.,:;@#()+%_]*$/, 'a masked shape');
+export const zMarketplaceColumnSheet = z.strictObject({
+  headerRow: z.number().int().min(0).max(1_048_576),
+  columns: z
+    .array(
+      z
+        .strictObject({ index: zColumnIndex, header: z.string().max(80), samples: z.array(zSampleShape).max(3), buyer: z.boolean() })
+        .refine((c) => !c.buyer || (c.header === '' && c.samples.length === 0), 'a buyer column carries nothing'),
+    )
+    .max(60),
 });
-export type MarketplaceColumnsConfirm = z.infer<typeof zMarketplaceColumnsConfirm>;
+export type MarketplaceColumnSheet = z.infer<typeof zMarketplaceColumnSheet>;
 
-// What a confirmation answers: the profile's id, and whether it was a new row (false when the latest profile of the org and platform already had this very mapping, so nothing was added).
-export const zMarketplaceColumnsConfirmed = z.object({ id: zId, added: z.boolean() });
-export type MarketplaceColumnsConfirmed = z.infer<typeof zMarketplaceColumnsConfirmed>;
-
-export const zMarketplaceColumnProfileQuery = z.strictObject({ platform: zMarketplacePlatform });
-
-export const zMarketplaceColumnProfile = z.object({
-  id: zId,
-  platform: zMarketplacePlatform,
-  headerRow: z.number().int().nonnegative(),
-  columns: z.array(zMarketplaceColumnEntry),
-  headerDigest: zMarketplaceHeaderDigest,
-  confirmedAt: z.string(),
+// One parsed line as the confirm screen shows it: only these fields. A line can carry a buyer's text when a column was mapped by hand, so the preview is personal data (kept at most seven days).
+export const zMarketplaceColumnPreviewLine = z.strictObject({
+  rowNo: z.number().int().positive().max(1_048_576),
+  orderNo: z.string().max(64),
+  lineKey: z.string().max(120),
+  sku: z.string().max(100).nullable(),
+  itemName: z.string().max(200).nullable(),
+  quantity: z.string().max(24),
+  amount: z.string().max(40).nullable(),
+  status: z.string().max(100).nullable(),
 });
-export type MarketplaceColumnProfile = z.infer<typeof zMarketplaceColumnProfile>;
+export type MarketplaceColumnPreviewLine = z.infer<typeof zMarketplaceColumnPreviewLine>;
+export const zMarketplaceColumnPreview = z.strictObject({
+  lines: z.array(zMarketplaceColumnPreviewLine).max(MARKETPLACE_COLUMN_PREVIEW_LINES),
+  // How many lines the mapping reads in all, and how many rows it skipped (a totals row, for one).
+  total: z.number().int().min(0).max(20_000),
+  skipped: z.number().int().min(0).max(1_048_576),
+});
+export type MarketplaceColumnPreview = z.infer<typeof zMarketplaceColumnPreview>;
+
+// What the worker found for a file: `none` before anyone asked. `sheet` is kept across requests; `refusal` and `preview` belong to the mapping asked last.
+export const zMarketplaceColumnsStatus = z.strictObject({
+  state: z.enum(['none', 'requested', 'done', 'failed']),
+  failure: z.enum(MARKETPLACE_COLUMN_FAILURES).nullable(),
+  refusal: z.enum(MARKETPLACE_COLUMN_REFUSALS).nullable(),
+  mapping: zMarketplaceColumnMapping.nullable(),
+  requestedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+  sheet: zMarketplaceColumnSheet.nullable(),
+  preview: zMarketplaceColumnPreview.nullable(),
+});
+export type MarketplaceColumnsStatus = z.infer<typeof zMarketplaceColumnsStatus>;
+
+// What the worker records (system only): the sheet, and for a mapping the check's verdict. `requestedAt` is the version of the request it ran for: a later request makes the record a no-op.
+export const zMarketplaceColumnsRecord = z.strictObject({
+  fileId: zId,
+  requestedAt: z.string(),
+  result: z.discriminatedUnion('state', [
+    z.strictObject({ state: z.literal('done'), sheet: zMarketplaceColumnSheet.nullable(), refusal: z.enum(MARKETPLACE_COLUMN_REFUSALS).nullable(), preview: zMarketplaceColumnPreview.nullable() }),
+    z.strictObject({ state: z.literal('failed'), failure: z.enum(MARKETPLACE_COLUMN_FAILURES) }),
+  ]),
+});
+export type MarketplaceColumnsRecord = z.infer<typeof zMarketplaceColumnsRecord>;
+
+// Ly's first mapping, from the masked sheet alone (never the lines, never a value): `none` (fewer than three columns to show), `off` (no model), `busy` (too frequent), `budget` (the AI budget is spent),
+// `failed` (the call failed or every answer was dropped; the reason is logged as a code, never the words) or `used`. The proposal is only a first mapping for the screen to check on the real file.
+export const zMarketplaceColumnsProposalAsk = z.strictObject({ fileId: zId, lang: z.enum(['vi', 'en']).optional() });
+export type MarketplaceColumnsProposalAsk = z.infer<typeof zMarketplaceColumnsProposalAsk>;
+export const zMarketplaceColumnsProposal = z.strictObject({
+  ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']),
+  assignments: z.array(zMarketplaceColumnAssignment).max(MARKETPLACE_COLUMN_FIELDS.length),
+});
+export type MarketplaceColumnsProposal = z.infer<typeof zMarketplaceColumnsProposal>;

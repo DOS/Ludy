@@ -33,6 +33,7 @@ export * from './marketplace-columns.ts';
 export * from './marketplace-connections.ts';
 export * from './misa-amis-connections.ts';
 export * from './marketplace-balance.ts';
+export * from './marketplace-column-profile.ts';
 export * from './timeline.ts';
 export * from './audit.ts';
 export * from './sort-key.ts';

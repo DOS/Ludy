@@ -20,7 +20,7 @@ export function ScreenTabs({ slug, installed, badges }: { slug: string; installe
   if (tabs.length < 2) return null;
   const here = pathname.split('/').slice(3).join('/').replace(/\/$/, '');
   return (
-    <div className="mb-5 border-b">
+    <div className="mb-5 border-b print:hidden">
       {/* Not a navigation landmark: the menu stays the one place a screen reader and a test finds "the menu". */}
       {/* A phone scrolls the strip sideways instead of stacking its tabs in rows: Settings has seven (#3589). */}
       <ul aria-label={t('tabsLabel')} className="-mb-px flex gap-x-5 overflow-x-auto md:flex-wrap md:overflow-visible">

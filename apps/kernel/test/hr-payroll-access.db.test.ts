@@ -16,7 +16,7 @@ import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { HR_ERASED_NAME, vietnamToday, type HrEmployee, type HrEmployeeErased, type HrEmployeeSummary, type HrWritten } from '@crove/kernel-contract';
-import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
+import { CredentialVault, DomainError, Runtime, STEP_UP_MAX_AGE_S, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
 import { hrCommands, hrQueries, retentionEnds } from '@crove/mod-hr';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -268,9 +268,10 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     for (const bad of [{ taxCode: '000000' }, { taxCode: '12345678901' }, { taxCode: 'AB12345678' }, { insuranceNumber: '000000' }, { insuranceNumber: 'SI-1234567890' }, { birthDate: '1899-12-31' }, { birthDate: '2999-01-01' }]) {
       await expect(o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, ...bad }), JSON.stringify(bad)).rejects.toMatchObject({ code: 'VALIDATION' });
     }
-    // An edit changes and clears them; the authorization is a list of years, each once, sorted; an admin may set it, a member may not; a year that has not begun is refused.
+    // An edit changes and clears them (including clearing birthDate back to null); the authorization is a list of years, each once, sorted; an admin may set it, a member may not; a year that has not begun is refused.
     const INS2 = '123456789012';
-    await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, taxCode: null, insuranceNumber: INS2 });
+    await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, taxCode: null, insuranceNumber: INS2, birthDate: null });
+    expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ birthDate: null, taxCode: null, insuranceNumber: INS2 });
     const year = Number(vietnamToday().slice(0, 4));
     await o.exec(o.admin, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year, authorized: true });
     await o.exec(o.owner, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year, authorized: true });
@@ -425,5 +426,36 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     await expect(o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, accountNumber: '0071009999999' })).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED' });
     await expect(o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, bankCode: 'TCB' })).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED' });
     await expect(erase()).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED' });
+  });
+
+  it('refuses hr.payroll.employee.erase without a fresh second factor even when retention has passed (#2691 N4)', async () => {
+    const o = await org();
+    const created = await o.add(o.owner, { bankCode: 'VCB' });
+    await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: created.employeeId, endedOn: '2026-08-31' });
+    await withAdmin((c) =>
+      c.query(`UPDATE crove_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE id = $1`, [created.employeeId]),
+    );
+
+    // Owner with aal1 (no second factor) -> 403 STEP_UP_REQUIRED.
+    await expect(o.exec(o.owner, 'hr.payroll.employee.erase', { employeeId: created.employeeId }, asUser(o.owner))).rejects.toMatchObject({
+      code: 'STEP_UP_REQUIRED',
+      status: 403,
+    });
+
+    // Owner with stale aal2 (older than the 5-minute step-up window) -> 403 STEP_UP_REQUIRED.
+    const staleMfa = { ...asMfa(o.owner), mfaAt: Math.floor(Date.now() / 1000) - STEP_UP_MAX_AGE_S - 60 };
+    await expect(o.exec(o.owner, 'hr.payroll.employee.erase', { employeeId: created.employeeId }, staleMfa)).rejects.toMatchObject({
+      code: 'STEP_UP_REQUIRED',
+      status: 403,
+    });
+
+    // Row, subject key, display_name, and sealed identity/bank numbers remain intact and readable by the owner.
+    const row = await withAdmin(async (c) =>
+      (await c.query<{ erased_at: Date | null; display_name: string }>('SELECT erased_at, display_name FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0],
+    );
+    expect(row).toEqual({ erased_at: null, display_name: NAME });
+    expect(await withAdmin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.subject_key WHERE org_id = $1 AND ref = $2', [o.orgId, `employee:${created.employeeId}`])).rowCount)).toBe(1);
+    const detail = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId });
+    expect(detail).toMatchObject({ erased: false, displayName: NAME, identityNumber: IDENTITY, accountNumber: ACCOUNT });
   });
 });

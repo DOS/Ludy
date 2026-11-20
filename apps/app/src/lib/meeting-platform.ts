@@ -80,6 +80,11 @@ export function isBenignClaimRefusal(error: unknown): boolean {
   return code === 'MEETING_PLATFORM_STATE' || code === 'MEETING_PLATFORM_NOT_FOUND';
 }
 
+// Whether a suggested recording already matches a visible Ludy meeting (#4123 Step 3): only suggestions show the notice instead of Import.
+export function matchedSuggestion(row: Pick<MeetingPlatformRecordingView, 'status' | 'matchedMeeting'>): { meetingId: string } | null {
+  return row.status === 'suggested' ? row.matchedMeeting : null;
+}
+
 // Whose transcription a meeting's lines are, when they came from a meeting platform (C2, #3174; C4, #3176): the platform that wrote them, and whether the transcript may have been cut. A draft holds at most
 // TRANSCRIPT_SEGMENTS_MAX lines and the import reads no more, so a platform transcript of exactly that many lines is cut or just at the limit; the screen says so in words that hold either way (#3922).
 // Null for Ludy's own transcription.

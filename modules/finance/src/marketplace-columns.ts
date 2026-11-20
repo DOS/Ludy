@@ -1,135 +1,227 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The confirmed mapping of a marketplace report's columns (#4037, slice 2 of #3850; plan stock-and-marketplaces.md section 8.6 "Columns": "A person confirms; the mapping is stored per org and platform
-// and applied by code afterwards").
-// - finance.marketplace.columns_confirm (owners and admins, a person only, never an agent; R1): saves the mapping a person confirmed for a platform, as a new row of
-//   crove_finance.marketplace_column_profile (append-only; the latest row of an org and platform wins). It stores the header text of each mapped column and the standard field it is, the row the header was
-//   read from and the digest of the whole header row, and nothing else: no cell value, no sample, no buyer column.
-// - finance.marketplace.columns_profile (every member reads): the latest profile of the org and a platform, or null.
-//
-// What is checked here and what is not. The kernel never reads a report (only the sandboxed extract step does), so the check that reads the rows of the file (`checkColumnMapping` of @crove/l10n-vn:
-// nothing read, a row that stops the file, rows without an order, quantity and amount swapped, dates swapped) runs where the file is read. This command re-checks what the header row alone decides, the
-// same refusals by the same names: a buyer column, a field or a column twice, the order number and the quantity (or the line key for a platform whose file has a row per unit) mapped, a return status with
-// a status. The extract step that applies a saved profile (#4035) and the screen (#4036) come after this slice.
-import { sql } from 'kysely';
+// The check of a column mapping on a marketplace order report no platform profile fits (#4036, slice 1c of #3850; plan stock-and-marketplaces.md section 8.6 "Columns").
+// The file is read in the extract sandbox, which only the worker reaches, so the API never reads it: a member asks, the worker reads the file through the sandbox, and records what it found.
+// - finance.marketplace.columns_check (owners, admins and members; a person, never an agent): files the request (the sheet alone, or the platform the person picked and a mapping to check) and queues the
+//   worker's job. A second press while a check asked in the last ten minutes for the same thing still waits returns that one and queues nothing.
+// - finance.marketplace.columns_target (system; query): what the worker needs for one file, or why it must not read it.
+// - finance.marketplace.columns_record (system only): records the masked sheet and the check's verdict (a refusal, or a preview of at most 20 parsed lines) and marks the check done or failed.
+// - finance.marketplace.columns (importers; query): the last check of a file and what it found, for the screen.
+// Nothing is imported or saved from a mapping here; saving a confirmed mapping is #4037. The preview lines are personal data (registry): the job carries ids only, and neither the audit row nor an error holds
+// a line.
 import { z } from 'zod';
 import {
-  zMarketplaceColumnProfile,
-  zMarketplaceColumnEntry,
-  zMarketplaceColumnProfileQuery,
-  zMarketplaceColumnsConfirm,
-  type MarketplaceColumnEntry,
-  type MarketplaceColumnProfile,
-  type MarketplaceColumnsConfirmed,
+  zId,
+  zMarketplaceColumnMapping,
+  zMarketplaceColumnPreview,
+  zMarketplaceColumnSheet,
+  zMarketplaceColumnsCheckAsk,
+  zMarketplaceColumnsRecord,
+  type MarketplaceColumnMapping,
+  type MarketplaceColumnsCheckQueued,
+  type MarketplaceColumnsStatus,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { MARKETPLACE_PROFILES, isBuyerHeader, type ColumnRefusal, type MarketplacePlatform } from '@crove/l10n-vn';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { sql } from 'kysely';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 
-const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
-const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
+const IMPORTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
+// The spreadsheets a report arrives as (an .xlsx may be stored as a ZIP), as the report readers take them.
+const SHEET_TYPES = ['application/zip', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/csv'];
+// A file the worker's readers took for a bank statement or a marketplace report is not this path's: only a spreadsheet whose latest run is `unsupported` and names none of those kinds is.
+const READ_KINDS = ['bank_statement', 'marketplace_orders', 'marketplace_income'];
+// A check asked this recently and still waiting is the running one; later than that a press asks again (a lost job must not block the file for ever).
+const RUNNING_MS = 10 * 60 * 1000;
 
-// The refusals the header row alone decides, as COLUMN_REFUSALS names them, with the sentence a person reads.
-type HeaderRefusal = Extract<ColumnRefusal, 'buyer_column' | 'field_twice' | 'column_twice' | 'no_order_no' | 'no_line' | 'return_without_status'>;
-const REFUSAL_TEXT: Record<HeaderRefusal, string> = {
-  buyer_column: 'Một cột có tiêu đề của người mua hoặc người nhận không được dùng làm cột dữ liệu',
-  field_twice: 'Một trường được gán cho hai cột',
-  column_twice: 'Một cột được gán cho hai trường',
-  no_order_no: 'Chưa có cột mã đơn hàng',
-  no_line: 'Chưa có cột số lượng (hoặc mã dòng, với sàn xuất mỗi dòng một đơn vị)',
-  return_without_status: 'Có cột trạng thái trả hàng nhưng chưa có cột trạng thái đơn',
-};
+export const MARKETPLACE_COLUMN_CHECK_REQUESTED = 'finance.marketplace_column_check.requested';
 
-// Whether the mapping passes what the header row alone decides; the first refusal, or null. Pure, so the extract step and the screen can ask the same.
-export function checkColumnProfileHeader(platform: MarketplacePlatform, columns: readonly MarketplaceColumnEntry[]): HeaderRefusal | null {
-  const profile = MARKETPLACE_PROFILES.find((p) => p.platform === platform);
-  if (!profile) return null;
-  const fields = new Set<string>();
-  const places = new Set<number>();
-  for (const column of columns) {
-    if (isBuyerHeader(column.header)) return 'buyer_column';
-    if (fields.has(column.field)) return 'field_twice';
-    if (places.has(column.index)) return 'column_twice';
-    fields.add(column.field);
-    places.add(column.index);
-  }
-  if (!fields.has('orderNo')) return 'no_order_no';
-  if (profile.rowPerUnit ? !fields.has('lineKey') : !fields.has('quantity')) return 'no_line';
-  if (fields.has('returnStatus') && !fields.has('status')) return 'return_without_status';
-  return null;
+const iso = (value: Date | string): string => new Date(value).toISOString();
+const notFound = () => new DomainError('MARKETPLACE_COLUMNS_NOT_FOUND', 404, 'Không tìm thấy báo cáo chưa nhận ra này');
+
+/** Whether a stored request is for the mapping asked: the platform and every assignment, in order. Compared field by field: the database stores a jsonb object with its keys in its own order, so the text of
+ * the stored array is never the text of the parsed input. */
+export function sameMapping(stored: { platform: string | null; assignments: unknown }, asked: MarketplaceColumnMapping | undefined): boolean {
+  if ((stored.platform ?? null) !== (asked?.platform ?? null)) return false;
+  const have = Array.isArray(stored.assignments) ? (stored.assignments as Array<{ index?: unknown; field?: unknown }>) : [];
+  const want = asked?.assignments ?? [];
+  return have.length === want.length && want.every((a, i) => have[i]?.index === a.index && have[i]?.field === a.field);
 }
 
-// What the table holds in `columns`, read through its schema (the database's CHECK keeps it that shape; this keeps the type honest).
-const storedColumns = (value: unknown): MarketplaceColumnEntry[] => z.array(zMarketplaceColumnEntry).parse(value);
+// The org's own spreadsheet that no reader of the worker took, with its original still there; null for any other file (an invoice, a bank statement, a recognised report, a file of another org).
+async function unrecognisedSheet(ctx: CommandContext | QueryContext, fileId: string): Promise<{ id: string; storage_key: string; generation: string | null; sha256: string; size_bytes: number } | null> {
+  const { rows } = await sql<{ id: string; storage_key: string; generation: string | null; sha256: string; size_bytes: number }>`
+    SELECT f.id::text AS id, f.storage_key, f.generation, f.sha256, f.size_bytes::bigint::int AS size_bytes
+      FROM crove_kernel.file f
+     WHERE f.org_id = ${ctx.orgId}::uuid AND f.id = ${fileId}::uuid AND f.original_deleted_at IS NULL
+       AND f.content_type = ANY(${SHEET_TYPES}::text[])
+       AND EXISTS (
+         SELECT 1 FROM crove_kernel.extraction x
+          WHERE x.org_id = f.org_id AND x.file_id = f.id AND x.method = 'unsupported'
+            AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
+            AND coalesce(x.result ->> 'kind', '') <> ALL(${READ_KINDS}::text[]))`.execute(ctx.trx);
+  return rows[0] ?? null;
+}
 
-// The mapped columns in the order of the header row, the form that is stored and compared.
-const inColumnOrder = (columns: readonly MarketplaceColumnEntry[]): MarketplaceColumnEntry[] =>
-  [...columns].sort((a, b) => a.index - b.index).map((c) => ({ index: c.index, header: c.header, field: c.field }));
-
-export const marketplaceColumnsConfirm = defineCommand({
-  name: 'finance.marketplace.columns_confirm',
-  input: zMarketplaceColumnsConfirm,
-  // A mapping saved for the next report of this platform; nothing is imported, posted or sent, and what is imported later is still confirmed by a person line by line.
+export const marketplaceColumnsCheck = defineCommand({
+  name: 'finance.marketplace.columns_check',
+  input: zMarketplaceColumnsCheckAsk,
+  // It files a request and queues a job that reads the file in the sandbox (no egress); it posts nothing and changes no book.
   risk: 'R1',
   sideEffect: 'internal',
-  access: MANAGERS,
-  handler: async (ctx, input): Promise<MarketplaceColumnsConfirmed> => {
-    // A person confirms, never an agent or the system (the database's insert policy admits the system context for the matrix's own-org control; this is the rule).
-    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xác nhận được cách đọc các cột của báo cáo');
-    const refusal = checkColumnProfileHeader(input.platform, input.columns);
-    if (refusal) throw new DomainError('MARKETPLACE_COLUMNS_REFUSED', 422, REFUSAL_TEXT[refusal], { reason: refusal });
-    const columns = inColumnOrder(input.columns);
-    // Two confirmations at once: one lock per org and platform, so the second sees the first's row and the "same mapping again" check below holds.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.marketplace_columns:${ctx.orgId}:${input.platform}`}, 0))`.execute(ctx.trx);
-    const latest = await ctx.trx
-      .selectFrom('crove_finance.marketplace_column_profile')
-      .select(['id', 'header_row', 'columns', 'header_digest'])
+  access: IMPORTERS,
+  handler: async (ctx, input): Promise<MarketplaceColumnsCheckQueued> => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới yêu cầu kiểm tra được các cột của báo cáo');
+    const file = await unrecognisedSheet(ctx, input.fileId);
+    if (!file) throw notFound();
+    const platform = input.mapping?.platform ?? null;
+    const assignments = JSON.stringify(input.mapping?.assignments ?? []);
+    const existing = await ctx.trx
+      .selectFrom('crove_finance.marketplace_column_check')
+      .select(['id', 'state', 'platform', 'assignments', 'requested_at'])
       .where('org_id', '=', ctx.orgId)
-      .where('platform', '=', input.platform)
-      .orderBy('confirmed_at', 'desc')
-      .orderBy('id', 'desc')
-      .limit(1)
+      .where('file_id', '=', input.fileId)
+      .forUpdate()
       .executeTakeFirst();
-    // The same mapping of the same header again is the same confirmation: nothing is added, so the history holds each distinct mapping once.
-    if (latest && latest.header_row === input.headerRow && latest.header_digest === input.headerDigest && JSON.stringify(inColumnOrder(storedColumns(latest.columns))) === JSON.stringify(columns)) {
-      ctx.audit({ platform: input.platform, added: false });
-      return { id: latest.id, added: false };
+    // The waiting one is returned only when it is for the same thing: a press for another mapping files it anew (an older job's record is then ignored).
+    if (existing && existing.state === 'requested' && ctx.now.getTime() - new Date(existing.requested_at).getTime() < RUNNING_MS && sameMapping(existing, input.mapping)) {
+      ctx.audit({ requested: false, running: true });
+      return { queued: false, running: true };
     }
-    const row = await ctx.trx
-      .insertInto('crove_finance.marketplace_column_profile')
-      .values({ org_id: ctx.orgId, platform: input.platform, header_row: input.headerRow, columns: JSON.stringify(columns), header_digest: input.headerDigest, confirmed_by: ctx.actor.userId })
-      .returning('id')
-      .executeTakeFirstOrThrow();
-    // Ids, the platform, the row and the standard fields only; the header texts stay in the profile row.
-    ctx.audit({ platform: input.platform, added: true, headerRow: input.headerRow, fields: columns.map((c) => c.field) });
-    return { id: row.id, added: true };
+    if (existing) {
+      // A new request clears the earlier verdict and preview (they belong to the earlier mapping) and keeps the sheet (the file's own); the guard allows no other move.
+      await ctx.trx
+        .updateTable('crove_finance.marketplace_column_check')
+        .set({ platform, assignments, state: 'requested', failure: null, refusal: null, preview: null, requested_by: ctx.actor.userId, requested_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', existing.id)
+        .execute();
+    } else {
+      try {
+        await ctx.trx
+          .insertInto('crove_finance.marketplace_column_check')
+          .values({ org_id: ctx.orgId, file_id: input.fileId, platform, assignments, requested_by: ctx.actor.userId, requested_at: ctx.now })
+          .execute();
+      } catch (error: unknown) {
+        // Two first requests for the same file at once: the other one filed the row (one row per file). A plain refusal, not a server error; the member presses again and gets the waiting one.
+        if ((error as { code?: unknown } | null)?.code === '23505') throw new DomainError('MARKETPLACE_COLUMNS_BUSY', 409, 'Báo cáo này vừa được yêu cầu kiểm tra ở nơi khác; hãy thử lại sau giây lát');
+        throw error;
+      }
+    }
+    // The job carries the file's id and nothing else.
+    await ctx.emit(MARKETPLACE_COLUMN_CHECK_REQUESTED, { file_id: input.fileId });
+    ctx.audit({ requested: true, running: false, mapping: input.mapping !== undefined });
+    return { queued: true, running: false };
   },
 });
 
-export const marketplaceColumnsProfile = defineQuery({
-  name: 'finance.marketplace.columns_profile',
-  input: zMarketplaceColumnProfileQuery,
-  access: ALL,
-  handler: async (ctx, input): Promise<MarketplaceColumnProfile | null> => {
-    const row = await ctx.trx
-      .selectFrom('crove_finance.marketplace_column_profile')
-      .select(['id', 'platform', 'header_row', 'columns', 'header_digest', 'confirmed_at'])
+// What the worker needs to read one file, or why it must not: a file that is gone, whose original is deleted, or no longer an unrecognised spreadsheet, or a check that is not waiting (done by an earlier run
+// of the same job), is left alone. The storage key and the checksum reach the worker and nothing else.
+export type MarketplaceColumnsTarget =
+  | { action: 'none'; reason: 'not_found' | 'not_requested' }
+  | { action: 'check'; fileId: string; storageKey: string; generation: string | null; sha256: string; sizeBytes: number; requestedAt: string; mapping: MarketplaceColumnMapping | null };
+
+export const marketplaceColumnsTarget = defineQuery({
+  name: 'finance.marketplace.columns_target',
+  input: z.strictObject({ fileId: zId }),
+  access: 'system',
+  handler: async (ctx, input): Promise<MarketplaceColumnsTarget> => {
+    const check = await ctx.trx
+      .selectFrom('crove_finance.marketplace_column_check')
+      .select(['state', 'platform', 'assignments', 'requested_at'])
       .where('org_id', '=', ctx.orgId)
-      .where('platform', '=', input.platform)
-      .orderBy('confirmed_at', 'desc')
-      .orderBy('id', 'desc')
-      .limit(1)
+      .where('file_id', '=', input.fileId)
       .executeTakeFirst();
-    if (!row) return null;
-    return zMarketplaceColumnProfile.parse({
-      id: row.id,
-      platform: row.platform,
-      headerRow: row.header_row,
-      columns: inColumnOrder(storedColumns(row.columns)),
-      headerDigest: row.header_digest,
-      confirmedAt: new Date(row.confirmed_at).toISOString(),
-    });
+    const file = await unrecognisedSheet(ctx, input.fileId);
+    if (!check || !file) return { action: 'none', reason: 'not_found' };
+    if (check.state !== 'requested') return { action: 'none', reason: 'not_requested' };
+    const parsed = check.platform === null ? null : zMarketplaceColumnMapping.safeParse({ platform: check.platform, assignments: check.assignments });
+    // A stored mapping the contract does not hold (a row written by hand) is read as the sheet alone: nothing is checked that was not asked in the shape the contract allows.
+    const mapping = parsed?.success ? parsed.data : null;
+    return { action: 'check', fileId: input.fileId, storageKey: file.storage_key, generation: file.generation, sha256: file.sha256, sizeBytes: file.size_bytes, requestedAt: iso(check.requested_at), mapping };
   },
 });
 
-export const marketplaceColumnsCommands = [marketplaceColumnsConfirm];
-export const marketplaceColumnsQueries = [marketplaceColumnsProfile];
+export const marketplaceColumnsRecord = defineCommand({
+  name: 'finance.marketplace.columns_record',
+  input: zMarketplaceColumnsRecord,
+  // A state, a masked sheet, a refusal code and at most 20 parsed lines on a row; no book, no money, no credential.
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<{ recorded: boolean }> => {
+    const check = await ctx.trx
+      .selectFrom('crove_finance.marketplace_column_check')
+      .select(['id', 'state', 'requested_at', 'sheet'])
+      .where('org_id', '=', ctx.orgId)
+      .where('file_id', '=', input.fileId)
+      .forUpdate()
+      .executeTakeFirst();
+    // A file erased while its check ran, a check another run already recorded, or a request filed again since this run took it (a newer one waits): nothing to record.
+    if (!check || check.state !== 'requested' || iso(check.requested_at) !== input.requestedAt) return { recorded: false };
+    const result = input.result;
+    if (result.state === 'done') {
+      // A refusal and a preview are the verdict on one mapping: not both, and neither without the other's absence being a refusal.
+      if (result.refusal !== null && result.preview !== null) throw new DomainError('MARKETPLACE_COLUMNS_INVALID', 422, 'Một mapping bị từ chối không có bản xem trước');
+      await ctx.trx
+        .updateTable('crove_finance.marketplace_column_check')
+        .set({
+          state: 'done',
+          failure: null,
+          refusal: result.refusal,
+          // The sheet is the file's own: a record without one keeps the one an earlier check stored.
+          sheet: result.sheet === null ? check.sheet === null ? null : JSON.stringify(check.sheet) : JSON.stringify(result.sheet),
+          preview: result.preview === null ? null : JSON.stringify(result.preview),
+          finished_at: ctx.now,
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', check.id)
+        .execute();
+    } else {
+      await ctx.trx
+        .updateTable('crove_finance.marketplace_column_check')
+        .set({ state: 'failed', failure: result.failure })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', check.id)
+        .execute();
+    }
+    // The state, the failure code and the refusal code only: nothing of the sheet or the preview (the audit scan refuses a fact that reads the classified preview column, and no count of it is wanted).
+    ctx.audit({ state: result.state, failure: result.state === 'failed' ? result.failure : null, refusal: result.state === 'done' ? result.refusal : null });
+    return { recorded: true };
+  },
+});
+
+const zSheetOrNull = zMarketplaceColumnSheet.nullable();
+const zPreviewOrNull = zMarketplaceColumnPreview.nullable();
+
+export const marketplaceColumns = defineQuery({
+  name: 'finance.marketplace.columns',
+  input: z.strictObject({ fileId: zId }),
+  access: IMPORTERS,
+  handler: async (ctx, input): Promise<MarketplaceColumnsStatus> => {
+    const file = await unrecognisedSheet(ctx, input.fileId);
+    if (!file) throw notFound();
+    const row = await ctx.trx
+      .selectFrom('crove_finance.marketplace_column_check')
+      .select(['state', 'failure', 'refusal', 'platform', 'assignments', 'requested_at', 'finished_at', 'sheet', 'preview'])
+      .where('org_id', '=', ctx.orgId)
+      .where('file_id', '=', input.fileId)
+      .executeTakeFirst();
+    if (!row) return { state: 'none', failure: null, refusal: null, mapping: null, requestedAt: null, finishedAt: null, sheet: null, preview: null };
+    const mapping = row.platform === null ? null : zMarketplaceColumnMapping.safeParse({ platform: row.platform, assignments: row.assignments });
+    // What the table holds was written through the record command's schema; a value the contract does not hold (a row written by hand) is read as absent, never passed on.
+    const sheet = zSheetOrNull.safeParse(row.sheet);
+    const preview = zPreviewOrNull.safeParse(row.preview);
+    return {
+      state: row.state,
+      failure: row.failure,
+      refusal: row.refusal,
+      mapping: mapping?.success ? mapping.data : null,
+      requestedAt: iso(row.requested_at),
+      finishedAt: row.finished_at ? iso(row.finished_at) : null,
+      sheet: sheet.success ? sheet.data : null,
+      preview: preview.success ? preview.data : null,
+    };
+  },
+});
+
+export const marketplaceColumnsCommands = [marketplaceColumnsCheck, marketplaceColumnsRecord];
+export const marketplaceColumnsQueries = [marketplaceColumnsTarget, marketplaceColumns];

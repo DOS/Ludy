@@ -128,6 +128,8 @@ export const EXPORT_TABLES = {
   // The last check of a connection's vouchers against the firm's MISA catalogue (#4112): the batch asked about, its state and times, and per party (its tax code) or item (its code) whether one entry matched, with that entry's code and id. No catalogue name or address is stored.
   'finance.misa_amis_match': { from: 'crove_finance.misa_amis_match', omit: [] },
   'finance.misa_amis_match_check': { from: 'crove_finance.misa_amis_match_check', omit: [] },
+  // The last column check per unrecognised order report: the preview of parsed lines is personal data kept seven days at most and a cache of the file, so it stays out (#4036).
+  'finance.marketplace_column_check': { from: 'crove_finance.marketplace_column_check', omit: ['preview'] },
   'finance.marketplace_party': { from: 'crove_finance.marketplace_party', omit: [] },
   'finance.stock_item': { from: 'crove_finance.stock_item', omit: [] },
   'finance.stock_alias': { from: 'crove_finance.stock_alias', omit: [] },
