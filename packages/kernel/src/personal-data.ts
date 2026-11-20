@@ -306,6 +306,14 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "The name of the MISA catalogue entry proposed for a party with no tax code; an erasure that reaches the party deletes its name matches and the next check makes them anew",
   },
+  // The preview of a column check on an unrecognised marketplace order report (#4036): at most 20 parsed lines (order no, line key, SKU, item name, variation, quantity, amount, status) a member looks at before
+  // anything is saved. A line can carry a buyer's text when an unflagged column is mapped to a text field (the limit stated in #4178). An erasure deletes the check whose preview quotes the value (the file stays; the
+  // person asks again); the preview is also deleted with its file, with the org, and by the nightly retention seven days after the check finished.
+  'crove_finance.marketplace_column_check.preview': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The preview of an order report's parsed lines, which may quote a buyer when a column was mapped by hand; an erasure deletes the check that quotes the value and the member asks again",
+  },
   // More free text (#1961): a task's title and description, which members and agents write, are replaced where they
   // quote the value; a bank statement line and a journal line's memo are kept.
   'crove_kernel.task.title': {
@@ -1506,6 +1514,15 @@ export const personalDataErase = defineCommand({
       const { rows: misaReasons } = await sql<{ rows: number }>`
         SELECT crove_finance.personal_data_clear_misa_amis_push_reason(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
       add('crove_finance.misa_amis_push.reason', Number(misaReasons[0]?.rows ?? 0));
+
+      // The preview of a column check (#4036): a check whose preview of parsed lines quotes the value is deleted whole (a preview is personal data kept for seven days at most); the file is not touched, and a member
+      // asks for the check again. Through the command's own transaction: the tenant role deletes a check of its own org by the table's policy.
+      const previewMatch = freeTextMatch(probe, sql.ref('c.preview'));
+      const { rows: previewRows } = await sql<{ id: string }>`
+        DELETE FROM crove_finance.marketplace_column_check c
+         WHERE c.org_id = ${ctx.orgId}::uuid AND c.preview IS NOT NULL AND coalesce(${previewMatch}, false)
+         RETURNING c.id`.execute(ctx.trx);
+      add('crove_finance.marketplace_column_check.preview', previewRows.length);
 
       // Tasks that quote the person (#1961): the value is replaced in the title and the description, as the owner (an
       // owner's update passes the task guards, which hold agents; taint, lease, status and entity stay as they are, and

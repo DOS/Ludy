@@ -11,7 +11,7 @@ import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wa
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -77,6 +77,7 @@ import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './
 import { MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
+import { marketplaceColumnsAi, proposeMarketplaceColumns } from './finance-marketplace-columns-ai.ts';
 import { explainMarketplaceFees, marketplaceFeeNoteAi } from './finance-marketplace-fee-note-ai.ts';
 import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
 import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
@@ -459,6 +460,8 @@ export function createRpcHandler(
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's notes under the Sàn table (#3711 slice 7): the same reader and model, a budget of its own; told the fees, their age and whether it is past the cycle, per numbered row, and no platform name.
   const financeMarketplaceFeeNoteAi = marketplaceFeeNoteAi(conversationReader?.marketplaceFeeNotes ? { marketplaceFeeNotes: conversationReader.marketplaceFeeNotes.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's first mapping for the columns of an unrecognised order report (#4036): told the masked sheet the worker recorded (header texts and the shapes of a few values) and nothing else; a budget of its own.
+  const financeMarketplaceColumnsAi = marketplaceColumnsAi(conversationReader?.marketplaceColumns ? { marketplaceColumns: conversationReader.marketplaceColumns.bind(conversationReader) } : null, suggestionBudget());
   const financeSupplierPayableLineAi = supplierPayableLineAi(conversationReader?.supplierPayableLineSentence ? { supplierPayableLineSentence: conversationReader.supplierPayableLineSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMisaCheckLineAi = misaCheckLineAi(conversationReader?.misaCheckLineSentence ? { misaCheckLineSentence: conversationReader.misaCheckLineSentence.bind(conversationReader) } : null, suggestionBudget());
   // The accounting coworker's notes on the kinds of blocker on the AMIS preview (#3904): the same reader and model, a budget of its own; told the kinds on the list and nothing else.
@@ -3532,6 +3535,21 @@ export function createRpcHandler(
           const { lang, legalEntityId } = input;
           const balance = await runtime.query<MarketplaceBalance>('finance.marketplace.balance', legalEntityId === undefined ? {} : { legalEntityId }, { actor, orgId });
           return explainMarketplaceFees(financeMarketplaceFeeNoteAi, orgId, actor.userId, balance, MARKETPLACE_FEE_CYCLE_DAYS, lang ?? 'vi');
+        }),
+      ),
+      // The columns of a report no platform profile fits (#4036, slice 1c of #3850). The file is read by the worker through the extract sandbox, which the API cannot reach: a check is a request row and a job.
+      columnsCheck: os.marketplace.columnsCheck.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.columns_check', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      columns: os.marketplace.columns.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.columns', input, { actor, orgId }))),
+      // Ly's first mapping, from the masked sheet the worker recorded (read again here in the caller's own context, so the model is told what the file shows, never what the caller says); a read that stores nothing.
+      columnsProposal: os.marketplace.columnsProposal.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const status = await runtime.query<MarketplaceColumnsStatus>('finance.marketplace.columns', { fileId: input.fileId }, { actor, orgId });
+          return proposeMarketplaceColumns(financeMarketplaceColumnsAi, orgId, actor.userId, status.sheet, input.lang ?? 'vi');
         }),
       ),
       preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
