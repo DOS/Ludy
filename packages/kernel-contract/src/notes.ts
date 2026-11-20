@@ -25,6 +25,26 @@ export const NOTEBOOK_STACK_MAX = 80;
 export const NOTEBOOKS_MAX = 200;
 // Links one note keeps: each read of the note checks every link through its module (#1672).
 export const NOTE_LINKS_MAX = 50;
+// Isolated note attachments (#3561, docs/plan/notes-v2.md V2-5, owner decision A3): <= 25 MiB per file.
+export const NOTE_ATTACHMENT_MAX_BYTES = 26_214_400;
+export const NOTE_ATTACHMENTS_PER_NOTE_MAX = 50;
+export const NOTE_ATTACHMENT_FILENAME_MAX = 255;
+export const NOTE_ATTACHMENT_EXTRACTED_TEXT_MAX = 200_000;
+export const NOTE_ATTACHMENT_EXTRACT_STATUSES = ['pending', 'done', 'skipped', 'failed'] as const;
+export type NoteAttachmentExtractStatus = (typeof NOTE_ATTACHMENT_EXTRACT_STATUSES)[number];
+export const NOTE_ATTACHMENT_INLINE_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'application/pdf',
+  'audio/mpeg',
+  'audio/wav',
+  'audio/ogg',
+  'audio/mp4',
+  'audio/webm',
+] as const;
+export type NoteAttachmentInlineType = (typeof NOTE_ATTACHMENT_INLINE_TYPES)[number];
 // Days a deleted note stays in the trash, and a former member's private notes stay sealed (ADR-0037 §4).
 export const NOTE_TRASH_DAYS = 30;
 export const NOTE_MEMBER_PURGE_DAYS = 30;
@@ -255,7 +275,53 @@ export type NoteSummary = z.infer<typeof zNoteSummary>;
 export const zNoteLinkView = z.object({ id: z.string(), targetType: z.enum(NOTE_LINK_TARGETS), targetId: z.string(), createdAt: z.string(), available: z.boolean() });
 export type NoteLink = z.infer<typeof zNoteLinkView>;
 
-export const zNote = zNoteSummary.extend({ body: z.string(), links: z.array(zNoteLinkView) });
+export const zNoteAttachment = z.object({
+  id: z.string(),
+  noteId: z.string(),
+  authorUserId: z.string(),
+  filename: z.string(),
+  contentType: z.string(),
+  sizeBytes: z.number().int(),
+  sha256: z.string(),
+  extractStatus: z.enum(NOTE_ATTACHMENT_EXTRACT_STATUSES),
+  createdAt: z.string(),
+});
+export type NoteAttachment = z.infer<typeof zNoteAttachment>;
+
+export const zNoteAttachmentRef = z.strictObject({ attachmentId: zId });
+export type NoteAttachmentRefInput = z.input<typeof zNoteAttachmentRef>;
+
+export const zNoteAttachmentCreate = z.strictObject({
+  attachmentId: zId,
+  noteId: zId,
+  filename: z.string().trim().min(1).max(NOTE_ATTACHMENT_FILENAME_MAX),
+  contentType: z.string().trim().min(1).max(128),
+  sizeBytes: z.number().int().min(1).max(NOTE_ATTACHMENT_MAX_BYTES),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  storageKey: z.string().min(1).max(128),
+  extractStatus: z.enum(['pending', 'skipped']),
+});
+export type NoteAttachmentCreateInput = z.input<typeof zNoteAttachmentCreate>;
+
+export const zNoteAttachmentCreated = z.object({
+  attachmentId: z.string(),
+  noteId: z.string(),
+  extractStatus: z.enum(NOTE_ATTACHMENT_EXTRACT_STATUSES),
+  createdAt: z.string(),
+});
+export type NoteAttachmentCreated = z.infer<typeof zNoteAttachmentCreated>;
+
+export const zNoteAttachmentDeleted = z.object({
+  noteId: z.string(),
+  attachmentId: z.string(),
+});
+export type NoteAttachmentDeleted = z.infer<typeof zNoteAttachmentDeleted>;
+
+export const zNote = zNoteSummary.extend({
+  body: z.string(),
+  links: z.array(zNoteLinkView),
+  attachments: z.array(zNoteAttachment).optional(),
+});
 export type Note = z.infer<typeof zNote>;
 
 // How many private notes a member has, for an owner or admin before removing them (ADR-0037 §4). No text.
@@ -864,6 +930,19 @@ export const zNotesExport = z.object({
       archivedAt: z.string().nullable(),
       deletedAt: z.string().nullable(),
       links: z.array(z.object({ targetType: z.string(), targetId: z.string() })),
+      attachments: z
+        .array(
+          z.object({
+            id: z.string(),
+            filename: z.string(),
+            contentType: z.string(),
+            sizeBytes: z.number().int(),
+            sha256: z.string(),
+            extractStatus: z.enum(NOTE_ATTACHMENT_EXTRACT_STATUSES),
+            createdAt: z.string(),
+          }),
+        )
+        .optional(),
     }),
   ),
   notebooks: z

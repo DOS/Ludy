@@ -1202,6 +1202,10 @@ export function createRpcHandler(
       delete: os.notes.delete.handler(notesCommand('notes.note.delete')),
       linkAdd: os.notes.linkAdd.handler(notesCommand('notes.link.add')),
       linkRemove: os.notes.linkRemove.handler(notesCommand('notes.link.remove')),
+      attachments: {
+        list: os.notes.attachments.list.handler(notesQuery('notes.attachment.list')),
+        delete: os.notes.attachments.delete.handler(notesCommand('notes.attachment.delete')),
+      },
       notebooks: {
         list: os.notes.notebooks.list.handler(notesQuery('notes.notebook.list')),
         create: os.notes.notebooks.create.handler(notesCommand('notes.notebook.create')),
