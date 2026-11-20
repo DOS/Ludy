@@ -14,6 +14,25 @@ export const AGENDA_REPLACE_MAX = 300;
 export const AGENDA_NEXT_MAX = 5;
 export const AGENDA_NEXT_MINUTES = 30;
 
+// How far a meeting/recording interval may extend when matching against calendar events or existing Ludy meetings (B1 15-minute rule).
+export function meetingOverlapWindow(
+  span: { startedAt: Date; endedAt?: Date | null; lengthSeconds?: number | null },
+  overlapMinutes: number = AGENDA_OVERLAP_MINUTES,
+): { startedAt: Date; endedAt: Date; windowStart: Date; windowEnd: Date } {
+  const startedAt = span.startedAt;
+  const seconds = span.lengthSeconds ?? null;
+  const computedEnd = seconds !== null && seconds > 0 ? new Date(startedAt.getTime() + Number(seconds) * 1000) : startedAt;
+  const rawEndedAt = span.endedAt ?? computedEnd;
+  const endedAt = rawEndedAt.getTime() >= startedAt.getTime() ? rawEndedAt : startedAt;
+  const slackMs = overlapMinutes * 60_000;
+  return {
+    startedAt,
+    endedAt,
+    windowStart: new Date(startedAt.getTime() - slackMs),
+    windowEnd: new Date(endedAt.getTime() + slackMs),
+  };
+}
+
 // A title is cut at 200 characters (code points) in the cache, so the answer's check counts code points too: an emoji is two UTF-16 units and a title of a hundred of them is still a valid one.
 const zAgendaTitle = z.string().refine((title) => Array.from(title).length <= 200, 'title is at most 200 characters');
 

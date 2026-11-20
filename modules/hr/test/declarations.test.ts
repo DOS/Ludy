@@ -10,6 +10,7 @@ import {
   buildD02Lt,
   buildD02LtListing,
   buildQuarterly,
+  fallbackTaxCode,
   quarterMonths,
   type DeclarationBreakdown,
   type DeclarationEmployer,
@@ -515,5 +516,116 @@ describe('what the second review found (#2533)', () => {
     const row = doc.sheets[0]?.rows[0];
     expect(doc.sheets[0]?.columns.find((c) => c.key === 'taxable')?.header).toBe('Tổng thu nhập chịu thuế');
     expect(row).toMatchObject({ gross: '25000000.00', taxable: '24900000.00' });
+  });
+});
+
+describe('CodeRabbit follow-ups (#2748)', () => {
+  const flatPay = (employeeId: string, month: string, pit: string): DeclarationLine => ({
+    ...line(employeeId, month, pit),
+    breakdown: breakdown('0', 'flat', 'not_insured'),
+  });
+  const flatAdj = (employeeId: string, month: string, pit: string, adjustsMonth?: string): DeclarationLine => ({
+    ...line(employeeId, month, pit),
+    kind: 'adjustment',
+    gross: '0',
+    employeeInsurance: '0',
+    employerInsurance: '0',
+    unionFee: '0',
+    taxableIncome: '0',
+    breakdown: null,
+    adjustsMonth: adjustsMonth ?? null,
+  });
+
+  it('(item 7) names negative flat-rate refund months on 03/TNCN even when net annual withholding is <= 0', () => {
+    const flatZero = person('1', 'Nguyễn Hoàn Đủ');
+    const flatNegative = person('2', 'Trần Hoàn Vượt');
+    const doc = buildCertificates({
+      year: 2026,
+      employer,
+      persons: [flatZero, flatNegative],
+      lines: [
+        flatPay('1', '2026-03', '500000'),
+        flatAdj('1', '2026-04', '-500000', '2026-03'),
+        flatPay('2', '2026-05', '300000'),
+        flatAdj('2', '2026-06', '-450000', '2026-05'),
+      ],
+    });
+    expect(doc.sheets[0]?.rows).toEqual([]);
+    const notes = doc.notes.join(' ');
+    expect(notes).toContain('Nguyễn Hoàn Đủ: tháng 2026-04 có điều chỉnh hoàn thuế 500000.00');
+    expect(notes).toContain('Trần Hoàn Vượt: tháng 2026-06 có điều chỉnh hoàn thuế 450000.00');
+  });
+
+  it('(item 8) adds missing approved-month warnings on D02-LT and 03/TNCN matching 05/KK and 05/QTT', () => {
+    const d02Missing = buildD02Lt({
+      month: '2026-08',
+      employer,
+      persons: [person('1', 'An')],
+      lines: [],
+      previousLines: null,
+      approvedMonths: ['2026-07'],
+    });
+    expect(d02Missing.notes[0]).toBe('Chưa có bảng lương đã duyệt của tháng 2026-08: số liệu của tháng chưa có.');
+
+    const d02Present = buildD02Lt({
+      month: '2026-08',
+      employer,
+      persons: [person('1', 'An')],
+      lines: [],
+      previousLines: ['2026-07'].length ? [] : null,
+      approvedMonths: ['2026-07', '2026-08'],
+    });
+    expect(d02Present.notes[0]).toBe('Nơi đăng ký khám chữa bệnh ban đầu chưa được lưu trong Ludy: nhập tay khi khai.');
+
+    const certMissing = buildCertificates({
+      year: 2026,
+      employer,
+      persons: [person('1', 'An')],
+      lines: [line('1', '2026-01', '100000')],
+      approvedMonths: ['2026-01', '2026-02'],
+    });
+    expect(certMissing.notes[0]).toContain('Chưa có bảng lương đã duyệt của tháng 2026-03, 2026-04');
+    expect(certMissing.notes[0]).toContain('2026-12: số liệu của năm chưa đủ.');
+  });
+
+  it('(item 10) builds quarterly, annual, certificate, and D02-LT declarations linearly at 5,000 staff / 60,000 lines', () => {
+    const count = 5000;
+    const months = Array.from({ length: 12 }, (_, i) => `2026-${String(i + 1).padStart(2, '0')}`);
+    const persons = Array.from({ length: count }, (_, i) =>
+      person(`e-${i}`, `Nhân viên ${String(i).padStart(4, '0')}`, { finalizationAuthorizedYears: i % 2 === 0 ? [2026] : [] }),
+    );
+    const lines: DeclarationLine[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const id = `e-${i}`;
+      const mode: WithholdingMode = i % 5 === 0 ? 'flat' : 'progressive';
+      for (const m of months) {
+        lines.push(line(id, m, '100000', { breakdown: breakdown('10000000', mode, mode === 'flat' ? 'not_insured' : null) }));
+      }
+    }
+    const start = performance.now();
+    const quarterly = buildQuarterly({ quarter: '2026-Q3', employer, persons, lines, approvedMonths: ['2026-07', '2026-08', '2026-09'] });
+    const annual = buildAnnual({ year: 2026, employer, persons, lines, approvedMonths: months });
+    const certs = buildCertificates({ year: 2026, employer, persons, lines, approvedMonths: months });
+    const d02 = buildD02Lt({ month: '2026-08', employer, persons, lines: lines.slice(0, count), previousLines: lines.slice(count, count * 2), approvedMonths: ['2026-07', '2026-08'] });
+    const elapsedMs = performance.now() - start;
+
+    expect(quarterly.sheets[1]?.rows).toHaveLength(4000);
+    expect(quarterly.sheets[2]?.rows).toHaveLength(1000);
+    expect(annual.sheets[1]?.rows).toHaveLength(2000);
+    expect(certs.sheets[0]?.rows).toHaveLength(2000 + 1000 * 12);
+    expect(d02.kind).toBe('d02lt');
+    expect(elapsedMs).toBeLessThan(15000);
+  });
+
+  it('(item 11) validates and normalizes nationalId fallback shapes as 10, 10-3, 13, or 12 digits and rejects passports/malformed values', () => {
+    expect(fallbackTaxCode('0123456789')).toBe('0123456789');
+    expect(fallbackTaxCode('0123456789-001')).toBe('0123456789-001');
+    expect(fallbackTaxCode('0123456789001')).toBe('0123456789-001');
+    expect(fallbackTaxCode('079 111 222 333')).toBe('079111222333');
+    expect(fallbackTaxCode('079.111.222.333')).toBe('079111222333');
+    expect(fallbackTaxCode('B1234567')).toBeNull();
+    expect(fallbackTaxCode('123456789')).toBeNull();
+    expect(fallbackTaxCode('079-111-222-333')).toBeNull();
+    expect(fallbackTaxCode(null)).toBeNull();
   });
 });

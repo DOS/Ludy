@@ -5,7 +5,7 @@ import { IMPORT_CONSENT_NOTICE_VERSION, MEETING_PLATFORM_ERROR_CODES, MEETING_PL
 import { IMPORT_NOTICE } from '@crove/meeting-recorder';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { IMPORT_MAX_SECONDS, POLL_BUSY_MS, POLL_IDLE_MS, canRetry, canSubmitImport, errorKey, importBlock, isBenignClaimRefusal, isInFlight, isTranscriptImport, lengthParts, platformTranscript, pollMs, rowsToClaim } from '../src/lib/meeting-platform.ts';
+import { IMPORT_MAX_SECONDS, POLL_BUSY_MS, POLL_IDLE_MS, canRetry, canSubmitImport, errorKey, importBlock, isBenignClaimRefusal, isInFlight, isTranscriptImport, lengthParts, matchedSuggestion, platformTranscript, pollMs, rowsToClaim } from '../src/lib/meeting-platform.ts';
 
 const row = (over: Partial<MeetingPlatformRecordingView> = {}): MeetingPlatformRecordingView => ({
   id: 'r1',
@@ -22,6 +22,7 @@ const row = (over: Partial<MeetingPlatformRecordingView> = {}): MeetingPlatformR
   status: 'suggested',
   meetingId: null,
   errorCode: null,
+  matchedMeeting: null,
   ...over,
 });
 
@@ -177,5 +178,15 @@ describe('platformTranscript', () => {
     expect(platformTranscript(lines(3, 'google_meet'))).toEqual({ platform: 'google_meet', cut: false });
     expect(platformTranscript(lines(4999, 'microsoft_teams'))).toEqual({ platform: 'microsoft_teams', cut: false });
     expect(platformTranscript(lines(TRANSCRIPT_SEGMENTS_MAX, 'google_meet'))).toEqual({ platform: 'google_meet', cut: true });
+  });
+});
+
+describe('matchedSuggestion', () => {
+  it('returns the matched meeting only for a suggested recording', () => {
+    const match = { meetingId: 'm-existing' };
+    expect(matchedSuggestion(row({ matchedMeeting: match }))).toEqual(match);
+    expect(matchedSuggestion(row({ matchedMeeting: null }))).toBeNull();
+    expect(matchedSuggestion(row({ status: 'imported', meetingId: 'm1', matchedMeeting: match }))).toBeNull();
+    expect(matchedSuggestion(row({ status: 'failed', meetingId: 'm1', matchedMeeting: match }))).toBeNull();
   });
 });

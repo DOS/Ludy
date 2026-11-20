@@ -390,10 +390,10 @@ export function DataTable({ head, numeric = [], foot, stacked = false, children 
     return () => observer.disconnect();
   }, []);
   return (
-    <div className={cn('overflow-hidden rounded-xl border bg-card', stacked && 'max-sm:border-0 max-sm:bg-transparent')}>
+    <div className={cn('overflow-hidden rounded-xl border bg-card print:overflow-visible', stacked && 'max-sm:border-0 max-sm:bg-transparent')}>
       <Table
-        className={cn('min-w-[640px] [&_td]:whitespace-normal', stacked && STACKED)}
-        container={{ ref: scroller, className: cn('max-h-[max(24rem,calc(100dvh-10rem))] overflow-y-auto', stacked && 'max-sm:max-h-none max-sm:overflow-visible'), tabIndex: scrolls ? 0 : undefined }}
+        className={cn('min-w-[640px] [&_td]:whitespace-normal print:min-w-0', stacked && STACKED)}
+        container={{ ref: scroller, className: cn('max-h-[max(24rem,calc(100dvh-10rem))] overflow-y-auto print:max-h-none print:overflow-visible', stacked && 'max-sm:max-h-none max-sm:overflow-visible'), tabIndex: scrolls ? 0 : undefined }}
       >
         {/* The rule under the header is a shadow: a collapsed border does not move with a sticky row. */}
         <TableHeader ref={header} className="sticky top-0 z-10 bg-muted [&_th]:bg-muted [&_th]:shadow-[inset_0_-1px_0_var(--color-border)] [&_tr]:border-b-0">
