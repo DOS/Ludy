@@ -24,6 +24,14 @@ import { TEST_MANIFESTS } from './manifests.ts';
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const PARSED = JSON.parse(readFileSync(new URL('../../../packages/l10n-vn/test/fixtures/einvoice-basic.parsed.json', import.meta.url), 'utf8')) as ParsedInvoice;
+// The last day of a VAT period key ("2026-11" or "2026-Q4"), as YYYY-MM-DD.
+const periodLastDay = (period: string): string => {
+  const month = /^(\d{4})-(\d{2})$/.exec(period);
+  const quarter = /^(\d{4})-Q(\d)$/.exec(period);
+  const [year, upTo] = month ? [Number(month[1]), Number(month[2])] : [Number(quarter?.[1]), Number(quarter?.[2]) * 3];
+  return new Date(Date.UTC(year, upTo, 0)).toISOString().slice(0, 10);
+};
+const addDays = (day: string, n: number): string => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const suite = ADMIN ? describe : describe.skip;
 
 class MemoryStore implements BlobStore {
@@ -291,17 +299,31 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     await rt.execute('kernel.org.set_vat_filing_period', { vatFilingPeriod: kind }, { actor: { ...asUser(users.owner), aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) }, orgId });
     const next = nextVatDeadline(kind, vietnamToday());
     const expected = next.daysLeft <= 30;
-    for (const who of [users.owner, users.viewer]) {
-      const deadlines = (await today(who)).filter((i) => i.kind === 'deadline' && i.id.startsWith('vat:'));
-      if (!expected) {
-        expect(deadlines, who).toEqual([]);
-        continue;
-      }
-      expect(deadlines, who).toHaveLength(1);
+    // Which entities owe a period is decided by the day each was created against the period's last day (the default
+    // entity always owes). The branch is created when the test runs, so which side of that day it falls on would change
+    // with the date (#4193): set it from the period instead, once on each side.
+    const lastDay = periodLastDay(next.period);
+    const createdOn = (day: string) => admin((c) => c.query(`UPDATE crove_kernel.legal_entity SET created_at = $2::timestamptz WHERE org_id = $1 AND id = $3`, [orgId, `${day}T12:00:00+07:00`, branch]));
+    const original = (await admin((c) => c.query<{ created_at: Date }>(`SELECT created_at FROM crove_kernel.legal_entity WHERE org_id = $1 AND id = $2`, [orgId, branch]))).rows[0]?.created_at as Date;
+    for (const [side, day, entity] of [
       // The branch was added after the period ended, so only the default entity owes the return: the link names it.
-      expect(deadlines[0]).toMatchObject({ id: `vat:${next.period}`, app: 'finance', dueAt: `${next.dueDate}T23:59:59+07:00`, href: `/vat?period=${next.period}&entity=${defaultEntity}` });
-      expect(deadlines[0]?.amount).toBeUndefined();
+      ['after the period', addDays(lastDay, 1), `&entity=${defaultEntity}`],
+      // Added on its last day, the branch owes it too: two entities owe, so the link names none.
+      ['on its last day', lastDay, ''],
+    ] as const) {
+      await createdOn(day);
+      for (const who of [users.owner, users.viewer]) {
+        const deadlines = (await today(who)).filter((i) => i.kind === 'deadline' && i.id.startsWith('vat:'));
+        if (!expected) {
+          expect(deadlines, `${who} ${side}`).toEqual([]);
+          continue;
+        }
+        expect(deadlines, `${who} ${side}`).toHaveLength(1);
+        expect(deadlines[0], `${who} ${side}`).toMatchObject({ id: `vat:${next.period}`, app: 'finance', dueAt: `${next.dueDate}T23:59:59+07:00`, href: `/vat?period=${next.period}${entity}` });
+        expect(deadlines[0]?.amount).toBeUndefined();
+      }
     }
+    await admin((c) => c.query(`UPDATE crove_kernel.legal_entity SET created_at = $2 WHERE org_id = $1 AND id = $3`, [orgId, original, branch]));
     await admin((c) => c.query(`UPDATE crove_kernel.tenant SET vat_filing_period = NULL WHERE org_id = $1`, [orgId]));
   });
 
