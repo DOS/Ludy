@@ -61,7 +61,7 @@ export const MCP_WRITE_SCOPES = Object.freeze(['ludy.social.draft', 'ludy.engage
 // The write scopes that have a sealed write context to enter (ADR-0051 decision 11, #3858 slice c). A scope is listed in MCP_WRITE_SCOPES before its commands exist, so a person can consent to it and the tool list can
 // be filtered by it; a command that declares a scope with no context here is refused at run time (rule `mcp_scope`), never run in another scope's context. A scope joins this list with the migration that seals its context
 // and the guard branch that says what that context may write (Engage E2, #3861, for `ludy.engage.write` and `ludy.ads.draft`).
-export const MCP_WRITE_CONTEXT_SCOPES: readonly string[] = Object.freeze(['ludy.social.draft']);
+export const MCP_WRITE_CONTEXT_SCOPES: readonly string[] = Object.freeze(['ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft']);
 export const MCP_SCOPES = Object.freeze([...MCP_READ_SCOPES, ...MCP_WRITE_SCOPES] as const);
 export type McpReadScope = (typeof MCP_READ_SCOPES)[number];
 export type McpWriteScope = (typeof MCP_WRITE_SCOPES)[number];
@@ -2345,11 +2345,16 @@ export class Runtime {
     if (actor.mcp && mcpWrite !== undefined && actor.mcp.scopes.includes(mcpWrite) && MCP_WRITE_CONTEXT_SCOPES.includes(mcpWrite)) {
       // A company MCP grant that holds a write scope runs the command that declares it (ADR-0051 decision 2, #3227): the same sealed shape as the read context (agent-shaped, no user,
       // tainted), at R1 and of its own kind, so the database guard lets it write exactly what that scope names. The grantor named in the seal is the user the edge named, else a bug.
-      const { rows } = await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
-        SELECT crove_kernel.enter_mcp_company_draft_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
+      // Each write scope enters its own context, by name: the draft scope the draft entry, the engage and ads scopes the write entry (which seals the scope it was given and the kind of that scope). A scope
+      // with no entry is refused here and never falls back to the draft or the read context; the entry's answer must name the scope it was asked for.
+      let entry;
+      if (mcpWrite === 'ludy.social.draft') entry = sql`crove_kernel.enter_mcp_company_draft_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid)`;
+      else if (mcpWrite === 'ludy.engage.write' || mcpWrite === 'ludy.ads.draft') entry = sql`crove_kernel.enter_mcp_company_write_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid, ${mcpWrite}::text)`;
+      else throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+      const { rows } = await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean; scope?: string } }>`SELECT ${entry} AS entered`.execute(trx);
       const got = rows[0]?.entered;
       const role = got?.role;
-      if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R1' || got.tainted !== true || (role !== 'owner' && role !== 'admin')) {
+      if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R1' || got.tainted !== true || (role !== 'owner' && role !== 'admin') || (mcpWrite !== 'ludy.social.draft' && got.scope !== mcpWrite)) {
         throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
       }
       return { role, agent: null, memberVy: null };
