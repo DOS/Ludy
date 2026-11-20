@@ -323,7 +323,6 @@ export const misaAmisMatchConfirmName = defineCommand({
       .where('match_key', '=', input.partyId)
       .where('state', '=', 'name_proposal')
       .where('catalogue_code', '=', input.candidateCode)
-      .forUpdate()
       .executeTakeFirst();
     // The row the person saw is gone (a newer check replaced it, someone decided it), is not a proposal any more, or holds another candidate than the one on screen: the person looks again.
     // Bound to the row and its code, never to "the party's proposal", so a confirmation can only be of what was shown.
