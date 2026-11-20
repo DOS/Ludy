@@ -15591,6 +15591,7 @@ export const en = {
           set: 'Turn member-owned AI app connections on or off',
         },
         parties: 'Show an AI app the list of customers, suppliers and contacts',
+        proposal_notify: 'Tell the people who may approve when an AI app sends a proposal',
         propose: 'Record what an AI app asked for as a proposal that waits for a person’s approval',
         signals: 'Show an AI app what needs attention across apps (won deals with no invoice, overdue receivables with an open deal)',
         wake: {
