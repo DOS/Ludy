@@ -144,18 +144,24 @@ suite('the read of started ad launches and the proposals made with its ids (#414
     for (const id of [`cmp-${live.launch.slice(0, 8)}`, `set-${live.launch.slice(0, 8)}`, `ad1-${live.launch.slice(0, 8)}`, `ext-${live.account.slice(0, 8)}`, `acct-${live.connection.slice(0, 8)}`]) expect(text, id).not.toContain(id);
   });
 
-  it('is a read for owners and admins of a company grant, and the tables it reads keep the legal-entity policy the grant\'s scope is judged by', async () => {
+  it('is a read for owners and admins of a company grant, and the tables it reads keep the RESTRICTIVE legal-entity policy the grant\'s scope is judged by, beside the org policy', async () => {
     expect(mcpAdsLaunches.access).toEqual(['owner', 'admin']);
     expect(mcpAdsLaunches.mcp).toEqual({ scope: 'ludy.read' });
     expect((mcpAdsLaunches as { sensitive?: unknown }).sensitive).toBeUndefined();
-    const policies = await h.q<{ t: string; text: string }>(
-      `SELECT r.relname AS t, pg_get_expr(p.polqual, p.polrelid) AS text FROM pg_policy p JOIN pg_class r ON r.oid = p.polrelid JOIN pg_namespace s ON s.oid = r.relnamespace
-       WHERE s.nspname = 'crove_ads' AND r.relname IN ('ad_launch', 'ad_object', 'ad_account')`,
+    // Each table the read touches has the org policy (permissive, org only) and, beside it, the RESTRICTIVE `le_scope` policy that narrows it to the grant's legal entities: a company grant's scope is the whole
+    // org, so what it reads is what an owner or an admin sees on the Campaigns screen, and a scope that names fewer entities would narrow the read here as it narrows the screen.
+    const policies = await h.q<{ t: string; name: string; restrictive: boolean; text: string }>(
+      `SELECT r.relname AS t, p.polname AS name, NOT p.polpermissive AS restrictive, pg_get_expr(p.polqual, p.polrelid) AS text FROM pg_policy p JOIN pg_class r ON r.oid = p.polrelid JOIN pg_namespace s ON s.oid = r.relnamespace
+       WHERE s.nspname = 'crove_ads' AND r.relname IN ('ad_launch', 'ad_object', 'ad_account', 'ad_manage_change')`,
     );
-    for (const table of ['ad_launch', 'ad_object', 'ad_account']) {
+    for (const table of ['ad_launch', 'ad_object', 'ad_account', 'ad_manage_change']) {
       const mine = policies.rows.filter((p) => p.t === table);
-      expect(mine.length, table).toBeGreaterThan(0);
-      for (const p of mine) expect(p.text, table).toMatch(/ctx_le_scope/);
+      const scope = mine.filter((p) => p.name === 'le_scope');
+      expect(scope.length, `${table} le_scope`).toBe(1);
+      expect(scope[0]?.restrictive, `${table} le_scope is restrictive`).toBe(true);
+      expect(scope[0]?.text, `${table} le_scope`).toMatch(/ctx_le_scope/);
+      // The other policies of the table are the org's own and name no entity.
+      for (const p of mine.filter((x) => x.name !== 'le_scope')) expect(p.text, `${table} ${p.name}`).not.toMatch(/ctx_le_scope/);
     }
   });
 
@@ -177,7 +183,7 @@ suite('the read of started ad launches and the proposals made with its ids (#414
 
   it('lets an AI coworker ask to lower a budget it read, and a budget that is not lower is refused when the person approves, leaving the proposal pending', async () => {
     const { launch } = await rig('live');
-    const listed = (await read()).launches.find((l) => l.launchId === launch) as { dailyBudget: string };
+    const listed = (await read()).launches.find((l) => l.launchId === launch) as unknown as { dailyBudget: string };
     expect(Number(listed.dailyBudget)).toBe(100000);
     const { actor } = await h.grant();
     const higher = await h.propose(actor, 'ads.budget.lower_approved', { launchId: launch, dailyBudget: '150000' });
