@@ -3,7 +3,7 @@
 // exact name. For one the catalogue spells differently (or has twice) the person types the unit's name as MISA has it, once per unit; the next check matches that name exactly, and a unit it does not find stays a
 // blocker. The names are shown as text, never as markup. The coworker has no part in it: no model reads a unit name and no agent path sets one.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { MisaAmisUnitRow } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
@@ -61,7 +61,8 @@ export function UnitRow({ row, busy, onKeep }: { row: MisaAmisUnitRow; busy: boo
   const t = useTranslations('misaAmisUnits');
   const [typed, setTyped] = useState(row.alias ?? '');
   const offer = unitNameOffer(typed, row.alias);
-  const id = `misa-amis-unit-${row.unit.replace(/[^a-z0-9]+/gi, '-')}`;
+  // One id per row (never made from the unit's text: letters with marks would collide).
+  const id = useId();
   return (
     <li className="flex flex-wrap items-center gap-2 py-2" data-testid="misa-amis-unit">
       <span className="min-w-0 flex-1 break-words text-foreground">{t(row.state === 'ambiguous' ? 'rowAmbiguous' : row.state === 'matched' ? 'rowMatched' : 'rowUnknown', { unit: row.unit })}</span>
@@ -69,10 +70,17 @@ export function UnitRow({ row, busy, onKeep }: { row: MisaAmisUnitRow; busy: boo
         {t('label', { unit: row.unit })}
       </label>
       <Input id={id} className="w-40" maxLength={64} autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} data-testid="misa-amis-unit-input" />
+      {/* A status region that exists before its text changes, so a screen reader announces what was kept or cleared. */}
+      <span role="status" className="text-xs text-subtle-foreground" data-testid="misa-amis-unit-state">
+        {row.alias === null ? t('none') : t('kept', { name: row.alias })}
+      </span>
       <Button type="button" size="sm" variant="outline" disabled={busy || !offer.canSave} onClick={() => onKeep(typed.trim())} data-testid="misa-amis-unit-save">
         {t('save')}
       </Button>
-      <Button type="button" size="sm" variant="ghost" disabled={busy || !offer.canClear} onClick={() => onKeep(null)} data-testid="misa-amis-unit-clear">
+      <Button type="button" size="sm" variant="ghost" disabled={busy || !offer.canClear} onClick={() => {
+          setTyped('');
+          onKeep(null);
+        }} data-testid="misa-amis-unit-clear">
         {t('clear')}
       </Button>
     </li>

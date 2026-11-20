@@ -242,6 +242,15 @@ describe('units and stocks (MISA ASP, #4125)', () => {
     ]);
   });
 
+  it('a typed name that does not fold to a name is no name: the unit stays unmatched, and a unit named like a prototype property is an ordinary unit', () => {
+    const catalogue = catalogueUnits([unit('Cái', ID1)]);
+    expect(matchUnits(['cái'], catalogue, { cái: 'İ'.repeat(64) })).toEqual([{ kind: 'unit', ref: 'cái', state: 'unknown', code: null, entryId: null }]);
+    expect(matchUnits(['constructor', '__proto__'], catalogue, Object.fromEntries([['constructor', 'Cái'], ['__proto__', 'Cái']]))).toEqual([
+      { kind: 'unit', ref: '__proto__', state: 'matched', code: 'Cái', entryId: ID1 },
+      { kind: 'unit', ref: 'constructor', state: 'matched', code: 'Cái', entryId: ID1 },
+    ]);
+  });
+
   it('never matches a unit or a stock that has no usable id', () => {
     expect(matchUnits(['cái'], catalogueUnits([unit('Cái', null)]))).toEqual([{ kind: 'unit', ref: 'cái', state: 'unknown', code: null, entryId: null }]);
     expect(matchStocks(['KHO1'], catalogueStocks([{ stock_code: 'KHO1', stock_id: 'not-a-guid' }]))).toEqual([{ kind: 'stock', ref: 'KHO1', state: 'unknown', code: null, entryId: null }]);

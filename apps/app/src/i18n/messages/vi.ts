@@ -7743,6 +7743,8 @@ export const vi = {
     label: 'Tên trong MISA ASP của đơn vị {unit}',
     save: 'Lưu',
     clear: 'Xóa',
+    kept: 'Đã lưu: {name}',
+    none: 'Chưa lưu tên',
   },
   misaAmisPush: {
     confirm: 'Gửi {count, plural, other {# chứng từ}} này sang MISA',
@@ -14922,6 +14924,7 @@ export const vi = {
         record_check: 'Ghi kết quả kiểm tra chứng từ với danh mục MISA',
         reject_name: 'Từ chối đề xuất khớp theo tên với danh mục MISA',
         request_check: 'Yêu cầu kiểm tra chứng từ với danh mục MISA',
+        units: 'Xem các đơn vị tính cần tên trong MISA ASP',
         results: 'Xem kết quả kiểm tra chứng từ với danh mục MISA',
       },
       misa_amis: {

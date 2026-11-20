@@ -7747,6 +7747,8 @@ export const en = {
     label: 'The MISA ASP name of the unit {unit}',
     save: 'Keep',
     clear: 'Clear',
+    kept: 'Kept: {name}',
+    none: 'No name kept',
   },
   misaAmisPush: {
     confirm: '{count, plural, one {Send this # voucher} other {Send these # vouchers}} to MISA',
@@ -14923,6 +14925,7 @@ export const en = {
         record_check: 'Recording the result of a check of vouchers against the MISA catalogue',
         reject_name: 'Rejecting a name match proposed against the MISA catalogue',
         request_check: 'Asking for a check of vouchers against the MISA catalogue',
+        units: 'Viewing the units of measure that need a MISA ASP name',
         results: 'Viewing the result of a check of vouchers against the MISA catalogue',
       },
       misa_amis: {

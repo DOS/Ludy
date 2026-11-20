@@ -483,14 +483,15 @@ export const misaAmisMatchUnitsQuery = defineQuery({
       .limit(2000)
       .execute();
     const listed = rows.flatMap((r) => {
-      const alias = aliases[r.match_key] ?? null;
+      const alias = Object.hasOwn(aliases, r.match_key) ? (aliases[r.match_key] ?? null) : null;
       if (r.state === 'matched' && alias === null) return [];
       return [{ unit: r.match_key, state: r.state === 'matched' ? ('matched' as const) : r.state === 'ambiguous' ? ('ambiguous' as const) : ('unknown' as const), alias }];
     });
     // A name typed for a unit no check has asked about yet is listed too, so it can be cleared.
-    const seen = new Set(listed.map((r) => r.unit));
-    for (const [unit, alias] of Object.entries(aliases)) if (!seen.has(unit) && !rows.some((r) => r.match_key === unit)) listed.push({ unit, state: 'unknown', alias });
-    return listed.slice(0, 200);
+    // They come first, so the 200 of the list never cut a name a person can no longer reach to clear.
+    const asked = new Set(rows.map((r) => r.match_key));
+    const unasked = Object.entries(aliases).filter(([unit]) => !asked.has(unit)).map(([unit, alias]) => ({ unit, state: 'unknown' as const, alias }));
+    return [...unasked, ...listed].slice(0, 200);
   },
 });
 

@@ -269,7 +269,10 @@ export const misaAmisConnectionSetDefaultItem = defineCommand({
 /** The aliases object as a plain record of text to text; anything else (a row changed outside the command) reads as none. */
 export function aliasesOf(value: unknown): Record<string, string> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
-  return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+  // Without a prototype, so a unit named `constructor` or `__proto__` is an entry like any other and never an inherited property.
+  const out: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (const [key, name] of Object.entries(value)) if (typeof name === 'string') Object.defineProperty(out, key, { value: name, enumerable: true, writable: true, configurable: true });
+  return out;
 }
 
 // The MISA name of a unit of Ludy on a MISA ASP connection (#4125): kept per unit (folded the way the check folds it), or cleared with a null name. Typed as the catalogue spells it, not looked up here; the next check
@@ -295,7 +298,7 @@ export const misaAmisConnectionSetUnitAlias = defineCommand({
     if (connection.product !== 'asp') throw new DomainError('MISA_AMIS_UNIT_NOT_ASP', 422, 'Chỉ kết nối MISA ASP mới có tên đơn vị tính riêng');
     const aliases = aliasesOf(connection.unit_aliases);
     if (input.misaName === null) delete aliases[key];
-    else aliases[key] = input.misaName;
+    else Object.defineProperty(aliases, key, { value: input.misaName, enumerable: true, writable: true, configurable: true });
     if (Object.keys(aliases).length > MISA_AMIS_UNIT_ALIASES_MAX) throw new DomainError('MISA_AMIS_UNIT_ALIASES_FULL', 422, `Mỗi kết nối chỉ giữ tối đa ${MISA_AMIS_UNIT_ALIASES_MAX} tên đơn vị tính`);
     await ctx.trx
       .updateTable('crove_finance.misa_amis_connection')

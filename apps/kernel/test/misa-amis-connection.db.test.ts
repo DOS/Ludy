@@ -644,6 +644,14 @@ suite('MISA AMIS connections (#3875)', () => {
     expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: '  CHIẾC  Lớn ', misaName: ' Cái ' })).toMatchObject({ status: 200, body: { saved: true } });
     expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'hộp', misaName: 'Hộp' })).toMatchObject({ status: 200 });
     expect(await aliasesOf()).toEqual({ 'chiếc lớn': 'Cái', hộp: 'Hộp' });
+    // A unit named like a prototype property is an ordinary unit: stored, listed and cleared like any other.
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: '__proto__', misaName: 'P' })).toMatchObject({ status: 200 });
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'constructor', misaName: 'C' })).toMatchObject({ status: 200 });
+    // (Read from the row: a JSON answer built from a plain record cannot carry an own `__proto__` key, which nothing on the screen reads.)
+    const [stored] = await rows<{ unit_aliases: Record<string, string> }>('SELECT unit_aliases FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, aspId]);
+    expect(Object.entries(stored?.unit_aliases ?? {}).sort()).toEqual([['__proto__', 'P'], ['chiếc lớn', 'Cái'], ['constructor', 'C'], ['hộp', 'Hộp']]);
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: '__proto__', misaName: null })).toMatchObject({ status: 200 });
+    expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'constructor', misaName: null })).toMatchObject({ status: 200 });
     // Replaced per unit, and cleared per unit with a null name, without touching the others.
     expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'chiếc lớn', misaName: 'Chiếc' })).toMatchObject({ status: 200 });
     expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'HỘP', misaName: null })).toMatchObject({ status: 200 });
@@ -676,10 +684,11 @@ suite('MISA AMIS connections (#3875)', () => {
       await rows('INSERT INTO crove_finance.misa_amis_match (org_id, connection_id, legal_entity_id, kind, match_key, state, catalogue_code, catalogue_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [orgId, aspId, chk?.legal_entity_id, 'unit', key, state, code, id]);
     }
     expect((await call('matches/units', owner, { connectionId: aspId }, aspApp)).body).toEqual([
+      // A name typed for a unit no check has asked about comes first, so a long list never hides a name that can no longer be cleared.
+      { unit: 'mới', state: 'unknown', alias: 'Hộp' },
       { unit: 'chiếc', state: 'matched', alias: 'Cái' },
       { unit: 'hộp', state: 'ambiguous', alias: null },
       { unit: 'kg', state: 'unknown', alias: null },
-      { unit: 'mới', state: 'unknown', alias: 'Hộp' },
     ]);
     expect(await call('matches/units', member, { connectionId: aspId }, aspApp)).toMatchObject({ status: 403 });
     await rows("DELETE FROM crove_finance.misa_amis_match WHERE org_id = $1 AND connection_id = $2 AND kind = 'unit'", [orgId, aspId]);

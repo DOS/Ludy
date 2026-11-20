@@ -133,8 +133,9 @@ export function matchUnits(wanted: Iterable<string>, catalogue: readonly Catalog
   }
   return [...keys].sort().map((key) => {
     // A name a person typed for the unit is looked up instead of the unit's own name (exactly, as every name is); the result stays under the unit of Ludy.
-    const typed = Object.hasOwn(aliases, key) ? normalizeUnitName(aliases[key]) : null;
-    const found = byName.get(typed ?? key) ?? [];
+    // A typed name that does not fold to a name is no name at all: the unit stays unmatched, never silently looked up under its own name.
+    const typed = Object.hasOwn(aliases, key) ? normalizeUnitName(aliases[key]) : undefined;
+    const found = typed === null ? [] : (byName.get(typed ?? key) ?? []);
     const [only] = found;
     // A unit whose id is not a usable id cannot be written on a line: it is as good as not there.
     if (found.length === 1 && only && only.id !== null) return { kind: 'unit' as const, ref: key, state: 'matched' as const, code: only.name, entryId: only.id };
