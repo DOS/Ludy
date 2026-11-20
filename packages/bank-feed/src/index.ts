@@ -6,7 +6,9 @@
 // Each adapter declares the hosts its fetch is bound to; the offline sandbox reaches none.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
-export const BANK_FEED_PROVIDERS = ['bank_sandbox'] as const;
+export { TINGEE_HOSTS, TINGEE_UAT_HOST, TingeeError, parseTingeeSecret, signTingeeRequest, tingeeBankFeed, vietnamStamp, type TingeeErrorKind, type TingeeOptions } from './tingee.ts';
+
+export const BANK_FEED_PROVIDERS = ['bank_sandbox', 'bank_tingee'] as const;
 export type BankFeedProviderId = (typeof BANK_FEED_PROVIDERS)[number];
 
 export function isBankFeedProvider(value: string): value is BankFeedProviderId {
