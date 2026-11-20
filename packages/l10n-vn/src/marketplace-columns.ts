@@ -172,10 +172,32 @@ export interface ColumnAssignment {
   field: OrderField;
 }
 
-export const COLUMN_REFUSALS = ['no_header', 'bad_column', 'buyer_column', 'field_twice', 'column_twice', 'no_order_no', 'no_line', 'nothing_read', 'row_stops_file', 'too_many_rows', 'rows_without_order', 'return_without_status', 'quantity_exceeds_amount', 'dates_swapped'] as const;
+export const COLUMN_REFUSALS = ['no_header', 'bad_column', 'buyer_column', 'field_twice', 'column_twice', 'no_order_no', 'no_line', 'nothing_read', 'row_stops_file', 'too_many_rows', 'rows_without_order', 'return_without_status', 'quantity_exceeds_amount', 'dates_swapped', 'buyer_text'] as const;
 export type ColumnRefusal = (typeof COLUMN_REFUSALS)[number];
 
 export type ColumnCheck = { ok: true; read: OrderRead } | { ok: false; reason: ColumnRefusal };
+
+// What a header cannot tell: an unflagged column ("Name", "Tên", a free column) can hold the buyer's own text, and a mapping copies the cells of its text fields into the lines word for word, so they
+// would leave the sandbox as an order number, a SKU, a product, a variation or a status. A cell with an at sign (an email) in any of them, or a Vietnamese phone number in the free-text ones, refuses the
+// mapping (a SKU or an order id may be a long run of digits, so only the free-text fields are held to the phone). A buyer's NAME has no such mark and is not found here: the person's confirmation
+// of the parsed lines (the confirm screen) is what stands between a name and the books, and the sandbox's guarantee about names is the header list alone.
+const TEXT_FIELDS: readonly OrderField[] = ['orderNo', 'lineKey', 'sku', 'itemName', 'variation', 'status', 'returnStatus'];
+const FREE_TEXT_FIELDS: ReadonlySet<OrderField> = new Set<OrderField>(['itemName', 'variation', 'status', 'returnStatus']);
+const PHONE = /(?:\+?84|0)\d{9,10}(?!\d)/;
+function holdsBuyerText(rows: StatementGrid, headerRow: number, columns: Record<OrderField, number | null>): boolean {
+  const mapped = TEXT_FIELDS.flatMap((field) => (columns[field] === null ? [] : [{ field, column: columns[field] as number }]));
+  if (mapped.length === 0) return false;
+  for (const [rowNo, row] of rows) {
+    if (rowNo <= headerRow) continue;
+    for (const { field, column } of mapped) {
+      const text = cellText(row.get(column));
+      if (text === '') continue;
+      if (text.includes('@')) return true;
+      if (FREE_TEXT_FIELDS.has(field) && PHONE.test(text.replace(/[\s.-]/g, ''))) return true;
+    }
+  }
+  return false;
+}
 
 const FIELD_SET: ReadonlySet<string> = new Set(ORDER_FIELDS);
 
@@ -211,6 +233,7 @@ export function checkColumnMapping(rows: StatementGrid, platform: MarketplacePla
       return col === null ? [] : [{ field, header: byIndex.get(col)?.header ?? '' }];
     }),
   };
+  if (holdsBuyerText(rows, sheet.headerRow, columns)) return { ok: false, reason: 'buyer_text' };
   const read = orderLines(rows, mapping, maxRows);
   if (read === null) return { ok: false, reason: 'too_many_rows' };
   if (read.skipped.some((s) => s.reason !== 'no_order_no')) return { ok: false, reason: 'row_stops_file' };
