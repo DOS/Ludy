@@ -24,16 +24,18 @@ export function MisaAmisDefaultItem({ connectionId, role, typed, saved, canManag
   const offer = defaultItemOffer(typed, saved);
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid={`misa-amis-default-${role}`}>
-      <span className="text-xs text-subtle-foreground" data-testid={`misa-amis-default-${role}-state`}>
+      {/* A status region that exists before its text changes, so a screen reader announces what was kept or cleared. */}
+      <span role="status" className="text-xs text-subtle-foreground" data-testid={`misa-amis-default-${role}-state`}>
         {saved === null ? t('defaultNone') : t('defaultIs', { code: saved })}
       </span>
-      {canManage && offer.canSave && (
-        <Button type="button" size="sm" variant="ghost" loading={keep.isPending} onClick={() => keep.mutate(typed.trim())} data-testid={`misa-amis-default-${role}-save`}>
+      {/* The buttons stay where they are and are disabled when they would change nothing, so the keyboard focus a click leaves on one is not lost when it has done its work. */}
+      {canManage && (
+        <Button type="button" size="sm" variant="ghost" loading={keep.isPending} disabled={!offer.canSave} onClick={() => keep.mutate(typed.trim())} data-testid={`misa-amis-default-${role}-save`}>
           {t('defaultSave')}
         </Button>
       )}
-      {canManage && offer.canClear && (
-        <Button type="button" size="sm" variant="ghost" loading={keep.isPending} onClick={() => keep.mutate(null)} data-testid={`misa-amis-default-${role}-clear`}>
+      {canManage && (
+        <Button type="button" size="sm" variant="ghost" loading={keep.isPending} disabled={!offer.canClear} onClick={() => keep.mutate(null)} data-testid={`misa-amis-default-${role}-clear`}>
           {t('defaultClear')}
         </Button>
       )}

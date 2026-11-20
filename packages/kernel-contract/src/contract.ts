@@ -2671,7 +2671,7 @@ export const contract = {
       // CHANNEL_NOT_ACTIVE (409), FORBIDDEN (403).
       test: oc.input(z.object({ id: zId })).output(z.object({ queued: z.boolean() })),
       // Keeps (or, with a null code, clears) the default item of the connection for service lines or sales lines (S3b, #4124): a code typed as the MISA catalogue spells it, which the next check validates against
-      // the catalogue. Owner or admin. MISA_AMIS_DISABLED (404), MISA_AMIS_CONNECTION_NOT_FOUND (404), FORBIDDEN (403).
+      // the catalogue. Owner or admin. MISA_AMIS_CONNECTION_NOT_FOUND (404), FORBIDDEN (403); not gated by the connector's switch (nothing is sent).
       setDefaultItem: oc.input(zMisaAmisDefaultItem).output(z.object({ saved: z.boolean() })),
     },
     // The check of a connection's vouchers against the firm's own MISA catalogue (S3a, #4112 of #4103): the worker opens the sealed access code, reads the catalogue pages in its memory, matches the parties

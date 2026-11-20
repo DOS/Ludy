@@ -39,22 +39,30 @@ const item = (over: Partial<Parameters<typeof MisaAmisDefaultItem>[0]> = {}, loc
   wrap(<MisaAmisDefaultItem connectionId={ID} role="service" typed="" saved={null} canManage {...over} />, locale);
 
 describe('the default item of a connection (#4124)', () => {
+  // The buttons stay on the screen and are disabled when they would change nothing, so focus is not lost when a click has done its work.
+  const enabled = (html: string, testid: string) => {
+    const tag = html.match(new RegExp(`<button[^>]*data-testid="${testid}"[^>]*>`))?.[0];
+    return tag === undefined ? null : !tag.includes(' disabled=""');
+  };
+
   it('says when nothing is kept and offers to keep only what has been typed', () => {
     const empty = item();
     expect(empty).toContain('No default code');
-    expect(empty).not.toContain('misa-amis-default-service-save');
-    expect(empty).not.toContain('misa-amis-default-service-clear');
+    expect(enabled(empty, 'misa-amis-default-service-save')).toBe(false);
+    expect(enabled(empty, 'misa-amis-default-service-clear')).toBe(false);
     const typed = item({ typed: ' DV_CHUNG ' });
-    expect(typed).toContain('data-testid="misa-amis-default-service-save"');
+    expect(enabled(typed, 'misa-amis-default-service-save')).toBe(true);
     expect(typed).toContain('Keep as default');
+    // The state text is a status region, announced when it changes.
+    expect(typed).toMatch(/<span role="status"[^>]*data-testid="misa-amis-default-service-state"/);
   });
 
   it('shows the kept code as text and offers to clear it, and to replace it only when the field holds another code', () => {
     const kept = item({ saved: 'DV_CHUNG', typed: 'DV_CHUNG' });
     expect(kept).toContain('Default code: DV_CHUNG');
-    expect(kept).toContain('data-testid="misa-amis-default-service-clear"');
-    expect(kept).not.toContain('misa-amis-default-service-save');
-    expect(item({ saved: 'DV_CHUNG', typed: 'DV_KHAC' })).toContain('data-testid="misa-amis-default-service-save"');
+    expect(enabled(kept, 'misa-amis-default-service-clear')).toBe(true);
+    expect(enabled(kept, 'misa-amis-default-service-save')).toBe(false);
+    expect(enabled(item({ saved: 'DV_CHUNG', typed: 'DV_KHAC' }), 'misa-amis-default-service-save')).toBe(true);
     const markup = item({ saved: '<img src=x onerror=alert(1)>' });
     expect(markup).toContain('&lt;img src=x onerror=alert(1)&gt;');
     expect(markup).not.toContain('<img');

@@ -663,11 +663,11 @@ suite('MISA AMIS connections (#3875)', () => {
     // The table holds the bound too; a tenant role may write these two columns and no other column of the row (the company code, the entity, the channel stay as they were made).
     await expect(rows('UPDATE crove_finance.misa_amis_connection SET default_sales_item_code = $3 WHERE org_id = $1 AND id = $2', [orgId, id, 'x'.repeat(51)])).rejects.toThrow(/misa_amis_connection_default_items_ck/);
     await expect(rows("UPDATE crove_finance.misa_amis_connection SET default_service_item_code = '' WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toThrow(/misa_amis_connection_default_items_ck/);
-    const asTenant = (statement: string) =>
+    const asTenant = (statement: string, who: Account = owner) =>
       admin(async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner.userId, orgId)]);
+          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(who.userId, orgId)]);
           await c.query('SET LOCAL ROLE crove_tenant');
           const result = await c.query(statement, [orgId, id]);
           return `updated ${result.rowCount}`;
@@ -678,6 +678,8 @@ suite('MISA AMIS connections (#3875)', () => {
         }
       });
     expect(await asTenant("UPDATE crove_finance.misa_amis_connection SET default_sales_item_code = 'KHAC' WHERE org_id = $1 AND id = $2")).toBe('updated 1');
+    // A member or a viewer who reached the table with the tenant role (no command, no route) updates no row: the update policy hides the row from them.
+    for (const who of [member, viewer]) expect(await asTenant("UPDATE crove_finance.misa_amis_connection SET default_sales_item_code = 'KHAC' WHERE org_id = $1 AND id = $2", who), who.email).toBe('updated 0');
     expect(await asTenant("UPDATE crove_finance.misa_amis_connection SET org_company_code = 'ludy-00000000000000000000000000000000' WHERE org_id = $1 AND id = $2")).toMatch(/permission denied/);
     expect(await asTenant("UPDATE crove_finance.misa_amis_connection SET legal_entity_id = legal_entity_id WHERE org_id = $1 AND id = $2")).toMatch(/permission denied/);
     // The trigger that fixes the product and the channel connection still does, for anyone.
