@@ -3,7 +3,7 @@
 // mapping it was made for, and a selection round-trips to assignments in column order.
 import { describe, expect, it } from 'vitest';
 import type { MarketplaceColumnSheet } from '@crove/kernel-contract';
-import { assignableIndexes, assignmentsFrom, fieldsChosenTwice, mappingFrom, sameMappings, selectionFrom, verdictIsCurrent } from '../src/lib/marketplace-columns.ts';
+import { assignableIndexes, checkIsStuck, assignmentsFrom, fieldsChosenTwice, mappingFrom, sameMappings, selectionFrom, verdictIsCurrent } from '../src/lib/marketplace-columns.ts';
 
 const sheet: MarketplaceColumnSheet = {
   headerRow: 1,
@@ -60,5 +60,18 @@ describe('the mapping a choice makes', () => {
     expect(verdictIsCurrent(a, other)).toBe(false);
     // The sheet alone (no mapping asked) has no verdict to show.
     expect(verdictIsCurrent(null, null)).toBe(false);
+  });
+});
+
+describe('a check whose job was lost', () => {
+  const now = Date.parse('2026-11-20T12:00:00.000Z');
+  it('is stuck only when it still waits and was asked ten minutes ago or more', () => {
+    expect(checkIsStuck({ state: 'requested', requestedAt: '2026-11-20T11:49:00.000Z' }, now)).toBe(true);
+    expect(checkIsStuck({ state: 'requested', requestedAt: '2026-11-20T11:50:00.000Z' }, now)).toBe(true);
+    expect(checkIsStuck({ state: 'requested', requestedAt: '2026-11-20T11:51:00.000Z' }, now)).toBe(false);
+    expect(checkIsStuck({ state: 'done', requestedAt: '2026-11-20T11:00:00.000Z' }, now)).toBe(false);
+    expect(checkIsStuck({ state: 'requested', requestedAt: null }, now)).toBe(false);
+    expect(checkIsStuck({ state: 'requested', requestedAt: 'not a date' }, now)).toBe(false);
+    expect(checkIsStuck(undefined, now)).toBe(false);
   });
 });

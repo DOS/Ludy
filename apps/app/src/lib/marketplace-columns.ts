@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The pure half of the column screen for an unrecognised marketplace order report (#4036, slice 1c of #3850): which field a person (or Ly's first suggestion) put on which column, the mapping that
 // choice makes, whether the verdict on screen still belongs to it, and what is held back from a press. Nothing here reads a file or calls the server; the server checks the mapping on the real file.
-import { MARKETPLACE_COLUMN_FIELDS, MARKETPLACE_COLUMN_PLATFORMS, type MarketplaceColumnAssignment, type MarketplaceColumnMapping, type MarketplaceColumnSheet } from '@crove/kernel-contract';
+import { MARKETPLACE_COLUMN_FIELDS, MARKETPLACE_COLUMN_PLATFORMS, MARKETPLACE_COLUMN_RUNNING_MINUTES, type MarketplaceColumnAssignment, type MarketplaceColumnMapping, type MarketplaceColumnSheet, type MarketplaceColumnsStatus } from '@crove/kernel-contract';
 
 export type ColumnField = (typeof MARKETPLACE_COLUMN_FIELDS)[number];
 export type ColumnPlatform = (typeof MARKETPLACE_COLUMN_PLATFORMS)[number];
@@ -78,4 +78,14 @@ export function sameMappings(a: MarketplaceColumnMapping | null, b: MarketplaceC
  */
 export function verdictIsCurrent(asked: MarketplaceColumnMapping | null, current: MarketplaceColumnMapping | null): boolean {
   return asked !== null && sameMappings(asked, current);
+}
+
+/**
+ * Whether a check that still waits was asked so long ago that its job is read as lost: the card stops polling and lets the person press again (the server accepts a new request after the same time).
+ * A request without a time, or with one that cannot be read, is not stuck.
+ */
+export function checkIsStuck(status: Pick<MarketplaceColumnsStatus, 'state' | 'requestedAt'> | undefined, nowMs: number): boolean {
+  if (status?.state !== 'requested' || status.requestedAt === null) return false;
+  const asked = Date.parse(status.requestedAt);
+  return Number.isFinite(asked) && nowMs - asked >= MARKETPLACE_COLUMN_RUNNING_MINUTES * 60_000;
 }

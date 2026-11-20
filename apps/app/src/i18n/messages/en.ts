@@ -8079,6 +8079,8 @@ export const en = {
       title: 'Marketplace order reports not recognised',
       hint: 'This spreadsheet does not match any marketplace Ludy knows. Look at the columns, pick the marketplace and say what each column is; Ludy reads it on the real file and shows you the lines it could read. Nothing is saved yet.',
       read: 'Look at the columns',
+      readAgain: 'Read the file again',
+      stuck: 'Reading the file is taking too long and seems to have been dropped; press again.',
       reading: 'Reading the file...',
       platform: 'Marketplace',
       platformChoose: 'Pick the marketplace',

@@ -8075,6 +8075,8 @@ export const vi = {
       title: 'Báo cáo đơn hàng của sàn chưa nhận ra',
       hint: 'Tệp bảng tính này chưa khớp với sàn nào mà Ludy biết. Hãy xem các cột, chọn sàn và chọn mỗi cột là mục nào; Ludy sẽ đọc thử trên tệp thật và cho bạn xem các dòng đọc được. Chưa có gì được lưu.',
       read: 'Xem các cột',
+      readAgain: 'Đọc lại tệp',
+      stuck: 'Việc đọc tệp mất quá lâu và có vẻ đã bị bỏ dở; hãy bấm lại.',
       reading: 'Đang đọc tệp...',
       platform: 'Sàn',
       platformChoose: 'Chọn sàn',

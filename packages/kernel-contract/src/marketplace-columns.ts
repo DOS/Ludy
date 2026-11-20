@@ -9,6 +9,8 @@ export const MARKETPLACE_COLUMN_PLATFORMS = ['shopee', 'tiktok_shop', 'lazada'] 
 export const MARKETPLACE_COLUMN_FIELDS = ['orderNo', 'lineKey', 'orderedAt', 'shippedAt', 'deliveredAt', 'status', 'returnStatus', 'sku', 'itemName', 'variation', 'quantity', 'unitPrice', 'amount'] as const;
 export const MARKETPLACE_COLUMN_REFUSALS = ['no_header', 'bad_column', 'buyer_column', 'field_twice', 'column_twice', 'no_order_no', 'no_line', 'nothing_read', 'row_stops_file', 'too_many_rows', 'rows_without_order', 'return_without_status', 'quantity_exceeds_amount', 'dates_swapped', 'buyer_text'] as const;
 export const MARKETPLACE_COLUMN_FAILURES = ['not_a_sheet', 'too_large', 'unavailable', 'unreadable'] as const;
+// A check asked this long ago and still waiting is read as lost: the server then lets a press ask again, and the screen stops waiting and says so (a lost job must not block the file for ever).
+export const MARKETPLACE_COLUMN_RUNNING_MINUTES = 10;
 // The lines a member sees before anything is saved: no more than this many.
 export const MARKETPLACE_COLUMN_PREVIEW_LINES = 20;
 // A check, its masked sheet and its preview (personal data) are deleted by the nightly retention this many days after the check finished.

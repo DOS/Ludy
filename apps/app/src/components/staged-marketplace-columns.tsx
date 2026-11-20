@@ -16,7 +16,7 @@ import { Card } from '@crove/ui/components/card';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { FIELD_ORDER, fieldsChosenTwice, isFieldChoice, isPlatform, mappingFrom, selectionFrom, verdictIsCurrent, type ColumnPlatform, type Selection } from '../lib/marketplace-columns.ts';
+import { FIELD_ORDER, checkIsStuck, fieldsChosenTwice, isFieldChoice, isPlatform, mappingFrom, selectionFrom, verdictIsCurrent, type ColumnPlatform, type Selection } from '../lib/marketplace-columns.ts';
 import { toast } from '../lib/toast.ts';
 import { CardSkeleton, ErrorText, Spinner } from './ui.tsx';
 
@@ -25,8 +25,15 @@ const WAIT_POLL_MS = 3000;
 
 type Edits = { platform: ColumnPlatform | ''; selection: Selection };
 
-function Verdict({ status, current }: { status: MarketplaceColumnsStatus; current: ReturnType<typeof mappingFrom> }) {
+function Verdict({ status, current, stuck }: { status: MarketplaceColumnsStatus; current: ReturnType<typeof mappingFrom>; stuck: boolean }) {
   const t = useTranslations('inbox.marketplaceColumns');
+  if (status.state === 'requested' && stuck) {
+    return (
+      <p className="mt-3 text-xs text-warning" role="alert" data-testid="staged-columns-stuck">
+        {t('stuck')}
+      </p>
+    );
+  }
   if (status.state === 'requested') {
     return (
       <p className="mt-3 flex items-center gap-2 text-xs text-subtle-foreground" role="status" data-testid="staged-columns-reading">
@@ -108,7 +115,8 @@ function ColumnsCard({ file }: { file: MarketplaceColumnsFile }) {
   const status = useQuery({
     ...orpc.marketplace.columns.queryOptions({ input: { fileId: file.fileId } }),
     enabled: opened,
-    refetchInterval: (query: { state: { data: MarketplaceColumnsStatus | undefined } }) => (query.state.data?.state === 'requested' ? WAIT_POLL_MS : false),
+    // A check waiting longer than the server's window is read as lost: polling stops and the person may press again.
+    refetchInterval: (query: { state: { data: MarketplaceColumnsStatus | undefined } }) => (query.state.data?.state === 'requested' && !checkIsStuck(query.state.data, Date.now()) ? WAIT_POLL_MS : false),
   });
   const data = status.data;
   const sheet = data?.sheet ?? null;
@@ -139,7 +147,8 @@ function ColumnsCard({ file }: { file: MarketplaceColumnsFile }) {
     },
     onError: (error) => toast(errorMessage(error), 'error'),
   });
-  const waiting = data?.state === 'requested';
+  const stuck = checkIsStuck(data, Date.now());
+  const waiting = data?.state === 'requested' && !stuck;
 
   return (
     <Card className="block p-4 text-sm" data-testid="staged-columns-report">
@@ -153,12 +162,14 @@ function ColumnsCard({ file }: { file: MarketplaceColumnsFile }) {
       )}
       {opened && status.isError && <ErrorText>{errorMessage(status.error)}</ErrorText>}
       {opened && status.isPending && <Spinner />}
-      {data !== undefined && sheet === null && data.state === 'requested' && (
-        <p className="mt-3 flex items-center gap-2 text-xs text-subtle-foreground" role="status" data-testid="staged-columns-reading">
-          <Spinner /> {t('reading')}
-        </p>
+      {data !== undefined && sheet === null && (data.state === 'requested' || data.state === 'failed') && <Verdict status={data} current={current} stuck={stuck} />}
+      {data !== undefined && sheet === null && (data.state === 'failed' || stuck) && (
+        <div className="mt-3">
+          <Button size="sm" className="min-h-11 md:min-h-8" loading={ask.isPending} onClick={() => ask.mutate(undefined)} data-testid="staged-columns-read-again">
+            {t('readAgain')}
+          </Button>
+        </div>
       )}
-      {data !== undefined && sheet === null && data.state === 'failed' && <Verdict status={data} current={current} />}
       {data !== undefined && sheet !== null && (
         <>
           <div className="mt-3 space-y-1">
@@ -246,7 +257,7 @@ function ColumnsCard({ file }: { file: MarketplaceColumnsFile }) {
               </span>
             )}
           </div>
-          <Verdict status={data} current={current} />
+          <Verdict status={data} current={current} stuck={stuck} />
         </>
       )}
     </Card>

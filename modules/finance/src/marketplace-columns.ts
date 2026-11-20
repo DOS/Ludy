@@ -12,6 +12,7 @@
 import { z } from 'zod';
 import {
   MARKETPLACE_COLUMN_FILES_LIMIT,
+  MARKETPLACE_COLUMN_RUNNING_MINUTES,
   zId,
   zMarketplaceColumnMapping,
   zMarketplaceColumnPreview,
@@ -33,7 +34,7 @@ const SHEET_TYPES = ['application/zip', 'application/vnd.openxmlformats-officedo
 // A file the worker's readers took for a bank statement or a marketplace report is not this path's: only a spreadsheet whose latest run is `unsupported` and names none of those kinds is.
 const READ_KINDS = ['bank_statement', 'marketplace_orders', 'marketplace_income'];
 // A check asked this recently and still waiting is the running one; later than that a press asks again (a lost job must not block the file for ever).
-const RUNNING_MS = 10 * 60 * 1000;
+const RUNNING_MS = MARKETPLACE_COLUMN_RUNNING_MINUTES * 60 * 1000;
 
 export const MARKETPLACE_COLUMN_CHECK_REQUESTED = 'finance.marketplace_column_check.requested';
 

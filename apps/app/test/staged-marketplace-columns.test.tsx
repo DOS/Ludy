@@ -183,9 +183,30 @@ describe('the unrecognised report card', () => {
 
   it('says a file that could not be read, and that a check is under way', () => {
     expect(card({ status: status({ state: 'failed', failure: 'unreadable', sheet: null }) })).toContain('Không đọc được tệp này');
-    const waiting = card({ status: status({ state: 'requested', sheet: null }) });
+    const waiting = card({ status: status({ state: 'requested', sheet: null, requestedAt: new Date().toISOString() }) });
     expect(waiting).toContain('staged-columns-reading');
     expect(waiting).toContain('Đang đọc tệp');
+    expect(waiting).not.toContain('staged-columns-stuck');
+    // A read that failed can be asked again.
+    expect(card({ status: status({ state: 'failed', failure: 'unavailable', sheet: null }) })).toContain('staged-columns-read-again');
+  });
+
+  it('does not wait for ever on a check whose job was lost: after the server window it says so and lets the member ask again', () => {
+    const longAgo = new Date(Date.now() - 11 * 60_000).toISOString();
+    // No sheet was ever recorded: no spinner, a note, and a button to read the file again.
+    const noSheet = card({ status: status({ state: 'requested', sheet: null, requestedAt: longAgo }) });
+    expect(noSheet).toContain('staged-columns-stuck');
+    expect(noSheet).toContain('Việc đọc tệp mất quá lâu');
+    expect(noSheet).not.toContain('staged-columns-reading');
+    expect(isDisabled(buttonTag(noSheet, 'staged-columns-read-again'))).toBe(false);
+    // A sheet is there and a mapping was asked: the note shows and the check button is not held for the waiting job.
+    const withSheet = card({ status: status({ state: 'requested', mapping: MAPPING, requestedAt: longAgo }) });
+    expect(withSheet).toContain('staged-columns-stuck');
+    expect(isDisabled(buttonTag(withSheet, 'staged-columns-check'))).toBe(false);
+    // Just under the window it still waits.
+    const recent = card({ status: status({ state: 'requested', mapping: MAPPING, requestedAt: new Date(Date.now() - 5 * 60_000).toISOString() }) });
+    expect(recent).toContain('staged-columns-reading');
+    expect(isDisabled(buttonTag(recent, 'staged-columns-check'))).toBe(true);
   });
 
   it('speaks English when the member does', () => {
