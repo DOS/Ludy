@@ -399,7 +399,7 @@ suite('files attached to a note on PostgreSQL (#3561)', () => {
     const sharedNote = await createNote(o, o.author, 'org', 'Ghi chú chung');
     const email = 'khach-hang@example.com';
 
-    const privAtt = await attached(o, o.author, privNote, pdf('rieng'), 'ho-so-khach-hang@example.com.pdf');
+    const privAtt = await attached(o, o.author, privNote, pdf('rieng'), 'ho-so-rieng.pdf');
     const sharedAtt = await attached(o, o.author, sharedNote, pdf('chung'), 'tai-lieu-chung.pdf');
     extract.text = `Liên hệ ${email} để đối chiếu`;
     await runNoteAttachmentExtract({ runtime: worker, store, extract }, { orgId: o.orgId, attachmentId: privAtt.id });
