@@ -562,7 +562,8 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     expect(none).toMatchObject({ connectionId: null, status: { state: 'none' } });
     await rows("UPDATE crove_finance.misa_amis_match_check SET state = 'requested', failure = NULL, finished_at = NULL WHERE org_id = $1", [orgId]);
     await record({ state: 'done', failure: null, results: [{ kind: 'item', ref: 'DV_CHUNG', state: 'unknown', code: null, entryId: null }] });
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toHaveLength(1);
+    // The check's own result is the one item row; a name a person confirmed (left by the tests above) stays through a check and goes only with the connection.
+    expect(await rows("SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1 AND kind = 'item'", [orgId])).toHaveLength(1);
     expect((await call('connections/disconnect', owner, { id: connectionId })).status).toBe(200);
     expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId])).toEqual([]);
     expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toEqual([]);
