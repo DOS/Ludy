@@ -83,6 +83,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // The bank feed adapters (ADR-0039, #2044): the offline sandbox reaches nothing; a real adapter is classified here,
   // with its provider, before it is added.
   'channels.bankFeeds': [],
+  // The bank feed adapters that reach a host (ADR-0039, #2045): a real adapter (Tingee, `bank_tingee`) calls its provider through a host-bound allowlisted fetch, so the field is
+  // classified for what it can reach: the providers of @crove/bank-feed. Only the sync job reaches the field. The sandbox stays in channels.bankFeeds, which reaches nothing.
+  'channels.bankFeedHosted': ['provider:bank_feed'],
   // The ad platform adapters (ADR-0040, #2217, #2218): the offline sandbox reaches nothing, the Meta adapter reaches the
   // Graph API host, and later adapters their own hosts, each bound to them by its allowlisted fetch, so the field is
   // classified for what it can reach: the platforms of @crove/ad-platform.
@@ -148,7 +151,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
 // directory runs from the base branch on a protected-path PR, so a new field lands in two steps (#1663): its
 // classification here first, which passes both the PR's own copy and the base one, then the field in a later PR, whose
 // base copy already knows it. Remove the entry once the field is on the base branch.
-export const PENDING_DEPS: Readonly<Record<string, string>> = {};
+export const PENDING_DEPS: Readonly<Record<string, string>> = {
+  'channels.bankFeedHosted': '#2045',
+};
 
 // What the classification of WorkerDeps gets wrong (#1663), given its top-level fields: a field DEPS_REACH does not
 // classify fails (the safety direction: a new dependency is classified before it is used), and so does an entry for a
