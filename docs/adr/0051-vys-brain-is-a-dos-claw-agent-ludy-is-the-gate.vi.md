@@ -73,6 +73,8 @@ Anh đã quyết ngày 2026-11-18 (cuộc trò chuyện với Platform PO, chọ
 
 Việc làm chia thành năm bản, mỗi bản có duyệt bảo mật riêng: (a) tài liệu này, (b) hộp kín đọc hội thoại và CRM, (c) quyền ghi theo mảng, (d) đề xuất thay cho thực thi, (e) sự kiện đánh thức theo mảng.
 
+**Ghi chú đã xây (E2, #3861):** Dy và Uy giờ làm ngay được các bước R1 nhỏ (giao, đóng, ghi chú, gắn liên hệ, tạo và chuyển cơ hội, lưu báo giá nháp, đánh dấu việc tiếp theo, lưu nháp quảng cáo) trong một "hộp kín ghi" riêng, mà cơ sở dữ liệu chỉ cho ghi đúng những dòng của từng việc. Một chỗ khác với lời văn ở mục 3: các chính sách của hộp kín này hỏi qua một hàm nhỏ, không đọc khóa niêm phong trực tiếp, để các bài kiểm tra bảo vệ không bị lệch; bài kiểm tra riêng của E2 chốt hàm nào và chính sách nào nhắc tới nó.
+
 ## Khi nào xem lại
 
 - DOS không giao bộ nối hoặc giai đoạn 3 trong thời gian chạy thử: "Hỏi Vy" trong Ludy được đưa lại cho anh quyết, không tự làm.
