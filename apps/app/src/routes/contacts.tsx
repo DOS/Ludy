@@ -37,6 +37,7 @@ import {
   type ContactFilterState,
   type Tri,
 } from '../lib/contact-filter.ts';
+import { AiWrittenBadge } from '../components/ai-written-badge.tsx';
 
 const SCOPE = 'crm.party';
 // The search waits for a pause in typing, so one request goes out per word and not per key.
@@ -113,6 +114,7 @@ function ContactTimeline({ partyId }: { partyId: string }) {
               </time>
               <span className="text-foreground">{e.summary}</span>
               {e.actorName && <span className="text-xs text-subtle-foreground">{e.actorName}</span>}
+              <AiWrittenBadge actorOrigin={e.actorOrigin} />
             </li>
           ))}
         </ol>

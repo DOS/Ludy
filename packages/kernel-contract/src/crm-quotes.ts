@@ -152,6 +152,9 @@ export const zQuoteSummary = z.strictObject({
   createdBy: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  // 'mcp' when a connected AI app made the quote or changed its text, lines or totals (under the name of the person who connected it); `tainted` says the text may be the app's: the screen says so (#4149).
+  actorOrigin: z.enum(['ui', 'mcp']),
+  tainted: z.boolean(),
 });
 export type QuoteSummary = z.infer<typeof zQuoteSummary>;
 

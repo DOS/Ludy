@@ -488,7 +488,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
     expect((await listAll(o, o.minh, { assignee: 'me' })).conversations.map((c) => c.id)).toEqual([id]);
     expect((await listAll(o, o.minh, { assignee: 'none' })).conversations).toHaveLength(1);
     const { noteId } = await exec<{ noteId: string }>(o, o.minh, 'kernel.conversation.note', { conversationId: id, body: SECRET_TEXT });
-    expect((await detail(o, o.viewer, id)).notes).toEqual([{ id: noteId, authorUserId: o.minh, body: SECRET_TEXT, createdAt: expect.any(String) }]);
+    expect((await detail(o, o.viewer, id)).notes).toEqual([{ id: noteId, authorUserId: o.minh, body: SECRET_TEXT, createdAt: expect.any(String), actorOrigin: 'ui', tainted: false }]);
     // Linking a contact is a person's decision, and holds for the customer's other threads.
     const party = randomUUID();
     await admin((c) => c.query("INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Khách')", [o.orgId, party]));

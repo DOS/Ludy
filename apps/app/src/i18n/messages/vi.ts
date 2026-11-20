@@ -9016,6 +9016,12 @@ export const vi = {
     revoked: 'Đã ngắt',
     expired: 'Hết hạn',
   },
+  // Dấu trên ghi chú, cơ hội, báo giá và dòng thời gian do một ứng dụng AI đã kết nối viết hoặc sửa (#4149): nó vẫn mang tên người đã kết nối, nên dấu này là cách phân biệt với chữ của chính người đó.
+  aiWritten: {
+    label: 'Do đồng nghiệp AI viết',
+    labelEdited: 'Đồng nghiệp AI đã sửa nội dung',
+    hint: 'Nội dung này do một ứng dụng AI đã kết nối ghi, dưới tên người đã kết nối nó. Đó là chữ để đọc, chưa ai duyệt; hãy kiểm tra trước khi dùng.',
+  },
   oauthConsent: {
     title: 'Kết nối ứng dụng AI với Ludy',
     loading: 'Đang tải yêu cầu kết nối…',

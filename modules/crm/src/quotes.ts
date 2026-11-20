@@ -268,6 +268,8 @@ interface SummaryRow {
   sent_at: Date | string | null;
   sent_via: string | null;
   first_viewed_at: Date | string | null;
+  actor_origin: string;
+  tainted: boolean;
   buyer_name: string | null;
   buyer_tax_code: string | null;
   buyer_address: string | null;
@@ -298,6 +300,8 @@ function base(ctx: Reader) {
       'q.created_by',
       'q.created_at',
       'q.updated_at',
+      'q.actor_origin',
+      'q.tainted',
       'q.sent_at',
       'q.sent_via',
       'q.first_viewed_at',
@@ -339,6 +343,8 @@ function summary(r: SummaryRow, now: Date): QuoteSummary {
     createdBy: r.created_by,
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
+    actorOrigin: r.actor_origin as 'ui' | 'mcp',
+    tainted: r.tainted,
   };
 }
 

@@ -9019,6 +9019,12 @@ export const en = {
     revoked: 'Disconnected',
     expired: 'Expired',
   },
+  // The mark on a note, deal, quote or timeline row that a connected AI app wrote or changed (#4149): it stays under the name of the person who connected the app, so the mark tells it from that person's own words.
+  aiWritten: {
+    label: 'Written by an AI coworker',
+    labelEdited: 'Text changed by an AI coworker',
+    hint: 'A connected AI app wrote this, under the name of the person who connected it. It is text to read, not something anyone approved: check it before you rely on it.',
+  },
   oauthConsent: {
     title: 'Connect an AI app to Ludy',
     loading: 'Loading the connection request…',

@@ -22,6 +22,8 @@ function document(number: string | null): QuoteDocument {
   return {
     quote: {
       id: '00000000-0000-4000-8000-000000000001',
+    actorOrigin: 'ui',
+    tainted: false,
       dealId: '00000000-0000-4000-8000-000000000002',
       dealTitle: 'Gói kế toán năm',
       partyId: '00000000-0000-4000-8000-000000000003',
