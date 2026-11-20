@@ -15,7 +15,7 @@
 //             deal (id, title, stage name and kind) and the meeting's state.
 // What is tainted: a party's name, a deal's title and lost reason, a quote's notes, terms, buyer and line descriptions, and above all a booking guest's name, note, email and phone are text a person or a
 // visitor typed, so every one is cut to one plain line (plainLine) and reaches the client as data, never as an instruction; every deal, quote and booking says `tainted: true`, and a booking also says `sourceTrust: 'external'` (the visitor's own words). Never returned: the quote's links and their tokens or hashes, the buyer's address and email (the party read has the contact's own), the public quote page,
-// who made a row (created_by), versions, canDelete, the duplicate-of chain of a party, the meeting's join link, the host and the calendar event, the booking's management token or requests, stock item ids,
+// who made a row (created_by), canDelete, the duplicate-of chain of a party, the meeting's join link, the host and the calendar event, the booking's management token or requests, stock item ids,
 // notes of the contact timeline, the sales orders, and anything of a query that is `sensitive`. A party merged into another is shown by the party it stands for in the deal screens; here the party id
 // and name are the deal's own. Erased data is never sent: an erased party or message leaves no row for a read to find (erasure deletes it and keeps only a tombstone with no text). Row-level
 // security and the `org_id` filters keep other orgs out.

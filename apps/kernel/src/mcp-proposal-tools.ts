@@ -128,14 +128,14 @@ const SPECS: readonly ToolSpec[] = [
     command: 'ads.budget.lower_approved',
     tool: 'ludy_ads_budget_lower',
     title: 'Propose lowering an ad\'s daily budget',
-    description: 'Proposes a LOWER daily budget for a live ad launch (launchId from ludy_ads_launches; dailyBudget: the new amount as a decimal string in the launch\'s own currency, below the current `dailyBudget`). A budget that is not lower is refused when a person approves.' + HOW,
+    description: 'Proposes a LOWER daily budget for a live ad launch (launchId from ludy_ads_launches; dailyBudget: the new amount as a decimal string in the launch\'s own currency, above zero, within the currency\'s decimals and below the launch\'s `heldDailyBudget`, which is higher than `dailyBudget` while a raise waits). A budget that is not lower is refused when a person approves.' + HOW,
     module: 'ads',
   },
   {
     command: 'ads.schedule.shorten_approved',
     tool: 'ludy_ads_schedule_shorten',
     title: 'Propose ending an ad earlier',
-    description: 'Proposes an EARLIER last day for a live ad launch (launchId from ludy_ads_launches; endOn: YYYY-MM-DD, before the current `endOn` and not before today in the account\'s time zone). A day that is not earlier is refused when a person approves.' + HOW,
+    description: 'Proposes an EARLIER last day for a live ad launch (launchId from ludy_ads_launches; endOn: YYYY-MM-DD, before the launch\'s `heldEndOn` (later than `endOn` while an extension waits), and not before its `startOn` or today in the account\'s time zone). A day that is not earlier is refused when a person approves.' + HOW,
     module: 'ads',
   },
 ];

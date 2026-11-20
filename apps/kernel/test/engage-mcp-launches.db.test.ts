@@ -140,7 +140,8 @@ suite('the read of started ad launches and the proposals made with its ids (#414
     for (const key of ['proposal_id', 'proposalId', 'plan_hash', 'planHash', 'created_by', 'createdBy', 'updated_by', 'updatedBy', 'draftId', 'externalId', 'external_id', 'connection', 'token', 'amount']) expect(text, key).not.toContain(`"${key}"`);
     expect(text).not.toMatch(/plan|token|secret/i);
     for (const value of [HASH, live.proposal, live.draft, live.connection, live.write, h.owner]) expect(text, value).not.toContain(value);
-    expect(text).not.toMatch(/cmp-|set-|ad1-|ext-|acct-/);
+    // The platform's own ids of the rig (its objects' and its accounts'), by their exact values.
+    for (const id of [`cmp-${live.launch.slice(0, 8)}`, `set-${live.launch.slice(0, 8)}`, `ad1-${live.launch.slice(0, 8)}`, `ext-${live.account.slice(0, 8)}`, `acct-${live.connection.slice(0, 8)}`]) expect(text, id).not.toContain(id);
   });
 
   it('is a read for owners and admins of a company grant, and the tables it reads keep the legal-entity policy the grant\'s scope is judged by', async () => {
