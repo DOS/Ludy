@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The bank feed card in Settings (ADR-0039, #2099): what the screen works out from the API's answers. The server
 // decides every rule; these only choose what to show.
-import type { BankFeedAccountView } from '@crove/kernel-contract';
+import { BANK_FEED_FIRST_PULL_DAYS, vietnamToday, type BankFeedAccountView } from '@crove/kernel-contract';
 import type { ChartAccount } from './accounts.ts';
 
 // A bank feed adapter this deployment offers (`/api/config` bankFeeds): none, and the card is not drawn at all, so
@@ -42,3 +42,11 @@ export function feedAccountRows(
 
 // The mappings of one connection, from the list of every mapping the caller reads.
 export const mappedOf = (mapped: readonly BankFeedAccountView[], connectionId: string): BankFeedAccountView[] => mapped.filter((m) => m.connectionId === connectionId);
+
+// The earliest day a cut-over may be set to (#4218), as the date input's `min`: no earlier than the provider's first pull reaches,
+// and once the account has synced never earlier than the day it already has. The server refuses the same.
+export function feedFromMin(provider: string, mapped: BankFeedAccountView | null, now: Date = new Date()): string {
+  const days = BANK_FEED_FIRST_PULL_DAYS[provider] ?? 0;
+  const reach = new Date(Date.parse(`${vietnamToday(now)}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
+  return mapped?.lastSyncedAt && mapped.feedFrom && mapped.feedFrom > reach ? mapped.feedFrom : reach;
+}

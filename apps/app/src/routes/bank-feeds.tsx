@@ -17,7 +17,7 @@ import { ErrorText, FieldError, fieldControl, focusFirstInvalid, RowsSkeleton, u
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { accountLabel, type ChartAccount } from '../lib/accounts.ts';
-import { bankAccountChoices, feedAccountRows, mappedOf, type FeedAccountRow } from '../lib/bank-feeds.ts';
+import { bankAccountChoices, feedAccountRows, feedFromMin, mappedOf, type FeedAccountRow } from '../lib/bank-feeds.ts';
 import type { Role } from '../lib/members.ts';
 
 const refreshAccounts = () => queryClient.invalidateQueries({ queryKey: orpc.bankFeeds.accounts.key() });
@@ -26,6 +26,7 @@ const refreshConnections = () => queryClient.invalidateQueries({ queryKey: orpc.
 type ConnectionStatus = 'active' | 'expired' | 'revoked' | 'error';
 interface Connection {
   id: string;
+  provider: string;
   displayName: string;
   status: ConnectionStatus;
 }
@@ -160,7 +161,7 @@ function AccountRow({
             <label htmlFor={feedFromId} className="text-xs text-muted-foreground">
               {t('feedFromLabel')}
             </label>
-            <Input id={feedFromId} type="date" className="min-h-11 w-auto" aria-describedby={`${feedFromId}-hint`} value={feedFrom} disabled={!active} onChange={(e) => setFeedFrom(e.target.value)} />
+            <Input id={feedFromId} type="date" min={feedFromMin(connection.provider, mapped)} className="min-h-11 w-auto" aria-describedby={`${feedFromId}-hint`} value={feedFrom} disabled={!active} onChange={(e) => setFeedFrom(e.target.value)} />
           </div>
           <p id={`${feedFromId}-hint`} className="text-xs text-subtle-foreground">
             {t('feedFromHint')}

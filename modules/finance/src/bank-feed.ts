@@ -17,7 +17,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
-import { isBankFeedProviderId, zBankFeedMap, zBankFeedRecordAccounts, zBankFeedRecordPull, zId, type BankFeedAccountView, type BankFeedConnectionView, type BankFeedListedAccount, type BankImportResult } from '@crove/kernel-contract';
+import { BANK_FEED_FIRST_PULL_DAYS, isBankFeedProviderId, vietnamToday, zBankFeedMap, zBankFeedRecordAccounts, zBankFeedRecordPull, zId, type BankFeedAccountView, type BankFeedConnectionView, type BankFeedListedAccount, type BankImportResult } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { accountNumberDigits, feedAccountDigits } from './account-number.ts';
 import { bankAccount, feedCutover, ingestFeedLines } from './bank.ts';
@@ -28,6 +28,12 @@ const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
 // One answer for a mapping in another entity, whether the caller can read that mapping or row security hides it (#2079).
 const accountMapped = () => new DomainError('BANK_FEED_ACCOUNT_MAPPED', 409, 'Tài khoản này đã gắn với một pháp nhân khác; hãy gỡ liên kết trước');
+
+// The first day a feed with this provider reaches on a first pull: today in Vietnam, minus the provider's first-pull days.
+function reachFrom(now: Date, provider: string): string {
+  const days = BANK_FEED_FIRST_PULL_DAYS[provider] ?? 0;
+  return new Date(Date.parse(`${vietnamToday(now)}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
+}
 
 export const bankFeedMap = defineCommand({
   name: 'finance.bank_feed.map',
@@ -80,12 +86,20 @@ export const bankFeedMap = defineCommand({
     }
     const existing = await ctx.trx
       .selectFrom('crove_finance.bank_feed_account')
-      .select(['id', 'legal_entity_id'])
+      .select(['id', 'legal_entity_id', 'cursor', 'feed_from'])
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', connection.id)
       .where('external_account_id', '=', input.externalAccountId)
       .forUpdate()
       .executeTakeFirst();
+    // The cut-over day decides which lines the feed supplies, so it must be a day the feed reaches (#4218): not before its first pull's window, and, once the account has synced, never earlier than it was (the lines the feed left out before it are not fetched again).
+    if (input.feedFrom) {
+      const reach = reachFrom(ctx.now, connection.provider);
+      if (input.feedFrom < reach) throw new DomainError('BANK_FEED_FROM_TOO_EARLY', 422, `Ngày nguồn tự động bắt đầu lấy giao dịch không được sớm hơn ${reach}, vì nguồn chỉ lấy lùi tới ngày đó`, { earliest: reach });
+      if (existing?.cursor != null && existing.feed_from !== null && input.feedFrom < existing.feed_from) {
+        throw new DomainError('BANK_FEED_FROM_MOVED_EARLIER', 422, 'Tài khoản này đã đồng bộ nên không thể lùi ngày bắt đầu sớm hơn; có thể đặt ngày muộn hơn hoặc bỏ ngày này', { current: existing.feed_from });
+      }
+    }
     let feedAccountId: string;
     if (existing) {
       // Its lines are already in that entity's books: another entity takes an unmap first.
@@ -312,7 +326,9 @@ export const bankFeedRecordPull = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', mapped.id)
       .execute();
-    if (!result) ctx.audit({ feedAccountId: mapped.id, lines: 0, ...(skippedBefore > 0 ? { feedFrom: cutover, skippedBeforeFeedFrom: skippedBefore } : {}) });
+    if (!result) ctx.audit({ feedAccountId: mapped.id, lines: 0 });
+    // The lines the cut-over day kept out are on the trail whether or not the rest was stored (#4218); the audit fields merge into this command's one row.
+    if (skippedBefore > 0) ctx.audit({ feedFrom: cutover, skippedBeforeFeedFrom: skippedBefore });
     return result ?? { importId: null };
   },
 });

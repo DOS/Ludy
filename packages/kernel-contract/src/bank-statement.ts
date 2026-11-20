@@ -342,6 +342,11 @@ export function statementAmountText(cell: { kind: string; value: string } | unde
 // A bank feed provider's id as its channel connections name it (ADR-0039): `bank_` and the adapter (`bank_sandbox`),
 // under the channel layer's provider pattern. The Social screens leave these connections out.
 const BANK_FEED_PROVIDER_ID = /^bank_[a-z0-9_]{1,27}$/;
+// How many days back a provider's first pull reaches (the adapters' own windows: packages/bank-feed tingee.ts FIRST_PULL_DAYS, the
+// sandbox's SANDBOX_FIRST_DAYS). A cut-over day (#4218) earlier than that would skip file lines the feed never fetches, so the
+// earliest day an owner may name is today (Vietnam) minus these days.
+export const BANK_FEED_FIRST_PULL_DAYS: Readonly<Record<string, number>> = { bank_sandbox: 7, bank_tingee: 31 };
+
 export const isBankFeedProviderId = (provider: string): boolean => BANK_FEED_PROVIDER_ID.test(provider);
 
 // Connects a Tingee account (#2045): the Client ID and Secret Token the org made in its own Tingee portal. The secret is sealed by the API and opened only by the worker; it is never returned, logged or

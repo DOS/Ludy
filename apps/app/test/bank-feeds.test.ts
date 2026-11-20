@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BankFeedAccountView } from '@crove/kernel-contract';
 import type { ChartAccount } from '../src/lib/accounts.ts';
-import { bankAccountChoices, bankFeedOffered, feedAccountRows, mappedOf, showsBankFeeds } from '../src/lib/bank-feeds.ts';
+import { bankAccountChoices, bankFeedOffered, feedAccountRows, feedFromMin, mappedOf, showsBankFeeds } from '../src/lib/bank-feeds.ts';
 
 const chart = (code: string, rootCode: string, active = true): ChartAccount => ({ code, name: '', parentCode: null, rootCode, active, custom: false });
 const mapped = (externalAccountId: string, connectionId = 'c1'): BankFeedAccountView => ({
@@ -77,5 +77,18 @@ describe('feedAccountRows', () => {
 describe('mappedOf', () => {
   it('keeps the mappings of one connection', () => {
     expect(mappedOf([mapped('a', 'c1'), mapped('b', 'c2')], 'c2').map((m) => m.externalAccountId)).toEqual(['b']);
+  });
+});
+
+describe('feedFromMin (#4218)', () => {
+  const now = new Date('2026-11-20T08:00:00Z');
+  it('is today in Vietnam minus the provider first-pull days', () => {
+    expect(feedFromMin('bank_tingee', null, now)).toBe('2026-10-20');
+    expect(feedFromMin('bank_sandbox', null, now)).toBe('2026-11-13');
+  });
+  it('never goes earlier than the day an already synced account has', () => {
+    const synced = { ...mapped('SBX-001'), lastSyncedAt: '2026-11-19T00:00:00.000Z', feedFrom: '2026-11-15' };
+    expect(feedFromMin('bank_sandbox', synced, now)).toBe('2026-11-15');
+    expect(feedFromMin('bank_sandbox', { ...synced, lastSyncedAt: null }, now)).toBe('2026-11-13');
   });
 });

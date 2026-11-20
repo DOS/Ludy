@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { normalizeStatementAmount, type BankFeedLine, type BankImportResult, type BankStatementRow } from '@crove/kernel-contract';
+import { normalizeStatementAmount, vietnamToday, type BankFeedLine, type BankImportResult, type BankStatementRow } from '@crove/kernel-contract';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
@@ -548,16 +548,21 @@ suite('bank statement import (#326)', () => {
     const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng cut-over' })).body.connectionId);
     await sync(connectionId);
     const map = (input: Record<string, unknown>) => feed('map', owner, { connectionId, externalAccountId: 'SBX-001', bankAccount: '1121.CUT', idempotencyKey: randomUUID(), ...input });
-    // Not a day: refused by the contract.
+    // Days relative to today in Vietnam: the sandbox's first pull reaches back 7 days, so a cut-over may be set from today minus 7.
+    const dayOf = (offset: number) => new Date(Date.parse(`${vietnamToday()}T00:00:00Z`) + offset * 86_400_000).toISOString().slice(0, 10);
+    const cut = dayOf(-3);
+    // Not a day: refused by the contract; a day before the feed's reach: refused, as the feed would never fetch what the import skips.
     expect((await map({ feedFrom: '15/10/2026' })).status).toBe(400);
-    const mapped = await map({ feedFrom: '2026-10-15' });
+    expect(await map({ feedFrom: dayOf(-8) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_TOO_EARLY' } });
+    expect((await map({ feedFrom: dayOf(-7) })).status).toBe(200);
+    const mapped = await map({ feedFrom: cut });
     expect(mapped.status).toBe(200);
-    expect(((await feed('accounts', viewer)).body as Array<{ feedFrom: string | null }>).map((a) => a.feedFrom)).toEqual(['2026-10-15']);
-    const rows = [row('2026-10-10', '100000', '', '', 'CUT-A'), row('2026-10-14', '200000', '', '', 'CUT-B'), row('2026-10-15', '300000', '', '', 'CUT-C'), row('2026-10-20', '400000', '', '', 'CUT-D')];
+    expect(((await feed('accounts', viewer)).body as Array<{ feedFrom: string | null }>).map((a) => a.feedFrom)).toEqual([cut]);
+    const rows = [row(dayOf(-6), '100000', '', '', 'CUT-A'), row(dayOf(-4), '200000', '', '', 'CUT-B'), row(cut, '300000', '', '', 'CUT-C'), row(dayOf(-1), '400000', '', '', 'CUT-D')];
     const shown = await preview(rows, '1121.CUT');
     expect(shown.status).toBe(200);
     expect(shown.body.counts).toMatchObject({ new: 2, duplicate: 2 });
-    expect(shown.body.feed).toEqual({ from: '2026-10-15', skipped: 2 });
+    expect(shown.body.feed).toEqual({ from: cut, skipped: 2 });
     expect(shown.body.rows.map((r: { status: string }) => r.status)).toEqual(['new', 'new', 'duplicate', 'duplicate']);
     // Imported, only the days before the cut-over are stored; the same file again stores nothing.
     expect(await importFile(rows, '1121.CUT')).toMatchObject({ status: 200, body: { counts: { new: 2, duplicate: 2 } } });
@@ -570,21 +575,26 @@ suite('bank statement import (#326)', () => {
     expect(cleared.body.feed).toBeUndefined();
     expect(cleared.body.counts).toMatchObject({ new: 2, duplicate: 2 });
     // A remap with no feedFrom leaves the day as it is.
-    expect((await map({ feedFrom: '2026-10-15' })).status).toBe(200);
+    expect((await map({ feedFrom: cut })).status).toBe(200);
     expect((await map({})).status).toBe(200);
-    expect(((await feed('accounts', viewer)).body as Array<{ feedFrom: string | null }>).map((a) => a.feedFrom)).toEqual(['2026-10-15']);
+    expect(((await feed('accounts', viewer)).body as Array<{ feedFrom: string | null }>).map((a) => a.feedFrom)).toEqual([cut]);
     // A feed that stopped supplies nothing, so it must not keep file lines out: an expired connection lifts the skip.
     const setStatus = (status: string) => admin((c) => c.query('UPDATE crove_kernel.channel_connection SET status = $3 WHERE org_id = $1 AND id = $2', [orgId, connectionId, status]));
     await setStatus('expired');
     expect((await preview(rows, '1121.CUT')).body.feed).toBeUndefined();
     await setStatus('active');
-    expect((await preview(rows, '1121.CUT')).body.feed).toEqual({ from: '2026-10-15', skipped: 2 });
-    // The other way: the pull leaves out the lines the feed brings from before the day (the sandbox's days are 2026-11-13 to 2026-11-20), keeping the cursor moving.
-    expect((await map({ feedFrom: '2026-11-19' })).status).toBe(200);
+    expect((await preview(rows, '1121.CUT')).body.feed).toEqual({ from: cut, skipped: 2 });
+    // The pull leaves out the lines the feed brings from before the day. The day is set in SQL here so the sandbox's fixed days (2026-11-14 to 2026-11-20) stay under test whatever today is.
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET feed_from = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, '2026-11-19']));
     await sync(connectionId);
     const fed = (await stored('1121.CUT')).filter((l) => l.bank_ref !== null && !l.bank_ref.startsWith('CUT-'));
     expect(fed.length).toBeGreaterThan(0);
     expect(fed.every((l) => l.value_date >= '2026-11-19')).toBe(true);
+    // Once the account has synced, the day cannot move earlier (the lines the feed left out are not fetched again); later, or cleared, it can.
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET feed_from = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, dayOf(-2)]));
+    expect(await map({ feedFrom: dayOf(-5) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
+    expect((await map({ feedFrom: dayOf(-1) })).status).toBe(200);
+    expect((await map({ feedFrom: null })).status).toBe(200);
     expect((await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).status).toBe(200);
   });
 
