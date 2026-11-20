@@ -183,8 +183,8 @@ export const marketplaceColumnsRecord = defineCommand({
         .where('id', '=', check.id)
         .execute();
     }
-    // The state, the failure code and counts only: never a header, a sample or a line.
-    ctx.audit({ state: result.state, failure: result.state === 'failed' ? result.failure : null, refusal: result.state === 'done' ? result.refusal : null, lines: result.state === 'done' ? (result.preview?.lines.length ?? 0) : 0 });
+    // The state, the failure code and the refusal code only: nothing of the sheet or the preview (the audit scan refuses a fact that reads the classified preview column, and no count of it is wanted).
+    ctx.audit({ state: result.state, failure: result.state === 'failed' ? result.failure : null, refusal: result.state === 'done' ? result.refusal : null });
     return { recorded: true };
   },
 });

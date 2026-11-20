@@ -14783,7 +14783,7 @@ export const en = {
         suggest_source: 'Read the product name and SKU of unassigned marketplace order lines to propose an item',
         columns_check: 'Ask for the columns of an unrecognised marketplace order report to be read and a column mapping to be checked on the file',
         columns_record: 'Record what the column check of an unrecognised marketplace order report found',
-        columns_target: 'Read which unrecognised marketplace order report the worker is to check',
+        columns_target: 'Read which unrecognised marketplace order report is waiting to have its columns checked',
         columns: 'View the column check of an unrecognised marketplace order report',
       },
       marketplace_income: {
