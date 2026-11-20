@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Validates the checks of 20270122210000 (#4149): the origin of a row is 'ui' or 'mcp' and a row of origin 'mcp' is tainted. They were added NOT VALID there, so they already bind every new or changed row; the scan
+-- Validates the checks of 20270122220000 (#4149): the origin of a row is 'ui' or 'mcp' and a row of origin 'mcp' is tainted. They were added NOT VALID there, so they already bind every new or changed row; the scan
 -- of the old rows runs here, in a transaction of its own, one table at a time, so it does not run under the lock the added columns took. Every old row took the defaults and passes. Idempotent.
 SET LOCAL lock_timeout = '2s';
 
