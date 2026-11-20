@@ -40,6 +40,7 @@ function baseMeeting(overrides: Partial<MeetingDetail> = {}): MeetingDetail {
     consentConfirmedAt: '2026-11-16T02:00:00.000Z',
     consentNoticeVersion: 'v1',
     recordingStopReason: null,
+    platformTranscriptCut: false,
     readers: [USER_ID],
     videoRetentionDate: null,
     isRecorder: true,
@@ -199,7 +200,7 @@ describe('formatMeetingTaskSource & formatConversationTaskSource (#2608)', () =>
         },
       ],
       notes: [
-        { id: 'n1', authorUserId: USER_ID, body: 'Ưu tiên gửi bản PDF trước 20/11', createdAt: '2026-11-16T08:00:00.000Z' },
+        { id: 'n1', authorUserId: USER_ID, body: 'Ưu tiên gửi bản PDF trước 20/11', createdAt: '2026-11-16T08:00:00.000Z', actorOrigin: 'ui', tainted: false },
       ],
       parentId: null,
       reply: { allowed: true, reason: null },

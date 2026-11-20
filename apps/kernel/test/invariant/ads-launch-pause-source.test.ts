@@ -9,6 +9,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { activeAdPlatformNamedImports, collectModuleImports, pkgImportMatches, resolveAdPlatformPackages } from './fixtures/ad-platform-imports.ts';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const SKIP = new Set(['node_modules', 'dist', 'test', 'tests', '.git', '.turbo', 'coverage']);
@@ -26,6 +27,17 @@ function sources(dir: string, out: string[] = []): string[] {
 
 const ALL = ['apps', 'packages', 'modules', 'tools'].filter((d) => existsSync(join(ROOT, d))).flatMap((d) => sources(join(ROOT, d)));
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
+const { activePkg: adPlatformPkg, inactivePkg: otherAdPlatformPkg } = resolveAdPlatformPackages(ROOT);
+const singleActiveAdPlatformImport = (src: string): boolean => {
+  const records = collectModuleImports(src);
+  const activeMatches = pkgImportMatches(src, adPlatformPkg, records);
+  return (
+    pkgImportMatches(src, otherAdPlatformPkg, records).length === 0 &&
+    activeMatches.length === 1 &&
+    activeMatches[0]?.specifier === adPlatformPkg
+  );
+};
+const pauseNamedImports = (src: string): string[] => activeAdPlatformNamedImports(src, adPlatformPkg, otherAdPlatformPkg).names;
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
 const code = (path: string) => read(path).split('\n').filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*')).join('\n');
@@ -56,7 +68,18 @@ describe('what the pause job may reach of the platform\'s writer (#2296, W2-4a)'
     expect(step).not.toMatch(/console\./);
     expect(step).not.toMatch(/runtime\.|\.execute\(|\.query\(/);
     expect(step).not.toMatch(/error\.message|String\(error\)/);
-    expect([...step.matchAll(/@crove\/ad-platform'/g)]).toHaveLength(1);
+    expect(singleActiveAdPlatformImport(read('apps/kernel/src/ads-pause-run.ts'))).toBe(true);
+    // Comments and string literals mentioning both package scopes during migration do not count as imports.
+    const commentOrStringOnly = `// migrating ${adPlatformPkg} -> ${otherAdPlatformPkg}\n/* from '${otherAdPlatformPkg}' */\nconst note = "Use imports from '${otherAdPlatformPkg}' after the rename";\nimport type { AdPauser } from '${adPlatformPkg}';`;
+    expect(singleActiveAdPlatformImport(commentOrStringOnly)).toBe(true);
+    expect(pauseNamedImports(commentOrStringOnly)).toEqual(['AdPauser']);
+    // Tripwire: mixing both scopes or importing a subpath in pause source fails the same predicate even when one import uses the active name.
+    const mixed = `import type { AdPauser } from '${adPlatformPkg}';\nimport type { AdWriter } from '${otherAdPlatformPkg}';`;
+    expect(singleActiveAdPlatformImport(mixed)).toBe(false);
+    expect(() => pauseNamedImports(mixed)).toThrow(/Unexpected mixed ad-platform import/);
+    const subpath = `import type { AdPauser } from '${adPlatformPkg}/writers';`;
+    expect(singleActiveAdPlatformImport(subpath)).toBe(false);
+    expect(() => pauseNamedImports(subpath)).toThrow(/Unexpected ad-platform subpath import/);
   });
 
   it('gives the pause job the narrowed pausers and the broker alone, opens the token once from the connection and never touches a platform call but the pause', () => {
@@ -66,8 +89,7 @@ describe('what the pause job may reach of the platform\'s writer (#2296, W2-4a)'
     expect(job).not.toMatch(/\.(verify|accounts|read\w*|create\w*|setStatus|findByTag|resolveTargeting|revokeToken)\(/);
     expect(job).not.toMatch(/\b(ACTIVE|PAUSED|ARCHIVED)\b/);
     expect(job).not.toMatch(/\b(activate|unpause|resume)\w*\s*\(/i);
-    const imports = [...read('apps/kernel/src/ads-pause.ts').matchAll(/import (?:type )?\{([^}]*)\} from '@crove\/ad-platform'/g)].flatMap((m) => (m[1] ?? '').split(',').map((s) => s.replace(/\btype\b/, '').trim()));
-    expect(imports.sort()).toEqual(['AdPauser']);
+    expect(pauseNamedImports(read('apps/kernel/src/ads-pause.ts')).sort()).toEqual(['AdPauser']);
     // Nothing it logs or records carries the secret.
     for (const line of read('apps/kernel/src/ads-pause.ts').split('\n').filter((l) => /console\.(log|warn|error|info|debug)/.test(l))) expect(line, line).not.toMatch(/secret|envelope|token|sealed/i);
     const worker = read('apps/kernel/src/worker.ts');
@@ -85,7 +107,7 @@ describe('what the pause job may reach of the platform\'s writer (#2296, W2-4a)'
   it('keeps the module free of the platform and of any status that could un-pause', () => {
     for (const path of ['modules/ads/src/launch-pause.ts', 'modules/ads/src/launch-pause-policy.ts']) {
       const file = code(path);
-      expect(file, path).not.toMatch(/@crove\/ad-platform|\bfetch\b|\bhttps?:\/\//);
+      expect(file, path).not.toMatch(/@(?:crove|ludy)\/ad-platform|\bfetch\b|\bhttps?:\/\//);
       // The platform's status words are upper case; the module's `'active'` is a channel connection's own status, a different word for a different thing.
       expect(file, path).not.toMatch(/\b(ACTIVE|PAUSED|ARCHIVED)\b/);
       expect(file, path).not.toMatch(/\b(activate|unpause|resume)\w*\s*\(/i);

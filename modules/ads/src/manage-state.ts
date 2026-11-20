@@ -18,7 +18,8 @@ export interface ChangeRecord extends ChangeRow {
 }
 
 // The changes of several launches in one read, by launch, oldest first.
-export async function changesOfMany(ctx: Db, launchIds: readonly string[]): Promise<Map<string, ChangeRecord[]>> {
+// `kinds` narrows the read to those kinds of change (a caller that needs one family reads none of the rest).
+export async function changesOfMany(ctx: Db, launchIds: readonly string[], kinds?: readonly ChangeRecord['kind'][]): Promise<Map<string, ChangeRecord[]>> {
   const out = new Map<string, ChangeRecord[]>(launchIds.map((id) => [id, []]));
   if (launchIds.length === 0) return out;
   const rows = await ctx.trx
@@ -41,6 +42,7 @@ export async function changesOfMany(ctx: Db, launchIds: readonly string[]): Prom
     ])
     .where('org_id', '=', ctx.orgId)
     .where('launch_id', 'in', [...launchIds])
+    .$if(kinds !== undefined, (qb) => qb.where('kind', 'in', [...(kinds as readonly ChangeRecord['kind'][])]))
     .orderBy('seq', 'asc')
     .execute();
   for (const r of rows) {

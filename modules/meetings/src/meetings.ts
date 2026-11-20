@@ -10,8 +10,10 @@ import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts
 import { chaptersCommands, chaptersQueries } from './chapters.ts';
 import { chaptersRunCommands, chaptersRunQueries } from './chapters-run.ts';
 import { titleCommands, titleQueries } from './title.ts';
+import { commitmentsCommands, commitmentsQueries } from './commitments.ts';
 import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
+import { glossaryCommands, glossaryQueries } from './glossary.ts';
 import { minutesTemplateCommands, minutesTemplateQueries } from './minutes-templates.ts';
 import { mcpMeetingsQueries } from './mcp.ts';
 import { seriesCommands, seriesQueries } from './series.ts';
@@ -24,7 +26,10 @@ import { translateRunCommands, translateRunQueries } from './translate-run.ts';
 import { askRunCommands, askRunQueries } from './ask.ts';
 import { briefCommands, briefQueries } from './brief.ts';
 import { digestCommands, digestQueries } from './digest.ts';
+import { todayQueries } from './today.ts';
+import { morningCommands, morningQueries } from './morning.ts';
 import { assigneeCommands, assigneeQueries } from './assignee.ts';
+import { adherenceCommands, adherenceQueries } from './adherence.ts';
 import { agendaCommands, agendaQueries } from './agenda.ts';
 import { chatCommands, chatQueries } from './chat.ts';
 import { linkCommands, linkQueries } from './links.ts';
@@ -164,6 +169,7 @@ interface MeetingRow {
   consent_confirmed_at: Date | string;
   consent_notice_version: string;
   recording_stop_reason: RecordingStopReason | null;
+  platform_transcript_cut: boolean;
   audio_retention_date: Date | string;
   text_retention_date: Date | string | null;
   created_at: Date | string;
@@ -710,6 +716,7 @@ export const meetingGet = defineQuery({
       consentConfirmedAt: new Date(meeting.consent_confirmed_at).toISOString(),
       consentNoticeVersion: meeting.consent_notice_version,
       recordingStopReason: meeting.recording_stop_reason,
+      platformTranscriptCut: meeting.platform_transcript_cut,
       readers: readerIds,
       videoRetentionDate,
       isRecorder: meeting.recorder_user_id === userId,
@@ -1012,10 +1019,12 @@ export const meetingsCommands = [
   ...chaptersCommands,
   ...chaptersRunCommands,
   ...titleCommands,
+  ...commitmentsCommands,
   ...summaryCommands,
   ...speakerCommands,
   ...seriesCommands,
   ...minutesTemplateCommands,
+  ...glossaryCommands,
   ...summaryRunCommands,
   ...summaryReadyCommands,
   ...translateCommands,
@@ -1023,7 +1032,9 @@ export const meetingsCommands = [
   ...askRunCommands,
   ...briefCommands,
   ...digestCommands,
+  ...morningCommands,
   ...assigneeCommands,
+  ...adherenceCommands,
   ...agendaCommands,
   ...chatCommands,
   ...linkCommands,
@@ -1055,15 +1066,20 @@ export const meetingsQueries = [
   ...chaptersQueries,
   ...chaptersRunQueries,
   ...titleQueries,
+  ...commitmentsQueries,
   ...summaryQueries,
   ...seriesQueries,
   ...minutesTemplateQueries,
+  ...glossaryQueries,
   ...summaryRunQueries,
   ...translateRunQueries,
   ...askRunQueries,
   ...briefQueries,
   ...digestQueries,
+  ...todayQueries,
+  ...morningQueries,
   ...assigneeQueries,
+  ...adherenceQueries,
   ...agendaQueries,
   ...chatQueries,
   ...linkQueries,

@@ -92,8 +92,10 @@ describe('MeetingDigest', () => {
     expect(html).toContain('href="/o/$slug/meetings/$id"'.replace('$slug', 'acme').replace('$id', M2));
     expect(html.match(/data-testid="digest-fact"/g)).toHaveLength(5);
     // The numbers run on from one meeting to the next: 1-2 decisions, 3-4 items, 5 the second meeting's decision.
-    const numbers = [...html.matchAll(/aria-label="(\d+)"/g)].map((m) => m[1]);
+    // The number is the text of the circle; it has no `aria-label` of its own (a name on a plain `span` is not allowed by ARIA), so a screen reader reads the number, which Vy's sentences cite.
+    const numbers = [...html.matchAll(/<span class="inline-flex h-5[^"]*">(\d+)<\/span>/g)].map((m) => m[1]);
     expect(numbers).toEqual(['1', '2', '3', '4', '5']);
+    expect(html).not.toMatch(/<span class="inline-flex h-5[^"]*"[^>]*aria-label/);
     const t = text(html);
     expect(t).toContain('Chốt giá gói kế toán 15.000.000 đồng');
     expect(t).toContain('Gửi báo giá');
@@ -102,6 +104,14 @@ describe('MeetingDigest', () => {
     expect(t).toContain('2026-11-17');
     // A person is named, never an id.
     expect(t).not.toContain(NAM);
+  });
+
+  it('has one polite line that is always in the page, empty on load, and the words it is filled with in both languages (#4055; filling it after a pick is left to the browser spec)', () => {
+    const html = render(facts(), { status: status() });
+    // Empty until the picker is used: nothing is announced on load. It is in the page from the start, so the later text is read when it is filled in.
+    expect(html).toMatch(/<p[^>]*role="status"[^>]*data-testid="digest-window-status"[^>]*><\/p>|<p[^>]*data-testid="digest-window-status"[^>]*role="status"[^>]*><\/p>/);
+    expect(en.meetings.digest.windowShown).toBe('Showing the last {count} days');
+    expect(viMessages.meetings.digest.windowShown).toBe('Đang xem {count} ngày gần đây');
   });
 
   it('says plainly when there is nothing, with the window still pickable, and says when the caps cut', () => {

@@ -31,6 +31,8 @@ const PUBLIC: Record<string, string> = {
   '/api/inbound/email': 'the inbound mail relay, checked by INBOUND_SECRET (constant-time)',
   '/api/bank-feed/:provider/webhook':
     "a bank feed provider's signed notice (ADR-0039, #2044): the adapter checks its signature and timestamp before anything else, it is rate limited per address, stores nothing of its body, and only asks the worker for a pull of a connection that lists an account it names",
+  '/api/webhooks/misa-amis':
+    "MISA AMIS's callback with the result of a save (#3903, S4 of #3854): the body is capped and the client address limited before it is read, the HMAC of its signed `data` (the ClientID as the key, constant time) is checked before anything else is read, a refusal is a fixed code with nothing stored or logged, the organisation is found only from our own stored push row by org_refid (never from the unsigned envelope), the company code must equal the located connection's, a refid found in two organisations is refused, and a verified message is always answered 200 and only moves a row forward through finance.misa_amis.push_record",
   '/api/ads/meta/data-deletion':
     "Meta's data deletion callback for the Ads connection (ads plan section 9, #2219), POST and GET: the POST is checked by Meta's signed_request (HMAC-SHA256 with the app secret, constant time, not expired) before anything else, has a body cap, is rate limited per address, stores no body, and only queues the keyed hash of the user id for the worker, which erases the ad accounts that user granted; the GET is the status page Meta shows the person, answered by the confirmation code (128 random bits) and showing no tenant data",
   '/api/channels/zalo/webhook':
@@ -41,6 +43,8 @@ const PUBLIC: Record<string, string> = {
     "Meta's Page webhook for comments on connected Facebook Pages (conversation core CV2, #2307, plan docs/plan/conversations.md section 6.1): GET answers the hub.verify_token subscription challenge in constant time; POST checks X-Hub-Signature-256 (HMAC-SHA256 with the app secret, constant time) over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection), and answers 401 to a missing or wrong signature without saying why",
   '/api/channels/whatsapp/webhook':
     "WhatsApp Business webhook for customers' messages (conversation core, #3131, plan docs/plan/conversations-channels.md section 4.1): GET answers the hub.verify_token subscription challenge in constant time; POST checks X-Hub-Signature-256 (HMAC-SHA256 with the WhatsApp app's secret, constant time) over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection by the phone number id), and answers 401 to a missing or wrong signature without saying why",
+  '/api/meeting-platform/zoom/webhook':
+    "Zoom's signed notice that a cloud recording finished (meetings integrations C3, #3175, plan docs/plan/meetings-integrations.md section 6.3; design comment on the issue): a doorbell, never data. It refuses a body over its size cap before reading it, then checks x-zm-signature (HMAC-SHA256 of v0:<timestamp>:<body> with the app's secret token, constant time, a 5 minute timestamp window) over the raw body before it looks at the event; it is rate limited per address, answers the same for a missing, malformed or wrong signature, and stores and logs nothing of the body. The one event it answers without a verified signature, if Zoom sends none, is the URL validation challenge, and only for a plainToken of [A-Za-z0-9_-]{1,128}, so the HMAC it returns can never be the signature of a v0: message. A verified recording.completed only asks the sweep to list the matching connections again at its next pass (a definer clears their last listing time; it names no org in the path or the answer, writes no recording row and downloads nothing), and answers 200 whether or not a connection matched. It exists only when ZOOM_WEBHOOK_SECRET_TOKEN is set and the Meetings module is installed",
   '/api/extension/token':
     "the Ludy extension's one-time code exchange (#2582, ADR-0047 point 10): the code (256 random bits, 5 minutes, single use, stored only as its SHA-256) is the credential and PKCE S256 binds it to the verifier only the extension holds; a body cap of 1 KB, a per-client rate limit, the code and verifier checked for shape before the database, one 400 answer for every refusal, only hashes reach SQL, and nothing of any org in the answer but for a valid exchange",
   '/api/meetings/:id/video/stream':
@@ -91,8 +95,6 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
-  '/api/meeting-platform/zoom/webhook':
-    "Zoom's signed notice that a cloud recording finished (meetings integrations C3, #3175, plan docs/plan/meetings-integrations.md section 6.3; design comment on the issue): a doorbell, never data. It refuses a body over its size cap before reading it, then checks x-zm-signature (HMAC-SHA256 of v0:<timestamp>:<body> with the app's secret token, constant time, a 5 minute timestamp window) over the raw body before it looks at the event; it is rate limited per address, answers the same for a missing, malformed or wrong signature, and stores and logs nothing of the body. The one event it answers without a verified signature, if Zoom sends none, is the URL validation challenge, and only for a plainToken of [A-Za-z0-9_-]{1,128}, so the HMAC it returns can never be the signature of a v0: message. A verified recording.completed only asks the sweep to list the matching connections again at its next pass (a definer clears their last listing time; it names no org in the path or the answer, writes no recording row and downloads nothing), and answers 200 whether or not a connection matched. It exists only when ZOOM_WEBHOOK_SECRET_TOKEN is set",
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
@@ -122,6 +124,8 @@ function app(authenticate: HttpDeps['authenticate']) {
     mailer: { name: 'test', enabled: true, sendRetrySafety: 'unsafe', send: unused, parseWebhook: () => [] } as unknown as NonNullable<HttpDeps['mailer']>,
     // An adapter that takes signed notices, so the bank feed route is registered and listed (ADR-0039, #2044).
     bankFeedWebhooks: { bank_sandbox: { id: 'bank_sandbox', hosts: [], verifyWebhook: () => [] } } as unknown as NonNullable<HttpDeps['bankFeedWebhooks']>,
+    // The ClientID of MISA AMIS, so its callback is registered and listed (#3903).
+    misaAmisCallback: { clientId: 'misa-client-id-0001' },
     // The Meta app of Ads, so the data deletion callback is registered and listed (ads plan section 9, #2219).
     adsDeletion: { appSecret: 'z'.repeat(32) },
     // The Zalo app and its OA secret key, so the webhook of customers' messages is registered and listed (conversation core, #2304).
@@ -130,6 +134,8 @@ function app(authenticate: HttpDeps['authenticate']) {
     telegramWebhook: { keys: () => [Buffer.alloc(32, 1)] },
     // The Meta app and its verify token, so the Page webhook is registered and listed (conversation core CV2, #2307).
     facebookWebhook: { appSecret: 's'.repeat(32), verifyToken: 'v'.repeat(24) },
+    // Zoom's secret token, so the recording webhook is registered and listed (meetings integrations C3, #3175).
+    zoomWebhook: { secretToken: 'z'.repeat(24) },
     // The WhatsApp app's secret and verify token, so its webhook is registered and listed (conversation core, #3131).
     whatsappWebhook: { appSecret: 'w'.repeat(32), verifyToken: 'u'.repeat(24) },
     stream: { hub: { ready: false }, tickets: unused, slots: unused, recheckSeconds: 30 } as unknown as NonNullable<HttpDeps['stream']>,

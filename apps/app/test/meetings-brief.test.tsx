@@ -94,7 +94,8 @@ describe('the brief before a meeting', () => {
     expect(html).toContain('href="/o/acme/deals"');
     // Four facts, numbered 1 to 4 in the order the model is given them.
     expect(html.match(/data-testid="brief-fact"/g)).toHaveLength(4);
-    expect(html).toMatch(/aria-label="1"[^>]*>1<[\s\S]*aria-label="4"[^>]*>4</);
+    // The number is the text of the circle (it has no `aria-label` of its own: a name on a plain span is not allowed by ARIA, #4055).
+    expect(html).toMatch(/<span class="inline-flex h-5[^"]*">1<\/span>[\s\S]*<span class="inline-flex h-5[^"]*">4<\/span>/);
   });
 
   it('shows no card at all with nothing to say, or while the facts are not here yet (a reader of nothing is told nothing)', () => {

@@ -221,6 +221,8 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
         company: null,
         peopleCount: 0,
         openDeals: 0,
+        actorOrigin: 'ui',
+        tainted: false,
       });
     });
 

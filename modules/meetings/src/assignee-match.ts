@@ -5,12 +5,14 @@ import { plainName } from './plain-name.ts';
 
 // Words that come before a name, as said ("chị") and folded ("chi"). A word written with marks must be the exact form ("Chí" and "Dương" are names, not "chị" and "dượng"); a word written with no marks
 // is compared folded, because that is how many people type. A text that is only one of them ("chị", "anh") names no one: it is a pronoun, and Anh and Chi are given names too.
-const HONORIFICS = ['anh', 'chị', 'em', 'bác', 'cô', 'chú', 'ông', 'bà', 'bạn', 'thầy', 'cậu', 'mợ', 'dì', 'dượng', 'sếp', 'anh/chị', 'chị/anh'];
-const HONORIFICS_PLAIN = new Set(HONORIFICS.map(plainName));
-const HONORIFICS_EXACT = new Set(HONORIFICS);
+// Exported so that a test in the kernel app, which sees this module and the agent package, pins this list and ASSIGNEE_CONNECTORS as equal to the folded copies in the agent's naming check (#4089).
+export const ASSIGNEE_HONORIFICS: readonly string[] = ['anh', 'chị', 'em', 'bác', 'cô', 'chú', 'ông', 'bà', 'bạn', 'thầy', 'cậu', 'mợ', 'dì', 'dượng', 'sếp', 'anh/chị', 'chị/anh'];
+const HONORIFICS_PLAIN = new Set(ASSIGNEE_HONORIFICS.map(plainName));
+const HONORIFICS_EXACT = new Set(ASSIGNEE_HONORIFICS);
 // Words that start a description of the person and not a name ("chị Lan bên kế toán", "anh Nam của team bán hàng"). Words that are given names (Phong, Tú, Trọng) are not here; the cut is
 // made only after the first word, so a name that starts with one is kept.
-const CONNECTORS = new Set(['ben', 'cua', 'nhom', 'team', 'thuoc']);
+export const ASSIGNEE_CONNECTORS: readonly string[] = ['ben', 'cua', 'nhom', 'team', 'thuoc'];
+const CONNECTOR_SET = new Set(ASSIGNEE_CONNECTORS);
 
 /** One word of a name: as written (lower case, composed) and folded. It is compared exactly when it was written with marks, folded otherwise. */
 interface Word {
@@ -47,7 +49,7 @@ function nameWords(said: string): Word[] {
   let end = rest.length;
   for (let i = 1; i < rest.length; i += 1) {
     const w = (rest[i] as Word).plain;
-    if (CONNECTORS.has(w) || (w === 'bo' && (rest[i + 1] as Word | undefined)?.plain === 'phan')) {
+    if (CONNECTOR_SET.has(w) || (w === 'bo' && (rest[i + 1] as Word | undefined)?.plain === 'phan')) {
       end = i;
       break;
     }

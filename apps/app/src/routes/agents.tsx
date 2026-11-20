@@ -15,8 +15,9 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AiMeter } from '../components/ai-meter.tsx';
+import { FormDialog, useLive } from '../components/form-dialog.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
-import { DataTable, Empty, ErrorText, FieldError, fieldControl, focusFirstInvalid, ListSkeleton, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, Field, focusFirstInvalid, ListSkeleton, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import {
   EVERY_ENTITY,
@@ -480,23 +481,36 @@ export function PositionNode({ node, ctx }: { node: ChartNode<Position>; ctx: Po
 
 // entitiesReady: the org's legal entities are known (an owner's create waits for them, so it never sends no scope
 // in an org of several only because the list has not loaded or failed).
-function AddPosition({
-  positions,
-  templates = [],
-  entities,
-  entitiesReady,
-}: {
+type AddPositionProps = {
   positions: Position[];
   templates?: readonly Template[];
   entities: Entity[];
   entitiesReady: boolean;
-}) {
+};
+
+// "Thêm vị trí" opens the dialog below (#3608); nothing is left open under the chart.
+function AddPosition(props: AddPositionProps) {
+  const t = useTranslations('agents');
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-4">
+      <Button type="button" variant="outline" onClick={() => setOpen(true)}>
+        {t('addPosition')}
+      </Button>
+      {open && <AddPositionDialog {...props} onClose={() => setOpen(false)} />}
+    </div>
+  );
+}
+
+// `defaultMore`: the options under "Tùy chọn khác" start open (a test of the form reads them; people open them with the button).
+export function AddPositionDialog({ positions, templates = [], entities, entitiesReady, onClose, defaultMore = false }: AddPositionProps & { onClose: () => void; defaultMore?: boolean }) {
   const t = useTranslations('agents');
   const moduleName = useModuleName();
   const { templateTitle, positionTitle } = useTemplateLabels();
   useModulesVersion(); // the apps of the org can change while this screen is open
   const modules = installedModules();
-  const [open, setOpen] = useState(false);
+  const [more, setMore] = useState(defaultMore);
+  const moreId = useId();
   const [title, setTitle] = useState('');
   const [module, setModule] = useState(modules[0] ?? 'kernel');
   // An app the org just switched off is no longer a choice: the form falls back to the first one that is on.
@@ -516,20 +530,14 @@ function AddPosition({
   // Until the owner picks, the org's default entity, which the server gives a new position anyway.
   const [picked, setPicked] = useState<string[] | null>(null);
   const leScope = picked ?? defaultScope(entities);
-  const [key, setKey] = useState(() => crypto.randomUUID());
+  const live = useLive();
+  const [key] = useState(() => crypto.randomUUID());
   const create = useMutation(orpc.chart.createPosition.mutationOptions({ onSuccess: refresh }));
-  const cleared = {
-    onSuccess: () => {
-      setTitle('');
-      setPresetRole('');
-      setPicked(null);
-      setOpen(false);
-      setKey(crypto.randomUUID());
-    },
-  };
+  const cleared = { onSuccess: onClose };
+  const blocked = !entitiesReady || (entities.length > 1 && !scopeReady(leScope));
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!entitiesReady || (entities.length > 1 && !scopeReady(leScope))) return;
+    if (blocked || !title.trim()) return;
     const trimmed = title.trim();
     const roleKey =
       selectedPreset ||
@@ -545,17 +553,35 @@ function AddPosition({
   };
   const locked = isStepUpRequired(create.error);
   return (
-    <details open={open || locked} onToggle={(e) => setOpen(e.currentTarget.open)} className="mt-4 rounded-lg border bg-muted/40 p-3">
-      <summary className="cursor-pointer text-sm font-medium text-foreground select-none">{t('addPosition')}</summary>
-      <form onSubmit={submit} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <label className="block text-xs lg:col-span-2">
-          <span className="text-subtle-foreground">{t('positionTitle')}</span>
-          <Input required maxLength={200} value={title} disabled={locked} onChange={(e) => setTitle(e.target.value)} className="mt-1" />
-        </label>
-        <label className="block text-xs">
-          <span className="text-subtle-foreground">{t('positionModule')}</span>
+    <FormDialog
+      title={t('addPosition')}
+      busy={create.isPending}
+      dirty={title.trim() !== '' || reportsTo !== '' || presetRole !== '' || picked !== null}
+      submitLabel={t('addPosition')}
+      submitDisabled={locked || blocked || !title.trim()}
+      onClose={onClose}
+      onSubmit={submit}
+      outside={
+        locked ? (
+          <Refusal
+            error={create.error}
+            variables={create.variables}
+            retry={(v) => live.current && create.mutate(v, cleared)}
+            reset={() => create.reset()}
+            action={t('stepUpAddPosition', { title: create.variables?.title ?? '' })}
+            className="text-xs text-destructive"
+          />
+        ) : null
+      }
+    >
+      {/* The name first: it is what the owner knows. The role code is made from it and the app, never typed. */}
+      <Field label={t('positionTitle')}>
+        {(control) => <Input {...control} required maxLength={200} value={title} disabled={locked} onChange={(e) => setTitle(e.target.value)} />}
+      </Field>
+      <Field label={t('positionModule')}>
+        {(control) => (
           <NativeSelect
-            className="mt-1 w-full"
+            {...control}
             value={chosenModule}
             disabled={locked}
             onChange={(e) => {
@@ -569,59 +595,49 @@ function AddPosition({
               </NativeSelectOption>
             ))}
           </NativeSelect>
-        </label>
-        <label className="block text-xs">
-          <span className="text-subtle-foreground">{t('reportsTo')}</span>
-          <NativeSelect className="mt-1 w-full" value={reportsTo} disabled={locked} onChange={(e) => setReportsTo(e.target.value)}>
-            <NativeSelectOption value="">{t('reportsToOwners')}</NativeSelectOption>
-            {positions.map((p) => (
-              <NativeSelectOption key={p.id} value={p.id}>
-                {positionTitle(p.title)}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </label>
-        {moduleTemplates.length > 0 && (
-          <label className="block text-xs sm:col-span-2 lg:col-span-2">
-            <span className="text-subtle-foreground">{t('positionRolePreset')}</span>
-            <NativeSelect
-              className="mt-1 w-full"
-              value={selectedPresetIndex}
-              disabled={locked}
-              onChange={(e) => setPresetRole(e.target.value === '' ? '' : (moduleTemplates[Number(e.target.value)]?.roleKey ?? ''))}
-            >
-              <NativeSelectOption value="">{t('positionRoleAuto')}</NativeSelectOption>
-              {moduleTemplates.map((tpl, idx) => (
-                <NativeSelectOption key={tpl.key} value={String(idx)}>
-                  {templateTitle(tpl.key, tpl.title)}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </label>
         )}
-        {entities.length > 1 && (
-          <div className="sm:col-span-2 lg:col-span-4">
-            <LeScopePicker label={t('leScope')} entities={entities} value={leScope} onChange={setPicked} disabled={locked} />
-          </div>
-        )}
-        <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-4">
-          <Button loading={create.isPending} type="submit" disabled={create.isPending || locked || !entitiesReady || (entities.length > 1 && !scopeReady(leScope))}>
-            {t('addPosition')}
-          </Button>
-          {create.error && !locked && <span className="text-xs text-destructive">{errorMessage(create.error)}</span>}
+      </Field>
+      <Button type="button" variant="ghost" size="sm" className="justify-self-start" aria-expanded={more} aria-controls={moreId} onClick={() => setMore((m) => !m)}>
+        {t('moreOptions')}
+      </Button>
+      {more && (
+        <div id={moreId} className="grid gap-3">
+          <Field label={t('reportsTo')}>
+            {(control) => (
+              <NativeSelect {...control} value={reportsTo} disabled={locked} onChange={(e) => setReportsTo(e.target.value)}>
+                <NativeSelectOption value="">{t('reportsToOwners')}</NativeSelectOption>
+                {positions.map((p) => (
+                  <NativeSelectOption key={p.id} value={p.id}>
+                    {positionTitle(p.title)}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            )}
+          </Field>
+          {moduleTemplates.length > 0 && (
+            <Field label={t('positionRolePreset')}>
+              {(control) => (
+                <NativeSelect
+                  {...control}
+                  value={selectedPresetIndex}
+                  disabled={locked}
+                  onChange={(e) => setPresetRole(e.target.value === '' ? '' : (moduleTemplates[Number(e.target.value)]?.roleKey ?? ''))}
+                >
+                  <NativeSelectOption value="">{t('positionRoleAuto')}</NativeSelectOption>
+                  {moduleTemplates.map((tpl, idx) => (
+                    <NativeSelectOption key={tpl.key} value={String(idx)}>
+                      {templateTitle(tpl.key, tpl.title)}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              )}
+            </Field>
+          )}
+          {entities.length > 1 && <LeScopePicker label={t('leScope')} entities={entities} value={leScope} onChange={setPicked} disabled={locked} />}
         </div>
-      </form>
-      {locked && (
-        <Refusal
-          error={create.error}
-          variables={create.variables}
-          retry={(v) => create.mutate(v, cleared)}
-          reset={() => create.reset()}
-          action={t('stepUpAddPosition', { title: create.variables?.title ?? '' })}
-          className="text-xs text-destructive"
-        />
       )}
-    </details>
+      {create.error && !locked && <ErrorText>{errorMessage(create.error)}</ErrorText>}
+    </FormDialog>
   );
 }
 
@@ -814,7 +830,21 @@ function Templates({ perms, entities, entitiesReady }: { perms: AgentPermissions
 
 type BudgetField = 'target' | 'limit' | 'warnPercent';
 
+// "Đặt ngân sách" opens the dialog below (#3608).
 function BudgetForm({ agents }: { agents: Agent[] }) {
+  const t = useTranslations('agents');
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-4">
+      <Button type="button" variant="outline" onClick={() => setOpen(true)}>
+        {t('setBudget')}
+      </Button>
+      {open && <BudgetDialog agents={agents} onClose={() => setOpen(false)} />}
+    </div>
+  );
+}
+
+export function BudgetDialog({ agents, onClose }: { agents: Agent[]; onClose: () => void }) {
   const t = useTranslations('agents');
   const moduleName = useModuleName();
   useModulesVersion(); // the apps of the org can change while this screen is open
@@ -827,6 +857,8 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
   const [warnPercent, setWarnPercent] = useState('80');
   const [hardStop, setHardStop] = useState(true);
   const set = useMutation(orpc.agents.setBudget.mutationOptions({ onSuccess: refresh }));
+  const live = useLive();
+  const done = { onSuccess: onClose };
   const targets: Array<{ value: string; label: string }> =
     scope === 'org' ? [{ value: '*', label: t('scope.org') }] : scope === 'module' ? modules.map((m) => ({ value: m, label: moduleName(m) })) : agents.map((a) => ({ value: a.id, label: a.displayName }));
   const amountOk = isBudgetAmount(limit);
@@ -838,7 +870,6 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
   const fields = useFieldErrors<BudgetField>((field) =>
     field === 'limit' ? (amountOk ? null : t('budgetAmountInvalid')) : field === 'warnPercent' ? (warnOk ? null : t('warnPercentInvalid')) : chosenTarget ? null : t('budgetTargetMissing'),
   );
-  const control = (field: BudgetField) => fieldControl(idOf(field), { error: Boolean(fields.of(field)) });
   const pickScope = (next: (typeof SCOPES)[number]) => {
     setScope(next);
     setTarget(next === 'org' ? '*' : next === 'module' ? (modules[0] ?? '') : (agents[0]?.id ?? ''));
@@ -846,115 +877,105 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
   };
   const locked = isStepUpRequired(set.error);
   return (
-    <>
-      <form
-        className="mt-4 grid gap-3 rounded-lg border bg-muted/40 p-3 sm:grid-cols-2 lg:grid-cols-4"
-        noValidate
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!fields.checkAll(['target', 'limit', 'warnPercent'])) {
-            focusFirstInvalid(event.currentTarget);
-            return;
-          }
-          set.mutate({ scope, target: chosenTarget, monthlyLimit: limit.trim(), warnPercent: warn, hardStop, idempotencyKey: crypto.randomUUID() });
-        }}
-      >
-        <label className="block text-xs">
-          <span className="text-subtle-foreground">{t('budgetScope')}</span>
-          <NativeSelect className="mt-1 w-full" value={scope} disabled={locked} onChange={(e) => pickScope(e.target.value as (typeof SCOPES)[number])}>
-            {SCOPES.map((s) => (
-              <NativeSelectOption key={s} value={s}>
-                {t(`scope.${s}`)}
+    <FormDialog
+      title={t('setBudget')}
+      busy={set.isPending}
+      dirty={limit.trim() !== '' || scope !== 'org' || warnPercent !== '80' || !hardStop}
+      submitLabel={t('setBudget')}
+      submitDisabled={locked}
+      onClose={onClose}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!fields.checkAll(['target', 'limit', 'warnPercent'])) {
+          focusFirstInvalid(event.currentTarget);
+          return;
+        }
+        set.mutate({ scope, target: chosenTarget, monthlyLimit: limit.trim(), warnPercent: warn, hardStop, idempotencyKey: crypto.randomUUID() }, done);
+      }}
+      outside={locked ? <Refusal error={set.error} variables={set.variables} retry={(v) => live.current && set.mutate(v, done)} reset={() => set.reset()} action={t('stepUpBudget')} className="text-xs text-destructive" /> : null}
+    >
+      {/* The amount first: it is what the owner decides. The scope starts at the whole org. */}
+      <Field id={idOf('limit')} label={t('budgetLimit')} error={fields.of('limit')}>
+        {(c) => (
+          <Input
+            {...c}
+            inputMode="decimal"
+            required
+            value={limit}
+            disabled={locked}
+            onChange={(e) => {
+              setLimit(e.target.value);
+              fields.edit('limit');
+            }}
+            onBlur={(e) => fields.blur('limit', e.target.value)}
+          />
+        )}
+      </Field>
+      <Field label={t('budgetScope')}>
+        {(c) => (
+          <NativeSelect {...c} value={scope} disabled={locked} onChange={(e) => pickScope(e.target.value as (typeof SCOPES)[number])}>
+            {SCOPES.map((sc) => (
+              <NativeSelectOption key={sc} value={sc}>
+                {t(`scope.${sc}`)}
               </NativeSelectOption>
             ))}
           </NativeSelect>
-        </label>
-        <div className="text-xs">
-          <label className="block">
-            <span className="text-subtle-foreground">{t('budgetTarget')}</span>
+        )}
+      </Field>
+      {scope !== 'org' && (
+        <Field id={idOf('target')} label={t('budgetTarget')} error={fields.of('target')}>
+          {(c) => (
             <NativeSelect
-              {...control('target')}
-              className="mt-1 w-full"
+              {...c}
               value={chosenTarget}
+              disabled={locked}
               onChange={(e) => {
                 setTarget(e.target.value);
                 fields.edit('target');
               }}
-              disabled={scope === 'org' || locked}
             >
-              {chosenTarget === '' && <NativeSelectOption value="" disabled>{''}</NativeSelectOption>}
+              {chosenTarget === '' && (
+                <NativeSelectOption value="" disabled>
+                  {''}
+                </NativeSelectOption>
+              )}
               {targets.map((o) => (
                 <NativeSelectOption key={o.value} value={o.value}>
                   {o.label}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-          </label>
-          <FieldError id={idOf('target')} className="mt-1">
-            {fields.of('target')}
-          </FieldError>
-        </div>
-        <div className="text-xs">
-          <label className="block">
-            <span className="text-subtle-foreground">{t('budgetLimit')}</span>
-            <Input
-              {...control('limit')}
-              inputMode="decimal"
-              required
-              value={limit}
-              disabled={locked}
-              onChange={(e) => {
-                setLimit(e.target.value);
-                fields.edit('limit');
-              }}
-              onBlur={(e) => fields.blur('limit', e.target.value)}
-              className="mt-1"
-            />
-          </label>
-          <FieldError id={idOf('limit')} className="mt-1">
-            {fields.of('limit')}
-          </FieldError>
-        </div>
-        <div className="text-xs">
-          <label className="block">
-            <span className="text-subtle-foreground">{t('warnPercent')}</span>
-            <Input
-              {...control('warnPercent')}
-              type="number"
-              min={1}
-              max={100}
-              value={warnPercent}
-              disabled={locked}
-              onChange={(e) => {
-                setWarnPercent(e.target.value);
-                fields.edit('warnPercent');
-              }}
-              onBlur={(e) => fields.blur('warnPercent', e.target.value)}
-              className="mt-1"
-            />
-          </label>
-          <FieldError id={idOf('warnPercent')} className="mt-1">
-            {fields.of('warnPercent')}
-          </FieldError>
-        </div>
-        <div className="flex flex-wrap items-center gap-4 sm:col-span-2 lg:col-span-4">
-          <Button loading={set.isPending} type="submit" disabled={set.isPending || locked}>
-            {t('setBudget')}
-          </Button>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Checkbox checked={hardStop} disabled={locked} onCheckedChange={(checked) => setHardStop(checked)} />
-            {t('hardStop')}
-          </label>
-          {set.error && !locked && <span className="text-xs text-destructive">{errorMessage(set.error)}</span>}
-        </div>
-      </form>
-      {locked && <Refusal error={set.error} variables={set.variables} retry={(v) => set.mutate(v)} reset={() => set.reset()} action={t('stepUpBudget')} className="text-xs text-destructive" />}
-    </>
+          )}
+        </Field>
+      )}
+      <Field id={idOf('warnPercent')} label={t('warnPercent')} error={fields.of('warnPercent')}>
+        {(c) => (
+          <Input
+            {...c}
+            type="number"
+            min={1}
+            max={100}
+            value={warnPercent}
+            disabled={locked}
+            onChange={(e) => {
+              setWarnPercent(e.target.value);
+              fields.edit('warnPercent');
+            }}
+            onBlur={(e) => fields.blur('warnPercent', e.target.value)}
+          />
+        )}
+      </Field>
+      <label className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Checkbox checked={hardStop} disabled={locked} onCheckedChange={(checked) => setHardStop(checked)} />
+        {t('hardStop')}
+      </label>
+      {set.error && !locked && <ErrorText>{errorMessage(set.error)}</ErrorText>}
+    </FormDialog>
   );
 }
 
 // The features the app has a name for (aiMeter.features); the keys are the server's with the dot as an underscore.
-const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'crm_quote_suggest', 'crm_followup_draft', 'crm_meeting_brief', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_einvoice_draft', 'finance_einvoice_rate_explain', 'finance_einvoice_reason_suggest', 'finance_payroll_prepare', 'finance_payroll_flag', 'finance_payroll_explain', 'finance_labor_check', 'hr_recruiting_brief', 'today_brief', 'today_weekly', 'ads_campaign_draft', 'finance_overview_explain', 'finance_vat_late_explain', 'finance_bank_match_explain', 'finance_marketplace_line', 'finance_supplier_payable_line', 'finance_misa_check_line', 'finance_stock_surplus_explain', 'meetings_transcribe', 'meetings_summary', 'meetings_translate', 'meetings_ask', 'meetings_assignee', 'meetings_brief', 'meetings_digest', 'meetings_chapters', 'meetings_title', 'meetings_followup_words', 'projects_weekly_status', 'projects_tasks_from_note', 'projects_tasks_from_source', 'notes_summary', 'notes_todo_suggest', 'sign_field_propose', 'sign_clause_summary', 'kernel_unattributed'] as const;
+const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'crm_company_rank', 'crm_quote_suggest', 'crm_followup_draft', 'crm_meeting_brief', 'finance_payment_reminder', 'finance_stock_match', 'finance_stock_reorder', 'finance_stock_columns', 'finance_einvoice_draft', 'finance_einvoice_rate_explain', 'finance_einvoice_reason_suggest', 'finance_payroll_prepare', 'finance_payroll_flag', 'finance_payroll_explain', 'finance_labor_check', 'hr_recruiting_brief', 'today_brief', 'today_weekly', 'ads_campaign_draft', 'finance_overview_explain', 'finance_vat_late_explain', 'finance_bank_match_explain', 'finance_marketplace_line', 'finance_marketplace_fee_note', 'finance_supplier_payable_line', 'finance_misa_check_line', 'finance_misa_amis_blocker_notes', 'finance_stock_surplus_explain', 'meetings_transcribe', 'meetings_summary', 'meetings_translate', 'meetings_ask', 'meetings_adherence', 'meetings_assignee', 'meetings_brief', 'meetings_digest', 'meetings_chapters', 'meetings_title', 'meetings_commitments', 'meetings_followup_words', 'projects_weekly_status', 'projects_tasks_from_note', 'projects_tasks_from_source', 'notes_summary', 'notes_todo_suggest', 'sign_field_propose', 'sign_clause_summary', 'kernel_unattributed'] as const;
 
 // This month's AI use by feature and by agent (#2382): the meter's ledger, numbers only. Owners and admins.
 export function AiUse({ agents }: { agents: Agent[] }) {

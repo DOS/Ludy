@@ -33,8 +33,8 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
   return {
     ...(await importOriginal<object>()),
-    Link: ({ children, to, params, ...rest }: { children?: ReactNode; to: string; params?: Record<string, string>; 'data-testid'?: string }) =>
-      createElement('a', { href: to, 'data-testid': rest['data-testid'], 'data-params': JSON.stringify(params ?? {}) }, children),
+    Link: ({ children, to, params, ...rest }: { children?: ReactNode; to: string; params?: Record<string, string>; 'data-testid'?: string; 'aria-label'?: string; className?: string }) =>
+      createElement('a', { href: to, 'data-testid': rest['data-testid'], 'data-params': JSON.stringify(params ?? {}), 'aria-label': rest['aria-label'], className: rest.className }, children),
   };
 });
 
@@ -69,6 +69,7 @@ const recording = (over: Partial<MeetingPlatformRecordingView> = {}): MeetingPla
   status: 'suggested',
   meetingId: null,
   errorCode: null,
+  matchedMeeting: null,
   ...over,
 });
 
@@ -112,7 +113,6 @@ describe('MeetingPlatforms (Settings)', () => {
     expect(html).toContain(en.meetings.platform.settings.disconnect);
     expect(html).not.toContain('meeting-platform-confirm');
     expect(html).not.toContain('meeting-platform-reason');
-    expect(html).toContain(en.meetings.platform.settings.moreLater);
   });
 
   it('says why a listing failed and that an expired connection must be connected again, in words', () => {
@@ -182,6 +182,32 @@ describe('MeetingPlatforms (Settings)', () => {
     const connected = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
     expect(connected).toContain(esc(`${en.meetings.platform.provider.zoom}: linh@example.test`));
     expect(connected).toContain('meeting-platform-connect-zoom');
+  });
+
+  it('offers "Connect Google Meet" with its plain-words note only where the deployment has the Google client, for a member who can connect, in both languages; the card never promises Google Meet "in a later version" (#4088)', () => {
+    reset();
+    client.current.setQueryData(KEYS.connections, []);
+    client.current.setQueryData(KEYS.providers, ['zoom']);
+    const without = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
+    expect(without).not.toContain('meeting-platform-connect-google');
+    expect(without).not.toMatch(/later version/i);
+    // The same card in Vietnamese: no "comes later" line either (the English render above cannot show a Vietnamese string).
+    expect(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />, 'vi'))).not.toContain('bản sau');
+    client.current.setQueryData(KEYS.providers, ['google_meet', 'zoom']);
+    const html = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />));
+    expect(html).toContain('data-testid="meeting-platform-connect-google"');
+    expect(html).toContain(en.meetings.platform.settings.connectGoogle);
+    expect(html).toContain(esc(en.meetings.platform.settings.googleNote));
+    expect(html).not.toMatch(/later version/i);
+    // The note says what is read (the transcript Google makes, no recording, no Drive) and whose words they are, with no setting name.
+    expect(en.meetings.platform.settings.googleNote).toContain("Google's transcription, not Ludy's");
+    expect(en.meetings.platform.settings.googleNote).toContain('does not touch Drive');
+    expect(en.meetings.platform.settings.googleNote).not.toMatch(/MEETINGS_GOOGLE|[A-Z]{3,}_[A-Z_]+/);
+    const vn = renderToStaticMarkup(wrap(<MeetingPlatforms canConnect />, 'vi'));
+    expect(vn).toContain(viMessages.meetings.platform.settings.connectGoogle);
+    expect(vn).toContain(esc(viMessages.meetings.platform.settings.googleNote));
+    // A viewer connects nothing.
+    expect(renderToStaticMarkup(wrap(<MeetingPlatforms canConnect={false} />))).not.toContain('meeting-platform-connect-google');
   });
 
   it('offers "Connect Microsoft Teams" only where the deployment has the Teams app: the note says the administrator acts, the cost line says nothing is charged by Microsoft, and the guide link is the runbook, in both languages', () => {
@@ -285,6 +311,24 @@ describe('PlatformRecordings (Meetings tab)', () => {
     expect(off).not.toContain(en.meetings.platform.recordings.videoKeepsAudio);
   });
 
+  it('offers "Nhập" for a recording that has only the platform\'s transcript, names the platform whose text it is in both languages, and blocks a provider with no transcript path (C2, #3174)', () => {
+    for (const locale of ['en', 'vi'] as const) {
+      const messages = locale === 'en' ? en : viMessages;
+      reset();
+      client.current.setQueryData(KEYS.connections, [connection()]);
+      client.current.setQueryData(KEYS.recordings, [recording({ provider: 'google_meet', hasAudio: false, hasVideo: false, hasTranscript: true })]);
+      const on = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+      expect(count(on, 'data-testid="meeting-recording-import"'), locale).toBe(1);
+      expect(count(on, 'data-testid="meeting-recording-blocked"'), locale).toBe(0);
+      expect(on).toContain(esc(messages.meetings.platform.recordings.transcriptKeepsText.replace('{platform}', 'Google Meet')));
+      client.current.setQueryData(KEYS.recordings, [recording({ provider: 'zoom', hasAudio: false, hasVideo: false, hasTranscript: true })]);
+      const off = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+      expect(count(off, 'data-testid="meeting-recording-import"'), locale).toBe(0);
+      expect(off).toContain(esc(messages.meetings.platform.recordings.transcriptOnly));
+      expect(off).not.toContain('data-testid="meeting-recording-transcript-note"');
+    }
+  });
+
   it('shows a suggested recording with its facts, a primary "Nhập" and a quiet "Bỏ qua"', () => {
     reset();
     client.current.setQueryData(KEYS.connections, [connection()]);
@@ -338,6 +382,53 @@ describe('PlatformRecordings (Meetings tab)', () => {
     expect(renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, 'vi'))).toContain('Chỉ có bản hình, chưa nhập được');
   });
 
+  it('shows the already-recorded notice in vi and en with an accessible meeting link and hides Import when matchedMeeting is present', () => {
+    for (const locale of ['vi', 'en'] as const) {
+      reset();
+      const words = locale === 'vi' ? viMessages : en;
+      client.current.setQueryData(KEYS.connections, [connection()]);
+      client.current.setQueryData(KEYS.recordings, [
+        recording({ id: 'matched-ok', title: 'Họp quý 4', matchedMeeting: { meetingId: 'm-matched-1' } }),
+        recording({ id: 'matched-blocked', title: 'Video đã có', hasAudio: false, hasVideo: true, matchedMeeting: { meetingId: 'm-matched-2' } }),
+        recording({ id: 'unmatched', title: 'Họp mới' }),
+      ]);
+      const html = renderToStaticMarkup(wrap(<PlatformRecordings slug="acme" />, locale));
+      const matchedItems = html.split('data-testid="meeting-recording"').slice(1);
+      expect(matchedItems).toHaveLength(3);
+
+      // Matched rows show the required notice and link to the meeting, offer no Import or blocked reason, and keep Skip.
+      for (const [idx, expectedMeetingId, expectedTitle] of [
+        [0, 'm-matched-1', 'Họp quý 4'],
+        [1, 'm-matched-2', 'Video đã có'],
+      ] as const) {
+        const item = matchedItems[idx] as string;
+        expect(item).toContain('data-testid="meeting-recording-matched"');
+        expect(item).toContain(esc(words.meetings.platform.recordings.alreadyRecorded));
+        expect(item).toContain('data-testid="meeting-recording-matched-link"');
+        expect(item).toContain('href="/o/$slug/meetings/$id"');
+        expect(item).toContain(`&quot;id&quot;:&quot;${expectedMeetingId}&quot;`);
+        expect(item).toContain(`&quot;slug&quot;:&quot;acme&quot;`);
+        expect(item).toContain(esc(words.meetings.platform.recordings.openMatched));
+        expect(item).toContain(`aria-label="${esc(words.meetings.platform.recordings.openMatchedOf.replace('{title}', expectedTitle))}"`);
+        // Accessibility checks: visible text starts accessible label (WCAG 2.5.3), keyboard focus ring, link color token, and >=44px mobile touch targets.
+        expect(words.meetings.platform.recordings.openMatchedOf.startsWith(words.meetings.platform.recordings.openMatched)).toBe(true);
+        expect(item).toContain('min-h-11');
+        expect(item).toContain('min-w-11');
+        expect(item).toContain('focus-visible:ring-3');
+        expect(item).toContain('text-link');
+        expect(item).not.toContain('meeting-recording-import');
+        expect(item).not.toContain('meeting-recording-blocked');
+        expect(item).toContain(words.meetings.platform.recordings.dismiss);
+      }
+
+      // The unmatched recording still renders the Import button normally.
+      expect(matchedItems[2]).toContain('data-testid="meeting-recording-import"');
+      expect(matchedItems[2]).not.toContain('meeting-recording-matched');
+    }
+    expect(viMessages.meetings.platform.recordings.alreadyRecorded).toBe('Ludy đã có bản ghi của cuộc họp này');
+    expect(en.meetings.platform.recordings.alreadyRecorded).toBe('Ludy already has a recording of this meeting');
+  });
+
   it('shows each state in words: importing, processing, imported with a link to the meeting, failed with a retry', () => {
     reset();
     client.current.setQueryData(KEYS.connections, [connection()]);
@@ -369,7 +460,7 @@ describe('PlatformRecordings (Meetings tab)', () => {
         const messages = locale === 'en' ? en : viMessages;
         expect(html, `${locale} ${code}`).toContain(esc(messages.meetings.platform.recordings.failed.replace('{reason}', messages.meetings.platform.errors[code])));
         const retry = count(html, 'data-testid="meeting-recording-retry"');
-        expect(retry, code).toBe(['recording_gone', 'no_audio', 'too_large', 'too_long'].includes(code) ? 0 : 1);
+        expect(retry, code).toBe(['recording_gone', 'no_audio', 'no_transcript', 'too_large', 'too_long'].includes(code) ? 0 : 1);
         // The dismiss stays for a failed row.
         expect(html).toContain(messages.meetings.platform.recordings.dismiss);
       }

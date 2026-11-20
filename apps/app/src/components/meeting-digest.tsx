@@ -7,15 +7,14 @@ import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { DIGEST_DAYS, briefItemDue, digestLines, vnDateOf, type DigestAnswer, type DigestAsk, type DigestFacts } from '@crove/kernel-contract';
+import { DIGEST_DAYS, digestLines, vnDateOf, type DigestAnswer, type DigestAsk, type DigestFacts } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { ErrorText } from './ui.tsx';
 import { askBlocked } from './meeting-ask.tsx';
-import { memberLabel } from './meeting-results.tsx';
-import { useMe } from './conversation-inbox.tsx';
+import { FactNumber, OpenItemLine } from './meeting-open-item.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 
@@ -28,21 +27,18 @@ export function digestFailureKey(code: string | null): (typeof KNOWN_FAILURES)[n
   return (KNOWN_FAILURES as readonly string[]).includes(code ?? '') ? (code as (typeof KNOWN_FAILURES)[number]) : 'default';
 }
 
-const FactNumber = ({ n }: { n: number }) => (
-  <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted px-1 text-xs text-muted-foreground" aria-label={String(n)}>
-    {n}
-  </span>
-);
-
 export function MeetingDigest({ slug }: { slug: string }) {
   const t = useTranslations('meetings.digest');
   const [days, setDays] = useState<DigestAsk['days']>(7);
+  // The picker changes the facts below it while the focus stays on it: once the new window has loaded, a polite line says which one is shown (WCAG 4.1.3). Empty until the member uses the picker.
+  const [picked, setPicked] = useState(false);
   // The card stays on screen while another window loads (the picker the member just used must not vanish).
   const facts = useQuery({ ...orpc.meetings.digest.facts.queryOptions({ input: { days } }), ...READ_ONCE, placeholderData: keepPreviousData });
   const data = facts.data;
-  if (facts.error && !data) return <ErrorText>{errorMessage(facts.error)}</ErrorText>;
+  // The first read failed: the error stands alone. A window the member picked failed: the card stays with its picker (they may pick another window) and the error sits in it, so the focus is not lost (WCAG 2.4.3).
+  if (facts.error && !data && !picked) return <ErrorText>{errorMessage(facts.error)}</ErrorText>;
   // Nothing else is shown until the facts have been read.
-  if (!data) return null;
+  if (!data && !facts.error) return null;
   return (
     <Card data-testid="meeting-digest">
       <CardHeader>
@@ -51,7 +47,12 @@ export function MeetingDigest({ slug }: { slug: string }) {
         </CardTitle>
         <CardDescription className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span>{t('description')}</span>
-          <NativeSelect aria-label={t('window')} value={String(days)} onChange={(e) => setDays(Number(e.target.value) as DigestAsk['days'])} data-testid="digest-window">
+          <NativeSelect aria-label={t('window')} value={String(days)} onChange={(e) => {
+              setPicked(true);
+              setDays(Number(e.target.value) as DigestAsk['days']);
+            }}
+            data-testid="digest-window"
+          >
             {DIGEST_DAYS.map((d) => (
               <NativeSelectOption key={d} value={String(d)}>
                 {t('days', { count: String(d) })}
@@ -61,7 +62,12 @@ export function MeetingDigest({ slug }: { slug: string }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {data.empty ? (
+        <p role="status" className="sr-only" data-testid="digest-window-status">
+          {picked && !facts.isPlaceholderData && !facts.error ? t('windowShown', { count: String(days) }) : ''}
+        </p>
+        {!data ? (
+          <ErrorText>{errorMessage(facts.error)}</ErrorText>
+        ) : data.empty ? (
           <>
             <p className="text-sm text-muted-foreground" data-testid="digest-nothing">
               {t('nothing', { count: String(days) })}
@@ -91,8 +97,6 @@ export function MeetingDigest({ slug }: { slug: string }) {
 // The numbered facts, meeting by meeting: the number is the one a sentence of Vy cites (decisions, then open items, in the order `digestLines` numbers them).
 function Meetings({ slug, facts }: { slug: string; facts: DigestFacts }) {
   const t = useTranslations('meetings.digest');
-  const series = useTranslations('meetings.series');
-  const { members } = useMe();
   let n = 0;
   return (
     <div className="space-y-4 text-sm">
@@ -116,19 +120,9 @@ function Meetings({ slug, facts }: { slug: string; facts: DigestFacts }) {
                 </span>
               </li>
             ))}
-            {meeting.items.map((item) => {
-              const who = item.whoUserId ? memberLabel(members, item.whoUserId, item.who) : (item.assigneeSeat ?? item.who);
-              return (
-                <li key={item.id} className="flex flex-wrap items-center gap-2" data-testid="digest-fact" data-kind="item" data-assigned={item.assigned}>
-                  <FactNumber n={(n += 1)} />
-                  <Badge variant="outline">{t('open')}</Badge>
-                  <span className="font-medium">{item.title}</span>
-                  {who !== '' && <span className="text-muted-foreground">{who}</span>}
-                  {item.assigned ? item.taskStatus && <Badge variant="outline">{series(`status.${item.taskStatus}`)}</Badge> : <Badge variant="secondary">{series('unassigned')}</Badge>}
-                  {briefItemDue(item) !== null && <span className="text-xs text-muted-foreground">{series('due', { date: briefItemDue(item) as string })}</span>}
-                </li>
-              );
-            })}
+            {meeting.items.map((item) => (
+              <OpenItemLine key={item.id} n={(n += 1)} item={item} testId="digest-fact" kind="item" lead={<Badge variant="outline">{t('open')}</Badge>} />
+            ))}
           </ol>
         </section>
       ))}

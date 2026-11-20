@@ -414,11 +414,13 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   // `enter_mcp_company_draft_context`, pinned in its own case below); another writer or reader still fails the exact sets below.
   const mcpMemberObjects = async () => {
     const found = await admin((c) =>
-      c.query<{ entry: boolean; helper: boolean; company: boolean; core: boolean; draft: boolean }>(
+      c.query<{ entry: boolean; helper: boolean; company: boolean; core: boolean; draft: boolean; proposal: boolean; write: boolean }>(
         `SELECT to_regprocedure('crove_kernel.enter_mcp_member_context(uuid,uuid)') IS NOT NULL AS entry, to_regprocedure('crove_kernel.ctx_mcp_member_id()') IS NOT NULL AS helper,
                 to_regprocedure('crove_kernel.enter_mcp_company_context(uuid,uuid)') IS NOT NULL AS company,
                 to_regprocedure('crove_kernel.seal_mcp_company_context(uuid,uuid)') IS NOT NULL AS core,
-                to_regprocedure('crove_kernel.enter_mcp_company_draft_context(uuid,uuid)') IS NOT NULL AS draft`,
+                to_regprocedure('crove_kernel.enter_mcp_company_draft_context(uuid,uuid)') IS NOT NULL AS draft,
+                to_regprocedure('crove_kernel.enter_mcp_company_proposal_context(uuid,uuid,text)') IS NOT NULL AS proposal,
+                to_regprocedure('crove_kernel.enter_mcp_company_write_context(uuid,uuid,text)') IS NOT NULL AS write`,
       ),
     );
     const row = found.rows[0];
@@ -430,6 +432,12 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         ...(row?.core ? ['crove_kernel.seal_mcp_company_context(uuid,uuid)'] : row?.company ? ['crove_kernel.enter_mcp_company_context(uuid,uuid)'] : []),
         // The write context of the one MCP write command (#3227, step 3, owner decision 2026-11-14): one more writer of the seal, its own kind (`mcp_company_draft`), accepted once it exists.
         ...(row?.draft ? ['crove_kernel.enter_mcp_company_draft_context(uuid,uuid)'] : []),
+        // The sealed context in which an MCP call to an R2 or R3 command becomes a proposal (#3858 slice d, ADR-0051 decision 10, owner decision 2026-11-18/19): one more writer of the seal, its own kind
+        // (`mcp_company_proposal`), accepted once it exists and pinned in its own case below.
+        ...(row?.proposal ? ['crove_kernel.enter_mcp_company_proposal_context(uuid,uuid,text)'] : []),
+        // The sealed write contexts of the Engage coworkers (E2, #3861, ADR-0051 decisions 10 and 11): one more writer of the seal for the two line scopes, kinds `mcp_engage_write` and `mcp_ads_draft`,
+        // accepted once it exists and pinned in test/invariant/mcp-engage-write.db.test.ts.
+        ...(row?.write ? ['crove_kernel.enter_mcp_company_write_context(uuid,uuid,text)'] : []),
       ],
       helper: row?.helper ? ['crove_kernel.ctx_mcp_member_id()'] : [],
     };
@@ -502,6 +510,54 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       max_risk: "R1",
       tainted: true,
       kind: "mcp_company_draft",
+      grantor: users.owner,
+      org: orgId,
+      agent: grantId,
+    });
+  });
+
+  // The sealed context of an MCP proposal (#3858 slice d): accepted above by name only when it exists, so its properties are pinned here whatever file later creates it: a weaker writer cannot pass the
+  // base copy of this suite. The API login alone runs it, its search path is pinned, and what it seals has no user, R1, taint and its own kind.
+  it("pins the sealed context of an MCP proposal when it exists: the API login alone, a pinned search path, no user, R1, tainted, its own kind", async () => {
+    const entry = "crove_kernel.enter_mcp_company_proposal_context(uuid,uuid,text)";
+    const found = await admin((c) => c.query<{ ok: boolean }>(`SELECT to_regprocedure('${entry}') IS NOT NULL AS ok`));
+    if (found.rows[0]?.ok !== true) return;
+    await admin(async (c) => {
+      const logins = (await c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper`)).rows;
+      expect(logins.length).toBeGreaterThan(0);
+      for (const { rolname } of logins) {
+        const ok = (await c.query<{ ok: boolean }>(`SELECT has_function_privilege($1, '${entry}', 'EXECUTE') AS ok`, [rolname])).rows[0]?.ok;
+        expect(ok, `${rolname} execute the proposal entry`).toBe(rolname === "crove_app");
+      }
+      expect((await c.query<{ ok: boolean }>(`SELECT has_function_privilege('public', '${entry}', 'EXECUTE') AS ok`)).rows[0]?.ok).toBe(false);
+      const row = (await c.query<{ proconfig: string[] | null; secdef: boolean; def: string }>(`SELECT proconfig, prosecdef AS secdef, pg_get_functiondef(oid) AS def FROM pg_proc WHERE oid = '${entry}'::regprocedure`)).rows[0];
+      expect(row?.secdef).toBe(true);
+      expect(row?.proconfig, "the proposal entry's settings").toEqual(["search_path=pg_catalog, pg_temp"]);
+      for (const part of [/'actor',\s*'agent'/, /'user',\s*NULL/, /'max_risk',\s*'R1'/, /'tainted',\s*true/, /'kind',\s*'mcp_company_proposal'/, /'grantor',\s*v_user/]) {
+        expect(row?.def, String(part)).toMatch(part);
+      }
+      expect(row?.def).not.toMatch(/'max_risk',\s*'R[23]'/);
+    });
+    // A live entry of a real company grant seals what the text says (a later expression could override a key).
+    const grantId = randomUUID();
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+         VALUES ($1, $2, $3, $4, 'Pin client', 'client.example.com', ARRAY['ludy.read', 'ludy.engage.write'], $5, now(), now() + interval '30 days', $3)`,
+        [orgId, grantId, users.owner, `pin-proposal-client-${grantId}`, `pin-proposal-oauth-${grantId}`],
+      ),
+    );
+    const sealed = await inContext(
+      appUrl,
+      (c) => c.query("SELECT crove_kernel.enter_mcp_company_proposal_context($1::uuid, $2::uuid, 'ludy.engage.write')", [orgId, grantId]),
+      sealOf,
+    );
+    expect(sealed, "the sealed context of the proposal entry").toMatchObject({
+      actor: "agent",
+      user: null,
+      max_risk: "R1",
+      tainted: true,
+      kind: "mcp_company_proposal",
       grantor: users.owner,
       org: orgId,
       agent: grantId,

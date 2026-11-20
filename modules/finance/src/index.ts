@@ -44,7 +44,9 @@ import { financeOverviewQuery } from './overview.ts';
 import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoice-connections.ts';
 import { marketplaceConnectionCommands, marketplaceConnectionQueries } from './marketplace-connections.ts';
 import { misaAmisConnectionCommands, misaAmisConnectionQueries } from './misa-amis-connections.ts';
-export { MISA_AMIS_CHANNEL_PROVIDER } from './misa-amis-connections.ts';
+import { misaAmisMatchCommands, misaAmisMatchQueries } from './misa-amis-match.ts';
+import { misaAmisPushCommands, misaAmisPushQueries } from './misa-amis-push.ts';
+export { MISA_AMIS_CHANNEL_PROVIDER, MISA_ASP_CHANNEL_PROVIDER, misaChannelProvider } from './misa-amis-connections.ts';
 import { einvoiceCommands, einvoiceQueries } from './einvoice-drafts.ts';
 import { marketplaceBalanceQueries } from './marketplace-balance.ts';
 import { marketplaceFactsQueries } from './marketplace-facts.ts';
@@ -82,6 +84,8 @@ import { householdReturnQueries } from './household-return.ts';
 import { householdS2aQueries } from './household-s2a.ts';
 import { householdS2bQueries } from './household-s2b.ts';
 import { householdS2cQueries } from './household-s2c.ts';
+import { householdS2dQueries } from './household-s2d.ts';
+import { householdS2eQueries } from './household-s2e.ts';
 import { stockReportQueries } from './stock-report.ts';
 import { stockLowQueries } from './stock-low.ts';
 export type { ReorderSource, SuggestSource } from './stock-low.ts';
@@ -90,6 +94,58 @@ export type { EInvoiceSuggestSource, EInvoiceSuggestParty, RateCount } from './e
 
 export { AI_BUDGET_MESSAGE, AI_BUDGET_RECHECK_MS, aiCost, extractAndPropose, recordExtractionFailure, type ExtractDeps } from './extract.ts';
 export { MARKETPLACE_POLL_DUE_PAGE, MARKETPLACE_POLL_REQUESTED, marketplacePollDue, marketplaceAdapterOf, type MarketplacePollTarget } from './marketplace-connections.ts';
+export { MISA_AMIS_TEST_REQUESTED, type MisaAmisTestTarget } from './misa-amis-connections.ts';
+export {
+  MISA_AMIS_PUSH_REQUESTED,
+  PUSH_AMBIGUOUS_REVIEW_DAYS,
+  PUSH_QUEUED_EXPIRY_DAYS,
+  PUSH_IN_FLIGHT_SECONDS,
+  PUSH_RESULT_WINDOW_HOURS,
+  type MisaAmisPushBegin,
+  type MisaAmisPushRecord,
+  type MisaAmisPushResult,
+  type MisaAmisPushRow,
+  type MisaAmisPushTarget,
+  type PushParams,
+  type PushRowRef,
+} from './misa-amis-push.ts';
+export {
+  AMIS_PLACEHOLDER_BRANCH,
+  amisBatchDigest,
+  amisContextOf,
+  amisPartDigest,
+  amisPartRows,
+  amisSourceType,
+  loadAmisEntries,
+  type AmisBuildAsk,
+  type AmisEntry,
+  type AmisMatches,
+  type AmisPartRow,
+  type AmisQuery,
+  type AmisWanted,
+} from './misa-amis-build.ts';
+export { MISA_AMIS_MATCH_CHECK_REQUESTED, NO_MATCH_RESULTS, type MisaAmisMatchResults, type MisaAmisMatchTarget } from './misa-amis-match.ts';
+export {
+  catalogueItems,
+  catalogueParties,
+  catalogueStocks,
+  catalogueUnits,
+  checkIsFresh,
+  confirmedStillHold,
+  matchItems,
+  matchNames,
+  matchParties,
+  matchStocks,
+  matchUnits,
+  MISA_AMIS_CHECK_MAX_AGE_MS,
+  normalizeName,
+  normalizeTaxCode,
+  normalizeUnitName,
+  relied,
+  staleMatches,
+  type StoredMatches,
+  type WantedName,
+} from './misa-amis-matching.ts';
 export * from './marketplace-provider.ts';
 export { NOT_A_REPORT, readMarketplaceFile, recordMarketplaceReadFailure, type MarketplaceFileDeps } from './marketplace-orders.ts';
 export { createMarketplaceSettlementCommands } from './marketplace-settlement-record.ts';
@@ -160,7 +216,8 @@ export { buildStatementsHtkkXml, type StatementsFiling } from './statements-htkk
 export * from './domain/statements-htkk-xml.ts';
 export { buildFixedAssetsWorkbook } from './fixed-assets-export.ts';
 export { buildStockWorkbook } from './stock-export.ts';
-export { buildCnkdWorkbook, buildS1aWorkbook, buildS2aWorkbook, buildS2bWorkbook, buildS2cWorkbook } from './household-export.ts';
+export { MARKETPLACE_FEE_CYCLE_DAYS } from './domain/marketplace-fee-age.ts';
+export { buildCnkdWorkbook, buildS1aWorkbook, buildS2aWorkbook, buildS2bWorkbook, buildS2cWorkbook, buildS2dWorkbook, buildS2eWorkbook } from './household-export.ts';
 export {
   MISA_SME_BANK_CREDIT,
   MISA_SME_BANK_DEBIT,
@@ -180,6 +237,7 @@ export {
   type SalesVoucher,
 } from './misa.ts';
 export {
+  AMIS_REFNO_MAX,
   amisTotals,
   cashAmisVouchers,
   purchaseGoodsAmisVouchers,
@@ -223,7 +281,7 @@ export { SEARCH_LIMIT, searchAmount, type SearchResult } from './search.ts';
 export { ARCHIVE_FORMAT, type ArchiveSource, type ArchiveSourceFile, type RecordedArchive } from './year-archive.ts';
 export { type FinancialStatements, type StatementLine, type UnmappedRow } from './statements.ts';
 
-export const financeCommands = [recordPurchase, revisePurchase, prepareReversal, reverseEntry, journalExport, vatExport, ledgerExport, statementsExport, openingBalancePost, periodLock, periodUnlock, bankImport, bankIngest, bankStatementConfirm, bankStatementReject, createAccount, updateAccount, setVendorDefaultAccount, prepareVoucher, recordVoucher, prepareJournalVoucher, recordJournalVoucher, prepareYearClosing, recordYearClosing, portalListImport, portalListRemove, portalListRecord, missingInvoicesRequest, missingInvoicesReminderSet, missingInvoicesRemind, vatPaymentMark, vatReturnMark, ...portalSyncCommands, ...financeNotificationCommands, ...yearArchiveCommands, ...fixedAssetCommands, ...misaGoodsCodeCommands, ...categorizationCommands, ...bankFeedCommands, ...bankAccountNumberCommands, ...bankPartyRuleCommands, ...paymentReminderCommands, ...collectionSettingCommands, ...einvoiceCommands, ...einvoiceConnectionCommands, ...marketplaceConnectionCommands, ...misaAmisConnectionCommands, ...einvoiceIssueCommands, ...einvoiceCorrectionCommands, ...einvoiceNoticeCommands, ...supplierBankAccountCommands, ...supplierPaymentCommands, ...supplierPaymentBankFileCommands, ...supplierPaymentSettleCommands, ...einvoiceJobCommands, ...stockCommands, ...stockLineCommands, ...orderHandoffCommands, ...stockCloseCommands, ...payrollPostingCommands, ...payrollPaymentCommands, ...stockCountCommands, ...stockExportCommands, ...marketplaceCommands, ...marketplaceIncomeCommands, ...marketplaceRetentionCommands, ...marketplaceSettlementCommands, ...marketplacePayoutCommands, ...marketplaceFeeClearingCommands, ...householdCommands, ...householdBookCommands];
+export const financeCommands = [recordPurchase, revisePurchase, prepareReversal, reverseEntry, journalExport, vatExport, ledgerExport, statementsExport, openingBalancePost, periodLock, periodUnlock, bankImport, bankIngest, bankStatementConfirm, bankStatementReject, createAccount, updateAccount, setVendorDefaultAccount, prepareVoucher, recordVoucher, prepareJournalVoucher, recordJournalVoucher, prepareYearClosing, recordYearClosing, portalListImport, portalListRemove, portalListRecord, missingInvoicesRequest, missingInvoicesReminderSet, missingInvoicesRemind, vatPaymentMark, vatReturnMark, ...portalSyncCommands, ...financeNotificationCommands, ...yearArchiveCommands, ...fixedAssetCommands, ...misaGoodsCodeCommands, ...categorizationCommands, ...bankFeedCommands, ...bankAccountNumberCommands, ...bankPartyRuleCommands, ...paymentReminderCommands, ...collectionSettingCommands, ...einvoiceCommands, ...einvoiceConnectionCommands, ...marketplaceConnectionCommands, ...misaAmisConnectionCommands, ...misaAmisMatchCommands, ...misaAmisPushCommands, ...einvoiceIssueCommands, ...einvoiceCorrectionCommands, ...einvoiceNoticeCommands, ...supplierBankAccountCommands, ...supplierPaymentCommands, ...supplierPaymentBankFileCommands, ...supplierPaymentSettleCommands, ...einvoiceJobCommands, ...stockCommands, ...stockLineCommands, ...orderHandoffCommands, ...stockCloseCommands, ...payrollPostingCommands, ...payrollPaymentCommands, ...stockCountCommands, ...stockExportCommands, ...marketplaceCommands, ...marketplaceIncomeCommands, ...marketplaceRetentionCommands, ...marketplaceSettlementCommands, ...marketplacePayoutCommands, ...marketplaceFeeClearingCommands, ...householdCommands, ...householdBookCommands];
 export const financeQueries = [
   ...mcpFinanceQueries,
   financeOverdueReceivablesSignals,
@@ -235,6 +293,8 @@ export const financeQueries = [
   ...householdS2aQueries,
   ...householdS2bQueries,
   ...householdS2cQueries,
+  ...householdS2dQueries,
+  ...householdS2eQueries,
   ...fixedAssetQueries,
   ...bankFeedQueries,
   ...bankAccountNumberQueries,
@@ -294,6 +354,8 @@ export const financeQueries = [
   ...einvoiceConnectionQueries,
   ...marketplaceConnectionQueries,
   ...misaAmisConnectionQueries,
+  ...misaAmisMatchQueries,
+  ...misaAmisPushQueries,
   ...einvoiceIssueQueries,
   ...stockQueries,
   ...stockLineQueries,

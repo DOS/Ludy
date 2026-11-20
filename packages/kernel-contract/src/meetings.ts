@@ -103,6 +103,8 @@ export const zMeetingDetail = zMeetingSummary.extend({
   consentNoticeVersion: z.string(),
   // Set when the recording stopped without the recorder's click; the stop time is `endedAt` (A1, #3159).
   recordingStopReason: zRecordingStopReason.nullable(),
+  // True while the draft is a platform's transcript that was cut (the platform sent more than Ludy reads or the draft takes, #3922): the page tells the recorder the draft stops early.
+  platformTranscriptCut: z.boolean(),
   readers: z.array(zId),
   videoRetentionDate: z.string().nullable(),
   isRecorder: z.boolean(),
@@ -483,9 +485,18 @@ export const zTranscriptSegment = z.strictObject({
 export type TranscriptSegment = z.infer<typeof zTranscriptSegment>;
 
 // The input of the import of a platform's transcript (C2, #3174): the lines the job staged, read again and bounded here (tainted input). It is no RPC input: only the import route runs the command.
+// A line of a platform's transcript, read again here (defense in depth: the job's `stageTranscript` already clamps the times and drops NUL bytes, so a staged line holds neither fault; this refuses
+// them if the staged bytes ever come from another path). A line that ends before it starts is no span of speech, and a NUL byte is no text: Postgres refuses it in a text column, which would fail the
+// whole import with a 500 instead of this refusal. Only the platform import asks for this: the draft transcript of a recording (`zTranscriptDraftStore`) keeps its own rules.
+const zImportedSegment = zTranscriptSegmentInput
+  .refine((line) => line.endSeconds >= line.startSeconds, { message: 'a line ends before it starts', path: ['endSeconds'] })
+  .refine((line) => !line.text.includes('\u0000'), { message: 'a line holds a NUL byte', path: ['text'] })
+  .refine((line) => !line.speakerLabel.includes('\u0000'), { message: 'a line holds a NUL byte', path: ['speakerLabel'] });
 export const zMeetingTranscriptImport = z.strictObject({
   meetingId: zId,
-  segments: z.array(zTranscriptSegmentInput).min(1).max(TRANSCRIPT_SEGMENTS_MAX),
+  segments: z.array(zImportedSegment).min(1).max(TRANSCRIPT_SEGMENTS_MAX),
+  // The platform's transcript was longer than the lines here (#3922): the staged file says so, the route passes it on, the meeting keeps it.
+  platformCut: z.boolean().default(false),
 });
 export type MeetingTranscriptImport = z.infer<typeof zMeetingTranscriptImport>;
 
@@ -1182,6 +1193,28 @@ export const zMcpOpenActionsInput = z.strictObject({
 export const zMcpSeriesOpenItemsInput = z.strictObject({
   meetingId: zId.describe('The id of a meeting from ludy_meetings_list. The items of every meeting in the same series as this one are listed.'),
   limit: z.number().int().min(1).max(MCP_OPEN_ACTIONS_MAX).default(MCP_OPEN_ACTIONS_DEFAULT).describe(`How many items to return (1 to ${MCP_OPEN_ACTIONS_MAX}, default ${MCP_OPEN_ACTIONS_DEFAULT}).`),
+});
+
+// The published decisions of the meetings of the last 7, 14 or 30 days (#4016): the window counts from the meeting's start, at most MCP_OPEN_ACTIONS_MAX decisions, the newest meeting first.
+export const MCP_DECISIONS_DAYS = [7, 14, 30] as const;
+export const MCP_DECISIONS_DAYS_DEFAULT = 14;
+export const zMcpDecisionsInput = z.strictObject({
+  days: z.literal([...MCP_DECISIONS_DAYS]).default(MCP_DECISIONS_DAYS_DEFAULT).describe(`How far back to look, counted from now: ${MCP_DECISIONS_DAYS.join(', ')} days (default ${MCP_DECISIONS_DAYS_DEFAULT}). A meeting counts by its start.`),
+  limit: z.number().int().min(1).max(MCP_OPEN_ACTIONS_MAX).default(MCP_OPEN_ACTIONS_DEFAULT).describe(`How many decisions to return (1 to ${MCP_OPEN_ACTIONS_MAX}, default ${MCP_OPEN_ACTIONS_DEFAULT}).`),
+});
+
+// A search over the published minutes (#4030): the typed words are folded in code (lower case, Vietnamese marks and đ removed) and never reach the database; at most MCP_SEARCH_WORDS_MAX words, each the
+// start of a word of ONE line (the title, a summary line, a decision or an action item title) of a meeting the grant may already read; at most MCP_SEARCH_MEETINGS_MAX of the newest such meetings are searched.
+export const MCP_SEARCH_QUERY_MAX = 200;
+export const MCP_SEARCH_WORDS_MAX = 8;
+export const MCP_SEARCH_DEFAULT = 10;
+export const MCP_SEARCH_MAX = 50;
+export const MCP_SEARCH_MEETINGS_MAX = 200;
+export const MCP_SNIPPET_MAX = 200;
+export const MCP_SEARCH_FIELDS = ['title', 'decision', 'summary', 'action'] as const;
+export const zMcpSearchInput = z.strictObject({
+  q: z.string().trim().min(2).max(MCP_SEARCH_QUERY_MAX).describe(`The words to look for (2 to ${MCP_SEARCH_QUERY_MAX} characters). Case and Vietnamese marks do not matter ("chiet khau" finds "chiết khấu"). Every word must start a word of the same line; at most ${MCP_SEARCH_WORDS_MAX} words count.`),
+  limit: z.number().int().min(1).max(MCP_SEARCH_MAX).default(MCP_SEARCH_DEFAULT).describe(`How many meetings to return (1 to ${MCP_SEARCH_MAX}, default ${MCP_SEARCH_DEFAULT}).`),
 });
 
 

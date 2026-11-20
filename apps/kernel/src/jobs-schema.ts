@@ -79,6 +79,8 @@ export const QUEUES = {
   meetingHookSweep: 'kernel-meeting-hook-sweep',
   // Created by the series nudge migration (20270107120000): the sweep, every 5 minutes, of the nudges about open items before the next meeting of a series (#3542).
   meetingsSeriesNudge: 'meetings-series-nudge',
+  // Created by the morning notice migration (20270120110000): the sweep, every 5 minutes, of the opt-in notices of the day's meetings (a count and a link, never a title; #3955).
+  meetingsMorning: 'meetings-morning',
   // Meeting platform recordings (meetings integrations C1, #3173): one download of a recording the member chose to import, and the sweep that hands them over, lists suggestions and expires.
   meetingsImport: 'kernel-meeting-import',
   meetingsImportSweep: 'kernel-meeting-import-sweep',
@@ -94,6 +96,10 @@ export const QUEUES = {
   einvoiceIssue: 'finance-einvoice-issue',
   // Created by the marketplace poll migration (crove_finance_marketplace_poll): one marketplace connection's pull of orders (#2519).
   marketplacePoll: 'finance-marketplace-poll',
+  // Created by the MISA AMIS test queue migration (20270119130000): one MISA AMIS connection's test, a token and the company's information (#3885, S2b of #3854).
+  misaAmisTest: 'finance-misa-amis-test',
+  misaAmisMatch: 'finance-misa-amis-match',
+  misaAmisPush: 'finance-misa-amis-push',
   // Created by the ads core migration (20261115120000): an ad account's sync (ADR-0040, #2217).
   adsSync: 'ads-sync',
   // Created by the conversations migration (20261118120000): a reply or a hide of the conversation core, ids only in its data (#2303).
@@ -200,6 +206,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.notesRemind]: 'none',
   // The sweep reads the database and runs a command that writes an in-app notice; it reaches nothing.
   [QUEUES.meetingsSeriesNudge]: 'none',
+  // The sweep reads the database and runs a command that writes an in-app notice and queues a mail (the mail queues send it); it reaches nothing itself.
+  [QUEUES.meetingsMorning]: 'none',
   [QUEUES.memberVySweep]: 'none',
   // The one request to the receiver URL an org set, through the egress guard (egressFetch, https only): the delivery's only reach. The sweep reads and writes the database and hands jobs over, nothing else.
   [QUEUES.mcpWake]: ['tenant_url'],
@@ -226,6 +234,11 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The marketplace provider adapters (channels.marketplaceProviders, modules/finance marketplace-provider.ts): the offline sandbox reaches nothing, a real adapter the hosts it declares, each
   // through guardedRequest. What they list goes through the ordinary intake (kernel.file.ingest), whose extraction job declares its own egress.
   [QUEUES.marketplacePoll]: ['provider:marketplace'],
+  // The MISA AMIS client (channels.misaAmis, @crove/misa-amis): its transport is bound to developer.misa.vn by the egress guard (guardedRequest, https and that host only). The test job reads a token and the
+  // company's information; a later slice's push job declares itself here too.
+  [QUEUES.misaAmisTest]: ['provider:misa_amis'],
+  [QUEUES.misaAmisMatch]: ['provider:misa_amis'],
+  [QUEUES.misaAmisPush]: ['provider:misa_amis'],
   // The ad platform adapters (channels.adPlatforms, @crove/ad-platform): the offline sandbox reaches nothing, the real ones
   // (Meta from A2, #2218) the host of their platform, each through its own host-bound fetch.
   [QUEUES.adsSync]: ['provider:ad_platform'],

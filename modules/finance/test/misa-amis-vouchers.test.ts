@@ -25,6 +25,7 @@ const ctx = (overrides: Partial<AmisContext> = {}): AmisContext => ({
   salesItemCode: 'BH_CHUNG',
   defaultUnitName: 'Lần',
   partyCodes: null,
+  itemCodes: null,
   ...overrides,
 });
 
@@ -272,6 +273,22 @@ describe('blockers: what AMIS needs that was not given', () => {
     }
   });
 
+  it('names a party that several active catalogue entries carry apart from one the catalogue does not have (#4114): different fixes, both block, and a check that has none ambiguous changes nothing', () => {
+    // 0101234564 is the party of the purchase and the cash voucher, 0312345678 the customer of the sale: the check found two active entries with each (ambiguous), and 9999999999 is matched.
+    const ambiguous = ctx({ partyCodes: new Map([['9999999999', 'KH_KHAC']]), partyAmbiguous: new Set(['0101234564', '0312345678']) });
+    const blocker = [{ code: 'party_code_ambiguous', sourceId: SOURCE_ID, lineNo: null }];
+    expect(purchaseServiceAmisVouchers(purchase(), ambiguous).blockers).toEqual(blocker);
+    expect(salesAmisVouchers(sale(), ambiguous).blockers).toEqual(blocker);
+    expect(cashAmisVouchers(cash(), ambiguous).blockers).toEqual(blocker);
+    // A party the check found none for (unknown), or whose tax code is not the ambiguous one, stays `party_code_unknown`.
+    const elsewhere = ctx({ partyCodes: new Map([['9999999999', 'KH_KHAC']]), partyAmbiguous: new Set(['0555555555']) });
+    expect(purchaseServiceAmisVouchers(purchase(), elsewhere).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    expect(purchaseServiceAmisVouchers(purchase(), ctx({ partyCodes: new Map([['9999999999', 'KH_KHAC']]), partyAmbiguous: null })).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    // A matched party is not blocked, ambiguous set or not; with no check read nothing is blocked either.
+    expect(purchaseServiceAmisVouchers(purchase(), ctx({ partyCodes: new Map([['0101234564', 'NCC_ABC']]), partyAmbiguous: new Set(['0101234564']) })).blockers).toEqual([]);
+    expect(purchaseServiceAmisVouchers(purchase(), ctx({ partyCodes: null, partyAmbiguous: new Set(['0101234564']) })).blockers).toEqual([]);
+  });
+
   it('names a party the dictionary does not have, but does not block when the dictionary was not read', () => {
     const known = ctx({ partyCodes: new Map([['9999999999', 'KH_KHAC']]) });
     expect(purchaseServiceAmisVouchers(purchase(), known).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
@@ -281,6 +298,77 @@ describe('blockers: what AMIS needs that was not given', () => {
     const match = ctx({ partyCodes: new Map([['0101234564', 'NCC_ABC']]) });
     const [data] = sent(purchaseServiceAmisVouchers(purchase(), match));
     expect(data).toMatchObject({ account_object_code: 'NCC_ABC' });
+  });
+
+  it('looks a party up by the digits of its tax code: a formatted one on the voucher is found, one that is not 10 or 13 digits is as unknown as one the catalogue lacks', () => {
+    const matched = ctx({ partyCodes: new Map([['0101234564', 'NCC_ABC']]) });
+    const formatted = purchase({ vendor: { name: 'Công ty TNHH ABC', taxCode: '0101.234.564', address: null } });
+    expect(purchaseServiceAmisVouchers(formatted, matched).blockers).toEqual([]);
+    const broken = purchase({ vendor: { name: 'Công ty TNHH ABC', taxCode: '12345', address: null } });
+    expect(purchaseServiceAmisVouchers(broken, matched).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    // Without a check nothing is judged, so the same broken code is no blocker.
+    expect(purchaseServiceAmisVouchers(broken, ctx({ partyCodes: null })).blockers).toEqual([]);
+  });
+
+  it('blocks a party with no tax code once a check is done (nothing to match it on until S3b), and sends it by name as before while no check is done', () => {
+    const person = purchase({ vendor: { name: 'Nguyễn Văn A', taxCode: null, address: null } });
+    const checked = ctx({ partyCodes: new Map([['0101234564', 'NCC_ABC']]) });
+    expect(purchaseServiceAmisVouchers(person, checked).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: null })).blockers).toEqual([]);
+  });
+
+  it('writes a party with no tax code with the code a person confirmed for its name (#4124), and blocks it while the name is only proposed or the confirmation is of another party', () => {
+    const PARTY = '77777777-7777-4777-8777-777777777777';
+    const person = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode: null, address: null } });
+    const confirmed = ctx({ partyCodes: new Map(), partyNameCodes: new Map([[PARTY, 'KH_NVA']]) });
+    expect(purchaseServiceAmisVouchers(person, confirmed).blockers).toEqual([]);
+    expect(JSON.stringify(purchaseServiceAmisVouchers(person, confirmed))).toContain('KH_NVA');
+    // Not confirmed (a proposal is not a match): blocked as before. A confirmation for another party does not count. A party with no id cannot be named.
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: new Map(), partyNameCodes: new Map() })).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: new Map(), partyNameCodes: new Map([['88888888-8888-4888-8888-888888888888', 'KH_KHAC']]) })).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    const noId = purchase({ vendor: { name: 'Nguyễn Văn A', taxCode: null, address: null } });
+    expect(purchaseServiceAmisVouchers(noId, confirmed).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    // A tax code that is PRESENT but cannot be used (not 10 or 13 digits: a mistyped one) is never matched by name, whatever is confirmed: it stays a blocker for a person to fix. Only none, or a blank one, is a party with no tax code.
+    for (const taxCode of ['12345', '010123456', 'không có', '0101234564-0']) {
+      const unusable = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode, address: null } });
+      expect(purchaseServiceAmisVouchers(unusable, confirmed).blockers, taxCode).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    }
+    for (const taxCode of [null, '', '   ']) {
+      const blank = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode, address: null } });
+      expect(purchaseServiceAmisVouchers(blank, confirmed).blockers, String(taxCode)).toEqual([]);
+    }
+    // No check done: nothing is judged, as before.
+    expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: null })).blockers).toEqual([]);
+  });
+
+  it('names an item code the catalogue does not have, by line, once a check is done; with no check it judges nothing', () => {
+    const checked = ctx({ itemCodes: new Set(['KHAC']) });
+    expect(purchaseServiceAmisVouchers(purchase(), checked).blockers.map((b) => [b.code, b.lineNo])).toEqual([
+      ['item_code_unknown', 1],
+      ['item_code_unknown', 2],
+      ['item_code_unknown', 3],
+    ]);
+    expect(salesAmisVouchers(sale(), checked).blockers.map((b) => b.code)).toEqual(['item_code_unknown', 'item_code_unknown']);
+    expect(purchaseServiceAmisVouchers(purchase(), ctx({ itemCodes: new Set(['DV_CHUNG']) })).blockers).toEqual([]);
+    expect(salesAmisVouchers(sale(), ctx({ itemCodes: new Set(['BH_CHUNG']) })).blockers).toEqual([]);
+    expect(purchaseServiceAmisVouchers(purchase(), ctx({ itemCodes: null })).blockers).toEqual([]);
+  });
+
+  it('names a saved goods item code the catalogue does not have', () => {
+    const goods = purchaseGoodsAmisVouchers(
+      {
+        ...purchase(),
+        vatAmount: '60000',
+        lines: [{ lineNo: 1, description: 'Giấy A4', unit: 'Ram', quantity: '10', unitPrice: '60000', amount: '600000', vatRate: '10%', debitAccount: '1561' }],
+      },
+      [{ accountCode: '156', itemCode: 'HH_VPP', warehouseCode: 'KHO1' }],
+      accountParents([
+        { code: '156', parentCode: null },
+        { code: '1561', parentCode: '156' },
+      ]),
+      ctx({ itemCodes: new Set(['DV_CHUNG']) }),
+    );
+    expect(goods.blockers).toEqual([{ code: 'item_code_unknown', sourceId: SOURCE_ID, lineNo: 1 }]);
   });
 
   it('names a VAT rate AMIS cannot take, by line', () => {
@@ -414,6 +502,33 @@ describe('what the reviewer found', () => {
     const mapping = purchaseGoodsAmisVouchers(goodsPurchase(), [{ accountCode: '156', itemCode: 'HH_VPP', warehouseCode: null }], GOODS_PARENTS, ctx());
     expect(mapping.vouchers).toEqual([]);
     expect(mapping.blockers).toEqual([{ code: 'stock_missing', sourceId: SOURCE_ID, lineNo: 1 }]);
+  });
+
+  // F3 of the S3a review (#3902): "/N" is added to a split voucher's number after cashVoucherNo checked its 20 characters, so the FINAL number of every part is checked.
+  describe('the final number of a split voucher (20 characters at most)', () => {
+    const manyLines = (code: string, n: number): CashVoucher =>
+      cash({ code, lines: Array.from({ length: n }, (_, i) => ({ lineNo: i + 1, account: '6422', amount: '1000', memo: null })) });
+    it('blocks a 19 character number that a split would take to 21', () => {
+      const mapping = cashAmisVouchers(manyLines('PC12345678901', AMIS_MAX_VOUCHER_LINES + 1), ctx());
+      expect(mapping.voucherNo).toHaveLength(19);
+      expect(mapping.vouchers).toEqual([]);
+      expect(mapping.blockers).toEqual([{ code: 'voucher_number_too_long', sourceId: SOURCE_ID, lineNo: null }]);
+    });
+    it('blocks a 20 character number that a split would take to 22', () => {
+      const mapping = cashAmisVouchers(manyLines('PC123456789012', AMIS_MAX_VOUCHER_LINES + 1), ctx());
+      expect(mapping.voucherNo).toHaveLength(20);
+      expect(mapping.vouchers).toEqual([]);
+      expect(mapping.blockers).toEqual([{ code: 'voucher_number_too_long', sourceId: SOURCE_ID, lineNo: null }]);
+    });
+    it('keeps a 19 and a 20 character number that is not split, and an 18 character one whose "/2" reaches 20', () => {
+      expect(cashAmisVouchers(manyLines('PC12345678901', 1), ctx()).vouchers.map((v) => v.org_refno)).toEqual(['CRPC' + '2026' + '12345678901']);
+      const twenty = cashAmisVouchers(manyLines('PC123456789012', 1), ctx());
+      expect(twenty.blockers).toEqual([]);
+      expect(String(twenty.vouchers[0]?.org_refno)).toHaveLength(20);
+      const split = cashAmisVouchers(manyLines('PC1234567890', AMIS_MAX_VOUCHER_LINES + 1), ctx());
+      expect(split.blockers).toEqual([]);
+      expect(split.vouchers.map((v) => String(v.org_refno).length)).toEqual([18, 20]);
+    });
   });
 
   it('lists a cash voucher whose number is too long with a blocker instead of throwing', () => {

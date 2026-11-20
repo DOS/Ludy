@@ -121,6 +121,7 @@ export const TAB_GROUPS: readonly TabGroup[] = [
       { path: 'settings/quotes', label: 'settingsQuotes' },
       { path: 'settings/accounting', label: 'settingsAccounting' },
       { path: 'settings/connections', label: 'settingsConnections' },
+      { path: 'settings/notifications', label: 'settingsNotifications' },
       { path: 'settings/security', label: 'settingsSecurity' },
       { path: 'settings/data', label: 'settingsData' },
     ],

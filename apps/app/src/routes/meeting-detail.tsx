@@ -14,10 +14,12 @@ import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { MeetingLinks } from '../components/meeting-links.tsx';
 import { MeetingResults, memberLabel } from '../components/meeting-results.tsx';
 import { MeetingLive } from '../components/meeting-live.tsx';
+import { MeetingAdherence } from '../components/meeting-adherence.tsx';
 import { MeetingBrief } from '../components/meeting-brief.tsx';
 import { MeetingSeries } from '../components/meeting-series.tsx';
 import { MeetingTitleSuggest } from '../components/meeting-title.tsx';
 import { MeetingChapters } from '../components/meeting-chapters.tsx';
+import { MeetingCommitments } from '../components/meeting-commitments.tsx';
 import { MeetingNotes } from '../components/meeting-notes.tsx';
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
@@ -27,6 +29,7 @@ import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, errorMessage, fetchVideoTicket, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
+import type { TranscriptFocus } from '../lib/transcript-focus.ts';
 import { createVideoTicketPlayer, videoStreamUrl, type VideoTicketPlayer } from '../lib/video-ticket.ts';
 
 const CONSENT_KEYS = { told_at_start: 'toldAtStart', in_invite: 'inInvite', in_writing: 'inWriting', in_call_chat: 'inCallChat', platform_notice: 'platformNotice' } as const;
@@ -63,11 +66,11 @@ export function MeetingDetailPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // A chapter was clicked (#3844): the transcript goes to its line, and a recording that is already loaded is set to that second (it is never started by the click).
-  const [jump, setJump] = useState<{ second: number; token: number } | undefined>(undefined);
+  const [jump, setJump] = useState<TranscriptFocus | undefined>(undefined);
   // The page links to another meeting in place: a jump to a line of one meeting never carries over to the next.
   useEffect(() => setJump(undefined), [id]);
-  const jumpTo = (second: number) => {
-    setJump((j) => ({ second, token: (j?.token ?? 0) + 1 }));
+  const jumpTo = (second: number, speaker?: string) => {
+    setJump((j) => ({ second, speaker, token: (j?.token ?? 0) + 1 }));
     if (audioRef.current) audioRef.current.currentTime = second;
     if (videoRef.current) videoRef.current.currentTime = second;
   };
@@ -284,7 +287,7 @@ export function MeetingDetailPage() {
       {/* A recording that ended without the recorder's click leaves a visible line (A1, #3159): when it stopped and why, in plain words. */}
       <RecordingStoppedNote meeting={meeting} />
       {/* The recorder's own Vy offers up to three titles on a click (#3947); a pick renames the meeting, nothing changes before it */}
-      <MeetingTitleSuggest key={id} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} />
+      <MeetingTitleSuggest key={`title-${id}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} />
 
       {/* AI Off Status Card: gone once the meeting has a transcript */}
       {!hasTranscript && (
@@ -351,10 +354,15 @@ export function MeetingDetailPage() {
       {meeting.isRecorder && <AgendaAttach meetingId={id} />}
 
       <MeetingLive meetingId={id} liveNotes={meeting.liveNotes} isRecorder={meeting.isRecorder} />
-      {/* The transcript: the recorder's draft, or what was shared with the meeting */}
+      {/* Each keyed child below has a key of its own: the same key on siblings makes React duplicate or drop children on a re-render (#4066) */}
       {/* The chapters (#3844): the published table of contents for every reader, the recorder's own draft editor; a click takes the transcript below to the line */}
-      <MeetingChapters key={id} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
-      <MeetingTranscript meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} />
+      <MeetingChapters key={`chapters-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
+      {/* What each speaker said they would do or decided (#3954): the recorder's own Vy on a click, each line opens the transcript where it was said, nothing is saved */}
+      <MeetingCommitments key={`commitments-${id}`} meetingId={id} isRecorder={meeting.isRecorder} hasTranscript={hasTranscript} onJump={jumpTo} />
+      {/* The transcript: the recorder's draft, or what was shared with the meeting */}
+      <MeetingTranscript key={`transcript-${id}`} meetingId={id} {...(seg ? { focusSegmentId: seg } : {})} focusSecond={jump} platformCut={meeting.platformTranscriptCut} />
+      {/* Did the meeting cover its agenda (#3959): the recorder's own click, Vy compares the agenda with the transcript above and cites the lines */}
+      <MeetingAdherence key={`adherence-${id}`} meetingId={id} isRecorder={meeting.isRecorder} onJump={jumpTo} />
       {/* The recorder's own rough notes (A5): theirs alone, so only the recorder gets the box */}
       {/* What to bring to the next meeting of a series (#3543): the previous meeting's decisions, the open items, the linked customer's open deals, and Vy's few sentences on a click */}
       <MeetingBrief slug={slug} meetingId={id} />
@@ -362,6 +370,7 @@ export function MeetingDetailPage() {
       <MeetingSeries meetingId={id} isRecorder={meeting.isRecorder} startedAt={meeting.startedAt} />
       {meeting.isRecorder && <MeetingNotes meetingId={id} minutesTemplate={meeting.minutesTemplate} />}
       <MeetingResults
+        key={`results-${id}`}
         meetingId={id}
         slug={slug}
         visibility={meeting.visibility}

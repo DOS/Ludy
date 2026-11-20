@@ -89,6 +89,8 @@ import { signAiCommands, signAiQueries, signCommands, signManifest, signQueries 
 import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adManagers, adPausers, adPlatforms, adRevokers, adStateReaders, type AdActivator, type AdManager, type AdPauser, type AdPlatform, type AdRevoker, type AdStateReader, type LaunchWriter } from '@crove/ad-platform';
 import { createMisaEInvoiceProvider, createSandboxEInvoiceProvider, misaBlockers, type EInvoiceProvider } from '@crove/einvoice';
 import { misaTransport } from './einvoice-transport.ts';
+import { createAmisClient, type AmisCallbackKey, type AmisClient, type AmisTransport } from '@crove/misa-amis';
+import { amisTransport } from './misa-amis-transport.ts';
 import { createSandboxMarketplaceProvider, isMarketplaceAdapter, type MarketplaceProvider } from '@crove/mod-finance';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
@@ -178,7 +180,7 @@ export interface KernelAdapters {
   summaryModel?: ModelPort | null;
   // Vy's eSign field placement and risky clause review (#3351); null runs manual signing without AI.
   signAi?: Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> | null;
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'supplierPayableLineSentence' | 'misaCheckLineSentence' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'marketplaceFeeNotes' | 'supplierPayableLineSentence' | 'misaCheckLineSentence' | 'misaAmisBlockerNotes' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'laborCheck' | 'recruitingBrief'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -388,11 +390,12 @@ export function channelConversationAdapters(config: WhatsAppConfig): Record<stri
   return whatsapp ? { whatsapp: new WhatsAppConversations(new Graph(whatsapp.appSecret, whatsapp.graphVersion)) } : {};
 }
 
-// The meeting platforms a deployment has (Meetings C1, C3 and C4): the offline sandbox when the channel sandbox is on, Zoom only when the deployment has its own Zoom OAuth app, and Teams only when it has its
-// own Microsoft Entra app (both off by default).
-export function meetingPlatformsOf(config: Pick<Config, 'CHANNEL_SANDBOX' | 'ZOOM_OAUTH_CLIENT_ID' | 'ZOOM_OAUTH_CLIENT_SECRET' | 'TEAMS_OAUTH_CLIENT_ID' | 'TEAMS_OAUTH_CLIENT_SECRET'>) {
+// The meeting platforms a deployment has (Meetings C1 to C4): the offline sandbox when the channel sandbox is on, Zoom only when the deployment has its own Zoom OAuth app, Teams only when it has its own
+// Microsoft Entra app, and Google Meet only when it has a Google OAuth client for it (all off by default).
+export function meetingPlatformsOf(config: Pick<Config, 'CHANNEL_SANDBOX' | 'ZOOM_OAUTH_CLIENT_ID' | 'ZOOM_OAUTH_CLIENT_SECRET' | 'TEAMS_OAUTH_CLIENT_ID' | 'TEAMS_OAUTH_CLIENT_SECRET' | 'MEETINGS_GOOGLE_CLIENT_ID' | 'MEETINGS_GOOGLE_CLIENT_SECRET'>) {
   return meetingPlatformAdapters({
     sandbox: config.CHANNEL_SANDBOX === 'true',
+    ...(config.MEETINGS_GOOGLE_CLIENT_ID && config.MEETINGS_GOOGLE_CLIENT_SECRET ? { google: { clientId: config.MEETINGS_GOOGLE_CLIENT_ID, clientSecret: config.MEETINGS_GOOGLE_CLIENT_SECRET } } : {}),
     ...(config.ZOOM_OAUTH_CLIENT_ID && config.ZOOM_OAUTH_CLIENT_SECRET ? { zoom: { clientId: config.ZOOM_OAUTH_CLIENT_ID, clientSecret: config.ZOOM_OAUTH_CLIENT_SECRET } } : {}),
     ...(config.TEAMS_OAUTH_CLIENT_ID && config.TEAMS_OAUTH_CLIENT_SECRET ? { teams: { clientId: config.TEAMS_OAUTH_CLIENT_ID, clientSecret: config.TEAMS_OAUTH_CLIENT_SECRET } } : {}),
   });
@@ -449,6 +452,23 @@ export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX' | 'E
     out.misa = createMisaEInvoiceProvider({ transport });
   }
   return out;
+}
+
+// The MISA AMIS Kế toán client (#3854, S2b): there only where the deployment holds the integrator's ClientID, over the transport the egress guard binds to developer.misa.vn. The ClientID stays in the
+// client's closure (it is also the callback's HMAC key); no answer, log or audit row carries it.
+export function misaAmisClientOf(config: Pick<Config, 'MISA_AMIS_CLIENT_ID'>, transport: AmisTransport = amisTransport()): AmisClient | undefined {
+  return config.MISA_AMIS_CLIENT_ID ? createAmisClient({ clientId: config.MISA_AMIS_CLIENT_ID, transport }) : undefined;
+}
+
+// The MISA ASP client (#4111, S2 of #4103): the same adapter on ASP's paths, there only where the deployment holds the ClientID for that product; the same transport, so the same egress guard and host.
+// It answers `unsupported` for what ASP does not have, before any token or send. The connection test, the catalogue check (#4152) and the push job (#4113) use it.
+// The ClientIDs this deployment holds, one per product, for the callback route (#4113): MISA AMIS and MISA ASP post to one address, each signing with its own.
+export function misaCallbackKeys(config: Pick<Config, 'MISA_AMIS_CLIENT_ID' | 'MISA_ASP_CLIENT_ID'>): AmisCallbackKey[] {
+  return [...(config.MISA_AMIS_CLIENT_ID ? [{ product: 'amis' as const, clientId: config.MISA_AMIS_CLIENT_ID }] : []), ...(config.MISA_ASP_CLIENT_ID ? [{ product: 'asp' as const, clientId: config.MISA_ASP_CLIENT_ID }] : [])];
+}
+
+export function misaAspClientOf(config: Pick<Config, 'MISA_ASP_CLIENT_ID'>, transport: AmisTransport = amisTransport()): AmisClient | undefined {
+  return config.MISA_ASP_CLIENT_ID ? createAmisClient({ clientId: config.MISA_ASP_CLIENT_ID, product: 'asp', transport }) : undefined;
 }
 
 // The marketplace providers this deployment offers, by adapter id (ADR-0045 point 7, #2519): the ones MARKETPLACE_PROVIDERS names. `sandbox` is the offline provider. A real adapter is
@@ -793,6 +813,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           ...(config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET ? { adsDeletion: { appSecret: config.CHANNEL_META_ADS_APP_SECRET } } : {}),
           ...(config.CHANNEL_META_ADS_WRITE_APP_ID && config.CHANNEL_META_ADS_WRITE_APP_SECRET ? { adsWriteDeletion: { appSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET } } : {}),
           ...(conversationSecrets ? { conversationsDeletion: { appSecret: conversationSecrets.primary, ...(conversationSecrets.instagram ? { instagramAppSecret: conversationSecrets.instagram } : {}) } } : {}),
+          // Zoom's webhook of finished cloud recordings (Meetings C3, #3175): with the Zoom app's secret token.
+          ...(config.ZOOM_WEBHOOK_SECRET_TOKEN ? { zoomWebhook: { secretToken: config.ZOOM_WEBHOOK_SECRET_TOKEN, secretTokenPrevious: config.ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS } } : {}),
           // Zalo OA's webhook for customers' messages (conversation core, #2304): with the Zalo app and its OA secret key configured.
           ...(config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_OA_SECRET_KEY ? { zaloWebhook: { appId: config.CHANNEL_ZALO_APP_ID, oaSecretKey: config.CHANNEL_ZALO_OA_SECRET_KEY, oaSecretKeyPrevious: config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS } } : {}),
           // Meta Page webhook for Page comments (conversation core CV2, #2307): with the Meta app and its webhook verify token configured.
@@ -803,11 +825,14 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           ...((conversationSecrets || threadsWebhookSecret) && config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN ? { facebookWebhook: { appSecret: conversationSecrets?.primary ?? '', ...(conversationSecrets?.instagram ? { instagramAppSecret: conversationSecrets.instagram } : {}), ...(threadsWebhookSecret ? { threadsAppSecret: threadsWebhookSecret } : {}), appSecretPrevious: config.CHANNEL_META_APP_SECRET_PREVIOUS, verifyToken: config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN } } : {}),
           // WhatsApp Business webhook for customers' messages (conversation core, #3131): with the WhatsApp app secret and its verify token configured.
           ...(config.CHANNEL_WHATSAPP_APP_SECRET && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsappWebhook: { appSecret: config.CHANNEL_WHATSAPP_APP_SECRET, appSecretPrevious: config.CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS, verifyToken: config.CHANNEL_WHATSAPP_VERIFY_TOKEN } } : {}),
+          // MISA AMIS's callback (#3903): the route exists only where the ClientID, the HMAC key of its signature, is set.
+          // The one address takes MISA ASP's results too (#4113), signed with ASP's own ClientID: each product's key that the deployment holds is tried, and the product of the key that verified the message goes with the result.
+          ...(config.MISA_AMIS_CLIENT_ID || config.MISA_ASP_CLIENT_ID ? { misaAmisCallback: { keys: misaCallbackKeys(config) } } : {}),
           // The bank feed adapters that take signed notices (ADR-0039): the route exists only for these.
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
           ),
-          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), misaAmis: Boolean(config.MISA_AMIS_CLIENT_ID), emailSenderCheck: Boolean(config.INBOUND_AUTHSERV_ID), adsLaunchProviders: Object.keys(adWritersOf(config)), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', ...(whatsappApp(config) && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsapp: whatsappApp(config) } : {}), connectors: channelConnectors(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
+          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), misaAmis: Boolean(config.MISA_AMIS_CLIENT_ID), misaAsp: Boolean(config.MISA_ASP_CLIENT_ID), misaAmisPush: Boolean(config.MISA_AMIS_CLIENT_ID) && config.MISA_AMIS_PUSH === 'on', misaAspPush: Boolean(config.MISA_ASP_CLIENT_ID) && config.MISA_ASP_PUSH === 'on', emailSenderCheck: Boolean(config.INBOUND_AUTHSERV_ID), adsLaunchProviders: Object.keys(adWritersOf(config)), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', ...(whatsappApp(config) && config.CHANNEL_WHATSAPP_VERIFY_TOKEN ? { whatsapp: whatsappApp(config) } : {}), connectors: channelConnectors(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
           ...(stream ? { stream } : {}),
           // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its
           // own worker, so it has none to wait for.
@@ -860,7 +885,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
             // The audio of a video-only platform recording (C2a, #3306): crove-media extracts it; without MEDIA_URL the extractor is not configured and such a recording fails `no_audio`.
             meetingsImportExtractor: mediaAudioExtractorFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS),
-            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config), adManagers: adManagersOf(config), adStateReaders: adStateReadersOf(config) },
+            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), marketplaceProviders: marketplaceProvidersOf(config), ...(config.MISA_AMIS_CLIENT_ID ? { misaAmis: misaAmisClientOf(config) as AmisClient, ...(config.MISA_AMIS_PUSH === 'on' ? { misaAmisPush: true } : {}) } : {}), ...(config.MISA_ASP_CLIENT_ID ? { misaAsp: misaAspClientOf(config) as AmisClient, ...(config.MISA_ASP_PUSH === 'on' ? { misaAspPush: true } : {}) } : {}), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', threadsHistory: config.CHANNEL_THREADS_HISTORY === 'true', youtubeHistory: config.CHANNEL_YOUTUBE_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), conversationMediaHostsBy: { whatsapp: zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS) }, conversationAdapters: channelConversationAdapters(config), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), meetingPlatforms: meetingPlatformsOf(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config), adManagers: adManagersOf(config), adStateReaders: adStateReadersOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,

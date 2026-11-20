@@ -26,7 +26,7 @@ const suite = ADMIN ? describe : describe.skip;
 const confirmedMaps = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133 as MarketplacePostingMap;
   const c = <T extends { status: string }>(r: T): T => ({ ...r, status: 'confirmed' });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
 };
 const notMarketplace = (name: string) => !name.startsWith('finance.marketplace_settlement.');
 
@@ -301,7 +301,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     // A settlement of another org is not found either.
     const stranger = await org();
     await expect(ask(stranger, original)).rejects.toMatchObject({ code: 'MARKETPLACE_SETTLEMENT_NOT_FOUND' });
-    // An entity on the TT99 chart has no marketplace map yet.
+    // An entity on the TT99 chart: the map set injected here holds only the confirmed TT133 one, so it is refused as unknown (the shipped TT99 map exists but is commentary, #3711 slice 4).
     const tt99 = await org('tt99');
     const there = await seed(tt99, 'shopee', '2026-10-01', '2026-10-15', TWO);
     await expect(ask(tt99, there)).rejects.toMatchObject({ code: 'MARKETPLACE_POSTING_REGIME_UNKNOWN', status: 422 });
@@ -390,7 +390,7 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     const rate = (await rows<{ vat_percent: string; pit_percent: string }>("SELECT vat_percent, pit_percent FROM crove_finance.household_trade_rate WHERE trade = 'goods' AND effective_from <= '2026-10-15' ORDER BY effective_from DESC LIMIT 1", []))[0];
     return { vat: Number(rate?.vat_percent), pit: Number(rate?.pit_percent) };
   }
-  type Stored = { total: string; taxWithheld?: string; lines: { account: string; debit: string; credit: string }[] };
+  type Stored = { total: string; taxWithheld?: string; taxEstimate?: { withheld: string; expected: string; difference: string }; lines: { account: string; debit: string; credit: string }[] };
   const proposalOf = async (id: string) => (await rows<{ payload: Stored }>('SELECT payload FROM crove_kernel.proposal WHERE id = $1', [id]))[0]?.payload as Stored;
 
   it('credits the tax a platform withheld from a household to 3331 and 3335 in the month of the sale, split by the rate pair of its one trade, and nets to zero', async () => {
@@ -408,14 +408,18 @@ suite('the posting of a marketplace settlement on PostgreSQL (#2516)', () => {
     // Both months carry their own tax lines; the two parts add up to what was withheld.
     expect(credit('3331')).toBe(vat);
     expect(credit('3335')).toBe(45000 - vat);
-    expect(debit('6422')).toBe(45000 - vat);
+    expect(debit('4212')).toBe(45000 - vat);
     expect(debit('511')).toBe(vat);
+    // The split is an estimate: the tax lines say so, and the proposal carries what the household's rate pair would take from the 3000000 of revenue beside what the platform withheld.
+    const expected = Math.round((3000000 * (r.vat + r.pit)) / 100);
+    expect(stored.taxEstimate).toEqual({ withheld: '45000', expected: String(expected), difference: String(45000 - expected) });
+    expect(stored.lines.filter((l) => ['3331', '3335', '4212'].includes(l.account)).every((l) => (l as { memo?: string }).memo?.includes('ước tính'))).toBe(true);
     await approve(o, proposalId);
     // Posted: the org holds only this settlement's entries, so the ledger totals by account are exactly the proposal's, and the tax accounts net to what the payout will debit.
     const posted = Object.fromEntries(
       (await rows<{ account: string; d: string; c: string }>('SELECT account_code AS account, sum(debit)::bigint::text AS d, sum(credit)::bigint::text AS c FROM crove_finance.journal_line WHERE org_id = $1 GROUP BY 1', [o.orgId])).map((l) => [l.account, [Number(l.d), Number(l.c)]]),
     );
-    expect(posted).toEqual({ '131': [3000000, 0], '511': [vat, 3000000], '3331': [0, vat], '6422': [45000 - vat, 0], '3335': [0, 45000 - vat] });
+    expect(posted).toEqual({ '131': [3000000, 0], '511': [vat, 3000000], '3331': [0, vat], '4212': [45000 - vat, 0], '3335': [0, 45000 - vat] });
   });
 
   it('refuses a household whose rate row is not confirmed, or whose profile has no single trade, and posts nothing', async () => {

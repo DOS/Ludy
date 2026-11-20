@@ -9,7 +9,7 @@ import { createMarketplacePayoutCommands, payoutProposalMismatch } from '../src/
 const confirmed = (): Record<string, MarketplacePostingMap> => {
   const base = MARKETPLACE_POSTING_MAPS.tt133!;
   const c = (r: MarketplacePostingMap['revenue']) => ({ ...r, status: 'confirmed' as const });
-  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitExpense: c(base.pitExpense), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
+  return { tt133: { ...base, status: 'confirmed', receivable: c(base.receivable), revenue: c(base.revenue), salesReturn: c(base.salesReturn), cash: c(base.cash), feePayable: c(base.feePayable), feeAwaitingInvoice: c(base.feeAwaitingInvoice), taxWithheld: c(base.taxWithheld), vatPayable: c(base.vatPayable), pitPayable: c(base.pitPayable), pitOwnerEquity: c(base.pitOwnerEquity), feeExpense: c(base.feeExpense), accruedExpense: c(base.accruedExpense) } };
 };
 const PARTY = '0192a000-0000-7000-8000-000000000003';
 const ID = '0192a000-0000-7000-8000-000000000001';
@@ -48,6 +48,15 @@ describe('the entry of a platform payout', () => {
     // A pit part of zero posts only the VAT line.
     const only = payoutProposal(input(taxed, { taxSplit: { vat: '2000', pit: '0' } }), confirmed());
     expect(only.lines.map((l) => l.account)).toEqual(['1121', '3331', '131']);
+  });
+  it('gates per path (#3711 slice 1): a payout without household tax needs no owner\'s equity row, one that clears withheld tax does', () => {
+    const maps = confirmed();
+    const open = { ...maps.tt133!, vatPayable: { ...maps.tt133!.vatPayable, status: 'commentary' as const }, pitPayable: { ...maps.tt133!.pitPayable, status: 'commentary' as const }, pitOwnerEquity: { ...maps.tt133!.pitOwnerEquity, status: 'commentary' as const } };
+    const withoutHouseholdTax = { tt133: open };
+    expect(payoutProposal(input([line()]), withoutHouseholdTax).lines.map((l) => l.account)).toEqual(['1121', '131']);
+    const taxed = [line({ sales: '100000', taxWithheld: '2000', net: '98000' })];
+    expect(code(() => payoutProposal(input(taxed, { taxSplit: { vat: '1334', pit: '666' } }), withoutHouseholdTax))).toMatchObject({ code: 'MARKETPLACE_POSTING_MAP_UNCONFIRMED', status: 409 });
+    expect(payoutProposal(input(taxed, { taxSplit: { vat: '1334', pit: '666' } }), maps).taxWithheld).toBe('2000');
   });
   it('omits a line with nothing on it and keeps the entry balanced', () => {
     const p = payoutProposal(input([line()]), confirmed());

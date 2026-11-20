@@ -80,6 +80,15 @@ export const AI_FEATURES = {
   // The finance coworker's one line above the MISA export check (#3848 slice B): code ran the deterministic check over the rows of the file and counted what it found per kind, the model only explains those
   // counts (what each kind means in MISA and how to fix it in Ludy); a line that states a number it was not given, sets a count against the wrong kind, has a link or says something was fixed is refused. A read.
   'finance.misa_check_line': 'finance',
+  // The finance coworker's notes on the AMIS preview (#3904, S5 of #3854): code built the preview and listed its blockers, the model only words what each KIND of blocker on the list means in AMIS and how to fix it in Ludy,
+  // told the set of kinds and nothing else (no count, voucher, item or party); a note with a number, a link, a claim that something was done or a promise is dropped. A read: the list decides, a person sends.
+  'finance.misa_amis_blocker_notes': 'finance',
+  // The finance coworker's notes under the Sàn table (#3711 slice 7): code read, per platform, the fees waiting on its 331, how old the oldest is and whether that is past one settlement cycle; the model only
+  // words what that means, told those figures per numbered row and no platform name; a note with a number that is not its row's, a name, a link, a claim that something was done or a promise is dropped. A read.
+  'finance.marketplace_fee_note': 'finance',
+  // The finance coworker's proposal for which standard field each column of a marketplace order report is, when no profile knows its header (#3850): told only the header texts and masked sample shapes of the
+  // columns that are not buyer data; the proposal is read against the real file by code and confirmed by a person. A read.
+  'finance.stock_columns': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
   // The sales coworker's proposal for the lines of a quote (#2698): from the deal, what the customer wrote and the earlier quotes to them; a price no source holds stays empty, and a person applies each line.
@@ -103,10 +112,14 @@ export const AI_FEATURES = {
   'meetings.digest': 'meetings',
   // The member's Vy naming who an action item belongs to from the name said in the meeting (#3921): one call over a name and at most 100 names, the member waiting for it, through their own meter.
   'meetings.assignee': 'meetings',
+  // The recorder's Vy checking whether a meeting covered its agenda (#3959): one call over a short agenda and the transcript the recorder reads, the recorder waiting for it, through their own meter.
+  'meetings.adherence': 'meetings',
   // The recorder's Vy writing the table of contents of one meeting (#3844): one call over the transcript, the member waiting for it, through their own meter.
   'meetings.chapters': 'meetings',
   // The recorder's Vy suggesting a title for one meeting (#3947): one call over the transcript, the member waiting for it, through their own meter.
   'meetings.title': 'meetings',
+  // The recorder's Vy listing what each speaker committed to or decided (#3954): one call over the transcript, the member waiting for it, through their own meter.
+  'meetings.commitments': 'meetings',
   // Vy's weekly status of one project (projects P6, #2597): transient 3 to 5 plain sentences from deterministic counts and task titles/comments only, never reading notes.
   'projects.weekly_status': 'projects',
   // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.

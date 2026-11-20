@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { activeAdPlatformNamedImports, resolveAdPlatformPackages } from './fixtures/ad-platform-imports.ts';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const SKIP = new Set(['node_modules', 'dist', 'test', 'tests', '.git', '.turbo', 'coverage']);
@@ -24,6 +25,8 @@ function sources(dir: string, out: string[] = []): string[] {
 
 const ALL = ['apps', 'packages', 'modules', 'tools'].filter((d) => existsSync(join(ROOT, d))).flatMap((d) => sources(join(ROOT, d)));
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
+const { activePkg: adPlatformPkg, inactivePkg: otherAdPlatformPkg } = resolveAdPlatformPackages(ROOT);
+const revokeNamedImports = (src: string): string[] => activeAdPlatformNamedImports(src, adPlatformPkg, otherAdPlatformPkg).names;
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
 const code = (path: string) => read(path).split('\n').filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*')).join('\n');
@@ -47,8 +50,13 @@ describe('what may open or name the sealed copy of a closed ads connection token
     expect(file).not.toContain('kernel.channel.credential');
     expect(file).not.toMatch(/runtime\.(execute|query)[^;]*envelope/);
     // The platform adapters it is built on are the revoke view and the typed error, never a writer.
-    const imports = [...read('apps/kernel/src/ads-revoke.ts').matchAll(/import \{([^}]*)\} from '@crove\/ad-platform'/g)].flatMap((m) => (m[1] ?? '').split(',').map((s) => s.replace(/\btype\b/, '').trim()));
-    expect(imports.sort()).toEqual(['AdPlatformError', 'AdRevoker']);
+    const rawRevoke = read('apps/kernel/src/ads-revoke.ts');
+    expect(revokeNamedImports(rawRevoke).sort()).toEqual(['AdPlatformError', 'AdRevoker']);
+    const commentOrStringOnly = `// migrating ${adPlatformPkg} -> ${otherAdPlatformPkg}\n/* from '${otherAdPlatformPkg}' */\nconst note = "Use imports from '${otherAdPlatformPkg}' after the rename";\nimport { AdRevoker, AdPlatformError } from '${adPlatformPkg}';`;
+    expect(revokeNamedImports(commentOrStringOnly).sort()).toEqual(['AdPlatformError', 'AdRevoker']);
+    const mixed = `import { AdRevoker } from '${adPlatformPkg}';\nimport { AdWriter } from '${otherAdPlatformPkg}';`;
+    expect(() => revokeNamedImports(mixed)).toThrow(/Unexpected mixed ad-platform import/);
+    expect(() => revokeNamedImports(`import { AdRevoker } from '${adPlatformPkg}/writers';`)).toThrow(/Unexpected ad-platform subpath import/);
   });
 
   it('never logs, returns or records the secret: the file that opens it writes only codes and counts', () => {

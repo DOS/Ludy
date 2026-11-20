@@ -38,6 +38,7 @@ const RETURNS: Readonly<Record<string, string>> = {
   meeting_platform_recording_claim_failed: 'void',
   meeting_platform_recording_imported: 'void',
   meeting_platform_recording_sweep: 'TABLE(staging_key text)',
+  meeting_platform_ring: 'integer',
 };
 
 // Who may execute each (the roles that hold EXECUTE, and nobody else; the helpers are executable by no login role).
@@ -62,13 +63,14 @@ const EXECUTORS: Readonly<Record<string, readonly string[]>> = {
   meeting_platform_recording_claim_failed: ['crove_app'],
   meeting_platform_recording_imported: ['crove_app'],
   meeting_platform_recording_sweep: ['crove_worker'],
+  meeting_platform_ring: ['crove_app'],
 };
 
 // Definers an open PR adds (the two-step landing of the invariant suite: this list first, in a PR of its own, then the PR with the migration moves each one into RETURNS and EXECUTORS above). A name here may be
 // absent from the database; when it is there it must return exactly this type and be executable by exactly these roles, and any other function of the family still fails the exact check below.
 // meeting_platform_ring (Zoom's webhook doorbell, #3175): clears the last listing of the active connections of one account whose org has Meetings on (it asks org_app_on) so the sweep lists them again, returns only how many; the API login runs it.
-const PENDING_RETURNS: Readonly<Record<string, string>> = { meeting_platform_ring: 'integer' };
-const PENDING_EXECUTORS: Readonly<Record<string, readonly string[]>> = { meeting_platform_ring: ['crove_app'] };
+const PENDING_RETURNS: Readonly<Record<string, string>> = {};
+const PENDING_EXECUTORS: Readonly<Record<string, readonly string[]>> = {};
 
 // A column name that would carry something a person wrote or the platform titled.
 const TEXTUAL_NAME = /title|summary|body|text|name|subject|note|transcript|decision|message/i;

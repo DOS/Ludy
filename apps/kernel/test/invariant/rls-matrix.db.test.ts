@@ -96,6 +96,8 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
+  'crove_finance.marketplace_column_check',
+  'crove_finance.marketplace_column_profile',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
   'crove_finance.stock_count_line',
@@ -109,6 +111,8 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
+  'crove_meetings.capture_session',
+  'crove_meetings.glossary_term',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
   'crove_notes.attachment',
@@ -192,7 +196,9 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.action_item', () => 'false'], // As above (action items, ADR-0047).
   ['crove_meetings.audio_segment', () => 'false'], // Meetings read through the recorder and the readers, who are users (ADR-0047).
   ['crove_meetings.calendar_agenda', () => 'false'], // A member's own calendar meetings, read by that member, a user (meetings integrations B1, #3165).
+  ['crove_meetings.capture_session', () => 'false'], // The recorder's own running-capture record, read by the recorder, a user (ADR-0055 slice 1, #4123); an agent context reads none.
   ['crove_meetings.chat_post', () => 'false'], // The recorder's own log of minutes posted to a channel, read by the recorder, a user (meetings integrations B4, #3168).
+  ['crove_meetings.glossary_term', () => 'false'], // The org's glossary is for owners and admins in a user context (#4043); an agent context reads none, the recorder's run reads it through a definer.
   ['crove_meetings.live_chunk', () => 'false'], // The recorder's own live pieces, read by the recorder, a user (ADR-0052 L4a, #3109).
   ['crove_meetings.live_line', () => 'false'], // The live preview of a recording, read by the recorder, a user (ADR-0052 L4a, #3110).
   ['crove_meetings.meeting', () => 'false'], // As above.
@@ -202,6 +208,7 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_meetings.meeting_reader', () => 'false'], // As above.
   ['crove_meetings.meeting_result', () => 'false'], // As above (summaries and decisions, ADR-0047).
   ['crove_meetings.meeting_video', () => 'false'], // As above.
+  ['crove_meetings.morning_notice', () => 'false'], // A member's own opt-in to the morning notice of the day's meetings, read by that member, a user (#3955).
   ['crove_meetings.transcript_segment', () => 'false'], // As above (transcript segments, ADR-0047).
   ['crove_meetings.translation', () => 'false'], // A machine translation, read by the member who asked for it, a user (meetings integrations E1, #3184).
   // Catalog 'read': the notes its member could read, own private and shared (the factory's private notes are the first owner's, not the member's, so only the shared ones).
@@ -245,8 +252,12 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
   ['crove_finance.einvoice_draft_line', ['update', 'delete']],
   ['crove_finance.einvoice_notice', ['update']],
   ['crove_finance.einvoice_series', ['update', 'delete']],
+  ['crove_finance.marketplace_column_check', ['update', 'delete']],
   ['crove_finance.marketplace_connection', ['update', 'delete']],
   ['crove_finance.misa_amis_connection', ['update', 'delete']],
+  ['crove_finance.misa_amis_match', ['delete']],
+  ['crove_finance.misa_amis_match_check', ['update']],
+  ['crove_finance.misa_amis_push', ['update']],
   ['crove_finance.stock_alias', ['delete']],
   ['crove_finance.stock_count', ['update']],
   ['crove_finance.stock_count_line', ['update']],
@@ -287,8 +298,12 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.audio_segment', 'false'],
   // A member's own calendar meetings (meetings integrations B1, #3165): the member's alone; worker system context reads and writes nothing (its one writer is a definer).
   ['crove_meetings.calendar_agenda', 'false'],
+  // The recorder's own running-capture record (ADR-0055 slice 1, #4123): the recorder's alone, in a user context; the worker system context reads and writes nothing.
+  ['crove_meetings.capture_session', 'false'],
   // The recorder's own log of minutes posted to a channel (meetings integrations B4, #3168): the recorder's alone; the worker system context reads and writes nothing.
   ['crove_meetings.chat_post', 'false'],
+  // The org's glossary (#4043): owners and admins alone, in a user context; the system context sees and changes none of it.
+  ['crove_meetings.glossary_term', 'false'],
   // Live pieces of a recording (ADR-0052 L4a, #3109): worker system context reads and writes nothing.
   ['crove_meetings.live_chunk', 'false'],
   // The live preview of a recording (ADR-0052 L4a, #3110): worker system context reads and writes nothing.
@@ -306,6 +321,8 @@ const AUTHOR_ONLY = new Map<string, string>([
   ['crove_meetings.meeting_result', 'false'],
   // Meeting videos (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.meeting_video', 'false'],
+  // A member's own morning notice setting (#3955): the member's alone; worker system context reads and writes nothing (its one reader is a definer).
+  ['crove_meetings.morning_notice', 'false'],
   // Meeting transcript segments (ADR-0047 point 2): worker system context reads and writes nothing.
   ['crove_meetings.transcript_segment', 'false'],
   // A machine translation of a summary (meetings integrations E1, #3184): the asker's alone; worker system context reads and writes nothing.
@@ -377,6 +394,8 @@ const APPEND_ONLY = new Set<string>([
   'crove_finance.channel_settlement_line',
   // The household profile of an entity (#2517): a change of tax group, method or trades is a new row from its effective date, never an edit of an earlier one.
   'crove_finance.household_profile',
+  // #4037 (slice 2 of #3850): a confirmed mapping of a marketplace report's columns is a new row per org and platform, the latest wins; an earlier one is never edited or deleted.
+  'crove_finance.marketplace_column_profile',
   // #3113 S1: a change of a supplier's bank account is a new row; the history is never edited or deleted.
   'crove_finance.supplier_bank_account_change',
   // #3330 / #3323 (eSign): hash-chained signing ledger per envelope (SELECT and INSERT only; no runtime role holds UPDATE or DELETE).
@@ -778,8 +797,8 @@ const signTemplateRow = (o: { id: string; owner: string; file: string }) => {
     source_storage_key: `org/${o.id}/${sha256}`,
     source_generation: '1',
     source_sha256: sha256,
-    inspect_status: 'passed',
-    status: 'active',
+    inspect_status: 'pending',
+    status: 'draft',
     created_by: o.owner,
   };
 };
@@ -1580,6 +1599,40 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_finance.legal_entity_books': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), regime: 'tt133', chart_version: '2026.1', effective_from: `${legalEntityBooksYear++}-01-01`, created_by: o.owner } }),
   },
+  // #4036 (slice 1c of #3850): the last check of a column mapping on an unrecognised marketplace order report, one row per org and file: what was asked (the platform and at most 13 assignments of a
+  // column to a standard field), waiting, done or failed, the masked sheet (shapes, never a value), the check's refusal code and a preview of at most 20 parsed lines (personal data in the registry, erased
+  // with the file and the org). Org-level, no legal entity. Importers (owner, admin, member) ask, read and delete their own org's rows, and the system context (the worker) records; a tenant role updates only
+  // the request and result columns (a column grant, through a state guard). Each row takes a file of its own. The update probes assign the failure to itself.
+  'crove_finance.marketplace_column_check': {
+    update: { set: 'failure = failure' },
+    make: (o) => {
+      const sha256 = hex64();
+      const file = { org_id: o.id, id: randomUUID(), sha256, storage_key: `org/${o.id}/${sha256}`, filename: 'column-check.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size_bytes: 1, source: 'upload' };
+      return {
+        setup: [{ table: 'crove_kernel.file', values: file }],
+        row: { org_id: o.id, id: randomUUID(), file_id: file.id, state: 'requested', requested_by: o.owner },
+      };
+    },
+  },
+  // #4037 (slice 2 of #3850): the confirmed mapping of an org's marketplace report columns (the header texts of the mapped columns and the standard field of each, never a cell value or a buyer
+  // column), one platform per row, append-only, the latest of an org and platform wins. Tenant roles read and insert (owners and admins, or the system context); nothing updates or deletes a row.
+  // The org-level table: no legal entity.
+  'crove_finance.marketplace_column_profile': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        platform: 'shopee',
+        header_row: 2,
+        columns: JSON.stringify([
+          { index: 0, header: 'Order ID', field: 'orderNo' },
+          { index: 3, header: 'Quantity', field: 'quantity' },
+        ]),
+        header_digest: randomUUID().replaceAll('-', '').repeat(2),
+        confirmed_by: o.owner,
+      },
+    }),
+  },
   // #2519: an org's connection to a marketplace (ADR-0045 point 7, plan section 8.7): the channel connection that holds the sealed credential, the platform and the entity it
   // imports for (the org's default, by its trigger). Tenant roles update only the last test and the poll's progress (a column grant), so the update probes assign the state to itself.
   'crove_finance.marketplace_connection': {
@@ -1619,6 +1672,76 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_kernel.channel_connection', values: connection },
         ],
         row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, channel_connection_id: connection.id },
+      };
+    },
+  },
+  // #4112: what that check found per party (its tax code) or item (its code): matched with the entry's code and id, unknown or ambiguous; replaced whole by each check, never updated (no UPDATE grant). Each row takes
+  // a connection and an entity of its own.
+  'crove_finance.misa_amis_match': {
+    make: (o) => {
+      const entity = randomUUID();
+      const channel = { ...channelConnectionRow(o), provider: 'accounting_misa_amis' };
+      const connection = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: `RLS matrix AMIS match result entity ${tag()}`, kind: 'branch', created_by: o.owner } },
+          { table: 'crove_kernel.channel_connection', values: channel },
+          { table: 'crove_finance.misa_amis_connection', values: { org_id: o.id, id: connection, legal_entity_id: entity, channel_connection_id: channel.id } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, connection_id: connection, kind: 'party', match_key: '0101234564', state: 'unknown' },
+      };
+    },
+  },
+  // #4112 (S3a of #4103): the last check of a MISA AMIS connection's vouchers against the firm's catalogue (the batch asked about, waiting, done or failed, when), one row per connection. Owners and admins ask
+  // (or the system context), the worker's system context records the result; a tenant role updates only the request and result columns, through the state guard, and nothing deletes it but the disconnect
+  // that removes the connection. Each row takes a connection and an entity of its own. The update probes assign the failure to itself.
+  'crove_finance.misa_amis_match_check': {
+    update: { set: 'failure = failure' },
+    make: (o) => {
+      const entity = randomUUID();
+      const channel = { ...channelConnectionRow(o), provider: 'accounting_misa_amis' };
+      const connection = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: `RLS matrix AMIS match entity ${tag()}`, kind: 'branch', created_by: o.owner } },
+          { table: 'crove_kernel.channel_connection', values: channel },
+          { table: 'crove_finance.misa_amis_connection', values: { org_id: o.id, id: connection, legal_entity_id: entity, channel_connection_id: channel.id } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), legal_entity_id: entity, connection_id: connection, state: 'requested', requested_by: o.owner },
+      };
+    },
+  },
+  // #3902 (S3b of #3854): one voucher part pushed to MISA AMIS Kế toán as a request a person approved: the connection and its entity, the source, the AMIS voucher type, the part and the
+  // `org_refid` AMIS is told (unique per org, so a replay or a double press never makes a second request). Tenant roles read, insert (owners and admins, or the system context) and update
+  // only the state columns (a column grant, through a state guard); nothing deletes a row, so nobody erases the record and pushes the same voucher again unseen. Each row takes a
+  // connection, an entity, a source and a reference of its own. The update probes assign the reason to itself.
+  'crove_finance.misa_amis_push': {
+    update: { set: 'reason = reason' },
+    make: (o) => {
+      const entity = randomUUID();
+      const channel = { ...channelConnectionRow(o), provider: 'accounting_misa_amis' };
+      const connection = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.legal_entity', values: { org_id: o.id, id: entity, name: `RLS matrix AMIS push entity ${tag()}`, kind: 'branch', created_by: o.owner } },
+          { table: 'crove_kernel.channel_connection', values: channel },
+          { table: 'crove_finance.misa_amis_connection', values: { org_id: o.id, id: connection, legal_entity_id: entity, channel_connection_id: channel.id } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          legal_entity_id: entity,
+          connection_id: connection,
+          source_type: 'cash_voucher',
+          source_id: randomUUID(),
+          voucher_type: 1,
+          part: 1,
+          org_refid: randomUUID(),
+          org_refno: `RLS${tag().toUpperCase()}`.slice(0, 20),
+          payload_digest: 'a'.repeat(64),
+          state: 'queued',
+          requested_by: o.owner,
+        },
       };
     },
   },
@@ -2791,6 +2914,19 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #4123 (ADR-0055 slice 1): the record that a meeting is being captured right now, by which kind of client, since when and last heard from when. Read and updated (the heartbeat and the end)
+  // by the recorder alone, like a live piece; its rows are written by one definer only (insert is refused to the tenant roles); tenant roles update only the three columns of the heartbeat (a column grant), so the update probes assign one to itself. Its factory lands before the table (step 1),
+  // so PENDING_TABLES holds it until the migration of the next step.
+  'crove_meetings.capture_session': {
+    update: { set: 'last_seen_at = last_seen_at' },
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: { org_id: o.id, id: randomUUID(), meeting_id: meeting.id, recorder_user_id: o.owner, kind: 'app' },
+      };
+    },
+  },
   // #3168 (meetings integrations B4): an org's channel for minutes (a Slack or Teams webhook). Tenant data, no secret: every member reads it, owners and admins change it through the commands.
   'crove_meetings.chat_channel': { make: (o) => ({ row: chatChannelRow(o) }) },
   // Definer-only machinery: the sealed address of a minutes channel, one row per channel. The envelope is opaque bytes here; only the worker opens a real one, for a queued post.
@@ -2832,6 +2968,13 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, post_id: post.id, body: JSON.stringify({ v: 1, lang: 'vi', title: 'RLS matrix', day: '2030-01-01', summary: '', decisions: [], items: [], link: null }) },
       };
     },
+  },
+  // #4043 (meetings glossary): a term the org spells one way (a product, an acronym, jargon). Only an owner or admin reads and writes it (restrictive policies; the factory's owner is one), and a
+  // recorder's run reads it through a definer. Its factory lands before the table (step 1 of 4), so PENDING_TABLES holds it until the migration of step 2. The term is letters only (a term may hold at most 4 digits) and unique per org.
+  'crove_meetings.glossary_term': {
+    make: (o) => ({
+      row: { org_id: o.id, id: randomUUID(), term: `Glossary${Array.from(randomBytes(6), (b) => String.fromCharCode(97 + (b % 26))).join('')}`, created_by: o.owner },
+    }),
   },
   // #3164 (meetings integrations A6): one delivery of a member's minutes webhook, here a ping whose body carries the ids of its own row and no meeting data. Definer-only, in MACHINERY.
   // It references the member's webhook of the same org.
@@ -3029,6 +3172,14 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_meetings.minutes_template': {
     make: (o) => ({
       row: { org_id: o.id, id: randomUUID(), name: `RLS matrix template ${tag()}`, sections: JSON.stringify([{ key: 's1', title: 'Nội dung', hint: '' }]), created_by: o.owner },
+    }),
+  },
+  // #3955 (part B): a member's own opt-in to the morning notice of the day's meetings (a time of day, their zone and language), one row per member, read, written and deleted by that member alone, so the
+  // system context reads none.
+  'crove_meetings.morning_notice': {
+    noInsertControl: 'one row per member (UNIQUE (org_id, user_id)); a member inserts their own, through meetings.morning.set (meetings-morning.db.test.ts tests it)',
+    make: (o) => ({
+      row: { org_id: o.id, id: randomUUID(), user_id: o.owner, send_minute: 420, time_zone: 'Asia/Ho_Chi_Minh', language: 'vi' },
     }),
   },
   // #2575: timestamped transcript segment of a meeting (ADR-0047 point 1, 3).

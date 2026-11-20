@@ -2,7 +2,7 @@
 // `defineJob`, §7.7, #1653); a command whose events feed a queue with egress declares an external effect, at least R2
 // (plan §4.7 "Derived risk"). The sources are parsed and followed by job-egress.ts; planted sources show each check
 // failing.
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { CHANNEL_PROVIDERS } from '@crove/channel';
 import { KERNEL_NOTIFYING_EVENTS, kernelCommands } from '@crove/kernel';
 import { deriveRisk, type CommandDef } from '@crove/kernel-runtime';
@@ -126,6 +126,13 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   // The sweep (every minute) hands the recordings a member chose to import to the download queue; each exists only for a click on "Nhập" through meetings.import.start, which declares the external effect
   // (meetings integrations C1, #3173). The same sweep lists suggestions and expires staged bytes; it downloads nothing.
   'kernel-meeting-import-sweep handler': { command: 'meetings.import.start' },
+  // The push to MISA AMIS (S3b, #3902): while rows wait for MISA's answer the job queues itself again a little later, for a connection whose vouchers an owner or admin confirmed through
+  // finance.misa_amis.push, which declares the external effect; the job's own send is committed to the external_call ledger by finance.misa_amis.push_begin before it is made.
+  'finance-misa-amis-push handler': { command: 'finance.misa_amis.push' },
+  // The sweep (every ten minutes) hands the unclear manage changes that are due to the same queue, to be settled by a READ of the object (#3898): each exists only for a change an owner or
+  // an admin asked for (a pause, a lower or raised budget, a shorter or longer schedule) that ended unclear. The job's first step is ads.manage.begin, which declares the external effect and,
+  // for a settle, hands out a read and makes no call and no ledger row; the queue's egress is the ad platform's and nothing else.
+  [`${QUEUES.adsManage} handler`]: { command: 'ads.manage.begin' },
 };
 
 // Reviewed send sites that may be listed before the site exists, so the two steps of an invariant change can land apart (the PENDING_DEPS pattern): each names the issue that adds
@@ -133,6 +140,7 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
 // any other. Remove the entry here once the site is on the base branch.
 const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'kernel-mcp-wake-sweep handler': '#3024',
+  'finance-misa-amis-push handler': '#3902',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.
@@ -189,6 +197,13 @@ function noCommandProblems(fedWithoutCommand: readonly string[], noCommand: Read
 
 describe('job egress (#1653)', () => {
   const sources = new Sources();
+
+  // The sources are parsed on first use and kept in `sources`, so whichever case reads a tree first used to pay for parsing all of it: two cases came to
+  // about four seconds on an idle machine and timed out at 5 s under CI load (#4151). The same files are parsed here once, in a hook with its own limit;
+  // nothing is read differently and no case checks less.
+  beforeAll(() => {
+    for (const file of sources.list(['modules', 'packages/kernel/src', 'apps/kernel/src'])) sources.get(file);
+  }, 120_000);
 
   it('declares the egress of every queue, as none, provider:<x> or tenant_url', () => {
     for (const queue of ALL_QUEUES) {
@@ -321,10 +336,12 @@ describe('job egress (#1653)', () => {
       'modules/planted/src/a.ts': "import { checkTelegramChat, CHANNEL_PROVIDERS } from '@crove/channel';\nexport const a = () => checkTelegramChat(CHANNEL_PROVIDERS);",
       'modules/planted/src/b.ts': "export const b = () => globalThis.fetch('https://example.test/');",
       'modules/planted/src/c.ts': "export const c = () => window['fetch']('https://example.test/');",
+      'modules/planted/src/d.ts': "import { checkTelegramChat, CHANNEL_PROVIDERS } from '@ludy/channel';\nimport { guardedFetch } from '@ludy/kernel-runtime';\nimport { chatModel } from '@ludy/agent';\nexport const d = () => [checkTelegramChat(CHANNEL_PROVIDERS), guardedFetch, chatModel];",
     });
     expect([...reachOf(planted.get('modules/planted/src/a.ts').program, planted)]).toEqual(['provider:telegram']);
     expect([...reachOf(planted.get('modules/planted/src/b.ts').program, planted)]).toEqual(['raw_network']);
     expect([...reachOf(planted.get('modules/planted/src/c.ts').program, planted)]).toEqual(['raw_network']);
+    expect(reachOf(planted.get('modules/planted/src/d.ts').program, planted)).toEqual(new Set(['provider:telegram', 'tenant_url', 'provider:ai']));
   }, 60_000);
 
   it('hands the egress guard to the adapters of the providers whose host the tenant names, and to no other', () => {
@@ -334,6 +351,7 @@ describe('job egress (#1653)', () => {
     expect(guarded.sort()).toEqual([...TENANT_HOSTED_PROVIDERS].sort());
   });
 
+  // Measured (#4151): two walks of the whole source tree, about 2 s each on an idle machine, so 5 s is too close under CI load.
   it('declares an external effect, at least R2, on every command whose events feed a queue with egress (plan §4.7)', () => {
     const sends = sendSites(sources, known).filter((s) => s.queues.some(hasEgress));
     // Every send of the relay to such a queue names the events that lead to it.
@@ -396,7 +414,7 @@ describe('job egress (#1653)', () => {
         .sort()
         .map((q) => `${event} -> ${q} (${targets(queueEgress(q)).join(', ')})`);
     expect(belowR2(commands, external, fed)).toEqual(BELOW_R2);
-  });
+  }, 30_000);
 
   it('fails a pending no-command event that expired, that a command emits, that is listed twice or has no issue or a bad date', () => {
     const pending = {
@@ -445,6 +463,7 @@ describe('job egress (#1653)', () => {
     ]);
   });
 
+  // Measured (#4151): about 2 s on an idle machine, so the 5 s default is too close under CI load.
   it('follows nested runs to the command that runs them, and fails a planted R1 command that runs an emitter (#1698)', () => {
     const planted = new Sources({
       'modules/planted/src/a.ts': `
@@ -511,5 +530,5 @@ describe('job egress (#1653)', () => {
     expect(emittersOf([], new Sources({ 'apps/kernel/src/stream.ts': 'export {};' }), known, ['apps/kernel/src']).problems).toEqual([
       'apps/kernel/src/stream.ts: gate.run is no longer in the sources (NOT_RUNS)',
     ]);
-  });
+  }, 30_000);
 });

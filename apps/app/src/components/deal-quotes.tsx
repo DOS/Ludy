@@ -43,6 +43,7 @@ import { ErrorText, Field } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { apiFetch, client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
+import { AiWrittenBadge } from './ai-written-badge.tsx';
 
 const refreshQuotes = refreshQuoteQueries;
 
@@ -248,7 +249,10 @@ function QuoteEditor({ quote, canEdit, sent, onSent, onClose }: { quote: Quote; 
     <form onSubmit={submit} noValidate className="space-y-4 rounded-lg border border-border p-4" aria-label={t('editor.title')} data-testid="quote-editor">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-base font-medium">{quote.number ? t('editor.titleNumbered', { number: quote.number }) : t('editor.title')}</h3>
-        <Badge variant={statusVariant(quote.status, quote.expired)}>{quote.expired ? t('status.expired') : t(`status.${quote.status}`)}</Badge>
+        <span className="flex flex-wrap items-center gap-1">
+          <AiWrittenBadge actorOrigin={quote.actorOrigin} tainted={quote.tainted} />
+          <Badge variant={statusVariant(quote.status, quote.expired)}>{quote.expired ? t('status.expired') : t(`status.${quote.status}`)}</Badge>
+        </span>
       </div>
       <p className="text-sm text-muted-foreground">{t('editor.for', { party: quote.partyName, deal: quote.dealTitle })}</p>
       {readOnly && <p className="text-sm text-muted-foreground">{t('editor.readOnly')}</p>}
@@ -441,7 +445,7 @@ function QuoteRow({
     <li className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm" data-testid="quote-row">
       <div className="min-w-0 space-y-0.5">
         <p className="font-medium text-foreground">
-          {label} <Badge variant={statusVariant(quote.status, quote.expired)}>{quote.expired ? t('status.expired') : t(`status.${quote.status}`)}</Badge>
+          {label} <Badge variant={statusVariant(quote.status, quote.expired)}>{quote.expired ? t('status.expired') : t(`status.${quote.status}`)}</Badge> <AiWrittenBadge actorOrigin={quote.actorOrigin} tainted={quote.tainted} />
         </p>
         {quote.firstViewedAt && (
           <p className="text-xs text-muted-foreground" data-testid="quote-viewed">

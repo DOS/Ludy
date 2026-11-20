@@ -8,6 +8,10 @@ import { zId } from './schemas.ts';
 export const MEETING_PLATFORM_PROVIDERS = ['sandbox', 'google_meet', 'zoom', 'microsoft_teams'] as const;
 export type MeetingPlatformProvider = (typeof MEETING_PLATFORM_PROVIDERS)[number];
 export const zMeetingPlatformProvider = z.enum(MEETING_PLATFORM_PROVIDERS);
+// The providers whose own transcript Ludy can import when a recording has nothing else (C2, #3174; the sandbox is the offline test platform). A provider is added here when its adapter reads a transcript, and the module's
+// table of whose transcription it is (modules/meetings/src/import.ts) must name it too: that table is typed on this list.
+export const MEETING_PLATFORM_TRANSCRIPT_PROVIDERS = ['sandbox', 'google_meet', 'microsoft_teams'] as const;
+export type MeetingPlatformTranscriptProvider = (typeof MEETING_PLATFORM_TRANSCRIPT_PROVIDERS)[number];
 
 // The names of the recording providers in the shared oauth_state table (a calendar's state is `google_calendar`; these never collide with it).
 export const MEETING_PLATFORM_OAUTH_PROVIDERS = ['google_recordings', 'zoom_recordings', 'teams_recordings'] as const;
@@ -16,10 +20,10 @@ export const zMeetingPlatformOAuthProvider = z.enum(MEETING_PLATFORM_OAUTH_PROVI
 
 // The platforms a member connects through the platform's own OAuth dialog (C3 onwards; the sandbox connects without one), and the name of their attempt in the oauth_state table. The return address of the
 // dialog is `<APP_URL>/meetings/oauth/<platform>/callback`, a page of the app.
-export const MEETING_PLATFORM_CONNECT_PROVIDERS = ['zoom', 'microsoft_teams'] as const;
+export const MEETING_PLATFORM_CONNECT_PROVIDERS = ['google_meet', 'zoom', 'microsoft_teams'] as const;
 export type MeetingPlatformConnectProvider = (typeof MEETING_PLATFORM_CONNECT_PROVIDERS)[number];
 export const zMeetingPlatformConnectProvider = z.enum(MEETING_PLATFORM_CONNECT_PROVIDERS);
-export const MEETING_PLATFORM_OAUTH_NAME: Record<MeetingPlatformConnectProvider, MeetingPlatformOAuthProvider> = { zoom: 'zoom_recordings', microsoft_teams: 'teams_recordings' };
+export const MEETING_PLATFORM_OAUTH_NAME: Record<MeetingPlatformConnectProvider, MeetingPlatformOAuthProvider> = { google_meet: 'google_recordings', zoom: 'zoom_recordings', microsoft_teams: 'teams_recordings' };
 
 export const MEETING_PLATFORM_CONNECTION_STATUSES = ['active', 'expired'] as const;
 // suggested -> importing (the click) -> staged (the worker's bytes wait in staging) -> claimed (the member's request took them) -> imported; failed and dismissed branch off.
@@ -32,6 +36,8 @@ export const MEETING_PLATFORM_LIST_DAYS = 14;
 export const MEETING_PLATFORM_STAGING_MINUTES = 55;
 // The job buffers a download in memory (the blob store has no streaming write to a staging key), so the declared size and the counted stream stay under the audio cap of an upload (MAX_MEETING_AUDIO_BYTES).
 export const MEETING_PLATFORM_IMPORT_MAX_BYTES = 300 * 1024 * 1024;
+// The most bytes of a platform's transcript the job stages (C2, #3174): 5000 lines of the longest text and speaker would be about 21 MB; a real one is far smaller. The import route reads it back under the same cap.
+export const MEETING_PLATFORM_TRANSCRIPT_MAX_BYTES = 24 * 1024 * 1024;
 // The most a platform's video file may be when its audio is taken out of it (C2a, #3306): the product's video upload cap (plan section 10) and crove-media's own MEDIA_MAX_INPUT_BYTES default. The audio
 // cap above is unchanged and counts the audio that comes out. A video over this fails `too_large`.
 export const MEETING_PLATFORM_VIDEO_MAX_BYTES = 2 * 1024 * 1024 * 1024;
@@ -53,6 +59,8 @@ export const MEETING_PLATFORM_ERROR_CODES = [
   'not_claimed',
   'claim_failed',
   'timeout',
+  // C2 (#3174): the platform has a transcript for the recording but it holds no usable line (every line empty).
+  'no_transcript',
   // Microsoft Teams (C4): the customer's tenant administrator has not turned on Graph access to meeting transcripts, or the speaker names; only they can.
   'transcripts_disabled',
   'speakers_disabled',
@@ -90,6 +98,8 @@ export const zMeetingPlatformRecordingView = z.strictObject({
   status: z.enum(MEETING_PLATFORM_RECORDING_STATUSES),
   meetingId: zId.nullable(),
   errorCode: z.string().nullable(),
+  // Minimal safe match reference when a suggested recording matches strictly one Ludy meeting the member can read within the B1 15-minute window (#4123 Step 3). Never leaks hidden or ambiguous meetings.
+  matchedMeeting: z.strictObject({ meetingId: zId }).nullable(),
 });
 export type MeetingPlatformRecordingView = z.infer<typeof zMeetingPlatformRecordingView>;
 

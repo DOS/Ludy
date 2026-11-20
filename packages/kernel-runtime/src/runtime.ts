@@ -61,7 +61,7 @@ export const MCP_WRITE_SCOPES = Object.freeze(['ludy.social.draft', 'ludy.engage
 // The write scopes that have a sealed write context to enter (ADR-0051 decision 11, #3858 slice c). A scope is listed in MCP_WRITE_SCOPES before its commands exist, so a person can consent to it and the tool list can
 // be filtered by it; a command that declares a scope with no context here is refused at run time (rule `mcp_scope`), never run in another scope's context. A scope joins this list with the migration that seals its context
 // and the guard branch that says what that context may write (Engage E2, #3861, for `ludy.engage.write` and `ludy.ads.draft`).
-export const MCP_WRITE_CONTEXT_SCOPES: readonly string[] = Object.freeze(['ludy.social.draft']);
+export const MCP_WRITE_CONTEXT_SCOPES: readonly string[] = Object.freeze(['ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft']);
 export const MCP_SCOPES = Object.freeze([...MCP_READ_SCOPES, ...MCP_WRITE_SCOPES] as const);
 export type McpReadScope = (typeof MCP_READ_SCOPES)[number];
 export type McpWriteScope = (typeof MCP_WRITE_SCOPES)[number];
@@ -89,7 +89,12 @@ export interface McpAccess {
 // The declaration that opens a command to an MCP grant holding a write `scope` (and to no other scope): the grant enters its write context (a company grant only) for it.
 export interface McpWriteAccess {
   scope: McpWriteScope;
+  // 'run' (the default): a call runs the command in the sealed write context of its scope (an R1 command, today the Social draft). 'proposal' (ADR-0051 decision 10, #3858 slice d): the command is an R2 or R3
+  // command that runs only through a proposal (access 'proposal'), and a call by an MCP grant never executes it: it creates a pending proposal (kernel.mcp.propose) that a person approves in Ludy.
+  mode?: 'run' | 'proposal';
 }
+// The kernel command that creates the proposal of an MCP call to a command declared with mode 'proposal': the runtime runs it in place of that command for an MCP actor, and for nobody else.
+export const MCP_PROPOSE_COMMAND = 'kernel.mcp.propose';
 
 export interface UserActor {
   type: 'user';
@@ -227,6 +232,12 @@ export function memberVyRuntime(runtime: Runtime, orgId: string, actor: Pick<Age
     execute: <O = unknown>(name: string, input: unknown) => runtime.execute<O>(name, input, { actor: bound, orgId }),
     query: <O = unknown>(name: string, input: unknown) => runtime.query<O>(name, input, { actor: bound, orgId }),
   });
+}
+
+// A copy of a command definition that names no record: the refusal audit of an MCP call to a proposal command takes its record id from nothing the client sent.
+function withoutTarget(def: CommandDef<unknown, unknown>): CommandDef<unknown, unknown> {
+  const { target: _target, ...rest } = def;
+  return rest;
 }
 
 const RISK_RANK: Record<Risk, number> = { R0: 0, R1: 1, R2: 2, R3: 3 };
@@ -391,6 +402,8 @@ export interface CommandInfo {
   // Whether an agent's proposal of it is flagged P04: it declares a write of a `contact` or `payment` column, or it
   // declares no writes, so nothing says it writes none.
   contactOrPayment: boolean;
+  // The MCP declaration (CommandDef.mcp) of a command a grant may call, or absent.
+  mcp?: { scope: string; mode: 'run' | 'proposal' };
 }
 
 export interface BootstrapEnv {
@@ -756,6 +769,12 @@ function mcpDetail(mcp: McpGrant): Record<string, unknown> {
 function authorizeMcp(access: McpAccess | McpWriteAccess | undefined, actor: Actor): void {
   if (actor.type !== 'user' || !actor.mcp) return;
   if (!access || !actor.mcp.scopes.includes(access.scope)) {
+    throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+  }
+  // A scope that has no sealed write context yet (MCP_WRITE_CONTEXT_SCOPES): a grant may hold it, but a command that runs directly under it is refused here, after the context was entered, so the
+  // refusal is audited as the grant's (#3858, N3 of the review of slice c). A proposal-mode command needs no write context of its own scope: it creates a proposal in the proposal context.
+  const write = access as McpWriteAccess;
+  if ((MCP_WRITE_SCOPES as readonly string[]).includes(write.scope) && (write.mode ?? 'run') === 'run' && !MCP_WRITE_CONTEXT_SCOPES.includes(write.scope)) {
     throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
   }
 }
@@ -1333,6 +1352,10 @@ function snapshotMcp(value: unknown, what: string, allowed: readonly string[] = 
   if (typeof copy.scope !== 'string' || !allowed.includes(copy.scope)) {
     throw new Error(`${what}: the scope is one of ${allowed.join(', ')}`);
   }
+  // Only a command declares a mode, and it is 'run' or 'proposal'.
+  if (copy.mode !== undefined && (allowed !== MCP_WRITE_SCOPES || (copy.mode !== 'run' && copy.mode !== 'proposal'))) {
+    throw new Error(`${what}: the mode, on a command only, is 'run' or 'proposal'`);
+  }
   return Object.freeze(copy);
 }
 
@@ -1813,22 +1836,42 @@ export class Runtime {
       // no sealed input and runs under no proposal.
       if ((c as { mcp?: unknown }).mcp !== undefined) {
         snapshotMcp((c as { mcp?: unknown }).mcp, `command ${c.name}: mcp`, MCP_WRITE_SCOPES);
-        const roles = c.access as readonly string[];
-        if (
-          !Array.isArray(c.access) ||
-          roles.length === 0 ||
-          roles.some((r) => r !== 'owner' && r !== 'admin') ||
-          c.risk !== 'R1' ||
-          c.sideEffect !== 'internal' ||
-          c.extension !== undefined ||
-          c.agent !== undefined ||
-          c.memberVy !== undefined ||
-          c.bootstrap !== undefined ||
-          c.permission !== undefined ||
-          c.sealedInput !== undefined ||
-          (c as { sensitive?: unknown }).sensitive !== undefined
-        ) {
-          throw new Error(`command ${c.name}: an MCP grant runs only an R1 command with no side effect, whose access is owner and admin and that is no extension, agent, member-mode, bootstrap, sensitive, permission or sealed-input command (ADR-0051 decision 2)`);
+        const mcpMode = (c.mcp as McpWriteAccess | undefined)?.mode ?? 'run';
+        if (mcpMode === 'proposal') {
+          // An R2 or R3 command that runs only through a proposal (access 'proposal'): a grant's call to it creates a pending proposal and never runs it (ADR-0051 decision 10). It names the kind its
+          // proposals carry (the Inbox card), and is no extension, agent, member-mode, bootstrap, sensitive or sealed-input command. Who may approve it is the approval policy's (a command with none has no approver).
+          if (
+            c.access !== 'proposal' ||
+            (c.risk !== 'R2' && c.risk !== 'R3') ||
+            typeof c.proposalKind !== 'string' ||
+            c.proposalKind.length === 0 ||
+            c.extension !== undefined ||
+            c.agent !== undefined ||
+            c.memberVy !== undefined ||
+            c.bootstrap !== undefined ||
+            c.sealedInput !== undefined ||
+            (c as { sensitive?: unknown }).sensitive !== undefined
+          ) {
+            throw new Error(`command ${c.name}: an MCP grant reaches a command of mode 'proposal' only when it is an R2 or R3 command that runs through a proposal (access 'proposal') and names its proposalKind, and is no extension, agent, member-mode, bootstrap, sensitive or sealed-input command (ADR-0051 decision 10)`);
+          }
+        } else {
+          const roles = c.access as readonly string[];
+          if (
+            !Array.isArray(c.access) ||
+            roles.length === 0 ||
+            roles.some((r) => r !== 'owner' && r !== 'admin') ||
+            c.risk !== 'R1' ||
+            c.sideEffect !== 'internal' ||
+            c.extension !== undefined ||
+            c.agent !== undefined ||
+            c.memberVy !== undefined ||
+            c.bootstrap !== undefined ||
+            c.permission !== undefined ||
+            c.sealedInput !== undefined ||
+            (c as { sensitive?: unknown }).sensitive !== undefined
+          ) {
+            throw new Error(`command ${c.name}: an MCP grant runs only an R1 command with no side effect, whose access is owner and admin and that is no extension, agent, member-mode, bootstrap, sensitive, permission or sealed-input command (ADR-0051 decision 2)`);
+          }
         }
       }
       if (c.extension !== undefined && (!Array.isArray(c.access) || c.risk === 'R3' || c.agent !== undefined || c.bootstrap !== undefined)) {
@@ -1910,6 +1953,7 @@ export class Runtime {
       agentApprovers: [...(def.agentApprovers?.roles ?? [])],
       proposalKind: def.proposalKind ?? def.name,
       contactOrPayment: this.#contactOrPayment.get(def.name) !== false,
+      ...(def.mcp ? { mcp: { scope: def.mcp.scope, mode: def.mcp.mode ?? 'run' } } : {}),
     };
   }
 
@@ -2173,6 +2217,10 @@ export class Runtime {
     for (const [command, names] of this.#revisers) {
       if (names.length > 1) problems.push(`proposal command ${command} has more than one reviser: ${names.join(', ')}`);
     }
+    // A command a grant reaches in mode 'proposal' needs the proposer the runtime runs in its place (kernel.mcp.propose).
+    for (const c of this.#commands.values()) {
+      if (c.mcp?.mode === 'proposal' && !this.#commands.has(MCP_PROPOSE_COMMAND)) problems.push(`command ${c.name} is reached by an MCP grant as a proposal, but ${MCP_PROPOSE_COMMAND} is not registered`);
+    }
     if (this.#revisers.size > 0 && !this.proposalEditor()) problems.push('revisers are registered but no proposal editor (proposalEditor: true) is');
     if (problems.length > 0) throw new Error(`invalid command registry:\n- ${problems.join('\n- ')}`);
     return this;
@@ -2216,16 +2264,16 @@ export class Runtime {
     await this.#sessions.check(trx, { ...actor, sessionId }, orgId);
   }
 
-  private async enter(trx: Transaction<Database>, actor: Actor, orgId: string, mcpWrite?: McpWriteScope): Promise<Entered> {
+  private async enter(trx: Transaction<Database>, actor: Actor, orgId: string, mcpWrite?: McpWriteScope, mcpMode?: 'run' | 'proposal'): Promise<Entered> {
     await this.checkSession(trx, actor, orgId);
-    return this.enterContext(trx, actor, orgId, mcpWrite);
+    return this.enterContext(trx, actor, orgId, mcpWrite, mcpMode);
   }
 
   // Works on a hot standby too: the re-entry guard's advisory lock and pg_locks read are allowed during recovery
   // (PostgreSQL 17, probed in #105). What a standby refuses is every write (25006, INTERNAL 500): commands, a session
   // check that records a first-seen session, refusal audits. Replica reads are not wired up (plan §3.3).
   // `mcpWrite` is the write scope a command declares (CommandDef.mcp), set only when a command runs: an MCP grant that holds it enters its sealed write context in place of the read-only one.
-  private async enterContext(trx: Transaction<Database>, actor: Actor, orgId: string, mcpWrite?: McpWriteScope): Promise<Entered> {
+  private async enterContext(trx: Transaction<Database>, actor: Actor, orgId: string, mcpWrite?: McpWriteScope, mcpMode?: 'run' | 'proposal'): Promise<Entered> {
     if (actor.type === 'system') {
       await sql`SELECT crove_kernel.enter_system_context(${orgId}::uuid)`.execute(trx);
       return { role: null, agent: null, memberVy: null };
@@ -2283,18 +2331,30 @@ export class Runtime {
       }
       return { role, agent: null, memberVy: null };
     }
-    if (actor.mcp && mcpWrite !== undefined && actor.mcp.scopes.includes(mcpWrite) && !MCP_WRITE_CONTEXT_SCOPES.includes(mcpWrite)) {
-      // A scope that has no sealed write context yet (MCP_WRITE_CONTEXT_SCOPES): the grant may hold it, but the command is refused, in no other scope's context and not in the read context (ADR-0051 decision 11).
-      throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
-    }
-    if (actor.mcp && mcpWrite !== undefined && actor.mcp.scopes.includes(mcpWrite)) {
-      // A company MCP grant that holds a write scope runs the command that declares it (ADR-0051 decision 2, #3227): the same sealed shape as the read context (agent-shaped, no user,
-      // tainted), at R1 and of its own kind, so the database guard lets it write exactly what that scope names. The grantor named in the seal is the user the edge named, else a bug.
+    if (actor.mcp && mcpWrite !== undefined && mcpMode === 'proposal' && actor.mcp.scopes.includes(mcpWrite)) {
+      // A call to a command of mode 'proposal' (ADR-0051 decision 10, #3858 slice d): the sealed context in which a company grant that holds the scope may insert one pending proposal of an exact shape and nothing else.
       const { rows } = await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
-        SELECT crove_kernel.enter_mcp_company_draft_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
+        SELECT crove_kernel.enter_mcp_company_proposal_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid, ${mcpWrite}::text) AS entered`.execute(trx);
       const got = rows[0]?.entered;
       const role = got?.role;
       if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R1' || got.tainted !== true || (role !== 'owner' && role !== 'admin')) {
+        throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      }
+      return { role, agent: null, memberVy: null };
+    }
+    if (actor.mcp && mcpWrite !== undefined && actor.mcp.scopes.includes(mcpWrite) && MCP_WRITE_CONTEXT_SCOPES.includes(mcpWrite)) {
+      // A company MCP grant that holds a write scope runs the command that declares it (ADR-0051 decision 2, #3227): the same sealed shape as the read context (agent-shaped, no user,
+      // tainted), at R1 and of its own kind, so the database guard lets it write exactly what that scope names. The grantor named in the seal is the user the edge named, else a bug.
+      // Each write scope enters its own context, by name: the draft scope the draft entry, the engage and ads scopes the write entry (which seals the scope it was given and the kind of that scope). A scope
+      // with no entry is refused here and never falls back to the draft or the read context; the entry's answer must name the scope it was asked for.
+      let entry;
+      if (mcpWrite === 'ludy.social.draft') entry = sql`crove_kernel.enter_mcp_company_draft_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid)`;
+      else if (mcpWrite === 'ludy.engage.write' || mcpWrite === 'ludy.ads.draft') entry = sql`crove_kernel.enter_mcp_company_write_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid, ${mcpWrite}::text)`;
+      else throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+      const { rows } = await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean; scope?: string } }>`SELECT ${entry} AS entered`.execute(trx);
+      const got = rows[0]?.entered;
+      const role = got?.role;
+      if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R1' || got.tainted !== true || (role !== 'owner' && role !== 'admin') || (mcpWrite !== 'ludy.social.draft' && got.scope !== mcpWrite)) {
         throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
       }
       return { role, agent: null, memberVy: null };
@@ -2347,11 +2407,11 @@ export class Runtime {
 
   // Answers the legal entities the user was let in for when only an entity-scoped permission admitted them (#1507),
   // else null (their role, or the permission org-wide).
-  private async authorize(trx: Transaction<Database>, def: CommandDef<unknown, unknown>, actor: Actor, entered: Entered, viaProposal: boolean): Promise<readonly string[] | null> {
+  private async authorize(trx: Transaction<Database>, def: CommandDef<unknown, unknown>, actor: Actor, entered: Entered, viaProposal: boolean, mcpTarget?: CommandDef<unknown, unknown>): Promise<readonly string[] | null> {
     // First of all: an extension token reaches a command only through the scope the command declares (ADR-0047 point 10).
     authorizeExtension(def.extension, actor);
     // An MCP grant runs a command only when it declares a write scope the grant holds; every other command is closed to it.
-    authorizeMcp(def.mcp, actor);
+    authorizeMcp((mcpTarget ?? def).mcp, actor);
     try {
       this.authorizeRole(def, actor, entered, viaProposal);
       return null;
@@ -3070,6 +3130,19 @@ export class Runtime {
     if (!def || def.bootstrap) throw new DomainError('COMMAND_NOT_FOUND', 404, `Không có lệnh ${name}`);
     const input = parseInput(def.input, rawInput);
     const orgId = options.orgId;
+    if (options.actor.type === 'user' && options.actor.mcp && def.mcp?.mode === 'proposal') {
+      // An MCP grant's call to a command of mode 'proposal' never executes it (ADR-0051 decision 10, #3858 slice d): the kernel's proposer runs in its place, in the sealed proposal context of the
+      // command's scope, and makes a pending proposal of the command and this (parsed) input. The scope is checked against the command's own declaration, and a refusal is audited under its name.
+      const proposer = this.#commands.get(MCP_PROPOSE_COMMAND);
+      if (!proposer) throw new DomainError('COMMAND_NOT_FOUND', 404, `Không có lệnh ${MCP_PROPOSE_COMMAND}`);
+      // A proposal command takes the envelope the approval runs it with, `{ payload, acceptFailedChecks? }`: the proposal stores the payload, and what the approver accepts (failed checks, a posting date) is the
+      // approver's to choose at approval, never a client's: a call that sets either is refused before anything is written.
+      const envelope = input as { payload?: unknown; acceptFailedChecks?: unknown; postingDate?: unknown };
+      if (typeof envelope.payload !== 'object' || envelope.payload === null || Array.isArray(envelope.payload) || envelope.acceptFailedChecks === true || envelope.postingDate !== undefined) {
+        throw new DomainError('INVALID', 422, 'Nội dung đề xuất không hợp lệ');
+      }
+      return this.executeIn<O>(MCP_PROPOSE_COMMAND, proposer, { command: name, payload: envelope.payload }, options.actor, options.idempotencyKey, () => this.#cells.resolveTenant(orgId), async () => orgId, def);
+    }
     return this.executeIn<O>(name, def, input, options.actor, options.idempotencyKey, () => this.#cells.resolveTenant(orgId), async () => orgId);
   }
 
@@ -3098,6 +3171,8 @@ export class Runtime {
     idempotencyKey: string | undefined,
     cell: () => Promise<Db>,
     resolveOrg: (trx: Transaction<Database>) => Promise<string>,
+    // The command an MCP call to a proposal-mode command is for: `def` is then the proposer, and the scope, the mode and the audit name are the target's.
+    mcpTarget?: CommandDef<unknown, unknown>,
   ): Promise<O> {
     const canonical = stableStringify(maskSealed(input, def.sealedInput));
     let orgId = '';
@@ -3110,7 +3185,7 @@ export class Runtime {
       const db = await cell();
       return await db.transaction().execute(async (trx) => {
         orgId = await resolveOrg(trx);
-        context = await this.enter(trx, actor, orgId, def.mcp?.scope);
+        context = await this.enter(trx, actor, orgId, (mcpTarget ?? def).mcp?.scope, (mcpTarget ?? def).mcp?.mode);
         entered = true;
         if (def.bootstrap) {
           const { rows } = await sql<{ fresh: boolean }>`
@@ -3119,8 +3194,9 @@ export class Runtime {
           orgIsNew = rows[0]?.fresh === true;
         }
         // The per-org app gate (ADR-0053), after the session and the membership and before the role check, the idempotency key and the handler.
-        if (!def.bootstrap) await this.refuseIfAppOff(trx, orgId, context, actor, def);
-        const permissionEntities = await this.authorize(trx, def, actor, context, false);
+        // A proposal an MCP grant makes for a command of an app the org switched off is refused as the command itself would be (the gate reads the target's module, not the proposer's).
+        if (!def.bootstrap) await this.refuseIfAppOff(trx, orgId, context, actor, mcpTarget ?? def);
+        const permissionEntities = await this.authorize(trx, def, actor, context, false, mcpTarget);
         this.requireStepUp(def, actor);
         await this.requireLiveSession(def, actor);
 
@@ -3176,11 +3252,13 @@ export class Runtime {
       // membership was established (plan §4.4 steps 7 and 14: a record the actor named is not in the org, such as
       // MEMBER_NOT_FOUND for a member of another org) is audited as failed like 409 and 422. Other statuses are not
       // audited today.
+      // A line's wake event for a grant that does not hold the line's scope (MCP_WAKE_SCOPE, #3858 slice e) is the same: the sweep offers a line's source to every due grant and the database says which are not for it.
       // A refusal because the app is off is the org's state, not an attempt to audit, and the worker, a sweep and the relay meet it every
       // tick for every item of an off org: it writes no row and spends none of the refusal budget when the system is the actor. A person's
       // or an AI agent's call keeps its failed row.
-      if (entered && !orgIsNew && AUDITED_REFUSAL_STATUSES.has(domain.status) && !(domain.code === 'MODULE_OFF' && actor.type === 'system')) {
-        await this.writeRefusalAudit(name, def, input, canonical, actor, orgId, domain);
+      if (entered && !orgIsNew && AUDITED_REFUSAL_STATUSES.has(domain.status) && !((domain.code === 'MODULE_OFF' || domain.code === 'MCP_WAKE_SCOPE') && actor.type === 'system')) {
+        // The refusal of an MCP call to a proposal command is audited under the target's name with NO target: the target's id would come from the client's payload.
+        await this.writeRefusalAudit((mcpTarget ?? def).name, mcpTarget ? withoutTarget(mcpTarget) : def, mcpTarget ? { payload: (input as { payload: unknown }).payload } : input, canonical, actor, orgId, domain);
       } else if ((!entered || orgIsNew) && isPreMembershipRefusal(domain)) {
         // Refused before the caller was a member of the org (or the org-less command's new org rolled back with
         // it): there is no org to audit in, so it is noted in security_event (plan §4.4 step 3, issue #1006).
