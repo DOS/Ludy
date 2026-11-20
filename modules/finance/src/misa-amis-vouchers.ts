@@ -19,7 +19,7 @@ import { PAYABLE_ACCOUNT, money, sum } from '@crove/l10n-vn';
 import { AMIS_MAX_VOUCHER_LINES, AMIS_VOUCHER_TYPES, AmisNumber, amisNumber, type AmisVoucher } from '@crove/misa-amis';
 import { isInflow, type AccountParents, type MisaGoodsCode } from '@crove/kernel-contract';
 import { DomainError } from '@crove/kernel-runtime';
-import { hasNoTaxCode, normalizeTaxCode } from './misa-amis-matching.ts';
+import { hasNoTaxCode, normalizeTaxCode, normalizeUnitName } from './misa-amis-matching.ts';
 import { canonical } from './domain/money.ts';
 import {
   cashVoucherNo,
@@ -68,6 +68,19 @@ export interface AmisContext {
   partyAmbiguous?: ReadonlySet<string> | null;
   /** The item codes the catalogue has (active, exactly one entry); null when no check is done. A line whose item code is not in it is blocked (`item_code_unknown`). */
   itemCodes: ReadonlySet<string> | null;
+  /** MISA ASP only (#4125): its lines name the item, the unit and the stock by id. Absent for AMIS, whose output has no new key. */
+  asp?: AmisAspContext | null;
+}
+
+/** What the last check matched in ASP's catalogues (misa-amis-match.ts `results`); the maps are null until a check is done, and then nothing is checked. */
+export interface AmisAspContext {
+  /** Matched items by code (id of the entry), matched units by the normalized unit name (the catalogue's own name and id), the unit names several units carry, matched stocks by code (id). */
+  itemIds: ReadonlyMap<string, string> | null;
+  unitIds: ReadonlyMap<string, { name: string; id: string }> | null;
+  unitAmbiguous: ReadonlySet<string> | null;
+  stockIds: ReadonlyMap<string, string> | null;
+  /** The stock code a person picked for the connection's sales lines (a sales line leaves a stock); null: none picked, and an ASP sales line is blocked (`stock_missing`). */
+  salesStockCode: string | null;
 }
 
 export type AmisBlockerCode =
@@ -76,6 +89,9 @@ export type AmisBlockerCode =
   | 'party_code_ambiguous'
   | 'item_code_unknown'
   | 'stock_missing'
+  | 'stock_unknown'
+  | 'unit_unknown'
+  | 'unit_ambiguous'
   | 'vat_rate_unmapped'
   | 'voucher_number_too_long'
   | 'no_lines';
@@ -190,7 +206,47 @@ function partyBlockerCode(party: VoucherParty, ctx: AmisContext): 'party_code_un
 }
 
 /** Whether the catalogue has this item code (true while no check is done: nothing is known against it). */
-const itemKnown = (code: string | null, ctx: AmisContext): boolean => code !== null && (ctx.itemCodes === null || ctx.itemCodes.has(code));
+// For ASP the matched item must also have its id (the line writes it); an AMIS item is matched by its code alone.
+const itemKnown = (code: string | null, ctx: AmisContext): boolean =>
+  code !== null && (ctx.itemCodes === null || (ctx.itemCodes.has(code) && (ctx.asp?.itemIds == null || ctx.asp.itemIds.has(code))));
+
+// ASP's ids (#4125). Each is written only for an ASP connection whose check is done; before one nothing is written or blocked (as for the party and item codes), and a push is never confirmed without a check.
+type AspUnit = { name: string; id: string } | 'unknown' | 'ambiguous';
+const aspUnit = (ctx: AmisContext, raw: string | null): AspUnit | null => {
+  const asp = ctx.asp;
+  if (!asp || asp.unitIds === null) return null;
+  const key = normalizeUnitName(raw ?? ctx.defaultUnitName);
+  if (key === null) return 'unknown';
+  const found = asp.unitIds.get(key);
+  if (found) return found;
+  return asp.unitAmbiguous?.has(key) ? 'ambiguous' : 'unknown';
+};
+const aspStockId = (ctx: AmisContext, code: string | null): string | 'unknown' | null => {
+  const asp = ctx.asp;
+  if (!asp || asp.stockIds === null || code === null) return null;
+  return asp.stockIds.get(code) ?? 'unknown';
+};
+/** The blockers of a line's unit, and of its stock when it leaves or enters one (`stockCode` undefined: the line has none). */
+function aspBlockers(ctx: AmisContext, unit: string | null, stockCode?: string | null): AmisBlockerCode[] {
+  const out: AmisBlockerCode[] = [];
+  const u = aspUnit(ctx, unit);
+  if (u === 'unknown') out.push('unit_unknown');
+  if (u === 'ambiguous') out.push('unit_ambiguous');
+  if (stockCode !== undefined && aspStockId(ctx, stockCode) === 'unknown') out.push('stock_unknown');
+  return out;
+}
+/** The id keys of a line for ASP: item, unit (the unit twice: ASP's main unit is the line's), and the stock when the line has one. Empty for AMIS and for a line a blocker stops before this is written. */
+function aspIds(ctx: AmisContext, itemCode: string | null, unit: string | null, stockCode?: string | null): Record<string, unknown> {
+  const u = aspUnit(ctx, unit);
+  if (u === null || typeof u === 'string') return {};
+  const itemId = itemCode === null ? undefined : ctx.asp?.itemIds?.get(itemCode);
+  const stockId = stockCode === undefined ? undefined : aspStockId(ctx, stockCode);
+  return {
+    ...(itemId === undefined ? {} : { inventory_item_id: itemId }),
+    unit_id: u.id,
+    ...(stockCode === undefined || typeof stockId !== 'string' || stockId === 'unknown' ? {} : { stock_id: stockId }),
+  };
+}
 
 function partyFields(prefix: 'account_object' | 'tax_account_object', party: VoucherParty, code: string | null | undefined): Record<string, unknown> {
   const fields: Record<string, unknown> = {
@@ -302,7 +358,7 @@ export function cashAmisVouchers(voucher: CashVoucher, ctx: AmisContext): AmisMa
 // Purchases: 17 Mua dịch vụ (the lines off a stock account), 18 Mua hàng nhập kho (the lines on one). Ludy books a purchase on 331
 // (unpaid): AMIS reftype 330 for services, 302 for goods.
 
-function purchaseBlockers<R extends PurchaseRow>(voucher: PurchaseVoucher, rows: readonly R[], ctx: AmisContext, itemCode: (row: R) => string | null): AmisBlocker[] {
+function purchaseBlockers<R extends PurchaseRow>(voucher: PurchaseVoucher, rows: readonly R[], ctx: AmisContext, itemCode: (row: R) => string | null, stock?: (row: R) => string | null): AmisBlocker[] {
   const blockers: AmisBlocker[] = [];
   const at = (code: AmisBlockerCode, lineNo: number | null) => blockers.push({ code, sourceId: voucher.sourceId, lineNo });
   if (ctx.branchId === null) at('branch_missing', null);
@@ -311,9 +367,21 @@ function purchaseBlockers<R extends PurchaseRow>(voucher: PurchaseVoucher, rows:
   for (const row of rows) {
     if (vatFields(row.vat) === null) at('vat_rate_unmapped', row.line.lineNo);
     if (!itemKnown(itemCode(row), ctx)) at('item_code_unknown', row.line.lineNo);
+    for (const code of aspBlockers(ctx, row.line.unit, stock?.(row))) at(code, row.line.lineNo);
   }
   return blockers;
 }
+
+/** The unit's name on a line: for ASP the catalogue's own spelling, else (and before a check) the one Ludy has. */
+const aspUnitName = (ctx: AmisContext, raw: string | null): string => {
+  const u = aspUnit(ctx, raw);
+  return u !== null && typeof u !== 'string' ? u.name : (raw ?? ctx.defaultUnitName);
+};
+/** ASP's main unit of a stock line is the line's unit (Ludy has one unit per line). */
+const aspMainUnit = (ctx: AmisContext, raw: string | null): Record<string, unknown> => {
+  const u = aspUnit(ctx, raw);
+  return u !== null && typeof u !== 'string' ? { main_unit_id: u.id, main_unit_name: u.name } : {};
+};
 
 function purchaseDetail<R extends PurchaseRow>(
   rows: readonly R[],
@@ -321,6 +389,7 @@ function purchaseDetail<R extends PurchaseRow>(
   code: string | null | undefined,
   itemCode: (row: R) => string,
   extra: (row: R) => Record<string, unknown>,
+  stockCode?: (row: R) => string | null,
 ) {
   return rows.map((row, i) => {
     const { line, voucher } = row;
@@ -334,7 +403,7 @@ function purchaseDetail<R extends PurchaseRow>(
       description: line.description,
       debit_account: line.debitAccount,
       credit_account: PAYABLE_ACCOUNT,
-      unit_name: line.unit ?? ctx.defaultUnitName,
+      unit_name: aspUnitName(ctx, line.unit),
       quantity: num(quantity),
       unit_price: num(unitPrice),
       amount_oc: num(line.amount),
@@ -351,6 +420,8 @@ function purchaseDetail<R extends PurchaseRow>(
       ...partyFields('account_object', voucher.vendor, code),
       ...partyFields('tax_account_object', voucher.vendor, code),
       ...extra(row),
+      ...aspIds(ctx, itemCode(row), line.unit, stockCode?.(row)),
+      ...(stockCode !== undefined ? aspMainUnit(ctx, line.unit) : {}),
     };
   });
 }
@@ -415,7 +486,7 @@ export function purchaseGoodsAmisVouchers(
   const no = misaVoucherNo(GOODS_PURCHASE_VOUCHER_PREFIX, voucher.entryId);
   const meta = { voucherNo: no, amisType: AMIS_VOUCHER_TYPES.purchaseGoods, reftype: 302, reasonTypeId: null };
   const rows = goodsPurchaseRows(voucher, saved, parents);
-  const blockers = purchaseBlockers(voucher, rows, ctx, (row) => row.goods.itemCode);
+  const blockers = purchaseBlockers(voucher, rows, ctx, (row) => row.goods.itemCode, (row) => row.goods.warehouseCode);
   // stock_code is required on a goods line, and a saved row may have no warehouse.
   for (const row of rows) if (row.goods.warehouseCode === null) blockers.push({ code: 'stock_missing', sourceId: voucher.sourceId, lineNo: row.line.lineNo });
   if (blockers.length > 0) return blocked(meta, blockers);
@@ -433,6 +504,7 @@ export function purchaseGoodsAmisVouchers(
       main_convert_rate: 1,
       inventory_resale_type_id: 0,
     }),
+    (row) => row.goods.warehouseCode,
   );
   return done(
     meta,
@@ -475,6 +547,14 @@ export function salesAmisVouchers(voucher: SalesVoucher, ctx: AmisContext): Amis
   const code = partyCode(voucher.customer, ctx);
   if (code === undefined) at(partyBlockerCode(voucher.customer, ctx), null);
   if (!itemKnown(ctx.salesItemCode, ctx)) for (const row of rows) at('item_code_unknown', row.line.lineNo);
+  // ASP: a sales line leaves a stock a person picked for the connection, and names its unit by id.
+  if (ctx.asp) {
+    const stock = ctx.asp.salesStockCode;
+    for (const row of rows) {
+      if (stock === null) at('stock_missing', row.line.lineNo);
+      for (const code of aspBlockers(ctx, row.line.unit, stock)) at(code, row.line.lineNo);
+    }
+  }
   for (const row of rows) if (vatFields(row.vat) === null) at('vat_rate_unmapped', row.line.lineNo);
   if (blockers.length > 0) return blocked(meta, blockers);
 
@@ -482,7 +562,7 @@ export function salesAmisVouchers(voucher: SalesVoucher, ctx: AmisContext): Amis
     const { line } = row;
     const quantity = line.quantity ?? '1';
     const unitPrice = line.unitPrice ?? line.amount;
-    const unit = line.unit ?? ctx.defaultUnitName;
+    const unit = aspUnitName(ctx, line.unit);
     return {
       sort_order: i + 1,
       inventory_item_code: ctx.salesItemCode,
@@ -509,6 +589,9 @@ export function salesAmisVouchers(voucher: SalesVoucher, ctx: AmisContext): Amis
       vat_amount_oc: num(row.vatAmount),
       vat_amount: num(row.vatAmount),
       vat_account: row.vatAccount,
+      ...(ctx.asp?.salesStockCode != null ? { stock_code: ctx.asp.salesStockCode } : {}),
+      ...aspIds(ctx, ctx.salesItemCode, line.unit, ctx.asp?.salesStockCode),
+      ...aspMainUnit(ctx, line.unit),
     };
   });
   return done(

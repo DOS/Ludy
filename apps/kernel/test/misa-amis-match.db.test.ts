@@ -176,7 +176,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
   let entityId = '';
   const events = async () => (await rows<{ payload: { connection_id?: string } }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.misa_amis_match.check_requested' ORDER BY id", [orgId])).map((r) => r.payload);
   const checkRow = async () => (await rows<{ state: string; failure: string | null; params: Record<string, unknown>; finished_at: Date | null; requested_by: string | null }>('SELECT state, failure, params, finished_at, requested_by FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))[0];
-  const results = (who: Account) => api.query<{ connectionId: string | null; status: { state: string; failure: string | null; requestedAt: string | null; checkedAt: string | null }; partyCodes: Map<string, string> | null; partyAmbiguous: Set<string> | null; itemCodes: Set<string> | null; partyNameCodes: Map<string, string> | null; unitIds: Map<string, { name: string; id: string }> | null; unitAmbiguous: Set<string> | null; stockIds: Map<string, string> | null }>('finance.misa_amis_match.results', {}, { actor: asUser(who), orgId });
+  const results = (who: Account) => api.query<{ connectionId: string | null; status: { state: string; failure: string | null; requestedAt: string | null; checkedAt: string | null }; partyCodes: Map<string, string> | null; partyAmbiguous: Set<string> | null; itemCodes: Set<string> | null; partyNameCodes: Map<string, string> | null; unitIds: Map<string, { name: string; id: string }> | null; unitAmbiguous: Set<string> | null; stockIds: Map<string, string> | null; itemIds: Map<string, string> | null; product?: string }>('finance.misa_amis_match.results', {}, { actor: asUser(who), orgId });
   const requestedAt = async () => new Date((await rows<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))[0]!.requested_at).toISOString();
   const record = async (input: Record<string, unknown>) => worker.execute('finance.misa_amis_match.record_check', { connectionId, requestedAt: await requestedAt(), ...input }, { actor: SYSTEM, orgId });
 
@@ -584,6 +584,9 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     expect(done).toEqual({ recorded: true, results: 6 });
     const read = await results(owner);
     expect(read.itemCodes).toEqual(new Set(['HH1']));
+    // The connection's product comes with the results, so the mapper knows whether to write ASP's ids; an item with no id has none to give.
+    expect(read.product).toBe('amis');
+    expect(read.itemIds).toEqual(new Map());
     expect(read.unitIds).toEqual(new Map([['cái', { name: 'Cái', id: unitId }]]));
     expect(read.unitAmbiguous).toEqual(new Set(['hộp']));
     expect(read.stockIds).toEqual(new Map([['KHO1', stockId]]));

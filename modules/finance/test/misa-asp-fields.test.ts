@@ -141,3 +141,67 @@ describe('the AMIS mapper against ASP voucher structures', () => {
     expect(structure.detail.required.filter((k) => !detail.has(k)).sort(), `${kind} required line fields not written`).toEqual(unwrittenRequired);
   });
 });
+
+// With a done check of an ASP connection (#4125) the lines carry the ids ASP requires: the item, the unit (and the main unit) and the stock. `stock_name` is the push's: it is read fresh right before the send.
+const UNIT = '0194a1c2-8f3e-7b10-9d4a-1e2f3a4b5c01';
+const STOCK = '0194a1c2-8f3e-7b10-9d4a-1e2f3a4b5c02';
+const ITEM = '0194a1c2-8f3e-7b10-9d4a-1e2f3a4b5c03';
+const aspCtx: AmisContext = {
+  ...ctx,
+  itemCodes: new Set(['DV_CHUNG', 'BH_CHUNG', 'HH_VPP']),
+  asp: {
+    itemIds: new Map([['DV_CHUNG', ITEM], ['BH_CHUNG', ITEM], ['HH_VPP', ITEM]]),
+    unitIds: new Map([['tháng', { name: 'Tháng', id: UNIT }], ['ram', { name: 'Ram', id: UNIT }]]),
+    unitAmbiguous: new Set(),
+    stockIds: new Map([['KHO1', STOCK]]),
+    salesStockCode: 'KHO1',
+  },
+};
+const aspMappings: Array<{ kind: string; voucherType: number; mapping: AmisMapping; unwritten: string[] }> = [
+  { kind: 'sales', voucherType: AMIS_VOUCHER_TYPES.sales, mapping: salesAmisVouchers(sale, aspCtx), unwritten: ['stock_name'] },
+  { kind: 'purchase_services', voucherType: AMIS_VOUCHER_TYPES.purchaseServices, mapping: purchaseServiceAmisVouchers(purchase, aspCtx), unwritten: [] },
+  { kind: 'purchase_goods', voucherType: AMIS_VOUCHER_TYPES.purchaseGoods, mapping: purchaseGoodsAmisVouchers(goods, [{ accountCode: '156', itemCode: 'HH_VPP', warehouseCode: 'KHO1' }], parents, aspCtx), unwritten: [] },
+];
+
+describe('the mapper for an ASP connection with a done check', () => {
+  it.each(aspMappings)('$kind: every field ASP requires on a line is written, but the stock name the push reads fresh', ({ kind, voucherType, mapping, unwritten }) => {
+    expect(mapping.blockers, kind).toEqual([]);
+    const [written] = mapping.vouchers.map((v) => JSON.parse(toJsonText({ voucher: v })).voucher as { detail: Array<Record<string, unknown>> });
+    const structure = ASP[String(voucherType)];
+    if (!written || !structure) throw new Error(`no voucher or structure for ${kind}`);
+    const detail = new Set(written.detail.flatMap((line) => Object.keys(line)));
+    expect(structure.detail.required.filter((k) => !detail.has(k)).sort(), kind).toEqual(unwritten);
+    for (const line of written.detail) {
+      expect(line.unit_id, kind).toBe(UNIT);
+      expect(line.inventory_item_id, kind).toBe(ITEM);
+    }
+  });
+
+  it('writes the catalogue\'s own unit name and the stock\'s id and code on the lines that have a stock', () => {
+    const [sales] = salesAmisVouchers(sale, aspCtx).vouchers;
+    expect(sales?.detail[0]).toMatchObject({ unit_name: 'Tháng', unit_id: UNIT, main_unit_id: UNIT, main_unit_name: 'Tháng', stock_code: 'KHO1', stock_id: STOCK });
+    const [bought] = purchaseGoodsAmisVouchers(goods, [{ accountCode: '156', itemCode: 'HH_VPP', warehouseCode: 'KHO1' }], parents, aspCtx).vouchers;
+    expect(bought?.detail[0]).toMatchObject({ unit_id: UNIT, main_unit_id: UNIT, stock_code: 'KHO1', stock_id: STOCK });
+    const [service] = purchaseServiceAmisVouchers(purchase, aspCtx).vouchers;
+    expect(service?.detail[0]).not.toHaveProperty('stock_id');
+    expect(service?.detail[0]).not.toHaveProperty('main_unit_id');
+  });
+
+  it('blocks a line whose unit is not in the catalogue or is there twice, and a stock that is not, and a sales line with no stock picked', () => {
+    const blockers = (mapping: AmisMapping) => mapping.blockers.map((b) => b.code).sort();
+    expect(blockers(purchaseServiceAmisVouchers(purchase, { ...aspCtx, asp: { ...aspCtx.asp!, unitIds: new Map() } }))).toEqual(['unit_unknown']);
+    expect(blockers(purchaseServiceAmisVouchers(purchase, { ...aspCtx, asp: { ...aspCtx.asp!, unitIds: new Map(), unitAmbiguous: new Set(['tháng']) } }))).toEqual(['unit_ambiguous']);
+    expect(blockers(purchaseGoodsAmisVouchers(goods, [{ accountCode: '156', itemCode: 'HH_VPP', warehouseCode: 'KHO9' }], parents, aspCtx))).toEqual(['stock_unknown']);
+    expect(blockers(salesAmisVouchers(sale, { ...aspCtx, asp: { ...aspCtx.asp!, salesStockCode: null } }))).toEqual(['stock_missing']);
+    expect(blockers(salesAmisVouchers(sale, { ...aspCtx, asp: { ...aspCtx.asp!, salesStockCode: 'KHO9' } }))).toEqual(['stock_unknown']);
+    // A matched item without its id cannot be written on an ASP line.
+    expect(blockers(salesAmisVouchers(sale, { ...aspCtx, asp: { ...aspCtx.asp!, itemIds: new Map() } }))).toEqual(['item_code_unknown']);
+  });
+
+  it('writes nothing new and blocks nothing new for AMIS, or for ASP before a check is done', () => {
+    const amis = JSON.stringify([salesAmisVouchers(sale, ctx), purchaseServiceAmisVouchers(purchase, ctx), purchaseGoodsAmisVouchers(goods, [{ accountCode: '156', itemCode: 'HH_VPP', warehouseCode: 'KHO1' }], parents, ctx)]);
+    expect(amis).not.toMatch(/unit_id|stock_id|inventory_item_id|main_unit_id/);
+    const unchecked: AmisContext = { ...ctx, asp: { itemIds: null, unitIds: null, unitAmbiguous: null, stockIds: null, salesStockCode: null } };
+    expect(JSON.stringify([purchaseServiceAmisVouchers(purchase, unchecked), purchaseGoodsAmisVouchers(goods, [{ accountCode: '156', itemCode: 'HH_VPP', warehouseCode: 'KHO1' }], parents, unchecked)])).not.toMatch(/unit_id|stock_id|inventory_item_id/);
+  });
+});

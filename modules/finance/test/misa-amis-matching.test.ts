@@ -128,9 +128,9 @@ describe('the matches a send relies on (#4124)', () => {
   const item = (state: 'matched' | 'unknown' | 'ambiguous') => ({ kind: 'item' as const, ref: 'DV_CHUNG', state, code: state === 'matched' ? 'DV_CHUNG' : null, entryId: null });
 
   it('relies only on the references of the batch that a check matched', () => {
-    expect(relied(stored, wanted)).toEqual({ taxCodes: ['0101234564'], itemCodes: ['DV_CHUNG'], confirmed: [] });
-    expect(relied({ partyCodes: null, itemCodes: null }, wanted)).toEqual({ taxCodes: [], itemCodes: [], confirmed: [] });
-    expect(relied(stored, { taxCodes: [], itemCodes: [] })).toEqual({ taxCodes: [], itemCodes: [], confirmed: [] });
+    expect(relied(stored, wanted)).toEqual({ taxCodes: ['0101234564'], itemCodes: ['DV_CHUNG'], confirmed: [], unitNames: [], stockCodes: [] });
+    expect(relied({ partyCodes: null, itemCodes: null }, wanted)).toEqual({ taxCodes: [], itemCodes: [], confirmed: [], unitNames: [], stockCodes: [] });
+    expect(relied(stored, { taxCodes: [], itemCodes: [] })).toEqual({ taxCodes: [], itemCodes: [], confirmed: [], unitNames: [], stockCodes: [] });
   });
 
   it('holds while the catalogue answers the same, and stops holding when an entry is gone, inactive, ambiguous or has another code', () => {
@@ -248,5 +248,36 @@ describe('units and stocks (MISA ASP, #4125)', () => {
       { kind: 'stock', ref: 'KHO3', state: 'ambiguous', code: null, entryId: null },
       { kind: 'stock', ref: 'kho1', state: 'unknown', code: null, entryId: null },
     ]);
+  });
+});
+
+describe('what an ASP send relies on (#4125)', () => {
+  const stored = {
+    partyCodes: new Map<string, string>(),
+    itemCodes: new Set(['HH1']),
+    product: 'asp' as const,
+    itemIds: new Map([['HH1', ID1]]),
+    unitIds: new Map([['cái', { name: 'Cái', id: ID1 }]]),
+    stockIds: new Map([['KHO1', ID2]]),
+  };
+  const wanted = { taxCodes: [], itemCodes: ['HH1'], unitNames: ['CÁI ', 'Hộp'], stockCodes: ['KHO1', 'KHO2'] };
+  const unit = (state: 'matched' | 'unknown', entryId: string | null) => ({ kind: 'unit' as const, ref: 'cái', state, code: entryId ? 'Cái' : null, entryId });
+  const stock = (state: 'matched' | 'unknown', entryId: string | null) => ({ kind: 'stock' as const, ref: 'KHO1', state, code: entryId ? 'KHO1' : null, entryId });
+
+  it('relies on the units and stocks the check matched, for ASP only', () => {
+    expect(relied(stored, wanted)).toMatchObject({ unitNames: ['CÁI '], stockCodes: ['KHO1'] });
+    expect(relied({ ...stored, product: undefined }, wanted)).toMatchObject({ unitNames: [], stockCodes: [] });
+  });
+
+  it('stops holding when a unit, a stock or an item has gone, been deactivated or has another id', () => {
+    const item = (entryId: string | null) => ({ kind: 'item' as const, ref: 'HH1', state: 'matched' as const, code: 'HH1', entryId });
+    expect(staleMatches(stored, [unit('matched', ID1), stock('matched', ID2), item(ID1)])).toBe(false);
+    expect(staleMatches(stored, [unit('unknown', null)])).toBe(true);
+    expect(staleMatches(stored, [unit('matched', ID2)])).toBe(true);
+    expect(staleMatches(stored, [stock('unknown', null)])).toBe(true);
+    expect(staleMatches(stored, [stock('matched', ID1)])).toBe(true);
+    expect(staleMatches(stored, [item(ID2)])).toBe(true);
+    // An AMIS check is never judged by ids it did not store for a line.
+    expect(staleMatches({ ...stored, product: undefined }, [unit('unknown', null), stock('unknown', null), item(ID2)])).toBe(false);
   });
 });
