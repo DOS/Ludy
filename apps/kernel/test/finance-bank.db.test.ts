@@ -609,6 +609,18 @@ suite('bank statement import (#326)', () => {
     await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, 'not-a-cursor']));
     expect(await map({ feedFrom: dayOf(-1) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_UNKNOWN' } });
     expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBeNull();
+    // A Tingee connection writes its cursor as yyyyMMddHHmmss: the floor is the day after, or the day itself at midnight.
+    const stampOf = (day: string, time: string) => `${day.replaceAll('-', '')}${time}`;
+    await admin((c) => c.query(`UPDATE crove_kernel.channel_connection SET provider = 'bank_tingee' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, stampOf(dayOf(-2), '083000')]));
+    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-1));
+    expect(await map({ feedFrom: dayOf(-2) })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_FROM_MOVED_EARLIER' } });
+    expect((await map({ feedFrom: dayOf(-1) })).status).toBe(200);
+    expect((await map({ feedFrom: null })).status).toBe(200);
+    await admin((c) => c.query('UPDATE crove_finance.bank_feed_account SET cursor = $3 WHERE org_id = $1 AND id = $2', [orgId, mapped.body.feedAccountId, stampOf(dayOf(-2), '000000')]));
+    expect((await feed('accounts', viewer)).body[0].feedFromEarliest).toBe(dayOf(-2));
+    // Back to the sandbox provider: the connection is only a stand-in for Tingee's cursor here, and other tests count Tingee connections.
+    await admin((c) => c.query(`UPDATE crove_kernel.channel_connection SET provider = 'bank_sandbox' WHERE org_id = $1 AND id = $2`, [orgId, connectionId]));
     expect((await feed('unmap', owner, { feedAccountId: mapped.body.feedAccountId, idempotencyKey: randomUUID() })).status).toBe(200);
   });
 

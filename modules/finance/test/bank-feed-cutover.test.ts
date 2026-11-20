@@ -18,8 +18,8 @@ describe('earliestFeedFrom', () => {
   });
 
   it('is the day after a Tingee stamp, except at midnight where the whole day is still fetched', () => {
-    expect(earliestFeedFrom(now, 'bank_tingee', row('20261118083000000'))).toBe('2026-11-19');
-    expect(earliestFeedFrom(now, 'bank_tingee', row('20261118000000000'))).toBe('2026-11-18');
+    expect(earliestFeedFrom(now, 'bank_tingee', row('20261118083000'))).toBe('2026-11-19');
+    expect(earliestFeedFrom(now, 'bank_tingee', row('20261118000000'))).toBe('2026-11-18');
   });
 
   it('keeps the day the mapping holds when that is later, and never goes under the reach', () => {
@@ -30,6 +30,11 @@ describe('earliestFeedFrom', () => {
   it('gives no day for a cursor it cannot read, or a day not on the calendar', () => {
     expect(earliestFeedFrom(now, 'bank_sandbox', row('garbage'))).toBeNull();
     expect(earliestFeedFrom(now, 'bank_sandbox', row('2026-02-30'))).toBeNull();
-    expect(earliestFeedFrom(now, 'bank_tingee', row('20261340120000000'))).toBeNull();
+    expect(earliestFeedFrom(now, 'bank_tingee', row('20261340120000'))).toBeNull();
+    expect(earliestFeedFrom(now, 'bank_tingee', row('20261118246000'))).toBeNull();
+    // Each provider reads only its own cursor: a 17-digit stamp or a day is not Tingee's, a stamp is not the sandbox's.
+    expect(earliestFeedFrom(now, 'bank_tingee', row('20261118083000000'))).toBeNull();
+    expect(earliestFeedFrom(now, 'bank_tingee', row('2026-11-18'))).toBeNull();
+    expect(earliestFeedFrom(now, 'bank_sandbox', row('20261118083000'))).toBeNull();
   });
 });

@@ -39,23 +39,27 @@ function reachFrom(now: Date, provider: string): string {
 export function earliestFeedFrom(now: Date, provider: string, row: { cursor: string | null; feed_from: string | null } | null): string | null {
   const reach = reachFrom(now, provider);
   if (!row || row.cursor === null) return reach;
-  const floor = row.feed_from ?? firstDayStillFetched(row.cursor);
+  const floor = row.feed_from ?? firstDayStillFetched(provider, row.cursor);
   if (floor === null) return null;
   return floor > reach ? floor : reach;
 }
 
-// The first day a feed will still fetch after this cursor. The sandbox's cursor is the last day pulled (2026-11-20): the next pull starts the day after. Tingee's is a stamp (20261120083000000) the next pull reads from: lines of its day from that moment on are still fetched, earlier ones are not, so the floor is the next day, except for a stamp at midnight, where the whole day is. Null for anything else, or a day that is not on the calendar.
-function firstDayStillFetched(cursor: string): string | null {
-  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(cursor);
-  if (iso) {
-    const day = calendarDay(iso[1] as string, iso[2] as string, iso[3] as string);
+// The first day a feed will still fetch after this cursor, read the way the provider writes it. The sandbox's cursor is the last day pulled (2026-11-20): the next pull starts the day after. Tingee's is a Vietnam time stamp yyyyMMddHHmmss (20261120083000) the next pull reads from: lines of its day from that moment on are still fetched, earlier ones are not, so the floor is the next day, except for a stamp at midnight, where the whole day is. Null for anything else, or a time that is not on the calendar.
+function firstDayStillFetched(provider: string, cursor: string): string | null {
+  if (provider === 'bank_sandbox') {
+    const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(cursor);
+    const day = iso ? calendarDay(iso[1] as string, iso[2] as string, iso[3] as string) : null;
     return day === null ? null : addDay(day);
   }
-  const stamp = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{3})$/.exec(cursor);
-  if (!stamp) return null;
-  const day = calendarDay(stamp[1] as string, stamp[2] as string, stamp[3] as string);
-  if (day === null) return null;
-  return stamp[4] === '00' && stamp[5] === '00' && stamp[6] === '00' && stamp[7] === '000' ? day : addDay(day);
+  if (provider === 'bank_tingee') {
+    const stamp = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(cursor);
+    if (!stamp) return null;
+    const [, y, mo, d, h, mi, sec] = stamp as unknown as [string, string, string, string, string, string, string];
+    const day = calendarDay(y, mo, d);
+    if (day === null || Number(h) > 23 || Number(mi) > 59 || Number(sec) > 59) return null;
+    return h === '00' && mi === '00' && sec === '00' ? day : addDay(day);
+  }
+  return null;
 }
 
 // A day of the calendar as `YYYY-MM-DD`, or null for one that is not (2026-02-30).
