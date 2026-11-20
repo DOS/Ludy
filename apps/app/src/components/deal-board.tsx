@@ -20,6 +20,7 @@ import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isDealOverdue, isEmptyBoard, moveCard, type Drop } from '../lib/deal-board.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
+import { AiWrittenBadge } from './ai-written-badge.tsx';
 
 // What an empty Deals screen offers (#3647): the one action, and the way to bring customers in first. There is no deal import; the deal needs a customer, so the file is of customers.
 export function DealsEmpty({ title, hint, canEdit, onAdd }: { title: string; hint?: string | undefined; canEdit: boolean; onAdd: () => void }) {
@@ -135,6 +136,7 @@ function Card({
         <span data-testid="deal-title" className="block font-medium text-foreground">
           {deal.title}
         </span>
+        <AiWrittenBadge actorOrigin={deal.actorOrigin} tainted={deal.tainted} className="mt-1" />
         {deal.followUp && (
           <Badge variant="warning" className="mt-1" data-testid="follow-up-badge">
             {t('followUp')}

@@ -1225,7 +1225,7 @@ export const conversationGet = defineQuery({
     }
     const notes = await ctx.trx
       .selectFrom('crove_kernel.conversation_note')
-      .select(['id', 'author_user_id', 'body', 'created_at'])
+      .select(['id', 'author_user_id', 'body', 'created_at', 'actor_origin', 'tainted'])
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', input.conversationId)
       .orderBy('created_at')
@@ -1316,7 +1316,7 @@ export const conversationGet = defineQuery({
           removed: m.platform_removed_at !== null,
           privateReplyConversationId: m.external_message_id ? (privateReplies.get(m.external_message_id) ?? null) : null,
         })),
-      notes: notes.map((n) => ({ id: n.id, authorUserId: n.author_user_id, body: n.body, createdAt: n.created_at.toISOString() })),
+      notes: notes.map((n) => ({ id: n.id, authorUserId: n.author_user_id, body: n.body, createdAt: n.created_at.toISOString(), actorOrigin: n.actor_origin as 'ui' | 'mcp', tainted: n.tainted })),
       parentId,
       reply: { allowed: reason === null, reason },
       hideAllowed,

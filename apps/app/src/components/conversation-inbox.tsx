@@ -27,6 +27,7 @@ import { DraftPanel, replyTextFor } from './conversation-drafts.tsx';
 import { IntentBadge, IntentBar, useSpamSuggested } from './conversation-intent.tsx';
 import { PaneError, ThreadSkeleton } from './conversation-states.tsx';
 import { REPLY_INSERT_EVENT, type ReplyInsert } from './quote-send.tsx';
+import { AiWrittenBadge } from './ai-written-badge.tsx';
 
 export const STATUSES: readonly ConversationStatus[] = ['new', 'pending', 'resolved'];
 // Lists and the open thread are read again this often (the stream's hints do not carry conversations yet).
@@ -737,8 +738,11 @@ function Notes({ detail, members, canWrite }: { detail: ConversationDetail; memb
         {detail.notes.map((n) => (
           <li key={n.id} className="rounded-md bg-muted px-3 py-2 text-sm" data-testid="conversation-note">
             <p className="whitespace-pre-wrap break-words text-foreground">{n.body}</p>
-            <p className="text-xs text-muted-foreground">
-              {names.get(n.authorUserId) ?? t('member')} · {f.dateTime(n.createdAt)}
+            <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+              <span>
+                {names.get(n.authorUserId) ?? t('member')} · {f.dateTime(n.createdAt)}
+              </span>
+              <AiWrittenBadge actorOrigin={n.actorOrigin} tainted={n.tainted} />
             </p>
           </li>
         ))}

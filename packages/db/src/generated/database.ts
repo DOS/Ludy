@@ -643,6 +643,8 @@ export interface CrmDealTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_by: string | null;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  actor_origin: ColumnType<string, string | undefined, NotGranted>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
 /** crove_crm.event_type */
@@ -739,6 +741,8 @@ export interface CrmQuoteLineTable {
   amount: Generated<string>;
   vat_amount: Generated<string>;
   stock_item_id: string | null;
+  actor_origin: Generated<string>;
+  tainted: Generated<boolean>;
 }
 
 /** crove_crm.quote_link */
@@ -811,6 +815,8 @@ export interface CrmQuoteTable {
   seller_bank_note: string | null;
   seller_logo_file_id: string | null;
   seller_logo_frozen: Generated<boolean>;
+  actor_origin: ColumnType<string, string | undefined, NotGranted>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
 /** crove_crm.sales_order_delivery */
@@ -2083,6 +2089,7 @@ export interface KernelActivityTable {
   occurred_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   agent_id: ColumnType<string | null, string | null, NotGranted>;
   legal_entity_id: ColumnType<string | null, string | null, NotGranted>;
+  actor_origin: ColumnType<string, string | undefined, NotGranted>;
 }
 
 /** crove_kernel.agent */
@@ -2406,6 +2413,8 @@ export interface KernelConversationNoteTable {
   author_user_id: ColumnType<string, string, NotGranted>;
   body: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  actor_origin: ColumnType<string, string | undefined, NotGranted>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
 /** crove_kernel.conversation_read */
@@ -2922,6 +2931,8 @@ export interface KernelPartyTable {
   search: ColumnType<string | null, never, never>;
   duplicate_of: string | null;
   company_id: string | null;
+  actor_origin: Generated<string>;
+  tainted: Generated<boolean>;
 }
 
 /** crove_kernel.permission_catalog */

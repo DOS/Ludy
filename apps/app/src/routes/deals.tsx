@@ -29,6 +29,7 @@ import { EMPTY_DEAL_FILTER, astToDealFilter, dealFilterToAst, type DealFilterSta
 import { isDealOverdue, isEmptyBoard, readDealView, showAllClosed, withDealView, type DealView } from '../lib/deal-board.ts';
 import { formatDate, formatMoney } from '../lib/format.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
+import { AiWrittenBadge } from '../components/ai-written-badge.tsx';
 
 const refresh = refreshDeals;
 const SCOPE = 'crm.deal';
@@ -66,7 +67,8 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns, onOpen }:
           {/* The deal opens in its side sheet: details, quotes, bookings and meetings (#3648). */}
           <button type="button" onClick={onOpen} data-testid="deal-row-open" className="rounded-sm text-left font-medium text-foreground outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
             {deal.title}
-          </button>
+          </button>{' '}
+          <AiWrittenBadge actorOrigin={deal.actorOrigin} tainted={deal.tainted} />
           {deal.followUp && (
             <>
               {' '}

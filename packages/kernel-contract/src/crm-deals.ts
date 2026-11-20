@@ -92,6 +92,9 @@ export interface Deal {
   partyDuplicateOf: DealPartyDuplicate | null;
   createdAt: string;
   updatedAt: string;
+  // 'mcp' when a connected AI app made the deal (under the name of the person who connected it), and whether its title or lost reason may be the app's text: the screen says so (#4149).
+  actorOrigin: 'ui' | 'mcp';
+  tainted: boolean;
 }
 
 export interface DealPage {
@@ -191,6 +194,8 @@ export const zDeal = z.object({
   partyDuplicateOf: z.object({ id: zId, name: z.string() }).nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  actorOrigin: z.enum(['ui', 'mcp']),
+  tainted: z.boolean(),
 });
 export const zDealPage = z.object({ items: z.array(zDeal), next: zDealCursor.nullable() });
 
