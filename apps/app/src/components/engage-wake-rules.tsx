@@ -27,7 +27,14 @@ export function EngageWakeRulesCard() {
   // The numbers as the person left them: every change sends all three from here, so a second change made while the first is still being saved starts from it and never undoes it.
   const latest = useRef<EngageWakeRules | null>(null);
   const set = useMutation({
+    // Saves run one after another (a later change waits for the earlier one), so the server never keeps older numbers than the card shows.
+    scope: { id: 'engage-wake-rules' },
     mutationFn: (rules: EngageWakeRules) => client.conversations.setWakeRules(rules),
+    // A save that failed leaves nothing of it on the card: back to what is stored.
+    onError: () => {
+      latest.current = null;
+      void queryClient.invalidateQueries({ queryKey: orpc.conversations.wakeRules.queryKey({ input: {} }) });
+    },
     // The newest answer is the truth: it goes into the cache only when no later change is on its way.
     onSuccess: (saved) => {
       const mine = latest.current;

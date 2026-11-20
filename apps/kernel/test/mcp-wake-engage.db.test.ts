@@ -10,7 +10,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
@@ -356,6 +356,23 @@ suite('Engage wake rules on PostgreSQL (#3862)', () => {
       await o.due(grantId);
     }
     expect(counts).toEqual([20, 40, 45, 45]);
+  });
+
+  it('lets a key the database refuses stop only its own type, and logs it by code, never by value', async () => {
+    const o = await org();
+    const grantId = await o.wakeUp();
+    const good = randomUUID();
+    const bad = { type: 'engage.booking_tomorrow', key: 'engage_booking_tomorrow:Nguyễn Văn A:2026-11-20', data: { booking_id: randomUUID(), on: '2026-11-20' } };
+    const ok = { type: 'social.post_comment_new', key: wakeKey('social.post_comment_new', good, '2026-11-19'), data: { conversation_id: good, since: '2026-11-19' } };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await o.sweep([{ types: ['engage.booking_tomorrow', 'social.post_comment_new'], read: async () => [bad, ok] }]);
+      const sent = await o.deliveries(grantId);
+      expect(sent.map((r) => r.type)).toEqual(['social.post_comment_new']);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('Nguyễn');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('wakes no coworker about an app the org switched off', async () => {

@@ -209,6 +209,27 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
     }
     return out;
   };
+  // The keys of a batch that are new for the grant, in ONE check. A key the database refuses (not reachable today: the keys are made of ids and days) refuses the whole check, so the batch is then checked a type at a
+  // time and only the type that holds the bad key is left out; it is logged by its type and the error's code, never by a key or a value.
+  const freshKeys = async (grant: WakeGrant, batch: readonly LineWakeItem[]): Promise<Set<string>> => {
+    const ctx = { actor: ACTOR, orgId: grant.orgId };
+    const check = async (items: readonly LineWakeItem[]) => (await deps.runtime.execute<{ fresh: string[] }>('kernel.mcp.wake.line_check', { grantId: grant.grantId, keys: items.map((it) => it.key) }, ctx)).fresh;
+    try {
+      return new Set(await check(batch));
+    } catch (error) {
+      console.warn(`[mcp-wake-sweep] line check for ${grant.grantId.slice(0, 8)} refused, checking a type at a time`, codeOf(error));
+    }
+    const out = new Set<string>();
+    for (const type of new Set(batch.map((it) => it.type))) {
+      try {
+        for (const key of await check(batch.filter((it) => it.type === type))) out.add(key);
+      } catch (error) {
+        done.failures += 1;
+        console.warn(`[mcp-wake-sweep] line check of ${type} for ${grant.grantId.slice(0, 8)}`, codeOf(error));
+      }
+    }
+    return out;
+  };
   // The items that are new for the grant become events, each with its one key (stored with it). The candidates are taken in the reads' own urgency order (newest wait first, the window closing soonest first), the types
   // dealt round-robin so one type cannot fill the batch, and checked for newness in ONE `line_check` per grant of up to FEED_KEYS_MAX keys (a command writes an audit row, so one a pass, not one a type). The new ones are
   // sent in that same order, at most FEED_PER_TYPE (WAKE_ITEMS_MAX) of a type; only when a type still has room and candidates are left is the next batch checked (at most FEED_CHECKS_MAX in a pass, which covers the 100
@@ -226,14 +247,12 @@ export async function runWakeSweep(deps: WakeSweepDeps): Promise<{ handedOver: n
     }
     const ordered: LineWakeItem[] = [];
     for (let row = 0; ordered.length < keys.size; row += 1) for (const lane of lanes.values()) if (row < lane.length) ordered.push(lane[row] as LineWakeItem);
-    const ctx = { actor: ACTOR, orgId: grant.orgId };
     const sentOf = new Map<string, number>();
     let sent = 0;
     for (let at = 0, checks = 0; at < ordered.length && checks < FEED_CHECKS_MAX; at += FEED_KEYS_MAX, checks += 1) {
       if (!ordered.slice(at).some((it) => (sentOf.get(it.type) ?? 0) < FEED_PER_TYPE)) break;
       const batch = ordered.slice(at, at + FEED_KEYS_MAX);
-      const { fresh } = await deps.runtime.execute<{ fresh: string[] }>('kernel.mcp.wake.line_check', { grantId: grant.grantId, keys: batch.map((it) => it.key) }, ctx);
-      const isNew = new Set(fresh);
+      const isNew = await freshKeys(grant, batch);
       for (const it of batch) {
         if (!isNew.has(it.key) || (sentOf.get(it.type) ?? 0) >= FEED_PER_TYPE) continue;
         sentOf.set(it.type, (sentOf.get(it.type) ?? 0) + 1);
