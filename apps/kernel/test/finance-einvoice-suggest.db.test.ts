@@ -130,8 +130,9 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
     parties: Array<{ id: string; name: string; kind: string; taxCode: string | null; address: string | null; email: string | null; rates: Array<{ vatRate: string; n: number }> }>;
     orgRates: Array<{ vatRate: string; n: number }>;
     invoice: { text: string } | null;
+    formBuyerRates: Array<{ vatRate: string; n: number }> | null;
   }
-  const source = (o: Org, text: string, user = o.owner) => query<Source>(o, 'finance.einvoice_draft.suggest_source', { text, date: today() }, user);
+  const source = (o: Org, text: string, user = o.owner, extra: { formBuyerPartyId?: string } = {}) => query<Source>(o, 'finance.einvoice_draft.suggest_source', { text, date: today(), ...extra }, user);
 
   it('offers the customers whose names share a word with the text, the best match first, with their record', async () => {
     const o = await org();
@@ -176,6 +177,32 @@ suite('the coworker on a sales e-invoice draft (#2505)', () => {
     const none = await source(stranger, 'bán cho anh Nam');
     expect(none.parties).toEqual([]);
     expect(none.orgRates).toEqual([]);
+  });
+
+  it('gives the rate history of the customer the form already names, whatever customer the text fits, and none for an unknown, another org\'s or merged customer (#2713)', async () => {
+    const o = await org();
+    const [series] = (await sync(o)).series;
+    const nam = await party(o, 'Nguyễn Văn Nam', { kind: 'person' });
+    const hoa = await party(o, 'Công ty Hoa Mai', { taxCode: VALID_TAX_CODE });
+    const merged = await party(o, 'Hoa Mai cũ');
+    await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, merged, hoa]));
+    await saveDraft(o, series?.id ?? null, nam, '8%');
+    await saveDraft(o, series?.id ?? null, nam, '8%');
+    await saveDraft(o, series?.id ?? null, hoa, '10%');
+    const rates = (rows: Array<{ vatRate: string; n: number }> | null) => Object.fromEntries((rows ?? []).map((r) => [r.vatRate, r.n]));
+    // The text fits Hoa Mai, the form names Nam: the history given is Nam's, and Hoa Mai is still offered to the model with her own.
+    const result = await source(o, 'bán cho công ty Hoa Mai', o.owner, { formBuyerPartyId: nam });
+    expect(rates(result.formBuyerRates)).toEqual({ '8%': 2 });
+    expect(rates(result.parties[0]?.rates ?? [])).toEqual({ '10%': 1 });
+    // A named customer with no earlier draft has an empty history, not none.
+    const fresh = await party(o, 'Lê Thị Mới', { kind: 'person' });
+    expect((await source(o, 'bán cho công ty Hoa Mai', o.owner, { formBuyerPartyId: fresh })).formBuyerRates).toEqual([]);
+    // Nothing named, an unknown id, a merged customer and another org\'s customer all read as none.
+    expect((await source(o, 'bán cho công ty Hoa Mai')).formBuyerRates).toBeNull();
+    expect((await source(o, 'bán cho công ty Hoa Mai', o.owner, { formBuyerPartyId: crypto.randomUUID() })).formBuyerRates).toBeNull();
+    expect((await source(o, 'bán cho công ty Hoa Mai', o.owner, { formBuyerPartyId: merged })).formBuyerRates).toBeNull();
+    const stranger = await org();
+    expect((await source(stranger, 'bán cho công ty Hoa Mai', stranger.owner, { formBuyerPartyId: nam })).formBuyerRates).toBeNull();
   });
 
   it('is read by owners, admins and members and refused to a viewer, and it writes nothing', async () => {

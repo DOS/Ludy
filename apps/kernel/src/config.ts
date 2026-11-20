@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { EXTRACT_TIMING } from '@crove/extract-contract';
 import { misaBlockers } from '@crove/einvoice';
-import { MODULE_IDS, zExtensionId, type ModuleId } from '@crove/kernel-contract';
+import { MODULE_IDS, TRANSLATION_FLAGGED_TARGETS, zExtensionId, type ModuleId, type TranslationFlaggedTarget } from '@crove/kernel-contract';
 import type { UsageLimits } from '@crove/kernel';
 import { parseAllowedEmails } from './auth-access.ts';
 import { checkHostedLoginUrl, hostedLoginName } from './auth-hosted-login.ts';
@@ -372,6 +372,8 @@ const schema = z.object({
   // Calls per minute one grant may make before the endpoint answers 429, and the cap of concurrent calls of one grant.
   MCP_GRANT_PER_MINUTE: z.coerce.number().int().min(1).max(6000).default(60),
   MCP_GRANT_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
+  // The writes one grant may make in a minute through the Engage write tools (E2, #3861); a client that loops is answered 429 before anything runs.
+  MCP_GRANT_WRITES_PER_MINUTE: z.coerce.number().int().min(1).max(600).default(20),
   // Rows of business data one grant may read per UTC day (the sum of the rows its tool calls return). A call that starts under the budget may end over it by one answer.
   MCP_GRANT_DAILY_ROWS: z.coerce.number().int().min(1).max(1_000_000).default(2000),
   // Dynamic client registrations one address may make per minute, and all addresses together (RFC 7591 is public by protocol).
@@ -398,6 +400,14 @@ const schema = z.object({
   // The integrator's ClientID that MISA issued for the MISA AMIS Kế toán API (#3854): a SECRET of the deployment (it is also the key that signs the callbacks of AMIS), never logged, never in an
   // error or an audit row. Unset, the connector is off: the card says so and no route that uses it is reachable. Crove Cloud sets DOS's own; a self-hoster sets the one MISA issued to their app.
   MISA_AMIS_CLIENT_ID: optional.pipe(z.string().regex(/^[0-9A-Za-z._-]{8,128}$/, 'MISA_AMIS_CLIENT_ID is not in the shape of a ClientID').optional()),
+  // The push of vouchers to MISA AMIS (S3b, #3902) is OFF unless this is `on`, and it needs MISA_AMIS_CLIENT_ID. It stays off until the sandbox check (docs/runbooks/misa-amis-sandbox-check.md) has confirmed what the push assumes; only the coordinator runs that check and sets this.
+  MISA_AMIS_PUSH: optional.pipe(z.enum(['on', 'off']).optional()),
+  // The integrator's ClientID for the MISA ASP API (#4111, S2 of #4103): one per product (the plan counts approved apps per product; where MISA issued one value for both it is set twice). A SECRET of the
+  // deployment like MISA_AMIS_CLIENT_ID, never logged, never in an error or an audit row. Unset, the ASP product is off: the connect dialog does not offer it and no route that uses it is reachable.
+  MISA_ASP_CLIENT_ID: optional.pipe(z.string().regex(/^[0-9A-Za-z._-]{8,128}$/, 'MISA_ASP_CLIENT_ID is not in the shape of a ClientID').optional()),
+  // The push of vouchers to MISA ASP (S4, #4113) is OFF unless this is `on`, and it needs MISA_ASP_CLIENT_ID: a switch of its own, apart from MISA_AMIS_PUSH, so one product can be pushed while the other is not.
+  // It stays off until the sandbox check of ASP (docs/runbooks/misa-amis-sandbox-check.md) has confirmed what the push assumes; only the coordinator runs that check and sets this.
+  MISA_ASP_PUSH: optional.pipe(z.enum(['on', 'off']).optional()),
   // The offline sandbox bank feed (ADR-0039, #2044): off unless asked for, so a deployment shows no bank feed until it
   // has one.
   BANK_FEED_SANDBOX: z.enum(['true', 'false']).default('false'),
@@ -542,6 +552,15 @@ const schema = z.object({
   // cloud recording read scopes and the redirect URL APP_URL/meetings/oauth/zoom/callback (docs/runbooks/meetings-zoom.md). Off by default: with neither set there is no Zoom adapter and no Zoom connection. Both or neither.
   ZOOM_OAUTH_CLIENT_ID: optional,
   ZOOM_OAUTH_CLIENT_SECRET: optional,
+  // The Zoom app's secret token (Feature, Event Subscriptions): signs the webhook that rings the recording import when a recording finishes, at APP_URL's API host /api/meeting-platform/zoom/webhook
+  // (docs/runbooks/meetings-zoom.md). Needs the OAuth app above. Unset: no route; the sweep alone lists. The token it replaces is kept while Zoom may still sign with it (a rotation in the app, then here).
+  ZOOM_WEBHOOK_SECRET_TOKEN: optional,
+  ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS: optional,
+  // Google Meet transcripts (Meetings C2, #3174): a Google OAuth web client of its own for the Meet connection (not the calendar's, so the calendar consent stays narrow), with the sensitive scope
+  // meetings.space.readonly on its consent screen, the Google Meet REST API on in its project and the redirect URL APP_URL/meetings/oauth/google_meet/callback (docs/runbooks/meetings-google.md). Off by default:
+  // with neither set there is no Google Meet adapter and no Google Meet connection. Both or neither. The value of the calendar's client may be used here if the owner decides so.
+  MEETINGS_GOOGLE_CLIENT_ID: optional,
+  MEETINGS_GOOGLE_CLIENT_SECRET: optional,
   // Microsoft Teams recordings and transcripts (Meetings C4, #3176): the operator's own multi-tenant Microsoft Entra app (work and school accounts; authorization code with PKCE) with the delegated
   // permissions of docs/runbooks/meetings-teams.md and the redirect URL APP_URL/meetings/oauth/microsoft_teams/callback. Two of the permissions need a customer's tenant administrator to consent. Off by default: with
   // neither set there is no Teams adapter and no Teams connection. Both or neither. Its own pair, apart from CALENDAR_MICROSOFT_*: a calendar app asks for calendar scopes only.
@@ -619,6 +638,20 @@ const schema = z.object({
   // The recorder's Vy summarizing a meeting (#2580, M6): off unless MEETINGS_SUMMARY=on (it also needs the deployment's AI provider and Vy turned on for members). The same switch lets a member's Vy translate the summary they read (#3184).
   // The module works with it off: the recorder types a summary and items by hand, and no button asks Vy.
   MEETINGS_SUMMARY: z.enum(['on', 'off']).default('off'),
+  // The languages besides vi and en a member's Vy may translate a meeting INTO (E3, #3186): a comma-separated list from zh, ja, ko, empty (none) by default. Each is a separate switch because each needs a
+  // native reader's check of its quality before a deployment offers it; it works only where MEETINGS_SUMMARY is on. An unknown name stops the boot, so a typo never silently leaves a language off.
+  MEETINGS_TRANSLATION_LANGUAGES: optional.transform((value, ctx): readonly TranslationFlaggedTarget[] => {
+    const names = (value ?? '')
+      .split(',')
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean);
+    const unknown = names.filter((name) => !(TRANSLATION_FLAGGED_TARGETS as readonly string[]).includes(name));
+    if (unknown.length > 0) {
+      ctx.addIssue({ code: 'custom', message: `unknown translation language(s) ${unknown.join(', ')}; available: ${TRANSLATION_FLAGGED_TARGETS.join(', ')}` });
+      return z.NEVER;
+    }
+    return TRANSLATION_FLAGGED_TARGETS.filter((language) => names.includes(language));
+  }),
   // How many meeting videos this process streams at once, over all members (#2965; each member may have 3, or this many if it is lower). A stream holds a slot until its body ends,
   // so size it from the members who may watch together and the process's memory (a window is 4 MiB); a request over the limit is told to retry (429).
   MEETINGS_VIDEO_STREAMS_MAX: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1).max(4096).default(64)),
@@ -926,10 +959,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.CALENDAR_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CALENDAR_GOOGLE_CLIENT_ID)) throw new Error('CALENDAR_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.CALENDAR_MICROSOFT_CLIENT_ID) !== Boolean(config.CALENDAR_MICROSOFT_CLIENT_SECRET)) throw new Error('set both CALENDAR_MICROSOFT_CLIENT_ID and CALENDAR_MICROSOFT_CLIENT_SECRET, or neither');
   if (config.CALENDAR_MICROSOFT_CLIENT_ID && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(config.CALENDAR_MICROSOFT_CLIENT_ID)) throw new Error('CALENDAR_MICROSOFT_CLIENT_ID is the application (client) id of a Microsoft Entra app registration, a UUID');
+  if (Boolean(config.MEETINGS_GOOGLE_CLIENT_ID) !== Boolean(config.MEETINGS_GOOGLE_CLIENT_SECRET)) throw new Error('set both MEETINGS_GOOGLE_CLIENT_ID and MEETINGS_GOOGLE_CLIENT_SECRET, or neither');
+  if (config.MEETINGS_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.MEETINGS_GOOGLE_CLIENT_ID)) throw new Error('MEETINGS_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.ZOOM_OAUTH_CLIENT_ID) !== Boolean(config.ZOOM_OAUTH_CLIENT_SECRET)) throw new Error('set both ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET, or neither');
   if (Boolean(config.TEAMS_OAUTH_CLIENT_ID) !== Boolean(config.TEAMS_OAUTH_CLIENT_SECRET)) throw new Error('set both TEAMS_OAUTH_CLIENT_ID and TEAMS_OAUTH_CLIENT_SECRET, or neither');
   if (config.TEAMS_OAUTH_CLIENT_ID && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(config.TEAMS_OAUTH_CLIENT_ID)) throw new Error('TEAMS_OAUTH_CLIENT_ID is the application (client) id of a Microsoft Entra app registration, a UUID');
   if (config.ZOOM_OAUTH_CLIENT_ID && !/^[A-Za-z0-9_-]{8,64}$/.test(config.ZOOM_OAUTH_CLIENT_ID)) throw new Error('ZOOM_OAUTH_CLIENT_ID is the client id of the Zoom app (letters, digits, - and _)');
+  if (config.ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS !== undefined && config.ZOOM_WEBHOOK_SECRET_TOKEN === undefined) throw new Error('ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS is set without ZOOM_WEBHOOK_SECRET_TOKEN');
+  for (const name of ['ZOOM_WEBHOOK_SECRET_TOKEN', 'ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS'] as const) {
+    const value = config[name];
+    // 16 at least: an unsigned URL validation challenge hands anyone the HMAC of a plainToken they choose, so a short token could be guessed offline. Zoom's own are random and about 22 characters.
+    if (value !== undefined && !/^\S{16,200}$/.test(value)) throw new Error(`${name} is the secret token of the Zoom app: 16 to 200 characters, no whitespace`);
+  }
+  if (config.ZOOM_WEBHOOK_SECRET_TOKEN !== undefined && !config.ZOOM_OAUTH_CLIENT_ID) throw new Error('ZOOM_WEBHOOK_SECRET_TOKEN needs ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET');
+  if (config.ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS !== undefined && config.ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS === config.ZOOM_WEBHOOK_SECRET_TOKEN) throw new Error('ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS is the same as ZOOM_WEBHOOK_SECRET_TOKEN: remove it');
   if (config.CALENDAR_MICROSOFT_TENANT && !/^(?:common|organizations|consumers|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|(?:[A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63})$/.test(config.CALENDAR_MICROSOFT_TENANT)) throw new Error('CALENDAR_MICROSOFT_TENANT is common, organizations, consumers, a directory id or a verified domain');
   if (config.CHANNEL_GOOGLE_BUSINESS === 'true' && !config.CHANNEL_GOOGLE_CLIENT_ID) throw new Error('CHANNEL_GOOGLE_BUSINESS needs CHANNEL_GOOGLE_CLIENT_ID and CHANNEL_GOOGLE_CLIENT_SECRET');
   if (config.CHANNEL_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CHANNEL_GOOGLE_CLIENT_ID)) throw new Error('CHANNEL_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');

@@ -11,7 +11,7 @@
 //   (`kernel-meeting-import-sweep handler`, apps/kernel/test/invariant/job-egress.test.ts) is justified by this command.
 // - The bytes then wait in staging; the member's own request claims, seals and records them through POST /api/meetings/:id/media, so the sealing code is the one an upload uses.
 // - No AI part: the transcript and minutes of the imported meeting are the ordinary ones, started by the member. Audit rows hold ids and the provider, never a title or a platform text.
-import { zMeetingImportDiscarded, zMeetingImportDiscardEmpty, zMeetingImportStart, zMeetingTranscriptImport, type MeetingLanguage, type TranscriptionMaker } from '@crove/kernel-contract';
+import { MEETING_PLATFORM_TRANSCRIPT_PROVIDERS, zMeetingImportDiscarded, zMeetingImportDiscardEmpty, zMeetingImportStart, zMeetingTranscriptImport, type MeetingLanguage, type MeetingPlatformTranscriptProvider, type TranscriptionMaker } from '@crove/kernel-contract';
 import { DomainError, defineCommand, newStagingKey, type CommandContext } from '@crove/kernel-runtime';
 import { sql } from 'kysely';
 import { createMeetingRow } from './meeting-core.ts';
@@ -45,13 +45,18 @@ function importError(error: unknown): never {
   }
 }
 
+// Whose transcription a platform's transcript is, by the provider of the connection it came through (the sandbox is the offline test platform and labels like Google, as C2 did).
+// Typed on the contract's list of providers with a transcript path, so a provider added there cannot be left without its label.
+const TRANSCRIPT_SOURCE_OF: Record<MeetingPlatformTranscriptProvider, TranscriptionMaker> = { google_meet: 'google_meet', microsoft_teams: 'microsoft_teams', sandbox: 'google_meet' };
+const hasTranscriptPath = (provider: string): provider is MeetingPlatformTranscriptProvider => (MEETING_PLATFORM_TRANSCRIPT_PROVIDERS as readonly string[]).includes(provider);
+
 type Trx = CommandContext['trx'];
 
 async function readOwnRecording(trx: Trx, orgId: string, userId: string, recordingId: string) {
   return trx
     .selectFrom('crove_kernel.meeting_platform_recording as r')
     .innerJoin('crove_kernel.meeting_platform_connection as c', (join) => join.onRef('c.org_id', '=', 'r.org_id').onRef('c.id', '=', 'r.connection_id'))
-    .select(['r.status', 'r.title', 'r.started_at', 'r.meeting_id', 'r.has_audio', 'r.has_video', 'c.provider'])
+    .select(['r.status', 'r.title', 'r.started_at', 'r.meeting_id', 'r.has_audio', 'r.has_video', 'r.has_transcript', 'c.provider'])
     .where('r.org_id', '=', orgId)
     .where('r.id', '=', recordingId)
     .where('r.user_id', '=', userId)
@@ -107,8 +112,9 @@ export const meetingImportStart = defineCommand({
     if (recording.status !== 'suggested' && recording.status !== 'failed') {
       throw new DomainError('MEETING_PLATFORM_STATE', 409, 'Bản ghi này đã được nhập hoặc đang được nhập');
     }
-    // No audio file and no way to take the audio out of a video file: refused here, before a meeting is made for it.
-    if (!recording.has_audio && !(recording.has_video && videoImportOn)) throw new DomainError('MEETING_PLATFORM_NO_AUDIO', 422, 'Nền tảng không có tệp âm thanh hay video cho bản ghi này');
+    // No audio file, no way to take the audio out of a video file and no transcript the platform's provider can hand over (C2, #3174: a recording with only a transcript): refused here, before a meeting is made for it.
+    const transcriptOnly = !recording.has_audio && !recording.has_video && recording.has_transcript && hasTranscriptPath(recording.provider);
+    if (!recording.has_audio && !(recording.has_video && videoImportOn) && !transcriptOnly) throw new DomainError('MEETING_PLATFORM_NO_AUDIO', 422, 'Nền tảng không có tệp âm thanh hay video cho bản ghi này');
     const title = (input.title ?? (recording.title.trim() === '' ? UNTITLED[input.language] : recording.title.trim())).slice(0, 200);
 
     // A retry of a failed try: the empty meeting that try made goes, by the recorder's own delete path (it also shreds the meeting's keys), so the list does not keep one empty meeting for each failed click.
@@ -197,9 +203,6 @@ export const meetingImportDiscardEmpty = defineCommand({
   },
 });
 
-// Whose transcription a platform's transcript is, by the provider of the connection it came through (the sandbox is the offline test platform and labels like Google, as C2 did).
-const TRANSCRIPT_SOURCE_OF: Record<string, TranscriptionMaker | undefined> = { google_meet: 'google_meet', microsoft_teams: 'microsoft_teams', sandbox: 'google_meet' };
-
 // The member's own step that finishes a TRANSCRIPT-ONLY import (C2, #3174): the worker's job staged the platform's transcript, the import route claimed it and read it again, and this command writes
 // the lines as the recorder's draft. It is no RPC command (nothing in the contract names it): only the route runs it, with the lines it read from the staged file, so a member cannot call it
 // with text of their own under the platform's name. It still refuses anything but the claimed transcript-only recording of this member for this meeting. The lines are the platform's
@@ -232,11 +235,11 @@ export const meetingImportTakeTranscript = defineCommand({
       .executeTakeFirst();
     if (!row) throw new DomainError('IMPORT_NOT_CLAIMED', 403, 'Cuộc họp này không có bản chép lời nào đang chờ nhập');
     // Explicit, and nothing else: only a provider that has a transcript path is labelled, so a Zoom recording can never carry Google's label. A new provider adds its line here and in its migration.
+    if (!hasTranscriptPath(row.provider)) throw new DomainError('IMPORT_NOT_CLAIMED', 403, 'Nền tảng này không có bản chép lời nào để nhập');
     const source = TRANSCRIPT_SOURCE_OF[row.provider];
-    if (source === undefined) throw new DomainError('IMPORT_NOT_CLAIMED', 403, 'Nền tảng này không có bản chép lời nào để nhập');
     // The same lock as every writer of a meeting's media, so a piece or an upload that races with this finds the meeting done or waits for it.
     await lockMeetingMedia(ctx, input.meetingId);
-    await replaceDraft(ctx, input.meetingId, input.segments, { tainted: true, source });
+    await replaceDraft(ctx, input.meetingId, input.segments, { tainted: true, source, platformCut: input.platformCut });
     await sql`SELECT crove_kernel.meeting_platform_recording_imported(${input.meetingId}::uuid)`.execute(ctx.trx);
     // The definer does nothing for a row that is no longer claimed (the sweep may have failed a stale claim since the read above, and the row cannot be locked by this role): then the
     // lines and the end of the meeting go with the rolled-back transaction, and the member is told so, never left with a half-imported meeting and a retry that makes a second one.
@@ -248,7 +251,7 @@ export const meetingImportTakeTranscript = defineCommand({
       UPDATE crove_meetings.meeting
       SET ended_at = LEAST(started_at + (${seconds}::int * interval '1 second'), ${ctx.now}::timestamptz), updated_at = ${ctx.now}::timestamptz
       WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid AND ended_at IS NULL AND started_at IS NOT NULL`.execute(ctx.trx);
-    ctx.audit({ meetingId: input.meetingId, recordingId: row.id, stored: input.segments.length, source });
+    ctx.audit({ meetingId: input.meetingId, recordingId: row.id, stored: input.segments.length, source, cut: input.platformCut });
     return { meetingId: input.meetingId, stored: input.segments.length };
   },
 });

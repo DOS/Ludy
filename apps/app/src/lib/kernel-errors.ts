@@ -28,8 +28,12 @@ export const KERNEL_ERROR_CODES = [
   'EXTENSION_TOKEN_INVALID',
   'EXTENSION_TOKEN_NOT_FOUND',
   'MCP_GRANT_NOT_FOUND',
+  // An AI app connected over MCP has too many proposals waiting for approval (ADR-0051 decision 10).
+  'MCP_PROPOSAL_CAP',
   'MCP_GRANT_TOO_MANY',
   'MCP_WAKE_GRANT_NOT_FOUND',
+  // A line's wake-up event for a connection that does not hold that line's permission (ADR-0051 decision 13).
+  'MCP_WAKE_SCOPE',
   'MCP_WAKE_NOT_FOUND',
   'MCP_WAKE_TOO_SOON',
   // A member's minutes webhook (Meetings A6, #3164).
@@ -343,6 +347,7 @@ export const KERNEL_ERROR_CODES = [
   'HOUSEHOLD_PROFILE_LOCKED',
   'HOUSEHOLD_BOOK_NOT_REQUIRED',
   'HOUSEHOLD_TRADES_CHANGED',
+  'HOUSEHOLD_S2D_MONTH_ONLY',
   'HOUSEHOLD_VAT_CUT_CHANGED',
   // The 01/CNKD quarterly return worksheet (#2518).
   'HOUSEHOLD_RETURN_NOT_REQUIRED',
@@ -442,6 +447,10 @@ export const KERNEL_ERROR_CODES = [
   'MINUTES_TEMPLATE_NAME_TAKEN',
   'MINUTES_TEMPLATE_SECTIONS_INVALID',
   'MINUTES_TEMPLATES_MAX',
+  // The glossary an org keeps (Meetings #4043).
+  'GLOSSARY_TERM_NOT_FOUND',
+  'GLOSSARY_TERM_TAKEN',
+  'GLOSSARY_MAX',
   // A series of meetings (Meetings #3542).
   'SERIES_CONFLICT',
   'SERIES_ORDER',
@@ -457,6 +466,8 @@ export const KERNEL_ERROR_CODES = [
   'TRANSLATE_OFF',
   // The same for the transcript (E2, #3185).
   'TRANSLATE_RUNNING',
+  // A translation language the deployment has not switched on (E3, #3186).
+  'TRANSLATION_LANGUAGE_OFF',
   'TRANSLATION_DONE',
   'TRANSLATION_TOO_LARGE',
   // The member's Vy answering across meetings (Meetings A3, #3161).
@@ -464,6 +475,20 @@ export const KERNEL_ERROR_CODES = [
   'ASK_BUSY',
   'BRIEF_OFF',
   'BRIEF_BUSY',
+  // Vy checking a meeting's agenda against its transcript (#3959).
+  'ADHERENCE_OFF',
+  'ADHERENCE_BUSY',
+  // The recorder's Vy suggesting a meeting title and the rename (#3947).
+  'TITLE_BUSY',
+  'COMMITMENTS_BUSY',
+  'MEETING_TITLE_EMPTY',
+  'MEETING_TITLE_TOO_LONG',
+  // The weekly digest across meetings (#3949).
+  'DIGEST_OFF',
+  'DIGEST_BUSY',
+  // Vy naming who an action item belongs to (#3921).
+  'ASSIGNEE_OFF',
+  'ASSIGNEE_BUSY',
   'TRANSLATION_NOT_FOUND',
   'TRANSLATION_NOTHING',
   'TRANSLATION_RESULT_INVALID',
@@ -896,6 +921,8 @@ export const KERNEL_ERROR_CODES = [
   'STOCK_SURPLUS_RESOLVED',
   'STOCK_SURPLUS_PENDING',
   'STOCK_SURPLUS_STALE',
+  // The books of the entity changed since a sale was proposed (#3712 slice 4).
+  'BOOKS_REGIME_CHANGED',
   'STOCK_COUNT_ENTRY',
   'STOCK_COUNT_ITEM_INACTIVE',
   'STOCK_COUNT_ITEM_ENTITY',
@@ -909,6 +936,25 @@ export const KERNEL_ERROR_CODES = [
   'MISA_AMIS_DISABLED',
   'MISA_AMIS_CONNECTION_EXISTS',
   'MISA_AMIS_CONNECTION_LIVE',
+  'MISA_AMIS_CONNECTION_NOT_FOUND',
+  // The push to MISA AMIS (#3902).
+  'MISA_AMIS_NOT_TESTED',
+  'MISA_AMIS_ENTITY_MISMATCH',
+  // The check against the firm's catalogue (#4112).
+  'MISA_AMIS_MATCH_ENTITY',
+  'MISA_AMIS_CHECK_REQUIRED',
+  'MISA_AMIS_NAME_PROPOSAL_GONE',
+  'MISA_AMIS_STOCK_NOT_ASP',
+  'MISA_AMIS_UNIT_INVALID',
+  'MISA_AMIS_UNIT_NOT_ASP',
+  'MISA_AMIS_UNIT_ALIASES_FULL',
+  'MISA_AMIS_PUSH_DISABLED',
+  'MISA_AMIS_PUSH_BLOCKED',
+  'MISA_AMIS_PUSH_EMPTY',
+  'MISA_AMIS_PUSH_STALE',
+  'MISA_AMIS_PUSH_STATE',
+  'MISA_AMIS_PUSH_TOO_MANY',
+  'MISA_AMIS_PUSH_PENDING',
   'MARKETPLACE_PROVIDER_NOT_READY',
   // Marketplace order reports (#2515).
   'MARKETPLACE_NOT_STAGED',
@@ -1375,6 +1421,8 @@ export const KERNEL_ERROR_RULES = {
   extension_org: 'FORBIDDEN',
   extension_only: 'FORBIDDEN',
   extension_id: 'FORBIDDEN',
+  // A connected AI app (an MCP grant) asked for something its scopes do not open (#3861, ADR-0051); it is the app's call, so a person rarely sees it.
+  mcp_scope: 'FORBIDDEN',
 } as const satisfies Record<string, KernelErrorCode>;
 
 type KernelErrorRule = keyof typeof KERNEL_ERROR_RULES;

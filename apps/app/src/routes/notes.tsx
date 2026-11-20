@@ -28,7 +28,6 @@ import { NoteLinks, RecordLinkAdder } from '../components/note-links.tsx';
 import { NoteBacklinks, NoteNotebookPicker, NoteWikiAutocomplete, NotebooksSidebar } from '../components/note-notebooks.tsx';
 import { NoteTaskProposals } from '../components/note-task-proposals.tsx';
 import { NoteVyPanel } from '../components/note-vy-panel.tsx';
-import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { VisibilityBadge, refreshNotes } from '../components/notes-panel.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -857,7 +856,6 @@ export function NotesPage() {
   return (
     <div>
       <PageHeader title={t('title')} subtitle={t('subtitle')} actions={actions} />
-      <NotesSubnav slug={slug} active="notes" />
       {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
       {exportMine.error && <ErrorText>{errorMessage(exportMine.error)}</ErrorText>}
       <div className="grid gap-6 lg:grid-cols-[18rem_minmax(0,1fr)]">

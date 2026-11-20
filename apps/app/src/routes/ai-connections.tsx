@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
 import { OrgMcpGrants } from '../components/org-mcp-grants.tsx';
 import { Empty, ListSkeleton, PageHeader } from '../components/ui.tsx';
+import { aiConnectionsVisible } from '../lib/agents.ts';
 import { orpc } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
 
@@ -14,7 +15,7 @@ export function AiConnectionsPage() {
   return (
     <div>
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
-      {getConfig().mcpEnabled !== true ? (
+      {!aiConnectionsVisible(getConfig().mcpEnabled) ? (
         <Empty title={t('off')} hint={t('offHint')} />
       ) : org.isPending || !org.data ? (
         <ListSkeleton />

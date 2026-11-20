@@ -57,6 +57,40 @@ describe('the token', () => {
     expect(tokenCalls(fake)).toBe(2);
   });
 
+  it('is asked for again when a call says `freshToken`, so the access code is checked by MISA each time, and the new token is kept for later calls', async () => {
+    const { fake, client } = setup();
+    await client.companyInfo(conn);
+    await client.companyInfo(conn, null, { freshToken: true });
+    expect(tokenCalls(fake)).toBe(2);
+    await client.companyInfo(conn);
+    expect(tokenCalls(fake)).toBe(2);
+    expect(fake.calls.at(-1)?.headers['X-MISA-AccessToken']).toBe('token-2');
+  });
+
+  it('is not shared with a token request already on its way when a call says `freshToken`: the access code is sent again, and the newer token is the one kept', async () => {
+    const fake = createFakeMisa({ clientId: CLIENT, accessCodes: { [CODE]: ORG } });
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let tokenRequests = 0;
+    const client = createAmisClient({
+      clientId: CLIENT,
+      transport: async (request) => {
+        if (request.url.endsWith('/amiskt/v1/token') && ++tokenRequests === 1) await gate;
+        return fake.transport(request);
+      },
+    });
+    const earlier = client.companyInfo(conn);
+    const fresh = client.companyInfo(conn, null, { freshToken: true });
+    await fresh;
+    // Two token requests went out while the first was still waiting for its answer.
+    expect(tokenRequests).toBe(2);
+    release();
+    await earlier;
+    // The token the fresh call got is the one kept: a later call uses it and asks for no third.
+    await client.companyInfo(conn);
+    expect(tokenRequests).toBe(2);
+  });
+
   it('is renewed once when MISA says it expired, and the call goes through', async () => {
     const { fake, client } = setup();
     await client.companyInfo(conn);
@@ -192,6 +226,12 @@ describe('delete, catalogues and company', () => {
     for (const [skip, take] of [[-1, 10], [0, 0], [0, 1001], [0.5, 10]] as const) expect(await fails(client.dictionary(conn, { dataType: 1, skip, take })), `${skip},${take}`).toMatchObject({ reason: 'bad_page' });
     await client.saveDictionary(conn, AMIS_DICTIONARIES.accountObject, [{ account_object_code: 'NCC9' }]);
     expect(fake.calls.at(-1)?.path).toBe('/amiskt/v1/save_dictionary');
+  });
+
+  it('refuses a catalogue page with an entry that is not an object, so a page is never shortened without anyone knowing (a caller that pages by length would stop early)', async () => {
+    const rows = [{ account_object_code: 'NCC0' }, null, { account_object_code: 'NCC2' }] as unknown as Record<string, unknown>[];
+    const { client } = setup({ dictionary: { [AMIS_DICTIONARIES.accountObject]: rows } });
+    expect(await fails(client.dictionary(conn, { dataType: AMIS_DICTIONARIES.accountObject, skip: 0, take: 10 }))).toMatchObject({ kind: 'invalid_response' });
   });
 
   it('tests a connection with the company information', async () => {

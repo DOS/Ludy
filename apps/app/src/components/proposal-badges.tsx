@@ -5,7 +5,7 @@ import { useTranslations } from 'use-intl';
 import { JOURNAL_VOUCHER_KIND } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { REVERSAL_KIND } from '../lib/reversal.ts';
-import { isAdsProposalKind, showMatched } from '../lib/review.ts';
+import { isAdsProposalKind, isEngageKind, showMatched } from '../lib/review.ts';
 import { VOUCHER_KIND } from '../lib/vouchers.ts';
 
 // What the badges read of a list item (kernel.inbox.list).
@@ -19,6 +19,7 @@ export interface ProposalBadgesItem {
   // Lines of an invoice proposal no rule matched (#2091); absent counts as none.
   unclassifiedLines?: number;
   requestedByAgent: { name: string } | null;
+  requestedByMcp?: { client: string; host: string } | null;
   extracted: boolean;
   voided: boolean;
 }
@@ -38,6 +39,7 @@ export function ProposalBadges({ item, hideSignature = false }: { item: Proposal
       {item.kind === JOURNAL_VOUCHER_KIND && <Badge variant="secondary">{t('journalVoucherKind')}</Badge>}
       {/* A request to open the way to spend on an ad platform (#2294) posts nothing and ran no check: its kind, no "matched". */}
       {isAdsProposalKind(item.kind) && <Badge variant="secondary">{t('adsKind')}</Badge>}
+      {isEngageKind(item.kind) && <Badge variant="secondary">{t('engageKind')}</Badge>}
       {item.direction === 'sale' && <Badge variant="secondary">{t('saleKind')}</Badge>}
       {item.duplicateOf && <Badge variant="warning">{t('maybeDuplicate')}</Badge>}
       {item.signatureStatus === 'unverified' && !hideSignature && <Badge variant="destructive">{t('signatureUnverified')}</Badge>}
@@ -45,6 +47,7 @@ export function ProposalBadges({ item, hideSignature = false }: { item: Proposal
       {item.failedChecks > 0 && <Badge variant="destructive">{t('failedChecks', { count: item.failedChecks })}</Badge>}
       {item.warnChecks > 0 && <Badge variant="warning">{t('warnChecks', { count: item.warnChecks })}</Badge>}
       {item.requestedByAgent && <Badge variant="proposal">{t('agentProposed', { name: item.requestedByAgent.name })}</Badge>}
+      {item.requestedByMcp && <Badge variant="proposal">{t('mcpProposed', { client: item.requestedByMcp.client, host: item.requestedByMcp.host })}</Badge>}
       {showMatched(item, REVERSAL_KIND, VOUCHER_KIND, JOURNAL_VOUCHER_KIND) && <Badge variant="success">{t('matched')}</Badge>}
     </div>
   );

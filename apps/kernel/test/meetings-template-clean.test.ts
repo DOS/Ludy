@@ -10,10 +10,14 @@ const SAMPLES = [
   '  nhiều   khoảng\ttrắng\n và dòng mới  ',
   'a\u2028b\u2029c\u0085d\u202ee\u2066f\u200bg\ufeffh',
   'tag \u{e0041}\u{e007f} char, filler \u3164\u2800\u00ad\u034f\u061c\u115f\u1160\u180e\ufff9',
+  'new ranges a\u180bb\u180dc\u206ad\u206fe\uffa0f\u{1d173}g\u{1d17a}h, outside i\u2070j\uffa1k\u{1d172}l\u{1d17b}m',
   'lone \ud800 high and \udc00 low and a pair \ud83d\ude00',
   'Tim \u2764\ufe0f vui, "quotes" and \\ backslash {"x": [1]}',
   '<img src=x onerror=alert(1)> **bold** `code`',
 ];
+
+// Both edges of each range the class missed before #4137, one sample each.
+SAMPLES.push(...[0x180b, 0x180d, 0x206a, 0x206f, 0xffa0, 0x1d173, 0x1d17a].map((point) => `edge ${String.fromCodePoint(point)} end`));
 
 describe('the cleaning of an organization\'s section text in the instruction', () => {
   it('is the contract\'s cleaning, then the caps, whatever the text', () => {

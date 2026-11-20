@@ -188,6 +188,13 @@ export const adsPauseBegin = defineCommand({
       SELECT count(*)::int AS n FROM crove_kernel.external_call
       WHERE org_id = ${ctx.orgId}::uuid AND key LIKE ${`ads.launch:${launchId}:%:activate\\_%`} AND state IN ('started', 'ambiguous') AND updated_at > ${new Date(ctx.now.getTime() - ACTIVATION_IN_FLIGHT_SECONDS * 1000)}`.execute(ctx.trx);
     if ((inFlight[0]?.n ?? 0) > 0) return none('activation_in_flight');
+    // The same for a change of the launch's objects (W4, #3835): a resume that was begun and may still be in flight could switch an object on after this run paused it.
+    // A change that ended unclear has no call pending (nothing calls it again; a sweep's read only looks and touches the row's clock, #3898), so it never holds the pause back.
+    const { rows: manageInFlight } = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM crove_kernel.external_call e
+      JOIN crove_ads.ad_manage_change c ON c.org_id = e.org_id AND e.key = 'ads.manage:' || c.id::text || ':apply'
+      WHERE e.org_id = ${ctx.orgId}::uuid AND c.launch_id = ${launchId}::uuid AND c.state <> 'unclear' AND e.state IN ('started', 'ambiguous') AND e.updated_at > ${new Date(ctx.now.getTime() - ACTIVATION_IN_FLIGHT_SECONDS * 1000)}`.execute(ctx.trx);
+    if ((manageInFlight[0]?.n ?? 0) > 0) return none('manage_in_flight');
 
     // Which token pauses it. A run on the live connection needs it active; one whose connection is closed (a switch-off closes it in the same transaction as the stop) is
     // the revoke sweep's, with the sealed copy it holds, as long as that obligation is open; with neither there is nothing to pause with and the person is told.
@@ -328,8 +335,10 @@ export const adsPauseRecord = defineCommand({
       // A create of this launch that is still in flight (begun a few minutes ago and not settled) may land after the platform was asked: the launch is not wound down
       // until it has settled or is old enough to be lost, and the next run lists again.
       const { rows: young } = await sql<{ age: number | null }>`
-        SELECT min(EXTRACT(EPOCH FROM (${ctx.now.toISOString()}::timestamptz - updated_at)))::float AS age FROM crove_kernel.external_call
-        WHERE org_id = ${ctx.orgId}::uuid AND key LIKE ${`ads.launch:${launchId}:%`} AND state = 'started' AND updated_at > ${ctx.now.toISOString()}::timestamptz - make_interval(secs => ${STARTED_STALE_SECONDS}::int)`.execute(ctx.trx);
+        SELECT min(EXTRACT(EPOCH FROM (${ctx.now.toISOString()}::timestamptz - e.updated_at)))::float AS age FROM crove_kernel.external_call e
+        WHERE e.org_id = ${ctx.orgId}::uuid AND e.state = 'started' AND e.updated_at > ${ctx.now.toISOString()}::timestamptz - make_interval(secs => ${STARTED_STALE_SECONDS}::int)
+          AND (e.key LIKE ${`ads.launch:${launchId}:%`}
+               OR EXISTS (SELECT 1 FROM crove_ads.ad_manage_change c WHERE c.org_id = e.org_id AND c.launch_id = ${launchId}::uuid AND e.key = 'ads.manage:' || c.id::text || ':apply'))`.execute(ctx.trx);
       const youngestAge = young[0]?.age ?? null;
       const everyLevelListed = result.listed.campaign.ok && result.listed.ad_set.ok && result.listed.ad.ok;
       // Every object recorded for the launch that has a status of its own must be among the ones this run paused: a create that landed after the run's list, and whose record

@@ -26,6 +26,31 @@ test('the confirmation link signs the new user in, and a used link shows why it 
   await expect(page.getByRole('alert')).toHaveText('Liên kết không hợp lệ hoặc đã hết hạn. Hãy yêu cầu liên kết mới.');
 });
 
+test('the sign-up form states the password rule and can show the password (#3593)', async ({ page }) => {
+  await page.goto('/login');
+  // One line for the suite, not the accounting screen (AU-1).
+  await expect(page.getByText('sổ sách, công việc và khách hàng')).toBeVisible();
+  await page.getByRole('button', { name: 'Tạo tài khoản' }).click();
+  await expect(page.getByText('Ít nhất 8 ký tự.')).toBeVisible();
+  const password = page.getByLabel('Mật khẩu');
+  await password.fill('abc-0123');
+  await expect(password).toHaveAttribute('type', 'password');
+  await page.getByRole('button', { name: 'Hiện', exact: true }).click();
+  await expect(password).toHaveAttribute('type', 'text');
+  await page.getByRole('button', { name: 'Ẩn', exact: true }).click();
+  await expect(password).toHaveAttribute('type', 'password');
+});
+
+test('a server that cannot be reached shows the network message, not the browser text (#3593)', async ({ page }) => {
+  await page.route('**/auth/v1/signup**', (route) => route.abort('failed'));
+  await page.goto('/login');
+  await page.getByRole('button', { name: 'Tạo tài khoản' }).click();
+  await page.getByLabel('Email').fill(newEmail('offline'));
+  await page.getByLabel('Mật khẩu').fill(PASSWORD);
+  await page.getByRole('button', { name: 'Tạo tài khoản' }).click();
+  await expect(page.getByRole('alert')).toHaveText('Không kết nối được máy chủ. Thử lại sau ít phút.');
+});
+
 test('password recovery sets a new password through the emailed link', async ({ page }) => {
   const email = newEmail('recover');
   const newPassword = 'e2e-new-password-4567';
@@ -146,6 +171,7 @@ test('managing members asks for two-factor first, then works once it is on', asy
 
   // Inviting is R3, and the owner has no second factor yet.
   const member = newEmail('member');
+  await page.getByRole('button', { name: 'Mời thành viên' }).click();
   await page.getByPlaceholder('email@congty.vn').fill(member);
   await page.getByRole('button', { name: 'Mời', exact: true }).click();
   await expect(page.getByText(`Đang chờ: mời ${member} với vai trò Thành viên.`)).toBeVisible();

@@ -95,7 +95,8 @@ function payoutProposalLines(input: PayoutProposalInput, map: Pick<MarketplacePo
 // The gated proposal: the map of the regime must be confirmed, there must be a receivable to clear and money received, and the entry must pass the journal voucher's own shape checks. The party of the
 // 131 and 331 lines may still be null here (the caller reads it from the platform's link), so that one problem is not raised for it; the party link is checked when the entry is recorded.
 export function payoutProposal(input: PayoutProposalInput, maps?: Readonly<Record<string, MarketplacePostingMap>>): PayoutProposal {
-  const map = requireConfirmedMarketplaceMap(input.regime, maps);
+  // The household tax rows only when the settlement posted tax lines (taxSplit): the payout then debits exactly what they credited.
+  const map = requireConfirmedMarketplaceMap(input.regime, maps, input.taxSplit ? ['payout', 'household_tax'] : ['payout']);
   const built = payoutProposalLines(input, map);
   const needing = new Set([map.receivable.code, map.feePayable.code]);
   const problems = journalVoucherProblems(built.lines.map((l) => ({ ...l, partyId: l.partyId ?? (needing.has(l.account) ? 'pending' : null) })));

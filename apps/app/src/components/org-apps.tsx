@@ -107,7 +107,8 @@ export function OrgAppsCard() {
           />
           <span className={indented ? 'font-normal' : 'font-medium'}>{label}</span>
         </label>
-        <Badge variant={status === 'on' ? 'default' : 'outline'}>{t(`status.${status}`)}</Badge>
+        {/* One signal per row (ST-2): a row in use shows only its checked switch; a badge says why a row is not. */}
+        {status !== 'on' && <Badge variant="outline">{t(`status.${status}`)}</Badge>}
       </li>
     );
   };

@@ -49,6 +49,9 @@ export const zContact = z.object({
   peopleCount: z.number().int(),
   // The open deals of the party (a deal sits on either kind).
   openDeals: z.number().int(),
+  // 'mcp' when a connected AI app added the contact (under the name of the person who connected it), and whether its text may be the app's (#4149): the screen says so.
+  actorOrigin: z.enum(['ui', 'mcp']),
+  tainted: z.boolean(),
 });
 export type Contact = z.infer<typeof zContact>;
 

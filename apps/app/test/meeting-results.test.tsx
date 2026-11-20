@@ -42,6 +42,7 @@ const item = (id: string, over: Partial<ActionItemView> = {}): ActionItemView =>
   taskId: null,
   positions: [],
   clean: false,
+  suggestion: null,
   ...over,
 });
 const view = (stage: 'draft' | 'published', summary: string) => ({ id: `r-${stage}`, feature: 'manual' as const, stage, summary, decisions: ['Giữ giá cũ'], tainted: false });
@@ -105,6 +106,55 @@ describe('MeetingResults', () => {
     expect(html).toContain(en.meetings.results.severalSeats);
     const none = render({ meetingId: 'm1', isRecorder: false, draft: null, published: view('published', 'x'), items: [flagged] });
     expect(none).not.toContain('clear tasks');
+  });
+
+  it('says who a said name probably means and offers their seats, only for an item with no named attendee and only as a suggestion', () => {
+    const quan = { userId: 'u9', name: 'Nguyễn Minh Quân', source: 'member' as const, positions: [{ id: 'p9', title: 'Kế toán' }] };
+    const lan = { userId: 'u2', name: 'Lê Thị Lan', source: 'attendee' as const, positions: [] };
+    const several = { userId: 'u3', name: 'Trần Văn Nam', source: 'attendee' as const, positions: [{ id: 'p1', title: 'A' }, { id: 'p2', title: 'B' }] };
+    const open = (suggestion: ActionItemView['suggestion'], over: Partial<ActionItemView> = {}) =>
+      render({ meetingId: 'm1', isRecorder: false, draft: null, published: view('published', 'x'), items: [item('s', { who: 'Quân', suggestion, ...over })] });
+    const member = open(quan);
+    expect(member).toContain('data-testid="assignee-suggestion"');
+    expect(member).toContain('Nguyễn Minh Quân');
+    expect(member).toContain(en.meetings.results.suggestedBadge);
+    expect(member).toContain(en.meetings.results.suggestedOneSeat);
+    expect(member).not.toContain(en.meetings.results.severalSeats);
+    // The suggestion is plain text: no id reaches the page as visible words.
+    expect(member.replace(/<[^>]*>/g, ' ')).not.toContain('u9');
+    expect(open(lan)).toContain(en.meetings.results.suggestedNoSeat);
+    expect(open(several)).toContain(en.meetings.results.suggestedSeveralSeats);
+    // A seat is preselected only when the suggested person holds exactly one; with none or several a person picks it.
+    client.current.setQueryData(['chart', 'get'], { root: [], agents: [], killSwitches: [], positions: ['p9', 'p1', 'p2'].map((id) => ({ id, title: id, status: 'active' })) });
+    expect(open(quan)).toContain('<option value="p9" selected="">');
+    expect(open(lan)).toContain('<option value="" selected="">');
+    expect(open(lan)).not.toContain('<option value="p9" selected="">');
+    const picked = open(several);
+    expect(picked).toContain('<option value="" selected="">');
+    expect(picked).not.toMatch(/<option value="p\d" selected/);
+    expect(open(null)).not.toContain('data-testid="assignee-suggestion"');
+    // An item that already names an attendee shows no suggestion, even if one came along.
+    expect(open(quan, { whoUserId: 'u1' })).not.toContain('data-testid="assignee-suggestion"');
+  });
+
+  it('offers "ask Vy who this is" only for an item code could not place, and only while Vy may be asked (AI off: the plain pick-a-seat flow, no button)', () => {
+    const open = (status: { enabled: boolean } | null, over: Partial<ActionItemView> = {}) => {
+      if (status) client.current.setQueryData(['meetings', 'assignee', 'status'], { ...status, reason: status.enabled ? null : 'off', estimate: null });
+      else client.current.removeQueries({ queryKey: ['meetings', 'assignee', 'status'] });
+      return render({ meetingId: 'm1', isRecorder: false, draft: null, published: view('published', 'x'), items: [item('v', { who: 'Tí bên kho', ...over })] });
+    };
+    const found = { userId: 'u9', name: 'Nguyễn Minh Quân', source: 'member' as const, positions: [] };
+    expect(open({ enabled: true })).toContain('data-testid="assignee-ask-button"');
+    expect(open({ enabled: true })).toContain(en.meetings.results.askVy);
+    // AI off, a pause, or no answer yet: no button and no message about it.
+    expect(open({ enabled: false })).not.toContain('assignee-ask');
+    expect(open(null)).not.toContain('assignee-ask');
+    // Code found a person, the item names an attendee, or there is no said name: nothing to ask.
+    expect(open({ enabled: true }, { suggestion: found })).not.toContain('assignee-ask');
+    expect(open({ enabled: true }, { whoUserId: 'u1' })).not.toContain('assignee-ask');
+    expect(open({ enabled: true }, { who: '  ' })).not.toContain('assignee-ask');
+    // Still the plain flow: the seat is picked by a person.
+    expect(open({ enabled: true })).toContain(en.meetings.results.makeTask);
   });
 
   it('shows no task form for an item that already has its task, and nothing at all to a reader with nothing shared', () => {

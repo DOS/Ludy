@@ -271,7 +271,8 @@ export const zConversationMessage = z.strictObject({
 });
 export type ConversationMessage = z.infer<typeof zConversationMessage>;
 
-export const zConversationNote = z.strictObject({ id: zId, authorUserId: zId, body: z.string(), createdAt: z.iso.datetime({ offset: true }) });
+// `actorOrigin` 'mcp' and `tainted`: a connected AI app wrote the note under the name of the person who connected it; the screen says so (#4149).
+export const zConversationNote = z.strictObject({ id: zId, authorUserId: zId, body: z.string(), createdAt: z.iso.datetime({ offset: true }), actorOrigin: z.enum(['ui', 'mcp']), tainted: z.boolean() });
 export type ConversationNote = z.infer<typeof zConversationNote>;
 
 // Vy's draft of a reply (CV8, #2310): asked for (requested, the text is on its way) or live (the text). Always tainted: a model wrote it from a customer's

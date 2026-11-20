@@ -479,16 +479,21 @@ const UNIT_KIND_MODIFIER_MAP: Readonly<Record<string, string>> = {
 };
 const FIELD_TYPE_SET: ReadonlySet<string> = new Set(SIGN_AI_FIELD_TYPES);
 const SEVERITY_SET: ReadonlySet<string> = new Set(SIGN_CLAUSE_SEVERITIES);
+const FORMAT_CONTROL_RE = /\p{Cf}+/gu;
+
+function stripFormatControl(text: string): string {
+  return text.replace(FORMAT_CONTROL_RE, '');
+}
 
 function safeSlice(text: string, max: number): string {
-  const trimmed = text.trim();
+  const trimmed = stripFormatControl(text).trim();
   if (trimmed.length <= max) return trimmed;
   const points = Array.from(trimmed);
-  return points.length <= max ? trimmed : points.slice(0, max).join('');
+  return points.length <= max ? trimmed : points.slice(0, max).join('').trimEnd();
 }
 
 function oneLine(text: string, max: number): string {
-  const cleaned = text.replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const cleaned = stripFormatControl(text).replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim();
   return safeSlice(cleaned, max).trimEnd();
 }
 
@@ -496,9 +501,10 @@ function cut(text: string, max: number): string {
   return safeSlice(text, max);
 }
 
-// Keep untrusted PDF text or labels from closing the <<< ... >>> prompt data fence.
+// Keep untrusted PDF text or labels from closing the <<< ... >>> prompt data fence,
+// even when format-control characters are interleaved inside <<< or >>>.
 function fenced(text: string, max: number): string {
-  return cut(text.replaceAll('<<<', '«««').replaceAll('>>>', '»»»'), max);
+  return cut(stripFormatControl(text).replaceAll('<<<', '«««').replaceAll('>>>', '»»»'), max);
 }
 
 interface BoundedPage {
@@ -512,7 +518,7 @@ function selectBoundedPages(pages: readonly SignAiPageInput[], pageCount: number
   const merged = new Map<number, { page: number; widthPt: number | null; heightPt: number | null; parts: string[] }>();
   for (const entry of pages) {
     if (!Number.isInteger(entry.page) || entry.page < 1 || entry.page > pageCount) continue;
-    const cleaned = entry.text.replaceAll('<<<', '«««').replaceAll('>>>', '»»»').trim();
+    const cleaned = stripFormatControl(entry.text).replaceAll('<<<', '«««').replaceAll('>>>', '»»»').trim();
     const widthPt = typeof entry.widthPt === 'number' && Number.isFinite(entry.widthPt) ? entry.widthPt : null;
     const heightPt = typeof entry.heightPt === 'number' && Number.isFinite(entry.heightPt) ? entry.heightPt : null;
     const prev = merged.get(entry.page);
@@ -643,9 +649,7 @@ function clampFieldBox(raw: { xNorm: number; yNorm: number; wNorm: number; hNorm
 }
 
 function normalizePreservingCase(text: string): string {
-  return text
-    .normalize('NFKC')
-    .replace(/\p{Cf}/gu, '')
+  return stripFormatControl(text.normalize('NFKC'))
     .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
     .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
     .replace(/[\u2013\u2014\u2212]/g, '-');
@@ -843,8 +847,7 @@ function collectNumberUnitPairs(norm: string): Array<[string[], string]> {
 }
 
 function collectRawUppercaseCodePairs(rawText: string): Array<[string[], string]> {
-  const normRaw = stripLeadingBullets(rawText)
-    .replace(/\p{Cf}/gu, '')
+  const normRaw = stripFormatControl(stripLeadingBullets(rawText))
     .normalize('NFKC')
     .replace(/\s+/g, ' ');
   const pairs: Array<[string[], string]> = [];
@@ -1138,7 +1141,7 @@ export function checkSignProposedFields(
   const exactRoles = new Map<string, string>();
   const lowerRoles = new Map<string, string | null>();
   for (const role of request.signerRoles) {
-    const key = role.roleKey.trim();
+    const key = oneLine(role.roleKey, 80);
     if (!key) continue;
     exactRoles.set(key, key);
     const lower = key.toLowerCase();
@@ -1158,12 +1161,12 @@ export function checkSignProposedFields(
       droppedCount += 1;
       continue;
     }
-    const fieldType = typeof candidate.fieldType === 'string' ? candidate.fieldType.trim() : '';
+    const fieldType = typeof candidate.fieldType === 'string' ? stripFormatControl(candidate.fieldType).trim() : '';
     if (!FIELD_TYPE_SET.has(fieldType)) {
       droppedCount += 1;
       continue;
     }
-    const rawRoleKey = typeof candidate.signerRoleKey === 'string' ? candidate.signerRoleKey.trim() : '';
+    const rawRoleKey = typeof candidate.signerRoleKey === 'string' ? oneLine(candidate.signerRoleKey, 80) : '';
     const canonicalRoleKey = exactRoles.get(rawRoleKey) ?? lowerRoles.get(rawRoleKey.toLowerCase()) ?? null;
     if (!canonicalRoleKey) {
       droppedCount += 1;
@@ -1234,14 +1237,14 @@ export function checkSignClauseSummary(
       droppedClauseCount += 1;
       continue;
     }
-    const severity = typeof item.severity === 'string' ? item.severity.trim().toLowerCase() : '';
+    const severity = typeof item.severity === 'string' ? stripFormatControl(item.severity).trim().toLowerCase() : '';
     if (!SEVERITY_SET.has(severity)) {
       droppedClauseCount += 1;
       continue;
     }
     const title = typeof item.title === 'string' ? oneLine(item.title, 200) : '';
     const explanation = typeof item.explanation === 'string' ? oneLine(item.explanation, 800) : '';
-    const rawQuote = typeof item.quote === 'string' ? item.quote.trim() : '';
+    const rawQuote = typeof item.quote === 'string' ? stripFormatControl(item.quote).trim() : '';
     const normQuote = normalizeContractText(rawQuote);
     if (!title || !explanation || normQuote.length < 6) {
       droppedClauseCount += 1;
@@ -1298,15 +1301,17 @@ export function checkSignClauseSummary(
 
   let summaryText: string | null = null;
   let summaryDropped = false;
-  if (typeof raw.summaryText === 'string' && raw.summaryText.replace(/\p{Cf}/gu, '').trim().length > 0) {
-    const cleanedSummary = cut(raw.summaryText.replace(/\p{Cf}/gu, '').trim(), SIGN_SUMMARY_MAX_CHARS);
-    if (
-      hasUnsourcedLinkOrEmail(cleanedSummary, sourceAddresses) ||
-      hasInventedNumbers(cleanedSummary, sourceNumbers, request.pageCount)
-    ) {
-      summaryDropped = true;
-    } else {
-      summaryText = cleanedSummary;
+  if (typeof raw.summaryText === 'string') {
+    const cleanedSummary = cut(raw.summaryText, SIGN_SUMMARY_MAX_CHARS);
+    if (cleanedSummary.length > 0) {
+      if (
+        hasUnsourcedLinkOrEmail(cleanedSummary, sourceAddresses) ||
+        hasInventedNumbers(cleanedSummary, sourceNumbers, request.pageCount)
+      ) {
+        summaryDropped = true;
+      } else {
+        summaryText = cleanedSummary;
+      }
     }
   }
 
