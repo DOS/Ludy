@@ -13357,6 +13357,7 @@ export const en = {
       MARKETPLACE_SETTLEMENT_WAITING_DELIVERY: 'Some lines of this settlement have no delivery day yet: wait for the delivery day before posting',
       MARKETPLACE_TAX_RATE_UNCONFIRMED: 'The accountant has not confirmed the tax rates of the trade yet; waiting for the accountant',
       MARKETPLACE_FEE_CLEARING_RETIRED: 'Fee clearing is retired: the fees the platform kept are debited to 331 at the payout, and the fee invoice credits 331 and nets them by itself',
+      MARKETPLACE_COLUMNS_REFUSED: 'This column mapping cannot be saved: a column holds buyer data, a field or a column is used twice, or the order number or the quantity is missing',
       MARKETPLACE_SETTLEMENT_PAYOUT_STANDS: "This settlement's payout still stands: reverse the payout first, then the settlement's posting",
       MARKETPLACE_FEE_ACCRUAL_STANDS: 'A platform fee accrual still stands: reverse it before asking for a new one',
       MARKETPLACE_FEE_ACCRUAL_PENDING: 'A platform fee accrual of this month already waits for approval: approve or reject that proposal',
@@ -14778,6 +14779,8 @@ export const en = {
         staged: 'View the order reports waiting to be imported',
         unassigned: 'View the marketplace order lines not assigned to an item',
         suggest_source: 'Read the product name and SKU of unassigned marketplace order lines to propose an item',
+        columns_confirm: 'Confirm how the columns of a marketplace report are read',
+        columns_profile: 'See how the columns of a marketplace report were confirmed',
       },
       marketplace_income: {
         confirm: 'Import a marketplace income report',

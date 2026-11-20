@@ -13356,6 +13356,7 @@ export const vi = {
       MARKETPLACE_SETTLEMENT_WAITING_DELIVERY: 'Kỳ đối soát còn dòng chưa có ngày giao hàng: chờ ngày giao rồi mới ghi sổ',
       MARKETPLACE_TAX_RATE_UNCONFIRMED: 'Tỷ lệ thuế của ngành nghề chưa được kế toán xác nhận: chờ kế toán xác nhận',
       MARKETPLACE_FEE_CLEARING_RETIRED: 'Bù trừ phí sàn đã ngưng: phí sàn giữ lại ghi nợ 331 khi sàn trả, hóa đơn phí ghi có 331 và tự bù trừ',
+      MARKETPLACE_COLUMNS_REFUSED: 'Chưa lưu được cách đọc các cột này: có cột chứa thông tin người mua, một trường hoặc một cột bị dùng hai lần, hoặc thiếu cột mã đơn hàng hay số lượng',
       MARKETPLACE_SETTLEMENT_PAYOUT_STANDS: 'Khoản sàn trả của kỳ đối soát này còn hiệu lực: hãy đảo khoản sàn trả trước, rồi mới đảo ghi sổ kỳ đối soát',
       MARKETPLACE_FEE_ACCRUAL_STANDS: 'Đã có khoản trích trước phí sàn chưa đảo: hãy đảo khoản trích trước đó trước khi lập khoản mới',
       MARKETPLACE_FEE_ACCRUAL_PENDING: 'Đã có đề xuất trích trước phí sàn của tháng này đang chờ duyệt: hãy duyệt hoặc từ chối đề xuất đó',
@@ -14777,6 +14778,8 @@ export const vi = {
         staged: 'Xem các báo cáo đơn hàng chờ nhập',
         unassigned: 'Xem các dòng đơn hàng của sàn chưa gán mặt hàng',
         suggest_source: 'Đọc tên sản phẩm và SKU của các dòng đơn sàn chưa gán để gợi ý mặt hàng',
+        columns_confirm: 'Xác nhận cách đọc các cột của báo cáo sàn',
+        columns_profile: 'Xem cách đọc các cột của báo cáo sàn đã xác nhận',
       },
       marketplace_income: {
         confirm: 'Nhập báo cáo thu nhập của sàn',
