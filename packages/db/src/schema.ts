@@ -673,6 +673,9 @@ export type MisaAmisMatchTable = Refine<
   },
   'legal_entity_id'
 >;
+// The mapping of a marketplace report's columns a person confirmed (#4037): append-only, the latest row of an org and platform wins. `columns` is a jsonb list of the mapped columns (the place, the
+// header text as the file words it and the standard field), never a cell value or a buyer column; the module reads it through its contract schema.
+export type MarketplaceColumnProfileTable = Refine<G.FinanceMarketplaceColumnProfileTable, { platform: ColumnType<ChannelPlatform, ChannelPlatform, never> }>;
 export type MarketplaceConnectionTable = Refine<
   G.FinanceMarketplaceConnectionTable,
   { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; legal_entity_id: LegalEntityColumn },
@@ -1525,6 +1528,7 @@ type Refined = Tables<{
   'crove_finance.einvoice_draft': EInvoiceDraftTable;
   'crove_finance.einvoice_connection': EInvoiceConnectionTable;
   'crove_finance.einvoice_notice': EInvoiceNoticeTable;
+  'crove_finance.marketplace_column_profile': MarketplaceColumnProfileTable;
   'crove_finance.marketplace_connection': MarketplaceConnectionTable;
   'crove_finance.misa_amis_connection': MisaAmisConnectionTable;
   'crove_finance.misa_amis_match': MisaAmisMatchTable;
