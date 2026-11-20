@@ -292,8 +292,10 @@ export function insertWikiLinkAt(
   target: { id: string; title: string },
   duplicateTitle = false,
 ): { value: string; caret: number } {
-  const safeTitle = target.title.replace(/[[\]|]/g, ' ').replace(/\s+/g, ' ').trim() || target.title;
-  const token = duplicateTitle ? `[[${target.id}|${safeTitle}]]` : `[[${safeTitle}]]`;
+  const safeTitle = target.title.replace(/[[\]|]/g, ' ').replace(/\s+/g, ' ').trim();
+  // A title that had to change to fit in [[...]] no longer names its note, so the link keeps the id.
+  const needsId = duplicateTitle || normalizeWikiTitle(safeTitle) !== normalizeWikiTitle(target.title);
+  const token = safeTitle === '' ? `[[${target.id}]]` : needsId ? `[[${target.id}|${safeTitle}]]` : `[[${safeTitle}]]`;
   const after = body.slice(cursor);
   // Consume an immediately following `]]` if the user had typed a closing bracket pair already.
   const skipClose = after.startsWith(']]') ? 2 : 0;

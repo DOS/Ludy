@@ -175,6 +175,12 @@ describe('[[Note]] wiki-links, autocomplete, and search helpers (#3559)', () => 
 
     const disambiguated = insertWikiLinkAt('Xem [[Ke]] tiep', 4, 8, { id: NOTE_A, title: 'Ke hoach Q4' }, true);
     expect(disambiguated.value).toBe(`Xem [[${NOTE_A}|Ke hoach Q4]] tiep`);
+
+    // A title that loses characters to fit in [[...]] keeps the id, so the link still names its note.
+    const cleaned = insertWikiLinkAt('[[Sa', 0, 4, { id: NOTE_A, title: 'Sales | UK' }, false);
+    expect(cleaned.value).toBe(`[[${NOTE_A}|Sales UK]]`);
+    const onlyBrackets = insertWikiLinkAt('[[', 0, 2, { id: NOTE_A, title: '[]' }, false);
+    expect(onlyBrackets.value).toBe(`[[${NOTE_A}]]`);
   });
 
   it('parses notebook and stack URL search params and groups 2-level stacks + pinned + standalone notebooks', () => {

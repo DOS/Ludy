@@ -268,14 +268,15 @@ function Editor({
     () => linkableNotes.filter((n) => n.id !== note.id && n.deletedAt === null),
     [linkableNotes, note.id],
   );
+  // Counts the open note too: a title it shares with the picked note needs the [[id|Title]] form to resolve.
   const wikiTitleCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const c of autocompletePool) {
+    for (const c of [note, ...autocompletePool]) {
       const k = normalizeWikiTitle(c.title);
       counts.set(k, (counts.get(k) ?? 0) + 1);
     }
     return counts;
-  }, [autocompletePool]);
+  }, [autocompletePool, note]);
   const wikiMatch = editable && !preview && !locked ? findActiveWikiAutocomplete(values.body, cursorPos) : null;
   const wikiOpen = wikiMatch !== null && wikiDismissedAt !== wikiMatch.from ? wikiMatch : null;
   const wikiFiltered = useMemo(() => {
@@ -288,7 +289,8 @@ function Editor({
 
   const pickWikiNote = (target: NoteSummary, duplicateTitle: boolean) => {
     if (!wikiOpen || locked) return;
-    const next = insertWikiLinkAt(values.body, wikiOpen.from, cursorPos, target, duplicateTitle);
+    const dup = duplicateTitle || (wikiTitleCounts.get(normalizeWikiTitle(target.title)) ?? 0) > 1;
+    const next = insertWikiLinkAt(values.body, wikiOpen.from, cursorPos, target, dup);
     if (next.value.length > NOTE_BODY_MAX) return;
     edit({ body: next.value });
     setCursorPos(next.caret);
@@ -308,11 +310,25 @@ function Editor({
       | { id: string; title: string; mine: boolean; visibility: 'private' | 'org'; pinned: boolean; archivedAt: string | null; deletedAt: string | null }
       | undefined;
     if (target.noteId) {
-      found = pool.find((n) => n.deletedAt === null && n.id.toLowerCase() === target.noteId);
+      const noteId = target.noteId;
+      found = pool.find((n) => n.deletedAt === null && n.id.toLowerCase() === noteId);
+      // Not in the loaded lists (archived, or past their limit): open it by id. The note view reads it under the
+      // caller's row policies and answers "not found" alike for a missing or an unreadable note.
+      if (!found) {
+        const fallbackList: NoteListView = back.list ?? 'mine';
+        return {
+          href: `/o/${encodeURIComponent(slug)}/notes?list=${encodeURIComponent(fallbackList)}&note=${encodeURIComponent(noteId)}`,
+          label: target.title || noteId,
+          available: true,
+          onClick: () => void navigate({ to: '/o/$slug/notes', params: { slug }, search: { list: fallbackList, note: noteId } }),
+        };
+      }
     } else {
       const norm = normalizeWikiTitle(target.title);
       const matches = pool.filter((n) => n.deletedAt === null && normalizeWikiTitle(n.title) === norm);
-      found = matches.find((n) => n.mine) ?? matches[0];
+      // Prefer another note over the open one, which a title-only link to a shared title would otherwise reopen.
+      const others = matches.filter((n) => n.id !== note.id);
+      found = others.find((n) => n.mine) ?? others[0] ?? matches[0];
     }
     if (!found) return null;
     const targetList = listOfNote(found, back.list);

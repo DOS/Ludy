@@ -557,4 +557,46 @@ suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]
     const detachedNote = await runtime.query<Note>('notes.note.get', { noteId: survivingNote.noteId }, { actor: asUser(users.alice), orgId });
     expect(detachedNote.notebookId).toBeNull();
   });
+
+  it('keeps the asked side of the anchor when other members share one sort key, and starts a new notebook after every readable one', async () => {
+    const x1 = await runtime.execute<NotebookWritten>('notes.notebook.create', { name: 'Dung chung A', visibility: 'org' }, { actor: asUser(users.owner), orgId });
+    const x2 = await runtime.execute<NotebookWritten>('notes.notebook.create', { name: 'Dung chung B', visibility: 'org' }, { actor: asUser(users.admin), orgId });
+    const mine = await runtime.execute<NotebookWritten>('notes.notebook.create', { name: 'So rieng cua Bob' }, { actor: asUser(users.bob), orgId });
+
+    // A new notebook goes after every notebook its author reads, not only after its own.
+    const keyOf = (r: NotebooksResponse, id: string) => r.notebooks.find((b) => b.id === id)?.sortKey ?? '';
+    const created = await runtime.query<NotebooksResponse>('notes.notebook.list', {}, { actor: asUser(users.bob), orgId });
+    expect(keyOf(created, mine.notebookId) > keyOf(created, x2.notebookId)).toBe(true);
+    expect(keyOf(created, x2.notebookId) > keyOf(created, x1.notebookId)).toBe(true);
+
+    // Notebooks made before that (each author's first got the same key) collide; Bob cannot rewrite the shared ones.
+    await admin(async (c) => {
+      await c.query(`UPDATE crove_notes.notebook SET sort_key = 'V' WHERE org_id = $1 AND id = ANY($2::uuid[])`, [
+        orgId,
+        [x1.notebookId, x2.notebookId, mine.notebookId],
+      ]);
+    });
+    const [first, second] = [x1.notebookId, x2.notebookId].sort();
+    const indexIn = (r: NotebooksResponse, id: string) => r.notebooks.findIndex((b) => b.id === id);
+
+    const after = await runtime.execute<NotebookWritten>(
+      'notes.notebook.update',
+      { notebookId: mine.notebookId, revision: mine.revision, reorder: { place: 'after', anchorId: first as string } },
+      { actor: asUser(users.bob), orgId },
+    );
+    const afterList = await runtime.query<NotebooksResponse>('notes.notebook.list', {}, { actor: asUser(users.bob), orgId });
+    expect(indexIn(afterList, mine.notebookId)).toBeGreaterThan(indexIn(afterList, first as string));
+    expect(keyOf(afterList, mine.notebookId)).not.toBe('V');
+
+    await runtime.execute<NotebookWritten>(
+      'notes.notebook.update',
+      { notebookId: mine.notebookId, revision: after.revision, reorder: { place: 'before', anchorId: second as string } },
+      { actor: asUser(users.bob), orgId },
+    );
+    const beforeList = await runtime.query<NotebooksResponse>('notes.notebook.list', {}, { actor: asUser(users.bob), orgId });
+    expect(indexIn(beforeList, mine.notebookId)).toBeLessThan(indexIn(beforeList, second as string));
+    // The shared notebooks Bob may not manage kept their keys.
+    expect(keyOf(beforeList, x1.notebookId)).toBe('V');
+    expect(keyOf(beforeList, x2.notebookId)).toBe('V');
+  });
 });

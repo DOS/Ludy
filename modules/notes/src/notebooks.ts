@@ -323,7 +323,10 @@ export const notebookCreate = defineCommand({
 
     if (existing.length >= NOTEBOOKS_MAX) throw notebookLimitReached();
 
-    let sortKey = keyBetween(existing.at(-1)?.sort_key ?? null, null);
+    // After every notebook the caller reads (its own included), so members' first notebooks do not all share one key.
+    const { rows: lastRows } = await sql<{ last: string | null }>`
+      SELECT pg_catalog.max(sort_key) AS last FROM crove_notes.notebook WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
+    let sortKey = keyBetween(lastRows[0]?.last ?? null, null);
     if (sortKey.length > REBALANCE_AT) {
       const fresh = spreadKeys(existing.length + 1);
       for (let i = 0; i < existing.length; i++) {
@@ -390,47 +393,46 @@ async function computeReorderedSortKey(
   const leftKey = leftIdx >= 0 ? (others[leftIdx]?.sort_key ?? null) : null;
   const rightKey = rightIdx < others.length ? (others[rightIdx]?.sort_key ?? null) : null;
 
-  // When two shared/own notebooks happen to share the exact same sort_key (e.g. different authors), rebalance editable rows first.
-  if (leftKey !== null && rightKey !== null && leftKey >= rightKey) {
+  // Rewrites the keys of the notebooks the caller may manage, with the moving one at its place among them.
+  const rebalance = async (): Promise<string> => {
     const editable = others.filter((r) => canManageNotebook(r, userId, ctx.role, wholeOrg));
-    const reordered = [...editable];
-    const editableAnchorIdx = reordered.findIndex((r) => r.id === anchorId);
-    const insertAt = editableAnchorIdx === -1 ? reordered.length : place === 'before' ? editableAnchorIdx : editableAnchorIdx + 1;
-    const fresh = spreadKeys(reordered.length + 1);
+    const editableAnchorIdx = editable.findIndex((r) => r.id === anchorId);
+    const insertAt = editableAnchorIdx === -1 ? editable.length : place === 'before' ? editableAnchorIdx : editableAnchorIdx + 1;
+    const fresh = spreadKeys(editable.length + 1);
     let cursor = 0;
-    let assigned = fresh[insertAt] as string;
-    for (let i = 0; i < reordered.length; i++) {
+    for (let i = 0; i < editable.length; i++) {
       if (cursor === insertAt) cursor++;
       await ctx.trx
         .updateTable('crove_notes.notebook')
         .set({ sort_key: fresh[cursor] as string })
         .where('org_id', '=', ctx.orgId)
-        .where('id', '=', reordered[i]!.id)
+        .where('id', '=', editable[i]!.id)
         .execute();
       cursor++;
     }
-    return assigned;
+    return fresh[insertAt] as string;
+  };
+
+  // Keys repeat across authors (each author's first notebook gets the same key), and the caller may not rewrite the
+  // keys of notebooks it cannot manage. Then the notebook goes strictly next to its anchor: just below the anchor's
+  // key for 'before', just above it for 'after', so the anchor relation holds whoever owns the neighbours.
+  if (leftKey !== null && rightKey !== null && leftKey >= rightKey) {
+    const anchorKey = others[anchorIdx]!.sort_key;
+    let lower: string | null = anchorKey;
+    let upper: string | null = anchorKey;
+    if (place === 'before') {
+      lower = null;
+      for (const r of others) if (r.sort_key < anchorKey) lower = r.sort_key;
+    } else {
+      upper = others.find((r) => r.sort_key > anchorKey)?.sort_key ?? null;
+    }
+    const nextToAnchor = keyBetween(lower, upper);
+    return nextToAnchor.length <= REBALANCE_AT ? nextToAnchor : rebalance();
   }
 
   const candidate = keyBetween(leftKey, rightKey);
   if (candidate.length <= REBALANCE_AT) return candidate;
-
-  const editable = others.filter((r) => canManageNotebook(r, userId, ctx.role, wholeOrg));
-  const editableAnchorIdx = editable.findIndex((r) => r.id === anchorId);
-  const insertAt = editableAnchorIdx === -1 ? editable.length : place === 'before' ? editableAnchorIdx : editableAnchorIdx + 1;
-  const fresh = spreadKeys(editable.length + 1);
-  let cursor = 0;
-  for (let i = 0; i < editable.length; i++) {
-    if (cursor === insertAt) cursor++;
-    await ctx.trx
-      .updateTable('crove_notes.notebook')
-      .set({ sort_key: fresh[cursor] as string })
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', editable[i]!.id)
-      .execute();
-    cursor++;
-  }
-  return fresh[insertAt] as string;
+  return rebalance();
 }
 
 export const notebookUpdate = defineCommand({
