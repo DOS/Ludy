@@ -524,6 +524,14 @@ function Editor({
                   canRestore={editable && !locked && state !== 'conflict' && state !== 'error'}
                   disabled={blocked}
                   beforeOpen={editable ? () => saver.settle() : undefined}
+                  prepareRestore={
+                    editable
+                      ? async () => {
+                          await saver.settle();
+                          return !saver.dirty();
+                        }
+                      : undefined
+                  }
                   getCurrentRevision={editable ? () => saver.revision() : undefined}
                   onRestored={async () => {
                     await reload();
@@ -538,7 +546,8 @@ function Editor({
                   body={editable ? values.body : note.body}
                   tags={editable ? parseTags(values.tags) : note.tags}
                   defaultVisibility={note.visibility}
-                  disabled={blocked}
+                  disabled={blocked || note.tainted}
+                  disabledHint={note.tainted ? t('templates.taintedBlocked') : undefined}
                   beforeOpen={editable ? () => saver.settle() : undefined}
                 />
               )}

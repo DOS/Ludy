@@ -295,4 +295,32 @@ suite('note templates and version history on PostgreSQL (#3562)', () => {
     expect(leftovers.notes.map((n) => n.id).sort()).toEqual([shared.noteId, priv.noteId].sort());
     expect(await versionRows(o.orgId, priv.noteId)).toEqual([{ revision: 2, title: 'Riêng' }]);
   });
+
+  it('never lets a restore racing the erasure write an erased value back into a shared note', async () => {
+    const o = await org();
+    const value = 'dua-e3@example.com';
+    const shared = await o.exec<NoteWritten>(o.author, 'notes.note.create', { title: 'Đua', body: `Gọi ${value}`, visibility: 'org' });
+    await o.edit(o.author, shared.noteId, 1, 'Đua', 'Đã gọi');
+    // A restore in flight: it holds the note's lock and is about to write the old text, which names the person, back.
+    const restore = new pg.Client({ connectionString: adminUrl });
+    await restore.connect();
+    try {
+      await restore.query('BEGIN');
+      await restore.query('SELECT id FROM crove_notes.note WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, shared.noteId]);
+      const erasing = app.execute<PersonalDataErasure>('kernel.personal_data.erase', { value }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+      // The erasure waits on the lock while the restore writes the old text back and commits.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await restore.query(`UPDATE crove_notes.note SET body = $3, revision = revision + 1 WHERE org_id = $1 AND id = $2`, [o.orgId, shared.noteId, `Gọi ${value}`]);
+      await restore.query('COMMIT');
+      await erasing;
+    } finally {
+      await restore.end();
+    }
+    const left = await admin(async (c) => ({
+      note: (await c.query<{ body: string }>('SELECT body FROM crove_notes.note WHERE org_id = $1 AND id = $2', [o.orgId, shared.noteId])).rows,
+      versions: (await c.query<{ body: string }>('SELECT body FROM crove_notes.note_version WHERE org_id = $1 AND note_id = $2', [o.orgId, shared.noteId])).rows,
+    }));
+    expect(left.note).toHaveLength(1);
+    expect(JSON.stringify(left)).not.toContain(value);
+  });
 });

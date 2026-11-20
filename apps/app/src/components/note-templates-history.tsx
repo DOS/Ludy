@@ -37,6 +37,7 @@ import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { ClientError } from '../lib/errors.ts';
 import { computeNoteVersionDiff, starterNoteTemplates, type StarterNoteTemplate } from '../lib/note-templates.ts';
 import { parseTags } from '../lib/notes.ts';
 import { toast } from '../lib/toast.ts';
@@ -479,6 +480,7 @@ export function SaveAsTemplateButton({
   tags,
   defaultVisibility,
   disabled,
+  disabledHint,
   beforeOpen,
 }: {
   slug: string;
@@ -487,6 +489,8 @@ export function SaveAsTemplateButton({
   tags: readonly string[];
   defaultVisibility: NoteVisibility;
   disabled?: boolean | undefined;
+  // Why the button is disabled, shown on hover (for example AI text that nobody has edited yet).
+  disabledHint?: string | undefined;
   beforeOpen?: (() => Promise<void>) | undefined;
 }) {
   const t = useTranslations('notes');
@@ -538,6 +542,7 @@ export function SaveAsTemplateButton({
         size="sm"
         variant="outline"
         disabled={disabled}
+        title={disabled ? disabledHint : undefined}
         onClick={() => void handleOpen()}
         data-testid="note-save-as-template"
       >
@@ -595,6 +600,7 @@ export function NoteVersionHistoryButton({
   canRestore,
   disabled,
   beforeOpen,
+  prepareRestore,
   getCurrentRevision,
   onRestored,
 }: {
@@ -606,6 +612,8 @@ export function NoteVersionHistoryButton({
   canRestore: boolean;
   disabled?: boolean | undefined;
   beforeOpen?: (() => Promise<void>) | undefined;
+  // Saves pending edits and answers whether none is left; a restore never replaces text that is not saved yet.
+  prepareRestore?: (() => Promise<boolean>) | undefined;
   getCurrentRevision?: (() => number) | undefined;
   onRestored: () => Promise<void>;
 }) {
@@ -649,7 +657,9 @@ export function NoteVersionHistoryButton({
 
   const restoreMutation = useMutation({
     mutationFn: async (target: NoteVersion) => {
-      await beforeOpen?.();
+      if (prepareRestore && !(await prepareRestore())) {
+        throw new ClientError('notes.versions.unsavedBlocked', (tr) => tr('notes.versions.unsavedBlocked'));
+      }
       const revision = getCurrentRevision ? getCurrentRevision() : note.revision;
       return api.notes.restoreVersion({
         noteId: note.id,

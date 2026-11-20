@@ -1281,6 +1281,20 @@ export const personalDataErase = defineCommand({
     const tagsOf = (alias: string) => sql`pg_catalog.array_to_string(${sql.ref(`${alias}.tags`)}, ' ')`;
     const keptTags = sql`ARRAY(SELECT g.v FROM pg_catalog.unnest(t.tags) WITH ORDINALITY AS g(v, i) WHERE NOT ${freeTextMatch(probe, sql.ref('g.v'))} ORDER BY g.i)`;
     const stillAcross = freeTextMatch(probe, sql`pg_catalog.array_to_string(${keptTags}, ' ')`);
+    // Lock every shared note whose text or any snapshot names the value first, in id order (#3562). A restore of a
+    // snapshot (notes.note.restore_version) locks its note before it reads the snapshot, so it either lands before
+    // these statements, whose fresh reads then see and edit out what it wrote back, or waits and finds the snapshot
+    // gone: an erased value never comes back from the version history.
+    await sql`
+      SELECT n.id FROM crove_notes.note n
+       WHERE n.org_id = ${ctx.orgId}::uuid AND n.visibility = 'org'
+         AND (${mentions('n.title')} OR ${mentions('n.body')} OR ${freeTextMatch(probe, tagsOf('n'))}
+              OR EXISTS (
+                SELECT 1 FROM crove_notes.note_version v
+                 WHERE v.org_id = n.org_id AND v.note_id = n.id
+                   AND (${mentions('v.title')} OR ${mentions('v.body')} OR ${freeTextMatch(probe, tagsOf('v'))})))
+       ORDER BY n.id
+       FOR UPDATE OF n`.execute(ctx.trx);
     const { rows: notes } = await sql<{ title: boolean; body: boolean; tags: boolean }>`
       UPDATE crove_notes.note t
          SET title = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), ERASED_TEXT_MARK)}, ${NOTE_TITLE_MAX}::int),

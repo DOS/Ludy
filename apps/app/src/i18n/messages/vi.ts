@@ -2653,6 +2653,7 @@ export const vi = {
       deleteConfirmDescription: 'Xóa mẫu "{name}"? Các ghi chú đã tạo từ mẫu này không bị ảnh hưởng.',
       confirmDeleteBtn: 'Xóa mẫu',
       saveAsTemplateBtn: 'Lưu làm mẫu',
+      taintedBlocked: 'Ghi chú còn văn bản AI chưa ai sửa. Hãy đọc và sửa nội dung trước khi lưu làm mẫu.',
       saveDialogTitle: 'Lưu ghi chú làm mẫu',
       editDialogTitle: 'Chỉnh sửa mẫu ghi chú',
       saveDialogDescription: 'Đặt tên cho mẫu và chọn chỉ mình bạn dùng hoặc chia sẻ cho cả tổ chức.',
@@ -2694,6 +2695,7 @@ export const vi = {
       restoring: 'Đang khôi phục...',
       restoredToast: 'Đã khôi phục nội dung từ bản #{revision, number}.',
       readOnlyHint: 'Chỉ người viết ghi chú mới khôi phục được phiên bản trước.',
+      unsavedBlocked: 'Còn chỉnh sửa chưa lưu được (ví dụ tiêu đề đang trống). Hãy lưu xong rồi mới khôi phục phiên bản.',
     },
   },
   meetings: {

@@ -2655,6 +2655,7 @@ export const en = {
       deleteConfirmDescription: 'Delete template "{name}"? Existing notes created from it will not change.',
       confirmDeleteBtn: 'Delete template',
       saveAsTemplateBtn: 'Save as template',
+      taintedBlocked: 'This note still holds AI text nobody has edited. Read and edit it before saving it as a template.',
       saveDialogTitle: 'Save note as template',
       editDialogTitle: 'Edit note template',
       saveDialogDescription: 'Name this template and choose whether to keep it private or share it with the organization.',
@@ -2696,6 +2697,7 @@ export const en = {
       restoring: 'Restoring...',
       restoredToast: 'Restored content from revision #{revision, number}.',
       readOnlyHint: 'Only the note author can restore an earlier version.',
+      unsavedBlocked: 'Some edits could not be saved yet (for example an empty title). Save them before restoring a version.',
     },
   },
   meetings: {
