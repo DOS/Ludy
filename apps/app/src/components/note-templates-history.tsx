@@ -42,7 +42,7 @@ import { computeNoteVersionDiff, starterNoteTemplates, type StarterNoteTemplate 
 import { parseTags } from '../lib/notes.ts';
 import { toast } from '../lib/toast.ts';
 import { refreshNotes } from './notes-panel.tsx';
-import { Empty, ErrorText, Spinner } from './ui.tsx';
+import { Empty, ErrorText, RowsSkeleton } from './ui.tsx';
 
 function invalidateTemplates() {
   return queryClient.invalidateQueries({ queryKey: orpc.notes.templates.key() });
@@ -363,9 +363,7 @@ export function NewFromTemplateButton({
             </section>
 
             {templatesQuery.isPending ? (
-              <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-                <Spinner />
-              </div>
+              <RowsSkeleton rows={3} />
             ) : templatesQuery.error ? (
               <ErrorText>{errorMessage(templatesQuery.error)}</ErrorText>
             ) : privateMine.length === 0 && sharedOrg.length === 0 ? (
@@ -708,9 +706,7 @@ export function NoteVersionHistoryButton({
 
           <SheetBody className="space-y-4">
             {versionsQuery.isPending ? (
-              <div className="flex items-center justify-center py-8">
-                <Spinner />
-              </div>
+              <RowsSkeleton rows={4} />
             ) : versionsQuery.error ? (
               <ErrorText>{errorMessage(versionsQuery.error)}</ErrorText>
             ) : versions.length === 0 ? (
