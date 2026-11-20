@@ -43,9 +43,9 @@ test('notebooks and 2-level stacks, interactive preview checkboxes, and RLS-safe
     await picker.selectOption({ label: 'Kinh doanh / Khách VIP (Dùng chung)' });
     await expect(picker).not.toHaveValue('');
 
-    await page.getByRole('button', { name: 'Chia sẻ với tổ chức' }).click();
-    await page.getByRole('alertdialog').getByRole('button', { name: 'Chia sẻ với tổ chức' }).click();
-    await expect(page.getByRole('article').getByText('Dùng chung')).toBeVisible();
+    await page.getByRole('button', { name: 'Chuyển thành dùng chung' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Chuyển thành dùng chung' }).click();
+    await expect(page.getByRole('article').getByText('Dùng chung', { exact: true })).toBeVisible();
 
     await page.getByTestId('notebook-stack-filter').filter({ hasText: 'Kinh doanh' }).click();
     await expect(rows).toHaveCount(1);
