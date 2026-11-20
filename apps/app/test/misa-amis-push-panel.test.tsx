@@ -10,7 +10,7 @@ import type { MisaAmisPreview, MisaAmisPushRow } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
-import { canSettle, confirmedAnything, openRows, previewSendable, pushOffer, PUSH_AMBIGUOUS_WAIT_MS, PUSH_RESULT_WINDOW_MS } from '../src/lib/misa-amis-push.ts';
+import { canSettle, checkIsYoung, confirmedAnything, openRows, previewSendable, pushOffer, PUSH_AMBIGUOUS_WAIT_MS, PUSH_CHECK_MAX_AGE_MS, PUSH_RESULT_WINDOW_MS } from '../src/lib/misa-amis-push.ts';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -33,7 +33,7 @@ const { MisaAmisPushConfirm, MisaAmisPushList } = await import('../src/component
 const ID = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5d';
 const NOW = Date.parse('2026-11-19T12:00:00.000Z');
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
-const result = (over: Partial<MisaAmisPreview> = {}): MisaAmisPreview => ({ kind: 'cash_payment', vouchers: 2, ready: 2, blocked: 0, checkedAgainstAmis: false, purchasePurpose: '1', more: false, digest: 'c'.repeat(64), items: [], ...over });
+const result = (over: Partial<MisaAmisPreview> = {}): MisaAmisPreview => ({ kind: 'cash_payment', vouchers: 2, ready: 2, blocked: 0, checkedAgainstAmis: false, matchCheck: { state: 'none', failure: null, requestedAt: null, checkedAt: null }, purchasePurpose: '1', more: false, digest: 'c'.repeat(64), items: [], ...over });
 const ask = { kind: 'cash_payment', legalEntityId: ID, purchasePurpose: '1' } as const;
 const row = (over: Partial<MisaAmisPushRow> = {}): MisaAmisPushRow => ({
   id: ID,
@@ -73,7 +73,7 @@ describe('the offer to send a previewed batch (#3902)', () => {
   it('shows the button, the note that the data is re-checked, and sends nothing until it is pressed', () => {
     const html = wrap(<MisaAmisPushConfirm result={result()} ask={ask} connectionId={ID} offer="ready" />);
     expect(html).toContain('data-testid="misa-amis-push-confirm"');
-    expect(html).toContain('Send these 2 vouchers to MISA AMIS');
+    expect(html).toContain('Send these 2 vouchers to MISA');
     expect(html).toContain('Only owners and admins can send');
     // The second click is not drawn yet.
     expect(html).not.toContain('misa-amis-push-yes');
@@ -94,6 +94,27 @@ describe('the offer to send a previewed batch (#3902)', () => {
     expect(html).toContain('data-testid="misa-amis-push-needs-test"');
     expect(html).toContain('Test the connection successfully');
     expect(html).not.toContain('misa-amis-push-start');
+  });
+
+  it('tells the person to check against the catalogue first unless the last check is from the last 15 minutes (the server decides, #4124)', () => {
+    const young = new Date(Date.now() - 5 * 60_000).toISOString();
+    const old = new Date(Date.now() - 20 * 60_000).toISOString();
+    const withCheck = (checkedAt: string | null) => result({ matchCheck: { state: checkedAt === null ? 'none' : 'done', failure: null, requestedAt: checkedAt, checkedAt } });
+    const note = (r: MisaAmisPreview) => wrap(<MisaAmisPushConfirm result={r} ask={ask} connectionId={ID} offer="ready" />).includes('data-testid="misa-amis-push-check-first"');
+    expect(note(withCheck(null))).toBe(true);
+    expect(note(withCheck(old))).toBe(true);
+    expect(note(withCheck(young))).toBe(false);
+    // The button stays: a person may always try, and the server answers MISA_AMIS_CHECK_REQUIRED.
+    expect(wrap(<MisaAmisPushConfirm result={withCheck(null)} ask={ask} connectionId={ID} offer="ready" />)).toContain('misa-amis-push-start');
+  });
+
+  it('rules: how young a check must be', () => {
+    const now = Date.parse('2026-11-19T12:00:00.000Z');
+    expect(PUSH_CHECK_MAX_AGE_MS).toBe(15 * 60_000);
+    expect(checkIsYoung(new Date(now - PUSH_CHECK_MAX_AGE_MS).toISOString(), now)).toBe(true);
+    expect(checkIsYoung(new Date(now - PUSH_CHECK_MAX_AGE_MS - 1).toISOString(), now)).toBe(false);
+    expect(checkIsYoung(new Date(now + 1000).toISOString(), now)).toBe(false);
+    expect(checkIsYoung(null, now)).toBe(false);
   });
 
   it('has the same keys in Vietnamese and English', () => {
@@ -133,6 +154,15 @@ describe('what was sent to MISA AMIS (#3902)', () => {
     expect(html).toContain('1 waiting');
   });
 
+  it('says in a sentence why a batch was not sent when this system refused it itself, and shows any other reason as it is', () => {
+    const html = list([row({ id: 'm', state: 'failed', reason: 'MATCH_STALE' }), row({ id: 'n', orgRefno: 'CRPC202600013', state: 'failed', reason: 'STALE' }), row({ id: 'o', orgRefno: 'CRPC202600014', state: 'failed', reason: 'BRANCH_UNKNOWN' })], false);
+    expect(html).toContain('The MISA catalogue changed since the check; nothing was sent.');
+    expect(html).toContain('The voucher changed since you confirmed; nothing was sent.');
+    expect(html).not.toContain('>MATCH_STALE<');
+    expect(list([row({ state: 'failed', reason: 'MATCH_UNREAD' })], false)).toContain('The MISA catalogue could not be read to check it again before sending');
+    expect(html).toContain('BRANCH_UNKNOWN');
+  });
+
   it("shows MISA's own reason for a refusal as text, never as markup", () => {
     const html = list([row({ state: 'refused', reason: '<img src=x onerror=alert(1)> Sai mã đối tượng' })], false);
     expect(html).toContain('MISA&#x27;s reason:');
@@ -154,8 +184,8 @@ describe('what was sent to MISA AMIS (#3902)', () => {
     ];
     const owner = list(rows, true);
     expect(settle(owner)).toBe(2);
-    expect(owner).toContain('It is in AMIS');
-    expect(owner).toContain('It is not in AMIS');
+    expect(owner).toContain('It is in MISA');
+    expect(owner).toContain('It is not in MISA');
     expect(settle(list(rows, false))).toBe(0);
   });
 
@@ -171,6 +201,6 @@ describe('what was sent to MISA AMIS (#3902)', () => {
   it('is written in Vietnamese too', () => {
     const html = list([row({ state: 'accepted' })], true, 'vi');
     expect(html).toContain('MISA đã nhận');
-    expect(html).toContain('Chứng từ đã gửi sang MISA AMIS');
+    expect(html).toContain('Chứng từ đã gửi sang MISA');
   });
 });

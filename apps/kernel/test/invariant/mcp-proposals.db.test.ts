@@ -87,9 +87,27 @@ describe('which commands an MCP grant may reach as a proposal (#3858 slice d)', 
     expect(() => rt().register({ commands: [...kernelCommands, base as never], queries: [] }).validate()).not.toThrow();
   });
 
-  it('pins that no real command declares mode proposal yet: slice (d) ships the mechanism, the commands come with their lines (Engage E4, #3863); a new one is a change to this protected file', () => {
+  it('pins which real commands declare mode proposal: only the proposal-only twins of the Engage commands (Engage E4, #3863), each under its line\'s scope; a new one is a change to this protected file', () => {
+    const ENGAGE_TWINS: Record<string, string> = {
+      'kernel.conversation.reply_approved': 'ludy.engage.write',
+      'kernel.conversation.reply_privately_approved': 'ludy.engage.write',
+      'kernel.conversation.hide_approved': 'ludy.engage.write',
+      'crm.quote.send_approved': 'ludy.engage.write',
+      'crm.booking.move_approved': 'ludy.engage.write',
+      'crm.booking.cancel_approved': 'ludy.engage.write',
+      'social.post.submit_approved': 'ludy.engage.write',
+      'social.variant.schedule_approved': 'ludy.engage.write',
+      'ads.launch.stop_approved': 'ludy.ads.draft',
+      'ads.pause_all_approved': 'ludy.ads.draft',
+      'ads.object.pause_approved': 'ludy.ads.draft',
+      'ads.object.archive_approved': 'ludy.ads.draft',
+      'ads.budget.lower_approved': 'ludy.ads.draft',
+      'ads.schedule.shorten_approved': 'ludy.ads.draft',
+    };
     const all = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
-    expect(all.filter((c) => (c as { mcp?: { mode?: string } }).mcp?.mode === 'proposal').map((c) => c.name)).toEqual([]);
+    const declared = all.filter((c) => (c as { mcp?: { mode?: string } }).mcp?.mode === 'proposal');
+    expect(declared.filter((c) => !Object.hasOwn(ENGAGE_TWINS, c.name)).map((c) => c.name)).toEqual([]);
+    for (const c of declared) expect((c as unknown as { mcp: { scope: string } }).mcp.scope, c.name).toBe(ENGAGE_TWINS[c.name]);
   });
 });
 
@@ -269,11 +287,14 @@ suite('what an MCP call to a proposal command does, end to end (#3858 slice d)',
     const noPolicy = await refusal(propose(actor, 'kernel.test.no_policy'));
     expect([noPolicy.status, ruleOf(noPolicy)]).toEqual([403, 'mcp_scope']);
     expect(await proposals()).toHaveLength(before);
-    // A direct (run-mode) command under a scope that has no sealed write context yet: refused after entry, so it is audited as the grant's.
-    const direct = await refusal(runtime.execute('kernel.test.direct', { payload: { text: 'x' } }, { actor, orgId: orgA }));
-    expect([direct.status, ruleOf(direct)]).toEqual([403, 'mcp_scope']);
+    // A direct (run-mode) command under the engage scope, which has its sealed write context (E2, #3861): it runs, as the grant, and makes no proposal.
+    const proposalsBefore = (await proposals()).length;
+    await runtime.execute('kernel.test.direct', { payload: { text: 'x' } }, { actor, orgId: orgA });
+    expect(ran).toEqual([{ name: 'kernel.test.direct', input: { text: 'x' } }]);
+    expect(await proposals()).toHaveLength(proposalsBefore);
+    ran.length = 0;
     const audited = (await q(`SELECT command, outcome FROM crove_kernel.audit_event WHERE org_id = $1 AND detail ->> 'mcpGrant' = $2 AND outcome <> 'ok' ORDER BY id`, [orgA, grant])).rows;
-    expect(audited.map((r) => r.command)).toEqual(expect.arrayContaining(['kernel.proposal.approve', 'kernel.test.no_policy', 'kernel.test.direct']));
+    expect(audited.map((r) => r.command)).toEqual(expect.arrayContaining(['kernel.proposal.approve', 'kernel.test.no_policy']));
     expect(ran).toEqual([]);
   });
 

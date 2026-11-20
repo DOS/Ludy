@@ -4,11 +4,12 @@
 import { describe, expect, it } from 'vitest';
 import type { Runtime, UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
+import { McpWriteBudget } from '../src/mcp-write-limit.ts';
 import { toolsFor, visibleTools } from '../src/mcp-endpoint.ts';
 
 const company: UserActor = { type: 'user', userId: 'u1', aal: 'aal1', mcp: { grantId: 'g1', clientId: 'c', clientName: 'Test', scopes: ['ludy.read'], kind: 'company' } };
 const member: UserActor = { type: 'user', userId: 'u2', aal: 'aal1', mcp: { grantId: 'g2', clientId: 'c', clientName: 'Test', scopes: ['ludy.read'], kind: 'member' } };
-const listed = (actor: UserActor) => toolsFor({} as unknown as Runtime, actor, 'org', new DraftBudget());
+const listed = (actor: UserActor) => toolsFor({} as unknown as Runtime, actor, 'org', new DraftBudget(), new McpWriteBudget());
 
 // The tools of E1 and the query each one runs.
 const ENGAGE: Record<string, string> = {
@@ -23,6 +24,7 @@ const ENGAGE: Record<string, string> = {
   ludy_ads_spend: 'ads.mcp.spend',
   ludy_ads_flags: 'ads.mcp.flags',
   ludy_ads_today: 'ads.mcp.today',
+  ludy_ads_launches: 'ads.mcp.launches',
   ludy_bookings_list: 'crm.mcp.bookings',
 };
 // What a member-bound grant is offered of them: the records every role reads in the app (the database narrows the conversations to the member's rights). The results of Social and Ads and the guests' bookings
@@ -106,6 +108,7 @@ describe('the Engage reads in the tool list (#3860)', () => {
     expect(rows('ludy_social_metrics_totals', { channels: some(2), previous: { channels: some(3) } })).toBe(6);
     expect(rows('ludy_ads_flags', { flags: some(4), truncated: false })).toBe(4);
     expect(rows('ludy_ads_today', { items: some(2) })).toBe(2);
+    expect(rows('ludy_ads_launches', { launches: some(3), truncated: false })).toBe(3);
     // The accounts listed, and for a chosen account its total, months, campaigns and days.
     expect(rows('ludy_ads_spend', { accounts: some(2), accountsTruncated: false, summary: null })).toBe(2);
     expect(rows('ludy_ads_spend', { accounts: some(2), accountsTruncated: false, summary: { months: some(1), campaigns: some(3), days: some(30) } })).toBe(2 + 1 + 1 + 3 + 30);

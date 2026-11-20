@@ -7,8 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AmisError, createAmisClient, type AmisRequest, type AmisResponse, type AmisTransport } from '@crove/misa-amis';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { amisContextOf, amisPartRows, loadAmisEntries, PUSH_IN_FLIGHT_SECONDS, type CashVoucher, type MisaAmisPushBegin } from '@crove/mod-finance';
-import { PUSH_PRESS_RECHECK_SECONDS, PUSH_RECHECK_SECONDS, PUSH_UNREACHABLE_ROUNDS, PUSH_WAIT_ROUNDS, pushFollowUp, pushGiveUp, pushPressKeyTail, runMisaAmisPush, type MisaAmisPushOutcome } from '../src/misa-amis-push-job.ts';
+import { amisContextOf, amisPartRows, loadAmisEntries, NO_MATCH_RESULTS, PUSH_IN_FLIGHT_SECONDS, type CashVoucher, type MisaAmisMatchResults, type MisaAmisPushBegin } from '@crove/mod-finance';
+import { readStockNames } from '../src/misa-amis-catalogue.ts';
+import { CATALOGUE_REREAD_MS, PUSH_PRESS_RECHECK_SECONDS, PUSH_RECHECK_SECONDS, PUSH_UNREACHABLE_ROUNDS, PUSH_WAIT_ROUNDS, pushFollowUp, pushGiveUp, pushPressKeyTail, runMisaAmisPush, stockIdsOf, withStockNames, type MisaAmisPushOutcome } from '../src/misa-amis-push-job.ts';
 
 const CLIENT_ID = 'planted-client-id-0123456789';
 const ACCESS_CODE = 'planted-access-code-abcdef';
@@ -20,6 +21,8 @@ const ENTITY = '44444444-4444-4444-8444-444444444444';
 const BRANCH = 'b8868580-c5d7-49c2-993d-15824b3083f6';
 const SOURCE = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5d';
 const PARTY_NAME = 'Công ty TNHH Planted Party';
+// The catalogue's entry for the party the checks below matched.
+const PARTY_ENTRY = { account_object_code: 'NCC_ABC', account_object_id: '0194a1c2-8f3e-7b10-9d4a-1e2f3a4b5c6d', company_tax_code: '0101234564', account_object_name: 'planted catalogue name', inactive: false };
 
 const ok = (data: unknown): AmisResponse => ({ status: 200, body: JSON.stringify({ Success: true, ErrorMessage: '', Data: data }) });
 const fail = (code: string, message = `planted AMIS text ${ACCESS_CODE}`): AmisResponse => ({ status: 200, body: JSON.stringify({ Success: false, ErrorCode: code, ErrorMessage: message }) });
@@ -43,7 +46,7 @@ const cash = (overrides: Partial<CashVoucher> = {}): CashVoucher => ({
 const PARAMS = { kind: 'cash_payment' as const, from: '2026-10-01', to: '2026-10-31', purchasePurpose: '1' as const };
 
 // What AMIS does with a call, as far as the push depends on it: a token for the right code and company, the dictionary, a queued save, the results.
-function fakeAmis(options: { branches?: Array<Record<string, unknown>>; results?: unknown[]; behave?: (path: string, body: Record<string, unknown>) => AmisResponse | Promise<AmisResponse> | undefined } = {}) {
+function fakeAmis(options: { branches?: Array<Record<string, unknown>>; parties?: Array<Record<string, unknown>>; items?: Array<Record<string, unknown>>; results?: unknown[]; behave?: (path: string, body: Record<string, unknown>) => AmisResponse | Promise<AmisResponse> | undefined } = {}) {
   const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
   const transport: AmisTransport = async (request: AmisRequest) => {
     const path = new URL(request.url).pathname.replace(/^\/apis/, '');
@@ -54,7 +57,7 @@ function fakeAmis(options: { branches?: Array<Record<string, unknown>>; results?
     if (request.headers.ClientID !== CLIENT_ID) return fail('InvalidAPPID');
     if (path === '/amiskt/v1/token') return body.access_code === ACCESS_CODE && body.org_company_code === COMPANY ? ok({ access_token: 'token-1', expired_time: '2027-01-19T20:00:00' }) : fail('InvalidAccessToken');
     if (request.headers['X-MISA-AccessToken'] !== 'token-1') return fail('InvalidToken');
-    if (path === '/amiskt/v1/get_dictionary') return ok(options.branches ?? [{ organization_unit_id: BRANCH, name: 'Trụ sở' }]);
+    if (path === '/amiskt/v1/get_dictionary') return ok(body.data_type === 1 ? (options.parties ?? []) : body.data_type === 2 ? (options.items ?? []) : (options.branches ?? [{ organization_unit_id: BRANCH, name: 'Trụ sở' }]));
     if (path === '/amiskt/v1/save') return ok(null);
     if (path === '/amiskt/v1/get_call_back_detail_error') return ok(JSON.stringify(options.results ?? []));
     return fail('InvalidParam');
@@ -86,19 +89,20 @@ interface Harness {
   opened: unknown[];
 }
 // `script` answers push_begin in order; a begin past the script's end answers "nothing, not waiting".
-function harness(options: { script?: MisaAmisPushBegin[]; vouchers?: CashVoucher[] | (() => CashVoucher[]); target?: unknown; credential?: () => unknown } = {}): Harness {
+function harness(options: { script?: MisaAmisPushBegin[]; vouchers?: CashVoucher[] | (() => CashVoucher[]); target?: unknown; credential?: () => unknown; matches?: MisaAmisMatchResults } = {}): Harness {
   const queries: Harness['queries'] = [];
   const executed: Harness['executed'] = [];
   const begins: Harness['begins'] = [];
   const opened: unknown[] = [];
   const script = [...(options.script ?? [])];
-  const target = options.target ?? { action: 'push', id: CONNECTION, channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY };
+  const target = options.target ?? { action: 'push', id: CONNECTION, product: 'amis', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY };
   const runtime = {
     query: async (name: string, input: unknown) => {
       queries.push({ name, input });
       if (name === 'finance.misa_amis.push_target') return target;
-      if (name === 'kernel.channel.credential') return options.credential ? options.credential() : { provider: 'accounting_misa_amis', externalAccountId: 'entity', keyId: 'k1', envelope: Buffer.from('sealed').toString('base64') };
+      if (name === 'kernel.channel.credential') return options.credential ? options.credential() : { provider: (target as { product?: string }).product === 'asp' ? 'accounting_misa_asp' : 'accounting_misa_amis', externalAccountId: 'entity', keyId: 'k1', envelope: Buffer.from('sealed').toString('base64') };
       if (name === 'finance.vouchers.cash') return typeof options.vouchers === 'function' ? options.vouchers() : (options.vouchers ?? [cash()]);
+      if (name === 'finance.misa_amis_match.results') return options.matches ?? NO_MATCH_RESULTS;
       throw new Error(`unexpected query ${name}`);
     },
     execute: async (name: string, input: unknown) => {
@@ -169,6 +173,197 @@ describe('the MISA AMIS push job: sending', () => {
     expect(records(h)).toEqual([
       { connectionId: CONNECTION, rows: [{ orgRefid: SOURCE, from: 'sending', to: 'failed', reason: 'STALE' }], call: { key: 'misa_amis:save:test', end: { state: 'failed', kind: 'bad_request', code: 'STALE' } } },
     ]);
+  });
+
+  it('writes the voucher with the party code the last check matched, asking for the entity of the target; a check made since the person approved changes the part, so it is STALE and never sent', async () => {
+    const rows = await approved([cash()]);
+    // The person approved the part with no check done; a check has since matched the party: the part now carries a code the person never saw.
+    const checked: MisaAmisMatchResults = {
+      connectionId: CONNECTION,
+      status: { state: 'done', failure: null, requestedAt: '2026-11-19T11:00:00.000Z', checkedAt: '2026-11-19T11:01:00.000Z' },
+      partyCodes: new Map([['0101234564', 'NCC_ABC']]),
+      partyAmbiguous: new Set(),
+      itemCodes: new Set(),
+    };
+    const h = harness({ script: [{ action: 'need_branch' }, send(rows)], matches: checked });
+    const amis = fakeAmis();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await run(h, amis)).toMatchObject({ state: 'done', sent: 0, failed: 1 });
+    expect(h.queries.find((q) => q.name === 'finance.misa_amis_match.results')?.input).toMatchObject({ legalEntityId: ENTITY });
+    expect(amis.calls.some((c) => c.path === '/amiskt/v1/save')).toBe(false);
+    expect(records(h)[0]?.rows).toEqual([{ orgRefid: SOURCE, from: 'sending', to: 'failed', reason: 'STALE' }]);
+  });
+
+  it('sends the part as approved when the check it was approved under is the one still stored, with the matched code written', async () => {
+    const checked: MisaAmisMatchResults = {
+      connectionId: CONNECTION,
+      status: { state: 'done', failure: null, requestedAt: '2026-11-19T11:00:00.000Z', checkedAt: '2026-11-19T11:01:00.000Z' },
+      partyCodes: new Map([['0101234564', 'NCC_ABC']]),
+      partyAmbiguous: new Set(),
+      itemCodes: new Set(),
+    };
+    // The approved digest is of the part written with the same matches.
+    const ask = { ...PARAMS, legalEntityId: ENTITY };
+    const { entries } = await loadAmisEntries(async () => [cash()] as never, ask, amisContextOf(ask, undefined, checked), 501);
+    const rows = amisPartRows(entries).map((p) => ({ orgRefid: p.orgRefid, digest: p.digest, sourceId: p.sourceId, part: p.part, attempts: 1 }));
+    const h = harness({ script: [{ action: 'need_branch' }, send(rows)], matches: checked });
+    // The catalogue still holds the entry the check matched, so the re-read before the send agrees with the stored match.
+    const amis = fakeAmis({ parties: [PARTY_ENTRY] });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await run(h, amis)).toMatchObject({ state: 'done', sent: 1, failed: 0 });
+    const saved = amis.calls.find((c) => c.path === '/amiskt/v1/save');
+    expect(JSON.stringify(saved?.body)).toContain('NCC_ABC');
+  });
+
+  // Sent only fresh (#4124): the entries the stored matches rely on are read from the catalogue again right before a batch goes out.
+  const checkedAs = (partyCodes: Map<string, string> | null): MisaAmisMatchResults => ({
+    connectionId: CONNECTION,
+    status: { state: 'done', failure: null, requestedAt: '2026-11-19T02:40:00.000Z', checkedAt: '2026-11-19T02:41:00.000Z' },
+    partyCodes,
+    partyAmbiguous: new Set(),
+    itemCodes: new Set(),
+  });
+  const approvedUnder = async (vouchers: CashVoucher[], matches: MisaAmisMatchResults): Promise<Row[]> => {
+    const ask = { ...PARAMS, legalEntityId: ENTITY };
+    const { entries } = await loadAmisEntries(async () => vouchers as never, ask, amisContextOf(ask, undefined, matches), 501);
+    return amisPartRows(entries).map((p) => ({ orgRefid: p.orgRefid, digest: p.digest, sourceId: p.sourceId, part: p.part, attempts: 1 }));
+  };
+  const dictionaryReads = (amis: ReturnType<typeof fakeAmis>) => amis.calls.filter((c) => c.path === '/amiskt/v1/get_dictionary').map((c) => c.body.data_type);
+
+  it('reads the party entries again before sending, and sends when the catalogue still says what the check stored', async () => {
+    const matches = checkedAs(new Map([['0101234564', 'NCC_ABC']]));
+    const rows = await approvedUnder([cash()], matches);
+    const h = harness({ script: [{ action: 'need_branch' }, send(rows)], matches });
+    const amis = fakeAmis({ parties: [PARTY_ENTRY] });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await run(h, amis)).toMatchObject({ state: 'done', sent: 1, failed: 0 });
+    // The branch (6), then the party catalogue (1), and no item read: nothing item-shaped was matched.
+    expect(dictionaryReads(amis)).toEqual([6, 1]);
+    expect(amis.calls.filter((c) => c.path === '/amiskt/v1/save')).toHaveLength(1);
+  });
+
+  it.each([
+    ['gone from the catalogue', []],
+    ['now inactive', [{ ...PARTY_ENTRY, inactive: true }]],
+    ['now with another tax code', [{ ...PARTY_ENTRY, company_tax_code: '0309999990' }]],
+    ['now under another code', [{ ...PARTY_ENTRY, account_object_code: 'NCC_KHAC' }]],
+    ['now one of two entries with that tax code', [PARTY_ENTRY, { ...PARTY_ENTRY, account_object_code: 'NCC_TRUNG', account_object_id: '0194a1c2-8f3e-7b10-9d4a-1e2f3a4b5c6f' }]],
+  ])('refuses the batch with MATCH_STALE and sends nothing when the matched entry is %s', async (_name, parties) => {
+    const matches = checkedAs(new Map([['0101234564', 'NCC_ABC']]));
+    const rows = await approvedUnder([cash()], matches);
+    const h = harness({ script: [{ action: 'need_branch' }, send(rows)], matches });
+    const amis = fakeAmis({ parties });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await run(h, amis)).toMatchObject({ state: 'done', sent: 0, failed: 1 });
+    expect(amis.calls.some((c) => c.path === '/amiskt/v1/save')).toBe(false);
+    expect(records(h)).toEqual([
+      { connectionId: CONNECTION, rows: [{ orgRefid: SOURCE, from: 'sending', to: 'failed', reason: 'MATCH_STALE' }], call: { key: 'misa_amis:save:test', end: { state: 'failed', kind: 'bad_request', code: 'MATCH_STALE' } } },
+    ]);
+  });
+
+  it('reads nothing from the catalogue when no check matched what the batch relies on', async () => {
+    const rows = await approved([cash()]);
+    const h = harness({ script: [{ action: 'need_branch' }, send(rows)] });
+    const amis = fakeAmis();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await run(h, amis)).toMatchObject({ state: 'done', sent: 1 });
+    expect(dictionaryReads(amis)).toEqual([6]);
+  });
+
+  it('reuses a read for the next batch for five minutes and reads again after that', async () => {
+    const other = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5e';
+    const matches = checkedAs(new Map([['0101234564', 'NCC_ABC']]));
+    const all = await approvedUnder([cash(), cash({ sourceId: other, code: 'PC00013' })], matches);
+    const first = all.filter((r) => r.sourceId === SOURCE);
+    const second = all.filter((r) => r.sourceId === other);
+    const vouchers = [cash(), cash({ sourceId: other, code: 'PC00013' })];
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    const quick = fakeAmis({ parties: [PARTY_ENTRY] });
+    await run(harness({ script: [{ action: 'need_branch' }, send(first), send(second)], matches, vouchers }), quick);
+    expect(dictionaryReads(quick)).toEqual([6, 1]);
+
+    let at = Date.parse('2026-11-19T03:00:00Z');
+    const slow = fakeAmis({ parties: [PARTY_ENTRY] });
+    // Every look at the clock moves it past the window, so the second batch finds the first read too old.
+    const clock = () => new Date((at += CATALOGUE_REREAD_MS + 1));
+    await run(harness({ script: [{ action: 'need_branch' }, send(first), send(second)], matches, vouchers }), slow, clock);
+    expect(dictionaryReads(slow)).toEqual([6, 1, 1]);
+  });
+
+  it('puts the batch back in the queue, sending nothing, when the catalogue cannot be reached or refuses the access code while it is read', async () => {
+    const matches = checkedAs(new Map([['0101234564', 'NCC_ABC']]));
+    const rows = await approvedUnder([cash()], matches);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    for (const [response, outcome, reason, code] of [
+      [{ status: 503, body: '' }, { state: 'unreachable', waiting: true }, 'BUILD_FAILED', 'BUILD_FAILED'],
+      [fail('InvalidAccessToken'), { state: 'credentials', waiting: false }, 'CREDENTIALS', 'CREDENTIALS'],
+    ] as const) {
+      const h = harness({ script: [{ action: 'need_branch' }, send(rows)], matches });
+      const amis = fakeAmis({ behave: (path, body) => (path.endsWith('/get_dictionary') && body.data_type === 1 ? response : undefined) });
+      expect(await run(h, amis), reason).toEqual(outcome);
+      expect(amis.calls.some((c) => c.path === '/amiskt/v1/save')).toBe(false);
+      expect(records(h)[0]?.rows).toEqual([{ orgRefid: SOURCE, from: 'sending', to: 'queued', reason }]);
+      expect(records(h)[0]?.call?.end).toMatchObject({ state: 'failed', code });
+    }
+  });
+
+  it('fails the batch with MATCH_UNREAD, never sending a guess, when the catalogue is too large to read whole or answers no page, and goes on to the next batch', async () => {
+    const matches = checkedAs(new Map([['0101234564', 'NCC_ABC']]));
+    const rows = await approvedUnder([cash()], matches);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const full = Array.from({ length: 1000 }, (_v, i) => ({ account_object_code: `K${i}`, company_tax_code: '0309999990' }));
+    for (const behave of [
+      (path: string, body: Record<string, unknown>) => (path.endsWith('/get_dictionary') && body.data_type === 1 ? ok(full) : undefined),
+      (path: string, body: Record<string, unknown>) => (path.endsWith('/get_dictionary') && body.data_type === 1 ? { status: 200, body: 'not json' } : undefined),
+    ]) {
+      const h = harness({ script: [{ action: 'need_branch' }, send(rows)], matches });
+      const amis = fakeAmis({ behave });
+      expect(await run(h, amis)).toMatchObject({ state: 'done', sent: 0, failed: 1 });
+      expect(amis.calls.some((c) => c.path === '/amiskt/v1/save')).toBe(false);
+      expect(records(h)[0]?.rows).toEqual([{ orgRefid: SOURCE, from: 'sending', to: 'failed', reason: 'MATCH_UNREAD' }]);
+    }
+  });
+
+  it('does not read a catalogue that failed once again for the next batch of the run, and fails that batch at once', async () => {
+    const other = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5e';
+    const matches = checkedAs(new Map([['0101234564', 'NCC_ABC']]));
+    const all = await approvedUnder([cash(), cash({ sourceId: other, code: 'PC00013' })], matches);
+    const vouchers = [cash(), cash({ sourceId: other, code: 'PC00013' })];
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const full = Array.from({ length: 1000 }, (_v, i) => ({ account_object_code: `K${i}`, company_tax_code: '0309999990' }));
+    const amis = fakeAmis({ behave: (path, body) => (path.endsWith('/get_dictionary') && body.data_type === 1 ? ok(full) : undefined) });
+    const h = harness({ script: [{ action: 'need_branch' }, send(all.filter((r) => r.sourceId === SOURCE)), send(all.filter((r) => r.sourceId === other))], matches, vouchers });
+    expect(await run(h, amis)).toMatchObject({ state: 'done', sent: 0, failed: 2 });
+    // 20 pages of 1000 for the first batch, none for the second.
+    expect(dictionaryReads(amis).filter((t) => t === 1)).toHaveLength(20);
+    expect(records(h).map((r) => r.rows.map((x) => [x.orgRefid, x.reason]))).toEqual([[[SOURCE, 'MATCH_UNREAD']], [[other, 'MATCH_UNREAD']]]);
+  });
+
+  it('treats a token MISA refuses while the catalogue is read like a refused access code', async () => {
+    const matches = checkedAs(new Map([['0101234564', 'NCC_ABC']]));
+    const rows = await approvedUnder([cash()], matches);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const h = harness({ script: [{ action: 'need_branch' }, send(rows)], matches });
+    const amis = fakeAmis({ behave: (path, body) => (path.endsWith('/get_dictionary') && body.data_type === 1 ? fail('InvalidToken') : undefined) });
+    expect(await run(h, amis)).toEqual({ state: 'credentials', waiting: false });
+    expect(records(h)[0]?.rows).toEqual([{ orgRefid: SOURCE, from: 'sending', to: 'queued', reason: 'CREDENTIALS' }]);
+  });
+
+  it('in one batch says STALE for the part that changed since the person approved it and MATCH_STALE for the others when a match no longer holds', async () => {
+    const other = '0192f0a1-2b3c-7d4e-8f50-6172839a4b5e';
+    const matches = checkedAs(new Map([['0101234564', 'NCC_ABC']]));
+    const all = await approvedUnder([cash(), cash({ sourceId: other, code: 'PC00013' })], matches);
+    const changed = cash({ lines: [{ lineNo: 1, account: '331', amount: '999', memo: null }] });
+    const h = harness({ script: [{ action: 'need_branch' }, send(all)], matches, vouchers: [changed, cash({ sourceId: other, code: 'PC00013' })] });
+    const amis = fakeAmis({ parties: [] });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await run(h, amis)).toMatchObject({ state: 'done', sent: 0, failed: 2 });
+    expect(amis.calls.some((c) => c.path === '/amiskt/v1/save')).toBe(false);
+    const reasons = Object.fromEntries((records(h)[0]?.rows ?? []).map((r) => [r.orgRefid, r.reason]));
+    expect(reasons).toEqual({ [SOURCE]: 'STALE', [other]: 'MATCH_STALE' });
   });
 
   it('every batch is rebuilt from the source: a voucher changed between two batches of one run is STALE in the second, one that is unchanged is still sent', async () => {
@@ -562,5 +757,102 @@ describe('the MISA AMIS push job: when a chain gives up it says so, and a row on
     // At worst four requests (a token request, a save refused for its token, a second token request and a second save: the one renewal of an expired token), each at the deadline, then the rebuild of the batch
     // and the record, given two minutes.
     expect(PUSH_IN_FLIGHT_SECONDS).toBeGreaterThanOrEqual(4 * deadlineSeconds + 120);
+  });
+});
+
+// MISA ASP (#4113, S4 of #4103): the same steps with ASP's client on ASP's paths; the job opens only a code sealed for the connection's product, leaves a product it has no client for alone, and never asks MISA for results
+// of an ASP row (its results come by the callback or from a person).
+describe('the MISA AMIS push job: a MISA ASP connection', () => {
+  const aspTarget = { action: 'push', id: CONNECTION, product: 'asp', channelConnectionId: CHANNEL, orgCompanyCode: COMPANY, legalEntityId: ENTITY };
+  // The ASP client over a fake that answers on ASP's paths with the same envelope.
+  function fakeAsp() {
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const transport: AmisTransport = async (request: AmisRequest) => {
+      const path = new URL(request.url).pathname.replace(/^\/apis/, '');
+      const body = JSON.parse(request.body) as Record<string, unknown>;
+      calls.push({ path, body });
+      if (request.headers.ClientID !== CLIENT_ID) return fail('InvalidAPPID');
+      if (path === '/asp/v1/token') return body.access_code === ACCESS_CODE && body.org_company_code === COMPANY ? ok({ access_token: 'token-1', expired_time: '2027-01-19T20:00:00' }) : fail('InvalidAccessToken');
+      if (request.headers['X-MISA-AccessToken'] !== 'token-1') return fail('InvalidToken');
+      if (path === '/asp/v1/get_dictionary') return ok([{ organization_unit_id: BRANCH, name: 'Trụ sở' }]);
+      if (path === '/asp/v1/save') return ok(null);
+      return fail('InvalidParam');
+    };
+    return { transport, calls, client: createAmisClient({ clientId: CLIENT_ID, product: 'asp', transport }) };
+  }
+  const runAsp = (h: Harness, deps: { client?: ReturnType<typeof createAmisClient> | null; aspClient?: ReturnType<typeof createAmisClient> | null }) =>
+    runMisaAmisPush({ runtime: h.runtime, broker: h.broker, client: deps.client ?? null, aspClient: deps.aspClient ?? null, now: () => new Date('2026-11-19T03:00:00Z') }, { orgId: ORG, connectionId: CONNECTION });
+
+  it('sends through the ASP client on ASP\'s paths, opens the code sealed for ASP, and records "sent"', async () => {
+    const rows = await approved([cash()]);
+    const h = harness({ script: [{ action: 'need_branch' }, send(rows)], target: aspTarget });
+    const asp = fakeAsp();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    // The AMIS client is not even handed over: the product decides.
+    const out = await runAsp(h, { aspClient: asp.client });
+    expect(out).toMatchObject({ state: 'done', batches: 1, sent: 1, failed: 0, waiting: false });
+    expect(asp.calls.map((c) => c.path)).toEqual(['/asp/v1/token', '/asp/v1/get_dictionary', '/asp/v1/save']);
+    expect(h.opened).toEqual([{ sealed: { keyId: 'k1', envelope: Buffer.from('sealed') }, binding: { orgId: ORG, provider: 'accounting_misa_asp', externalAccountId: 'entity' } }]);
+    expect(records(h)).toEqual([{ connectionId: CONNECTION, rows: [{ orgRefid: SOURCE, from: 'sending', to: 'sent', reason: null }], call: { key: 'misa_amis:save:test', end: { state: 'succeeded' } } }]);
+  });
+
+  it('leaves a connection alone when the deployment has no client for its product, and opens nothing and calls no one', async () => {
+    const h = harness({ target: aspTarget });
+    const amis = fakeAmis();
+    // Only the AMIS client is on: an ASP connection is never pushed with it.
+    const out = await runAsp(h, { client: createAmisClient({ clientId: CLIENT_ID, transport: amis.transport }) });
+    expect(out).toEqual({ state: 'skipped', reason: 'product_off' });
+    expect(amis.calls).toEqual([]);
+    expect(h.opened).toEqual([]);
+    expect(h.begins).toEqual([]);
+  });
+
+  it('opens no access code sealed for another provider: the AMIS code of an ASP connection is not read, and nothing is called', async () => {
+    const h = harness({ target: aspTarget, credential: () => ({ provider: 'accounting_misa_amis', externalAccountId: 'entity', keyId: 'k1', envelope: Buffer.from('sealed').toString('base64') }) });
+    const asp = fakeAsp();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(await runAsp(h, { aspClient: asp.client })).toEqual({ state: 'credentials', waiting: false });
+    expect(h.opened).toEqual([]);
+    expect(asp.calls).toEqual([]);
+  });
+
+  it('never asks MISA for results of an ASP row: the job has no polling step, and the follow-up is not queued for a row that waits for the callback', async () => {
+    const h = harness({ target: aspTarget, script: [{ action: 'none', reason: 'nothing', waiting: false }] });
+    const asp = fakeAsp();
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const out = await runAsp(h, { aspClient: asp.client });
+    expect(out).toMatchObject({ state: 'done', waiting: false });
+    expect(asp.calls).toEqual([]);
+    // Past the press's own one more look (round 1 has nothing left), the chain ends.
+    expect(pushFollowUp({ orgId: ORG, connectionId: CONNECTION, round: 1 }, out)).toBeNull();
+  });
+});
+
+// ASP (#4125): `stock_name` goes beside each `stock_id`, read fresh right before the send, never kept in the digest or a log.
+describe('the stock names of an ASP send', () => {
+  const STOCK_A = '0194a1c2-8f3e-7b10-9d4a-1e2f3a4b5c02';
+  const part = (detail: unknown[]) => ({ sourceType: 'sales_document', sourceId: 's', voucherType: 13, part: 1, orgRefid: 'r', orgRefno: 'n', digest: 'd', voucher: { voucher_type: 13, org_refid: 'r', detail } }) as unknown as Parameters<typeof withStockNames>[0];
+
+  it('writes the fresh name beside each stock id, and refuses a part whose stock has no name now', () => {
+    const named = withStockNames(part([{ sort_order: 1, stock_id: STOCK_A, stock_code: 'KHO1' }, { sort_order: 2 }]), new Map([[STOCK_A, 'Kho chính']]));
+    expect(named?.voucher.detail).toEqual([{ sort_order: 1, stock_id: STOCK_A, stock_code: 'KHO1', stock_name: 'Kho chính' }, { sort_order: 2 }]);
+    expect(named?.digest).toBe('d');
+    expect(withStockNames(part([{ stock_id: STOCK_A }]), new Map())).toBeNull();
+    expect(stockIdsOf(part([{ stock_id: STOCK_A }, {}]).voucher)).toEqual([STOCK_A]);
+  });
+
+  it('reads the names of active stocks only, by id, from catalogue 3', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const transport: AmisTransport = async (request: AmisRequest) => {
+      const path = new URL(request.url).pathname.replace(/^\/apis/, '');
+      const body = JSON.parse(request.body) as Record<string, unknown>;
+      calls.push({ path, ...body });
+      if (path === '/asp/v1/token') return ok({ access_token: 'token-1', expired_time: '2027-01-19T20:00:00' });
+      return ok([{ stock_id: STOCK_A.toUpperCase(), stock_code: 'KHO1', stock_name: ' Kho chính ' }, { stock_id: '0194a1c2-8f3e-7b10-9d4a-1e2f3a4b5c09', stock_code: 'OFF', stock_name: 'Kho cũ', inactive: true }]);
+    };
+    const client = createAmisClient({ clientId: CLIENT_ID, product: 'asp', transport });
+    const names = await readStockNames(client, { accessCode: ACCESS_CODE, orgCompanyCode: COMPANY });
+    expect([...names]).toEqual([[STOCK_A, 'Kho chính']]);
+    expect(calls.filter((c) => c.path === '/asp/v1/get_dictionary').map((c) => c.data_type)).toEqual([3]);
   });
 });

@@ -48,8 +48,11 @@ export const financeManifest = defineModule({
       legal_entity_books: columns(['org_id', 'id', 'legal_entity_id', 'regime', 'chart_version', 'effective_from', 'created_by', 'created_at']),
       marketplace_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'platform', 'last_test_state', 'last_tested_at', 'poll_cursor', 'last_polled_at', 'last_poll_state', 'orders_waiting', 'created_by', 'created_at']),
       marketplace_party: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'party_id', 'created_by', 'created_at']),
-      misa_amis_callback_pending: columns(['seq', 'org_refid', 'voucher_type', 'org_company_code', 'success', 'error_code', 'received_at', 'claimed_at'], { error_message: 'sensitive' }),
-      misa_amis_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'org_company_code', 'last_test_state', 'last_tested_at', 'created_by', 'created_at']),
+      misa_amis_callback_pending: columns(['seq', 'org_refid', 'voucher_type', 'org_company_code', 'success', 'error_code', 'received_at', 'claimed_at', 'product'], { error_message: 'sensitive' }),
+      misa_amis_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'org_company_code', 'last_test_state', 'last_tested_at', 'created_by', 'created_at', 'product', 'default_service_item_code', 'default_sales_item_code', 'default_sales_stock_code', 'unit_aliases']),
+      // The check of a connection's vouchers against the firm's MISA catalogue (#4112): the last request, and what was found per party (its tax code) or item (its code). No catalogue name, address or tax code is kept.
+      misa_amis_match: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'kind', 'state', 'catalogue_code', 'catalogue_id', 'checked_at', 'confirmed_by', 'confirmed_at'], { match_key: 'national_id_if_individual', candidate_name: 'pii' }),
+      misa_amis_match_check: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'params', 'state', 'failure', 'requested_by', 'requested_at', 'finished_at']),
       misa_amis_push: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'source_type', 'source_id', 'voucher_type', 'part', 'org_refid', 'org_refno', 'payload_digest', 'params', 'state', 'attempts', 'requested_by', 'requested_at', 'sent_at', 'answered_at', 'updated_at'], { reason: 'pii' }),
       misa_goods_code: columns(['org_id', 'id', 'account_code', 'item_code', 'warehouse_code', 'updated_by', 'updated_at']),
       org_account: columns(['org_id', 'id', 'code', 'name', 'parent_code', 'root_code', 'active', 'created_by', 'created_at', 'updated_by', 'updated_at']),

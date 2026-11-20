@@ -217,7 +217,15 @@ suite('Telegram Business mode on PostgreSQL (#3191)', () => {
     const shown = list.find((c) => c.id === a.connectionId)?.chatBusiness;
     expect(shown).toEqual([{ ref: expect.stringMatching(/^[0-9a-f]{12}$/), name: 'Lan Trần', username: 'lan_tran', enabled: true, canReply: true, approved: false }]);
     expect(JSON.stringify(list)).not.toContain(CONN);
-    expect(JSON.stringify(list)).not.toContain(String(OWNER_TG));
+    // The account's id is a short number, so look for it as a value, not as a substring of a random UUID or fingerprint.
+    const values: unknown[] = [];
+    JSON.stringify(list, (_key, value: unknown) => {
+      values.push(value);
+      return value;
+    });
+    expect(values).not.toContain(OWNER_TG);
+    expect(values).not.toContain(String(OWNER_TG));
+    expect(values.filter((v) => typeof v === 'string' && new RegExp(`(^|[^0-9a-z])${OWNER_TG}($|[^0-9a-z])`, 'i').test(v))).toEqual([]);
     ref = (shown as Array<{ ref: string }>)[0]?.ref as string;
     // Neither the audit log nor an event holds the business connection id, the account's id, its name or its @username.
     for (const needle of [CONN, 'Lan Trần', 'lan_tran']) {

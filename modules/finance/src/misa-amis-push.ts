@@ -18,11 +18,13 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { MISA_AMIS_PREVIEW_LIMIT, zId, zMisaAmisPreviewAsk, type MisaAmisPreviewAsk } from '@crove/kernel-contract';
+import { MISA_AMIS_PREVIEW_LIMIT, zId, zMisaAmisPreviewAsk, type MisaAmisPreviewAsk, type MisaAmisProduct } from '@crove/kernel-contract';
 import type { MemberRole, MisaAmisPushSource, MisaAmisPushState } from '@crove/db';
 import { AMIS_SAVE_BATCH_MAX } from '@crove/misa-amis';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { amisBatchDigest, amisContextOf, amisPartRows, loadAmisEntries, type AmisQuery } from './misa-amis-build.ts';
+import { AMIS_PLACEHOLDER_BRANCH, amisBatchDigest, amisContextOf, amisPartRows, loadAmisEntries, type AmisQuery } from './misa-amis-build.ts';
+import type { MisaAmisMatchResults } from './misa-amis-match.ts';
+import { checkIsFresh } from './misa-amis-matching.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -130,7 +132,7 @@ export const misaAmisPush = defineCommand({
     const connection = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.legal_entity_id', 'c.last_test_state', 'ch.status'])
+      .select(['c.id', 'c.product', 'c.legal_entity_id', 'c.last_test_state', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.connectionId)
       .executeTakeFirst();
@@ -143,7 +145,14 @@ export const misaAmisPush = defineCommand({
     const { connectionId: _id, digest, ...ask } = input;
     const buildAsk: MisaAmisPreviewAsk = { ...ask, legalEntityId: connection.legal_entity_id };
     // One more than the list holds, as the preview asks: a longer period is never pushed from a partial view.
-    const { entries, loaded } = await loadAmisEntries(queryOf(ctx), buildAsk, amisContextOf(buildAsk), MISA_AMIS_PREVIEW_LIMIT + 1);
+    // The vouchers are written with what the last check against the firm's catalogue matched (S3a, #4112): the same read as the preview's, so a check made since the person looked changes the digest, and the
+    // push is refused as stale instead of sending what was not looked at.
+    const matches = await queryOf(ctx)<MisaAmisMatchResults>('finance.misa_amis_match.results', { legalEntityId: connection.legal_entity_id, ask: buildAsk });
+    // A confirmation needs a check of this batch no older than 15 minutes (S3b, #4124): a match is a view of the catalogue at the time of the check, so a person confirms what was looked at a moment ago, and the
+    // worker reads the entries it relies on again before it sends (apps/kernel misa-amis-push-job.ts). No check, one of another batch, one that never finished or an old one: nothing is queued.
+    // ASP is held to the same rule (a voucher never goes out unchecked, and ASP needs catalogue ids even more): its connection is checked by the same job with the ASP client (#4152).
+    if (!checkIsFresh(matches.status.checkedAt, ctx.now)) throw new DomainError('MISA_AMIS_CHECK_REQUIRED', 409, 'Hãy kiểm tra chứng từ với danh mục MISA (trong 15 phút gần đây) rồi mới gửi');
+    const { entries, loaded } = await loadAmisEntries(queryOf(ctx), buildAsk, amisContextOf(buildAsk, AMIS_PLACEHOLDER_BRANCH, matches), MISA_AMIS_PREVIEW_LIMIT + 1);
     if (loaded > MISA_AMIS_PREVIEW_LIMIT) throw new DomainError('MISA_AMIS_PUSH_TOO_MANY', 422, 'Kỳ này có quá nhiều chứng từ, hãy chọn khoảng ngắn hơn');
     if (entries.some((e) => e.mapping.blockers.length > 0)) throw new DomainError('MISA_AMIS_PUSH_BLOCKED', 409, 'Có chứng từ chưa đủ điều kiện gửi, hãy xem lại bản xem trước');
     if (amisBatchDigest(entries) !== digest) throw new DomainError('MISA_AMIS_PUSH_STALE', 409, 'Dữ liệu đã thay đổi từ lúc bạn xem, hãy xem trước lại');
@@ -221,7 +230,8 @@ export const misaAmisPush = defineCommand({
 // ---------------------------------------------------------------------------------------------------------------
 // What the worker needs
 
-export type MisaAmisPushTarget = { action: 'none'; reason: 'not_found' | 'not_active' } | { action: 'push'; id: string; channelConnectionId: string; orgCompanyCode: string; legalEntityId: string };
+// `product`: which MISA product the connection is for (#4113, S4 of #4103), so the worker uses that product's client and opens only an access code sealed for it.
+export type MisaAmisPushTarget = { action: 'none'; reason: 'not_found' | 'not_active' } | { action: 'push'; id: string; product: MisaAmisProduct; channelConnectionId: string; orgCompanyCode: string; legalEntityId: string };
 
 export const misaAmisPushTarget = defineQuery({
   name: 'finance.misa_amis.push_target',
@@ -231,13 +241,13 @@ export const misaAmisPushTarget = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'ch.status'])
+      .select(['c.id', 'c.product', 'c.channel_connection_id', 'c.org_company_code', 'c.legal_entity_id', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.connectionId)
       .executeTakeFirst();
     if (!row) return { action: 'none', reason: 'not_found' };
     if (row.status !== 'active') return { action: 'none', reason: 'not_active' };
-    return { action: 'push', id: row.id, channelConnectionId: row.channel_connection_id, orgCompanyCode: row.org_company_code, legalEntityId: row.legal_entity_id };
+    return { action: 'push', id: row.id, product: row.product, channelConnectionId: row.channel_connection_id, orgCompanyCode: row.org_company_code, legalEntityId: row.legal_entity_id };
   },
 });
 
@@ -273,7 +283,7 @@ export const misaAmisPushBegin = defineCommand({
     const connection = await ctx.trx
       .selectFrom('crove_finance.misa_amis_connection as c')
       .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
-      .select(['c.id', 'ch.status'])
+      .select(['c.id', 'c.product', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', input.connectionId)
       .forUpdate('c')
@@ -305,8 +315,9 @@ export const misaAmisPushBegin = defineCommand({
       .where('requested_at', '<', new Date(ctx.now.getTime() - PUSH_QUEUED_EXPIRY_DAYS * 24 * 3600 * 1000))
       .execute();
 
-    // 1. Rows MISA took, or whose answer was lost (a batch begun and never answered is `ambiguous` above): MISA is asked for their results once per run, before anything else is sent.
-    if (!input.checked) {
+    // 1. Rows MISA took, or whose answer was lost (a batch begun and never answered is `ambiguous` above): MISA is asked for their results once per run, before anything else is sent. Only for AMIS: MISA ASP has no
+    // call that lists results (#4103), so an ASP row that MISA took (`sent`) or whose answer was lost (`ambiguous`) is settled by MISA's callback or by a person (push_resolve), never asked about.
+    if (!input.checked && connection.product === 'amis') {
       const checkable = await ctx.trx
         .selectFrom(table)
         .select(['org_refid', 'state', 'attempts', 'sent_at', 'updated_at'])
@@ -394,13 +405,14 @@ export const misaAmisPushBegin = defineCommand({
       };
     }
 
-    // 3. Nothing to send: the job comes back later while rows wait for MISA's answer inside the window.
+    // 3. Nothing to send: the job comes back later while rows wait for MISA's answer inside the window. For ASP only a row being sent counts (the next run sweeps it if its answer was lost): a `sent` row waits for the
+    // callback or a person, and no run of the job polls for it.
     const waiting = await ctx.trx
       .selectFrom(table)
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('connection_id', '=', input.connectionId)
-      .where('state', 'in', ['sending', 'sent', 'ambiguous'])
+      .where('state', 'in', connection.product === 'amis' ? ['sending', 'sent', 'ambiguous'] : ['sending'])
       .where('updated_at', '>', windowStart)
       .limit(1)
       .executeTakeFirst();

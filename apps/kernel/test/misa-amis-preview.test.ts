@@ -4,7 +4,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { MISA_AMIS_KINDS, MISA_AMIS_PREVIEW_BLOCKERS, MISA_AMIS_PREVIEW_LIMIT, zMisaAmisPreview } from '@crove/kernel-contract';
-import type { CashVoucher, PurchaseVoucher, SalesVoucher } from '@crove/mod-finance';
+import { NO_MATCH_RESULTS, type CashVoucher, type MisaAmisMatchResults, type PurchaseVoucher, type SalesVoucher } from '@crove/mod-finance';
 import { misaAmisPreview, type MisaAmisPreviewQuery } from '../src/misa-amis-preview.ts';
 
 const CHART = [
@@ -61,7 +61,50 @@ const cash = (): CashVoucher => ({
 });
 
 const range = { from: '2026-10-01', to: '2026-10-31' } as const;
-const all = { 'finance.accounts.list': CHART, 'finance.vouchers.purchases': [], 'finance.vouchers.sales': [], 'finance.vouchers.cash': [], 'finance.misa_goods_codes.list': [] };
+const all = { 'finance.accounts.list': CHART, 'finance.vouchers.purchases': [], 'finance.vouchers.sales': [], 'finance.vouchers.cash': [], 'finance.misa_goods_codes.list': [], 'finance.misa_amis_match.results': NO_MATCH_RESULTS };
+
+const CHECKED = '2026-11-19T12:00:00.000Z';
+const done = (partyCodes: Array<[string, string]>, itemCodes: string[]): MisaAmisMatchResults => ({
+  connectionId: '22222222-2222-4222-8222-222222222222',
+  status: { state: 'done', failure: null, requestedAt: '2026-11-19T11:59:00.000Z', checkedAt: CHECKED },
+  partyCodes: new Map(partyCodes),
+  partyAmbiguous: new Set(),
+  itemCodes: new Set(itemCodes),
+});
+
+describe('misaAmisPreview after a check against the firm\'s catalogue (#4112)', () => {
+  const ask = { kind: 'purchase_services' as const, ...range, serviceItemCode: 'DV_CHUNG' };
+  it('reads the last check of the ask\'s entity, says when it was made and writes the matched party code on the voucher', async () => {
+    const entity = '11111111-1111-4111-8111-111111111111';
+    const { query, calls } = fake({ ...all, 'finance.vouchers.purchases': [purchase()], 'finance.misa_amis_match.results': done([['0101234564', 'NCC_ABC']], ['DV_CHUNG']) });
+    const result = await misaAmisPreview(query, { ...ask, legalEntityId: entity });
+    expect(calls.find((c) => c.name === 'finance.misa_amis_match.results')?.input).toEqual({ legalEntityId: entity, ask: { ...ask, legalEntityId: entity } });
+    expect(result).toMatchObject({ checkedAgainstAmis: true, ready: 1, blocked: 0, matchCheck: { state: 'done', failure: null, checkedAt: CHECKED } });
+    expect(zMisaAmisPreview.safeParse(result).success).toBe(true);
+  });
+  it('asks for the caller\'s own entity when the ask names none', async () => {
+    const { query, calls } = fake({ ...all, 'finance.vouchers.purchases': [purchase()] });
+    await misaAmisPreview(query, ask);
+    expect(calls.find((c) => c.name === 'finance.misa_amis_match.results')?.input).toEqual({ ask });
+  });
+  it('blocks a party and an item the check did not match, and does not judge them while no check is done', async () => {
+    const unmatched = await misaAmisPreview(fake({ ...all, 'finance.vouchers.purchases': [purchase()], 'finance.misa_amis_match.results': done([], []) }).query, ask);
+    expect(unmatched).toMatchObject({ checkedAgainstAmis: true, ready: 0, blocked: 1 });
+    expect(unmatched.items[0]?.blockers.map((b) => b.code).sort()).toEqual(['item_code_unknown', 'party_code_unknown']);
+    const waiting: MisaAmisMatchResults = { connectionId: '22222222-2222-4222-8222-222222222222', status: { state: 'requested', failure: null, requestedAt: CHECKED, checkedAt: null }, partyCodes: null, partyAmbiguous: null, itemCodes: null };
+    const pending = await misaAmisPreview(fake({ ...all, 'finance.vouchers.purchases': [purchase()], 'finance.misa_amis_match.results': waiting }).query, ask);
+    expect(pending).toMatchObject({ checkedAgainstAmis: false, ready: 1, blocked: 0, matchCheck: { state: 'requested', checkedAt: null } });
+    const failed: MisaAmisMatchResults = { ...waiting, status: { state: 'failed', failure: 'credentials', requestedAt: CHECKED, checkedAt: null } };
+    const refused = await misaAmisPreview(fake({ ...all, 'finance.vouchers.purchases': [purchase()], 'finance.misa_amis_match.results': failed }).query, ask);
+    expect(refused).toMatchObject({ checkedAgainstAmis: false, ready: 1, matchCheck: { state: 'failed', failure: 'credentials' } });
+  });
+  it('changes the digest when a check changes what is written, so a confirmation made on the old view is stale', async () => {
+    const withCode = await misaAmisPreview(fake({ ...all, 'finance.vouchers.purchases': [purchase()], 'finance.misa_amis_match.results': done([['0101234564', 'NCC_ABC']], ['DV_CHUNG']) }).query, ask);
+    const otherCode = await misaAmisPreview(fake({ ...all, 'finance.vouchers.purchases': [purchase()], 'finance.misa_amis_match.results': done([['0101234564', 'NCC_KHAC']], ['DV_CHUNG']) }).query, ask);
+    const unchecked = await misaAmisPreview(fake({ ...all, 'finance.vouchers.purchases': [purchase()] }).query, ask);
+    expect(new Set([withCode.digest, otherCode.digest, unchecked.digest]).size).toBe(3);
+  });
+});
 
 describe('misaAmisPreview', () => {
   it('asks for the vouchers of the kind, with the range, the entity and one more than the list holds', async () => {
@@ -78,7 +121,7 @@ describe('misaAmisPreview', () => {
     for (const kind of MISA_AMIS_KINDS) {
       const { query, calls } = fake(all);
       const result = await misaAmisPreview(query, { kind, ...range, legalEntityId: entity });
-      expect(result).toEqual({ kind, vouchers: 0, ready: 0, blocked: 0, checkedAgainstAmis: false, purchasePurpose: '1', more: false, digest: createHash('sha256').update('').digest('hex'), items: [] });
+      expect(result).toEqual({ kind, vouchers: 0, ready: 0, blocked: 0, checkedAgainstAmis: false, matchCheck: NO_MATCH_RESULTS.status, purchasePurpose: '1', more: false, digest: createHash('sha256').update('').digest('hex'), items: [] });
       expect(calls.find((c) => c.name === expected[kind])?.input, kind).toMatchObject({ ...range, limit: MISA_AMIS_PREVIEW_LIMIT + 1, legalEntityId: entity });
       expect(calls.some((c) => c.name === 'finance.misa_goods_codes.list'), kind).toBe(kind === 'purchase_goods');
     }

@@ -18,6 +18,7 @@ import {
   type AmisMapping,
 } from './misa-amis-vouchers.ts';
 import { goodsPurchaseRows, salesRows, servicePurchaseRows, type CashVoucher, type PurchaseVoucher, type SalesVoucher } from './misa.ts';
+import { hasNoTaxCode, normalizeTaxCode, type WantedName } from './misa-amis-matching.ts';
 
 /** Stands where the AMIS branch will be, so the mapper does not report it missing; the digest leaves the branch out, and the worker writes the real one. */
 export const AMIS_PLACEHOLDER_BRANCH = '00000000-0000-4000-8000-000000000000';
@@ -36,25 +37,76 @@ export interface AmisEntry {
 export const amisSourceType = (kind: MisaAmisKind): MisaAmisPushSource =>
   kind === 'purchase_services' || kind === 'purchase_goods' ? 'purchase_document' : kind === 'sales' ? 'sales_document' : 'cash_voucher';
 
-/** The mapper's context for an ask: the placeholder branch (or the real one, for the worker), no party codes (AMIS matches a party by name and tax code: unconfirmed, see the docs). */
-export const amisContextOf = (ask: AmisBuildAsk, branchId: string | null = AMIS_PLACEHOLDER_BRANCH): AmisContext => ({
+/** What a check against the firm's catalogue found, as the mapper reads it (misa-amis-match.ts `finance.misa_amis_match.results`): null until a check is done. */
+export interface AmisMatches {
+  partyCodes: ReadonlyMap<string, string> | null;
+  // The party tax codes the check found several active entries for (#4114); absent for a caller that does not read them.
+  partyAmbiguous?: ReadonlySet<string> | null;
+  itemCodes: ReadonlySet<string> | null;
+  /** The codes a person confirmed for parties with no tax code, by party id (S3b, #4124). */
+  partyNameCodes?: ReadonlyMap<string, string> | null;
+  /** MISA ASP (#4125): the connection's product and what its check matched in the item, unit and stock catalogues. */
+  product?: 'amis' | 'asp';
+  itemIds?: ReadonlyMap<string, string> | null;
+  unitIds?: ReadonlyMap<string, { name: string; id: string }> | null;
+  unitAmbiguous?: ReadonlySet<string> | null;
+  stockIds?: ReadonlyMap<string, string> | null;
+  /** The stock code a person picked for the connection's sales lines (part C of #4125). */
+  salesStockCode?: string | null;
+}
+
+/**
+ * The mapper's context for an ask: the placeholder branch (or the real one, for the worker) and, once a check against the catalogue is done, the party and item codes it matched (a party or item it did not
+ * match is then a blocker). Without a check there are no codes and nothing is checked (AMIS matches a party by name and tax code: unconfirmed, see the docs).
+ */
+export const amisContextOf = (ask: AmisBuildAsk, branchId: string | null = AMIS_PLACEHOLDER_BRANCH, matches: AmisMatches | null = null): AmisContext => ({
   branchId,
   purchasePurpose: ask.purchasePurpose ?? '1',
   serviceItemCode: ask.serviceItemCode ?? null,
   salesItemCode: ask.salesItemCode ?? null,
   defaultUnitName: 'Lần',
-  partyCodes: null,
+  partyCodes: matches?.partyCodes ?? null,
+  partyNameCodes: matches?.partyNameCodes ?? null,
+  partyAmbiguous: matches?.partyAmbiguous ?? null,
+  itemCodes: matches?.itemCodes ?? null,
+  asp:
+    matches?.product === 'asp'
+      ? { itemIds: matches.itemIds ?? null, unitIds: matches.unitIds ?? null, unitAmbiguous: matches.unitAmbiguous ?? null, stockIds: matches.stockIds ?? null, salesStockCode: matches.salesStockCode ?? null }
+      : null,
 });
+
+/** What a check has to look up for the vouchers of an ask: the tax codes of their parties (digits only) and the item codes they are written with. */
+export interface AmisWanted {
+  taxCodes: string[];
+  itemCodes: string[];
+  /** The parties with no tax code at all (none or blank), by id and name as Ludy has them: looked up by name (S3b, #4124). The names are for the worker's memory and the comparison, never stored. */
+  names: WantedName[];
+  /** The unit names (as Ludy writes them, the voucher's default included) and the stock codes the lines are written with: only MISA ASP names them by id (#4125), so only its check asks for them. */
+  unitNames: string[];
+  stockCodes: string[];
+}
 
 /**
  * Loads and maps the vouchers of the ask. `limit` is how many the loaders are asked for (the preview asks for one more than it lists, so it knows there are more); `loaded` is how many they returned, before
  * a kind drops the vouchers that have no line of it (a purchase with only stock lines has no services voucher).
  */
-export async function loadAmisEntries(query: AmisQuery, ask: AmisBuildAsk, ctx: AmisContext, limit: number): Promise<{ entries: AmisEntry[]; loaded: number }> {
+export async function loadAmisEntries(query: AmisQuery, ask: AmisBuildAsk, ctx: AmisContext, limit: number): Promise<{ entries: AmisEntry[]; loaded: number; wanted: AmisWanted }> {
   const range = { from: ask.from, to: ask.to, limit, ...(ask.legalEntityId === undefined ? {} : { legalEntityId: ask.legalEntityId }) };
   const sourceType = amisSourceType(ask.kind);
   const entries: AmisEntry[] = [];
   let loaded = 0;
+  const taxCodes = new Set<string>();
+  const itemCodes = new Set<string>();
+  const names = new Map<string, string>();
+  const unitNames = new Set<string>();
+  const stockCodes = new Set<string>();
+  const wantUnit = (unit: string | null | undefined) => unitNames.add(unit ?? ctx.defaultUnitName);
+  const wantParty = (party: { id?: string | null; name?: string; taxCode: string | null } | null | undefined) => {
+    const key = normalizeTaxCode(party?.taxCode);
+    if (key !== null) taxCodes.add(key);
+    // Only a party with no tax code at all is looked up by name: a tax code that is present and unusable stays a blocker (party_code_unknown) for a person to fix, never matched to a same-name entry.
+    else if (party?.id && party.name && hasNoTaxCode(party.taxCode)) names.set(party.id, party.name);
+  };
   if (ask.kind === 'purchase_services' || ask.kind === 'purchase_goods') {
     const vouchers = await query<PurchaseVoucher[]>('finance.vouchers.purchases', range);
     loaded = vouchers.length;
@@ -62,6 +114,9 @@ export async function loadAmisEntries(query: AmisQuery, ask: AmisBuildAsk, ctx: 
       for (const v of vouchers) {
         // A purchase with only stock lines has no services voucher.
         if (servicePurchaseRows(v).length === 0) continue;
+        wantParty(v.vendor);
+        if (ctx.serviceItemCode !== null) itemCodes.add(ctx.serviceItemCode);
+        for (const row of servicePurchaseRows(v)) wantUnit(row.line.unit);
         entries.push({ sourceId: v.sourceId, sourceType, mapping: purchaseServiceAmisVouchers(v, ctx) });
       }
     } else {
@@ -69,7 +124,14 @@ export async function loadAmisEntries(query: AmisQuery, ask: AmisBuildAsk, ctx: 
       const goodsCodes = await query<MisaGoodsCode[]>('finance.misa_goods_codes.list', {});
       const parents = accountParents(chart);
       for (const v of vouchers) {
-        if (goodsPurchaseRows(v, goodsCodes, parents).length === 0) continue;
+        const goodsRows = goodsPurchaseRows(v, goodsCodes, parents);
+        if (goodsRows.length === 0) continue;
+        wantParty(v.vendor);
+        for (const row of goodsRows) {
+          if (row.goods.itemCode !== null) itemCodes.add(row.goods.itemCode);
+          if (row.goods.warehouseCode) stockCodes.add(row.goods.warehouseCode);
+          wantUnit(row.line.unit);
+        }
         entries.push({ sourceId: v.sourceId, sourceType, mapping: purchaseGoodsAmisVouchers(v, goodsCodes, parents, ctx) });
       }
     }
@@ -78,14 +140,20 @@ export async function loadAmisEntries(query: AmisQuery, ask: AmisBuildAsk, ctx: 
     loaded = vouchers.length;
     for (const v of vouchers) {
       if (salesRows(v).length === 0) continue;
+      wantParty(v.customer);
+      if (ctx.salesItemCode !== null) itemCodes.add(ctx.salesItemCode);
+      for (const row of salesRows(v)) wantUnit(row.line.unit);
       entries.push({ sourceId: v.sourceId, sourceType, mapping: salesAmisVouchers(v, ctx) });
     }
   } else {
     const vouchers = await query<CashVoucher[]>('finance.vouchers.cash', { ...range, type: ask.kind });
     loaded = vouchers.length;
-    for (const v of vouchers) entries.push({ sourceId: v.sourceId, sourceType, mapping: cashAmisVouchers(v, ctx) });
+    for (const v of vouchers) {
+      wantParty(v.party);
+      entries.push({ sourceId: v.sourceId, sourceType, mapping: cashAmisVouchers(v, ctx) });
+    }
   }
-  return { entries, loaded };
+  return { entries, loaded, wanted: { taxCodes: [...taxCodes].sort(), itemCodes: [...itemCodes].sort(), unitNames: [...unitNames].sort(), stockCodes: [...stockCodes].sort(), names: [...names].map(([partyId, name]) => ({ partyId, name })).sort((a, b) => a.partyId.localeCompare(b.partyId)) } };
 }
 
 // Canonical JSON: keys sorted, an exact number written as its own text, nothing else that JSON.stringify would leave to chance. Only plain data goes in (the mapper's output).

@@ -12,6 +12,10 @@ const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
 // Codes the SPA never receives, so it keeps the kernel's message for them.
 const NOT_SHOWN: Record<string, string> = {
+  // The ads draft an AI app saves over MCP (#3861) is a new draft only: the refusal answers a connected app, and no screen sends that command.
+  ADS_DRAFT_AI_NEW_ONLY: 'mcp ads draft',
+  // The check against the firm's MISA catalogue (#4112): the worker's record of a check, which no screen sends.
+  MISA_AMIS_MATCH_INVALID: 'misa amis match record',
   // Live notes pieces (#3109, ADR-0052 L4a): sent by the recorder's sender in the background, which stops quietly on any of them; the recording and its upload go on and no screen shows them.
   CONSENT_MISSING: 'meetings live notes',
   LIVE_CLOSED: 'meetings live notes',

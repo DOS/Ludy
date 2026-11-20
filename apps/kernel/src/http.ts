@@ -167,6 +167,7 @@ import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
 import { MAX_MISA_AMIS_CALLBACK_BYTES, acceptMisaAmisCallback } from './misa-amis-callback.ts';
+import type { AmisCallbackKey } from '@crove/misa-amis';
 import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, WHATSAPP_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
 import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
 import { ZOOM_MAX_NOTICE_BYTES, ZOOM_SIGNATURE_HEADER, ZOOM_TIMESTAMP_HEADER, ZOOM_WEBHOOK_PATH, ZoomReplayCache, acceptZoomWebhook, type ZoomWebhookConfig } from './zoom-webhook.ts';
@@ -309,7 +310,8 @@ export interface HttpDeps {
   // Notices per minute per client address; one is checked and queued per call.
   bankFeedWebhookLimit?: RateLimiter;
   // MISA AMIS's callback with the result of a save (#3903): the route exists only where the deployment holds the ClientID (the HMAC key of the signature); without it the path is not served.
-  misaAmisCallback?: { clientId: string };
+  // The HMAC keys of the callback's signature: one ClientID (MISA AMIS's), or one per product the deployment holds (MISA AMIS and MISA ASP, #4103), tried all, never told apart.
+  misaAmisCallback?: { clientId: string } | { keys: readonly AmisCallbackKey[] };
   misaAmisCallbackLimit?: RateLimiter;
   // Zalo OA's webhook for the conversation core (#2304): the app id and the OA secret key that sign its notices. Unset: the route does
   // not exist.
@@ -1010,8 +1012,8 @@ export function createHttpApp(deps: HttpDeps) {
     );
   }
 
-  // MISA AMIS's callback with the result of a save (#3903, S4 of #3854): public, checked by the HMAC of its signed `data` before anything else is read, capped in size and rate limited per client
-  // address before the body is read. The signature proves MISA sent it, not for which organisation (one key per deployment): the organisation is found from our own stored push row, never from the
+  // MISA AMIS's callback with the result of a save (#3903, S4 of #3854; MISA ASP posts to it too, #4103): public, checked by the HMAC of its signed `data` before anything else is read, capped in size and rate limited per client
+  // address before the body is read. The signature proves MISA sent it, not for which organisation (one key per product the deployment holds): the organisation is found from our own stored push row, never from the
   // envelope (misa-amis-callback.ts). A verified message is always answered 200, so the answer says nothing about an org_refid; a refusal is a fixed code, and nothing of the body, the signature,
   // MISA's text or the ClientID is logged or kept. Without the ClientID the route is not registered: a POST to the path falls through to the session check of /api/* (401) and reaches nothing.
   const misaAmisCallback = deps.misaAmisCallback;
@@ -1032,7 +1034,7 @@ export function createHttpApp(deps: HttpDeps) {
       bodyLimit({ maxSize: MAX_MISA_AMIS_CALLBACK_BYTES }),
       async (c) => {
         try {
-          const outcome = await acceptMisaAmisCallback(runtime, misaAmisCallback.clientId, await c.req.text());
+          const outcome = await acceptMisaAmisCallback(runtime, 'keys' in misaAmisCallback ? misaAmisCallback.keys : [{ product: 'amis' as const, clientId: misaAmisCallback.clientId }], await c.req.text());
           if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
           return c.json({ ok: true }, 200);
         } catch {

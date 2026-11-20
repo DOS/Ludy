@@ -32,6 +32,8 @@ const { DealPartyDuplicate } = await import('../src/components/deal-form.tsx');
 
 const deal = (partyDuplicateOf: Deal['partyDuplicateOf']): Deal => ({
   id: '00000000-0000-4000-8000-000000000001',
+  actorOrigin: 'ui',
+  tainted: false,
   partyId: '00000000-0000-4000-8000-000000000010',
   partyName: 'Công ty ABC (trùng)',
   title: 'Gói kế toán năm',

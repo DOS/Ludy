@@ -71,7 +71,11 @@ Anh đã quyết ngày 2026-11-18 (cuộc trò chuyện với Platform PO, chọ
 4. **Tin đánh thức có thêm sự kiện theo từng mảng** (ví dụ hội thoại chưa trả lời), vẫn chỉ gồm mã số, loại, ngày và số tiền, không có chữ nào của khách.
 5. **Vai trò**: giấy phép vẫn là giấy phép của chủ hoặc quản trị viên, thu hẹp bằng quyền; **chưa gắn với vị trí trong sơ đồ tổ chức (ADR-0029)**. Lý do: quyền ghi theo mảng và việc "mọi thứ trên R1 phải chờ người duyệt" đã giới hạn đủ; vị trí kéo theo thêm cả bộ máy (mẫu, lượt chạy) mà quy trình này không cần; muốn agent chỉ thấy phần của một người thì dùng giấy phép gắn với người đó. Sẽ xem lại khi có công ty cần một đồng nghiệp AI thấy ít hơn người cấp quyền.
 
+Đã làm cho Engage (#3862): các luật nhắc việc không gọi mô hình nào, và mỗi luật cũng hiện trên Hôm nay khi chưa nối agent nào. Chín loại sự kiện (hội thoại mới, khách chờ quá N giờ, thời hạn trả lời của nền tảng sắp hết, báo giá đã gửi chưa có trả lời sau N ngày, lịch hẹn ngày mai, bình luận mới dưới bài đã đăng, quảng cáo vượt tốc độ chi hoặc hạn mức) chỉ mang mã số, ngày, số tiền và từ cố định; số tiền luôn kèm đơn vị tiền. Mỗi mục chỉ gửi một lần trong mỗi khoảng thời gian (khóa gồm mục và ngày), và chỉ cho giấy phép của công ty có quyền của mảng đó. N có mặc định (4 giờ, 3 giờ, 5 ngày) và chủ hoặc quản trị viên đổi trong Cài đặt, không đặt trên màn hình hộp thư.
+
 Việc làm chia thành năm bản, mỗi bản có duyệt bảo mật riêng: (a) tài liệu này, (b) hộp kín đọc hội thoại và CRM, (c) quyền ghi theo mảng, (d) đề xuất thay cho thực thi, (e) sự kiện đánh thức theo mảng.
+
+**Ghi chú đã xây (E2, #3861):** Dy và Uy giờ làm ngay được các bước R1 nhỏ (giao, đóng, ghi chú, gắn liên hệ, tạo và chuyển cơ hội, lưu báo giá nháp, đánh dấu việc tiếp theo, lưu nháp quảng cáo) trong một "hộp kín ghi" riêng, mà cơ sở dữ liệu chỉ cho ghi đúng những dòng của từng việc. Một chỗ khác với lời văn ở mục 3: các chính sách của hộp kín này hỏi qua một hàm nhỏ, không đọc khóa niêm phong trực tiếp, để các bài kiểm tra bảo vệ không bị lệch; bài kiểm tra riêng của E2 chốt hàm nào và chính sách nào nhắc tới nó.
 
 ## Khi nào xem lại
 

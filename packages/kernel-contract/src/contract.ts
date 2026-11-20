@@ -195,7 +195,8 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zMarketplaceConnect, zMarketplaceConnection, zMarketplaceConnectionTested, zMarketplaceProviders } from './marketplace-connections.ts';
-import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisStatus } from './misa-amis-connections.ts';
+import { zMisaAmisConnect, zMisaAmisConnection, zMisaAmisDefaultItem, zMisaAmisStatus, zMisaAmisUnitAlias, zMisaAmisUnitRow, zMisaAmisUnitsAsk } from './misa-amis-connections.ts';
+import { zMisaAmisMatchCheckQueued, zMisaAmisNameDecided, zMisaAmisNameDecision, zMisaAmisNameProposal, zMisaAmisNameProposalsAsk } from './misa-amis-match.ts';
 import { zMisaAmisPushConfirm, zMisaAmisPushConfirmed, zMisaAmisPushListAsk, zMisaAmisPushResolveAsk, zMisaAmisPushRow } from './misa-amis-push.ts';
 import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './misa-check.ts';
 import { zMisaAmisPreview, zMisaAmisBlockerNotes, zMisaAmisBlockerNotesAsk, zMisaAmisPreviewAsk } from './misa-amis-preview.ts';
@@ -270,6 +271,7 @@ import {
   zSavedReplyUpdate,
   zConversationAddress,
 } from './conversations.ts';
+import { zEngageWakeRules, zEngageWakeRulesView } from './engage-wake.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
 import { zDepreciationRequest, zJournalVoucherRequest, zSurplusResolutionRequest, zYearClosingRequest } from './journal-voucher.ts';
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
@@ -499,6 +501,7 @@ import {
   zSummaryCopied,
   zSummaryCopy,
 } from './meetings.ts';
+import { zGlossaryAdd, zGlossaryDone, zGlossaryList, zGlossaryRemove, zGlossaryTerms, zGlossaryUpdate } from './meeting-glossary.ts';
 import {
   zMinutesTemplateArchive,
   zMinutesTemplateCreate,
@@ -1291,6 +1294,13 @@ export const contract = {
       create: oc.input(zMinutesTemplateCreate).output(zMinutesTemplateDone),
       update: oc.input(zMinutesTemplateUpdate).output(zMinutesTemplateDone),
       archive: oc.input(zMinutesTemplateArchive).output(zMinutesTemplateDone),
+    },
+    // The org's glossary (#4043): terms Vy spells the way the org does. Owner and admin only, for the list too. GLOSSARY_TERM_TAKEN (409), GLOSSARY_TERM_NOT_FOUND (404), GLOSSARY_MAX (422).
+    glossary: {
+      list: oc.input(zGlossaryList).output(zGlossaryTerms),
+      add: oc.input(zGlossaryAdd).output(zGlossaryDone),
+      update: oc.input(zGlossaryUpdate).output(zGlossaryDone),
+      remove: oc.input(zGlossaryRemove).output(zGlossaryDone),
     },
     // The org's three retention settings (#2579): anyone who reads meetings sees them, an owner or admin changes them.
     settings: {
@@ -2361,6 +2371,9 @@ export const contract = {
     // admins, with a fresh second factor).
     retention: oc.input(z.strictObject({})).output(zConversationRetention),
     setRetention: oc.input(zConversationRetentionSet).output(zConversationRetention),
+    // Engage's wake rules (#3862): the org's N for the three rules that have one (every member reads, owners and admins set; set in Settings, never on the inbox screen).
+    wakeRules: oc.input(z.strictObject({})).output(zEngageWakeRulesView),
+    setWakeRules: oc.input(zEngageWakeRules).output(zEngageWakeRulesView),
     eraseContact: oc.input(zConversationEraseContact.extend({ idempotencyKey: zId })).output(zConversationErased),
     // Deleting a disconnected channel's conversations too (#3299): the counts the confirmation names, then the erasure (owners and admins, a fresh
     // second factor; the channel must be disconnected first).
@@ -2410,7 +2423,7 @@ export const contract = {
     misaAmisBlockerNotes: oc.input(zMisaAmisBlockerNotesAsk).output(zMisaAmisBlockerNotes),
     // A person confirms a previewed batch for MISA AMIS (#3902, S3b): the requests are queued and the worker sends them. Owner or admin, never an agent. MISA_AMIS_PUSH_DISABLED (404) while the deployment has not
     // switched the push on, MISA_AMIS_NOT_TESTED, CHANNEL_NOT_ACTIVE, MISA_AMIS_CONNECTION_NOT_FOUND (404), MISA_AMIS_ENTITY_MISMATCH, MISA_AMIS_PUSH_TOO_MANY, MISA_AMIS_PUSH_EMPTY (422), MISA_AMIS_PUSH_BLOCKED and
-    // MISA_AMIS_PUSH_STALE (409: the data changed since the preview; nothing is queued), FORBIDDEN (403).
+    // MISA_AMIS_PUSH_STALE (409: the data changed since the preview; nothing is queued), MISA_AMIS_CHECK_REQUIRED (409: no check of this batch against the catalogue in the last 15 minutes, #4124), FORBIDDEN (403).
     misaAmisPush: oc.input(zMisaAmisPushConfirm).output(zMisaAmisPushConfirmed),
   },
   // Opening balances from Excel (#320), owners and admins. preview checks a trial balance read from the template and
@@ -2664,6 +2677,25 @@ export const contract = {
       // unreachable) and a time, which the list then shows. Owner or admin. MISA_AMIS_DISABLED (404) when this deployment does not offer the connector, MISA_AMIS_CONNECTION_NOT_FOUND (404),
       // CHANNEL_NOT_ACTIVE (409), FORBIDDEN (403).
       test: oc.input(z.object({ id: zId })).output(z.object({ queued: z.boolean() })),
+      // Keeps (or, with a null code, clears) the default item of the connection for service lines or sales lines (S3b, #4124): a code typed as the MISA catalogue spells it, which the next check validates against
+      // the catalogue. Owner or admin. MISA_AMIS_CONNECTION_NOT_FOUND (404), FORBIDDEN (403); not gated by the connector's switch (nothing is sent).
+      setDefaultItem: oc.input(zMisaAmisDefaultItem).output(z.object({ saved: z.boolean() })),
+      // Keeps (or, with a null name, clears) the MISA name of one unit of Ludy on a MISA ASP connection (#4125): typed as the catalogue spells it, matched exactly by the next check. Owner or admin.
+      // MISA_AMIS_CONNECTION_NOT_FOUND (404), MISA_AMIS_UNIT_NOT_ASP (422), MISA_AMIS_UNIT_INVALID (422), MISA_AMIS_UNIT_ALIASES_FULL (422), FORBIDDEN (403).
+      setUnitAlias: oc.input(zMisaAmisUnitAlias).output(z.object({ saved: z.boolean() })),
+    },
+    // The check of a connection's vouchers against the firm's own MISA catalogue (S3a, #4112 of #4103): the worker opens the sealed access code, reads the catalogue pages in its memory, matches the parties
+    // (by tax code) and items (by code) of the batch and records only what it found, which the preview then shows ("checked at"). Owner or admin; a second press while a check waits returns it. The ask is the
+    // preview's own. MISA_AMIS_DISABLED (404), MISA_AMIS_CONNECTION_NOT_FOUND (404), CHANNEL_NOT_ACTIVE (409), MISA_AMIS_MATCH_ENTITY (422) when the ask names another entity, FORBIDDEN (403).
+    matches: {
+      check: oc.input(z.strictObject({ id: zId, ask: zMisaAmisPreviewAsk })).output(zMisaAmisMatchCheckQueued),
+      // The proposals of the last check (S3b, #4124): a party with no tax code and the one active catalogue entry of its name. Owner or admin. Confirming makes the entry's code the party's code on the vouchers (the
+      // preview then changes); rejecting deletes the proposal. MISA_AMIS_NAME_PROPOSAL_GONE (409) when a newer check replaced it, MISA_AMIS_CONNECTION_NOT_FOUND (404), FORBIDDEN (403).
+      proposals: oc.input(zMisaAmisNameProposalsAsk).output(z.array(zMisaAmisNameProposal)),
+      // The units of the last check of a MISA ASP connection that have no match (or a name typed) (#4125). Owner or admin.
+      units: oc.input(zMisaAmisUnitsAsk).output(z.array(zMisaAmisUnitRow)),
+      confirmName: oc.input(zMisaAmisNameDecision).output(zMisaAmisNameDecided),
+      rejectName: oc.input(zMisaAmisNameDecision).output(zMisaAmisNameDecided),
     },
     // The vouchers pushed through a connection, with their state (#3902, S3b-2). Every role reads; a row's reason is MISA's own text (untrusted).
     pushes: {

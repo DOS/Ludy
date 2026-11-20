@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.ts';
+import { misaCallbackKeys } from '../src/kernel.ts';
 
 const BASE = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: 'unit-test-jwt-secret-0123456789abcdef', AUTH_ISSUER: 'crove-auth' };
 const CLIENT = 'ae60ffcb-817e-474c-a4a3-212ca13a7984';
@@ -58,5 +59,76 @@ describe('MISA_AMIS_PUSH (#3902)', () => {
     expect(compose).toContain('MISA_AMIS_PUSH: ${MISA_AMIS_PUSH:-}');
     const example = readFileSync(fileURLToPath(new URL('../../../.env.example', import.meta.url)), 'utf8');
     expect(example).toMatch(/^MISA_AMIS_PUSH=$/m);
+  });
+});
+
+describe('MISA_ASP_CLIENT_ID (#4111)', () => {
+  it('is unset by default and when empty or blank: the ASP product is off', () => {
+    expect(loadConfig({ ...BASE }).MISA_ASP_CLIENT_ID).toBeUndefined();
+    expect(loadConfig({ ...BASE, MISA_ASP_CLIENT_ID: '' }).MISA_ASP_CLIENT_ID).toBeUndefined();
+    expect(loadConfig({ ...BASE, MISA_ASP_CLIENT_ID: '   ' }).MISA_ASP_CLIENT_ID).toBeUndefined();
+  });
+
+  it('is its own value, independent of the AMIS one, and trimmed', () => {
+    expect(loadConfig({ ...BASE, MISA_ASP_CLIENT_ID: ` ${CLIENT} ` }).MISA_ASP_CLIENT_ID).toBe(CLIENT);
+    const only = loadConfig({ ...BASE, MISA_ASP_CLIENT_ID: CLIENT });
+    expect(only.MISA_AMIS_CLIENT_ID).toBeUndefined();
+    expect(only.MISA_ASP_CLIENT_ID).toBe(CLIENT);
+  });
+
+  it('refuses a value that is not in the shape of a ClientID, naming the setting and never the value', () => {
+    for (const bad of ['short', 'has space in it 12345', 'x'.repeat(129)]) {
+      let message = '';
+      try {
+        loadConfig({ ...BASE, MISA_ASP_CLIENT_ID: bad });
+      } catch (error) {
+        message = String(error);
+      }
+      expect(message, JSON.stringify(bad)).toContain('MISA_ASP_CLIENT_ID');
+      expect(message, JSON.stringify(bad)).not.toContain(bad);
+    }
+  });
+
+  it('is passed through by the compose file and documented, empty, in the example env', () => {
+    const compose = readFileSync(fileURLToPath(new URL('../../../docker-compose.yml', import.meta.url)), 'utf8');
+    expect(compose).toContain('MISA_ASP_CLIENT_ID: ${MISA_ASP_CLIENT_ID:-}');
+    const example = readFileSync(fileURLToPath(new URL('../../../.env.example', import.meta.url)), 'utf8');
+    expect(example).toMatch(/^MISA_ASP_CLIENT_ID=$/m);
+  });
+});
+
+describe('MISA_ASP_PUSH (#4113)', () => {
+  it('is off unless it is `on`: unset, empty and `off` leave it off, and a value that is neither is refused naming the setting', () => {
+    expect(loadConfig({ ...BASE }).MISA_ASP_PUSH).toBeUndefined();
+    expect(loadConfig({ ...BASE, MISA_ASP_PUSH: '' }).MISA_ASP_PUSH).toBeUndefined();
+    expect(loadConfig({ ...BASE, MISA_ASP_PUSH: 'off' }).MISA_ASP_PUSH).toBe('off');
+    expect(loadConfig({ ...BASE, MISA_ASP_PUSH: 'on' }).MISA_ASP_PUSH).toBe('on');
+    expect(() => loadConfig({ ...BASE, MISA_ASP_PUSH: 'yes' })).toThrow(/MISA_ASP_PUSH/);
+  });
+
+  it('is its own switch, apart from MISA_AMIS_PUSH', () => {
+    const asp = loadConfig({ ...BASE, MISA_ASP_PUSH: 'on' });
+    expect(asp.MISA_AMIS_PUSH).toBeUndefined();
+    const amis = loadConfig({ ...BASE, MISA_AMIS_PUSH: 'on' });
+    expect(amis.MISA_ASP_PUSH).toBeUndefined();
+  });
+
+  it('is passed through by the compose file and documented, empty, in the example env', () => {
+    const compose = readFileSync(fileURLToPath(new URL('../../../docker-compose.yml', import.meta.url)), 'utf8');
+    expect(compose).toContain('MISA_ASP_PUSH: ${MISA_ASP_PUSH:-}');
+    const example = readFileSync(fileURLToPath(new URL('../../../.env.example', import.meta.url)), 'utf8');
+    expect(example).toMatch(/^MISA_ASP_PUSH=$/m);
+  });
+});
+
+describe('the callback keys of the deployment (#4113)', () => {
+  it('holds one key per product, for each ClientID the deployment has, AMIS first, and none where neither is set', () => {
+    expect(misaCallbackKeys({})).toEqual([]);
+    expect(misaCallbackKeys({ MISA_AMIS_CLIENT_ID: CLIENT })).toEqual([{ product: 'amis', clientId: CLIENT }]);
+    expect(misaCallbackKeys({ MISA_ASP_CLIENT_ID: 'asp-client-id-0123' })).toEqual([{ product: 'asp', clientId: 'asp-client-id-0123' }]);
+    expect(misaCallbackKeys({ MISA_AMIS_CLIENT_ID: CLIENT, MISA_ASP_CLIENT_ID: 'asp-client-id-0123' })).toEqual([
+      { product: 'amis', clientId: CLIENT },
+      { product: 'asp', clientId: 'asp-client-id-0123' },
+    ]);
   });
 });

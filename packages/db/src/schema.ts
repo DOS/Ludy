@@ -623,7 +623,14 @@ export type MarketplacePollState = (typeof MARKETPLACE_POLL_STATES)[number];
 // A connection to MISA AMIS Kế toán (#3875): the result of its last test, as a state and never MISA's own text; a tenant updates only that (the entity, the channel connection and the code are fixed for the row's life).
 export const MISA_AMIS_TEST_STATES = ['works', 'wrong_credentials', 'unreachable'] as const;
 export type MisaAmisTestState = (typeof MISA_AMIS_TEST_STATES)[number];
-export type MisaAmisConnectionTable = Refine<G.FinanceMisaAmisConnectionTable, { last_test_state: MisaAmisTestState | null; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+// The MISA product a connection is for (#4111, S2 of #4103): AMIS Kế toán (the default) or MISA ASP. Fixed for the row's life; the channel connection's provider must be the product's (a guard).
+export const MISA_AMIS_PRODUCTS = ['amis', 'asp'] as const;
+export type MisaAmisProduct = (typeof MISA_AMIS_PRODUCTS)[number];
+export type MisaAmisConnectionTable = Refine<
+  G.FinanceMisaAmisConnectionTable,
+  { last_test_state: MisaAmisTestState | null; product: ColumnType<MisaAmisProduct, MisaAmisProduct | undefined, G.NotGranted>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
 // The vouchers pushed to MISA AMIS (#3902, S3b of #3854): one row per AMIS voucher part. queued -> sending -> sent -> accepted | refused; ambiguous after a lost answer; failed when ours could not send.
 export const MISA_AMIS_PUSH_STATES = ['queued', 'sending', 'sent', 'accepted', 'refused', 'ambiguous', 'failed'] as const;
 export type MisaAmisPushState = (typeof MISA_AMIS_PUSH_STATES)[number];
@@ -634,6 +641,34 @@ export type MisaAmisPushTable = Refine<
   {
     source_type: ColumnType<MisaAmisPushSource, MisaAmisPushSource, G.NotGranted>;
     state: ColumnType<MisaAmisPushState, MisaAmisPushState | undefined, MisaAmisPushState>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+// The check of a connection's vouchers against the firm's MISA catalogue (#4112, S3a of #4103): the last request, and what the worker found for each party (by tax code) and item (by code).
+export const MISA_AMIS_MATCH_CHECK_STATES = ['requested', 'done', 'failed'] as const;
+export type MisaAmisMatchCheckState = (typeof MISA_AMIS_MATCH_CHECK_STATES)[number];
+export const MISA_AMIS_MATCH_FAILURES = ['credentials', 'unreachable', 'invalid_response', 'catalogue_too_large'] as const;
+export type MisaAmisMatchFailure = (typeof MISA_AMIS_MATCH_FAILURES)[number];
+export type MisaAmisMatchCheckTable = Refine<
+  G.FinanceMisaAmisMatchCheckTable,
+  {
+    state: Generated<MisaAmisMatchCheckState>;
+    failure: MisaAmisMatchFailure | null;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+// `party_name` (S3b, #4124): a party with no tax code, keyed by its id in Ludy and found by name.
+export const MISA_AMIS_MATCH_KINDS = ['party', 'item', 'party_name', 'unit', 'stock'] as const;
+export type MisaAmisMatchKind = (typeof MISA_AMIS_MATCH_KINDS)[number];
+export const MISA_AMIS_MATCH_STATES = ['matched', 'unknown', 'ambiguous', 'name_proposal', 'confirmed'] as const;
+export type MisaAmisMatchState = (typeof MISA_AMIS_MATCH_STATES)[number];
+export type MisaAmisMatchTable = Refine<
+  G.FinanceMisaAmisMatchTable,
+  {
+    kind: ColumnType<MisaAmisMatchKind, MisaAmisMatchKind, G.NotGranted>;
+    state: ColumnType<MisaAmisMatchState, MisaAmisMatchState, G.NotGranted>;
     legal_entity_id: LegalEntityColumn;
   },
   'legal_entity_id'
@@ -979,6 +1014,9 @@ export type ConversationDraftTable = Refine<
 >;
 // The inbox (#2306): the marker of a member typing a reply to a thread (its kind is the thread's), and a member's availability for new conversations.
 export const MEMBER_AVAILABILITY_STATUSES = ['available', 'away'] as const;
+// Where a row came from: a connected AI app in its sealed write context ('mcp'), or not ('ui': a person's own act, and also what the system or an org-chart agent writes), stamped by the database (#4149).
+export const ACTOR_ORIGINS = ['ui', 'mcp'] as const;
+export type ActivityTable = Refine<G.KernelActivityTable, { actor_origin: Generated<(typeof ACTOR_ORIGINS)[number]> }>;
 export type ConversationComposingTable = Refine<G.KernelConversationComposingTable, { kind: (typeof CONVERSATION_KINDS)[number] }>;
 export type MemberPermissionOverrideTable = Refine<G.KernelMemberPermissionOverrideTable, { permission: (typeof MEMBER_PERMISSION_OVERRIDE_PERMISSIONS)[number] }>;
 export type MemberVyTableTable = Refine<G.KernelMemberVyTableTable, { mode: (typeof MEMBER_VY_TABLE_MODES)[number] }>;
@@ -1474,6 +1512,7 @@ type Refined = Tables<{
   'crove_kernel.conversation_composing': ConversationComposingTable;
   'crove_kernel.conversation_draft': ConversationDraftTable;
   'crove_kernel.external_call': ExternalCallTable;
+  'crove_kernel.activity': ActivityTable;
   'crove_kernel.member_availability': MemberAvailabilityTable;
   'crove_kernel.member_permission_override': MemberPermissionOverrideTable;
   'crove_kernel.member_vy_result': MemberVyResultTable;
@@ -1499,6 +1538,8 @@ type Refined = Tables<{
   'crove_finance.einvoice_notice': EInvoiceNoticeTable;
   'crove_finance.marketplace_connection': MarketplaceConnectionTable;
   'crove_finance.misa_amis_connection': MisaAmisConnectionTable;
+  'crove_finance.misa_amis_match': MisaAmisMatchTable;
+  'crove_finance.misa_amis_match_check': MisaAmisMatchCheckTable;
   'crove_finance.misa_amis_push': MisaAmisPushTable;
   'crove_finance.stock_item': StockItemTable;
   'crove_finance.channel_order': ChannelOrderTable;

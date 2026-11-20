@@ -31,6 +31,33 @@ describe('what the model is told', () => {
     expect(misaAmisBlockerNotesInstructions('en')).toContain('English');
   });
 
+  it('words the fix by the product (#4114): AMIS keeps its sentences, MISA ASP names itself and says a missing party is added in MISA ASP, since Ludy cannot write its catalogue', () => {
+    const amis = misaAmisBlockerNotesFactsText({ language: 'en', kinds: ['party_code_unknown', 'party_code_ambiguous', 'item_code_unknown'] });
+    const sameAsDefault = misaAmisBlockerNotesFactsText({ language: 'en', product: 'amis', kinds: ['party_code_unknown', 'party_code_ambiguous', 'item_code_unknown'] });
+    expect(sameAsDefault).toBe(amis);
+    expect(amis).toContain('create it in AMIS or match it to the AMIS code');
+    expect(amis).not.toContain('MISA ASP');
+    const asp = misaAmisBlockerNotesFactsText({ language: 'en', product: 'asp', kinds: ['party_code_unknown', 'party_code_ambiguous', 'item_code_unknown'] });
+    expect(asp).toContain('add the party in MISA ASP');
+    expect(asp).toContain('keep one of them active and make the others inactive in MISA ASP');
+    expect(asp).toContain('a party is matched by its tax code');
+    expect(asp).toContain('has no MISA ASP item code');
+    expect(asp).not.toContain('AMIS');
+    // Both name what the problem is and the one fix, and neither carries a figure (the checks refuse a number in a note).
+    expect(/\d/.test(amis)).toBe(false);
+    expect(/\d/.test(asp)).toBe(false);
+    expect(misaAmisBlockerNotesInstructions('en', 'asp')).toContain('MISA ASP');
+    expect(misaAmisBlockerNotesInstructions('en', 'asp')).not.toContain('AMIS Kế toán');
+    expect(misaAmisBlockerNotesInstructions('en')).toContain('MISA AMIS Kế toán');
+  });
+
+  it('keeps a note for the ambiguous party kind and drops the same note for a kind that is not on the list', () => {
+    const facts: MisaAmisBlockerNotesFacts = { language: 'vi', product: 'asp', kinds: ['party_code_ambiguous'] };
+    const note = 'Có nhiều hơn một đối tượng đang dùng cùng mã số thuế trong MISA ASP: hãy để lại một đối tượng và chuyển các đối tượng còn lại sang ngưng sử dụng.';
+    expect(check([{ kind: 'party_code_ambiguous', text: note }], facts)).toEqual({ kind: 'notes', notes: [{ kind: 'party_code_ambiguous', text: note }] });
+    expect(check([{ kind: 'party_code_unknown', text: note }], facts)).toEqual({ kind: 'none', code: 'REFUSED' });
+  });
+
   it('says there is news only when a kind is on the list', () => {
     expect(misaAmisBlockerNotesHaveNews({ kinds: [] })).toBe(false);
     expect(misaAmisBlockerNotesHaveNews({ kinds: ['no_lines'] })).toBe(true);

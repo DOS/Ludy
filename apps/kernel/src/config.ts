@@ -372,6 +372,8 @@ const schema = z.object({
   // Calls per minute one grant may make before the endpoint answers 429, and the cap of concurrent calls of one grant.
   MCP_GRANT_PER_MINUTE: z.coerce.number().int().min(1).max(6000).default(60),
   MCP_GRANT_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
+  // The writes one grant may make in a minute through the Engage write tools (E2, #3861); a client that loops is answered 429 before anything runs.
+  MCP_GRANT_WRITES_PER_MINUTE: z.coerce.number().int().min(1).max(600).default(20),
   // Rows of business data one grant may read per UTC day (the sum of the rows its tool calls return). A call that starts under the budget may end over it by one answer.
   MCP_GRANT_DAILY_ROWS: z.coerce.number().int().min(1).max(1_000_000).default(2000),
   // Dynamic client registrations one address may make per minute, and all addresses together (RFC 7591 is public by protocol).
@@ -400,6 +402,12 @@ const schema = z.object({
   MISA_AMIS_CLIENT_ID: optional.pipe(z.string().regex(/^[0-9A-Za-z._-]{8,128}$/, 'MISA_AMIS_CLIENT_ID is not in the shape of a ClientID').optional()),
   // The push of vouchers to MISA AMIS (S3b, #3902) is OFF unless this is `on`, and it needs MISA_AMIS_CLIENT_ID. It stays off until the sandbox check (docs/runbooks/misa-amis-sandbox-check.md) has confirmed what the push assumes; only the coordinator runs that check and sets this.
   MISA_AMIS_PUSH: optional.pipe(z.enum(['on', 'off']).optional()),
+  // The integrator's ClientID for the MISA ASP API (#4111, S2 of #4103): one per product (the plan counts approved apps per product; where MISA issued one value for both it is set twice). A SECRET of the
+  // deployment like MISA_AMIS_CLIENT_ID, never logged, never in an error or an audit row. Unset, the ASP product is off: the connect dialog does not offer it and no route that uses it is reachable.
+  MISA_ASP_CLIENT_ID: optional.pipe(z.string().regex(/^[0-9A-Za-z._-]{8,128}$/, 'MISA_ASP_CLIENT_ID is not in the shape of a ClientID').optional()),
+  // The push of vouchers to MISA ASP (S4, #4113) is OFF unless this is `on`, and it needs MISA_ASP_CLIENT_ID: a switch of its own, apart from MISA_AMIS_PUSH, so one product can be pushed while the other is not.
+  // It stays off until the sandbox check of ASP (docs/runbooks/misa-amis-sandbox-check.md) has confirmed what the push assumes; only the coordinator runs that check and sets this.
+  MISA_ASP_PUSH: optional.pipe(z.enum(['on', 'off']).optional()),
   // The offline sandbox bank feed (ADR-0039, #2044): off unless asked for, so a deployment shows no bank feed until it
   // has one.
   BANK_FEED_SANDBOX: z.enum(['true', 'false']).default('false'),
