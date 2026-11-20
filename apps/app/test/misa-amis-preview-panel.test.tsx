@@ -88,6 +88,17 @@ describe('what would be sent to MISA AMIS on the screen (#3901)', () => {
     expect(html.match(/data-testid="misa-amis-preview-blocker"/g)).toHaveLength(2);
   });
 
+  it('names a party found more than once in the catalogue apart from one it does not have, in both languages (#4114)', () => {
+    const item = { ...(result.items[1] as MisaAmisPreview['items'][number]), blockers: [{ code: 'party_code_ambiguous' as const, lineNo: null }, { code: 'party_code_unknown' as const, lineNo: null }], blockersMore: 0 };
+    const withBoth = { ...result, items: [item] };
+    const en = wrap(<MisaAmisPreviewResult result={withBoth} />, 'en');
+    expect(en).toContain('Party found more than once in AMIS');
+    expect(en).toContain('Party not in AMIS');
+    const vi = wrap(<MisaAmisPreviewResult result={withBoth} />, 'vi');
+    expect(vi).toContain('Đối tượng có nhiều hơn một mã trong AMIS');
+    expect(vi).toContain('Đối tượng chưa có trong AMIS');
+  });
+
   it('says so when the period is empty or holds more than one view shows', () => {
     expect(wrap(<MisaAmisPreviewResult result={{ ...result, vouchers: 0, ready: 0, blocked: 0, items: [] }} />, 'en')).toContain('There is nothing in this period for this kind.');
     expect(wrap(<MisaAmisPreviewResult result={{ ...result, vouchers: 0, ready: 0, blocked: 0, items: [], more: true }} />, 'en')).toContain('Choose a shorter period');

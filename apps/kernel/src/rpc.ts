@@ -3130,7 +3130,10 @@ export function createRpcHandler(
         inFinance(context, async (orgId, actor) => {
           const { lang, ...ask } = input;
           const preview = await misaAmisPreview((name, query) => runtime.query(name, query, { actor, orgId }), ask);
-          return explainMisaAmisBlockers(financeMisaAmisBlockerNotesAi, orgId, actor.userId, preview, lang ?? 'vi');
+          // The wording follows the product of the connection of the entity the ask names (MISA ASP's catalogue cannot be changed from Ludy, so the fix reads differently, #4114); an ask that names none reads as AMIS.
+          const connections = ask.legalEntityId === undefined ? [] : await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
+          const product = connections.find((c) => c.legalEntityId === ask.legalEntityId)?.product ?? 'amis';
+          return explainMisaAmisBlockers(financeMisaAmisBlockerNotesAi, orgId, actor.userId, preview, lang ?? 'vi', product);
         }),
       ),
       // What MISA's import will refuse or cut in one of the seven exports (#3848): a read over the rows the file is built from, in the caller's own context. The export is unchanged and never waits for it.

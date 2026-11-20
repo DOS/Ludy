@@ -273,6 +273,22 @@ describe('blockers: what AMIS needs that was not given', () => {
     }
   });
 
+  it('names a party that several active catalogue entries carry apart from one the catalogue does not have (#4114): different fixes, both block, and a check that has none ambiguous changes nothing', () => {
+    // 0101234564 is the party of the purchase and the cash voucher, 0312345678 the customer of the sale: the check found two active entries with each (ambiguous), and 9999999999 is matched.
+    const ambiguous = ctx({ partyCodes: new Map([['9999999999', 'KH_KHAC']]), partyAmbiguous: new Set(['0101234564', '0312345678']) });
+    const blocker = [{ code: 'party_code_ambiguous', sourceId: SOURCE_ID, lineNo: null }];
+    expect(purchaseServiceAmisVouchers(purchase(), ambiguous).blockers).toEqual(blocker);
+    expect(salesAmisVouchers(sale(), ambiguous).blockers).toEqual(blocker);
+    expect(cashAmisVouchers(cash(), ambiguous).blockers).toEqual(blocker);
+    // A party the check found none for (unknown), or whose tax code is not the ambiguous one, stays `party_code_unknown`.
+    const elsewhere = ctx({ partyCodes: new Map([['9999999999', 'KH_KHAC']]), partyAmbiguous: new Set(['0555555555']) });
+    expect(purchaseServiceAmisVouchers(purchase(), elsewhere).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    expect(purchaseServiceAmisVouchers(purchase(), ctx({ partyCodes: new Map([['9999999999', 'KH_KHAC']]), partyAmbiguous: null })).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    // A matched party is not blocked, ambiguous set or not; with no check read nothing is blocked either.
+    expect(purchaseServiceAmisVouchers(purchase(), ctx({ partyCodes: new Map([['0101234564', 'NCC_ABC']]), partyAmbiguous: new Set(['0101234564']) })).blockers).toEqual([]);
+    expect(purchaseServiceAmisVouchers(purchase(), ctx({ partyCodes: null, partyAmbiguous: new Set(['0101234564']) })).blockers).toEqual([]);
+  });
+
   it('names a party the dictionary does not have, but does not block when the dictionary was not read', () => {
     const known = ctx({ partyCodes: new Map([['9999999999', 'KH_KHAC']]) });
     expect(purchaseServiceAmisVouchers(purchase(), known).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
