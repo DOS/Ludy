@@ -51,7 +51,7 @@ export const kernelManifest = defineModule({
       conversation_message: columns(['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'seq', 'direction', 'sent_at', 'received_at', 'author_kind', 'author_user_id', 'attachments', 'author_identity_id', 'send_state', 'send_attempt', 'send_error_code', 'hidden_at', 'hidden_by', 'hide_request', 'hide_attempt', 'hide_error_code', 'platform_removed_at', 'tainted', 'sender_verified'], { external_message_id: 'pii', body: 'pii', email_refs: 'pii' }),
       conversation_note: columns(['org_id', 'id', 'conversation_id', 'author_user_id', 'created_at'], { body: 'pii' }),
       conversation_read: columns(['org_id', 'id', 'conversation_id', 'user_id', 'last_read_seq', 'updated_at']),
-      conversation_setting: columns(['org_id', 'id', 'retention_months', 'auto_draft', 'set_by', 'created_at', 'updated_at']),
+      conversation_setting: columns(['org_id', 'id', 'retention_months', 'auto_draft', 'wake_unanswered_hours', 'wake_reply_window_hours', 'wake_quote_days', 'set_by', 'created_at', 'updated_at']),
       credential: columns(['org_id', 'connection_id', 'key_id', 'created_at', 'sealed_at'], { envelope: 'sensitive' }),
       currency: columns(['code', 'minor_units']),
       ddl_event: columns(['id', 'occurred_at', 'session_role', 'set_role', 'command_tag', 'object_type', 'schema_name', 'object_identity', 'backend_pid', 'backend_start', 'alerted_at'], { client_addr: 'pii' }),
