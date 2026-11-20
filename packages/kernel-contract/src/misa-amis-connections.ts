@@ -34,6 +34,9 @@ export const zMisaAmisConnection = z.object({
   // The last connection test (#3885, S2b): its state and time, or null while none ran.
   lastTestState: zMisaAmisTestState.nullable(),
   lastTestedAt: z.iso.datetime({ offset: true }).nullable(),
+  // The connection's default items (S3b, #4124): the item code a person keeps for service lines and for sales lines, as the firm's MISA catalogue spells it; null for none. The preview starts from them.
+  defaultServiceItemCode: z.string().nullable().optional(),
+  defaultSalesItemCode: z.string().nullable().optional(),
 });
 export type MisaAmisConnection = z.infer<typeof zMisaAmisConnection>;
 
@@ -50,3 +53,13 @@ export type MisaAmisConnect = z.infer<typeof zMisaAmisConnect>;
 
 // The command that records a connection test (the worker's alone): a state, nothing else.
 export const zMisaAmisConnectionRecordTest = z.strictObject({ id: zId, state: zMisaAmisTestState });
+
+// A person keeps, or clears, the default item of a connection for one kind of line (S3b, #4124): `service` for a purchase of services, `sales` for a sale. The code is typed as the catalogue spells it (at most 50
+// characters, as the preview's own field); null clears it. It is not looked up here (the API cannot read the catalogue): the next check against the catalogue says when an item is not there.
+export const MISA_AMIS_DEFAULT_ITEM_ROLES = ['service', 'sales'] as const;
+export const zMisaAmisDefaultItem = z.strictObject({
+  id: zId,
+  role: z.enum(MISA_AMIS_DEFAULT_ITEM_ROLES),
+  code: z.string().trim().min(1).max(50).nullable(),
+});
+export type MisaAmisDefaultItem = z.infer<typeof zMisaAmisDefaultItem>;

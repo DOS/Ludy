@@ -12,6 +12,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage } from '../lib/api.ts';
+import { MisaAmisDefaultItem } from './misa-amis-default-item.tsx';
 import { MisaAmisNameProposals } from './misa-amis-name-proposals.tsx';
 import { MisaAmisPushConfirm } from './misa-amis-push-panel.tsx';
 import { CHECK_POLL_MS, CHECK_WAIT_MS, checkTick, pickResult } from '../lib/misa-amis-match-check.ts';
@@ -30,14 +31,25 @@ function kindsOnList(result: MisaAmisPreview): Set<string> {
 
 // `push` is given where the connection card can offer to send what the preview shows (an owner or admin, the push on, the connection tested): the preview itself stays a read.
 // `checkConnectionId` is given only to an owner or admin (the route refuses anyone else): it shows the button that asks for the check.
-export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }: { legalEntityId: string; push?: { connectionId: string; offer: PushOffer }; checkConnectionId?: string }) {
+// `defaults` are the connection's kept item codes (S3b, #4124): the fields start from them, and an owner or admin (who is given `checkConnectionId`) keeps or clears them under each field.
+export function MisaAmisPreviewPanel({
+  legalEntityId,
+  push,
+  checkConnectionId,
+  defaults,
+}: {
+  legalEntityId: string;
+  push?: { connectionId: string; offer: PushOffer };
+  checkConnectionId?: string;
+  defaults?: { service: string | null; sales: string | null };
+}) {
   const t = useTranslations('misaAmisPreview');
   const lang = useLocale() === 'en' ? 'en' : 'vi';
   const [kind, setKind] = useState<MisaAmisKind>(MISA_AMIS_KINDS[0]);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const [serviceItemCode, setServiceItemCode] = useState('');
-  const [salesItemCode, setSalesItemCode] = useState('');
+  const [serviceItemCode, setServiceItemCode] = useState(defaults?.service ?? '');
+  const [salesItemCode, setSalesItemCode] = useState(defaults?.sales ?? '');
   const [purpose, setPurpose] = useState<Purpose>('1');
   const id = useId();
   const asked = `${kind}|${from}|${to}|${serviceItemCode}|${salesItemCode}|${purpose}|${legalEntityId}`;
@@ -145,6 +157,7 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
               {t('serviceItem')}
             </label>
             <Input id={`${id}-service`} className="min-w-40" maxLength={50} autoComplete="off" value={serviceItemCode} onChange={(e) => setServiceItemCode(e.target.value)} />
+            {push && <MisaAmisDefaultItem connectionId={push.connectionId} role="service" typed={serviceItemCode} saved={defaults?.service ?? null} canManage={checkConnectionId !== undefined} />}
           </div>
         )}
         {kind === 'sales' && (
@@ -153,6 +166,7 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
               {t('salesItem')}
             </label>
             <Input id={`${id}-sales`} className="min-w-40" maxLength={50} autoComplete="off" value={salesItemCode} onChange={(e) => setSalesItemCode(e.target.value)} />
+            {push && <MisaAmisDefaultItem connectionId={push.connectionId} role="sales" typed={salesItemCode} saved={defaults?.sales ?? null} canManage={checkConnectionId !== undefined} />}
           </div>
         )}
         {(kind === 'purchase_services' || kind === 'purchase_goods' || kind === 'cash_payment' || kind === 'bank_debit') && (
