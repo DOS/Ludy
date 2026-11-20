@@ -21,6 +21,8 @@ import {
   NOTE_BODY_MAX,
   NOTE_TEMPLATE_NAME_MAX,
   NOTE_TITLE_MAX,
+  NOTEBOOK_NAME_MAX,
+  NOTEBOOK_STACK_MAX,
   PROJECT_DESCRIPTION_MAX,
   PROJECT_NAME_MAX,
   PROJECT_TASK_TITLE_MAX,
@@ -305,6 +307,14 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: "The name of the MISA catalogue entry proposed for a party with no tax code; an erasure that reaches the party deletes its name matches and the next check makes them anew",
   },
+  // The preview of a column check on an unrecognised marketplace order report (#4036): at most 20 parsed lines (order no, line key, SKU, item name, variation, quantity, amount, status) a member looks at before
+  // anything is saved. A line can carry a buyer's text when an unflagged column is mapped to a text field (the limit stated in #4178). An erasure deletes the check whose preview quotes the value (the file stays; the
+  // person asks again); the preview is also deleted with its file, with the org, and by the nightly retention seven days after the check finished.
+  'crove_finance.marketplace_column_check.preview': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: "The preview of an order report's parsed lines, which may quote a buyer when a column was mapped by hand; an erasure deletes the check that quotes the value and the member asks again",
+  },
   // More free text (#1961): a task's title and description, which members and agents write, are replaced where they
   // quote the value; a bank statement line and a journal line's memo are kept.
   'crove_kernel.task.title': {
@@ -353,7 +363,22 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_notes.note.title': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared' },
   'crove_notes.note.body': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared' },
   'crove_notes.note.tags': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared', list: true },
-  'crove_notes.note.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a note's title, tags and body, rebuilt from them" },
+  'crove_notes.note.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a note's title, tags, body and attachments, rebuilt from them" },
+  'crove_notes.attachment.filename': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Filename of a note attachment: on a shared note, the erasure deletes the attachment and queues its blob; on a private note, counted per author and deleted once the author was told',
+    privateRows: 'unless_shared',
+  },
+  'crove_notes.attachment.extracted_text': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Extracted text of a note attachment: on a shared note, the erasure deletes the attachment and queues its blob; on a private note, counted per author and deleted once the author was told',
+    privateRows: 'unless_shared',
+  },
+  'crove_notes.attachment.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a note attachment's filename and extracted text, rebuilt from them" },
+  'crove_notes.notebook.name': { kind: 'free_text', handling: 'erase', reason: 'A shared notebook: the erasure edits the value out of its name and stack name, and the notebook stays; a private notebook is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
+  'crove_notes.notebook.stack_name': { kind: 'free_text', handling: 'erase', reason: 'A shared notebook stack name: the erasure edits the value out of its name and stack name, and the notebook stays; a private notebook is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
   'crove_notes.todo.title': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.details': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
   'crove_notes.todo.checklist': { kind: 'free_text', handling: 'erase', reason: 'Steps of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
@@ -773,11 +798,11 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
     // Row security already hides other members' private notes; the finder's own private ones are counted below too,
     // not listed, so every author's are reported alike.
     const shared =
-      entry.privateRows !== 'unless_shared'
-        ? sql``
-        : table === 'note_version'
+      entry.privateRows === 'unless_shared'
+        ? schema === 'crove_notes' && (table === 'attachment' || table === 'note_version')
           ? sql`AND EXISTS (SELECT 1 FROM crove_notes.note n WHERE n.org_id = t.org_id AND n.id = t.note_id AND n.visibility = 'org')`
-          : sql`AND t.visibility = 'org'`;
+          : sql`AND t.visibility = 'org'`
+        : sql``;
     let byId = sql``;
     if (schema === 'crove_meetings') {
       const ids = meetingRows.get(table) ?? [];
@@ -1026,7 +1051,7 @@ export const personalDataNotify = defineCommand({
     const authors = new Map<string, { authorUserId: string; notes: number; todos: number; meetings: number }>();
     for (const row of rows) {
       const a = authors.get(row.author_user_id) ?? { authorUserId: row.author_user_id, notes: 0, todos: 0, meetings: 0 };
-      if (row.item_type === 'note' || row.item_type === 'note_template') a.notes += 1;
+      if (row.item_type === 'note' || row.item_type === 'note_template' || row.item_type === 'note_attachment' || row.item_type === 'notebook') a.notes += 1;
       else a.todos += 1;
       authors.set(row.author_user_id, a);
     }
@@ -1060,6 +1085,8 @@ export const personalDataNotify = defineCommand({
       key: keys[0]?.key ?? null,
       notes: items('note'),
       note_templates: items('note_template'),
+      note_attachments: items('note_attachment'),
+      notebooks: items('notebook'),
       todos: items('todo'),
       todo_lists: items('todo_list'),
       meeting_key: meetingKey,
@@ -1392,6 +1419,41 @@ export const personalDataErase = defineCommand({
     add('crove_notes.note_version.title', noteVersions.filter((n) => n.title).length);
     add('crove_notes.note_version.body', noteVersions.filter((n) => n.body).length);
     add('crove_notes.note_version.tags', noteVersions.filter((n) => n.tags).length);
+    const { rows: sharedNoteAttachments } = await sql<{ note_id: string; filename: boolean; extracted_text: boolean }>`
+      DELETE FROM crove_notes.attachment a
+       WHERE a.org_id = ${ctx.orgId}::uuid
+         AND EXISTS (
+           SELECT 1 FROM crove_notes.note n
+            WHERE n.org_id = a.org_id AND n.id = a.note_id AND n.visibility = 'org'
+         )
+         AND (${mentions('a.filename')} OR ${mentions('a.extracted_text')})
+       RETURNING a.note_id, ${mentions('a.filename')} AS filename, ${mentions('a.extracted_text')} AS extracted_text`.execute(ctx.trx);
+    add('crove_notes.attachment.filename', sharedNoteAttachments.filter((a) => a.filename).length);
+    add('crove_notes.attachment.extracted_text', sharedNoteAttachments.filter((a) => a.extracted_text).length);
+    const touchedSharedNoteIds = [...new Set(sharedNoteAttachments.map((a) => a.note_id))];
+    if (touchedSharedNoteIds.length > 0) {
+      await ctx.trx
+        .updateTable('crove_notes.note')
+        .set({ updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', 'in', touchedSharedNoteIds)
+        .execute();
+    }
+    const { rows: notebooks } = await sql<{ name: boolean; stack_name: boolean }>`
+      UPDATE crove_notes.notebook t
+         SET name = COALESCE(NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.name'), ERASED_TEXT_MARK)}, ${NOTEBOOK_NAME_MAX}::int)), ''), ${ERASED_TEXT_MARK}),
+             stack_name = CASE
+               WHEN t.stack_name IS NOT NULL AND ${mentions('t.stack_name')}
+                 THEN COALESCE(NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.stack_name'), ERASED_TEXT_MARK)}, ${NOTEBOOK_STACK_MAX}::int)), ''), ${ERASED_TEXT_MARK})
+               ELSE t.stack_name
+             END,
+             revision = t.revision + 1, updated_at = ${ctx.now}
+        FROM crove_notes.notebook o
+       WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
+         AND (${mentions('t.name')} OR (t.stack_name IS NOT NULL AND ${mentions('t.stack_name')}))
+       RETURNING ${mentions('o.name')} AS name, (o.stack_name IS NOT NULL AND ${mentions('o.stack_name')}) AS stack_name`.execute(ctx.trx);
+    add('crove_notes.notebook.name', notebooks.filter((b) => b.name).length);
+    add('crove_notes.notebook.stack_name', notebooks.filter((b) => b.stack_name).length);
     const { rows: privateRows } = await sql<{ notes: string; todos: string; untold_notes: string; untold_todos: string; note_ids: string[]; todo_ids: string[] }>`
       SELECT notes, todos, untold_notes, untold_todos, note_ids, todo_ids FROM crove_notes.private_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
     const sum = (key: 'notes' | 'todos' | 'untold_notes' | 'untold_todos') => privateRows.reduce((n, r) => n + Number(r[key]), 0);
@@ -1543,6 +1605,15 @@ export const personalDataErase = defineCommand({
       const { rows: misaReasons } = await sql<{ rows: number }>`
         SELECT crove_finance.personal_data_clear_misa_amis_push_reason(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
       add('crove_finance.misa_amis_push.reason', Number(misaReasons[0]?.rows ?? 0));
+
+      // The preview of a column check (#4036): a check whose preview of parsed lines quotes the value is deleted whole (a preview is personal data kept for seven days at most); the file is not touched, and a member
+      // asks for the check again. Through the command's own transaction: the tenant role deletes a check of its own org by the table's policy.
+      const previewMatch = freeTextMatch(probe, sql.ref('c.preview'));
+      const { rows: previewRows } = await sql<{ id: string }>`
+        DELETE FROM crove_finance.marketplace_column_check c
+         WHERE c.org_id = ${ctx.orgId}::uuid AND c.preview IS NOT NULL AND coalesce(${previewMatch}, false)
+         RETURNING c.id`.execute(ctx.trx);
+      add('crove_finance.marketplace_column_check.preview', previewRows.length);
 
       // Tasks that quote the person (#1961): the value is replaced in the title and the description, as the owner (an
       // owner's update passes the task guards, which hold agents; taint, lease, status and entity stay as they are, and

@@ -85,8 +85,24 @@ export const notesExportMine = defineQuery({
             FROM crove_notes.todo_list WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${listKeep}::uuid[])`.execute(ctx.trx)
       ).rows[0]?.used ?? 0,
     );
-    const { rows: templateIds } = await sql<{ id: string; fits: boolean }>`
+    const { rows: notebookIds } = await sql<{ id: string; fits: boolean }>`
       SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT - used - todoUsed - listUsed}) AS fits FROM (
+        SELECT id, pg_catalog.row_number() OVER w AS n,
+               pg_catalog.sum(pg_catalog.length(name) + COALESCE(pg_catalog.length(stack_name), 0)) OVER w AS running
+          FROM crove_notes.notebook
+         WHERE org_id = ${ctx.orgId}::uuid AND author_user_id = ${userId}::uuid
+        WINDOW w AS (ORDER BY sort_key, id)) b
+       ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
+    const notebookKeep = notebookIds.filter((r) => r.fits).map((r) => r.id);
+    const notebookUsed = Number(
+      (
+        await sql<{ used: string | null }>`
+          SELECT pg_catalog.sum(pg_catalog.length(name) + COALESCE(pg_catalog.length(stack_name), 0)) AS used
+            FROM crove_notes.notebook WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${notebookKeep}::uuid[])`.execute(ctx.trx)
+      ).rows[0]?.used ?? 0,
+    );
+    const { rows: templateIds } = await sql<{ id: string; fits: boolean }>`
+      SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT - used - todoUsed - listUsed - notebookUsed}) AS fits FROM (
         SELECT id, pg_catalog.row_number() OVER w AS n,
                pg_catalog.sum(
                  pg_catalog.length(name)
@@ -104,11 +120,23 @@ export const notesExportMine = defineQuery({
         ? []
         : await ctx.trx
             .selectFrom('crove_notes.note')
-            .select(['id', 'visibility', 'title', 'body', 'tags', 'pinned', 'created_at', 'updated_at', 'archived_at', 'deleted_at'])
+            .select(['id', 'notebook_id', 'visibility', 'title', 'body', 'tags', 'pinned', 'created_at', 'updated_at', 'archived_at', 'deleted_at'])
             .where('org_id', '=', ctx.orgId)
             .where('author_user_id', '=', userId)
             .where('id', 'in', noteKeep)
             .orderBy('created_at', 'desc')
+            .orderBy('id')
+            .execute();
+    const notebooks =
+      notebookKeep.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('crove_notes.notebook')
+            .select(['id', 'visibility', 'name', 'stack_name', 'pinned', 'sort_key', 'created_at', 'updated_at'])
+            .where('org_id', '=', ctx.orgId)
+            .where('author_user_id', '=', userId)
+            .where('id', 'in', notebookKeep)
+            .orderBy('sort_key')
             .orderBy('id')
             .execute();
     const todos =
@@ -198,10 +226,47 @@ export const notesExportMine = defineQuery({
       list.push({ targetType: l.target_type, targetId: l.target_id });
       targetMap.set(ownerId, list);
     }
+    const attachments =
+      noteIdsList.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('crove_notes.attachment')
+            .select(['id', 'note_id', 'filename', 'content_type', 'size_bytes', 'sha256', 'extract_status', 'created_at'])
+            .where('org_id', '=', ctx.orgId)
+            .where('note_id', 'in', noteIdsList)
+            .orderBy('created_at', 'asc')
+            .orderBy('id', 'asc')
+            .execute();
+    const noteAttachmentsOf = new Map<
+      string,
+      Array<{
+        id: string;
+        filename: string;
+        contentType: string;
+        sizeBytes: number;
+        sha256: string;
+        extractStatus: 'pending' | 'done' | 'skipped' | 'failed';
+        createdAt: string;
+      }>
+    >();
+    for (const a of attachments) {
+      const list = noteAttachmentsOf.get(a.note_id) ?? [];
+      list.push({
+        id: a.id,
+        filename: a.filename,
+        contentType: a.content_type,
+        sizeBytes: a.size_bytes,
+        sha256: a.sha256,
+        extractStatus: a.extract_status,
+        createdAt: new Date(a.created_at).toISOString(),
+      });
+      noteAttachmentsOf.set(a.note_id, list);
+    }
     return {
       exportedAt: new Date().toISOString(),
       notes: notes.map((n) => ({
         id: n.id,
+        notebookId: n.notebook_id,
         visibility: n.visibility,
         title: n.title,
         body: n.body,
@@ -212,6 +277,17 @@ export const notesExportMine = defineQuery({
         archivedAt: iso(n.archived_at),
         deletedAt: iso(n.deleted_at),
         links: noteLinksOf.get(n.id) ?? [],
+        attachments: noteAttachmentsOf.get(n.id) ?? [],
+      })),
+      notebooks: notebooks.map((b) => ({
+        id: b.id,
+        visibility: b.visibility,
+        name: b.name,
+        stackName: b.stack_name,
+        pinned: b.pinned,
+        sortKey: b.sort_key,
+        createdAt: new Date(b.created_at).toISOString(),
+        updatedAt: new Date(b.updated_at).toISOString(),
       })),
       todos: todos.map((t) => ({
         id: t.id,
@@ -261,6 +337,7 @@ export const notesExportMine = defineQuery({
         noteKeep.length < noteIds.length ||
         todoKeep.length < todoIds.length ||
         listKeep.length < todoListIds.length ||
+        notebookKeep.length < notebookIds.length ||
         templateKeep.length < templateIds.length,
     };
   },

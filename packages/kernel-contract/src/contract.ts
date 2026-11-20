@@ -200,6 +200,7 @@ import { zMisaAmisMatchCheckQueued, zMisaAmisNameDecided, zMisaAmisNameDecision,
 import { zMisaAmisPushConfirm, zMisaAmisPushConfirmed, zMisaAmisPushListAsk, zMisaAmisPushResolveAsk, zMisaAmisPushRow } from './misa-amis-push.ts';
 import { zMisaCheck, zMisaCheckAsk, zMisaCheckLine, zMisaCheckLineAsk } from './misa-check.ts';
 import { zMisaAmisPreview, zMisaAmisBlockerNotes, zMisaAmisBlockerNotesAsk, zMisaAmisPreviewAsk } from './misa-amis-preview.ts';
+import { zMarketplaceColumnsCheckAsk, zMarketplaceColumnsCheckQueued, zMarketplaceColumnsFile, zMarketplaceColumnsProposal, zMarketplaceColumnsProposalAsk, zMarketplaceColumnsStatus } from './marketplace-columns.ts';
 import { zMarketplaceBalance, zMarketplaceBalanceInput, zMarketplaceFacts, zMarketplaceFeeNotes, zMarketplaceFeeNotesAsk, zMarketplaceLine, zMarketplaceLineAsk, zMarketplaceWorklist } from './marketplace-balance.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceFeeClearingRequest, zMarketplaceIncomeConfirmResult, zMarketplaceIncomePreview, zMarketplaceIncomeStaged, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePayoutRequest, zMarketplacePreview, zMarketplaceSettlementRequest, zMarketplaceStaged, zMarketplaceSuggested, zMarketplaceSuggestInput, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseCheck, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockLowInput, zStockLowItem, zStockMove, zStockMoveReturn, zStockPeriod, zStockPeriodsInput, zStockReorderAsk, zStockReorderDraft, zStockReportInput, zStockReportRow, zStockSuggested, zStockSuggestInput, zStockSurplusNote, zStockSurplusNoteInput, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
@@ -345,6 +346,10 @@ import {
 import {
   zNote,
   zNoteAcceptSummary,
+  zNoteAttachment,
+  zNoteAttachmentDeleted,
+  zNoteAttachmentRef,
+  zNoteBacklinksInput,
   zNoteClip,
   zNoteCreate,
   zNoteFromMeetingSummary,
@@ -375,6 +380,12 @@ import {
   zNoteVyResults,
   zNoteVyStatus,
   zNoteWritten,
+  zNotebookCreate,
+  zNotebookDeleted,
+  zNotebookRef,
+  zNotebookUpdate,
+  zNotebookWritten,
+  zNotebooksResponse,
   zNotesExport,
   zMyWork,
   zMyWorkInput,
@@ -603,7 +614,7 @@ import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStates
 import { zAdsBudgetLowerCall, zAdsManageCancelCall, zAdsManageChanged, zAdsManageStateView, zAdsManageSuggestion, zAdsObjectCall, zAdsScheduleShortenCall } from './ads-manage.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdS2d, zHouseholdS2dGet, zHouseholdS2e, zHouseholdS2eGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
-import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
+import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectTingee, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -1178,6 +1189,7 @@ export const contract = {
   notes: {
     list: oc.input(zNoteList).output(z.array(zNoteSummary)),
     get: oc.input(zNoteRef).output(zNote),
+    backlinks: oc.input(zNoteBacklinksInput).output(z.array(zNoteSummary)),
     search: oc.input(zNoteSearch).output(z.array(zNoteSummary)),
     panel: oc.input(zNoteLinkTarget).output(zNoteRecordPanelView),
     create: oc.input(zNoteCreate).output(zNoteWritten),
@@ -1192,6 +1204,17 @@ export const contract = {
     delete: oc.input(zNoteRef).output(zNoteWritten),
     linkAdd: oc.input(zNoteLinkAdd).output(zNoteLinkWritten),
     linkRemove: oc.input(zNoteLinkRemove).output(zNoteLinkWritten),
+    attachments: {
+      list: oc.input(zNoteRef).output(z.array(zNoteAttachment)),
+      delete: oc.input(zNoteAttachmentRef).output(zNoteAttachmentDeleted),
+    },
+    // Notebooks and 2-level stacks (#3559): private to their author or shared with the org.
+    notebooks: {
+      list: oc.input(z.strictObject({})).output(zNotebooksResponse),
+      create: oc.input(zNotebookCreate).output(zNotebookWritten),
+      update: oc.input(zNotebookUpdate).output(zNotebookWritten),
+      delete: oc.input(zNotebookRef).output(zNotebookDeleted),
+    },
     // Rolling 20-snapshot version history and custom templates (#3562, Notes v2 E3).
     versions: oc.input(zNoteRef).output(z.array(zNoteVersion)),
     restoreVersion: oc.input(zNoteRestoreVersion).output(zNoteWritten),
@@ -2676,6 +2699,15 @@ export const contract = {
     line: oc.input(zMarketplaceLineAsk).output(zMarketplaceLine),
     // The finance coworker's note under the Sàn table for each platform with fees waiting on its 331 (#3711 slice 7): how old they are and what to do, from the books read again on the server. Read only: it posts nothing and changes no figure.
     feeNotes: oc.input(zMarketplaceFeeNotesAsk).output(zMarketplaceFeeNotes),
+    // The columns of a report no platform profile fits (#4036, slice 1c of #3850). The file is read in the extract sandbox, which only the worker reaches, so `columnsCheck` files a request and queues the worker's
+    // job (the sheet alone, or a mapping to check on the real file; a press while one waits returns it), `columns` reads what the worker found (the masked sheet, the check's refusal and a preview of at most 20
+    // parsed lines), and `columnsProposal` asks Ly for a first mapping from the masked sheet alone, within the AI budget. Nothing is imported or saved. Owners, admins and members.
+    // MARKETPLACE_COLUMNS_NOT_FOUND (404) for a file that is not a staged unrecognised report of the org, MARKETPLACE_COLUMNS_BUSY (409) when another request for the same file filed the row first.
+    columnsCheck: oc.input(zMarketplaceColumnsCheckAsk.extend({ idempotencyKey: zId })).output(zMarketplaceColumnsCheckQueued),
+    // The unrecognised spreadsheets of the org the screen offers a check for (newest first, at most 10), each with where its check stands.
+    columnsFiles: oc.input(z.strictObject({})).output(z.array(zMarketplaceColumnsFile)),
+    columns: oc.input(z.object({ fileId: zId })).output(zMarketplaceColumnsStatus),
+    columnsProposal: oc.input(zMarketplaceColumnsProposalAsk).output(zMarketplaceColumnsProposal),
   },
   // An entity's connection to MISA AMIS Kế toán (#3875, S2 of #3854). `status` says whether this deployment offers the connector (it does only when it holds the integrator's ClientID; the value is
   // never in any answer). The customer's access code is sealed in the kernel at the edge and never in an answer, a log or an audit row: the screen shows only "connected since". Every role reads the
@@ -2965,6 +2997,9 @@ export const contract = {
     // The offline sandbox feed, when the deployment enables it (BANK_FEED_SANDBOX): a login of its own each time. The
     // worker lists the accounts it reaches (listed), to map.
     connectSandbox: oc.input(z.object({ displayName: z.string().trim().min(1).max(200) })).output(z.object({ connectionId: zId })),
+    // A Tingee account, when the deployment enables it (BANK_FEED_TINGEE): the org's own Client ID and Secret Token, tested with one read call, then sealed. Owners and admins. The worker lists the
+    // accounts it reaches (listed), to map. Read-only: Tingee's payment endpoints are never called.
+    connectTingee: oc.input(zBankFeedConnectTingee).output(z.object({ connectionId: zId })),
     // The accounts a connection reaches, as the worker last listed them.
     listed: oc
       .input(z.object({ connectionId: zId }))

@@ -46,9 +46,10 @@ export const hrManifest = defineModule({
       // `OWNER_RUN_EXPORT_TABLES`, and under Accounting Law 88/2015 Art. 41 (`HR_RETENTION_YEARS = 10`) rows stay as anonymized day counts once
       // `hr.payroll.employee.erase` clears employee PII and shreds `subject_key` (and `org_purge` deletes them on org closure).
       payroll_leave_entry: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'month', 'kind', 'days', 'approved', 'created_by', 'created_at', 'updated_at']),
-      // The pay run (#2531): one month of one legal entity, and a line per person. The wage figures, the month's inputs and the breakdown are sensitive like the wage they come from; the
-      // approval record holds the totals, so it is too. The ids, the status and the dates are internal.
-      payroll_line: columns(['org_id', 'id', 'legal_entity_id', 'run_id', 'employee_id', 'employment_id', 'kind', 'status', 'checks', 'rules_used', 'refusal', 'adjusts_run_id', 'note', 'created_by', 'created_at', 'updated_at'], {
+      // The pay run (#2531): one month of one legal entity, and a line per person. The wage figures, the month's inputs, the breakdown and an adjustment line's free-text note are
+      // sensitive like the wage they come from (on an approved run a frozen line's note survives employee erasure under Accounting Law 88/2015 Art. 41 10-year retention until org_purge, #2720);
+      // the approval record holds the totals, so it is too. The ids, the status and the dates are internal.
+      payroll_line: columns(['org_id', 'id', 'legal_entity_id', 'run_id', 'employee_id', 'employment_id', 'kind', 'status', 'checks', 'rules_used', 'refusal', 'adjusts_run_id', 'created_by', 'created_at', 'updated_at'], {
         inputs: 'sensitive',
         gross: 'sensitive',
         employee_insurance: 'sensitive',
@@ -59,6 +60,7 @@ export const hrManifest = defineModule({
         net: 'sensitive',
         employer_cost: 'sensitive',
         breakdown: 'sensitive',
+        note: 'sensitive',
       }),
       payroll_run: columns(['org_id', 'id', 'legal_entity_id', 'month', 'status', 'working_days', 'approved_by', 'approved_at', 'created_by', 'created_at', 'updated_at'], { approval: 'sensitive' }),
     },

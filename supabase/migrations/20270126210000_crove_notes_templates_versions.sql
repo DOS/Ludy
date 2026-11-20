@@ -327,6 +327,8 @@ BEGIN
       FROM (
           SELECT n.org_id, n.author_user_id AS user_id FROM crove_notes.note n WHERE n.visibility = 'private'
           UNION
+          SELECT b.org_id, b.author_user_id FROM crove_notes.notebook b WHERE b.visibility = 'private'
+          UNION
           SELECT tpl.org_id, tpl.author_user_id FROM crove_notes.note_template tpl WHERE tpl.visibility = 'private'
           UNION
           SELECT t.org_id, t.owner_user_id FROM crove_notes.todo t
@@ -348,6 +350,7 @@ RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, p
 DECLARE
   v_org uuid := crove_kernel.ctx_org_id();
   v_n bigint;
+  v_b bigint;
   v_tpl bigint;
   v_t bigint;
   v_l bigint;
@@ -373,12 +376,14 @@ BEGIN
   GET DIAGNOSTICS v_t = ROW_COUNT;
   DELETE FROM crove_notes.todo_list l WHERE l.org_id = v_org AND l.owner_user_id = p_user;
   GET DIAGNOSTICS v_l = ROW_COUNT;
-  -- Deleting private notes cascades their crove_notes.note_version snapshots via note_version_note_fk.
+  -- Deleting private notes cascades both crove_notes.attachment (firing attachment_doom) and crove_notes.note_version.
   DELETE FROM crove_notes.note n WHERE n.org_id = v_org AND n.author_user_id = p_user AND n.visibility = 'private';
   GET DIAGNOSTICS v_n = ROW_COUNT;
+  DELETE FROM crove_notes.notebook b WHERE b.org_id = v_org AND b.author_user_id = p_user AND b.visibility = 'private';
+  GET DIAGNOSTICS v_b = ROW_COUNT;
   DELETE FROM crove_notes.note_template tpl WHERE tpl.org_id = v_org AND tpl.author_user_id = p_user AND tpl.visibility = 'private';
   GET DIAGNOSTICS v_tpl = ROW_COUNT;
-  RETURN v_n + v_tpl + v_t + v_l;
+  RETURN v_n + v_b + v_tpl + v_t + v_l;
 END $$;
 REVOKE ALL ON FUNCTION crove_notes.member_items_purge(uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_notes.member_items_purge(uuid) TO crove_worker;
@@ -410,6 +415,19 @@ BEGIN
                         OR crove_kernel.text_mentions(v.body, p_kind, p_value)
                         OR crove_kernel.text_mentions(pg_catalog.array_to_string(v.tags, ' '), p_kind, p_value))
               ))
+      UNION ALL
+      SELECT n.author_user_id, 1, 0
+        FROM crove_notes.attachment a
+        JOIN crove_notes.note n ON n.org_id = a.org_id AND n.id = a.note_id
+       WHERE a.org_id = v_org AND n.visibility = 'private'
+         AND (crove_kernel.text_mentions(a.filename, p_kind, p_value)
+              OR crove_kernel.text_mentions(a.extracted_text, p_kind, p_value))
+      UNION ALL
+      SELECT b.author_user_id, 1, 0
+        FROM crove_notes.notebook b
+       WHERE b.org_id = v_org AND b.visibility = 'private'
+         AND (crove_kernel.text_mentions(b.name, p_kind, p_value)
+              OR crove_kernel.text_mentions(b.stack_name, p_kind, p_value))
       UNION ALL
       SELECT tpl.author_user_id, 1, 0
         FROM crove_notes.note_template tpl
@@ -471,6 +489,19 @@ BEGIN
                       OR crove_kernel.text_mentions(pg_catalog.array_to_string(v.tags, ' '), p_kind, p_value))
             ))
     UNION ALL
+    SELECT 'note_attachment'::text, a.id, n.author_user_id, CASE WHEN a.extract_status = 'done' THEN 2 ELSE 1 END
+      FROM crove_notes.attachment a
+      JOIN crove_notes.note n ON n.org_id = a.org_id AND n.id = a.note_id
+     WHERE a.org_id = v_org AND n.visibility = 'private'
+       AND (crove_kernel.text_mentions(a.filename, p_kind, p_value)
+            OR crove_kernel.text_mentions(a.extracted_text, p_kind, p_value))
+    UNION ALL
+    SELECT 'notebook'::text, b.id, b.author_user_id, b.revision
+      FROM crove_notes.notebook b
+     WHERE b.org_id = v_org AND b.visibility = 'private'
+       AND (crove_kernel.text_mentions(b.name, p_kind, p_value)
+            OR crove_kernel.text_mentions(b.stack_name, p_kind, p_value))
+    UNION ALL
     SELECT 'note_template'::text, tpl.id, tpl.author_user_id, tpl.revision
       FROM crove_notes.note_template tpl
      WHERE tpl.org_id = v_org AND tpl.visibility = 'private'
@@ -507,8 +538,10 @@ DECLARE
   v_org uuid := crove_kernel.ctx_org_id();
   v_key text;
   v_items jsonb := '[]'::jsonb;
+  v_attachments jsonb := '[]'::jsonb;
   v_templates jsonb := '[]'::jsonb;
   v_lists jsonb := '[]'::jsonb;
+  v_notebooks jsonb := '[]'::jsonb;
 BEGIN
   IF v_org IS NULL OR crove_kernel.ctx_actor_type() IS DISTINCT FROM 'user' OR NOT EXISTS (
     SELECT 1 FROM crove_kernel.tenant_member m
@@ -519,7 +552,32 @@ BEGIN
   PERFORM crove_kernel.text_mention_pattern(p_kind, p_value);
   v_key := crove_notes.private_notice_key_of(v_org, p_kind, p_value);
 
-  -- Global lock DAG: note[id ASC] -> note_template[id ASC] -> todo_list[id ASC] -> todo[id ASC] before any DELETE.
+  -- Global lock DAG: notebook[id ASC] -> note[id ASC] -> note_template[id ASC] -> todo_list[id ASC] -> todo[id ASC]
+  -- before any DELETE so concurrent commands and FK ON DELETE SET NULL / CASCADE stay deadlock-free.
+  PERFORM b.id
+    FROM crove_notes.notebook b
+   WHERE b.org_id = v_org AND b.visibility = 'private'
+     AND (
+       crove_kernel.text_mentions(b.name, p_kind, p_value)
+       OR crove_kernel.text_mentions(b.stack_name, p_kind, p_value)
+       OR EXISTS (
+         SELECT 1 FROM crove_notes.note n
+          WHERE n.org_id = v_org AND n.notebook_id = b.id AND n.visibility = 'private'
+            AND (crove_kernel.text_mentions(n.title, p_kind, p_value)
+                 OR crove_kernel.text_mentions(n.body, p_kind, p_value)
+                 OR crove_kernel.text_mentions(pg_catalog.array_to_string(n.tags, ' '), p_kind, p_value)
+                 OR EXISTS (
+                   SELECT 1 FROM crove_notes.note_version v
+                    WHERE v.org_id = n.org_id AND v.note_id = n.id
+                      AND (crove_kernel.text_mentions(v.title, p_kind, p_value)
+                           OR crove_kernel.text_mentions(v.body, p_kind, p_value)
+                           OR crove_kernel.text_mentions(pg_catalog.array_to_string(v.tags, ' '), p_kind, p_value))
+                 ))
+       )
+     )
+   ORDER BY b.id
+   FOR UPDATE;
+
   PERFORM n.id
     FROM crove_notes.note n
    WHERE n.org_id = v_org AND n.visibility = 'private'
@@ -533,6 +591,12 @@ BEGIN
             AND (crove_kernel.text_mentions(v.title, p_kind, p_value)
                  OR crove_kernel.text_mentions(v.body, p_kind, p_value)
                  OR crove_kernel.text_mentions(pg_catalog.array_to_string(v.tags, ' '), p_kind, p_value))
+       )
+       OR EXISTS (
+         SELECT 1 FROM crove_notes.notebook b
+          WHERE b.org_id = v_org AND b.id = n.notebook_id AND b.visibility = 'private'
+            AND (crove_kernel.text_mentions(b.name, p_kind, p_value)
+                 OR crove_kernel.text_mentions(b.stack_name, p_kind, p_value))
        )
      )
    ORDER BY n.id
@@ -592,8 +656,8 @@ BEGIN
    ORDER BY t.id
    FOR UPDATE;
 
-  -- Erase matched private notes (cascading their note_version snapshots), or erase matching note_version snapshots
-  -- when the live note itself no longer mentions the value, alongside matched todos.
+  -- Erase matched private notes (cascading attachments via attachment_doom and note_version snapshots),
+  -- or erase matching note_version snapshots when the live note itself no longer mentions the value, alongside todos.
   WITH told AS (
     SELECT a.detail, a.actor_id FROM crove_kernel.audit_event a
      WHERE a.org_id = v_org AND a.command = 'kernel.personal_data.notify' AND a.outcome = 'ok'
@@ -669,6 +733,42 @@ BEGIN
     INTO v_items
     FROM counted c;
 
+  -- Erase matched private attachments on surviving private notes (triggering attachment_doom and search sync).
+  WITH told AS (
+    SELECT a.detail, a.actor_id FROM crove_kernel.audit_event a
+     WHERE a.org_id = v_org AND a.command = 'kernel.personal_data.notify' AND a.outcome = 'ok'
+       AND a.occurred_at <= pg_catalog.now() - interval '24 hours'
+       AND pg_catalog.jsonb_typeof(a.detail) = 'object' AND a.detail ->> 'key' = v_key
+  ),
+  att_found AS (
+    SELECT a.id, (CASE WHEN a.extract_status = 'done' THEN 2 ELSE 1 END) AS rev, n.author_user_id AS author,
+           EXISTS (SELECT 1 FROM told
+                    WHERE pg_catalog.jsonb_typeof(told.detail -> 'note_attachments') = 'array'
+                      AND (told.detail -> 'note_attachments') ? (a.id::text || ':' || (CASE WHEN a.extract_status = 'done' THEN 2 ELSE 1 END)::text)
+                      AND crove_notes.private_notice_told(v_org, n.author_user_id, told.actor_id, told.detail ->> 'event')) AS named
+      FROM crove_notes.attachment a
+      JOIN crove_notes.note n ON n.org_id = a.org_id AND n.id = a.note_id
+     WHERE a.org_id = v_org AND n.visibility = 'private'
+       AND (crove_kernel.text_mentions(a.filename, p_kind, p_value)
+            OR crove_kernel.text_mentions(a.extracted_text, p_kind, p_value))
+  ),
+  att_gone AS (
+    DELETE FROM crove_notes.attachment a USING att_found f
+     WHERE a.org_id = v_org AND a.id = f.id
+       AND (CASE WHEN a.extract_status = 'done' THEN 2 ELSE 1 END) = f.rev
+       AND f.named
+    RETURNING a.id, f.author
+  ),
+  att_counted AS (
+    SELECT g.author, g.id, 'note'::text AS kind, true AS gone FROM att_gone g
+    UNION ALL SELECT f.author, f.id, 'note', false FROM att_found f WHERE NOT EXISTS (SELECT 1 FROM att_gone g WHERE g.id = f.id)
+  )
+  SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+    'author', c.author, 'id', c.id, 'kind', c.kind, 'gone', c.gone
+  )), '[]'::jsonb)
+    INTO v_attachments
+    FROM att_counted c;
+
   -- Erase matched private note templates in a separate statement.
   WITH told AS (
     SELECT a.detail, a.actor_id FROM crove_kernel.audit_event a
@@ -740,7 +840,40 @@ BEGIN
     INTO v_lists
     FROM list_counted c;
 
-  v_items := v_items || v_templates || v_lists;
+  -- Erase matched private notebooks in a separate statement after matching notes are already removed.
+  WITH told AS (
+    SELECT a.detail, a.actor_id FROM crove_kernel.audit_event a
+     WHERE a.org_id = v_org AND a.command = 'kernel.personal_data.notify' AND a.outcome = 'ok'
+       AND a.occurred_at <= pg_catalog.now() - interval '24 hours'
+       AND pg_catalog.jsonb_typeof(a.detail) = 'object' AND a.detail ->> 'key' = v_key
+  ),
+  notebook_found AS (
+    SELECT b.id, b.revision, b.author_user_id AS author,
+           EXISTS (SELECT 1 FROM told
+                    WHERE pg_catalog.jsonb_typeof(told.detail -> 'notebooks') = 'array'
+                      AND (told.detail -> 'notebooks') ? (b.id::text || ':' || b.revision::text)
+                      AND crove_notes.private_notice_told(v_org, b.author_user_id, told.actor_id, told.detail ->> 'event')) AS named
+      FROM crove_notes.notebook b
+     WHERE b.org_id = v_org AND b.visibility = 'private'
+       AND (crove_kernel.text_mentions(b.name, p_kind, p_value)
+            OR crove_kernel.text_mentions(b.stack_name, p_kind, p_value))
+  ),
+  notebook_gone AS (
+    DELETE FROM crove_notes.notebook b USING notebook_found f
+     WHERE b.org_id = v_org AND b.id = f.id AND b.revision = f.revision AND f.named
+    RETURNING b.id, f.author
+  ),
+  notebook_counted AS (
+    SELECT g.author, g.id, 'note'::text AS kind, true AS gone FROM notebook_gone g
+    UNION ALL SELECT f.author, f.id, 'note', false FROM notebook_found f WHERE NOT EXISTS (SELECT 1 FROM notebook_gone g WHERE g.id = f.id)
+  )
+  SELECT COALESCE(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+    'author', c.author, 'id', c.id, 'kind', c.kind, 'gone', c.gone
+  )), '[]'::jsonb)
+    INTO v_notebooks
+    FROM notebook_counted c;
+
+  v_items := v_items || v_attachments || v_templates || v_lists || v_notebooks;
 
   RETURN QUERY
     SELECT c.author,

@@ -45,6 +45,7 @@ import {
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { loadNoteAttachments } from './attachments.ts';
 import { insertRecordLink, loadEnrichedLinks, NOTE_TARGET_QUERIES } from './links.ts';
 import { notesManifest } from './manifest.ts';
 import { TODO_SUMMARY_COLUMNS, loadSourceNotes, todoSummaryRow } from './todos.ts';
@@ -59,11 +60,13 @@ const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const NOTE = notesManifest.tables.crove_notes.note;
 const NOTE_TEMPLATE = notesManifest.tables.crove_notes.note_template;
 
-const SUMMARY = ['id', 'author_user_id', 'visibility', 'title', 'tags', 'pinned', 'tainted', 'revision', 'created_at', 'updated_at', 'archived_at', 'deleted_at'] as const;
+const SUMMARY = ['id', 'author_user_id', 'notebook_id', 'visibility', 'title', 'tags', 'pinned', 'tainted', 'revision', 'created_at', 'updated_at', 'archived_at', 'deleted_at'] as const;
+export const NOTE_SUMMARY_COLUMNS = SUMMARY;
 
 interface SummaryRow {
   id: string;
   author_user_id: string;
+  notebook_id: string | null;
   visibility: NoteVisibility;
   title: string;
   tags: string[];
@@ -83,6 +86,7 @@ function summary(r: SummaryRow, userId: string): NoteSummary {
     id: r.id,
     authorUserId: r.author_user_id,
     mine: r.author_user_id === userId,
+    notebookId: r.notebook_id,
     visibility: r.visibility,
     title: r.title,
     tags: r.tags,
@@ -95,6 +99,7 @@ function summary(r: SummaryRow, userId: string): NoteSummary {
     deletedAt: iso(r.deleted_at),
   };
 }
+export const noteSummaryRow = summary;
 
 function userOf(actor: QueryContext['actor']): string {
   if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -102,6 +107,42 @@ function userOf(actor: QueryContext['actor']): string {
 }
 
 const notFound = () => new DomainError('NOTE_NOT_FOUND', 404, 'Không tìm thấy ghi chú này');
+const notebookNotFound = () => new DomainError('NOTEBOOK_NOT_FOUND', 404, 'Không tìm thấy sổ tay này');
+const sharedNotePrivateNotebook = () =>
+  new DomainError('NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK', 422, 'Ghi chú dùng chung không thể đặt trong sổ tay riêng; hãy chọn sổ tay dùng chung hoặc bỏ chọn sổ tay');
+
+// Checks notebook readability under caller SELECT RLS with uniform 404 for missing or unreadable notebooks
+// so cross-member private notebook_id probing yields zero existence oracle, takes a shared per-notebook advisory
+// lock (SELECT FOR SHARE in PostgreSQL would apply UPDATE RLS and hide shared notebooks from plain members),
+// re-reads under the lock, and rejects shared notes in private notebooks.
+async function resolveNotebookForNote(
+  ctx: CommandContext,
+  notebookId: string,
+  noteAuthorUserId: string,
+  noteVisibility: NoteVisibility,
+): Promise<{ id: string; visibility: NoteVisibility }> {
+  const first = await ctx.trx
+    .selectFrom('crove_notes.notebook')
+    .select(['id', 'author_user_id', 'visibility'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', notebookId)
+    .executeTakeFirst();
+  if (!first) throw notebookNotFound();
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${`notes.notebook:${ctx.orgId}:${notebookId}`}, 0))`.execute(ctx.trx);
+  const nb = await ctx.trx
+    .selectFrom('crove_notes.notebook')
+    .select(['id', 'author_user_id', 'visibility'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', notebookId)
+    .executeTakeFirst();
+  if (!nb) throw notebookNotFound();
+  if (nb.visibility === 'private' && nb.author_user_id !== noteAuthorUserId) throw notebookNotFound();
+  if (nb.visibility === 'private' && noteVisibility === 'org') throw sharedNotePrivateNotebook();
+  return { id: nb.id, visibility: nb.visibility };
+}
+
+const notebookAuditFact = (noteVisibility: NoteVisibility, notebookId: string | null) =>
+  notebookId === null ? { notebookId: null } : noteVisibility === 'org' ? { notebookId } : { notebook: 'private' as const };
 
 // The note as the caller may read it (row policies), with its body, locked for a change when `lock` is set.
 async function load(ctx: Pick<QueryContext, 'trx' | 'orgId'>, noteId: string, lock: boolean): Promise<SummaryRow & { body: string }> {
@@ -196,11 +237,16 @@ export const noteCreate = defineCommand({
   access: WRITERS,
   handler: async (ctx, input): Promise<NoteWritten> => {
     const userId = userOf(ctx.actor);
+    const notebookId = input.notebookId ?? null;
+    if (notebookId !== null) {
+      await resolveNotebookForNote(ctx, notebookId, userId, input.visibility);
+    }
     const row = await ctx.trx
       .insertInto('crove_notes.note')
       .values({
         org_id: ctx.orgId,
         author_user_id: userId,
+        notebook_id: notebookId,
         visibility: input.visibility,
         title: input.title,
         body: input.body,
@@ -217,6 +263,7 @@ export const noteCreate = defineCommand({
       visibility: row.visibility,
       title: auditValue(NOTE, 'title', input.title),
       tags: auditValue(NOTE, 'tags', input.tags.length > 0 ? input.tags : null),
+      ...(notebookId !== null ? notebookAuditFact(row.visibility, notebookId) : {}),
       ...(input.tainted !== undefined ? { tainted: input.tainted } : {}),
       ...(input.link ? { linkId, ...linkTargetFact(row.visibility, input.link.targetType, input.link.targetId) } : {}),
     });
@@ -290,18 +337,41 @@ export const noteUpdate = defineCommand({
   target,
   handler: async (ctx, input): Promise<NoteWritten> => {
     const userId = userOf(ctx.actor);
-    const before = await loadForChange(ctx, input.noteId, (row) => assertAuthor(row, userId));
+    const editsText = input.title !== undefined || input.body !== undefined || input.tags !== undefined;
+    const peek = await load(ctx, input.noteId, false);
+    if (editsText) assertAuthor(peek, userId);
+    else assertMayManage(ctx, peek, userId);
+    assertNotInTrash(peek);
+
+    // Lock notebook FOR SHARE before locking note FOR UPDATE (canonical notebook -> note lock order).
+    if (input.notebookId !== undefined && input.notebookId !== null) {
+      await resolveNotebookForNote(ctx, input.notebookId, peek.author_user_id, peek.visibility);
+    }
+
+    const before = await load(ctx, input.noteId, true);
+    if (editsText) assertAuthor(before, userId);
+    else assertMayManage(ctx, before, userId);
     assertNotInTrash(before);
     if (before.revision !== input.revision) {
       throw new DomainError('NOTE_REVISION_CONFLICT', 409, 'Ghi chú vừa được sửa ở nơi khác; hãy tải lại trước khi lưu', { revision: before.revision });
     }
-    const contentEdited = before.title !== input.title || before.body !== input.body;
-    const tagsChanged = before.tags.join('\u0000') !== input.tags.join('\u0000');
+    if (input.notebookId !== undefined && input.notebookId !== null && before.visibility !== peek.visibility) {
+      await resolveNotebookForNote(ctx, input.notebookId, before.author_user_id, before.visibility);
+    }
+
+    const nextTitle = input.title ?? before.title;
+    const nextBody = input.body ?? before.body;
+    const nextTags = input.tags ?? before.tags;
+    const nextNotebookId = input.notebookId !== undefined ? input.notebookId : before.notebook_id;
+
+    const contentEdited = before.title !== nextTitle || before.body !== nextBody;
+    const tagsChanged = before.tags.join('\u0000') !== nextTags.join('\u0000');
     const clearTaint = before.tainted && contentEdited;
     const changed = [
-      ...(before.title !== input.title ? ['title'] : []),
-      ...(before.body !== input.body ? ['body'] : []),
+      ...(before.title !== nextTitle ? ['title'] : []),
+      ...(before.body !== nextBody ? ['body'] : []),
       ...(tagsChanged ? ['tags'] : []),
+      ...(before.notebook_id !== nextNotebookId ? ['notebookId'] : []),
       ...(clearTaint ? ['tainted'] : []),
     ];
     if (contentEdited || tagsChanged) {
@@ -310,9 +380,10 @@ export const noteUpdate = defineCommand({
     const row = await ctx.trx
       .updateTable('crove_notes.note')
       .set({
-        title: input.title,
-        body: input.body,
-        tags: input.tags,
+        ...(input.title !== undefined ? { title: nextTitle } : {}),
+        ...(input.body !== undefined ? { body: nextBody } : {}),
+        ...(input.tags !== undefined ? { tags: nextTags } : {}),
+        ...(input.notebookId !== undefined ? { notebook_id: nextNotebookId } : {}),
         ...(clearTaint ? { tainted: false } : {}),
         revision: before.revision + 1,
         updated_at: ctx.now,
@@ -321,15 +392,20 @@ export const noteUpdate = defineCommand({
       .where('id', '=', input.noteId)
       .returning(['id', 'revision'])
       .executeTakeFirstOrThrow();
-    ctx.audit({ noteId: row.id, revision: row.revision, changed });
+    ctx.audit({
+      noteId: row.id,
+      revision: row.revision,
+      changed,
+      ...(before.notebook_id !== nextNotebookId ? notebookAuditFact(before.visibility, nextNotebookId) : {}),
+    });
     return written(row);
   },
 });
 
 const zNoteFromMeetingSummaryCommand = z.strictObject({
-  meetingId: zNoteUpdate.shape.noteId,
-  title: zNoteUpdate.shape.title,
-  body: zNoteUpdate.shape.body,
+  meetingId: zNoteRef.shape.noteId,
+  title: z.string().trim().min(1).max(NOTE_TITLE_MAX),
+  body: z.string().max(NOTE_BODY_MAX),
 });
 
 // Saves a meeting's summary as a shared org note linked to the meeting (#1679, step N10). Always starts tainted until
@@ -387,15 +463,48 @@ export const noteSetVisibility = defineCommand({
   target,
   handler: async (ctx, input): Promise<NoteWritten> => {
     const userId = userOf(ctx.actor);
-    const before = await loadForChange(ctx, input.noteId, (row) => assertAuthor(row, userId));
+    const peek = await load(ctx, input.noteId, false);
+    assertAuthor(peek, userId);
+    if (peek.visibility === input.visibility) return written(peek);
+    if (input.visibility === 'org' && peek.notebook_id !== null) {
+      await resolveNotebookForNote(ctx, peek.notebook_id, peek.author_user_id, 'org');
+    }
+    const before = await load(ctx, input.noteId, true);
+    assertAuthor(before, userId);
     if (before.visibility === input.visibility) return written(before);
-    const row = await ctx.trx
-      .updateTable('crove_notes.note')
-      .set({ visibility: input.visibility, revision: before.revision + 1, updated_at: ctx.now })
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.noteId)
-      .returning(['id', 'revision'])
-      .executeTakeFirstOrThrow();
+    if (input.visibility === 'org' && before.notebook_id !== null && before.notebook_id !== peek.notebook_id) {
+      // Do not acquire a new notebook lock while already holding note FOR UPDATE (canonical lock order is notebook -> note);
+      // verify accessibility without locking and rely on b_note_notebook_integrity to enforce cross-visibility atomically.
+      const movedNb = await ctx.trx
+        .selectFrom('crove_notes.notebook')
+        .select(['id', 'author_user_id', 'visibility'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', before.notebook_id)
+        .executeTakeFirst();
+      if (!movedNb || (movedNb.visibility === 'private' && movedNb.author_user_id !== before.author_user_id)) {
+        throw notebookNotFound();
+      }
+      if (movedNb.visibility === 'private') throw sharedNotePrivateNotebook();
+    }
+    let row: { id: string; revision: number };
+    try {
+      row = await ctx.trx
+        .updateTable('crove_notes.note')
+        .set({ visibility: input.visibility, revision: before.revision + 1, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.noteId)
+        .returning(['id', 'revision'])
+        .executeTakeFirstOrThrow();
+    } catch (err) {
+      const pgErr = err as { code?: string; message?: string } | null;
+      if (pgErr?.code === '23514' && pgErr.message?.includes('NOTES_SHARED_NOTE_PRIVATE_NOTEBOOK')) {
+        throw sharedNotePrivateNotebook();
+      }
+      if (pgErr?.code === '42501' && pgErr.message?.includes('NOTES_NOTEBOOK_NOT_ACCESSIBLE')) {
+        throw notebookNotFound();
+      }
+      throw err;
+    }
     ctx.audit({ noteId: row.id, visibility: input.visibility, previousVisibility: before.visibility });
     return written(row);
   },
@@ -488,6 +597,20 @@ export const noteList = defineQuery({
       if (input.view === 'shared') q = q.where('n.visibility', '=', 'org');
       if (input.view === 'pinned') q = q.where('n.pinned', '=', true);
     }
+    if (input.notebookId === 'unfiled') q = q.where('n.notebook_id', 'is', null);
+    else if (input.notebookId !== undefined) q = q.where('n.notebook_id', '=', input.notebookId);
+    const stackName = input.stackName;
+    if (stackName !== undefined) {
+      q = q.where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom('crove_notes.notebook as b')
+            .select('b.id')
+            .whereRef('b.org_id', '=', 'n.org_id')
+            .whereRef('b.id', '=', 'n.notebook_id')
+            .where('b.stack_name', '=', stackName),
+        ),
+      );
+    }
     if (input.tag !== undefined) q = q.where(sql<boolean>`${input.tag} = ANY (n.tags)`);
     const t = input.target;
     if (t) {
@@ -520,14 +643,18 @@ export const noteGet = defineQuery({
       .where('id', '=', input.noteId)
       .executeTakeFirst();
     if (!row) throw notFound();
-    const shown = await loadEnrichedLinks(ctx, { kind: 'note', id: input.noteId });
-    return { ...summary(row, userId), body: row.body, links: shown };
+    const [shown, attachments] = await Promise.all([
+      loadEnrichedLinks(ctx, { kind: 'note', id: input.noteId }),
+      loadNoteAttachments(ctx, input.noteId),
+    ]);
+    return { ...summary(row, userId), body: row.body, links: shown, attachments };
   },
 });
 
 // Words typed without Vietnamese marks find them ("hoa don" finds "hóa đơn"), each as a prefix, in the title, tags and
-// body of the notes the caller may read, outside the trash: the row policies decide, so another member's private note
-// is never found. The closest matches first, then the latest.
+// body of the notes the caller may read, outside the trash, or in the file name or extracted text of one of their
+// attachments (#3561): the row policies decide, so another member's private note is never found, and the attachments'
+// own policy keeps their words from any agent. The closest matches first, then the latest.
 export const noteSearch = defineQuery({
   name: 'notes.note.search',
   input: zNoteSearch,
@@ -539,8 +666,12 @@ export const noteSearch = defineQuery({
       .select(SUMMARY)
       .where('org_id', '=', ctx.orgId)
       .where('deleted_at', 'is', null)
-      .where(sql<boolean>`search @@ crove_kernel.search_query(${input.q})`)
-      .orderBy(sql`pg_catalog.ts_rank(search, crove_kernel.search_query(${input.q}))`, 'desc')
+      .where(
+        sql<boolean>`(note.search @@ crove_kernel.search_query(${input.q}) OR EXISTS (
+          SELECT 1 FROM crove_notes.attachment a
+           WHERE a.org_id = note.org_id AND a.note_id = note.id AND a.search @@ crove_kernel.search_query(${input.q})))`,
+      )
+      .orderBy(sql`pg_catalog.ts_rank(note.search, crove_kernel.search_query(${input.q}))`, 'desc')
       .orderBy('updated_at', 'desc')
       .orderBy('id')
       .limit(input.limit)

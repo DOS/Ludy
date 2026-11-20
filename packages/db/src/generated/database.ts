@@ -82,6 +82,7 @@ export interface CroveFinanceSchema {
   'crove_finance.journal_line': FinanceJournalLineTable;
   'crove_finance.journal_voucher': FinanceJournalVoucherTable;
   'crove_finance.legal_entity_books': FinanceLegalEntityBooksTable;
+  'crove_finance.marketplace_column_check': FinanceMarketplaceColumnCheckTable;
   'crove_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
   'crove_finance.marketplace_party': FinanceMarketplacePartyTable;
   'crove_finance.misa_amis_connection': FinanceMisaAmisConnectionTable;
@@ -226,10 +227,12 @@ export interface CroveMeetingsSchema {
 }
 
 export interface CroveNotesSchema {
+  'crove_notes.attachment': NotesAttachmentTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.note_template': NotesNoteTemplateTable;
   'crove_notes.note_version': NotesNoteVersionTable;
+  'crove_notes.notebook': NotesNotebookTable;
   'crove_notes.todo': NotesTodoTable;
   'crove_notes.todo_list': NotesTodoListTable;
 }
@@ -1407,6 +1410,23 @@ export interface FinanceLegalEntityBooksTable {
   effective_from: ColumnType<string, NotGranted, NotGranted>;
   created_by: ColumnType<string | null, NotGranted, NotGranted>;
   created_at: ColumnType<Date, NotGranted, NotGranted>;
+}
+
+/** crove_finance.marketplace_column_check */
+export interface FinanceMarketplaceColumnCheckTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  file_id: ColumnType<string, string, NotGranted>;
+  platform: string | null;
+  assignments: ColumnType<unknown, string | undefined, string>;
+  state: Generated<string>;
+  failure: string | null;
+  refusal: string | null;
+  requested_by: string | null;
+  requested_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  finished_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  sheet: ColumnType<unknown, string | null | undefined, string | null>;
+  preview: ColumnType<unknown, string | null | undefined, string | null>;
 }
 
 /** crove_finance.marketplace_connection */
@@ -3019,6 +3039,7 @@ export interface KernelProposalTable {
   requested_by_grant: string | null;
   mcp_client_name: string | null;
   mcp_client_host: string | null;
+  approvers_told_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_kernel.record_le */
@@ -3492,6 +3513,23 @@ export interface MeetingsTranslationTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
+/** crove_notes.attachment */
+export interface NotesAttachmentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  note_id: ColumnType<string, string, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  filename: ColumnType<string, string, NotGranted>;
+  content_type: ColumnType<string, string, NotGranted>;
+  size_bytes: ColumnType<number, number, NotGranted>;
+  sha256: ColumnType<string, string, NotGranted>;
+  storage_key: ColumnType<string, string, NotGranted>;
+  extracted_text: ColumnType<string | null, string | null, NotGranted>;
+  extract_status: ColumnType<string, string | undefined, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  search: ColumnType<string, string | undefined, NotGranted>;
+}
+
 /** crove_notes.link */
 export interface NotesLinkTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -3525,6 +3563,7 @@ export interface NotesNoteTable {
   archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   summary_run_ids: Generated<string[]>;
+  notebook_id: string | null;
 }
 
 /** crove_notes.note_template */
@@ -3554,6 +3593,21 @@ export interface NotesNoteVersionTable {
   tags: ColumnType<string[], string[] | undefined, NotGranted>;
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_notes.notebook */
+export interface NotesNotebookTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  visibility: Generated<string>;
+  name: string;
+  stack_name: string | null;
+  pinned: Generated<boolean>;
+  sort_key: Generated<string>;
+  revision: Generated<number>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_notes.todo_list */

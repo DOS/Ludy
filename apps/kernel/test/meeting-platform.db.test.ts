@@ -12,7 +12,8 @@ import { z } from 'zod';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, setMeetingPlatformVideoImport, upsertIdentity } from '@crove/kernel';
-import type { MeetingPlatformConnectionView, MeetingPlatformRecordingView } from '@crove/kernel-contract';
+import { meetingsQueries } from '@crove/mod-meetings';
+import { vietnamToday, type MeetingPlatformConnectionView, type MeetingPlatformRecordingView } from '@crove/kernel-contract';
 import { DomainError, Runtime, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -73,6 +74,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let api: Runtime;
+  let apiWithoutMeetings: Runtime;
   let worker: Runtime;
   let personDb: ReturnType<typeof createDb>;
 
@@ -185,8 +187,10 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     personDb = createDb(appPool);
-    const defs = { commands: [...kernelCommands, begin, imported, rawReplace], queries: [...kernelQueries({ inboundDomain: null }), recordingRows] };
+    const kernelDefs = { commands: [...kernelCommands, begin, imported, rawReplace], queries: [...kernelQueries({ inboundDomain: null }), recordingRows] };
+    const defs = { commands: kernelDefs.commands, queries: [...kernelDefs.queries, ...meetingsQueries] };
     api = new Runtime(personDb, { manifests: TEST_MANIFESTS }).register(defs);
+    apiWithoutMeetings = new Runtime(personDb, { manifests: TEST_MANIFESTS }).register(kernelDefs);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(defs);
   }, 300_000);
 
@@ -658,5 +662,169 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     // Connecting again makes it active and due.
     await connect(o, o.nam, b.account);
     expect((await due()).sort()).toEqual([a.connectionId, b.connectionId].sort());
+  });
+
+  it('matches a suggested recording only to a single overlapping visible meeting within 15 minutes (#4123)', async () => {
+    const o = await org();
+    const c = await connect(o, o.lan);
+    const scheduledMeeting = async (
+      recorder: string,
+      opts: { startedAt: Date; endedAt?: Date | null; lengthSeconds?: number | null; visibility?: 'attendees' | 'org'; readers?: string[] },
+    ): Promise<string> => {
+      const id = (
+        await sqlAdmin<{ id: string }>(
+          `INSERT INTO crove_meetings.meeting
+             (org_id, recorder_user_id, visibility, title, started_at, ended_at, length_seconds, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
+           VALUES ($1, $2, $3, 'Họp thử', $4, $5, $6, 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, current_date + 30)
+           RETURNING id`,
+          [o.orgId, recorder, opts.visibility ?? 'attendees', opts.startedAt, opts.endedAt ?? null, opts.lengthSeconds ?? null],
+        )
+      ).rows[0]?.id as string;
+      for (const readerId of opts.readers ?? []) {
+        await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, meeting_id, user_id) VALUES ($1, $2, $3)', [o.orgId, id, readerId]);
+      }
+      return id;
+    };
+
+    const t0 = new Date(Math.floor(Date.now() / 60_000) * 60_000 - 24 * 3_600_000);
+    const at = (mins: number) => new Date(t0.getTime() + mins * MIN);
+
+    // 1. Own attendees-only meeting starting 14m after rec-own ends -> 1 match.
+    const mOwn = await scheduledMeeting(o.lan, { startedAt: at(44), endedAt: at(74) });
+    // 2. Shared org meeting using length_seconds fallback ending 14m before rec-org starts (180..210) -> 1 match.
+    const mOrg = await scheduledMeeting(o.nam, { startedAt: at(136), lengthSeconds: 1800, visibility: 'org' });
+    // 3. Attendees-only meeting where lan is explicitly in meeting_reader (360..390) -> 1 match.
+    const mReader = await scheduledMeeting(o.nam, { startedAt: at(350), endedAt: at(370), visibility: 'attendees', readers: [o.lan] });
+    // 4. Ambiguous window with two visible meetings overlapping rec-ambig (540..570) -> null.
+    await scheduledMeeting(o.lan, { startedAt: at(545), endedAt: at(575) });
+    await scheduledMeeting(o.nam, { startedAt: at(550), endedAt: at(580), visibility: 'org' });
+    // 5. Out-of-window meetings for rec-zero (720..750): ends 16m before, ends exactly 15m before (strict >), starts 16m after -> null.
+    await scheduledMeeting(o.lan, { startedAt: at(674), endedAt: at(704) });
+    await scheduledMeeting(o.lan, { startedAt: at(675), endedAt: at(705) });
+    await scheduledMeeting(o.lan, { startedAt: at(766), endedAt: at(796) });
+    // 6. Imported recording in an overlapping window -> never matched (matchedMeeting: null).
+    const impMeetingId = await scheduledMeeting(o.lan, { startedAt: at(900), endedAt: at(930) });
+
+    await replace(o, c.connectionId, [
+      listed('rec-own', { startedAt: at(0).toISOString(), lengthSeconds: 1800 }),
+      listed('rec-org', { startedAt: at(180).toISOString(), lengthSeconds: 1800 }),
+      listed('rec-reader', { startedAt: at(360).toISOString(), lengthSeconds: 1800 }),
+      listed('rec-ambig', { startedAt: at(540).toISOString(), lengthSeconds: 1800 }),
+      listed('rec-zero', { startedAt: at(720).toISOString(), lengthSeconds: 1800 }),
+      listed('rec-imported', { startedAt: at(900).toISOString(), lengthSeconds: 1800 }),
+    ]);
+
+    const impRow = await rowOf('rec-imported', c.connectionId);
+    const impKey = stagingKey();
+    await o.exec(o.lan, 'test.mp.begin', { recordingId: impRow?.id, meetingId: impMeetingId, stagingKey: impKey });
+    await o.sys('kernel.meeting_platform.import_staged', { recordingId: impRow?.id, stagingKey: impKey });
+    await o.exec(o.lan, 'kernel.meeting_platform.import.claim', { recordingId: impRow?.id, meetingId: impMeetingId });
+    await o.exec(o.lan, 'test.mp.imported', { meetingId: impMeetingId });
+
+    const byExt = new Map<string, MeetingPlatformRecordingView>();
+    const rows = await mine(o, o.lan);
+    const rowById = new Map(rows.map((r) => [r.id, r]));
+    for (const ext of ['rec-own', 'rec-org', 'rec-reader', 'rec-ambig', 'rec-zero', 'rec-imported']) {
+      const dbRow = await rowOf(ext, c.connectionId);
+      if (dbRow && rowById.has(dbRow.id)) byExt.set(ext, rowById.get(dbRow.id) as MeetingPlatformRecordingView);
+    }
+
+    expect(byExt.get('rec-own')?.matchedMeeting).toEqual({ meetingId: mOwn });
+    expect(byExt.get('rec-org')?.matchedMeeting).toEqual({ meetingId: mOrg });
+    expect(byExt.get('rec-reader')?.matchedMeeting).toEqual({ meetingId: mReader });
+    expect(byExt.get('rec-ambig')?.matchedMeeting).toBeNull();
+    expect(byExt.get('rec-zero')?.matchedMeeting).toBeNull();
+    expect(byExt.get('rec-imported')?.status).toBe('imported');
+    expect(byExt.get('rec-imported')?.matchedMeeting).toBeNull();
+
+    // The single-row claim lookup (`{ recordingId }`) skips matching and keeps the claim path untouched.
+    const recOwnView = byExt.get('rec-own') as MeetingPlatformRecordingView;
+    const single = await o.query<MeetingPlatformRecordingView[]>(o.lan, 'kernel.meeting_platform.recordings', { recordingId: recOwnView.id });
+    expect(single).toHaveLength(1);
+    expect(single[0]?.matchedMeeting).toBeNull();
+  });
+
+  it('enforces RLS visibility, org scope, retention, failed-import shell exclusion and disabled Meetings app with no existence leak (#4123)', async () => {
+    const o = await org();
+    const o2 = await org();
+    await sqlAdmin("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o2.orgId, o.lan]);
+    const c = await connect(o, o.lan);
+    const t0 = new Date(Math.floor(Date.now() / 60_000) * 60_000 - 20 * 3_600_000);
+    const at = (mins: number) => new Date(t0.getTime() + mins * MIN);
+    const insertMeeting = async (targetOrgId: string, recorder: string, startedAt: Date, endedAt: Date, visibility: 'attendees' | 'org', retentionDate: string) =>
+      (
+        await sqlAdmin<{ id: string }>(
+          `INSERT INTO crove_meetings.meeting
+             (org_id, recorder_user_id, visibility, title, started_at, ended_at, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
+           VALUES ($1, $2, $3, 'Họp mật', $4, $5, 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, $6::date)
+           RETURNING id`,
+          [targetOrgId, recorder, visibility, startedAt, endedAt, retentionDate],
+        )
+      ).rows[0]?.id as string;
+
+    const futureRetention = '2099-01-01';
+    const todayVn = vietnamToday();
+
+    // 1. Only a hidden attendees meeting (nam is recorder, lan not a reader) in window 0..30 -> null.
+    await insertMeeting(o.orgId, o.nam, at(0), at(30), 'attendees', futureRetention);
+    // 2. One visible + one hidden in window 180..210 -> still matches the visible one (no existence leak of hidden meeting!).
+    const mVisible = await insertMeeting(o.orgId, o.lan, at(180), at(210), 'attendees', futureRetention);
+    await insertMeeting(o.orgId, o.nam, at(180), at(210), 'attendees', futureRetention);
+    // 3. Other org's meeting in window 360..390 -> null.
+    await insertMeeting(o2.orgId, o.lan, at(360), at(390), 'org', futureRetention);
+    // 4. Expired meeting (text_retention_date <= vietnamToday) in window 540..570 -> null.
+    await insertMeeting(o.orgId, o.lan, at(540), at(570), 'org', todayVn);
+    // 5. Failed import placeholder shell in window 720..750 -> null.
+    const failedMeetingId = await insertMeeting(o.orgId, o.lan, at(720), at(750), 'attendees', futureRetention);
+
+    await replace(o, c.connectionId, [
+      listed('rec-hidden', { startedAt: at(0).toISOString(), lengthSeconds: 1800 }),
+      listed('rec-vis-hid', { startedAt: at(180).toISOString(), lengthSeconds: 1800 }),
+      listed('rec-other-org', { startedAt: at(360).toISOString(), lengthSeconds: 1800 }),
+      listed('rec-expired', { startedAt: at(540).toISOString(), lengthSeconds: 1800 }),
+      listed('rec-shell', { startedAt: at(720).toISOString(), lengthSeconds: 1800 }),
+      listed('rec-failed-src', { startedAt: at(720).toISOString(), lengthSeconds: 1800 }),
+    ]);
+
+    const failedSrcRow = await rowOf('rec-failed-src', c.connectionId);
+    const failedKey = stagingKey();
+    await o.exec(o.lan, 'test.mp.begin', { recordingId: failedSrcRow?.id, meetingId: failedMeetingId, stagingKey: failedKey });
+    await o.sys('kernel.meeting_platform.import_failed', { recordingId: failedSrcRow?.id, code: 'download_failed', stagingKey: failedKey });
+
+    const rowsByExt = async () => {
+      const list = await mine(o, o.lan);
+      const map = new Map<string, MeetingPlatformRecordingView>();
+      const byId = new Map(list.map((r) => [r.id, r]));
+      for (const ext of ['rec-hidden', 'rec-vis-hid', 'rec-other-org', 'rec-expired', 'rec-shell']) {
+        const raw = await rowOf(ext, c.connectionId);
+        if (raw && byId.has(raw.id)) map.set(ext, byId.get(raw.id) as MeetingPlatformRecordingView);
+      }
+      return map;
+    };
+
+    const first = await rowsByExt();
+    expect(first.get('rec-hidden')?.matchedMeeting).toBeNull();
+    expect(first.get('rec-vis-hid')?.matchedMeeting).toEqual({ meetingId: mVisible });
+    expect(first.get('rec-other-org')?.matchedMeeting).toBeNull();
+    expect(first.get('rec-expired')?.matchedMeeting).toBeNull();
+    expect(first.get('rec-shell')?.matchedMeeting).toBeNull();
+
+    // 6. Disabling the Meetings app suppresses matches.
+    await o.exec(o.owner, 'kernel.org.set_app', { module: 'meetings', enabled: false });
+    expect((await rowsByExt()).get('rec-vis-hid')?.matchedMeeting).toBeNull();
+    await o.exec(o.owner, 'kernel.org.set_app', { module: 'meetings', enabled: true });
+    expect((await rowsByExt()).get('rec-vis-hid')?.matchedMeeting).toEqual({ meetingId: mVisible });
+
+    // 6b. When the deployment omits the meetings module (ctx.installed('meetings') is false), matching stays disabled.
+    const uninstalledRows = await apiWithoutMeetings.query<MeetingPlatformRecordingView[]>('kernel.meeting_platform.recordings', {}, { actor: asUser(o.lan), orgId: o.orgId });
+    const visHidRow = (await rowOf('rec-vis-hid', c.connectionId)) as { id: string };
+    expect(uninstalledRows.find((r) => r.id === visHidRow.id)?.matchedMeeting).toBeNull();
+
+    // 7. A member demoted to viewer still lists their own connection rows but cannot see any meeting (meeting_read denies viewer).
+    await sqlAdmin("UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.lan]);
+    await insertMeeting(o.orgId, o.nam, at(900), at(930), 'org', futureRetention);
+    await replace(o, c.connectionId, [listed('rec-viewer', { startedAt: at(900).toISOString(), lengthSeconds: 1800 })]);
+    const viewerList = await mine(o, o.lan);
+    expect(viewerList[0]?.matchedMeeting).toBeNull();
   });
 });

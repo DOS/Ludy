@@ -17,7 +17,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { canRetry, canSubmitImport, errorKey, importBlock, isTranscriptImport, lengthParts, pollMs } from '../lib/meeting-platform.ts';
+import { canRetry, canSubmitImport, errorKey, importBlock, isTranscriptImport, lengthParts, matchedSuggestion, pollMs } from '../lib/meeting-platform.ts';
 import { formatBytes } from '../lib/offboarding.ts';
 import { toast } from '../lib/toast.ts';
 import { useConsentPolicy } from './consent-policy.tsx';
@@ -180,11 +180,12 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
     onSuccess: () => refreshRecordings(),
   });
   const title = row.title === '' ? t('untitled') : row.title;
+  const matched = matchedSuggestion(row);
   const block = importBlock(row);
   const length = row.lengthSeconds === null ? null : lengthParts(row.lengthSeconds);
   const lengthText = length === null ? null : length.hours > 0 ? t('lengthHours', length) : length.minutes > 0 ? t('lengthMinutes', { minutes: length.minutes }) : t('lengthShort');
   const quiet = (label: string, of: string) => (
-    <Button type="button" size="sm" variant="ghost" disabled={dismiss.isPending} aria-label={of} onClick={() => dismiss.mutate()}>
+    <Button type="button" size="sm" variant="ghost" className="max-md:min-h-11 max-md:min-w-11" disabled={dismiss.isPending} aria-label={of} onClick={() => dismiss.mutate()}>
       {label}
     </Button>
   );
@@ -210,9 +211,28 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
             </p>
           )}
           <p className="text-xs text-subtle-foreground">{t('offers', { items: offers(row, { audio: t('offerAudio'), video: t('offerVideo'), transcript: t('offerTranscript'), nothing: t('offerNothing') }) })}</p>
+          {matched && (
+            <p className="text-xs font-medium text-foreground" data-testid="meeting-recording-matched">
+              {t('alreadyRecorded')}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {row.status === 'suggested' && block === null && (
+          {row.status === 'suggested' && matched !== null && (
+            <>
+              <Link
+                to="/o/$slug/meetings/$id"
+                params={{ slug, id: matched.meetingId }}
+                aria-label={t('openMatchedOf', { title })}
+                className="inline-flex min-h-11 min-w-11 items-center rounded px-2 text-xs font-medium text-link underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 md:min-h-6 md:min-w-0 md:px-0"
+                data-testid="meeting-recording-matched-link"
+              >
+                {t('openMatched')}
+              </Link>
+              {quiet(t('dismiss'), t('dismissOf', { title }))}
+            </>
+          )}
+          {row.status === 'suggested' && matched === null && block === null && (
             <>
               {canImport ? (
                 <Button type="button" size="sm" aria-label={t('importOf', { title })} data-testid="meeting-recording-import" onClick={() => onImport(row)}>
@@ -226,7 +246,7 @@ function RecordingRow({ row, slug, canImport, onImport }: { row: MeetingPlatform
               {quiet(t('dismiss'), t('dismissOf', { title }))}
             </>
           )}
-          {row.status === 'suggested' && block !== null && (
+          {row.status === 'suggested' && matched === null && block !== null && (
             <>
               <span className="text-xs text-muted-foreground" data-testid="meeting-recording-blocked">
                 {block === 'video_only' ? t('videoOnly') : block === 'transcript_only' ? t('transcriptOnly') : block === 'too_long' ? t('tooLong') : t('tooLarge')}

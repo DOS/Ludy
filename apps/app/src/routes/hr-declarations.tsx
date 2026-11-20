@@ -4,7 +4,8 @@
 // a PDF), "Download xlsx" fetches the file from the authenticated export route. Nothing is filed or sent; every document says it is a list to declare from, its layout version and, while the
 // accountant has not confirmed the plan rows it rests on, that it is a draft. Owners and admins only. Every read is a sensitive query that leaves an audit row and needs a second factor used in the last 5 minutes: the page reads on a click, never on its own.
 import { useMutation } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useParams } from '@tanstack/react-router';
+import { useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
 import { HR_DECLARATION_KINDS, hrDeclarationPeriodOk, vietnamToday, zHrDeclarationDocument, type HrDeclarationDocument, type HrDeclarationKind, type HrLaborCheckKind, type HrLaborCheckResult } from '@crove/kernel-contract';
 import { Alert } from '@crove/ui/components/alert';
@@ -17,7 +18,32 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, ErrorText, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { apiFetch, client, errorMessage, isStepUpRequired } from '../lib/api.ts';
+import { apiFetch, client, clientForOrg, errorMessage, getCurrentOrg, isStepUpRequired } from '../lib/api.ts';
+
+export interface DeclarationSelection {
+  orgSlug: string;
+  kind: HrDeclarationKind;
+  period: string;
+}
+
+export interface DeclarationRequestVars extends DeclarationSelection {
+  requestId: number;
+}
+
+/** Rejects stale in-flight read responses when the active organization, declaration kind, period, or latest request token changed. */
+export function isCurrentDeclarationRequest(
+  vars: DeclarationRequestVars | undefined,
+  current: DeclarationSelection,
+  activeRequestId: number,
+): boolean {
+  if (!vars) return false;
+  return (
+    vars.requestId === activeRequestId &&
+    vars.orgSlug === current.orgSlug &&
+    vars.kind === current.kind &&
+    vars.period === current.period
+  );
+}
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
 
@@ -96,7 +122,7 @@ function SheetTable({ sheet, noRows }: { sheet: Sheet; noRows: string }) {
   );
 }
 
-export function HrDeclarationsPage() {
+export function HrDeclarationsContent({ orgSlug }: { orgSlug: string }) {
   const t = useTranslations('hrDeclarations');
   const lang = useLocale() === 'en' ? 'en' : 'vi';
   const today = vietnamToday();
@@ -120,19 +146,40 @@ export function HrDeclarationsPage() {
             : year;
   const valid = hrDeclarationPeriodOk(kind, period);
   const isLaborExport = kind === 'labor_register' || kind === '01pli';
-  // The document shown: read on a click (a sensitive read leaves an audit row), and dropped when the choice changes so a list is never shown under another period's name.
-  const [doc, setDoc] = useState<{ period: string; kind: HrDeclarationKind; document: HrDeclarationDocument } | null>(null);
-  const [checkState, setCheckState] = useState<{ period: string; kind: HrLaborCheckKind; result: HrLaborCheckResult } | null>(null);
+  // The document shown: read on a click (a sensitive read leaves an audit row), scoped to the active org, kind, and period so a loaded list never lingers across org switches or stale reads.
+  const [doc, setDoc] = useState<{ orgSlug: string; period: string; kind: HrDeclarationKind; document: HrDeclarationDocument } | null>(null);
+  const [checkState, setCheckState] = useState<{ orgSlug: string; period: string; kind: HrLaborCheckKind; result: HrLaborCheckResult } | null>(null);
+  const currentSelection: DeclarationSelection = { orgSlug, kind, period };
+  const selectionRef = useRef<DeclarationSelection>(currentSelection);
+  selectionRef.current = currentSelection;
+  const viewReqRef = useRef(0);
+  const downloadReqRef = useRef(0);
+  const laborCheckReqRef = useRef(0);
   const view = useMutation({
     // The same audited read as the download, as JSON: the server records the view (and so the print) with the same row as a file.
-    mutationFn: async (vars: { kind: HrDeclarationKind; period: string }) =>
-      zHrDeclarationDocument.parse(await (await apiFetch(`/api/payroll-export/${vars.kind}.json?period=${encodeURIComponent(vars.period)}`)).json()),
-    onSuccess: (document, vars) => setDoc({ period: vars.period, kind: vars.kind, document }),
+    mutationFn: async (vars: DeclarationRequestVars) =>
+      zHrDeclarationDocument.parse(
+        await (
+          await apiFetch(
+            `/api/payroll-export/${vars.kind}.json?period=${encodeURIComponent(vars.period)}`,
+            vars.orgSlug ? { orgSlug: vars.orgSlug } : undefined,
+          )
+        ).json(),
+      ),
+    onSuccess: (document, vars) => {
+      if (!isCurrentDeclarationRequest(vars, selectionRef.current, viewReqRef.current)) return;
+      setDoc({ orgSlug: vars.orgSlug, period: vars.period, kind: vars.kind, document });
+    },
   });
   const download = useMutation({
-    mutationFn: async (vars: { kind: HrDeclarationKind; period: string }) => {
-      const response = await apiFetch(`/api/payroll-export/${vars.kind}.xlsx?period=${encodeURIComponent(vars.period)}`);
-      const url = URL.createObjectURL(await response.blob());
+    mutationFn: async (vars: DeclarationRequestVars) => {
+      const response = await apiFetch(
+        `/api/payroll-export/${vars.kind}.xlsx?period=${encodeURIComponent(vars.period)}`,
+        vars.orgSlug ? { orgSlug: vars.orgSlug } : undefined,
+      );
+      const blob = await response.blob();
+      if (!isCurrentDeclarationRequest(vars, selectionRef.current, downloadReqRef.current)) return;
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = t('downloadFile', { kind: vars.kind, period: vars.period });
@@ -141,16 +188,62 @@ export function HrDeclarationsPage() {
     },
   });
   const laborCheck = useMutation({
-    mutationFn: (vars: { kind: HrLaborCheckKind; period: string; lang: 'vi' | 'en' }) => client.hr.payroll.laborCheck(vars),
-    onSuccess: (result, vars) => setCheckState({ period: vars.period, kind: vars.kind, result }),
+    mutationFn: (vars: Omit<DeclarationRequestVars, 'kind'> & { kind: HrLaborCheckKind; lang: 'vi' | 'en' }) =>
+      (vars.orgSlug ? clientForOrg(vars.orgSlug) : client).hr.payroll.laborCheck({ kind: vars.kind, period: vars.period, lang: vars.lang }),
+    onSuccess: (result, vars) => {
+      if (!isCurrentDeclarationRequest(vars, selectionRef.current, laborCheckReqRef.current)) return;
+      setCheckState({ orgSlug: vars.orgSlug, period: vars.period, kind: vars.kind, result });
+    },
   });
+  const prevOrgRef = useRef(orgSlug);
+  const resetMutationsRef = useRef(() => {});
+  resetMutationsRef.current = () => {
+    view.reset();
+    download.reset();
+    laborCheck.reset();
+  };
+  useEffect(() => {
+    if (prevOrgRef.current !== orgSlug) {
+      prevOrgRef.current = orgSlug;
+      setDoc(null);
+      setCheckState(null);
+      resetMutationsRef.current();
+    }
+    return () => {
+      viewReqRef.current += 1;
+      downloadReqRef.current += 1;
+      laborCheckReqRef.current += 1;
+    };
+  }, [orgSlug]);
+  const startView = () => {
+    const requestId = (viewReqRef.current += 1);
+    view.mutate({ orgSlug, kind, period, requestId });
+  };
+  const startDownload = () => {
+    const requestId = (downloadReqRef.current += 1);
+    download.mutate({ orgSlug, kind, period, requestId });
+  };
+  const startLaborCheck = () => {
+    if (!isLaborExport) return;
+    const requestId = (laborCheckReqRef.current += 1);
+    laborCheck.mutate({ orgSlug, kind, period, lang, requestId });
+  };
   // Opening everyone's identifiers needs a second factor used in the last 5 minutes: the prompt appears when the server asks, and the action that was refused runs again once it is verified.
-  const stepUp = isStepUpRequired(view.error) ? 'view' : isStepUpRequired(download.error) ? 'download' : null;
-  const shown = doc && doc.kind === kind && doc.period === period ? doc.document : null;
-  const shownCheck = checkState && checkState.kind === kind && checkState.period === period ? checkState.result : null;
+  const viewPending = view.isPending && isCurrentDeclarationRequest(view.variables, currentSelection, viewReqRef.current);
+  const downloadPending = download.isPending && isCurrentDeclarationRequest(download.variables, currentSelection, downloadReqRef.current);
+  const laborCheckPending = isLaborExport && laborCheck.isPending && isCurrentDeclarationRequest(laborCheck.variables, currentSelection, laborCheckReqRef.current);
+  const viewErrorForCurrent = view.error && isCurrentDeclarationRequest(view.variables, currentSelection, viewReqRef.current) ? view.error : null;
+  const downloadErrorForCurrent = download.error && isCurrentDeclarationRequest(download.variables, currentSelection, downloadReqRef.current) ? download.error : null;
+  const laborCheckErrorForCurrent =
+    isLaborExport && laborCheck.error && isCurrentDeclarationRequest(laborCheck.variables, currentSelection, laborCheckReqRef.current) ? laborCheck.error : null;
+  const stepUp = isStepUpRequired(viewErrorForCurrent) ? 'view' : isStepUpRequired(downloadErrorForCurrent) ? 'download' : null;
+  const shown = doc && doc.orgSlug === orgSlug && doc.kind === kind && doc.period === period ? doc.document : null;
+  const shownCheck = checkState && checkState.orgSlug === orgSlug && checkState.kind === kind && checkState.period === period ? checkState.result : null;
   return (
     <>
-      <PageHeader title={t('title')} subtitle={t('subtitle')} />
+      <div className="print:hidden">
+        <PageHeader title={t('title')} subtitle={t('subtitle')} />
+      </div>
       <Card className="mb-6 block p-4 print:hidden" aria-label={t('kind')}>
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
@@ -205,18 +298,18 @@ export function HrDeclarationsPage() {
               <Input id="hr-decl-year" inputMode="numeric" maxLength={4} className="w-24" value={year} onChange={(e) => setYear(e.target.value)} />
             </div>
           )}
-          <Button loading={view.isPending} disabled={!valid} onClick={() => view.mutate({ kind, period })} data-testid="hr-decl-view">
+          <Button loading={viewPending} disabled={!valid} onClick={startView} data-testid="hr-decl-view">
             {t('view')}
           </Button>
-          <Button variant="outline" loading={download.isPending} disabled={!valid} onClick={() => download.mutate({ kind, period })} data-testid="hr-decl-download">
+          <Button variant="outline" loading={downloadPending} disabled={!valid} onClick={startDownload} data-testid="hr-decl-download">
             {t('download')}
           </Button>
           {isLaborExport && (
             <Button
               variant="outline"
-              loading={laborCheck.isPending}
+              loading={laborCheckPending}
               disabled={!valid}
-              onClick={() => laborCheck.mutate({ kind: kind as HrLaborCheckKind, period, lang })}
+              onClick={startLaborCheck}
               data-testid="hr-decl-ly-check"
             >
               {t('lyCheck')}
@@ -232,20 +325,16 @@ export function HrDeclarationsPage() {
         {stepUp && (
           <StepUpPrompt
             action={t('stepUp')}
-            onVerified={() =>
-              stepUp === 'view'
-                ? view.mutate(view.variables ?? { kind, period })
-                : download.mutate(download.variables ?? { kind, period })
-            }
+            onVerified={() => (stepUp === 'view' ? startView() : startDownload())}
             onCancel={() => {
               view.reset();
               download.reset();
             }}
           />
         )}
-        {view.error && !isStepUpRequired(view.error) && <ErrorText>{errorMessage(view.error)}</ErrorText>}
-        {download.error && !isStepUpRequired(download.error) && <ErrorText>{errorMessage(download.error)}</ErrorText>}
-        {isLaborExport && laborCheck.error && <ErrorText>{errorMessage(laborCheck.error)}</ErrorText>}
+        {viewErrorForCurrent && !isStepUpRequired(viewErrorForCurrent) && <ErrorText>{errorMessage(viewErrorForCurrent)}</ErrorText>}
+        {downloadErrorForCurrent && !isStepUpRequired(downloadErrorForCurrent) && <ErrorText>{errorMessage(downloadErrorForCurrent)}</ErrorText>}
+        {laborCheckErrorForCurrent && <ErrorText>{errorMessage(laborCheckErrorForCurrent)}</ErrorText>}
       </Card>
       {shownCheck && (
         <Card className="mb-6 block p-4 print:hidden" data-testid="hr-decl-ly-result">
@@ -308,7 +397,7 @@ export function HrDeclarationsPage() {
         </Card>
       )}
       {shown && (
-        <article data-testid="hr-declaration" aria-label={shown.title}>
+        <article className="declaration-sheet" data-testid="hr-declaration" aria-label={shown.title}>
           <h2 className="mb-1 text-lg font-semibold uppercase tracking-tight text-foreground" data-testid="hr-declaration-notice">
             {shown.notice}
           </h2>
@@ -322,11 +411,11 @@ export function HrDeclarationsPage() {
             </Alert>
           )}
           <p className="mb-3 text-sm text-muted-foreground">{shown.notSent}</p>
-          <dl className="mb-6 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
+          <dl className="mb-6 grid grid-cols-1 gap-x-4 gap-y-1 text-sm sm:grid-cols-[max-content_1fr] print:grid-cols-[max-content_1fr]">
             {shown.header.map((h) => (
               <div key={h.label} className="contents">
-                <dt className="text-subtle-foreground">{h.label}</dt>
-                <dd>{h.value}</dd>
+                <dt className="min-w-0 text-subtle-foreground">{h.label}</dt>
+                <dd className="min-w-0 break-words">{h.value}</dd>
               </div>
             ))}
           </dl>
@@ -345,4 +434,10 @@ export function HrDeclarationsPage() {
       )}
     </>
   );
+}
+
+export function HrDeclarationsPage() {
+  const { slug = '' } = (useParams({ strict: false }) as { slug?: string } | undefined) ?? {};
+  const orgSlug = slug || getCurrentOrg() || '';
+  return <HrDeclarationsContent key={orgSlug} orgSlug={orgSlug} />;
 }
