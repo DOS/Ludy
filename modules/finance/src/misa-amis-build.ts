@@ -18,7 +18,7 @@ import {
   type AmisMapping,
 } from './misa-amis-vouchers.ts';
 import { goodsPurchaseRows, salesRows, servicePurchaseRows, type CashVoucher, type PurchaseVoucher, type SalesVoucher } from './misa.ts';
-import { normalizeTaxCode, type WantedName } from './misa-amis-matching.ts';
+import { hasNoTaxCode, normalizeTaxCode, type WantedName } from './misa-amis-matching.ts';
 
 /** Stands where the AMIS branch will be, so the mapper does not report it missing; the digest leaves the branch out, and the worker writes the real one. */
 export const AMIS_PLACEHOLDER_BRANCH = '00000000-0000-4000-8000-000000000000';
@@ -64,7 +64,7 @@ export const amisContextOf = (ask: AmisBuildAsk, branchId: string | null = AMIS_
 export interface AmisWanted {
   taxCodes: string[];
   itemCodes: string[];
-  /** The parties with no (usable) tax code, by id and name as Ludy has them: looked up by name (S3b, #4124). The names are for the worker's memory and the comparison, never stored. */
+  /** The parties with no tax code at all (none or blank), by id and name as Ludy has them: looked up by name (S3b, #4124). The names are for the worker's memory and the comparison, never stored. */
   names: WantedName[];
 }
 
@@ -83,7 +83,8 @@ export async function loadAmisEntries(query: AmisQuery, ask: AmisBuildAsk, ctx: 
   const wantParty = (party: { id?: string | null; name?: string; taxCode: string | null } | null | undefined) => {
     const key = normalizeTaxCode(party?.taxCode);
     if (key !== null) taxCodes.add(key);
-    else if (party?.id && party.name) names.set(party.id, party.name);
+    // Only a party with no tax code at all is looked up by name: a tax code that is present and unusable stays a blocker (party_code_unknown) for a person to fix, never matched to a same-name entry.
+    else if (party?.id && party.name && hasNoTaxCode(party.taxCode)) names.set(party.id, party.name);
   };
   if (ask.kind === 'purchase_services' || ask.kind === 'purchase_goods') {
     const vouchers = await query<PurchaseVoucher[]>('finance.vouchers.purchases', range);

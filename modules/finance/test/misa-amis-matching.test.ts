@@ -3,7 +3,7 @@
 // unknown, several ambiguous, and nothing in the result that is not the matched entry's code and id. Plus (#4124, S3b) how young a check must be for a confirmation and when a stored match no longer holds.
 import { describe, expect, it } from 'vitest';
 import { sameBatch } from '../src/misa-amis-match.ts';
-import { catalogueItems, catalogueParties, checkIsFresh, confirmedStillHold, matchItems, matchNames, matchParties, MISA_AMIS_CHECK_MAX_AGE_MS, normalizeName, normalizeTaxCode, relied, staleMatches } from '../src/misa-amis-matching.ts';
+import { catalogueItems, catalogueParties, checkIsFresh, confirmedStillHold, hasNoTaxCode, matchItems, matchNames, matchParties, MISA_AMIS_CHECK_MAX_AGE_MS, normalizeName, normalizeTaxCode, relied, staleMatches } from '../src/misa-amis-matching.ts';
 
 const ID1 = '0194a1c2-8f3e-7b10-9d4a-1e2f3a4b5c6d';
 const ID2 = '0194A1C2-8F3E-7B10-9D4A-1E2F3A4B5C6E';
@@ -160,6 +160,11 @@ describe('names (#4124)', () => {
     expect(normalizeName('Co\u0302ng ty')).toBe(normalizeName('Công ty'));
     expect(normalizeName('Cong ty')).not.toBe(normalizeName('Công ty'));
     for (const bad of ['', '  ', 'Ab', null, undefined]) expect(normalizeName(bad), String(bad)).toBeNull();
+  });
+
+  it('calls a party one with no tax code only when it has none or a blank one, not when the one it has cannot be used', () => {
+    for (const none of [null, undefined, '', '  ', '\t']) expect(hasNoTaxCode(none), String(none)).toBe(true);
+    for (const present of ['0101234564', '12345', 'n/a', '010123456', '0101234564-001']) expect(hasNoTaxCode(present), present).toBe(false);
   });
 
   it('proposes the one active entry of the name with its code, id and name, says ambiguous for several, and says nothing for none, an inactive entry or an entry without a name', () => {

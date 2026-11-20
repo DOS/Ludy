@@ -11,6 +11,11 @@ export function normalizeTaxCode(raw: string | null | undefined): string | null 
   return digits.length === 10 || digits.length === 13 ? digits : null;
 }
 
+/** A party with no tax code at all: none, or one that is blank. Only such a party is looked at by name; a tax code that is present but cannot be used (not 10 or 13 digits) stays a blocker for a person to fix. */
+export function hasNoTaxCode(raw: string | null | undefined): boolean {
+  return raw === null || raw === undefined || raw.trim() === '';
+}
+
 export interface CatalogueParty {
   code: string;
   id: string | null;
@@ -83,7 +88,7 @@ export function normalizeName(raw: string | null | undefined): string | null {
   return name.length >= 3 ? name : null;
 }
 
-/** A party of Ludy with no tax code (its id and its name as Ludy has it) and what a check asks of the catalogue about it. */
+/** A party of Ludy with no tax code at all (its id and its name as Ludy has it) and what a check asks of the catalogue about it. */
 export interface WantedName {
   partyId: string;
   name: string;

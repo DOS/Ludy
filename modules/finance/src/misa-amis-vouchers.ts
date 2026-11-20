@@ -19,7 +19,7 @@ import { PAYABLE_ACCOUNT, money, sum } from '@crove/l10n-vn';
 import { AMIS_MAX_VOUCHER_LINES, AMIS_VOUCHER_TYPES, AmisNumber, amisNumber, type AmisVoucher } from '@crove/misa-amis';
 import { isInflow, type AccountParents, type MisaGoodsCode } from '@crove/kernel-contract';
 import { DomainError } from '@crove/kernel-runtime';
-import { normalizeTaxCode } from './misa-amis-matching.ts';
+import { hasNoTaxCode, normalizeTaxCode } from './misa-amis-matching.ts';
 import { canonical } from './domain/money.ts';
 import {
   cashVoucherNo,
@@ -172,10 +172,11 @@ function vatFields(vat: MisaVatRate): Record<string, unknown> | null {
  */
 function partyCode(party: VoucherParty, ctx: AmisContext): string | null | undefined {
   if (ctx.partyCodes === null) return null;
-  // The catalogue is matched on the tax code's digits: a tax code that is not 10 or 13 digits cannot be matched by it, so such a party is looked at by name like one with no tax code.
+  // The catalogue is matched on the tax code's digits. A party whose tax code is present but cannot be used (not 10 or 13 digits) is a blocker for a person to fix, never matched by name; only a party with no tax
+  // code at all (none, or blank) takes the code a person confirmed for its name.
   const key = normalizeTaxCode(party.taxCode);
-  if (key === null) return party.id ? ctx.partyNameCodes?.get(party.id) : undefined;
-  return ctx.partyCodes.get(key);
+  if (key !== null) return ctx.partyCodes.get(key);
+  return hasNoTaxCode(party.taxCode) && party.id ? ctx.partyNameCodes?.get(party.id) : undefined;
 }
 
 /** Whether the catalogue has this item code (true while no check is done: nothing is known against it). */

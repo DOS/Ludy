@@ -9,6 +9,8 @@
 --                     are kept. A later check does not replace it; it checks the code is still in the catalogue and active, and the row goes when it is not.
 -- state 'ambiguous'   several active entries carry the name: nothing is proposed.
 -- A rejected proposal is deleted. No UPDATE is granted: the commands delete and insert, as the worker does.
+-- Only a person confirms: a tenant role may insert a `confirmed` row only as a user, in its own name (confirmed_by is the caller) and with the time; the system context (the worker) never inserts one, and a check
+-- cannot make one. A superuser (a restore) and the table's owner keep what they write.
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_finance.misa_amis_match ADD COLUMN IF NOT EXISTS candidate_name text;
@@ -48,6 +50,7 @@ ALTER TABLE crove_finance.misa_amis_match ADD CONSTRAINT misa_amis_match_found_c
   -- The candidate's name is on a proposal and nowhere else; who confirmed and when, on a confirmation and nowhere else.
   AND (state = 'name_proposal') = (candidate_name IS NOT NULL)
   AND (state = 'confirmed' OR (confirmed_by IS NULL AND confirmed_at IS NULL))
+  AND (state <> 'confirmed' OR confirmed_at IS NOT NULL)
   -- A tax code or an item code finds a match, nothing is none, several are ambiguous; a name finds a proposal, several or none, and a person confirms.
   AND (kind = 'party_name' OR state IN ('matched', 'unknown', 'ambiguous'))
   AND (kind <> 'party_name' OR state IN ('name_proposal', 'confirmed', 'ambiguous', 'unknown'))
@@ -57,3 +60,24 @@ ALTER TABLE crove_finance.misa_amis_match ADD CONSTRAINT misa_amis_match_name_ck
 ALTER TABLE crove_finance.misa_amis_match ADD CONSTRAINT misa_amis_match_confirmed_by_fk
   FOREIGN KEY (org_id, confirmed_by) REFERENCES crove_kernel.tenant_member (org_id, user_id) ON DELETE SET NULL (confirmed_by);
 CREATE INDEX IF NOT EXISTS misa_amis_match_confirmed_by_idx ON crove_finance.misa_amis_match (org_id, confirmed_by) WHERE confirmed_by IS NOT NULL;
+
+-- The result's entity is the connection's, whoever writes it (as before); and a `confirmed` row is a person's: the only insert of one by a tenant role is a user's, in their own name and with a time.
+CREATE OR REPLACE FUNCTION crove_finance.misa_amis_match_guard() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_tenant boolean := pg_catalog.pg_has_role(current_user, 'crove_tenant', 'MEMBER')
+    AND NOT (SELECT r.rolsuper FROM pg_catalog.pg_roles r WHERE r.rolname = current_user);
+BEGIN
+  IF EXISTS (SELECT 1 FROM crove_finance.misa_amis_connection c WHERE c.org_id = NEW.org_id AND c.id = NEW.connection_id AND c.legal_entity_id <> NEW.legal_entity_id) THEN
+    RAISE EXCEPTION 'MISA_AMIS_MATCH_ENTITY' USING ERRCODE = '42501';
+  END IF;
+  IF v_tenant AND NEW.state = 'confirmed' THEN
+    IF (SELECT crove_kernel.ctx_actor_type()) = 'system'
+       OR NEW.confirmed_by IS DISTINCT FROM (SELECT crove_kernel.ctx_user_id())
+       OR NEW.confirmed_at IS NULL THEN
+      RAISE EXCEPTION 'MISA_AMIS_MATCH_CONFIRMED' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION crove_finance.misa_amis_match_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;

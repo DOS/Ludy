@@ -1123,7 +1123,7 @@ suite('finding a person in the org (#923)', () => {
       );
       await c.query("DELETE FROM crove_finance.misa_amis_match WHERE org_id = $1 AND kind = 'party_name'", [orgId]);
       await c.query("INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code, candidate_name) VALUES ($1, $2, $3, 'party_name', $4, 'name_proposal', 'KH_HS', 'Hoa Sen (HKD)')", [orgId, entity, connectionId, erasedParty]);
-      await c.query("INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code) VALUES ($1, $2, $3, 'party_name', $4, 'confirmed', 'KH_HM')", [orgId, entity, connectionId, keptParty]);
+      await c.query("INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code, confirmed_at) VALUES ($1, $2, $3, 'party_name', $4, 'confirmed', 'KH_HM', pg_catalog.now())", [orgId, entity, connectionId, keptParty]);
     });
     const askedAt = async () => new Date((await admin((c) => c.query<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))).rows[0]!.requested_at).getTime();
     const before = await askedAt();

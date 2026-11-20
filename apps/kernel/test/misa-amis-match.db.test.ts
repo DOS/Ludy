@@ -16,6 +16,7 @@ import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
+import { contextToken } from './invariant/fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -381,6 +382,8 @@ suite('MISA AMIS catalogue match (#4112)', () => {
         rows('INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code, candidate_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [orgId, entityId, connectionId, kind, key, state, code, name]);
       await expect(insert('party_name', randomUUID(), 'name_proposal', 'KH', null)).rejects.toThrow(/misa_amis_match_found_ck/);
       await expect(insert('party_name', randomUUID(), 'confirmed', 'KH', 'a name')).rejects.toThrow(/misa_amis_match_found_ck/);
+      // A confirmed row has the time it was confirmed.
+      await expect(insert('party_name', randomUUID(), 'confirmed', 'KH', null)).rejects.toThrow(/misa_amis_match_found_ck/);
       await expect(insert('party_name', 'not-a-uuid', 'ambiguous', null, null)).rejects.toThrow(/misa_amis_match_key_ck/);
       await expect(insert('party', '0101234564', 'name_proposal', 'KH', 'a name')).rejects.toThrow(/misa_amis_match_found_ck/);
       await expect(insert('person', 'x', 'unknown', null, null)).rejects.toThrow(/misa_amis_match_kind_ck/);
@@ -388,6 +391,51 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       // The record that was refused left the rows as they were.
       expect((await nameRows()).map((r) => r.state).sort()).toEqual(['ambiguous', 'name_proposal']);
       await record({ state: 'done', failure: null, results: [proposal(partyIds[0] as string, 'KH_HS', 'Hoa Sen (HKD)'), { kind: 'party_name', ref: partyIds[1] as string, state: 'ambiguous', code: null, entryId: null }] });
+    });
+
+    it('lets only a person make a confirmed row: a tenant insert of one is a user\'s, in their own name and with the time, and the system context (the worker) never inserts one', async () => {
+      const [, , , p4] = partyIds as [string, string, string, string];
+      const insertConfirmed = (by: string | null, at: string | null, key = p4) =>
+        `INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code, confirmed_by, confirmed_at) VALUES ('${orgId}', '${entityId}', '${connectionId}', 'party_name', '${key}', 'confirmed', 'KH_X', ${by === null ? 'NULL' : `'${by}'`}, ${at === null ? 'NULL' : `'${at}'::timestamptz`})`;
+      const asOwner = (statement: string) =>
+        admin(async (c) => {
+          await c.query('BEGIN');
+          try {
+            await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner.userId, orgId)]);
+            await c.query('SET LOCAL ROLE crove_tenant');
+            await c.query(statement);
+            return 'inserted';
+          } catch (error) {
+            return String((error as Error).message);
+          } finally {
+            await c.query('ROLLBACK');
+          }
+        });
+      const asSystem = async (statement: string) => {
+        const c = await workerPool.connect();
+        try {
+          await c.query('BEGIN');
+          await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+          await c.query(statement);
+          return 'inserted';
+        } catch (error) {
+          return String((error as Error).message);
+        } finally {
+          await c.query('ROLLBACK').catch(() => {});
+          c.release();
+        }
+      };
+      const now = new Date().toISOString();
+      // An owner's own insert, in their own name and with the time, is the one a tenant role may make; the name of another member, none, or no time is refused.
+      expect(await asOwner(insertConfirmed(owner.userId, now))).toBe('inserted');
+      expect(await asOwner(insertConfirmed(adminUser.userId, now))).toMatch(/MISA_AMIS_MATCH_CONFIRMED/);
+      expect(await asOwner(insertConfirmed(null, now))).toMatch(/MISA_AMIS_MATCH_CONFIRMED/);
+      expect(await asOwner(insertConfirmed(owner.userId, null))).toMatch(/misa_amis_match_found_ck|MISA_AMIS_MATCH_CONFIRMED/);
+      // The worker's system context never inserts a confirmed row, whoever it names; it still inserts what a check finds.
+      expect(await asSystem(insertConfirmed(owner.userId, now))).toMatch(/MISA_AMIS_MATCH_CONFIRMED/);
+      expect(await asSystem(insertConfirmed(null, now))).toMatch(/MISA_AMIS_MATCH_CONFIRMED/);
+      expect(await asSystem(`INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state) VALUES ('${orgId}', '${entityId}', '${connectionId}', 'party', '0309999990', 'unknown')`)).toBe('inserted');
+      expect(await nameRows()).toHaveLength(2);
     });
 
     it('shows the proposals to an owner or admin only, with the names as the party and the catalogue have them', async () => {

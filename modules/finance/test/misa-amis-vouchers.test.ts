@@ -312,9 +312,15 @@ describe('blockers: what AMIS needs that was not given', () => {
     expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: new Map(), partyNameCodes: new Map([['88888888-8888-4888-8888-888888888888', 'KH_KHAC']]) })).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
     const noId = purchase({ vendor: { name: 'Nguyễn Văn A', taxCode: null, address: null } });
     expect(purchaseServiceAmisVouchers(noId, confirmed).blockers).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
-    // A tax code that is not 10 or 13 digits cannot be matched by it, so the party is looked at by name like one with none.
-    const short = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode: '12345', address: null } });
-    expect(purchaseServiceAmisVouchers(short, confirmed).blockers).toEqual([]);
+    // A tax code that is PRESENT but cannot be used (not 10 or 13 digits: a mistyped one) is never matched by name, whatever is confirmed: it stays a blocker for a person to fix. Only none, or a blank one, is a party with no tax code.
+    for (const taxCode of ['12345', '010123456', 'không có', '0101234564-0']) {
+      const unusable = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode, address: null } });
+      expect(purchaseServiceAmisVouchers(unusable, confirmed).blockers, taxCode).toEqual([{ code: 'party_code_unknown', sourceId: SOURCE_ID, lineNo: null }]);
+    }
+    for (const taxCode of [null, '', '   ']) {
+      const blank = purchase({ vendor: { id: PARTY, name: 'Nguyễn Văn A', taxCode, address: null } });
+      expect(purchaseServiceAmisVouchers(blank, confirmed).blockers, String(taxCode)).toEqual([]);
+    }
     // No check done: nothing is judged, as before.
     expect(purchaseServiceAmisVouchers(person, ctx({ partyCodes: null })).blockers).toEqual([]);
   });
