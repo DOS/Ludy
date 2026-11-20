@@ -596,7 +596,7 @@ import { zAdsBoostDraftCall, zAdsBoostDrafted, zAdsBoostOptions, zAdsBoostStates
 import { zAdsBudgetLowerCall, zAdsManageCancelCall, zAdsManageChanged, zAdsManageStateView, zAdsManageSuggestion, zAdsObjectCall, zAdsScheduleShortenCall } from './ads-manage.ts';
 import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zHouseholdCnkd, zHouseholdCnkdGet, zHouseholdProfileGet, zHouseholdS1a, zHouseholdS1aGet, zHouseholdS2a, zHouseholdS2aGet, zHouseholdS2b, zHouseholdS2bGet, zHouseholdS2c, zHouseholdS2cGet, zHouseholdS2d, zHouseholdS2dGet, zHouseholdS2e, zHouseholdS2eGet, zHouseholdProfileSet, zHouseholdProfileView, zHouseholdRules, zHouseholdRulesGet } from './household.ts';
-import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
+import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectTingee, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankPayrollExplainAsk, zBankPayrollExplanation, zBankPayrollMatch, zBankPlatformLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -2958,6 +2958,9 @@ export const contract = {
     // The offline sandbox feed, when the deployment enables it (BANK_FEED_SANDBOX): a login of its own each time. The
     // worker lists the accounts it reaches (listed), to map.
     connectSandbox: oc.input(z.object({ displayName: z.string().trim().min(1).max(200) })).output(z.object({ connectionId: zId })),
+    // A Tingee account, when the deployment enables it (BANK_FEED_TINGEE): the org's own Client ID and Secret Token, tested with one read call, then sealed. Owners and admins. The worker lists the
+    // accounts it reaches (listed), to map. Read-only: Tingee's payment endpoints are never called.
+    connectTingee: oc.input(zBankFeedConnectTingee).output(z.object({ connectionId: zId })),
     // The accounts a connection reaches, as the worker last listed them.
     listed: oc
       .input(z.object({ connectionId: zId }))

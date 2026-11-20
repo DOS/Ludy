@@ -3,7 +3,7 @@
 // source scan that keeps the adapter to the two read endpoints.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { BANK_FEED_PROVIDERS, TINGEE_HOSTS, TINGEE_UAT_HOST, TingeeError, allowlistedFetch, parseTingeeSecret, signTingeeRequest, tingeeBankFeed, vietnamStamp, type BankFeedTransaction } from '../src/index.ts';
+import { BANK_FEED_PROVIDERS, TINGEE_HOSTS, TINGEE_UAT_HOST, TingeeError, allowlistedFetch, bankFeedHostedProviders, parseTingeeSecret, signTingeeRequest, tingeeBankFeed, vietnamStamp, type BankFeedTransaction } from '../src/index.ts';
 import { FakeTingee, type FakeAccount, type FakeTransaction } from './tingee-fake.ts';
 
 const CLIENT = 'client-id-for-tests';
@@ -115,6 +115,77 @@ describe('listing the accounts', () => {
     // Three pages of two, and only the one read path.
     expect(fake.requests.map((r) => r.path)).toEqual(['/v1/get-va-paging', '/v1/get-va-paging', '/v1/get-va-paging']);
     expect(fake.requests.every((r) => r.host === 'open-api.tingee.vn')).toBe(true);
+  });
+});
+
+describe('an answer that is too large', () => {
+  it('is refused past 2 MB, by its declared length or as it is read, and a normal answer is read', async () => {
+    const clock = { now: new Date(NOW) };
+    const ok = '{"code":"00","message":"Success","data":{"totalCount":0,"items":[]}}';
+    const answering = (make: () => Response) => tingeeBankFeed({ fetch: async () => make(), now: () => clock.now, sleep: async () => {} });
+    expect(await answering(() => new Response(ok, { status: 200 })).accounts(credential())).toEqual([]);
+    // The declared length is refused before the body is read, and the body is cancelled so its connection is released.
+    let cancelled = false;
+    const declared = answering(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode(ok));
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          { status: 200, headers: { 'content-length': '3000000' } },
+        ),
+    );
+    expect(await failure(() => declared.accounts(credential()))).toMatchObject({ kind: 'upstream' });
+    expect(cancelled).toBe(true);
+    // A body with no declared length, over the cap, is cut off while it is read.
+    const streamed = answering(() => new Response(new ReadableStream({ start(c) { for (let i = 0; i < 4; i++) c.enqueue(new Uint8Array(600_000).fill(32)); c.close(); } }), { status: 200 }));
+    const error = await failure(() => streamed.accounts(credential()));
+    expect(error).toMatchObject({ kind: 'upstream' });
+    expect(error.message).toContain('too large');
+  });
+});
+
+describe('the hosted adapters of a deployment', () => {
+  const ok = '{"code":"00","message":"Success","data":{"totalCount":0,"items":[]}}';
+  const hostsCalled = async (options: { tingee: boolean; uat?: boolean }) => {
+    const seen: string[] = [];
+    const providers = bankFeedHostedProviders({
+      ...options,
+      fetchImpl: async (input) => {
+        seen.push(new URL(input).hostname);
+        return new Response(ok, { status: 200 });
+      },
+    });
+    for (const provider of Object.values(providers)) await provider.check?.(credential());
+    return { providers, seen };
+  };
+
+  it('offers nothing when Tingee is off, only the production host by default, and only the UAT host for the UAT run', async () => {
+    expect((await hostsCalled({ tingee: false })).providers).toEqual({});
+    expect((await hostsCalled({ tingee: false, uat: true })).providers).toEqual({});
+    const production = await hostsCalled({ tingee: true });
+    expect(Object.keys(production.providers)).toEqual(['bank_tingee']);
+    expect(production.seen).toEqual([TINGEE_HOSTS[0]]);
+    const uat = await hostsCalled({ tingee: true, uat: true });
+    expect(uat.seen).toEqual([TINGEE_UAT_HOST]);
+    // What an adapter declares it reaches stays the production host.
+    expect(production.providers.bank_tingee?.hosts).toEqual(TINGEE_HOSTS);
+  });
+});
+
+describe('testing a credential', () => {
+  it('is one call for a page of one account, and refuses a credential Tingee does not accept', async () => {
+    const account: FakeAccount = { accountNumber: '0011223344', vaAccountNumber: VA, bankBin: '970418', bankName: 'BIDV', accountName: 'CONG TY ABC', status: 'active' };
+    const { adapter, fake } = setup({ accounts: [account, { ...account, vaAccountNumber: '8888000002' }, { ...account, vaAccountNumber: '8888000003' }], accountPageCap: 1 });
+    await adapter.check?.(credential());
+    expect(fake.requests).toHaveLength(1);
+    expect(fake.requests[0]).toMatchObject({ path: '/v1/get-va-paging', body: { skipCount: 0, maxResultCount: 1 } });
+    expect(await failure(() => adapter.check?.(credential('another-secret-token')) as Promise<void>)).toMatchObject({ kind: 'credentials', tingeeCode: '97' });
   });
 });
 

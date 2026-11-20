@@ -227,9 +227,9 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The speech to text endpoint (packages/agent transcribeChunks), the only place the recorder's audio leaves the deployment.
   [QUEUES.meetingsTranscribe]: ['provider:ai'],
   [QUEUES.meetingsLiveNotes]: ['provider:ai'],
-  // The bank feed adapters (channels.bankFeeds): the offline sandbox reaches nothing. A real adapter (#2045) adds its
-  // provider here, and to DEPS_REACH first.
-  [QUEUES.bankFeedSync]: 'none',
+  // The bank feed adapters: the offline sandbox (channels.bankFeeds) reaches nothing, a real adapter (channels.bankFeedHosted, Tingee #2045) the hosts it declares, each through its own host-bound
+  // fetch. What a sync pulls goes through the ordinary bank line path (finance.bank_feed.record_pull), which a person matches and approves.
+  [QUEUES.bankFeedSync]: ['provider:bank_feed'],
   // The e-invoice provider adapters (channels.einvoiceProviders, @crove/einvoice): the offline sandbox reaches nothing, a real adapter (#2503) the hosts it declares, each through its
   // own host-bound fetch. The signed XML then goes through the ordinary intake (kernel.file.ingest), whose extraction job declares its own egress.
   [QUEUES.einvoiceIssue]: ['provider:einvoice'],

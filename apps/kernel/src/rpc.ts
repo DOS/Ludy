@@ -3,7 +3,8 @@ import { randomBytes } from 'node:crypto';
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, MARKETPLACE_PLATFORM_KEYS, MEETING_PLATFORM_CONNECT_PROVIDERS, canReadEventsWith, meetingPlatformBinding, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
-import { sandboxBankFeed } from '@crove/bank-feed';
+import { TingeeError, sandboxBankFeed, type BankFeedProvider } from '@crove/bank-feed';
+import { RateLimiter } from './rate-limit.ts';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@crove/kernel-contract';
@@ -99,6 +100,21 @@ import type { InviteRole, SendInviteMail } from './invite-mail.ts';
 import type { Delivery, DeliveryResult } from './mail.ts';
 import type { TaxCodeLookup } from './tax-lookup.ts';
 import type { PortalSync } from './portal-sync.ts';
+
+// What a refused Tingee test call says to the owner (#2045): a fixed sentence per kind, never Tingee's own text, the Client ID or the Secret Token.
+function tingeeConnectError(error: unknown): DomainError {
+  if (!(error instanceof TingeeError)) return new DomainError('BANK_FEED_UPSTREAM', 503, 'Không gọi được Tingee lúc này; hãy thử lại sau');
+  switch (error.kind) {
+    case 'credentials':
+      return new DomainError('BANK_FEED_CREDENTIALS', 422, 'Tingee không chấp nhận Client ID hoặc Secret Token này; hãy kiểm tra lại trong cổng Tingee');
+    case 'clock':
+      return new DomainError('BANK_FEED_CLOCK', 422, 'Giờ của máy chủ lệch quá xa so với Tingee; hãy chỉnh lại giờ máy chủ rồi thử lại');
+    case 'rate_limited':
+      return new DomainError('BANK_FEED_RATE_LIMITED', 429, 'Tingee báo gọi quá nhanh; hãy thử lại sau ít phút');
+    default:
+      return new DomainError('BANK_FEED_UPSTREAM', 503, 'Không gọi được Tingee lúc này; hãy thử lại sau');
+  }
+}
 
 export interface RpcContext {
   user: AuthUser;
@@ -297,6 +313,8 @@ export interface RpcChannels {
   wakeResolve?: WakeResolve;
   // The offline sandbox bank feed is enabled (BANK_FEED_SANDBOX, ADR-0039).
   bankFeedSandbox?: boolean;
+  // The real bank feed adapters this deployment offers, by provider id (BANK_FEED_TINGEE, #2045): the connect call tests a credential once through the adapter, then seals it; the worker alone opens it.
+  bankFeedHosted?: Readonly<Record<string, BankFeedProvider>>;
   // The e-invoice providers this deployment offers, by adapter id (ADR-0044): the offline sandbox when EINVOICE_SANDBOX is on, a real adapter when its own switch is.
   einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
   // The marketplace providers this deployment offers, by adapter id (ADR-0045 point 7, #2519): the offline sandbox when MARKETPLACE_PROVIDERS names it.
@@ -422,6 +440,10 @@ export function createRpcHandler(
   signAiReader: SignAi['reader'] = null,
 ) {
   const os = implement(contract).$context<RpcContext>();
+  // Connecting a Tingee account makes one signed read call from this server's address, and Tingee allows 20 calls in 10 seconds per address (#2045): an org may try a few times a minute, and the whole
+  // deployment a few more, so a loop of made-up credentials cannot use up the budget the workers' syncs share.
+  const tingeeConnectsPerOrg = new RateLimiter({ perMinute: 5 });
+  const tingeeConnectsAll = new RateLimiter({ perMinute: 30, maxKeys: 1 });
   // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
   const briefs = new DraftBudget();
   // "Tuần này" has a rate limit of its own, apart from the brief's, so the two cards of Home never make each other wait.
@@ -3973,6 +3995,39 @@ export function createRpcHandler(
             provider: login.provider,
             externalAccountId: login.externalAccountId,
             displayName: login.displayName,
+            scopes: [],
+            expiresAt: null,
+            credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+          };
+          const { connectionId } = await runtime.execute<{ connectionId: string }>('kernel.channel.connect', command, { actor, orgId });
+          return { connectionId };
+        }),
+      ),
+      connectTingee: os.bankFeeds.connectTingee.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { role } = await resolveMembership(runtime, context.user, context.orgSlug);
+          if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được nguồn giao dịch ngân hàng');
+          const hosted = channels?.bankFeedHosted;
+          if (!channels || !hosted || !Object.hasOwn(hosted, 'bank_tingee')) throw new DomainError('BANK_FEED_TINGEE_DISABLED', 404, 'Nguồn giao dịch Tingee chưa được bật trên máy chủ này');
+          if (channels.broker.id === 'none') throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+          const provider = hosted.bank_tingee as BankFeedProvider;
+          // The org's own credential, as the one value the worker opens (the adapter reads it back). One read call tests it before anything is sealed; its answer is dropped, the worker lists the accounts.
+          const secret = JSON.stringify({ clientId: input.clientId, secretToken: input.secretToken });
+          // The org's ticket first: a refused org must not spend the deployment's. Both limits are per process (a deployment with several API instances allows up to that many times each).
+          const own = tingeeConnectsPerOrg.take(orgId);
+          const ticket = own.allowed ? [tingeeConnectsAll.take('all')].find((t) => !t.allowed) : own;
+          if (ticket) throw new DomainError('RATE_LIMITED', 429, 'Đã thử kết nối Tingee nhiều lần trong phút này, hãy đợi một lát rồi thử lại', { retryAfterSeconds: ticket.retryAfterSeconds });
+          try {
+            // One cheap read call (a page of one account) when the adapter has one, else its account list.
+            await (provider.check ? provider.check(secret) : provider.accounts(secret));
+          } catch (error) {
+            throw tingeeConnectError(error);
+          }
+          const sealed = channels.broker.seal(secret, { orgId, provider: provider.id, externalAccountId: input.clientId });
+          const command: ChannelConnectInput = {
+            provider: provider.id,
+            externalAccountId: input.clientId,
+            displayName: input.displayName ?? 'Tingee',
             scopes: [],
             expiresAt: null,
             credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
