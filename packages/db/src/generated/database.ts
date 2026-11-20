@@ -2926,6 +2926,8 @@ export interface KernelPartyTable {
   search: ColumnType<string | null, never, never>;
   duplicate_of: string | null;
   company_id: string | null;
+  actor_origin: Generated<string>;
+  tainted: Generated<boolean>;
 }
 
 /** crove_kernel.permission_catalog */
