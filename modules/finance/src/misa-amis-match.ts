@@ -21,7 +21,8 @@ import {
   type MisaAmisNameProposal,
   type MisaAmisPreviewAsk,
 } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+import type { Database, MemberRole } from '@crove/db';
+import type { Transaction } from 'kysely';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 
@@ -295,7 +296,7 @@ export const misaAmisMatchResultsQuery = defineQuery({
 // Name proposals (S3b, #4124): a party of Ludy with no tax code and the one active catalogue entry of the same name, which a person confirms or rejects. Nothing else makes a name match count.
 
 // The connection and its check row, locked, so that a person's decision and a worker's record of a check never run over each other; the check row is the lock the worker's record takes too.
-async function lockedConnection(ctx: { trx: import('kysely').Transaction<import('@crove/db').Database>; orgId: string }, connectionId: string) {
+async function lockedConnection(ctx: { trx: Transaction<Database>; orgId: string }, connectionId: string) {
   const conn = await ctx.trx.selectFrom('crove_finance.misa_amis_connection').select(['id']).where('org_id', '=', ctx.orgId).where('id', '=', connectionId).executeTakeFirst();
   if (!conn) throw new DomainError('MISA_AMIS_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối MISA AMIS này');
   await ctx.trx.selectFrom('crove_finance.misa_amis_match_check').select(['id']).where('org_id', '=', ctx.orgId).where('connection_id', '=', connectionId).forUpdate().execute();
