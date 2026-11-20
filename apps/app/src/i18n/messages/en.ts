@@ -14452,6 +14452,7 @@ export const en = {
       mcp: {
         campaign_draft_save: 'Lets a connected AI app save a new ad campaign draft for a person to review',
         flags: 'Let an AI app read the ad spend flags',
+        launches: 'Let an AI app read which ad launches are running, with their budget and last day',
         spend: 'Let an AI app read the ad accounts and the spend of one',
         today: 'Let an AI app read what needs a person in Ads today',
       },

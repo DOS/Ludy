@@ -14451,6 +14451,7 @@ export const vi = {
       mcp: {
         campaign_draft_save: 'Cho ứng dụng AI lưu một bản nháp chiến dịch quảng cáo mới chờ người xem',
         flags: 'Cho ứng dụng AI xem các cảnh báo chi tiêu quảng cáo',
+        launches: 'Cho ứng dụng AI xem các lần chạy quảng cáo đang chạy, cùng ngân sách và ngày kết thúc',
         spend: 'Cho ứng dụng AI xem các tài khoản quảng cáo và chi tiêu của một tài khoản',
         today: 'Cho ứng dụng AI xem việc cần người xử lý hôm nay trong Quảng cáo',
       },
