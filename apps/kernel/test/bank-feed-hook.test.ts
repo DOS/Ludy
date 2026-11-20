@@ -276,14 +276,25 @@ describe('the worker verification of claimed notices', () => {
     expect(two.queries).toEqual(['kernel.channel.credential:conn-1', 'kernel.channel.credential:conn-2']);
   });
 
-  it('drops a notice of a connection whose owner left or that is closed, and raises any other failure so the batch waits', async () => {
+  it('drops a notice of a connection whose owner left, that is closed or whose credential cannot be read, so one broken credential never holds back the others', async () => {
     for (const code of ['CHANNEL_OWNER_LEFT', 'CHANNEL_NOT_ACTIVE']) {
       const { d, rejected } = deps({ credential: async () => Promise.reject(new DomainError(code, 409, 'no')) });
       expect(await verifyBankFeedHookNotices(d, [row()])).toEqual(['dropped']);
       expect(rejected).toEqual([]);
     }
-    const broken = deps({ credential: async () => Promise.reject(new Error('database down')) });
-    await expect(verifyBankFeedHookNotices(broken.d, [row()])).rejects.toThrow('database down');
+    // Any other failure of that connection's credential (a retired key, an envelope that will not open, a missing row) is dropped too, and the next connection's notice is still checked.
+    let calls = 0;
+    const mixed = deps({
+      credential: async () => {
+        calls++;
+        if (calls === 1) throw new Error('key retired');
+        return { provider: 'bank_tingee', externalAccountId: CLIENT, keyId: 'k1', envelope: Buffer.from('x').toString('base64') };
+      },
+    });
+    const verdicts = await verifyBankFeedHookNotices(mixed.d, [row(), row({ connectionId: 'conn-2', requestId: 'req-2' })]);
+    expect(verdicts[0]).toBe('dropped');
+    expect(verdicts).toHaveLength(2);
+    expect(mixed.rejected).toEqual([]);
   });
 
   it('does not count a notice against its hook when the stored credential cannot be read', async () => {

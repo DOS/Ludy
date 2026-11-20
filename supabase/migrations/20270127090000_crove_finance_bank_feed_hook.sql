@@ -139,7 +139,7 @@ BEGIN
 END $$;
 
 -- Claims up to p_limit waiting notices for the worker relay: the rows are deleted as they are claimed (a notice is only a hint to pull; one lost with a worker that dies is made up by the next notice and the daily
--- sweep), and what an org or connection that no longer takes notices left is deleted and not answered. Older than ten minutes goes first. The answer is the raw notice with the hook, the connection and its provider:
+-- sweep), and what an org or connection that no longer takes notices left is deleted and not answered. Anything older than ten minutes is swept first. The answer is the raw notice with the hook, the connection and its provider:
 -- the worker alone opens the connection's secret and checks it, and the body stays in its memory.
 CREATE OR REPLACE FUNCTION crove_finance.bank_feed_hook_claim(p_limit integer)
 RETURNS TABLE (org_id uuid, hook_id uuid, connection_id uuid, provider text, request_id text, notice_timestamp text, signature text, body text)
@@ -221,7 +221,7 @@ END $$;
 -- row when the connection has no hook. Owners and admins only.
 CREATE OR REPLACE FUNCTION crove_finance.bank_feed_hook_status(p_connection uuid)
 RETURNS TABLE (created_at timestamptz, rotated_at timestamptz, last_seen_at timestamptz, rejected_count integer, stopped boolean)
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 #variable_conflict use_column
 DECLARE
   v_org uuid := crove_kernel.ctx_org_id();

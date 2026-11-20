@@ -13,7 +13,7 @@ import { sql, type Transaction } from 'kysely';
 import type { Database, Db } from '@crove/db';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import { BANK_FEED_HOOK_KEY_LENGTH } from '@crove/kernel-contract';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import type { CredentialBroker, Runtime } from '@crove/kernel-runtime';
 
 // The most a notice's body may be: the provider's notices are a few hundred bytes (a transaction), so a larger one is not its.
 export const MAX_BANK_FEED_HOOK_BYTES = 16 * 1024;
@@ -143,9 +143,9 @@ export async function verifyBankFeedHookNotices(deps: BankFeedHookDeps, rows: re
     try {
       const sealed = await deps.runtime.query<SealedChannelCredential>('kernel.channel.credential', { connectionId: row.connectionId }, { actor: SYSTEM, orgId: row.orgId });
       secret = deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, { orgId: row.orgId, provider: sealed.provider, externalAccountId: sealed.externalAccountId });
-    } catch (error) {
-      // A connection whose owner left or that is no longer active has no secret to check with; anything else is a failure of ours and is raised (the batch rolls back and the notices wait).
-      if (!(error instanceof DomainError && (error.code === 'CHANNEL_OWNER_LEFT' || error.code === 'CHANNEL_NOT_ACTIVE'))) throw error;
+    } catch {
+      // A connection whose owner left or that is no longer active, whose key was retired or whose sealed envelope cannot be opened has no secret to check with. That is the connection's own state, not the batch's:
+      // its notices are dropped (a notice is only a hint, the daily pull makes it up) so one broken credential never holds back the other orgs' notices in the shared claim.
     }
     secrets.set(key, secret);
     return secret;

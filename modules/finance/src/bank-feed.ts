@@ -324,6 +324,8 @@ export const bankFeedHookSet = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
+  // The answer holds the key in plaintext, so it must never be stored for a replay (crove_kernel.idempotency_key.response): callers omit the key and the runtime refuses one.
+  noIdempotency: true,
   handler: async (ctx, input): Promise<BankFeedHookCreated> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tạo được địa chỉ nhận thông báo của nguồn giao dịch');
     const connection = await ctx.trx
