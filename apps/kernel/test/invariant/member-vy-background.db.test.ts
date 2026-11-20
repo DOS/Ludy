@@ -414,12 +414,13 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   // `enter_mcp_company_draft_context`, pinned in its own case below); another writer or reader still fails the exact sets below.
   const mcpMemberObjects = async () => {
     const found = await admin((c) =>
-      c.query<{ entry: boolean; helper: boolean; company: boolean; core: boolean; draft: boolean; proposal: boolean }>(
+      c.query<{ entry: boolean; helper: boolean; company: boolean; core: boolean; draft: boolean; proposal: boolean; write: boolean }>(
         `SELECT to_regprocedure('crove_kernel.enter_mcp_member_context(uuid,uuid)') IS NOT NULL AS entry, to_regprocedure('crove_kernel.ctx_mcp_member_id()') IS NOT NULL AS helper,
                 to_regprocedure('crove_kernel.enter_mcp_company_context(uuid,uuid)') IS NOT NULL AS company,
                 to_regprocedure('crove_kernel.seal_mcp_company_context(uuid,uuid)') IS NOT NULL AS core,
                 to_regprocedure('crove_kernel.enter_mcp_company_draft_context(uuid,uuid)') IS NOT NULL AS draft,
-                to_regprocedure('crove_kernel.enter_mcp_company_proposal_context(uuid,uuid,text)') IS NOT NULL AS proposal`,
+                to_regprocedure('crove_kernel.enter_mcp_company_proposal_context(uuid,uuid,text)') IS NOT NULL AS proposal,
+                to_regprocedure('crove_kernel.enter_mcp_company_write_context(uuid,uuid,text)') IS NOT NULL AS write`,
       ),
     );
     const row = found.rows[0];
@@ -434,6 +435,9 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         // The sealed context in which an MCP call to an R2 or R3 command becomes a proposal (#3858 slice d, ADR-0051 decision 10, owner decision 2026-11-18/19): one more writer of the seal, its own kind
         // (`mcp_company_proposal`), accepted once it exists and pinned in its own case below.
         ...(row?.proposal ? ['crove_kernel.enter_mcp_company_proposal_context(uuid,uuid,text)'] : []),
+        // The sealed write contexts of the Engage coworkers (E2, #3861, ADR-0051 decisions 10 and 11): one more writer of the seal for the two line scopes, kinds `mcp_engage_write` and `mcp_ads_draft`,
+        // accepted once it exists and pinned in test/invariant/mcp-engage-write.db.test.ts.
+        ...(row?.write ? ['crove_kernel.enter_mcp_company_write_context(uuid,uuid,text)'] : []),
       ],
       helper: row?.helper ? ['crove_kernel.ctx_mcp_member_id()'] : [],
     };

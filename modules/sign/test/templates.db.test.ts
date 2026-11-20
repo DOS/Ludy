@@ -895,6 +895,31 @@ suite('eSign Slice 2a reusable templates, roles & direct signing links on Postgr
       [orgA, uninspectedFile.fileId, uninspectedFile.storageKey, uninspectedFile.generation, uninspectedFile.sha256, ownerA],
       /SIGN_TEMPLATE_SYSTEM_ONLY/,
     );
+    // Raw SQL INSERT with inspect_status = 'passed' and NULL page_count is rejected both for uninspected and inspected source PDFs (#3566).
+    await expectTenantSqlRejects(
+      `INSERT INTO crove_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, status, created_by)
+       VALUES ($1, 'Forged Passed Null PageCount Draft', $2, $3, $4, $5, 'passed', 'draft', $6)`,
+      [orgA, uninspectedFile.fileId, uninspectedFile.storageKey, uninspectedFile.generation, uninspectedFile.sha256, ownerA],
+      /SIGN_TEMPLATE_SYSTEM_ONLY/,
+    );
+    await expectTenantSqlRejects(
+      `INSERT INTO crove_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, status, created_by)
+       VALUES ($1, 'Forged Passed Null PageCount Active', $2, $3, $4, $5, 'passed', 'active', $6)`,
+      [orgA, uninspectedFile.fileId, uninspectedFile.storageKey, uninspectedFile.generation, uninspectedFile.sha256, ownerA],
+      /SIGN_TEMPLATE_SYSTEM_ONLY/,
+    );
+    await expectTenantSqlRejects(
+      `INSERT INTO crove_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, status, created_by)
+       VALUES ($1, 'Forged Passed Null PageCount Inspected File', $2, $3, $4, $5, 'passed', 'active', $6)`,
+      [orgA, file.fileId, file.storageKey, file.generation, file.sha256, ownerA],
+      /SIGN_TEMPLATE_SYSTEM_ONLY/,
+    );
+    await expect(
+      adminPool!.query(
+        "UPDATE crove_sign.template SET page_count = NULL WHERE org_id = $1 AND id = $2",
+        [orgA, tpl.templateId],
+      ),
+    ).rejects.toThrow(/SIGN_TEMPLATE_SYSTEM_ONLY/);
     await expectTenantSqlRejects(
       `INSERT INTO crove_sign.template (org_id, title, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
        VALUES ($1, 'Forged Failed', $2, $3, $4, $5, 'failed', $6)`,

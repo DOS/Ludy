@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The per-line write scopes of an MCP grant (#3858 slice c; ADR-0051 decision 11, owner decision 2026-11-18/19): `ludy.engage.write` and `ludy.ads.draft`, beside `ludy.social.draft`. A grant may HOLD them;
-// nothing yet lets it USE them, and what it holds is bounded:
+// a scope is used only once it has its sealed write context (until then nothing lets a grant USE it; E2, #3861, adds the context and the commands), and what a grant holds is bounded:
 // - the three lists that must agree do: the contract's scope ids, the runtime's write scopes and the database's CHECK on agent_grant; only `ludy.social.draft` has a sealed write context (a scope with none is
-//   refused at run time, rule `mcp_scope`, and never run in the read context or another scope's context);
+//   refused at run time, rule `mcp_scope`, and never run in the read context or another scope's context; a scope that has one runs its commands in it and in no other);
 // - a write scope belongs to a company grant that also holds the read scope: the CHECK refuses a write scope alone, on a member grant, or mixed with the member scope, and the grant definer for a member
 //   (mcp_member_grant_approve) cannot make one; a company owner or admin can, and a member cannot;
-// - a command that declares a new scope is accepted at register() only in the narrow shape of the first (R1, internal, owners and admins), and an MCP grant that holds the scope is still refused it
-//   (FORBIDDEN, rule `mcp_scope`) until the scope's context exists; a grant without the scope, and a member-bound grant, are refused too, and the handler never runs;
+// - a command that declares a new scope is accepted at register() only in the narrow shape of the first (R1, internal, owners and admins), and an MCP grant that holds the scope is refused it
+//   (FORBIDDEN, rule `mcp_scope`) until the scope's context exists; a grant without the scope, and a member-bound grant, are refused too, and the handler never runs for them;
 // - the tool list is filtered by the grant's role and scopes: a tool that names a write scope is listed only for a company grant that holds it, a member grant never sees one, and a tool that is not read
 //   only and names no scope is never listed.
 // Part of the invariant suite: its fixtures are its own, and it imports package code under test, never helpers from outside test/invariant/.
@@ -39,8 +39,9 @@ describe('the lists of MCP scopes agree (#3858 slice c)', () => {
     expect([...MCP_WRITE_SCOPES].sort()).toEqual([...MCP_WRITE_SCOPE_IDS].sort());
     // The runtime's list of a grant's scopes is the read scope and the write scopes (the member scope ships dark: no query declares it).
     expect([...MCP_SCOPES].sort()).toEqual(['ludy.read', DRAFT, ENGAGE, ADS].sort());
-    // Only the Social draft has a sealed write context: the two new scopes have none, so no command may run under them yet.
-    expect([...MCP_WRITE_CONTEXT_SCOPES]).toEqual([DRAFT]);
+    // The Social draft has a sealed write context. The two new scopes have none until the Engage write tools land (E2, #3861, step 2 of 2): a scope with none runs no command, and one with its own joins this list
+    // whole, with the database entry that seals it. Either state is accepted here, nothing in between (never the scope of a line that has no entry).
+    expect([[DRAFT], [DRAFT, ENGAGE, ADS]]).toContainEqual([...MCP_WRITE_CONTEXT_SCOPES]);
   });
 
   it('accepts at register() a command that declares a new scope in the narrow shape of the first, and refuses it in any other', () => {
@@ -228,20 +229,30 @@ suite('what the database and the runtime do with a grant that holds a new write 
     }
   });
 
-  it('refuses a command that declares a new scope to a grant that holds it, in no context, and never runs the handler; a grant without it and a member grant are refused too', async () => {
+  it('runs a command that declares a new scope for a grant that holds it only where the scope has its sealed write context, and never for a grant without it or a member grant', async () => {
     const commands: Array<[string, string]> = [['kernel.test.engage_write', ENGAGE], ['kernel.test.ads_draft', ADS]];
     for (const [name, scope] of commands) {
       const holds = await insert(['ludy.read', scope]);
-      const err = await refusal(runtime.execute(name, {}, { actor: grantActor('owner', holds, ['ludy.read', scope], 'company'), orgId: orgA }));
-      expect([err.code, err.status, (err as { rule?: unknown }).rule ?? (err.details as { rule?: unknown } | undefined)?.rule], `${name} with its scope`).toEqual(['FORBIDDEN', 403, 'mcp_scope']);
+      const sealed = MCP_WRITE_CONTEXT_SCOPES.includes(scope);
+      if (sealed) {
+        // The scope has its context (E2, #3861): the command runs in it, as the grant.
+        await runtime.execute(name, {}, { actor: grantActor('owner', holds, ['ludy.read', scope], 'company'), orgId: orgA });
+        expect(ran, `${name} with its scope`).toContain(name);
+      } else {
+        const err = await refusal(runtime.execute(name, {}, { actor: grantActor('owner', holds, ['ludy.read', scope], 'company'), orgId: orgA }));
+        expect([err.code, err.status, (err as { rule?: unknown }).rule ?? (err.details as { rule?: unknown } | undefined)?.rule], `${name} with its scope`).toEqual(['FORBIDDEN', 403, 'mcp_scope']);
+      }
+      const before = [...ran];
       const without = await insert(['ludy.read']);
       expect((await refusal(runtime.execute(name, {}, { actor: grantActor('owner', without, ['ludy.read'], 'company'), orgId: orgA }))).status, `${name} without it`).toBe(403);
       const memberGrant = await insert(['ludy.member.read'], 'member');
       expect((await refusal(runtime.execute(name, {}, { actor: grantActor('owner', memberGrant, [scope], 'member'), orgId: orgA }))).status, `${name} member grant`).toBe(403);
+      // The handler never ran for the two refused ones.
+      expect(ran, `${name} refused`).toEqual(before);
     }
-    expect(ran).toEqual([]);
     // The person's own click on the same commands still runs them (the refusal is the grant's).
+    const clicked = [...ran];
     await runtime.execute('kernel.test.engage_write', {}, { actor: browser('owner'), orgId: orgA });
-    expect(ran).toEqual(['kernel.test.engage_write']);
+    expect(ran).toEqual([...clicked, 'kernel.test.engage_write']);
   });
 });
