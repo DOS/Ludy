@@ -7665,6 +7665,10 @@ export const en = {
     from: 'From',
     to: 'To',
     serviceItem: 'AMIS service item code',
+    defaultNone: 'No default code',
+    defaultIs: 'Default code: {code}',
+    defaultSave: 'Keep as default',
+    defaultClear: 'Clear the default',
     salesItem: 'AMIS sales item code',
     purposeLabel: 'Purpose of the purchase',
     purpose: {
@@ -14780,6 +14784,7 @@ export const en = {
         list: 'View the MISA AMIS connections',
         record_test: 'Record the result of a MISA AMIS connection test',
         request_test: 'Ask for a test of a MISA AMIS connection',
+        set_default_item: 'Set the default item of a MISA connection',
         target: 'Check the legal entity of a MISA AMIS connection',
         test_target: 'Read a MISA AMIS connection to test it',
         unlink: 'Disconnect MISA AMIS',
