@@ -24,7 +24,7 @@ LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $$
       )
   END
 $$;
-REVOKE ALL ON FUNCTION crove_finance.misa_amis_unit_aliases_ok(jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION crove_finance.misa_amis_unit_aliases_ok(jsonb) FROM PUBLIC, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_finance.misa_amis_unit_aliases_ok(jsonb) TO crove_tenant;
 
 ALTER TABLE crove_finance.misa_amis_connection DROP CONSTRAINT IF EXISTS misa_amis_connection_unit_aliases_ck;

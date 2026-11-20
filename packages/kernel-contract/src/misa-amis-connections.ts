@@ -75,8 +75,9 @@ export type MisaAmisDefaultItem = z.infer<typeof zMisaAmisDefaultItem>;
 export const MISA_AMIS_UNIT_ALIASES_MAX = 200;
 export const zMisaAmisUnitAlias = z.strictObject({
   id: zId,
-  unit: z.string().trim().min(1).max(64),
-  misaName: z.string().trim().min(1).max(64).nullable(),
+  // No control character in either text (a NUL cannot be stored in jsonb text and would be a 500, not a refusal).
+  unit: z.string().trim().min(1).max(64).regex(/^[^\p{Cc}]+$/u),
+  misaName: z.string().trim().min(1).max(64).regex(/^[^\p{Cc}]+$/u).nullable(),
 });
 export type MisaAmisUnitAlias = z.infer<typeof zMisaAmisUnitAlias>;
 

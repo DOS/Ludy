@@ -69,7 +69,7 @@ export function UnitRow({ row, busy, onKeep }: { row: MisaAmisUnitRow; busy: boo
       <label htmlFor={id} className="sr-only">
         {t('label', { unit: row.unit })}
       </label>
-      <Input id={id} className="w-40" maxLength={64} autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} data-testid="misa-amis-unit-input" />
+      <Input id={id} className="w-40 max-md:min-h-11" maxLength={64} autoComplete="off" value={typed} onChange={(e) => setTyped(e.target.value)} data-testid="misa-amis-unit-input" />
       {/* A status region that exists before its text changes, so a screen reader announces what was kept or cleared. */}
       <span role="status" className="text-xs text-subtle-foreground" data-testid="misa-amis-unit-state">
         {row.alias === null ? t('none') : t('kept', { name: row.alias })}

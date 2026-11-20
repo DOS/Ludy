@@ -664,6 +664,11 @@ suite('MISA AMIS connections (#3875)', () => {
     expect(await call('connections/setUnitAlias', owner, { id: String(amis?.id), unit: 'cái', misaName: 'Cái' })).toMatchObject({ status: 422, body: { code: 'MISA_AMIS_UNIT_NOT_ASP' } });
     expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'x'.repeat(65), misaName: 'Cái' })).toMatchObject({ status: 400 });
     expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'cái', misaName: 'x'.repeat(65) })).toMatchObject({ status: 400 });
+    // A control character in either text is a bad input, never a 500 from the table.
+    for (const bad of ['cái\u0000', 'cá\ni', '\u007fcái']) {
+      expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: bad, misaName: 'Cái' })).toMatchObject({ status: 400 });
+      expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'cái', misaName: bad })).toMatchObject({ status: 400 });
+    }
     expect(await call('connections/setUnitAlias', owner, { id: randomUUID(), unit: 'cái', misaName: 'Cái' })).toMatchObject({ status: 404 });
     // 200 units at most: a 201st is refused by the command, the 200 stay.
     await rows("UPDATE crove_finance.misa_amis_connection SET unit_aliases = (SELECT jsonb_object_agg('u' || g, 'V' || g) FROM generate_series(1, 200) g) WHERE org_id = $1 AND id = $2", [orgId, aspId]);
