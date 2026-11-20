@@ -574,6 +574,16 @@ export function createRpcHandler(
     if (!finance) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun tài chính chưa được bật' });
     return inOrg(context, fn);
   };
+  // The catalogue check and the name proposals it makes belong to a MISA connection of one product (#4152, #4124): the connector of THAT product must be on in this deployment, or the answer is the same 404 as for a
+  // deployment without the connector. The connection is looked up here for its product; an id the org does not hold needs either product on, and the command then answers its own not found. Ids are compared without case.
+  const requireMisaConnectorOf = async (actor: UserActor, orgId: string, connectionId: string) => {
+    const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
+    const wanted = connectionId.toLowerCase();
+    const product = rows.find((r) => r.id.toLowerCase() === wanted)?.product;
+    if (!channels || !(product === 'asp' ? channels.misaAsp : product === 'amis' ? channels.misaAmis : channels.misaAmis || channels.misaAsp)) {
+      throw new DomainError('MISA_AMIS_DISABLED', 404, product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+    }
+  };
   // The e-invoice provider this deployment offers under an adapter id (EINVOICE_SANDBOX and, later, one switch per real adapter), or nothing.
   const marketplaceProviderOf = (id: string): MarketplaceProvider | undefined => (Object.hasOwn(channels?.marketplaceProviders ?? {}, id) ? channels?.marketplaceProviders?.[id] : undefined);
   const einvoiceProviderOf = (id: string): EInvoiceProvider | undefined => (Object.hasOwn(channels?.einvoiceProviders ?? {}, id) ? channels?.einvoiceProviders?.[id] : undefined);
@@ -3620,35 +3630,30 @@ export function createRpcHandler(
         check: os.misaAmis.matches.check.handler(({ context, input }) =>
           inFinance(context, async (orgId, actor) => {
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được chứng từ với danh mục MISA');
-            // The check job reads the catalogue with the client of the connection's product and opens only an access code sealed for that product (misa-amis-match-job.ts, #4152): a connection whose product the
-            // deployment holds no ClientID for answers the same 404 as a deployment without the connector, so the check is never queued to fail. The connection is looked up here for its product; an id the org does
-            // not hold needs either product on, and the command then answers its own not found. Ids are compared without case, as the command does.
-            const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
-            const wanted = input.id.toLowerCase();
-            const product = rows.find((r) => r.id.toLowerCase() === wanted)?.product;
-            if (!channels || !(product === 'asp' ? channels.misaAsp : product === 'amis' ? channels.misaAmis : channels.misaAmis || channels.misaAsp)) throw new DomainError('MISA_AMIS_DISABLED', 404, product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+            // The check job reads the catalogue with the client of the connection's product and opens only an access code sealed for that product (misa-amis-match-job.ts, #4152): the check is never queued to fail.
+            await requireMisaConnectorOf(actor, orgId, input.id);
             return runtime.execute<{ queued: boolean; running: boolean }>('finance.misa_amis_match.request_check', input, { actor, orgId });
           }),
         ),
-        // The name proposals of the last check and a person's decision on one (S3b, #4124). Owner or admin; nothing is gated by the push switch (nothing is sent by a decision), only by the connector being there at all.
+        // The name proposals of the last check and a person's decision on one (S3b, #4124). Owner or admin; nothing is gated by the push switch (nothing is sent by a decision), only by the connector of the connection's product being there.
         proposals: os.misaAmis.matches.proposals.handler(({ context, input }) =>
           inFinance(context, async (orgId, actor) => {
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được các đề xuất khớp theo tên');
-            if (!channels?.misaAmis) throw new DomainError('MISA_AMIS_DISABLED', 404, 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+            await requireMisaConnectorOf(actor, orgId, input.connectionId);
             return runtime.query('finance.misa_amis_match.proposals', input, { actor, orgId });
           }),
         ),
         confirmName: os.misaAmis.matches.confirmName.handler(({ context, input }) =>
           inFinance(context, async (orgId, actor) => {
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xác nhận được đề xuất khớp theo tên');
-            if (!channels?.misaAmis) throw new DomainError('MISA_AMIS_DISABLED', 404, 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+            await requireMisaConnectorOf(actor, orgId, input.connectionId);
             return runtime.execute<{ decided: boolean }>('finance.misa_amis_match.confirm_name', input, { actor, orgId });
           }),
         ),
         rejectName: os.misaAmis.matches.rejectName.handler(({ context, input }) =>
           inFinance(context, async (orgId, actor) => {
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới từ chối được đề xuất khớp theo tên');
-            if (!channels?.misaAmis) throw new DomainError('MISA_AMIS_DISABLED', 404, 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+            await requireMisaConnectorOf(actor, orgId, input.connectionId);
             return runtime.execute<{ decided: boolean }>('finance.misa_amis_match.reject_name', input, { actor, orgId });
           }),
         ),

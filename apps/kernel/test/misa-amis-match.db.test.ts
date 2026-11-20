@@ -64,6 +64,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
   // The deployment that holds the integrator's ClientID, and one that does not.
   let app: ReturnType<typeof createHttpApp>;
   let offApp: ReturnType<typeof createHttpApp>;
+  let aspOnlyApp: ReturnType<typeof createHttpApp>;
   const owner: Account = { subject: randomUUID(), email: 'owner@misa-amis-match.test', session: randomUUID(), userId: '' };
   const adminUser: Account = { subject: randomUUID(), email: 'admin@misa-amis-match.test', session: randomUUID(), userId: '' };
   const member: Account = { subject: randomUUID(), email: 'member@misa-amis-match.test', session: randomUUID(), userId: '' };
@@ -142,6 +143,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     const deps = { config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false };
     app = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAmis: true } });
     offApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false } });
+    aspOnlyApp = createHttpApp({ ...deps, channels: { broker: vault, sandbox: false, misaAsp: true } });
 
     for (const who of [owner, adminUser, member, viewer, outsider]) {
       const me = await rpc('me/get', await tokenFor(who), undefined, null);
@@ -450,6 +452,10 @@ suite('MISA AMIS catalogue match (#4112)', () => {
         expect(listed.body).toEqual([{ id: await rowOf(p1), partyId: p1, partyName: 'Hộ kinh doanh Hoa Sen', candidateName: 'Hoa Sen (HKD)', candidateCode: 'KH_HS', checkedAt: expect.any(String) }]);
       }
       expect((await call('matches/proposals', owner, { connectionId }, offApp)).status).toBe(404);
+      // The connector asked for is the one of the connection's product: an AMIS connection on a deployment that has ASP only is as off as on one with none, for the list and for both decisions.
+      for (const [route, input] of [['matches/proposals', { connectionId }], ['matches/confirmName', await decision(p1, 'KH_HS')], ['matches/rejectName', await decision(p1, 'KH_HS')]] as const) {
+        expect(await call(route, owner, input, aspOnlyApp), route).toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
+      }
     });
 
     it('confirms a proposal: the code stays, the candidate name goes, who and when are kept, the party then has its code; it takes an owner or admin and a proposal that is still there', async () => {
