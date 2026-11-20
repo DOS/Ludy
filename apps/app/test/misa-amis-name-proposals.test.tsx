@@ -89,6 +89,29 @@ describe('the name proposals of a check (#4124)', () => {
     expect(idle).not.toContain(' disabled=""');
   });
 
+  it('shows the spinner on the button of the decision in flight and keeps the other one disabled', () => {
+    const confirming = wrap(<ProposalRow proposal={proposal()} busy active="confirm" onDecide={() => undefined} />);
+    expect(confirming.match(/aria-busy="true"/g)).toHaveLength(1);
+    expect(confirming.indexOf('aria-busy="true"')).toBeLessThan(confirming.indexOf('misa-amis-name-reject'));
+    const rejecting = wrap(<ProposalRow proposal={proposal()} busy active="reject" onDecide={() => undefined} />);
+    expect(rejecting.indexOf('aria-busy="true"')).toBeGreaterThan(rejecting.indexOf('misa-amis-name-confirm'));
+  });
+
+  it('says so, with a retry, when the list could not be loaded, and stays silent for a member who may not decide', () => {
+    // Rendered on the server the list is not fetched; a failed query is not tried again on mount, so its error is what the component reads.
+    cache.current.setDefaultOptions({ queries: { retryOnMount: false } });
+    const failWith = (error: Error & { status?: number }) => {
+      const query = cache.current.getQueryCache().build(cache.current, { queryKey: ['misaAmis', 'matches', 'proposals'] });
+      query.setState({ status: 'error', error, fetchStatus: 'idle', data: undefined });
+      return wrap(<MisaAmisNameProposals connectionId={ID} onDecided={() => undefined} />);
+    };
+    const failed = failWith(new Error('network'));
+    expect(failed).toContain('misa-amis-names-load-error');
+    expect(failed).toContain('misa-amis-names-retry');
+    cache.current.clear();
+    expect(failWith(Object.assign(new Error('forbidden'), { status: 403 }))).toBe('');
+  });
+
   it('has the same keys in Vietnamese and English', () => {
     const keys = (o: object, p = ''): string[] => Object.entries(o).flatMap(([k, v]) => (typeof v === 'object' && v !== null ? keys(v, `${p}${k}.`) : [`${p}${k}`]));
     expect(keys(viMessages.misaAmisNames).sort()).toEqual(keys(en.misaAmisNames).sort());

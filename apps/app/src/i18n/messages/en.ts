@@ -7712,6 +7712,7 @@ export const en = {
     titleDone: 'Name matches against the MISA catalogue',
     confirmLabel: 'Confirm {party} as the entry in the MISA catalogue',
     rejectLabel: 'Reject the proposal for {party}',
+    retry: 'Try again',
   },
   misaAmisPush: {
     confirm: '{count, plural, one {Send this # voucher} other {Send these # vouchers}} to MISA AMIS',

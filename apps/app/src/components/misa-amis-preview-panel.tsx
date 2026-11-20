@@ -41,6 +41,8 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
   const [purpose, setPurpose] = useState<Purpose>('1');
   const id = useId();
   const asked = `${kind}|${from}|${to}|${serviceItemCode}|${salesItemCode}|${purpose}|${legalEntityId}`;
+  const askedRef = useRef(asked);
+  askedRef.current = asked;
   const ask = {
     kind,
     legalEntityId,
@@ -187,11 +189,15 @@ export function MisaAmisPreviewPanel({ legalEntityId, push, checkConnectionId }:
       )}
       {result && <MisaAmisPreviewResult result={result} notes={notes.data ?? null} />}
       {result && checkConnectionId && <MisaAmisCheckButton state={result.matchCheck.state} pending={check.isPending} waiting={waiting} slow={slow && result.matchCheck.state === 'requested'} error={check.error} onAsk={askCheck} />}
-      {result && checkConnectionId && result.matchCheck.checkedAt !== null && (
+      {result && checkConnectionId && (
         <MisaAmisNameProposals
           key={result.matchCheck.checkedAt ?? 'none'}
           connectionId={checkConnectionId}
-          onDecided={() => preview.mutate(undefined, { onSuccess: (data) => { setAnsweredFor(asked); setLast({ asked, data }); setRuns((n) => n + 1); } })}
+          onDecided={() => {
+            // The refresh is labelled with the ask it is sent with, read when it starts, not the one a render before captured.
+            const startedFor = askedRef.current;
+            preview.mutate(undefined, { onSuccess: (data) => { setAnsweredFor(startedFor); setLast({ asked: startedFor, data }); setRuns((n) => n + 1); } });
+          }}
         />
       )}
       {result && push && <MisaAmisPushConfirm key={`${runs}:${result.digest}`} result={result} ask={ask} connectionId={push.connectionId} offer={push.offer} />}

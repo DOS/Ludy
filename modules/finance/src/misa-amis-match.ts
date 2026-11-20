@@ -347,6 +347,15 @@ export const misaAmisMatchConfirmName = defineCommand({
         checked_at: proposal.checked_at,
       })
       .execute();
+    // A check that is waiting or running read the confirmed names before this one existed, so it cannot say whether this code is still in the catalogue; moving its request time makes that run's record a no-op
+    // and the next run verifies the new confirmation (the same step erasure takes). A done or failed check is left as it is.
+    await ctx.trx
+      .updateTable('crove_finance.misa_amis_match_check')
+      .set({ requested_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('connection_id', '=', input.connectionId)
+      .where('state', '=', 'requested')
+      .execute();
     ctx.audit({ decided: true, decision: 'confirmed' });
     return { decided: true };
   },

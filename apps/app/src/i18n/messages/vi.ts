@@ -7708,6 +7708,7 @@ export const vi = {
     titleDone: 'Khớp theo tên với danh mục MISA',
     confirmLabel: 'Xác nhận {party} là mục trong danh mục MISA',
     rejectLabel: 'Từ chối đề xuất cho {party}',
+    retry: 'Thử lại',
   },
   misaAmisPush: {
     confirm: 'Gửi {count, plural, other {# chứng từ}} này sang MISA AMIS',

@@ -503,22 +503,42 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       const [p1, , , p4] = partyIds as [string, string, string, string];
       await askAgain();
       expect(await worker.query('finance.misa_amis_match.check_target', { id: connectionId }, { actor: SYSTEM, orgId })).toMatchObject({ action: 'check', confirmed: [{ partyId: p1, code: 'KH_HS' }] });
-      // The check finds a proposal for p4 and (wrongly) one for p1, which a person already confirmed; it says p1's code still holds.
+      // The check finds a proposal for p4 and says p1's code still holds.
       await record({
         state: 'done',
         failure: null,
-        results: [{ kind: 'party_name', ref: p1, state: 'confirmed', code: 'KH_HS', entryId: null }, proposal(p1, 'KH_KHAC', 'Another'), proposal(p4, 'KH_HC', 'Hoa Cúc (HKD)')],
+        results: [{ kind: 'party_name', ref: p1, state: 'confirmed', code: 'KH_HS', entryId: null }, proposal(p4, 'KH_HC', 'Hoa Cúc (HKD)')],
       });
       // The proposals of the earlier check are replaced whole (they are gone), p1 stays as it was confirmed, p4 is new.
       expect((await nameRows()).map((r) => [r.match_key, r.state, r.catalogue_code, r.candidate_name !== null])).toEqual(
         [[p1, 'confirmed', 'KH_HS', false], [p4, 'name_proposal', 'KH_HC', true]].sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
       );
       expect((await nameRows()).find((r) => r.match_key === p1)?.confirmed_by).toBe(adminUser.userId);
+      // A later check (wrongly) proposes another entry for p1, which a person already confirmed: the proposal is ignored and the confirmation stays.
+      await askAgain();
+      await record({ state: 'done', failure: null, results: [proposal(p1, 'KH_KHAC', 'Another')] });
+      expect((await nameRows()).map((r) => [r.match_key, r.state, r.catalogue_code])).toEqual([[p1, 'confirmed', 'KH_HS']]);
       // The worker says p1's code is gone from the catalogue: the confirmation goes and the party is blocked again.
       await askAgain();
       await record({ state: 'done', failure: null, results: [{ kind: 'party_name', ref: p1, state: 'unknown', code: null, entryId: null }] });
       expect(await nameRows()).toEqual([]);
       expect((await results(owner)).partyNameCodes).toEqual(new Map());
+    });
+
+    it('a confirmation made while a check waits or runs makes that run\'s record a no-op, so a code no check verified is never shown as checked', async () => {
+      const [p1] = partyIds as [string];
+      await askAgain();
+      await record({ state: 'done', failure: null, results: [proposal(p1, 'KH_HS', 'Hoa Sen (HKD)')] });
+      await askAgain();
+      const taken = await requestedAt();
+      expect(await call('matches/confirmName', owner, await decision(p1, 'KH_HS'))).toMatchObject({ body: { decided: true } });
+      expect(await requestedAt()).not.toBe(taken);
+      // The run that took the earlier request records late: it read the confirmed names before this one existed, so its record is dropped.
+      expect(await worker.execute('finance.misa_amis_match.record_check', { connectionId, requestedAt: taken, state: 'done', failure: null, results: [] }, { actor: SYSTEM, orgId })).toMatchObject({ recorded: false });
+      expect(await rows("SELECT state FROM crove_finance.misa_amis_match_check WHERE org_id = $1", [orgId])).toEqual([{ state: 'requested' }]);
+      // The next run reads the confirmation and says its code is gone; the fixture is clean for the next test.
+      await record({ state: 'done', failure: null, results: [{ kind: 'party_name', ref: p1, state: 'unknown', code: null, entryId: null }] });
+      expect(await nameRows()).toEqual([]);
     });
 
     it('keeps a confirmed name when a check fails, as it keeps the other results', async () => {
