@@ -232,7 +232,7 @@ function ImageAttachmentPreview({
       type="button"
       onClick={() => onOpenLightbox(objectUrl, attachment.filename)}
       aria-label={t('openImage', { name: attachment.filename })}
-      className="block overflow-hidden rounded-md border bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="flex items-center justify-center overflow-hidden rounded-md border bg-muted/30 max-md:min-h-11 max-md:min-w-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       data-testid="note-attachment-image-button"
     >
       <img
@@ -283,6 +283,7 @@ function AudioAttachmentPreview({ attachment, slug }: { attachment: NoteAttachme
     <audio
       controls
       preload="metadata"
+      aria-label={attachment.filename}
       src={objectUrl}
       className="w-full max-w-md"
       data-testid="note-attachment-audio"
@@ -523,6 +524,7 @@ export function NoteAttachments({
                         type="button"
                         size="sm"
                         variant="ghost"
+                        aria-label={`${pdfOpen ? t('hidePdf') : t('previewPdf')}: ${att.filename}`}
                         onClick={() => setOpenPdfs((prev) => ({ ...prev, [att.id]: !pdfOpen }))}
                         data-testid="note-attachment-toggle-pdf"
                       >
@@ -533,6 +535,7 @@ export function NoteAttachments({
                       type="button"
                       size="sm"
                       variant="outline"
+                      aria-label={`${t('download')}: ${att.filename}`}
                       loading={downloadingId === att.id}
                       disabled={downloadingId === att.id}
                       onClick={() => void handleDownload(att)}
@@ -545,6 +548,7 @@ export function NoteAttachments({
                         type="button"
                         size="sm"
                         variant="ghost"
+                        aria-label={`${t('delete')}: ${att.filename}`}
                         loading={removeMutation.isPending && removeMutation.variables === att.id}
                         disabled={removeMutation.isPending}
                         onClick={() => removeMutation.mutate(att.id)}
