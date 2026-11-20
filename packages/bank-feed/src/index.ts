@@ -5,8 +5,9 @@
 // no capability that moves money, and an adapter for a provider that also offers payments implements none of it.
 // Each adapter declares the hosts its fetch is bound to; the offline sandbox reaches none.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { TINGEE_PRODUCTION_HOST, TINGEE_UAT_HOST, tingeeBankFeed } from './tingee.ts';
 
-export { TINGEE_HOSTS, TINGEE_UAT_HOST, TingeeError, parseTingeeSecret, signTingeeRequest, tingeeBankFeed, vietnamStamp, type TingeeErrorKind, type TingeeOptions } from './tingee.ts';
+export { TINGEE_HOSTS, TINGEE_PRODUCTION_HOST, TINGEE_UAT_HOST, TingeeError, parseTingeeSecret, signTingeeRequest, tingeeBankFeed, vietnamStamp, type TingeeErrorKind, type TingeeOptions } from './tingee.ts';
 
 export const BANK_FEED_PROVIDERS = ['bank_sandbox', 'bank_tingee'] as const;
 export type BankFeedProviderId = (typeof BANK_FEED_PROVIDERS)[number];
@@ -104,6 +105,21 @@ export function allowlistedFetch(hosts: readonly string[], fetchImpl: Fetch = fe
 // is built here with allowlistedFetch(itsHosts, fetchImpl); none exists yet (Tingee is #2045).
 export function bankFeedProviders(options: { sandbox: boolean; now?: () => Date; sandboxWebhookSecret?: string | undefined }): Readonly<Record<string, BankFeedProvider>> {
   return options.sandbox ? { bank_sandbox: sandboxBankFeed(options.now, options.sandboxWebhookSecret) } : {};
+}
+
+// The adapters of the real providers this deployment offers, by provider id (ADR-0039, #2045): Tingee when BANK_FEED_TINGEE is on. Each reaches only its own host, through
+// allowlistedFetch; `uat` points Tingee at its UAT host for the UAT run (and leaves its production host out of the allowlist). The sandbox is not here: it reaches no host and
+// stays in bankFeedProviders, so what a worker reaches is classified field by field (channels.bankFeeds reaches nothing, channels.bankFeedHosted a provider).
+export function bankFeedHostedProviders(options: { tingee: boolean; uat?: boolean; fetchImpl?: Fetch; now?: () => Date }): Readonly<Record<string, BankFeedProvider>> {
+  if (!options.tingee) return {};
+  const host = options.uat === true ? TINGEE_UAT_HOST : TINGEE_PRODUCTION_HOST;
+  return {
+    bank_tingee: tingeeBankFeed({
+      fetch: allowlistedFetch([host], options.fetchImpl ?? fetch),
+      host,
+      ...(options.now ? { now: options.now } : {}),
+    }),
+  };
 }
 
 // The offline sandbox (ADR-0039): no network, so the connect, map and sync flow runs on a laptop and in tests. Its

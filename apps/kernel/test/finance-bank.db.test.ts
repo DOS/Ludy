@@ -21,7 +21,8 @@ import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { runBankFeedSync } from '../src/bank-feed-sync.ts';
-import { bankFeedProviders, signSandboxWebhook } from '@crove/bank-feed';
+import { TINGEE_HOSTS, allowlistedFetch, bankFeedProviders, signSandboxWebhook, tingeeBankFeed, vietnamStamp, type BankFeedProvider } from '@crove/bank-feed';
+import { FakeTingee } from '../../../packages/bank-feed/test/tingee-fake.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -56,6 +57,9 @@ interface Account {
 
 const suite = ADMIN ? describe : describe.skip;
 const WEBHOOK_SECRET = 'bank-feed-webhook-secret-0123456789-abcdef';
+const TINGEE_CLIENT = 'tingee-client-id-for-the-test';
+const TINGEE_SECRET = 'tingee-secret-token-for-the-test-0123456789';
+const TINGEE_VA = '8888000001';
 
 suite('bank statement import (#326)', () => {
   const dbName = `crove_test_bank_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -67,6 +71,10 @@ suite('bank statement import (#326)', () => {
   // The same, with a tight limit on signed notices per address.
   let limitedApp: ReturnType<typeof createHttpApp>;
   let vault: CredentialVault;
+  // The Tingee bank feed (#2045): a fake Tingee, the real adapter over it, and an app that offers it.
+  let tingeeApp: ReturnType<typeof createHttpApp>;
+  let tingeeAdapter: BankFeedProvider;
+  let tingeeFake: FakeTingee;
   // The API's runtime, and the worker's, which runs feed jobs as the system.
   let api: Runtime;
   let worker: Runtime;
@@ -174,6 +182,19 @@ suite('bank statement import (#326)', () => {
     const feedDeps = { config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false, channels: { broker: vault, sandbox: false, bankFeedSandbox: true } };
     feedApp = createHttpApp({ ...feedDeps, bankFeedWebhooks: notices });
     limitedApp = createHttpApp({ ...feedDeps, bankFeedWebhooks: notices, bankFeedWebhookLimit: new RateLimiter({ perMinute: 2 }) });
+    // A fake Tingee that knows one Client ID, with a linked account and two transactions in the last days, and the real adapter over it (its pause between calls kept short).
+    const day = (back: number) => vietnamStamp(new Date(Date.now() - back * 86_400_000)).slice(0, 8);
+    tingeeFake = new FakeTingee(
+      { get now() { return new Date(); } },
+      { [TINGEE_CLIENT]: TINGEE_SECRET },
+      [{ accountNumber: '0011223344', vaAccountNumber: TINGEE_VA, bankBin: '970418', bankName: 'BIDV', accountName: 'CONG TY ABC', status: 'active' }],
+      [
+        { transactionId: '00000000-0000-4000-8000-000000000001', code: 'FT26000001', amount: '1500000', type: 'credit', content: 'HD 0000123 thanh toan', accountNumber: '0011223344', vaAccountNumber: TINGEE_VA, transactionDate: `${day(3)}090000` },
+        { transactionId: '00000000-0000-4000-8000-000000000002', code: 'FT26000002', amount: '250000', type: 'debit', content: 'Phi dich vu', accountNumber: '0011223344', vaAccountNumber: TINGEE_VA, transactionDate: `${day(2)}101500` },
+      ],
+    );
+    tingeeAdapter = tingeeBankFeed({ fetch: allowlistedFetch(TINGEE_HOSTS, tingeeFake.fetch), spacingMs: 5 });
+    tingeeApp = createHttpApp({ ...feedDeps, channels: { broker: vault, sandbox: false, bankFeedHosted: { bank_tingee: tingeeAdapter } } });
     const workerUrl = new URL(adminUrl);
     workerUrl.username = 'crove_worker';
     workerUrl.password = 'test-worker-pw';
@@ -1362,6 +1383,66 @@ suite('bank statement import (#326)', () => {
       await expect(worker.execute('finance.bank.statement_reject', { fileId }, { actor: WORKER, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
       await expect(worker.execute('kernel.extraction.statement_state', { fileId, state: 'imported' }, { actor: WORKER, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect(await status(fileId)).toMatchObject({ status: 'staged' });
+    });
+  });
+
+  // The Tingee bank feed (ADR-0039, #2045 S2): the org's own Client ID and Secret Token, tested once through the adapter and sealed; the worker lists and pulls.
+  describe('the Tingee bank feed', () => {
+    const connect = async (who: Account, input: Record<string, unknown>, on: ReturnType<typeof createHttpApp> = tingeeApp) => rpc('bankFeeds/connectTingee', await tokenFor(who), input, slug, on);
+    const tingeeSync = (connectionId: string) => runBankFeedSync({ runtime: worker, broker: vault, providers: { bank_tingee: tingeeAdapter } }, { orgId, connectionId });
+
+    it('is offered only where the deployment turns it on, and only to owners and admins', async () => {
+      const good = { clientId: TINGEE_CLIENT, secretToken: TINGEE_SECRET };
+      expect(await connect(owner, good, feedApp)).toMatchObject({ status: 404, body: { code: 'BANK_FEED_TINGEE_DISABLED' } });
+      expect((await connect(member, good)).status).toBe(403);
+      expect((await connect(viewer, good)).status).toBe(403);
+      // Nothing was tested or sealed for any of them.
+      expect(tingeeFake.requests).toEqual([]);
+    });
+
+    it('refuses a credential Tingee does not accept, with a fixed sentence, and seals nothing', async () => {
+      const before = Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.credential WHERE org_id = $1', [orgId])).rows[0]?.n)));
+      const wrongSecret = await connect(owner, { clientId: TINGEE_CLIENT, secretToken: 'another-secret-token-0123456789' });
+      expect(wrongSecret).toMatchObject({ status: 422, body: { code: 'BANK_FEED_CREDENTIALS' } });
+      expect(await connect(owner, { clientId: 'nobody-by-this-id', secretToken: TINGEE_SECRET })).toMatchObject({ status: 422, body: { code: 'BANK_FEED_CREDENTIALS' } });
+      // A control character is refused before any call.
+      expect((await connect(owner, { clientId: TINGEE_CLIENT, secretToken: 'a\u0000b' })).status).toBe(400);
+      expect(JSON.stringify(wrongSecret.body)).not.toContain('another-secret-token');
+      expect(Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.credential WHERE org_id = $1', [orgId])).rows[0]?.n)))).toBe(before);
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1 AND provider = 'bank_tingee'`, [orgId])).rows)).toEqual([]);
+    });
+
+    it('connects, then the worker lists the account, a mapped account is pulled once, and no secret is stored or shown in the clear', async () => {
+      const connected = await connect(owner, { clientId: TINGEE_CLIENT, secretToken: TINGEE_SECRET, displayName: 'Tingee BIDV' });
+      expect(connected.status).toBe(200);
+      const connectionId = String(connected.body.connectionId);
+      expect(JSON.stringify(connected.body)).not.toContain(TINGEE_SECRET);
+      const connections = (await feed('connections', owner)).body;
+      expect(connections).toContainEqual(expect.objectContaining({ id: connectionId, provider: 'bank_tingee', displayName: 'Tingee BIDV', status: 'active' }));
+      // Only the two read endpoints were called.
+      expect([...new Set(tingeeFake.requests.map((r) => r.path))].sort()).toEqual(['/v1/get-va-paging']);
+
+      expect(await tingeeSync(connectionId)).toMatchObject({ accounts: 1, pages: 0 });
+      expect((await feed('listed', owner, { connectionId })).body.map((a: { externalAccountId: string }) => a.externalAccountId)).toEqual([TINGEE_VA]);
+      const mapped = await feed('map', owner, { connectionId, externalAccountId: TINGEE_VA, bankAccount: '1121.VCB', idempotencyKey: randomUUID() });
+      expect(mapped.status).toBe(200);
+      const first = await tingeeSync(connectionId);
+      expect(first.pages).toBeGreaterThanOrEqual(1);
+      expect(first.stored).toBe(2);
+      const lines = await admin(async (c) =>
+        (await c.query<{ amount: string; reference: string; description: string }>(`SELECT amount::text AS amount, bank_ref AS reference, description FROM crove_finance.bank_line WHERE org_id = $1 AND bank_ref LIKE 'FT26%' ORDER BY bank_ref`, [orgId])).rows,
+      );
+      expect(lines.map((l) => [l.reference, Number(l.amount)])).toEqual([['FT26000001', 1_500_000], ['FT26000002', -250_000]]);
+      // Pulled again (the last days are read again), nothing is stored twice.
+      expect((await tingeeSync(connectionId)).stored).toBe(0);
+      expect([...new Set(tingeeFake.requests.map((r) => r.path))].sort()).toEqual(['/v1/get-va-paging', '/v1/transaction/get-paging']);
+
+      // The credential is sealed: no row of the org holds the Secret Token, and no audit row mentions it.
+      expect(
+        await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.credential cr WHERE cr.org_id = $1 AND row_to_json(cr)::text LIKE $2`, [orgId, `%${TINGEE_SECRET}%`])).rows),
+      ).toEqual([]);
+      expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE $2`, [orgId, `%${TINGEE_SECRET}%`])).rows)).toEqual([]);
+      expect((await rpc('channels/list', await tokenFor(owner), {}, slug, tingeeApp)).body.map((c: { id: string }) => c.id)).not.toContain(connectionId);
     });
   });
 });

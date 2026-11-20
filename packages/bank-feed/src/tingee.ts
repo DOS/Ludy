@@ -7,7 +7,8 @@
 import { createHmac } from 'node:crypto';
 import type { BankFeedAccount, BankFeedProvider, BankFeedPull, BankFeedTransaction, Fetch } from './index.ts';
 
-const PRODUCTION_HOST = 'open-api.tingee.vn';
+export const TINGEE_PRODUCTION_HOST = 'open-api.tingee.vn';
+const PRODUCTION_HOST = TINGEE_PRODUCTION_HOST;
 export const TINGEE_HOSTS: readonly string[] = [PRODUCTION_HOST];
 // The UAT host, used only for the UAT run (S5); never part of the production allowlist.
 export const TINGEE_UAT_HOST = 'uat-open-api.tingee.vn';

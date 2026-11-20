@@ -341,6 +341,16 @@ export function statementAmountText(cell: { kind: string; value: string } | unde
 const BANK_FEED_PROVIDER_ID = /^bank_[a-z0-9_]{1,27}$/;
 export const isBankFeedProviderId = (provider: string): boolean => BANK_FEED_PROVIDER_ID.test(provider);
 
+// Connects a Tingee account (#2045): the Client ID and Secret Token the org made in its own Tingee portal. The secret is sealed by the API and opened only by the worker; it is never returned, logged or
+// put in an error. A control character in either value is refused (the database would refuse the row).
+const zTingeeCredentialText = z.string().trim().min(1).max(200).regex(/^[^\p{Cc}]+$/u);
+export const zBankFeedConnectTingee = z.strictObject({
+  clientId: zTingeeCredentialText,
+  secretToken: zTingeeCredentialText,
+  displayName: z.string().trim().min(1).max(200).optional(),
+});
+export type BankFeedConnectTingee = z.infer<typeof zBankFeedConnectTingee>;
+
 // Maps an account a bank feed connection reaches to one of the org's bank accounts in one legal entity (#2044).
 export const zBankFeedMap = z.strictObject({
   connectionId: zId,
