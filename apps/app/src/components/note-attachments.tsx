@@ -10,11 +10,12 @@ import { NOTE_ATTACHMENT_MAX_BYTES, type NoteAttachment } from '@crove/kernel-co
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@crove/ui/components/dialog';
+import { Skeleton } from '@crove/ui/components/skeleton';
 import { ClientError, clientForOrg, errorMessage, fetchNoteAttachmentBlob, uploadNoteAttachment } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
 import { refreshNotes } from './notes-panel.tsx';
 import { PdfCanvasViewer } from './sign/pdf-canvas-viewer.tsx';
-import { ErrorText, Spinner } from './ui.tsx';
+import { ErrorText } from './ui.tsx';
 
 const SAFE_RASTER_IMAGES: ReadonlySet<string> = new Set([
   'image/png',
@@ -221,9 +222,9 @@ function ImageAttachmentPreview({
   }
   if (!objectUrl) {
     return (
-      <div className="flex items-center gap-2 py-2 text-xs text-subtle-foreground">
-        <Spinner />
-        <span>{t('loadingPreview')}</span>
+      <div aria-busy="true" className="py-1">
+        <span className="sr-only">{t('loadingPreview')}</span>
+        <Skeleton className="h-32 w-48 max-w-full rounded-md" />
       </div>
     );
   }
@@ -273,9 +274,9 @@ function AudioAttachmentPreview({ attachment, slug }: { attachment: NoteAttachme
   if (failed) return <p className="text-xs text-subtle-foreground">{t('previewFailed')}</p>;
   if (!objectUrl) {
     return (
-      <div className="flex items-center gap-2 py-1 text-xs text-subtle-foreground">
-        <Spinner />
-        <span>{t('loadingPreview')}</span>
+      <div aria-busy="true" className="py-1">
+        <span className="sr-only">{t('loadingPreview')}</span>
+        <Skeleton className="h-10 w-full max-w-md rounded-md" />
       </div>
     );
   }
@@ -330,9 +331,9 @@ function PdfAttachmentPreview({ attachment, slug }: { attachment: NoteAttachment
   if (failed) return <p className="text-xs text-subtle-foreground">{t('previewFailed')}</p>;
   if (loading) {
     return (
-      <div className="flex items-center gap-2 py-2 text-xs text-subtle-foreground">
-        <Spinner />
-        <span>{t('loadingPreview')}</span>
+      <div aria-busy="true" className="py-1">
+        <span className="sr-only">{t('loadingPreview')}</span>
+        <Skeleton className="h-44 w-full rounded-md" />
       </div>
     );
   }
@@ -487,7 +488,7 @@ export function NoteAttachments({
         >
           {uploader.uploadingName ? (
             <span className="inline-flex items-center gap-2 text-foreground" role="status">
-              <Spinner />
+              <span className="size-2 animate-pulse rounded-full bg-primary" aria-hidden="true" />
               {t('uploading', { name: uploader.uploadingName })}
             </span>
           ) : dragActive ? (

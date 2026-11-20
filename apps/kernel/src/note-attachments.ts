@@ -219,6 +219,15 @@ const DEFAULT_EXT_FOR_TYPE: Readonly<Record<string, string>> = {
   'application/xml': 'xml',
 };
 
+function sliceSafeUtf16(value: string, maxLen: number): string {
+  let end = Math.min(value.length, Math.max(0, maxLen));
+  if (end > 0) {
+    const last = value.charCodeAt(end - 1);
+    if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 export function sanitizeNoteAttachmentFilename(rawName: string | null | undefined, contentType: string): string {
   const input = (rawName ?? '').trim();
   const chars: string[] = [];
@@ -245,9 +254,10 @@ export function sanitizeNoteAttachmentFilename(rawName: string | null | undefine
     const ext = lowerExtension(cleaned);
     if (ext !== '' && ext.length < 12) {
       const keep = NOTE_ATTACHMENT_FILENAME_MAX - ext.length - 1;
-      cleaned = `${cleaned.slice(0, Math.max(1, keep))}.${ext}`;
+      const stem = sliceSafeUtf16(cleaned, Math.max(1, keep)) || 'dinh-kem';
+      cleaned = `${stem}.${ext}`;
     } else {
-      cleaned = cleaned.slice(0, NOTE_ATTACHMENT_FILENAME_MAX);
+      cleaned = sliceSafeUtf16(cleaned, NOTE_ATTACHMENT_FILENAME_MAX) || 'dinh-kem';
     }
   }
   return cleaned;
