@@ -32,8 +32,10 @@ interface Answer {
   body?: unknown;
 }
 // A fake Google for the connect step: the token address (POST) and the userinfo address (GET, bearer token), recording each request.
-function google(token: Answer, userinfo: Answer = { body: { sub: '110248495921238986420', email: 'Lan@Example.Test', email_verified: true } }) {
+function google(token: Answer, userinfo: Answer = { body: { sub: '110248495921238986420', email: 'Lan@Example.Test', email_verified: true } }, revoke: Answer | 'network' = { body: {} }) {
   const seen: { url: URL; init: RequestInit | undefined }[] = [];
+  // What the revoke address was asked to take away: the form of each POST, which must hold the token and nothing else.
+  const revoked: URLSearchParams[] = [];
   const fetch = async (input: string, init?: RequestInit): Promise<Response> => {
     const url = new URL(input);
     seen.push({ url, init });
@@ -42,6 +44,12 @@ function google(token: Answer, userinfo: Answer = { body: { sub: '11024849592123
       if (init?.method !== 'POST') violations.push(`token method ${init?.method}`);
       return reply(token);
     }
+    if (url.hostname === 'oauth2.googleapis.com' && url.pathname === '/revoke') {
+      if (init?.method !== 'POST') violations.push(`revoke method ${init?.method}`);
+      revoked.push(new URLSearchParams(String(init?.body)));
+      if (revoke === 'network') throw new Error(`connect failed for ${REFRESH}`);
+      return reply(revoke);
+    }
     if (url.hostname === 'www.googleapis.com' && url.pathname === '/oauth2/v3/userinfo') {
       if ((init?.headers as Record<string, string> | undefined)?.authorization !== `Bearer ${ACCESS}`) violations.push('userinfo without the bearer token');
       return reply(userinfo);
@@ -49,7 +57,7 @@ function google(token: Answer, userinfo: Answer = { body: { sub: '11024849592123
     violations.push(`unexpected ${url.hostname}${url.pathname}`);
     return new Response('{}', { status: 500 });
   };
-  return { fetch, seen };
+  return { fetch, seen, revoked };
 }
 const GRANT = { access_token: ACCESS, refresh_token: REFRESH, expires_in: 3599, scope: `openid https://www.googleapis.com/auth/userinfo.email ${GOOGLE_MEET_SPACE_READ_SCOPE}`, token_type: 'Bearer' };
 const adapterOver = (fake: ReturnType<typeof google>) =>
@@ -124,12 +132,17 @@ describe('the code exchange', () => {
     const fake = google({ body: { ...GRANT, scope: 'openid https://www.googleapis.com/auth/userinfo.email' } });
     const error = await refusal(adapterOver(fake).exchange({ code: CODE, redirectUri: REDIRECT, codeVerifier: VERIFIER }));
     expect(error.code).toBe('platform_refused');
-    expect(fake.seen).toHaveLength(1);
+    // The token address, then the revoke address: the profile is never read.
+    expect(fake.seen.map((s) => s.url.pathname)).toEqual(['/token', '/revoke']);
+    // The grant Google issued is taken away: the refresh token, alone in the form (no client id, no secret, no code).
+    expect(fake.revoked.map((form) => Object.fromEntries(form))).toEqual([{ token: REFRESH }]);
   });
 
-  it('refuses a grant without a refresh token: the connection would die in an hour', async () => {
-    const error = await refusal(adapterOver(google({ body: { ...GRANT, refresh_token: undefined } })).exchange({ code: CODE, redirectUri: REDIRECT, codeVerifier: VERIFIER }));
+  it('refuses a grant without a refresh token: the connection would die in an hour, and the access token is revoked', async () => {
+    const fake = google({ body: { ...GRANT, refresh_token: undefined } });
+    const error = await refusal(adapterOver(fake).exchange({ code: CODE, redirectUri: REDIRECT, codeVerifier: VERIFIER }));
     expect(error.code).toBe('platform_refused');
+    expect(fake.revoked.map((form) => Object.fromEntries(form))).toEqual([{ token: ACCESS }]);
   });
 
   it('reads the account again as unavailable when Google answers without an access token', async () => {
@@ -139,8 +152,10 @@ describe('the code exchange', () => {
 
   it('stores nothing for an account Google gives no verified subject and address for', async () => {
     for (const info of [{ email: 'lan@example.test', email_verified: true }, { sub: '1', email_verified: true }, { sub: '1', email: 'lan@example.test', email_verified: false }]) {
-      const error = await refusal(adapterOver(google({ body: GRANT }, { body: info })).exchange({ code: CODE, redirectUri: REDIRECT, codeVerifier: VERIFIER }));
+      const fake = google({ body: GRANT }, { body: info });
+      const error = await refusal(adapterOver(fake).exchange({ code: CODE, redirectUri: REDIRECT, codeVerifier: VERIFIER }));
       expect(error.code).toBe('platform_refused');
+      expect(fake.revoked.map((form) => Object.fromEntries(form))).toEqual([{ token: REFRESH }]);
     }
   });
 
@@ -163,9 +178,32 @@ describe('the code exchange', () => {
     expect(error.message).not.toContain(CODE);
   });
 
-  it('refuses the profile when Google will not give it', async () => {
-    const error = await refusal(adapterOver(google({ body: GRANT }, { status: 403, body: {} })).exchange({ code: CODE, redirectUri: REDIRECT, codeVerifier: VERIFIER }));
+  it('refuses the profile when Google will not give it, and revokes the grant', async () => {
+    const fake = google({ body: GRANT }, { status: 403, body: {} });
+    const error = await refusal(adapterOver(fake).exchange({ code: CODE, redirectUri: REDIRECT, codeVerifier: VERIFIER }));
     expect(error.code).toBe('platform_refused');
+    expect(fake.revoked.map((form) => Object.fromEntries(form))).toEqual([{ token: REFRESH }]);
+  });
+
+  it('revokes nothing when the connect works, and nothing when Google issued no grant (a refused code)', async () => {
+    const ok = google({ body: GRANT });
+    await adapterOver(ok).exchange({ code: CODE, redirectUri: REDIRECT, codeVerifier: VERIFIER });
+    expect(ok.revoked).toEqual([]);
+    for (const answer of [{ status: 400, body: { error: 'invalid_grant' } }, { status: 503, body: {} }, { body: { ...GRANT, access_token: undefined } }]) {
+      const fake = google(answer);
+      await refusal(adapterOver(fake).exchange({ code: CODE, redirectUri: REDIRECT, codeVerifier: VERIFIER }));
+      expect(fake.revoked).toEqual([]);
+    }
+  });
+
+  it('keeps the same refusal and leaks nothing when the revoke itself fails (an error, a 400, a network failure)', async () => {
+    for (const revoke of [{ status: 500, body: { error: 'server' } }, { status: 400, body: { error: 'invalid_token' } }, 'network' as const]) {
+      const fake = google({ body: { ...GRANT, scope: 'openid email' } }, undefined, revoke);
+      const error = await refusal(adapterOver(fake).exchange({ code: CODE, redirectUri: REDIRECT, codeVerifier: VERIFIER }));
+      expect(error.code).toBe('platform_refused');
+      expect(fake.revoked).toHaveLength(1);
+      for (const secret of [CODE, VERIFIER, ACCESS, REFRESH, APP.clientSecret]) expect(error.message).not.toContain(secret);
+    }
   });
 });
 

@@ -63,6 +63,40 @@ describe('GoogleCalendarAdapter', () => {
     await expect(exchange({ access_token: 'a', refresh_token: 'r', scope: GOOGLE_CALENDAR_FREEBUSY_SCOPE }, { email: 'a@b.test', email_verified: false })).rejects.toMatchObject({ kind: 'denied', code: 'NO_EMAIL' });
   });
 
+  it('takes the grant away at Google when the connect refuses after Google issued tokens, and only then', async () => {
+    const attempt = async (token: object, info: object, revoke: { status?: number; body: unknown } = { body: {} }) => {
+      const fake = google({ 'POST oauth2.googleapis.com/token': [{ body: token }], 'GET www.googleapis.com/oauth2/v3/userinfo': [{ body: info }], 'POST oauth2.googleapis.com/revoke': [revoke] });
+      const failure = await new GoogleCalendarAdapter(APP, fake.fetchImpl).exchange({ code: 'c', redirectUri: REDIRECT, codeVerifier: null }).catch((e: unknown) => e);
+      return { failure, revoked: fake.calls.filter((c) => c.route === 'POST oauth2.googleapis.com/revoke').map((c) => c.body) };
+    };
+    const verified = { email: 'a@b.test', email_verified: true };
+    // The member unticked the calendar permission: the refresh token is revoked, alone in the form (no client secret, no code).
+    const noScope = await attempt({ access_token: 'a1', refresh_token: 'r1', scope: 'openid email' }, verified);
+    expect(noScope.failure).toMatchObject({ kind: 'denied', code: 'MISSING_PERMISSION' });
+    expect(noScope.revoked).toEqual([{ token: 'r1' }]);
+    // No refresh token came: the access token is what there is to revoke.
+    const noRefresh = await attempt({ access_token: 'a2', scope: `openid email ${GOOGLE_CALENDAR_FREEBUSY_SCOPE}` }, verified);
+    expect(noRefresh.failure).toBeInstanceOf(ConnectorError);
+    expect(noRefresh.revoked).toEqual([{ token: 'a2' }]);
+    // An address Google has not verified.
+    const unverified = await attempt({ access_token: 'a3', refresh_token: 'r3', scope: GOOGLE_CALENDAR_FREEBUSY_SCOPE }, { email: 'a@b.test', email_verified: false });
+    expect(unverified.failure).toMatchObject({ kind: 'denied', code: 'NO_EMAIL' });
+    expect(unverified.revoked).toEqual([{ token: 'r3' }]);
+    // A revoke that fails (a 500, a 400) changes nothing the member sees.
+    for (const revoke of [{ status: 500, body: { error: 'server' } }, { status: 400, body: { error: 'invalid_token' } }]) {
+      const failed = await attempt({ access_token: 'a4', refresh_token: 'r4', scope: 'openid email' }, verified, revoke);
+      expect(failed.failure).toMatchObject({ kind: 'denied', code: 'MISSING_PERMISSION' });
+      expect(failed.revoked).toEqual([{ token: 'r4' }]);
+    }
+    // A connect that works, and a code Google refused (no grant exists), revoke nothing.
+    const worked = await attempt({ access_token: 'a5', refresh_token: 'r5', expires_in: 3599, scope: `openid email ${GOOGLE_CALENDAR_FREEBUSY_SCOPE}` }, verified);
+    expect(worked.failure).toMatchObject({ externalAccount: 'a@b.test' });
+    expect(worked.revoked).toEqual([]);
+    const fake = google({ 'POST oauth2.googleapis.com/token': [{ status: 400, body: { error: 'invalid_grant' } }] });
+    await new GoogleCalendarAdapter(APP, fake.fetchImpl).exchange({ code: 'c', redirectUri: REDIRECT, codeVerifier: null }).catch(() => undefined);
+    expect(fake.calls.map((c) => c.route)).toEqual(['POST oauth2.googleapis.com/token']);
+  });
+
   it('maps a refused code to invalid_grant without putting the code or a token in the error', async () => {
     const { fetchImpl } = google({ 'POST oauth2.googleapis.com/token': [{ status: 400, body: { error: 'invalid_grant', error_description: 'Bad Request' } }] });
     const failure = await new GoogleCalendarAdapter(APP, fetchImpl).exchange({ code: 'secret-code', redirectUri: REDIRECT, codeVerifier: null }).catch((e: unknown) => e);

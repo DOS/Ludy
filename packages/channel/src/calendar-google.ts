@@ -285,17 +285,25 @@ export class GoogleCalendarAdapter implements CalendarAdapter {
       throw connectorError(error, true);
     });
     if (typeof answer.access_token !== 'string' || !answer.access_token) throw new ConnectorError('provider', 'Google answered without an access token');
-    if (typeof answer.refresh_token !== 'string' || !answer.refresh_token) throw new ConnectorError('provider', 'Google answered without a refresh token');
-    const granted = typeof answer.scope === 'string' ? answer.scope.split(' ').filter(Boolean) : [];
-    // Google lets the member untick a permission on the consent screen.
-    if (!granted.includes(GOOGLE_CALENDAR_FREEBUSY_SCOPE)) throw new ConnectorError('denied', 'Google did not grant the calendar permission this app needs', 'MISSING_PERMISSION');
-    const info = await this.call('GET', 'https://www.googleapis.com/oauth2/v3/userinfo', answer.access_token).catch((error: unknown) => {
-      throw connectorError(error);
-    });
-    const email = typeof info.email === 'string' ? info.email.trim().toLowerCase() : '';
-    if (!email || info.email_verified === false) throw new ConnectorError('denied', 'Google did not give a verified email for this account', 'NO_EMAIL');
-    const secret: GoogleCalendarSecret = { accessToken: answer.access_token, refreshToken: answer.refresh_token };
-    return { externalAccount: email.slice(0, 200), displayName: email.slice(0, 200), scopes: granted.slice(0, 20), expiresAt: expiryOf(answer, now), secret: JSON.stringify(secret) };
+    const accessToken = answer.access_token;
+    // From here Google has issued a grant. A refusal below leaves nothing in Ludy, so the grant is taken away at Google too (best effort), instead of staying in the member's Google Account unused.
+    try {
+      if (typeof answer.refresh_token !== 'string' || !answer.refresh_token) throw new ConnectorError('provider', 'Google answered without a refresh token');
+      const refreshToken = answer.refresh_token;
+      const granted = typeof answer.scope === 'string' ? answer.scope.split(' ').filter(Boolean) : [];
+      // Google lets the member untick a permission on the consent screen.
+      if (!granted.includes(GOOGLE_CALENDAR_FREEBUSY_SCOPE)) throw new ConnectorError('denied', 'Google did not grant the calendar permission this app needs', 'MISSING_PERMISSION');
+      const info = await this.call('GET', 'https://www.googleapis.com/oauth2/v3/userinfo', accessToken).catch((error: unknown) => {
+        throw connectorError(error);
+      });
+      const email = typeof info.email === 'string' ? info.email.trim().toLowerCase() : '';
+      if (!email || info.email_verified === false) throw new ConnectorError('denied', 'Google did not give a verified email for this account', 'NO_EMAIL');
+      const secret: GoogleCalendarSecret = { accessToken, refreshToken };
+      return { externalAccount: email.slice(0, 200), displayName: email.slice(0, 200), scopes: granted.slice(0, 20), expiresAt: expiryOf(answer, now), secret: JSON.stringify(secret) };
+    } catch (error) {
+      await this.revokeToken(typeof answer.refresh_token === 'string' && answer.refresh_token ? answer.refresh_token : accessToken, 5_000);
+      throw error;
+    }
   }
 
   async refresh(secret: string): Promise<CalendarRefreshResult> {
@@ -431,12 +439,18 @@ export class GoogleCalendarAdapter implements CalendarAdapter {
   async revoke(secret: string): Promise<{ revoked: true } | { revoked: false; reason: string } | { failed: string }> {
     const s = googleCalendarSecretOf(secret);
     if (!s) return { revoked: false, reason: 'no_token' };
+    return this.revokeToken(s.refreshToken);
+  }
+
+  // One call to Google's revoke address with a token (a refresh token takes the whole grant away; an access token alone only that token). Never throws: a network failure is `failed`, and a token Google no
+  // longer knows counts as revoked. The connect step asks for a short wait, since a member is looking at the page.
+  private async revokeToken(token: string, timeoutMs = 30_000): Promise<{ revoked: true } | { failed: string }> {
     try {
       const response = await this.fetch('https://oauth2.googleapis.com/revoke', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-        body: new URLSearchParams({ token: s.refreshToken }).toString(),
-        signal: AbortSignal.timeout(30_000),
+        body: new URLSearchParams({ token }).toString(),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (response.ok) return { revoked: true };
       const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
