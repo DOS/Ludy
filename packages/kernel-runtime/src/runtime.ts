@@ -918,6 +918,8 @@ interface Entered {
   role: MemberRole | null;
   agent: AgentGrant | null;
   memberVy: MemberVyGrant | null;
+  // Set only by the sealed write and proposal entries of an MCP company grant (#4155): the module whose switches executeIn reads once the context is entered, so a refusal is audited as the grant's.
+  mcpSwitchModule?: string;
 }
 
 // The detail an audit row of this actor carries when the command adds none: the system component, or the agent's
@@ -2264,16 +2266,26 @@ export class Runtime {
     await this.#sessions.check(trx, { ...actor, sessionId }, orgId);
   }
 
-  private async enter(trx: Transaction<Database>, actor: Actor, orgId: string, mcpWrite?: McpWriteScope, mcpMode?: 'run' | 'proposal'): Promise<Entered> {
+  private async enter(trx: Transaction<Database>, actor: Actor, orgId: string, mcpWrite?: McpWriteScope, mcpMode?: 'run' | 'proposal', mcpModule?: string): Promise<Entered> {
     await this.checkSession(trx, actor, orgId);
-    return this.enterContext(trx, actor, orgId, mcpWrite, mcpMode);
+    return this.enterContext(trx, actor, orgId, mcpWrite, mcpMode, mcpModule);
+  }
+
+  // The module and coworker switches of an MCP grant's write or proposal entry (#4155). The entry's own gate reads the grant's standing (live, the org not stopped, the deployment's AI switch);
+  // this reads the two stops an owner or admin uses for one app or one coworker, as an org-chart agent's entry does: an engaged module switch for the module the command belongs to (for a proposal,
+  // the command the proposal is for), and an engaged agent switch naming the grant. executeIn calls it right after the context is entered, so the refusal, KILL_SWITCH_ON (403), is audited as the
+  // grant's like any other refused command, with no handler run. The app gate (ADR-0053, MODULE_OFF) follows on the same module.
+  private async refuseIfMcpSwitched(trx: Transaction<Database>, orgId: string, actor: Actor, entered: Entered): Promise<void> {
+    if (entered.mcpSwitchModule === undefined) return;
+    if (actor.type !== 'user' || !actor.mcp) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+    await sql`SELECT crove_kernel.mcp_switch_check(${orgId}::uuid, ${actor.mcp.grantId}::uuid, ${entered.mcpSwitchModule}::text)`.execute(trx);
   }
 
   // Works on a hot standby too: the re-entry guard's advisory lock and pg_locks read are allowed during recovery
   // (PostgreSQL 17, probed in #105). What a standby refuses is every write (25006, INTERNAL 500): commands, a session
   // check that records a first-seen session, refusal audits. Replica reads are not wired up (plan §3.3).
   // `mcpWrite` is the write scope a command declares (CommandDef.mcp), set only when a command runs: an MCP grant that holds it enters its sealed write context in place of the read-only one.
-  private async enterContext(trx: Transaction<Database>, actor: Actor, orgId: string, mcpWrite?: McpWriteScope, mcpMode?: 'run' | 'proposal'): Promise<Entered> {
+  private async enterContext(trx: Transaction<Database>, actor: Actor, orgId: string, mcpWrite?: McpWriteScope, mcpMode?: 'run' | 'proposal', mcpModule?: string): Promise<Entered> {
     if (actor.type === 'system') {
       await sql`SELECT crove_kernel.enter_system_context(${orgId}::uuid)`.execute(trx);
       return { role: null, agent: null, memberVy: null };
@@ -2340,7 +2352,8 @@ export class Runtime {
       if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R1' || got.tainted !== true || (role !== 'owner' && role !== 'admin')) {
         throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
       }
-      return { role, agent: null, memberVy: null };
+      if (mcpModule === undefined) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      return { role, agent: null, memberVy: null, mcpSwitchModule: mcpModule };
     }
     if (actor.mcp && mcpWrite !== undefined && actor.mcp.scopes.includes(mcpWrite) && MCP_WRITE_CONTEXT_SCOPES.includes(mcpWrite)) {
       // A company MCP grant that holds a write scope runs the command that declares it (ADR-0051 decision 2, #3227): the same sealed shape as the read context (agent-shaped, no user,
@@ -2357,7 +2370,8 @@ export class Runtime {
       if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R1' || got.tainted !== true || (role !== 'owner' && role !== 'admin') || (mcpWrite !== 'ludy.social.draft' && got.scope !== mcpWrite)) {
         throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
       }
-      return { role, agent: null, memberVy: null };
+      if (mcpModule === undefined) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      return { role, agent: null, memberVy: null, mcpSwitchModule: mcpModule };
     }
     if (actor.mcp) {
       // A company MCP grant (ADR-0051 decision 2, slice 3e): the same sealed shape, with no user in the seal, so a policy bound to a user (a private note, a Vy-catalog table) answers nothing to
@@ -3185,8 +3199,9 @@ export class Runtime {
       const db = await cell();
       return await db.transaction().execute(async (trx) => {
         orgId = await resolveOrg(trx);
-        context = await this.enter(trx, actor, orgId, (mcpTarget ?? def).mcp?.scope, (mcpTarget ?? def).mcp?.mode);
+        context = await this.enter(trx, actor, orgId, (mcpTarget ?? def).mcp?.scope, (mcpTarget ?? def).mcp?.mode, moduleOf((mcpTarget ?? def).name));
         entered = true;
+        await this.refuseIfMcpSwitched(trx, orgId, actor, context);
         if (def.bootstrap) {
           const { rows } = await sql<{ fresh: boolean }>`
             SELECT COALESCE(t.xmin = pg_catalog.pg_current_xact_id_if_assigned()::xid, false) AS fresh
