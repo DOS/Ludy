@@ -6,7 +6,7 @@ import { PgBoss, type Db as BossDb, type SendOptions } from 'pg-boss';
 import type { Database, Db } from '@crove/db';
 import { SUMMARY_READY_EVENT, vietnamToday } from '@crove/kernel-contract';
 import { DomainError, inboundKey, moduleOffOf, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { KERNEL_NOTIFYING_EVENTS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
+import { KERNEL_NOTIFYING_EVENTS, MCP_PROPOSAL_NOTICE_SWEEP_MS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepMcpProposalNotices, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
 import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@crove/agent';
 import type { CalendarAdapter, ConversationAdapter, MeetingPlatformAdapter, Publisher, Refresher } from '@crove/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
@@ -2238,6 +2238,23 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const proposalNudgeTimer = setInterval(() => void proposalNudgeSweep(), PROPOSAL_NUDGE_SWEEP_MS);
   void proposalNudgeSweep();
 
+  // An AI coworker's proposal (E5, #4180): every half minute, the approvers of a pending proposal of an MCP grant not told yet get one notification each (the proposal's own insert is sealed and emits no event).
+  let noticing = false;
+  const mcpProposalNoticeSweep = async () => {
+    if (noticing) return;
+    noticing = true;
+    try {
+      const done = await sweepMcpProposalNotices({ runtime: deps.runtime, workerDb: deps.workerDb });
+      if (done > 0) console.log(`[mcp-proposal-notice] told the approvers of ${done} proposal(s)`);
+    } catch (error) {
+      console.error('[mcp-proposal-notice] sweep', error instanceof Error ? error.name : 'error');
+    } finally {
+      noticing = false;
+    }
+  };
+  const mcpProposalNoticeTimer = setInterval(() => void mcpProposalNoticeSweep(), MCP_PROPOSAL_NOTICE_SWEEP_MS);
+  void mcpProposalNoticeSweep();
+
   // Detective security alerts (#996, plan §7.8): every 5 minutes, the signals worth an alert are logged and posted.
   let watching = false;
   const securitySweep = async () => {
@@ -3376,6 +3393,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (todayMailTimer) clearInterval(todayMailTimer);
     if (missingInvoiceTimer) clearInterval(missingInvoiceTimer);
     clearInterval(proposalNudgeTimer);
+    clearInterval(mcpProposalNoticeTimer);
     clearInterval(securityTimer);
     if (closingTimer) clearInterval(closingTimer);
     if (reportTimer) clearInterval(reportTimer);
