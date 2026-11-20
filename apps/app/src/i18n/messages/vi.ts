@@ -13681,7 +13681,7 @@ export const vi = {
       BANK_FEED_ACCOUNT_NOT_FOUND: 'Không tìm thấy tài khoản của nguồn giao dịch ngân hàng',
       BANK_FEED_ACCOUNT_UNKNOWN: 'Kết nối này không có tài khoản đó; hãy chọn một tài khoản trong danh sách',
       BANK_FEED_DISABLED: 'Nguồn giao dịch ngân hàng thử nghiệm chưa được bật trên máy chủ này',
-      BANK_FEED_TINGEE_DISABLED: 'Nguồn giao dịch Tingee chưa được bật trên máy chủ này',
+      BANK_FEED_TINGEE_DISABLED: 'Nguồn giao dịch Tingee chưa được bật trên máy chủ này; hãy nhờ quản trị viên máy chủ bật lên',
       BANK_FEED_CREDENTIALS: 'Tingee không chấp nhận Client ID hoặc Secret Token này; hãy kiểm tra lại trong cổng Tingee',
       BANK_FEED_CLOCK: 'Giờ của máy chủ lệch quá xa so với Tingee; hãy chỉnh lại giờ máy chủ rồi thử lại',
       BANK_FEED_RATE_LIMITED: 'Tingee báo gọi quá nhanh; hãy thử lại sau ít phút',

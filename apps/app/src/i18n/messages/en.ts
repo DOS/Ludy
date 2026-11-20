@@ -13682,7 +13682,7 @@ export const en = {
       BANK_FEED_ACCOUNT_NOT_FOUND: 'This bank feed account was not found.',
       BANK_FEED_ACCOUNT_UNKNOWN: 'This account is not one the bank feed lists; pick one from its list.',
       BANK_FEED_DISABLED: 'The test bank feed is not turned on for this server.',
-      BANK_FEED_TINGEE_DISABLED: 'The Tingee bank feed is not turned on for this server.',
+      BANK_FEED_TINGEE_DISABLED: 'The Tingee bank feed is not turned on for this server; ask the server administrator to turn it on.',
       BANK_FEED_CREDENTIALS: 'Tingee did not accept this Client ID or Secret Token; check them in your Tingee portal.',
       BANK_FEED_CLOCK: 'This server\'s clock is too far from Tingee\'s; correct the server time and try again.',
       BANK_FEED_RATE_LIMITED: 'Tingee says too many requests; try again in a few minutes.',

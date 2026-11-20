@@ -164,7 +164,11 @@ function toLine(item: unknown, index: number): BankFeedTransaction | null {
 // The text of an answer, read in pieces and refused past MAX_ANSWER_BYTES (a declared length too large is refused before reading).
 async function readAnswer(response: Response): Promise<string> {
   const declared = Number(response.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > MAX_ANSWER_BYTES) throw new TingeeError('upstream', 'tingee: the answer is too large');
+  if (Number.isFinite(declared) && declared > MAX_ANSWER_BYTES) {
+    // The body is released, not left to hold the connection until the transport cleans up.
+    await response.body?.cancel().catch(() => undefined);
+    throw new TingeeError('upstream', 'tingee: the answer is too large');
+  }
   if (!response.body) {
     const text = await response.text();
     if (text.length > MAX_ANSWER_BYTES) throw new TingeeError('upstream', 'tingee: the answer is too large');

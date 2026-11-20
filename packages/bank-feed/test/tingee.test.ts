@@ -124,8 +124,24 @@ describe('an answer that is too large', () => {
     const ok = '{"code":"00","message":"Success","data":{"totalCount":0,"items":[]}}';
     const answering = (make: () => Response) => tingeeBankFeed({ fetch: async () => make(), now: () => clock.now, sleep: async () => {} });
     expect(await answering(() => new Response(ok, { status: 200 })).accounts(credential())).toEqual([]);
-    const declared = answering(() => new Response(ok, { status: 200, headers: { 'content-length': '3000000' } }));
+    // The declared length is refused before the body is read, and the body is cancelled so its connection is released.
+    let cancelled = false;
+    const declared = answering(
+      () =>
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(new TextEncoder().encode(ok));
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          { status: 200, headers: { 'content-length': '3000000' } },
+        ),
+    );
     expect(await failure(() => declared.accounts(credential()))).toMatchObject({ kind: 'upstream' });
+    expect(cancelled).toBe(true);
     // A body with no declared length, over the cap, is cut off while it is read.
     const streamed = answering(() => new Response(new ReadableStream({ start(c) { for (let i = 0; i < 4; i++) c.enqueue(new Uint8Array(600_000).fill(32)); c.close(); } }), { status: 200 }));
     const error = await failure(() => streamed.accounts(credential()));
