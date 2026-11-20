@@ -260,13 +260,14 @@ describe('what an ASP send relies on (#4125)', () => {
     unitIds: new Map([['cái', { name: 'Cái', id: ID1 }]]),
     stockIds: new Map([['KHO1', ID2]]),
   };
+  const { product: _product, ...amisStored } = stored;
   const wanted = { taxCodes: [], itemCodes: ['HH1'], unitNames: ['CÁI ', 'Hộp'], stockCodes: ['KHO1', 'KHO2'] };
   const unit = (state: 'matched' | 'unknown', entryId: string | null) => ({ kind: 'unit' as const, ref: 'cái', state, code: entryId ? 'Cái' : null, entryId });
   const stock = (state: 'matched' | 'unknown', entryId: string | null) => ({ kind: 'stock' as const, ref: 'KHO1', state, code: entryId ? 'KHO1' : null, entryId });
 
   it('relies on the units and stocks the check matched, for ASP only', () => {
     expect(relied(stored, wanted)).toMatchObject({ unitNames: ['CÁI '], stockCodes: ['KHO1'] });
-    expect(relied({ ...stored, product: undefined }, wanted)).toMatchObject({ unitNames: [], stockCodes: [] });
+    expect(relied(amisStored, wanted)).toMatchObject({ unitNames: [], stockCodes: [] });
   });
 
   it('stops holding when a unit, a stock or an item has gone, been deactivated or has another id', () => {
@@ -278,6 +279,6 @@ describe('what an ASP send relies on (#4125)', () => {
     expect(staleMatches(stored, [stock('matched', ID1)])).toBe(true);
     expect(staleMatches(stored, [item(ID2)])).toBe(true);
     // An AMIS check is never judged by ids it did not store for a line.
-    expect(staleMatches({ ...stored, product: undefined }, [unit('unknown', null), stock('unknown', null), item(ID2)])).toBe(false);
+    expect(staleMatches(amisStored, [unit('unknown', null), stock('unknown', null), item(ID2)])).toBe(false);
   });
 });

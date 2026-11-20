@@ -209,6 +209,7 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
       let readKey: string | null = null;
       // ASP (#4125): the names of the stocks the lines leave or enter, read fresh below and written beside their ids; null for AMIS and for a batch with no stock line.
       let stockNames: Map<string, string> | null = null;
+      let nameStale = false;
       try {
         // The same matches the person's confirmation was made on (the stored result of the last check against the catalogue): a check made since changes the part, and the part is then `STALE`, never sent.
         const matches = await query<MisaAmisMatchResults>('finance.misa_amis_match.results', { legalEntityId: target.legalEntityId, ask });
@@ -266,11 +267,14 @@ export async function runMisaAmisPush(deps: MisaAmisPushDeps, job: MisaAmisPushJ
         else {
           const named = stockNames === null ? part : withStockNames(part, stockNames);
           // A stock the catalogue no longer has (or has inactive) cannot be named: the part is stale, never sent without its name.
-          if (named === null) moves.push({ orgRefid: row.orgRefid, from: 'sending', to: 'failed', reason: 'MATCH_STALE' });
+          if (named === null) {
+            nameStale = true;
+            moves.push({ orgRefid: row.orgRefid, from: 'sending', to: 'failed', reason: 'MATCH_STALE' });
+          }
           else ready.push(named);
         }
       }
-      staleBatch = matchStale;
+      staleBatch = matchStale || nameStale;
     }
     let end: CallEnd;
     if (ready.length === 0) {
