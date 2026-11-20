@@ -96,6 +96,7 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
+  'crove_finance.marketplace_column_check',
   'crove_finance.marketplace_column_profile',
   'crove_finance.stock_alias',
   'crove_finance.stock_count',
@@ -251,6 +252,7 @@ const MEMBER_VY_UNREACHED = new Map<string, ReadonlyArray<'update' | 'delete'>>(
   ['crove_finance.einvoice_draft_line', ['update', 'delete']],
   ['crove_finance.einvoice_notice', ['update']],
   ['crove_finance.einvoice_series', ['update', 'delete']],
+  ['crove_finance.marketplace_column_check', ['update', 'delete']],
   ['crove_finance.marketplace_connection', ['update', 'delete']],
   ['crove_finance.misa_amis_connection', ['update', 'delete']],
   ['crove_finance.misa_amis_match', ['delete']],
@@ -1596,6 +1598,21 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // default entity), so each row gets its own year.
   'crove_finance.legal_entity_books': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), regime: 'tt133', chart_version: '2026.1', effective_from: `${legalEntityBooksYear++}-01-01`, created_by: o.owner } }),
+  },
+  // #4036 (slice 1c of #3850): the last check of a column mapping on an unrecognised marketplace order report, one row per org and file: what was asked (the platform and at most 13 assignments of a
+  // column to a standard field), waiting, done or failed, the masked sheet (shapes, never a value), the check's refusal code and a preview of at most 20 parsed lines (personal data in the registry, erased
+  // with the file and the org). Org-level, no legal entity. Importers (owner, admin, member) ask, read and delete their own org's rows, and the system context (the worker) records; a tenant role updates only
+  // the request and result columns (a column grant, through a state guard). Each row takes a file of its own. The update probes assign the failure to itself.
+  'crove_finance.marketplace_column_check': {
+    update: { set: 'failure = failure' },
+    make: (o) => {
+      const sha256 = hex64();
+      const file = { org_id: o.id, id: randomUUID(), sha256, storage_key: `org/${o.id}/${sha256}`, filename: 'column-check.xlsx', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size_bytes: 1, source: 'upload' };
+      return {
+        setup: [{ table: 'crove_kernel.file', values: file }],
+        row: { org_id: o.id, id: randomUUID(), file_id: file.id, state: 'requested', requested_by: o.owner },
+      };
+    },
   },
   // #4037 (slice 2 of #3850): the confirmed mapping of an org's marketplace report columns (the header texts of the mapped columns and the standard field of each, never a cell value or a buyer
   // column), one platform per row, append-only, the latest of an org and platform wins. Tenant roles read and insert (owners and admins, or the system context); nothing updates or deletes a row.
