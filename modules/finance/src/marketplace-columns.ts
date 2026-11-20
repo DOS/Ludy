@@ -6,10 +6,12 @@
 // - finance.marketplace.columns_target (system; query): what the worker needs for one file, or why it must not read it.
 // - finance.marketplace.columns_record (system only): records the masked sheet and the check's verdict (a refusal, or a preview of at most 20 parsed lines) and marks the check done or failed.
 // - finance.marketplace.columns (importers; query): the last check of a file and what it found, for the screen.
+// - finance.marketplace.columns_files (importers; query): the unrecognised spreadsheets the screen offers a check for, with where each check stands.
 // Nothing is imported or saved from a mapping here; saving a confirmed mapping is #4037. The preview lines are personal data (registry): the job carries ids only, and neither the audit row nor an error holds
 // a line.
 import { z } from 'zod';
 import {
+  MARKETPLACE_COLUMN_FILES_LIMIT,
   zId,
   zMarketplaceColumnMapping,
   zMarketplaceColumnPreview,
@@ -18,6 +20,7 @@ import {
   zMarketplaceColumnsRecord,
   type MarketplaceColumnMapping,
   type MarketplaceColumnsCheckQueued,
+  type MarketplaceColumnsFile,
   type MarketplaceColumnsStatus,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
@@ -223,5 +226,28 @@ export const marketplaceColumns = defineQuery({
   },
 });
 
+// The org's unrecognised spreadsheets for the screen's card: the same test as `unrecognisedSheet`, newest first, with where each check stands. Names and states only: no sheet, no preview.
+export const marketplaceColumnsFiles = defineQuery({
+  name: 'finance.marketplace.columns_files',
+  input: z.strictObject({}),
+  access: IMPORTERS,
+  handler: async (ctx): Promise<MarketplaceColumnsFile[]> => {
+    const { rows } = await sql<{ id: string; filename: string; created_at: Date | string; state: string | null }>`
+      SELECT f.id::text AS id, f.filename, f.created_at, c.state
+        FROM crove_kernel.file f
+        LEFT JOIN crove_finance.marketplace_column_check c ON c.org_id = f.org_id AND c.file_id = f.id
+       WHERE f.org_id = ${ctx.orgId}::uuid AND f.original_deleted_at IS NULL
+         AND f.content_type = ANY(${SHEET_TYPES}::text[])
+         AND EXISTS (
+           SELECT 1 FROM crove_kernel.extraction x
+            WHERE x.org_id = f.org_id AND x.file_id = f.id AND x.method = 'unsupported'
+              AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
+              AND coalesce(x.result ->> 'kind', '') <> ALL(${READ_KINDS}::text[]))
+       ORDER BY f.created_at DESC, f.id DESC
+       LIMIT ${MARKETPLACE_COLUMN_FILES_LIMIT}`.execute(ctx.trx);
+    return rows.map((r) => ({ fileId: r.id, filename: r.filename, createdAt: iso(r.created_at), state: (r.state ?? 'none') as MarketplaceColumnsFile['state'] }));
+  },
+});
+
 export const marketplaceColumnsCommands = [marketplaceColumnsCheck, marketplaceColumnsRecord];
-export const marketplaceColumnsQueries = [marketplaceColumnsTarget, marketplaceColumns];
+export const marketplaceColumnsQueries = [marketplaceColumnsTarget, marketplaceColumns, marketplaceColumnsFiles];

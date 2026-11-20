@@ -69,6 +69,16 @@ export const zMarketplaceColumnPreview = z.strictObject({
 });
 export type MarketplaceColumnPreview = z.infer<typeof zMarketplaceColumnPreview>;
 
+// The org's unrecognised spreadsheets the screen offers a column check for: newest first, at most this many, each with where its check stands (`none` before anyone asked).
+export const MARKETPLACE_COLUMN_FILES_LIMIT = 10;
+export const zMarketplaceColumnsFile = z.strictObject({
+  fileId: zId,
+  filename: z.string().max(255),
+  createdAt: z.string(),
+  state: z.enum(['none', 'requested', 'done', 'failed']),
+});
+export type MarketplaceColumnsFile = z.infer<typeof zMarketplaceColumnsFile>;
+
 // What the worker found for a file: `none` before anyone asked. `sheet` is kept across requests; `refusal` and `preview` belong to the mapping asked last.
 export const zMarketplaceColumnsStatus = z.strictObject({
   state: z.enum(['none', 'requested', 'done', 'failed']),
