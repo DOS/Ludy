@@ -36,7 +36,6 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
     Link: ({ children, to }: { children?: ReactNode; to: string }) => createElement('a', { href: to }, children),
   };
 });
-vi.mock('../src/components/notes-subnav.tsx', () => ({ NotesSubnav: () => null }));
 
 const { MeetingRecordPage } = await import('../src/routes/meeting-record.tsx');
 

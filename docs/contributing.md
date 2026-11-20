@@ -13,6 +13,10 @@ Read this when you add a package with tests, or when `tools/test/typecheck-cover
 
 `pnpm typecheck` checks every test file too, since Vitest runs tests without checking types (#294): a package's `tsconfig.json` includes `test`, or, where the source must not see test-only types, a `tsconfig.test.json` that extends it does and the package's `typecheck` script runs both (`apps/app`, whose browser code gets no Node types). `tools/tsconfig.json` covers `tools/test` from the root script. A new package with tests follows the same pattern; `tools/test/typecheck-coverage.test.ts` fails when a test directory is outside them.
 
+### Typecheck memory (#4034)
+
+`tsconfig.lib.json` sets `"checkers": 1` (the TypeScript 7 compiler's type checker workers; the default is 4). `pnpm -r typecheck` runs several packages at once, and with the default the kernel project alone reaches about 13.6 GB and the app 6.8 GB, which killed the 16 GB CI runner ("The runner has received a shutdown signal") and the typecheck job with it. With one checker the kernel peaks at about 5.6 GB and the app at 2.9 GB, and the whole `pnpm -r typecheck` peaks at about 7 GB above idle (12.8 GB and killed before), for about twice the wall time of the sum of the parts run alone. Do not raise it without measuring the peak of a full `pnpm -r typecheck` first.
+
 ### Leftover test roles on a shared dev PostgreSQL
 
 Read this when every migrate on a shared dev cluster fails the T17 check with `role t100_test_runner_..._proxy can create temporary objects`.
@@ -43,6 +47,8 @@ Read this before you run `pnpm test:e2e`.
 
 Specs that need a model live in `e2e/tests-ai/` and run only in the AI job of `e2e.yml`, on a second stack: `stack:up:ai` adds `e2e/compose.ai.yml` (the recorder's Vy summary on, and a fake OpenAI-compatible service with a fixed answer, `e2e/fake-model`, that reaches no other host), then `pnpm --filter @crove/e2e test:ai` runs them and `stack:down:ai` removes the stack. The default stack stays AI off, because many specs assert it; never put model settings in `compose.e2e.yml`.
 
+The fake model answers the fixed summary to a summary request and, for the member-Vy features of the meetings line (title, commitments, agenda adherence, weekly digest, brief), the answer in `e2e/fake-model/fixtures.ts`, chosen by a phrase of the feature's instruction. Every such answer holds sentences the app's checks keep AND ones they must drop (an invented figure, a link, a citation of a line that is not there), so a spec shows the kept ones and the count of the dropped ones. A spec picks the scenario by writing a token into the data it stores (a transcript line, a typed agenda line, a decision): `[fake:bad]` (every part of the answer is one the checks drop), `[fake:garbage]` (text that is not JSON) or `[fake:down]` (HTTP 500). To cover a new Vy feature: add its route phrase (a phrase of the first line of its instruction) and its answers to `fixtures.ts`, run them through the feature's own check functions in `tools/test/fake-model.test.ts` (that test also fails when a route phrase is no longer in the product source), and write one spec per feature that asserts the click, the answer, the refusal or empty path, and, with `runsOf` in `e2e/lib/meetings-seed.ts`, that no run starts before the click. Member-Vy runs share a rate limit per user per minute (title and commitments share the summaries' 4 a minute, with the summary and the chapters; adherence, digest and brief have 6 each): keep a spec to fewer runs than that.
+
 ## Migration versions
 
 Read this before you add a migration, and again right before you merge a PR that adds one (#1492).
@@ -69,12 +75,12 @@ Read this when you run a Product Owner (PO) session, the coordinator included (o
 
 Ludy uses a single four-tier naming hierarchy defined in [DESIGN.md](../DESIGN.md) section 1.1 and exported from `packages/kernel-contract/src/apps.ts` ([#3796](https://github.com/DOS/Ludy/issues/3796)):
 
-1. **Suite:** **Ludy** (internal code identifiers keep `crove`).
+1. **Suite:** **Ludy** (internal `crove` code, package, env, and DB identifiers are migrating to `ludy` under [#1682](https://github.com/DOS/Ludy/issues/1682) and [ADR-0054](adr/0054-rebrand-internal-crove-identifiers-to-ludy.md), issues [#3964](https://github.com/DOS/Ludy/issues/3964) through [#3972](https://github.com/DOS/Ludy/issues/3972)).
 2. **App (`AppId`, Vietnamese: Ứng dụng):** top-level switcher workspaces and `ludy.vn` product pages: `teamwork` (**Cộng tác / Teamwork**), `finance` (**Tài chính / Finance**), `engage` (**Engage**), `hr` (**Nhân sự / HR**), `sign` (**eSign**), `ai` (**Ludy AI**).
 3. **Feature Group (`AppGroupId`, Vietnamese: Nhóm tính năng):** sidebar navigation groups inside an App (`Hộp thư`, `CRM`, `Marketing`, `Báo cáo`; `Sổ sách & Thuế`, `Bán hàng`, `Mua hàng`). Feature Groups are never toggled independently.
 4. **Module (`ModuleId`, Vietnamese: Phân hệ):** independently deployed (`CROVE_MODULES`) and per-org toggleable packages (`kernel`, `notes`, `projects`, `meetings`, `finance`, `social`, `crm`, `ads`, `hr`, `sign`), each mapped to a primary App in `MODULE_CATALOG` (`kernel` maps to `null` and stays on).
 
-Do not duplicate module or app lists across packages or routes: import `APP_IDS`, `MODULE_IDS`, `MODULE_CATALOG`, `SWITCHABLE_MODULE_IDS`, `isKnownModule`, `isSwitchableModule`, `appOfModule`, and `modulesOfApp` from `@crove/kernel-contract`. Display names for all canonical `ModuleId` values live in `modules.*` inside `vi.ts` and `en.ts` (for example, `social` is shown as **Hộp thư & Bài đăng** / **Inbox & Posts**, never `"Social"` as an app name, and Settings **Ứng dụng & Phân hệ** groups switches under their parent App). Legacy wire and schema identifiers (`crove_kernel.tenant.apps_off`, `crove_kernel.org_app_on`, `kernel.org.apps`, `kernel.org.set_app`) remain unchanged for backwards compatibility.
+Do not duplicate module or app lists across packages or routes: import `APP_IDS`, `MODULE_IDS`, `MODULE_CATALOG`, `SWITCHABLE_MODULE_IDS`, `isKnownModule`, `isSwitchableModule`, `appOfModule`, and `modulesOfApp` from `@crove/kernel-contract` (moving to `@ludy/kernel-contract` in [#3965](https://github.com/DOS/Ludy/issues/3965)). Display names for all canonical `ModuleId` values live in `modules.*` inside `vi.ts` and `en.ts` (for example, `social` is shown as **Hộp thư & Bài đăng** / **Inbox & Posts**, never `"Social"` as an app name, and Settings **Ứng dụng & Phân hệ** groups switches under their parent App). Wire and schema identifiers (`crove_kernel.tenant.apps_off`, `crove_kernel.org_app_on`, `kernel.org.apps`, `kernel.org.set_app`) remain active until the [#1682](https://github.com/DOS/Ludy/issues/1682) Phase 3 migration in [#3970](https://github.com/DOS/Ludy/issues/3970).
 
 ## Production, secret and credential steps
 

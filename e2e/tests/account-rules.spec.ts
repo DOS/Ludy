@@ -69,20 +69,26 @@ test('an approver teaches a line rule, Settings lists and removes rules, and the
   });
 
   await test.step('an owner adds a keyword rule for every vendor, then removes it', async () => {
-    const add = card.getByRole('form', { name: 'Thêm quy tắc theo từ khóa' });
+    // The form is a dialog behind a button (#3608).
+    await card.getByRole('button', { name: 'Thêm quy tắc theo từ khóa' }).click();
+    const add = page.getByRole('form', { name: 'Thêm quy tắc theo từ khóa' });
     await add.getByLabel('Từ khóa').fill('Chiết khấu');
     await add.getByLabel('Tài khoản').selectOption('6422');
-    await add.getByRole('button', { name: 'Thêm' }).click();
+    await add.getByRole('button', { name: 'Thêm', exact: true }).click();
     const rule = card.getByRole('listitem').filter({ hasText: 'Chiết khấu' });
     await expect(rule.getByText('Từ khóa', { exact: true })).toBeVisible();
     await expect(rule.getByText('Mọi nhà cung cấp')).toBeVisible();
     await expect(rule.getByText('Ghi vào TK 6422')).toBeVisible();
 
-    // The same words without marks are the same rule.
+    // The same words without marks are the same rule: flagged while typing, before anything is saved.
+    await card.getByRole('button', { name: 'Thêm quy tắc theo từ khóa' }).click();
     await add.getByLabel('Từ khóa').fill('chiet khau');
     await add.getByLabel('Tài khoản').selectOption('6422');
-    await add.getByRole('button', { name: 'Thêm' }).click();
-    await expect(card.getByRole('alert').filter({ hasText: 'Đã có quy tắc cho từ khóa' })).toBeVisible();
+    await expect(add.getByTestId('keyword-rule-duplicate')).toContainText('Đã có quy tắc cho từ khóa');
+    await expect(add.getByRole('button', { name: 'Thêm', exact: true })).toBeDisabled();
+    await add.getByRole('button', { name: 'Hủy' }).click();
+    await page.getByRole('button', { name: 'Bỏ thay đổi' }).click();
+    await expect(add).toHaveCount(0);
 
     await rule.getByRole('button', { name: 'Xóa quy tắc Chiết khấu' }).click();
     await rule.getByRole('button', { name: 'Xóa quy tắc', exact: true }).click();

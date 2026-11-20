@@ -155,6 +155,9 @@ async function raiseQuoteSteps(ctx: CommandContext, today: string): Promise<{ ra
     .returning('id')
     .execute();
   const resolvedSince = new Date(ctx.now.getTime() - 7 * DAY_MS);
+  // The org's own N (Settings, Engage's wake rules #3862), else the product's default: the days a sent quote waits before the follow-up is raised, for Home and for the coworker's wake-up alike.
+  const setting = await ctx.trx.selectFrom('crove_kernel.conversation_setting').select('wake_quote_days').where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const quoteDays = setting?.wake_quote_days ?? QUOTE_UNANSWERED_DAYS;
   const soon = sql<boolean>`(q.valid_until >= ${today}::date AND q.valid_until <= ${today}::date + ${QUOTE_EXPIRING_DAYS}::int)`;
   const found = await sql<{ deal_id: string; owner_user_id: string | null; owner_role: string | null; reason: DealNextStepReason; since_on: Date | string }>`
     SELECT DISTINCT ON (d.id) d.id AS deal_id, d.owner_user_id,
@@ -165,7 +168,7 @@ async function raiseQuoteSteps(ctx: CommandContext, today: string): Promise<{ ra
     JOIN crove_crm.deal d ON d.org_id = q.org_id AND d.id = q.deal_id
     WHERE q.org_id = ${ctx.orgId}::uuid AND q.status = 'sent' AND d.closed_at IS NULL
       AND q.valid_until >= ${today}::date
-      AND (${soon} OR coalesce(q.sent_at, q.created_at) <= ${new Date(ctx.now.getTime() - QUOTE_UNANSWERED_DAYS * DAY_MS)})
+      AND (${soon} OR coalesce(q.sent_at, q.created_at) <= ${new Date(ctx.now.getTime() - quoteDays * DAY_MS)})
       AND NOT EXISTS (SELECT 1 FROM crove_crm.deal_next_step n WHERE n.org_id = d.org_id AND n.deal_id = d.id AND (n.status = 'open' OR n.resolved_at > ${resolvedSince}))
     ORDER BY d.id, (CASE WHEN ${soon} THEN 0 ELSE 1 END), q.valid_until, q.id
     LIMIT ${RAISE_LIMIT}`.execute(ctx.trx);

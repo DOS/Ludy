@@ -12,6 +12,7 @@ import { QuickCaptureDialog } from '../components/todo-quick-add.tsx';
 import { OrgLeftNotice } from '../components/ui.tsx';
 import { LOCALE_NAMES, LOCALES } from '../i18n/locale.ts';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
+import { aiConnectionsVisible } from '../lib/agents.ts';
 import { orpc } from '../lib/api.ts';
 import { ALL_NAV, NAV_KEYWORDS, appOfPath, installedApps, type NavItem } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
@@ -97,7 +98,7 @@ export function OrgLayout() {
   const managerHere = roleHere === 'owner' || roleHere === 'admin';
   // Items left out of the menu and the palette for a viewer who cannot use them (#3225): the AI budgets are for owners and admins, and the AI connections
   // exist only where this system runs MCP. Their screens still answer anyone who types the address.
-  const hidden = (item: NavItem) => (item.module === 'hr' && !managerHere) || (item.label === 'aiUsage' && !managerHere) || (item.label === 'aiConnections' && !getConfig().mcpEnabled);
+  const hidden = (item: NavItem) => (item.module === 'hr' && !managerHere) || (item.label === 'aiUsage' && !managerHere) || (item.label === 'aiConnections' && !aiConnectionsVisible(getConfig().mcpEnabled));
   const NAV = useMemo(() => allNav.filter((n) => !hidden(n)), [allNav, managerHere]); // oxlint-disable-line react-hooks/exhaustive-deps
   const apps = useMemo(
     () =>

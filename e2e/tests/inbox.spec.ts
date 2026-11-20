@@ -38,15 +38,14 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   await test.step('the empty Inbox links the quick guide, and the shell the support channel (#310)', async () => {
     const support = page.getByRole('complementary').getByRole('link', { name: 'Góp ý / Hỗ trợ' });
     await expect(support).toHaveAttribute('href', 'mailto:support@e2e.test');
-    await page.getByRole('link', { name: 'Xem hướng dẫn nhanh: tải lên, duyệt, xuất Excel' }).click();
+    await page.getByRole('link', { name: 'Xem hướng dẫn nhanh: tải lên, duyệt, khai thuế, xuất Excel' }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/guide$`));
     await expect(page.getByRole('heading', { name: 'Hướng dẫn nhanh' })).toBeVisible();
-    // The firm guide follows (#661).
-    await expect(page.getByRole('heading', { name: 'Hướng dẫn cho công ty dịch vụ kế toán' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Bước 7. Đưa số liệu sang phần mềm kế toán của hãng' })).toBeVisible();
-    for (const step of ['Bước 1. Tải hóa đơn lên', 'Bước 2. Kiểm tra và duyệt', 'Bước 3. Xuất Excel cho kế toán']) {
+    // The three jobs of the month (#3596); the guide for an accounting firm is gone.
+    for (const step of ['Bước 1. Tải hóa đơn lên và duyệt', 'Bước 2. Khai thuế GTGT của tháng', 'Bước 3. Xuất Excel cho kế toán']) {
       await expect(page.getByRole('heading', { name: step })).toBeVisible();
     }
+    await expect(page.getByRole('heading', { name: 'Hướng dẫn cho công ty dịch vụ kế toán' })).toHaveCount(0);
     await page.getByRole('link', { name: '← Chứng từ chờ duyệt' }).click();
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
   });
@@ -251,12 +250,13 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     const nav = page.getByRole('navigation');
     await nav.getByRole('link', { name: 'Cài đặt' }).click();
     await openSettingsTab(page, 'accounting');
+    await page.getByRole('button', { name: 'Thêm tài khoản con' }).click();
     const add = page.getByRole('form', { name: 'Thêm tài khoản con' });
     await add.getByLabel('Tài khoản cha').selectOption('6422');
     await expect(add.getByLabel('Mã tài khoản con')).toHaveValue('6422');
     await add.getByLabel('Mã tài khoản con').fill('6422.vp');
     await add.getByLabel('Tên tài khoản con').fill('Văn phòng Hà Nội');
-    await add.getByRole('button', { name: 'Thêm' }).click();
+    await add.getByRole('button', { name: 'Thêm', exact: true }).click();
     await expect(page.getByText('6422.VP', { exact: true })).toBeVisible();
 
     await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();

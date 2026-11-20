@@ -630,12 +630,15 @@ suite('cash and bank vouchers (#327)', () => {
     const payments = await runtime.query<any[]>('finance.vouchers.cash', { ...november, type: 'cash_payment' }, asViewer);
     expect(payments).toEqual([
       {
+        // The cash voucher's own id: the key a push to an accounting system uses, the same across revisions of its journal entry (#3901).
+        sourceId: paid.voucherId,
         type: 'cash_payment',
         code: codeOf.get(paid.voucherId),
         numberPeriod: '2026',
         date: '2026-11-03',
         cashAccount: '1111',
-        party: { name: await vendorName(), taxCode: expect.any(String), address: expect.toSatisfy((a: unknown) => a === null || typeof a === 'string') },
+        // The party's own id too: a push to MISA looks a party with no tax code up by it (#4124).
+        party: { id: expect.any(String), name: await vendorName(), taxCode: expect.any(String), address: expect.toSatisfy((a: unknown) => a === null || typeof a === 'string') },
         personName: 'Nguyễn Văn An',
         description: 'Trả tiền hàng HĐ 1234',
         lines: [
@@ -645,7 +648,7 @@ suite('cash and bank vouchers (#327)', () => {
       },
     ]);
     const receipts = await runtime.query<any[]>('finance.vouchers.cash', { ...november, type: 'cash_receipt' }, asViewer);
-    expect(receipts).toMatchObject([{ code: codeOf.get(received.voucherId), personName: 'Trần Thị Bình', cashAccount: '1111', lines: [{ account: '131', amount: expect.stringMatching(/^700000(\.0+)?$/) }] }]);
+    expect(receipts).toMatchObject([{ sourceId: received.voucherId, code: codeOf.get(received.voucherId), personName: 'Trần Thị Bình', cashAccount: '1111', lines: [{ account: '131', amount: expect.stringMatching(/^700000(\.0+)?$/) }] }]);
     expect(receipts[0].party).toMatchObject({ name: expect.any(String) });
 
     // Viewers may download (same roles as the other exports); each download writes its audit row first.

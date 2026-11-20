@@ -19,7 +19,7 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const FIGURE_KEYS = ['amount', 'change', 'changePercent', 'previous'];
-const KEYS = ['cash', 'empty', 'from', 'payables', 'previousFrom', 'previousTo', 'profit', 'range', 'receivables', 'to', 'unmapped'];
+const KEYS = ['cash', 'empty', 'from', 'outputVatUnsettled', 'payables', 'previousFrom', 'previousTo', 'profit', 'range', 'receivables', 'to', 'unmapped'];
 
 suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
   const dbName = `crove_test_mcp_overview_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -112,6 +112,8 @@ suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
     await o.post('2026-11-10', '111', '511', '5000000');
     await o.post('2026-11-11', '131', '511', '2000000');
     await o.post('2026-11-12', '642', '331', '800000');
+    // Planted output VAT (#3912): a credit to 3331, which `outputVatUnsettled` must report as exactly this decimal string (the ledger's balance of 3331, not the VAT return's net tax).
+    await o.post('2026-11-13', '131', '3331', '700000');
     const asOf = '2026-11-15';
     const screen = await rt.query<Record<string, unknown>>('finance.overview', { range: 'this_month', asOf }, { actor: user(o.owner), orgId: o.orgId });
     const seen = await o.read(o.owner, { range: 'this_month' });
@@ -120,13 +122,19 @@ suite('finance.mcp.overview on PostgreSQL (#3849)', () => {
     expect(seen.range).toBe('this_month');
     for (const key of ['cash', 'receivables', 'payables'] as const) expect((seen[key] as { amount: string }).amount, key).toBe((screen[key] as { amount: string }).amount);
     expect(typeof (seen.profit as { amount: unknown }).amount).toBe('string');
-    expect(screen.receivables).toMatchObject({ amount: '2000000' });
-    expect(seen.receivables).toMatchObject({ amount: '2000000' });
+    // 2000000 of the sale plus the planted 700000 on 131.
+    expect(screen.receivables).toMatchObject({ amount: '2700000' });
+    expect(seen.receivables).toMatchObject({ amount: '2700000' });
     expect(seen.payables).toMatchObject({ amount: '800000' });
     expect(seen.cash).toMatchObject({ amount: '5000000' });
     const wire = JSON.stringify(seen);
     for (const secret of ['secret text', 'secret-customer@example.test', '0900000000', 'Khách bí mật']) expect(wire, secret).not.toContain(secret);
-    for (const key of ['cash', 'profit', 'receivables', 'payables']) expect(Object.keys(seen[key] as object).sort(), key).toEqual(FIGURE_KEYS);
+    // The value and the type of the planted output VAT: the decimal string of the 3331 credit, every figure field a string (changePercent a string or null).
+    const vat = seen.outputVatUnsettled as { amount: unknown; previous: unknown; change: unknown; changePercent: unknown };
+    expect(vat.amount).toBe('700000');
+    for (const field of [vat.amount, vat.previous, vat.change]) expect(typeof field).toBe('string');
+    expect(vat.changePercent === null || typeof vat.changePercent === 'string').toBe(true);
+    for (const key of ['cash', 'profit', 'receivables', 'payables', 'outputVatUnsettled']) expect(Object.keys(seen[key] as object).sort(), key).toEqual(FIGURE_KEYS);
     expect(seen).not.toHaveProperty('months');
     expect(seen).not.toHaveProperty('expenses');
   });

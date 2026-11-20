@@ -11,7 +11,7 @@ import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wa
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
-import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, FinanceOverview, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
 import { type CalendarAdapter, type MeetingPlatformAdapter, BlueskyError, ConnectorError, MeetingPlatformConsentError, MeetingPlatformError, hasOAuth, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWhatsApp, connectWordPress, discordLogin, mastodonLogin, telegramLogin, whatsappLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
@@ -65,21 +65,25 @@ import { generateRecruitingBrief, type RecruitingBriefAi, type RecruitingBriefPo
 import type { HrLaborCheckSnapshot, HrRecruitingBriefSnapshot } from '@crove/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
 import { einvoiceRateAi, explainCorrectionRate } from './einvoice-rate-ai.ts';
+import { explainSurplus, stockSurplusAi } from './stock-surplus-ai.ts';
 import { einvoiceReasonAi, suggestCorrectionReason } from './einvoice-reason-ai.ts';
 import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import { proposeEnvelopeAnalysis, signAi, type SignAi } from './sign-ai.ts';
-import { briefStatusOf, runMeetingBrief, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort } from './member-vy-ports.ts';
+import { adherenceStatusOf, runMeetingAdherence, assigneeStatusOf, runMeetingAssignee, briefStatusOf, digestStatusOf, runMeetingBrief, runMeetingTitle, runMeetingDigest, askStatusOf, notesVyStatusOf, readNotesVyResults, runLiveNotes, runMeetingAsk, runMeetingChapters, runMeetingSummary, runMeetingTranslation, runNotesEnhance, runNotesSuggestTodos, runNotesSummarize, runProjectsTasksFromNote, runProjectsTasksFromSource, runTranscriptTranslation, tasksFromNoteStatusOf, tasksFromSourceStatusOf, transcriptTranslationStatusOf, translationStatusOf, type ModelPort, runMeetingCommitments } from './member-vy-ports.ts';
 import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems } from './stock-ai.ts';
-import { MISA_AMIS_CHANNEL_PROVIDER, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
+import { MARKETPLACE_FEE_CYCLE_DAYS, misaChannelProvider, MarketplaceProviderError, SANDBOX_MARKETPLACE_SECRET, type EInvoiceSuggestSource, type MarketplaceProvider, type MarketplaceTestResult, type MarketplaceSuggestSource, type ReorderSource, type SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { explainVatLate, vatLateAi } from './finance-vat-ai.ts';
+import { explainMarketplaceFees, marketplaceFeeNoteAi } from './finance-marketplace-fee-note-ai.ts';
 import { explainMarketplaceLine, marketplaceLineAi } from './finance-marketplace-line-ai.ts';
 import { explainSupplierPayableLine, supplierPayableLineAi } from './finance-supplier-payable-line-ai.ts';
 import { misaCheck } from './misa-check.ts';
+import { explainMisaAmisBlockers, misaAmisBlockerNotesAi } from './finance-misa-amis-blocker-notes-ai.ts';
 import { explainMisaCheckLine, misaCheckLineAi } from './finance-misa-check-line-ai.ts';
+import { misaAmisPreview } from './misa-amis-preview.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -298,6 +302,12 @@ export interface RpcChannels {
   marketplaceProviders?: Readonly<Record<string, MarketplaceProvider>>;
   // Whether this deployment holds the integrator's ClientID for MISA AMIS (#3854): only that, never the value.
   misaAmis?: boolean;
+  // Whether it holds the ClientID for MISA ASP too (#4111, S2 of #4103): each product is on only with its own.
+  misaAsp?: boolean;
+  // The push of vouchers to MISA AMIS is switched on too (MISA_AMIS_PUSH=on, after the sandbox check, #3902). Off: the confirm route answers 404 and the screen draws no button.
+  misaAmisPush?: boolean;
+  // The push to MISA ASP is switched on too (MISA_ASP_PUSH=on, #4113): its own switch, so AMIS's push and ASP's are on or off apart.
+  misaAspPush?: boolean;
   // The ad platforms this deployment offers, by provider id (ADR-0040, #2217): the offline sandbox when ADS_SANDBOX is on.
   adsPlatforms?: Readonly<Record<string, AdPlatform>>;
   // The deployment can confirm who sent an email (INBOUND_AUTHSERV_ID, #3636): only then do conversations carry the "sender not confirmed" mark. Left out: it cannot.
@@ -425,6 +435,12 @@ export function createRpcHandler(
   // A question across meetings (A3, #3161) is one model call over at most 40 lines and any member may ask: its own budget, apart from the summaries' and the translations'.
   const asks = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   const meetingBriefs = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // The weekly digest (#3949) is one call per click: its own budget, so it never makes a brief or a question wait.
+  const meetingDigests = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
+  // Naming who an action item belongs to (#3921) is one short call per click: its own budget, so it never makes a brief or a question wait.
+  const meetingAssignees = new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
+  // Checking a meeting's agenda against its transcript (#3959) reads a whole transcript: its own budget, a few a minute, so it never makes a summary or a question wait.
+  const meetingAdherence = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   // Proposing project tasks from a note (#2598): one call per click, own budget so it does not contend with meetings.
   const noteTaskProposals = new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 });
   // Notes N8 (#1677): independent budgets for summarizing notes and suggesting personal to-dos.
@@ -441,8 +457,12 @@ export function createRpcHandler(
   // The finance coworker's one line on why a bank line may be a payroll payment (#2532): the same reader and model, a budget of its own; told the kind, month, amount and date only.
   const financePayrollMatchAi = payrollMatchAi(conversationReader?.payrollMatchSentence ? { payrollMatchSentence: conversationReader.payrollMatchSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMarketplaceLineAi = marketplaceLineAi(conversationReader?.marketplaceLineSentence ? { marketplaceLineSentence: conversationReader.marketplaceLineSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The finance coworker's notes under the Sàn table (#3711 slice 7): the same reader and model, a budget of its own; told the fees, their age and whether it is past the cycle, per numbered row, and no platform name.
+  const financeMarketplaceFeeNoteAi = marketplaceFeeNoteAi(conversationReader?.marketplaceFeeNotes ? { marketplaceFeeNotes: conversationReader.marketplaceFeeNotes.bind(conversationReader) } : null, suggestionBudget());
   const financeSupplierPayableLineAi = supplierPayableLineAi(conversationReader?.supplierPayableLineSentence ? { supplierPayableLineSentence: conversationReader.supplierPayableLineSentence.bind(conversationReader) } : null, suggestionBudget());
   const financeMisaCheckLineAi = misaCheckLineAi(conversationReader?.misaCheckLineSentence ? { misaCheckLineSentence: conversationReader.misaCheckLineSentence.bind(conversationReader) } : null, suggestionBudget());
+  // The accounting coworker's notes on the kinds of blocker on the AMIS preview (#3904): the same reader and model, a budget of its own; told the kinds on the list and nothing else.
+  const financeMisaAmisBlockerNotesAi = misaAmisBlockerNotesAi(conversationReader?.misaAmisBlockerNotes ? { misaAmisBlockerNotes: conversationReader.misaAmisBlockerNotes.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker on payroll (#2534, #2815): the same reader and model, independent budgets per action so `Promise.all([prepare, flag])` in the UI does not self-contend on `running`.
   const payrollPrepareBudget = suggestionBudget();
   const payrollAi: PayrollAi = {
@@ -488,6 +508,11 @@ export function createRpcHandler(
   // The accounting coworker's proposal of the reason code of an adjusting or replacing e-invoice (#3690): the same reader and model, a budget of its own. It is told the list of codes, the buyer's kind, the
   // original's lines without a price and the person's note (never stored or logged); the code it answers is picked from the list by number and checked in code, and a person confirms it.
   const einvoiceReasonCoworker = einvoiceReasonAi(conversationReader?.einvoiceReasonSuggestion ? { einvoiceReasonSuggestion: conversationReader.einvoiceReasonSuggestion.bind(conversationReader) } : null, suggestionBudget());
+
+  // The accounting coworker's explanation of the surplus of a confirmed count of stock (#3712 slice 2b): the same reader and model, a budget of its own. Code reads the items, the total, the supplier hint and
+  // the manual-entry flag (the finance query); the model is told the date, the items, the total and a supplier's name only, and what it writes only explains. A person chooses the account. With AI off the
+  // screen shows its own template.
+  const stockSurplusCoworker = stockSurplusAi(conversationReader?.stockSurplusNote ? { stockSurplusNote: conversationReader.stockSurplusNote.bind(conversationReader) } : null, suggestionBudget());
 
   // The sales coworker on the lines of a quote (#2698): the same reader and model, a budget of its own. It is told the deal, the customer's latest words (only while the org's switch for AI on customers'
   // words is on) and the earlier quotes to them, and what it answers only fills the editor as proposals that a person applies or drops.
@@ -548,6 +573,16 @@ export function createRpcHandler(
   const inFinance = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
     if (!finance) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun tài chính chưa được bật' });
     return inOrg(context, fn);
+  };
+  // The catalogue check and the name proposals it makes belong to a MISA connection of one product (#4152, #4124): the connector of THAT product must be on in this deployment, or the answer is the same 404 as for a
+  // deployment without the connector. The connection is looked up here for its product; an id the org does not hold needs either product on, and the command then answers its own not found. Ids are compared without case.
+  const requireMisaConnectorOf = async (actor: UserActor, orgId: string, connectionId: string) => {
+    const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
+    const wanted = connectionId.toLowerCase();
+    const product = rows.find((r) => r.id.toLowerCase() === wanted)?.product;
+    if (!channels || !(product === 'asp' ? channels.misaAsp : product === 'amis' ? channels.misaAmis : channels.misaAmis || channels.misaAsp)) {
+      throw new DomainError('MISA_AMIS_DISABLED', 404, product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+    }
   };
   // The e-invoice provider this deployment offers under an adapter id (EINVOICE_SANDBOX and, later, one switch per real adapter), or nothing.
   const marketplaceProviderOf = (id: string): MarketplaceProvider | undefined => (Object.hasOwn(channels?.marketplaceProviders ?? {}, id) ? channels?.marketplaceProviders?.[id] : undefined);
@@ -725,6 +760,13 @@ export function createRpcHandler(
         return { command: 'ads.launches.unblock', input: {} };
       case 'campaign_launch':
         return { command: 'ads.campaign.launch', input: { draftId: change.draftId } };
+      // What can start or raise spend on a running ad (#3835, W4): each asks through its own preparer, and the approval runs the command.
+      case 'object_resume':
+        return { command: 'ads.object.resume', input: { launchId: change.launchId, slot: change.slot } };
+      case 'budget_raise':
+        return { command: 'ads.budget.raise', input: { launchId: change.launchId, dailyBudget: change.dailyBudget } };
+      case 'schedule_extend':
+        return { command: 'ads.schedule.extend', input: { launchId: change.launchId, endOn: change.endOn } };
     }
   };
   const inAds = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
@@ -1198,6 +1240,7 @@ export function createRpcHandler(
       importStart: os.meetings.importStart.handler(meetingsCommand('meetings.import.start')),
       importDiscardEmpty: os.meetings.importDiscardEmpty.handler(meetingsCommand('meetings.import.discard_empty')),
       setTemplate: os.meetings.setTemplate.handler(meetingsCommand('meetings.minutes.set_template')),
+      rename: os.meetings.rename.handler(meetingsCommand('meetings.meeting.rename')),
       delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
       ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
       ownerList: os.meetings.ownerList.handler(meetingsCommand('meetings.meeting.owner_list')),
@@ -1251,6 +1294,12 @@ export function createRpcHandler(
         create: os.meetings.template.create.handler(meetingsCommand('meetings.template.create')),
         update: os.meetings.template.update.handler(meetingsCommand('meetings.template.update')),
         archive: os.meetings.template.archive.handler(meetingsCommand('meetings.template.archive')),
+      },
+      glossary: {
+        list: os.meetings.glossary.list.handler(meetingsQuery('meetings.glossary.list')),
+        add: os.meetings.glossary.add.handler(meetingsCommand('meetings.glossary.add')),
+        update: os.meetings.glossary.update.handler(meetingsCommand('meetings.glossary.update')),
+        remove: os.meetings.glossary.remove.handler(meetingsCommand('meetings.glossary.remove')),
       },
       settings: {
         get: os.meetings.settings.get.handler(meetingsQuery('meetings.settings.get')),
@@ -1329,7 +1378,7 @@ export function createRpcHandler(
         chaptersStatus: os.meetings.results.chaptersStatus.handler(meetingsQuery('meetings.chapters.status')),
         chaptersCopy: os.meetings.results.chaptersCopy.handler(meetingsCommand('meetings.chapters.copy_result')),
         chaptersRun: os.meetings.results.chaptersRun.handler(({ context, input }) =>
-          inOrg(context, (orgId, actor) => runMeetingChapters({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+          inMeetings(context, (orgId, actor) => runMeetingChapters({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
         ),
         enhance: os.meetings.results.enhance.handler(({ context, input }) =>
           inOrg(context, (orgId, actor) => runNotesEnhance({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
@@ -1342,18 +1391,18 @@ export function createRpcHandler(
       // The machine translation of the summary the member reads (meetings integrations E1, #3184): the member's own Vy, the answer theirs alone; see member-vy-ports.ts.
       translation: {
         status: os.meetings.translation.status.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => translationStatusOf({ runtime, price: aiPrice }, orgId, actor, input.meetingId, input.stage)),
+          inMeetings(context, (orgId, actor) => translationStatusOf({ runtime, price: aiPrice }, orgId, actor, input.meetingId, input.stage, input.to)),
         ),
         translate: os.meetings.translation.translate.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => runMeetingTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: translations, price: aiPrice }, orgId, actor, input.meetingId, input.stage)),
+          inMeetings(context, (orgId, actor) => runMeetingTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: translations, price: aiPrice }, orgId, actor, input.meetingId, input.stage, input.to)),
         ),
         get: os.meetings.translation.get.handler(meetingsQuery('meetings.translation.get')),
         // The transcript (E2, #3185): the member's own Vy translates the next batch of the lines they read, in the request; the page asks again while it is open.
         transcriptStatus: os.meetings.translation.transcriptStatus.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => transcriptTranslationStatusOf({ runtime, price: aiPrice, hasModel: summaryModel !== null }, orgId, actor, input.meetingId)),
+          inMeetings(context, (orgId, actor) => transcriptTranslationStatusOf({ runtime, price: aiPrice, hasModel: summaryModel !== null }, orgId, actor, input.meetingId, input.to)),
         ),
         transcriptTranslate: os.meetings.translation.transcriptTranslate.handler(({ context, input }) =>
-          inMeetings(context, (orgId, actor) => runTranscriptTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: transcriptTranslations, price: aiPrice }, orgId, actor, input.meetingId)),
+          inMeetings(context, (orgId, actor) => runTranscriptTranslation({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: transcriptTranslations, price: aiPrice }, orgId, actor, input.meetingId, input.to)),
         ),
         transcriptStop: os.meetings.translation.transcriptStop.handler(meetingsCommand('meetings.translation.transcript_stop')),
         transcriptGet: os.meetings.translation.transcriptGet.handler(meetingsQuery('meetings.translation.transcript_get')),
@@ -1373,6 +1422,57 @@ export function createRpcHandler(
         status: os.meetings.brief.status.handler(({ context }) => inMeetings(context, (orgId, actor) => briefStatusOf({ runtime, price: aiPrice, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor))),
         write: os.meetings.brief.write.handler(({ context, input }) =>
           inMeetings(context, (orgId, actor) => runMeetingBrief({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingBriefs, price: aiPrice }, orgId, actor, input)),
+        ),
+      },
+      // The recorder's Vy suggesting a title from the transcript (#3947): `status` feeds the button, `suggest` runs the recorder's own Vy once and returns up to three checked candidates to the browser; nothing
+      // is stored. The pick is `rename`. See member-vy-ports.ts.
+      title: {
+        status: os.meetings.title.status.handler(meetingsQuery('meetings.title.status')),
+        suggest: os.meetings.title.suggest.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingTitle({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
+      },
+      // What each speaker committed to or decided (#3954): `status` feeds the button, `list` runs the recorder's own Vy once and returns the checked lines, grouped by speaker, to the browser; nothing is stored,
+      // published or made a task. See member-vy-ports.ts.
+      commitments: {
+        status: os.meetings.commitments.status.handler(meetingsQuery('meetings.commitments.status')),
+        list: os.meetings.commitments.list.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingCommitments({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: summaries }, orgId, actor, input.meetingId)),
+        ),
+      },
+      // This week's decisions and what is still open, across the meetings the member reads (#3949): the facts are read as the member (no model); the click has the member's own Vy write two or three sentences from
+      // them, each citing facts, and a sentence whose figure no cited fact writes is refused; nothing is stored or sent. See member-vy-ports.ts.
+      digest: {
+        facts: os.meetings.digest.facts.handler(meetingsQuery('meetings.digest.facts')),
+        status: os.meetings.digest.status.handler(({ context }) => inMeetings(context, (orgId, actor) => digestStatusOf({ runtime, price: aiPrice, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor))),
+        recap: os.meetings.digest.recap.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingDigest({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingDigests, price: aiPrice }, orgId, actor, input)),
+        ),
+      },
+      // Who an action item belongs to, by Vy, when code found nobody (#3921, step 2): the click has the member's own Vy pick one of the people the member may give the work to from the said name, or nobody; the model
+      // sees names only and nothing is stored. See member-vy-ports.ts.
+      assignee: {
+        status: os.meetings.assignee.status.handler(({ context }) => inMeetings(context, (orgId, actor) => assigneeStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null) }, orgId, actor))),
+        suggest: os.meetings.assignee.suggest.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingAssignee({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingAssignees, price: aiPrice }, orgId, actor, input)),
+        ),
+      },
+      // The Today view (#3955): the member's own agenda for today with the facts of each event's brief, read as the member in one call (no model, nothing in the background); see modules/meetings/src/today.ts.
+      today: {
+        facts: os.meetings.today.facts.handler(meetingsQuery('meetings.today.facts')),
+      },
+      // The opt-in morning notice of the day's meetings (#3955, part B): the member's own setting; see modules/meetings/src/morning.ts.
+      morning: {
+        get: os.meetings.morning.get.handler(meetingsQuery('meetings.morning.get')),
+        set: os.meetings.morning.set.handler(meetingsCommand('meetings.morning.set')),
+      },
+      // Agenda adherence (#3959): `agenda` is the open-item list the recorder sees before clicking (no model), `status` the button, `check` the click that has the recorder's own Vy compare the agenda with the transcript
+      // and answer, per agenda line, covered with the transcript lines it cites, or not heard. Nothing is stored; see member-vy-ports.ts.
+      adherence: {
+        agenda: os.meetings.adherence.agenda.handler(meetingsQuery('meetings.adherence.agenda')),
+        status: os.meetings.adherence.status.handler(({ context, input }) => inMeetings(context, (orgId, actor) => adherenceStatusOf({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), price: aiPrice }, orgId, actor, input.meetingId))),
+        check: os.meetings.adherence.check.handler(({ context, input }) =>
+          inMeetings(context, (orgId, actor) => runMeetingAdherence({ runtime, model: summaryModel, meter: aiMeter ?? (() => null), budget: meetingAdherence, price: aiPrice }, orgId, actor, input)),
         ),
       },
       // A member's own Google Calendar meetings (B1, #3165): the member's own rows, no model; see modules/meetings/src/agenda.ts.
@@ -2944,6 +3044,9 @@ export function createRpcHandler(
       // for the worker with no tenant context, as a platform's notice does.
       retention: os.conversations.retention.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.retention', {}, { actor, orgId }))),
       setRetention: os.conversations.setRetention.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.retention_set', input, { actor, orgId }))),
+      // Engage's wake rules (#3862): the org's N, read by every member and set by owners and admins in Settings.
+      wakeRules: os.conversations.wakeRules.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.wake_rules', {}, { actor, orgId }))),
+      setWakeRules: os.conversations.setWakeRules.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.wake_rules_set', input, { actor, orgId }))),
       eraseContact: os.conversations.eraseContact.handler(({ context, input }) => keyed(context, 'kernel.conversation.erase_contact', input)),
       channelCounts: os.conversations.channelCounts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.channel_counts', input, { actor, orgId }))),
       eraseChannel: os.conversations.eraseChannel.handler(({ context, input }) => keyed(context, 'kernel.conversation.erase_channel', input)),
@@ -3012,6 +3115,44 @@ export function createRpcHandler(
     vouchers: {
       list: os.vouchers.list.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.vouchers.list', input, { actor, orgId })),
+      ),
+      // What would be sent to MISA AMIS Kế toán (#3901): a read over the same vouchers as the MISA SME export, in the caller's own context. It sends nothing and calls no one.
+      misaAmisPreview: os.vouchers.misaAmisPreview.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => misaAmisPreview((name, query) => runtime.query(name, query, { actor, orgId }), input)),
+      ),
+      // F4 (security review of #4013): with the push switched off the command is not reached at all, so a confirmation made while it is off can never be sent within its seven days once it is turned on.
+      // The switch is read before anything else (membership included): with it off the answer is the same 404 for everyone.
+      misaAmisPush: os.vouchers.misaAmisPush.handler(({ context, input }) =>
+        // `guard` turns the DomainError into its own status (404), as inside inFinance, but nothing of the org is read before the switch is.
+        guard(async () => {
+          const disabled = () => new DomainError('MISA_AMIS_PUSH_DISABLED', 404, 'Việc gửi chứng từ sang MISA chưa được bật trên hệ thống này');
+          const amisOn = channels?.misaAmis === true && channels.misaAmisPush === true;
+          const aspOn = channels?.misaAsp === true && channels.misaAspPush === true;
+          // With both switches off nothing is read at all (F4): the same 404 for everyone.
+          if (!amisOn && !aspOn) throw disabled();
+          return inFinance(context, async (orgId, actor) => {
+            // Where only one product's push is on, a connection of the other product answers the same 404 as a deployment with that push off (the product is the connection's own, read in the caller's context).
+            if (!amisOn || !aspOn) {
+              const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
+              // `zId` accepts a capital letter in a UUID, the database answers lower case: compare without the case, or a connection of the off product would pass the gate.
+              const wanted = input.connectionId.toLowerCase();
+              const product = rows.find((r) => r.id.toLowerCase() === wanted)?.product;
+              if (product !== undefined && !(product === 'asp' ? aspOn : amisOn)) throw disabled();
+            }
+            return runtime.execute('finance.misa_amis.push', input, { actor, orgId });
+          });
+        }),
+      ),
+      // The preview is run again here, so what the model is told comes from the books, never from the caller; the notes are a read and change no voucher, blocker or push.
+      misaAmisBlockerNotes: os.vouchers.misaAmisBlockerNotes.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const preview = await misaAmisPreview((name, query) => runtime.query(name, query, { actor, orgId }), ask);
+          // The wording follows the product of the connection of the entity the ask names (MISA ASP's catalogue cannot be changed from Ludy, so the fix reads differently, #4114); an ask that names none reads as AMIS.
+          const connections = ask.legalEntityId === undefined ? [] : await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
+          const product = connections.find((c) => c.legalEntityId.toLowerCase() === ask.legalEntityId?.toLowerCase())?.product ?? 'amis';
+          return explainMisaAmisBlockers(financeMisaAmisBlockerNotesAi, orgId, actor.userId, preview, lang ?? 'vi', product);
+        }),
       ),
       // What MISA's import will refuse or cut in one of the seven exports (#3848): a read over the rows the file is built from, in the caller's own context. The export is unchanged and never waits for it.
       misaCheck: os.vouchers.misaCheck.handler(({ context, input }) =>
@@ -3133,6 +3274,8 @@ export function createRpcHandler(
       s2a: os.household.s2a.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2a', input, { actor, orgId }))),
       s2b: os.household.s2b.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2b', input, { actor, orgId }))),
       s2c: os.household.s2c.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2c', input, { actor, orgId }))),
+      s2d: os.household.s2d.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2d', input, { actor, orgId }))),
+      s2e: os.household.s2e.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.household.s2e', input, { actor, orgId }))),
     },
     einvoice: {
       status: os.einvoice.status.handler(async () => ({ sandbox: Boolean(einvoiceProviderOf('sandbox')) })),
@@ -3384,6 +3527,14 @@ export function createRpcHandler(
           return explainMarketplaceLine(financeMarketplaceLineAi, orgId, actor.userId, facts, lang ?? 'vi');
         }),
       ),
+      // The balance is loaded again here in the caller's own transaction, so what the model is told comes from the books, never from the caller; the notes are a read and post nothing.
+      feeNotes: os.marketplace.feeNotes.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, legalEntityId } = input;
+          const balance = await runtime.query<MarketplaceBalance>('finance.marketplace.balance', legalEntityId === undefined ? {} : { legalEntityId }, { actor, orgId });
+          return explainMarketplaceFees(financeMarketplaceFeeNoteAi, orgId, actor.userId, balance, MARKETPLACE_FEE_CYCLE_DAYS, lang ?? 'vi');
+        }),
+      ),
       preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
       confirm: os.marketplace.confirm.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {
@@ -3437,19 +3588,20 @@ export function createRpcHandler(
     // An entity's connection to MISA AMIS Kế toán (#3875, S2 of #3854). The access code the customer made in AMIS is sealed here, once; the command gets the envelope, never the code, and only a
     // worker may open it. The connector is on only when this deployment holds the integrator's ClientID: without it no connect is possible and the card says the connector is off.
     misaAmis: {
-      status: os.misaAmis.status.handler(({ context }) => inFinance(context, async () => ({ offered: channels?.misaAmis === true }))),
+      status: os.misaAmis.status.handler(({ context }) => inFinance(context, async () => ({ offered: channels?.misaAmis === true, pushOffered: channels?.misaAmis === true && channels?.misaAmisPush === true, aspOffered: channels?.misaAsp === true, aspPushOffered: channels?.misaAsp === true && channels?.misaAspPush === true }))),
       connections: {
         list: os.misaAmis.connections.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.misa_amis_connection.list', {}, { actor, orgId }))),
         connect: os.misaAmis.connections.connect.handler(({ context, input }) =>
           inFinance(context, async (orgId, actor) => {
             await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được MISA AMIS');
-            if (!channels?.misaAmis) throw new DomainError('MISA_AMIS_DISABLED', 404, 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+            // Each product is on only with its own ClientID (#4111): a deployment that holds AMIS's offers no ASP connection, and the other way round.
+            if (!channels || !(input.product === 'asp' ? channels.misaAsp : channels.misaAmis)) throw new DomainError('MISA_AMIS_DISABLED', 404, input.product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
             const target = await runtime.query<{ legalEntityId: string }>('finance.misa_amis_connection.target', { legalEntityId: input.legalEntityId }, { actor, orgId });
             // The account is the entity's, so a second connect of it is the same connection. The access code is not in the display name or the account id: the channel row stays as history after a disconnect.
-            const sealed = channels.broker.seal(input.accessCode, { orgId, provider: MISA_AMIS_CHANNEL_PROVIDER, externalAccountId: target.legalEntityId });
+            const sealed = channels.broker.seal(input.accessCode, { orgId, provider: misaChannelProvider(input.product), externalAccountId: target.legalEntityId });
             const connected = await runtime.execute<{ id: string }>(
               'finance.misa_amis_connection.connect',
-              { legalEntityId: target.legalEntityId, displayName: 'MISA AMIS Kế toán', credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+              { legalEntityId: target.legalEntityId, product: input.product, displayName: input.product === 'asp' ? 'MISA ASP' : 'MISA AMIS Kế toán', credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
               { actor, orgId },
             );
             return { id: connected.id };
@@ -3461,11 +3613,86 @@ export function createRpcHandler(
             const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
             const row = rows.find((r) => r.id === input.id);
             if (!row) return { removed: false };
+            // Vouchers still awaiting MISA's answer refuse the disconnect before anything is revoked: the access code stays, so their results can still be read.
+            await runtime.query('finance.misa_amis_connection.can_disconnect', { id: row.id }, { actor, orgId });
             // The credential goes first: a failure after it leaves a row of a closed connection that a second disconnect removes, never a live access code with no row.
             await runtime.execute('kernel.channel.disconnect', { connectionId: row.connectionId }, { actor, orgId });
             return runtime.execute<{ removed: boolean }>('finance.misa_amis_connection.unlink', { id: row.id }, { actor, orgId });
           }),
         ),
+        // The test is the worker's (S2b, #3885): the command queues it and the worker opens the access code and asks AMIS. The answer here is only "queued"; the list shows the state when it lands.
+        test: os.misaAmis.connections.test.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được kết nối MISA AMIS');
+            // The product of the connection decides which ClientID must be held; a connection that is not found falls through to the command's own 404.
+            const rows = await runtime.query<MisaAmisConnection[]>('finance.misa_amis_connection.list', {}, { actor, orgId });
+            const wanted = input.id.toLowerCase();
+            const product = rows.find((r) => r.id.toLowerCase() === wanted)?.product;
+            if (product !== undefined && !(product === 'asp' ? channels?.misaAsp : channels?.misaAmis)) throw new DomainError('MISA_AMIS_DISABLED', 404, product === 'asp' ? 'Bộ kết nối MISA ASP chưa được bật trên hệ thống này' : 'Bộ kết nối MISA AMIS chưa được bật trên hệ thống này');
+            return runtime.execute<{ queued: boolean }>('finance.misa_amis_connection.request_test', { id: input.id }, { actor, orgId });
+          }),
+        ),
+        // The MISA name of a unit of Ludy on a MISA ASP connection (#4125): typed as the catalogue spells it, or cleared; the next check validates it. Owner or admin; nothing is sent by it.
+        setUnitAlias: os.misaAmis.connections.setUnitAlias.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới đặt được tên đơn vị tính của kết nối MISA');
+            return runtime.execute<{ saved: boolean }>('finance.misa_amis_connection.set_unit_alias', input, { actor, orgId });
+          }),
+        ),
+        // The default item of a connection for service lines or sales lines (S3b, #4124): kept as typed, or cleared; the next check validates it against the catalogue. Owner or admin; no switch gates it (nothing is sent).
+        setDefaultItem: os.misaAmis.connections.setDefaultItem.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới đặt được mặt hàng mặc định của kết nối MISA');
+            return runtime.execute<{ saved: boolean }>('finance.misa_amis_connection.set_default_item', input, { actor, orgId });
+          }),
+        ),
+      },
+      // The check of a connection's vouchers against the firm's own catalogue is the worker's too (S3a, #4112): the command files the request and queues the job; the preview shows the result when it lands.
+      matches: {
+        check: os.misaAmis.matches.check.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được chứng từ với danh mục MISA');
+            // The check job reads the catalogue with the client of the connection's product and opens only an access code sealed for that product (misa-amis-match-job.ts, #4152): the check is never queued to fail.
+            await requireMisaConnectorOf(actor, orgId, input.id);
+            return runtime.execute<{ queued: boolean; running: boolean }>('finance.misa_amis_match.request_check', input, { actor, orgId });
+          }),
+        ),
+        // The name proposals of the last check and a person's decision on one (S3b, #4124). Owner or admin; nothing is gated by the push switch (nothing is sent by a decision), only by the connector of the connection's product being there.
+        proposals: os.misaAmis.matches.proposals.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được các đề xuất khớp theo tên');
+            await requireMisaConnectorOf(actor, orgId, input.connectionId);
+            return runtime.query('finance.misa_amis_match.proposals', input, { actor, orgId });
+          }),
+        ),
+        units: os.misaAmis.matches.units.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được các đơn vị tính chưa khớp');
+            await requireMisaConnectorOf(actor, orgId, input.connectionId);
+            return runtime.query('finance.misa_amis_match.units', input, { actor, orgId });
+          }),
+        ),
+        confirmName: os.misaAmis.matches.confirmName.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xác nhận được đề xuất khớp theo tên');
+            await requireMisaConnectorOf(actor, orgId, input.connectionId);
+            return runtime.execute<{ decided: boolean }>('finance.misa_amis_match.confirm_name', input, { actor, orgId });
+          }),
+        ),
+        rejectName: os.misaAmis.matches.rejectName.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới từ chối được đề xuất khớp theo tên');
+            await requireMisaConnectorOf(actor, orgId, input.connectionId);
+            return runtime.execute<{ decided: boolean }>('finance.misa_amis_match.reject_name', input, { actor, orgId });
+          }),
+        ),
+      },
+      // The vouchers pushed through a connection (#3902, S3b-2): every role reads the rows; an owner or admin settles one MISA never answered for. Neither is gated by the push switch: rows pushed earlier stay readable
+      // and settleable while it is off (nothing is sent by either).
+      pushes: {
+        list: os.misaAmis.pushes.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.misa_amis.push_list', input, { actor, orgId }))),
+        // An `ambiguous` row settled "in AMIS" while the push is off becomes `sent` and waits: the worker that reads its result is not running, so the row is settled again after the 24 hours (an edge: ambiguous rows exist only where the push was on).
+        resolve: os.misaAmis.pushes.resolve.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.misa_amis.push_resolve', input, { actor, orgId }))),
       },
     },
     stock: {
@@ -3499,6 +3726,7 @@ export function createRpcHandler(
       report: os.stock.report.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.report', input, { actor, orgId }))),
       card: os.stock.card.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.card', input, { actor, orgId }))),
       periods: os.stock.periods.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.periods', input, { actor, orgId }))),
+      closeCheck: os.stock.closeCheck.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.close_check', input, { actor, orgId }))),
       closeEmpty: os.stock.closeEmpty.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock.close_empty', input, { actor, orgId }))),
       // The coworker's reads (#2514): the model is asked outside any transaction, from what the member's own read said it may see.
       suggest: os.stock.suggest.handler(({ context, input }) =>
@@ -3516,6 +3744,13 @@ export function createRpcHandler(
       ),
       counts: {
         list: os.stock.counts.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_count.list', input ?? {}, { actor, orgId }))),
+        // Where the surplus of a confirmed count stands (#3712 slice 2b): the books' facts read in the member's own transaction, then the coworker's words outside any transaction.
+        surplusNote: os.stock.counts.surplusNote.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            const source = await runtime.query<StockSurplusSource>('finance.stock_count.surplus_source', { countId: input.countId }, { actor, orgId });
+            return explainSurplus(stockSurplusCoworker, orgId, actor.userId, source, input.lang ?? 'vi');
+          }),
+        ),
         preview: os.stock.counts.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_count.preview', input, { actor, orgId }))),
         create: os.stock.counts.create.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_count.create', input, { actor, orgId }))),
         cancel: os.stock.counts.cancel.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_count.cancel', input, { actor, orgId }))),
@@ -3911,6 +4146,40 @@ export function createRpcHandler(
           return runtime.execute('ads.launch.stop', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+      // Managing a running ad (W4, #3835): owners and admins. A pause, an archive, a lower budget and a shorter schedule only reduce spend: each is written here and queued, and the
+      // platform is called by the manage job afterwards (never in this request). A resume, a raise and an extension are proposals (requestChange).
+      pauseObject: os.ads.pauseObject.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.object.pause', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      archiveObject: os.ads.archiveObject.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.object.archive', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      lowerBudget: os.ads.lowerBudget.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.budget.lower', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      shortenSchedule: os.ads.shortenSchedule.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.schedule.shorten', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      cancelChange: os.ads.cancelChange.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.manage.cancel', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      manageState: os.ads.manageState.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.manage.state', input, { actor, orgId }))),
+      manageSuggestions: os.ads.manageSuggestions.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.manage.suggestions', input, { actor, orgId }))),
       // Running a launch that needs attention again (W2-4b): owners and admins; the request is stamped here and the launch job takes it (never a platform call in this request).
       retryLaunch: os.ads.retryLaunch.handler(({ context, input }) =>
         inAds(context, (orgId, actor) => {

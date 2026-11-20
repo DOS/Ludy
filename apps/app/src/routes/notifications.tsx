@@ -1,19 +1,21 @@
 // In-app notifications of the kernel and finance (#671): the viewer's own, newest first. Opening one marks it read and
-// goes to what it is about; the settings turn kinds off for this member only. Social's have their own screen (#637).
+// goes to what it is about. The settings that turn kinds off for this member sit in Settings (NT-1, #3592), linked from here; a run of the same kind of notice is one row (NT-2).
+// Social's have their own screen (#637).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useNavigate, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
+import { Button, buttonVariants } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
 import { cn } from '@crove/ui/lib/utils';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { TodayMailSetting } from '../components/today-mail-setting.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { isKnownKind, kindKey, notificationKinds, notificationTarget, periodParts, type KnownNotificationKind } from '../lib/notifications.ts';
+import { groupNotifications, groupSubjectCount, isKnownKind, NOTIFICATION_LIST_LIMIT, notificationTarget, periodParts, unreadIdChunks, type GroupableKind, type NotificationTarget } from '../lib/notifications.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
-import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
+import { SETTINGS_CARD } from './settings/tabs.ts';
+
+// The card of Settings that holds the preferences; test/settings-tabs.test.ts checks this link goes to the tab of that card.
+const NOTIFICATION_SETTINGS_ID = SETTINGS_CARD.notifications;
 
 export type WorkNotification = Awaited<ReturnType<typeof client.notifications.list>>['items'][number];
 
@@ -67,6 +69,8 @@ function useLine() {
         return t('text.series_open_items', { count: Number(n.detail.count ?? 0) });
       case 'meetings.summary_ready':
         return t('text.summary_ready');
+      case 'meetings.morning':
+        return t('text.morning', { count: Number(n.detail.count ?? 0) });
       case 'kernel.channel_expired':
         return t('text.channel_expired');
       case 'kernel.ai_budget':
@@ -84,36 +88,6 @@ function useLine() {
   };
 }
 
-function Settings({ muted }: { muted: readonly string[] }) {
-  const t = useTranslations('notifications');
-  useModulesVersion(); // the apps of the org can change while this screen is open
-  const kinds = notificationKinds(installedModules());
-  const mute = useMutation({
-    mutationFn: (v: { kind: KnownNotificationKind; muted: boolean }) => client.notifications.mute(v),
-    onSettled: refresh,
-  });
-  return (
-    <Card className="block space-y-3 p-4">
-      <div>
-        <h2 className="text-sm font-medium text-foreground">{t('settings')}</h2>
-        <p className="text-xs text-subtle-foreground">{t('settingsHint')}</p>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {kinds.map((kind) => {
-          const on = mute.isPending && mute.variables?.kind === kind ? !mute.variables.muted : !muted.includes(kind);
-          return (
-            <label key={kind} className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Checkbox checked={on} disabled={mute.isPending} onCheckedChange={(checked) => mute.mutate({ kind, muted: checked !== true })} />
-              {t(`kinds.${kindKey(kind)}`)}
-            </label>
-          );
-        })}
-      </div>
-      {mute.error && <ErrorText>{errorMessage(mute.error)}</ErrorText>}
-    </Card>
-  );
-}
-
 export function NotificationsPage() {
   const { slug } = useParams({ strict: false }) as { slug: string };
   const t = useTranslations('notifications');
@@ -125,13 +99,11 @@ export function NotificationsPage() {
     mutationFn: (input: { ids: string[] } | { all: true }) => client.notifications.read(input),
     onSettled: refresh,
   });
-  const open = (n: WorkNotification) => {
-    if (!n.read) read.mutate({ ids: [n.id] });
-    const target = notificationTarget(n);
+  const go = (target: NotificationTarget | null, detail: Record<string, string>) => {
     if (target?.to === 'proposal') void navigate({ to: '/o/$slug/inbox/$id', params: { slug, id: target.id } });
     else if (target?.to === 'inbox') void navigate({ to: '/o/$slug/inbox', params: { slug } });
     else if (target?.to === 'bank') void navigate({ to: '/o/$slug/bank', params: { slug }, search: target.account ? { account: target.account } : {} });
-    else if (target?.to === 'portal') void navigate({ to: '/o/$slug/portal-invoices', params: { slug }, search: { ...(target.sale ? { direction: 'sale' as const } : {}), ...(typeof n.detail.period === 'string' && n.detail.period ? { period: n.detail.period } : {}) } });
+    else if (target?.to === 'portal') void navigate({ to: '/o/$slug/portal-invoices', params: { slug }, search: { ...(target.sale ? { direction: 'sale' as const } : {}), ...(typeof detail.period === 'string' && detail.period ? { period: detail.period } : {}) } });
     // The period-closing notice asks for a lock, which is on the ledger's Kết thúc kỳ tab (#3602).
     else if (target?.to === 'ledger') void navigate({ to: '/o/$slug/ledger', params: { slug }, search: { report: 'closing' as const } });
     else if (target?.to === 'myWork') void navigate({ to: '/o/$slug/my-work', params: { slug } });
@@ -142,20 +114,43 @@ export function NotificationsPage() {
     else if (target?.to === 'conversation') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { c: target.id } });
     else if (target?.to === 'conversations') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { status: 'new' } });
     else if (target?.to === 'meeting') void navigate({ to: '/o/$slug/meetings/$id', params: { slug, id: target.id } });
+    else if (target?.to === 'meetings') void navigate({ to: '/o/$slug/meetings', params: { slug } });
     else if (target?.to === 'ads') void navigate({ to: '/o/$slug/ads', params: { slug } });
     else if (target?.to === 'agents') void navigate({ to: '/o/$slug/agents', params: { slug } });
   };
+  const open = (n: WorkNotification) => {
+    if (!n.read) read.mutate({ ids: [n.id] });
+    go(notificationTarget(n), n.detail);
+  };
+  // A group row opens the screen that lists all of its kind, and marks the ones it stood for read (the read command takes 100 ids at a time).
+  const openGroup = (kind: GroupableKind, group: WorkNotification[]) => {
+    // One chunk after the other: a failed chunk stops the rest and shows its error (the list is 30 long, so there is one chunk in practice).
+    void (async () => {
+      for (const ids of unreadIdChunks(group)) await read.mutateAsync({ ids });
+    })().catch(() => undefined);
+    go(notificationTarget({ kind, subjectId: null, detail: {} }), {});
+  };
   // A kind this version of the app does not know (a newer module) is left out rather than shown blank.
   const items = (list.data?.items ?? []).filter((n) => isKnownKind(n.kind));
+  const rows = groupNotifications(items);
+  // The server answers with the newest 30: a group at the end of a full list may stand for more.
+  const capped = (list.data?.items.length ?? 0) >= NOTIFICATION_LIST_LIMIT;
+  const rowClass = (unread: boolean) => cn('flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none', unread && 'bg-primary/5');
   return (
     <div className="space-y-4">
       <PageHeader
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <Button variant="outline" size="sm" disabled={!list.data?.unread || read.isPending} onClick={() => read.mutate({ all: true })}>
-            {t('readAll')}
-          </Button>
+          <>
+            {/* The preferences are a card of Settings (NT-1, #3592), the tab "Thông báo của tôi". */}
+            <Link to="/o/$slug/settings/notifications" params={{ slug }} hash={NOTIFICATION_SETTINGS_ID} className={buttonVariants({ variant: 'ghost', size: 'sm' })}>
+              {t('settingsLink')}
+            </Link>
+            <Button variant="outline" size="sm" disabled={!list.data?.unread || read.isPending} onClick={() => read.mutate({ all: true })}>
+              {t('readAll')}
+            </Button>
+          </>
         }
       />
       {list.isLoading ? (
@@ -166,29 +161,36 @@ export function NotificationsPage() {
         <Empty title={t('empty')} hint={t('emptyHint')} />
       ) : (
         <Card className="block divide-y p-0">
-          {items.map((n) => (
-            <button
-              key={n.id}
-              type="button"
-              onClick={() => open(n)}
-              className={cn('flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none', !n.read && 'bg-primary/5')}
-            >
-              <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', n.read ? 'bg-transparent' : 'bg-primary')} aria-hidden />
-              <span className="min-w-0 flex-1 space-y-0.5">
-                <span className={cn('block text-sm', n.read ? 'text-muted-foreground' : 'font-medium text-foreground')}>
-                  {line(n)}
-                  {!n.read && <span className="sr-only"> ({t('unread')})</span>}
+          {rows.map((row) =>
+            row.type === 'group' ? (
+              // A run of the same kind (NT-2, #3592): one row with the count, opening the screen that lists them all.
+              <button key={`group:${row.items[0]!.id}`} type="button" onClick={() => openGroup(row.kind, row.items)} className={rowClass(true)} data-testid="notification-group">
+                <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', 'bg-primary')} aria-hidden />
+                <span className="min-w-0 flex-1 space-y-0.5">
+                  <span className={cn('block text-sm', 'font-medium text-foreground')}>
+                    {t(`group.${row.kind.replace('kernel.', '') as 'approval_waiting'}`, { count: groupSubjectCount(row.items), plus: capped && row === rows[rows.length - 1] ? '+' : '' })}
+                    <span className="sr-only"> ({t('unread')})</span>
+                  </span>
+                  <span className="block text-xs text-subtle-foreground">{f.dateTime(row.items[0]!.createdAt)}</span>
                 </span>
-                <span className="block text-xs text-subtle-foreground">{f.dateTime(n.createdAt)}</span>
-              </span>
-            </button>
-          ))}
+                <span className="shrink-0 self-center text-sm text-link">{t('groupOpen')}</span>
+              </button>
+            ) : (
+              <button key={row.item.id} type="button" onClick={() => open(row.item)} className={rowClass(!row.item.read)}>
+                <span className={cn('mt-1.5 size-2 shrink-0 rounded-full', row.item.read ? 'bg-transparent' : 'bg-primary')} aria-hidden />
+                <span className="min-w-0 flex-1 space-y-0.5">
+                  <span className={cn('block text-sm', row.item.read ? 'text-muted-foreground' : 'font-medium text-foreground')}>
+                    {line(row.item)}
+                    {!row.item.read && <span className="sr-only"> ({t('unread')})</span>}
+                  </span>
+                  <span className="block text-xs text-subtle-foreground">{f.dateTime(row.item.createdAt)}</span>
+                </span>
+              </button>
+            ),
+          )}
         </Card>
       )}
       {read.error && <ErrorText>{errorMessage(read.error)}</ErrorText>}
-      {list.data && <Settings muted={list.data.muted} />}
-      {/* The daily "Hôm nay cần bạn" brief by email: the member's own opt-in (#2406). */}
-      <TodayMailSetting />
     </div>
   );
 }

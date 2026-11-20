@@ -7,6 +7,7 @@
 // A title is shown to every reader of the minutes and a hint reaches the instruction of another member's Vy, so both are plain text only: control characters, line and paragraph
 // separators and bidirectional controls are stripped, whitespace is collapsed and the caps hold. The same rules are in the database (crove_meetings.minutes_sections_ok).
 import { z } from 'zod';
+import { INVISIBLE_PATTERN } from './invisible-chars.ts';
 import { SECTIONS_MAX, type TemplateSection } from './meeting-templates.ts';
 import { zId } from './schemas.ts';
 
@@ -16,13 +17,10 @@ export const SECTION_HINT_MAX = 200;
 // Active templates one organization keeps; archived ones do not count.
 export const TEMPLATES_ACTIVE_MAX = 50;
 
-// What is stripped from a title, a hint or a name: C0 and C1 controls (a newline and a tab included), the line and paragraph separators, the bidirectional controls, the zero-width
-// characters that hide text, the tag characters (which can carry a hidden message), the invisible fillers (soft hyphen, combining grapheme joiner, Mongolian vowel separator, Arabic letter
-// mark, Hangul fillers, the braille blank, the interlinear annotation marks), and an unpaired surrogate (which PostgreSQL refuses in a jsonb value). Variation selectors stay: emoji need
-// them. Whitespace left is collapsed to single spaces. The database refuses the same set (crove_meetings.minutes_sections_ok).
-// The combining grapheme joiner is outside the class: a combining mark inside one is a lint warning (no-misleading-character-class).
-// oxlint-disable-next-line no-control-regex
-const STRIP = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\u2800\u3164\ufeff\ufff9-\ufffb\u{e0000}-\u{e007f}]|\u034f/gu;
+// What is stripped from a title, a hint or a name: the invisible-character class of ./invisible-chars.ts (controls, separators, bidirectional controls, zero-width characters, the invisible
+// fillers and operators, tag characters; a line break is one of them), and an unpaired surrogate (which PostgreSQL refuses in a jsonb value). Variation selectors stay: emoji need them.
+// Whitespace left is collapsed to single spaces. The database refuses the same set (crove_meetings.minutes_sections_ok and the name CHECK of minutes_template).
+const STRIP = new RegExp(INVISIBLE_PATTERN, 'gu');
 const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
 export function cleanTemplateText(raw: string): string {
   return raw.replace(LONE_SURROGATE, ' ').replace(STRIP, ' ').replace(/\s+/gu, ' ').trim();

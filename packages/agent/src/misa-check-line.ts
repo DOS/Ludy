@@ -76,7 +76,7 @@ const CLAIMS: readonly RegExp[] = [
 ];
 // A promise about what MISA will do, or a word that says the download is held back: the line never promises and the download is never blocked.
 const PROMISES: readonly RegExp[] = [/\bwill\s+(?:import|accept|work|pass|succeed|be\s+accepted)\b/, /\b(?:accepts?|accepted|sorted)\b/, /\bblock(?:s|ed|ing)?\b/, /\bse\s+(?:nhap|duoc|thanh\s+cong|chap\s+nhan)\b/, /\bchan\b/];
-const claimsDone = (text: string): boolean => {
+export const claimsDone = (text: string): boolean => {
   const folded = fold(text);
   return CLAIMS.some((re) => re.test(folded.replace(STILL_TO_COME, ' '))) || PROMISES.some((re) => re.test(folded));
 };

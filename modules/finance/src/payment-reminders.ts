@@ -175,7 +175,7 @@ async function lastReminders(ctx: QueryContext, entity: string, partyIds: readon
 }
 
 // The currency every amount of the books is in.
-async function bookCurrency(ctx: QueryContext): Promise<string> {
+export async function bookCurrency(ctx: QueryContext): Promise<string> {
   const row = await ctx.trx.selectFrom('crove_kernel.tenant').select('base_currency').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
   return row.base_currency;
 }
@@ -238,7 +238,7 @@ async function payToOptions(ctx: QueryContext, entity: string): Promise<Array<{ 
   return rows.map((r) => ({ id: r.id, bank: accounts.get(r.bank_account)?.name ?? r.bank_account, number: r.account_number, holder: holder?.name ?? '' }));
 }
 
-async function orgName(ctx: QueryContext, entity: string): Promise<string> {
+export async function orgName(ctx: QueryContext, entity: string): Promise<string> {
   // The seller named in the mail is the legal entity whose books the invoices are in.
   const row = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('name').where('org_id', '=', ctx.orgId).where('id', '=', entity).executeTakeFirst();
   if (row) return oneLine(row.name);
@@ -255,8 +255,8 @@ function invoiceKey(invoices: readonly OpenInvoice[]): string {
   return sha256Hex(invoices.map((i) => `${i.id}:${i.dueDate}:${i.amountDue}`).sort().join(','));
 }
 
-const customerPaused = () => new DomainError('CUSTOMER_PAUSED', 409, 'Đang tạm dừng nhắc khách hàng này; bỏ tạm dừng rồi gửi lại');
-const nothingOverdue = () => new DomainError('NOTHING_OVERDUE', 409, 'Khách hàng này không còn hóa đơn nào quá hạn');
+export const customerPaused = () => new DomainError('CUSTOMER_PAUSED', 409, 'Đang tạm dừng nhắc khách hàng này; bỏ tạm dừng rồi gửi lại');
+export const nothingOverdue = () => new DomainError('NOTHING_OVERDUE', 409, 'Khách hàng này không còn hóa đơn nào quá hạn');
 
 export const paymentReminderDraft = defineQuery({
   name: 'finance.payment_reminder.draft',

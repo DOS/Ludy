@@ -3,7 +3,8 @@
 // results their platforms report, read only. The inputs its commands and queries take and the views they return; the app
 // reads the same types. Money is a decimal string, never a number (AGENTS.md); counts are whole numbers.
 import { z } from 'zod';
-import { zAdsCampaignPlan } from './ads-campaign.ts';
+import { zAdsBudget, zAdsCampaignPlan } from './ads-campaign.ts';
+import { zAdsManageSlot } from './ads-manage.ts';
 import { zTimeZone } from './calendar.ts';
 import { zAccountCode, zId, zLocalDate, zMoney } from './schemas.ts';
 
@@ -213,6 +214,47 @@ export const zAdsChange = z.discriminatedUnion('change', [
     origin: z.enum(['human', 'ai']),
     aiFields: z.array(z.string().max(64)),
   }),
+  // What can start or raise spend on a running ad (W4, #3835): the largest amount the launch can spend with the change is what the approver signs.
+  z.object({
+    change: z.literal('object_resume'),
+    launchId: zId,
+    adAccountId: zId,
+    adAccountName: z.string(),
+    campaignName: z.string(),
+    slot: zAdsManageSlot,
+    objectName: z.string(),
+    currency: zCurrency,
+    dailyBudget: z.string(),
+    endOn: z.string(),
+    amount: z.string(),
+    previousAmount: z.string(),
+  }),
+  z.object({
+    change: z.literal('budget_raise'),
+    launchId: zId,
+    adAccountId: zId,
+    adAccountName: z.string(),
+    campaignName: z.string(),
+    currency: zCurrency,
+    fromBudget: z.string(),
+    toBudget: z.string(),
+    endOn: z.string(),
+    amount: z.string(),
+    previousAmount: z.string(),
+  }),
+  z.object({
+    change: z.literal('schedule_extend'),
+    launchId: zId,
+    adAccountId: zId,
+    adAccountName: z.string(),
+    campaignName: z.string(),
+    currency: zCurrency,
+    dailyBudget: z.string(),
+    fromEndOn: z.string(),
+    toEndOn: z.string(),
+    amount: z.string(),
+    previousAmount: z.string(),
+  }),
 ]);
 export type AdsChange = z.infer<typeof zAdsChange>;
 // `canLaunch` (#3675) is asked for a plan to launch only (null for every other request): whether this deployment has a launch writer for the plan's ad account, so the card
@@ -237,6 +279,10 @@ export const zAdsChangeRequest = z.discriminatedUnion('change', [
     .refine(capNamesAccount, capNamesAccountIssue),
   z.strictObject({ change: z.literal('launches_unblock'), idempotencyKey: zId }),
   z.strictObject({ change: z.literal('campaign_launch'), draftId: zId, idempotencyKey: zId }),
+  // Resuming a paused object, raising a daily budget and extending a schedule (W4, #3835): each is a proposal approved like a launch.
+  z.strictObject({ change: z.literal('object_resume'), launchId: zId, slot: zAdsManageSlot, idempotencyKey: zId }),
+  z.strictObject({ change: z.literal('budget_raise'), launchId: zId, dailyBudget: zAdsBudget, idempotencyKey: zId }),
+  z.strictObject({ change: z.literal('schedule_extend'), launchId: zId, endOn: zLocalDate, idempotencyKey: zId }),
 ]);
 export type AdsChangeRequest = z.infer<typeof zAdsChangeRequest>;
 

@@ -27,6 +27,8 @@ const CHECKED: ReadonlyArray<readonly [string, string]> = [
   ['crove_crm.quote_link_view(text)', 'crm'],
   ['crove_crm.quote_link_logo(text)', 'crm'],
   ['crove_finance.bank_feed_notice_claim(integer)', 'finance'],
+  ['crove_finance.misa_amis_callback_claim(integer)', 'finance'],
+  ['crove_kernel.meeting_platform_ring(text,text)', 'meetings'],
   ['crove_sign.public_token_resolve(text,boolean)', 'sign'],
   ['crove_sign.public_pdf_source(text)', 'sign'],
   ['crove_sign.public_verify_certificate(text,text)', 'sign'],

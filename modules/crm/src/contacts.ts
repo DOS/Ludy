@@ -120,6 +120,8 @@ interface Row {
   company_name: string | null;
   people_count: number;
   open_deals: number;
+  actor_origin: 'ui' | 'mcp';
+  tainted: boolean;
   sort_value: string;
 }
 
@@ -156,7 +158,7 @@ export const contactList = defineQuery({
     }
 
     const result = await sql<Row>`
-      SELECT p.id, p.kind, p.name, p.tax_code, p.address, p.email, p.phone, p.version, p.created_at, (${by.text}) AS sort_value,
+      SELECT p.id, p.kind, p.name, p.tax_code, p.address, p.email, p.phone, p.version, p.created_at, p.actor_origin, p.tainted, (${by.text}) AS sort_value,
         -- The company of a person, through a merge to the one kept (#2438).
         c.id AS company_id, c.name AS company_name,
         -- The people who work at a company (the ones linked to a company merged into it too), and the open deals of the party.
@@ -188,6 +190,8 @@ export const contactList = defineQuery({
       company: r.company_id === null || r.company_name === null ? null : { id: r.company_id, name: r.company_name },
       peopleCount: r.people_count,
       openDeals: r.open_deals,
+      actorOrigin: r.actor_origin,
+      tainted: r.tainted,
     }));
     return { items, next: more ? encodeCursor({ f: sorted.field, d: sorted.dir, id: last.id, v: last.sort_value }) : null };
   },

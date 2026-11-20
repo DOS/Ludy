@@ -1,7 +1,7 @@
 // The kernel's and finance's in-app notifications in the app (#671): the kinds the settings list, what an item opens
 // and how a VAT period reads.
 import { describe, expect, it } from 'vitest';
-import { isKnownKind, kindKey, notificationKinds, notificationTarget, periodParts } from '../src/lib/notifications.ts';
+import { GROUPABLE_KINDS, groupNotifications, groupSubjectCount, isKnownKind, kindKey, notificationKinds, notificationTarget, periodParts, unreadIdChunks } from '../src/lib/notifications.ts';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';
 
@@ -12,7 +12,7 @@ describe('notificationKinds', () => {
     expect(notificationKinds(['notes'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'notes.todo_due']);
     expect(notificationKinds(['projects'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'projects.weekly_status']);
     // The series nudge is a kind of the Meetings module (#3542).
-    expect(notificationKinds(['meetings']).slice(-2)).toEqual(['meetings.series_open_items', 'meetings.summary_ready']);
+    expect(notificationKinds(['meetings']).slice(-3)).toEqual(['meetings.series_open_items', 'meetings.summary_ready', 'meetings.morning']);
     expect(notificationKinds(['finance'])).not.toContain('meetings.series_open_items');
     // An ad account's paused connection is a kind of the Ads module (#2219).
     expect(notificationKinds(['ads'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'kernel.channel_expired']);
@@ -62,5 +62,58 @@ describe('periodParts', () => {
     expect(periodParts('2026-09')).toEqual({ kind: 'month', label: '09/2026' });
     expect(periodParts('2026-Q3')).toEqual({ kind: 'quarter', label: '3/2026' });
     expect(periodParts('2026-13')).toBeNull();
+  });
+});
+
+// A run of the same kind is one row (NT-2, #3592); the rest keep a row per event.
+describe('groupNotifications', () => {
+  const n = (id: string, kind: string, read = false) => ({ id, kind, read });
+  it('groups a run of two or more unread of a groupable kind, in the order of the list', () => {
+    const rows = groupNotifications([n('1', 'kernel.approval_waiting'), n('2', 'kernel.approval_waiting'), n('3', 'kernel.approval_waiting'), n('4', 'finance.bank_attention'), n('5', 'kernel.file_unreadable')]);
+    expect(rows.map((r) => r.type)).toEqual(['group', 'one', 'one']);
+    const [first] = rows;
+    expect(first?.type === 'group' && { kind: first.kind, ids: first.items.map((i) => i.id) }).toEqual({ kind: 'kernel.approval_waiting', ids: ['1', '2', '3'] });
+  });
+
+  it('never counts a read one: the server marks a decided proposal read, so it no longer waits', () => {
+    // 3 pending then 4 decided: the group says 3, and the 4 stay rows of their own.
+    const rows = groupNotifications([n('1', 'kernel.approval_waiting'), n('2', 'kernel.approval_waiting'), n('3', 'kernel.approval_waiting'), ...['4', '5', '6', '7'].map((id) => n(id, 'kernel.approval_waiting', true))]);
+    expect(rows.map((r) => r.type)).toEqual(['group', 'one', 'one', 'one', 'one']);
+    expect(rows[0]?.type === 'group' && rows[0].items.length).toBe(3);
+    expect(groupNotifications([n('1', 'kernel.approval_waiting', true), n('2', 'kernel.approval_waiting', true)]).map((r) => r.type)).toEqual(['one', 'one']);
+    // One unread between read ones is a row of its own, not a group of one.
+    expect(groupNotifications([n('1', 'kernel.task_assigned', true), n('2', 'kernel.task_assigned'), n('3', 'kernel.task_assigned', true)]).map((r) => r.type)).toEqual(['one', 'one', 'one']);
+  });
+
+  it('keeps a row per event for a single notice and for kinds that name different things', () => {
+    expect(groupNotifications([n('1', 'kernel.approval_waiting')]).map((r) => r.type)).toEqual(['one']);
+    expect(groupNotifications([n('1', 'finance.bank_attention'), n('2', 'finance.bank_attention'), n('3', 'finance.period_closing')]).map((r) => r.type)).toEqual(['one', 'one', 'one']);
+    expect(groupNotifications([])).toEqual([]);
+  });
+
+  it('does not join runs a different event separates', () => {
+    const rows = groupNotifications([n('1', 'kernel.task_assigned'), n('2', 'kernel.task_assigned'), n('3', 'finance.bank_attention'), n('4', 'kernel.task_assigned'), n('5', 'kernel.task_assigned')]);
+    expect(rows.map((r) => r.type)).toEqual(['group', 'one', 'group']);
+  });
+
+  it('opens the screen that lists every one of the kind, which exists for each groupable kind', () => {
+    const targets = GROUPABLE_KINDS.map((kind) => notificationTarget({ kind, subjectId: null, detail: {} })?.to);
+    expect(targets).toEqual(['inbox', 'inbox', 'tasks', 'conversations']);
+    for (const kind of GROUPABLE_KINDS) {
+      const key = kind.replace('kernel.', '') as 'approval_waiting';
+      expect(vi.notifications.group[key], kind).toBeTruthy();
+      expect(en.notifications.group[key], kind).toBeTruthy();
+    }
+  });
+
+  it('counts the things a group stands for, not the notices: one file read twice is one file', () => {
+    expect(groupSubjectCount([{ id: 'a', subjectId: 'f1' }, { id: 'b', subjectId: 'f1' }, { id: 'c', subjectId: 'f2' }, { id: 'd', subjectId: null }, { id: 'e', subjectId: null }])).toBe(4);
+  });
+
+  it('chunks the unread ids for the read command, which takes 100 at a time', () => {
+    const items = Array.from({ length: 250 }, (_v, i) => ({ id: String(i), read: i % 5 === 0 }));
+    // 250 items, 50 of them read: 200 unread, two chunks of 100.
+    expect(unreadIdChunks(items).map((c) => c.length)).toEqual([100, 100]);
+    expect(unreadIdChunks([{ id: 'a', read: true }])).toEqual([]);
   });
 });

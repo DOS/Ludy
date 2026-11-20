@@ -132,6 +132,8 @@ suite('org purge on PostgreSQL (#1024)', () => {
       await c.query(`INSERT INTO crove_kernel.task_comment (org_id, task_id, body, author_type) VALUES ($1, $2, 'Đã xem', 'system')`, [org.orgId, pinned]);
       // A minutes template the org wrote (#3578): a working row, deleted with the org's others.
       await c.query(`INSERT INTO crove_meetings.minutes_template (org_id, name, sections, created_by) VALUES ($1, 'Mẫu họp dự án', '[{"key":"s1","title":"Nội dung","hint":""}]'::jsonb, $2)`, [org.orgId, owner]);
+      // A term of the org's glossary (#4043): a working row, deleted with the org's others.
+      await c.query(`INSERT INTO crove_meetings.glossary_term (org_id, term, created_by) VALUES ($1, 'Crove', $2)`, [org.orgId, owner]);
       // A bank feed account (#2044) and its connection: the account is deleted before the connection it references.
       const feedConnection = randomUUID();
       await c.query(
@@ -176,7 +178,15 @@ suite('org purge on PostgreSQL (#1024)', () => {
         'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [org.orgId, misaAmisChannel, 'accounting_misa_amis', `misa-amis-${tag}`, 'MISA AMIS thử', owner],
       );
-      await c.query(`INSERT INTO crove_finance.misa_amis_connection (org_id, channel_connection_id) VALUES ($1, $2)`, [org.orgId, misaAmisChannel]);
+      const misaAmisConnection = (
+        await c.query<{ id: string; legal_entity_id: string }>(`INSERT INTO crove_finance.misa_amis_connection (org_id, channel_connection_id) VALUES ($1, $2) RETURNING id, legal_entity_id`, [org.orgId, misaAmisChannel])
+      ).rows[0] as { id: string; legal_entity_id: string };
+      // A voucher part pushed to it (#3902): deleted with the connection's working rows, before the connection.
+      await c.query(
+        `INSERT INTO crove_finance.misa_amis_push (org_id, legal_entity_id, connection_id, source_type, source_id, voucher_type, org_refid, org_refno, payload_digest)
+         VALUES ($1, $2, $3, 'cash_voucher', $4, 5, $5, 'PT-PURGE', $6)`,
+        [org.orgId, misaAmisConnection.legal_entity_id, misaAmisConnection.id, randomUUID(), randomUUID(), 'b'.repeat(64)],
+      );
       // Stock (#2512): an item, the name a source uses for it and two moves (the second a reversal of the first), the first made by the owner. The moves are append-only and the
       // purge keeps them with the books: removing the owner's membership must not touch the row that names them.
       const stockItem = (
@@ -485,7 +495,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     // Kept whole: the books, the audit and outbox streams, inbound addresses.
     // Bank feed accounts (#2044) are working rows, deleted with the connections they map; so are the sales e-invoice series, drafts and lines (#2500) and the stock aliases
     // (#2512). The stock moves are kept with the books, and the item they name with them.
-    const workingRows = new Set(['crove_finance.vendor_account_rule', 'crove_finance.bank_feed_account', 'crove_finance.bank_account_number', 'crove_finance.einvoice_series', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_connection', 'crove_finance.marketplace_connection', 'crove_finance.misa_amis_connection', 'crove_finance.stock_alias']);
+    const workingRows = new Set(['crove_finance.vendor_account_rule', 'crove_finance.bank_feed_account', 'crove_finance.bank_account_number', 'crove_finance.einvoice_series', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_connection', 'crove_finance.marketplace_connection', 'crove_finance.misa_amis_connection', 'crove_finance.misa_amis_push', 'crove_finance.stock_alias']);
     for (const table of Object.keys(before).filter((t) => t.startsWith('crove_finance.') && !workingRows.has(t))) {
       expect([table, after[table]]).toEqual([table, before[table]]);
     }
@@ -504,6 +514,10 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(before['crove_meetings.minutes_template']).toBe(1);
     expect(after['crove_meetings.minutes_template'] ?? 0).toBe(0);
     expect(otherBefore['crove_meetings.minutes_template']).toBe(1);
+    // The org's glossary goes with the org, and the other org's stays (#4043).
+    expect(before['crove_meetings.glossary_term']).toBe(1);
+    expect(after['crove_meetings.glossary_term'] ?? 0).toBe(0);
+    expect(otherBefore['crove_meetings.glossary_term']).toBe(1);
     // A customer's images (CV5c): both rows and the stored one's blob go in the same command; the pending image's key waits in the queue of
     // doomed blobs for the worker (nothing was written under it), and the other org's image and blob stay.
     expect(before['crove_kernel.conversation_attachment']).toBe(2);
@@ -526,7 +540,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(await admin(async (c) => (await c.query('SELECT id FROM crove_kernel.proposal WHERE org_id = $1', [s.org.orgId])).rows)).toEqual([{ id: s.proposalId }]);
     // The task comment and the post approval are deleted (#1032), and so is what they used to pin: the commented task,
     // its parent and assignee position, the approved variant, its post and channel connection.
-    for (const table of ['crove_kernel.task_comment', 'crove_kernel.task', 'crove_kernel.position', 'crove_social.post_approval', 'crove_social.post_variant', 'crove_social.post', 'crove_kernel.channel_connection', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_series', 'crove_finance.einvoice_connection', 'crove_finance.marketplace_connection', 'crove_finance.misa_amis_connection', 'crove_finance.stock_alias']) {
+    for (const table of ['crove_kernel.task_comment', 'crove_kernel.task', 'crove_kernel.position', 'crove_social.post_approval', 'crove_social.post_variant', 'crove_social.post', 'crove_kernel.channel_connection', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_series', 'crove_finance.einvoice_connection', 'crove_finance.marketplace_connection', 'crove_finance.misa_amis_connection', 'crove_finance.misa_amis_push', 'crove_finance.stock_alias']) {
       expect([table, before[table]]).not.toEqual([table, 0]);
       expect([table, after[table] ?? 0]).toEqual([table, 0]);
     }
@@ -593,6 +607,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
             'crove_finance.einvoice_connection': 1,
             'crove_finance.marketplace_connection': 1,
             'crove_finance.misa_amis_connection': 1,
+            'crove_finance.misa_amis_push': 1,
             'crove_finance.stock_alias': 1,
             'crove_finance.stock_item': 0,
             'crove_finance.bank_account_number': 1,

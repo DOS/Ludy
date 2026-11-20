@@ -49,7 +49,7 @@ describe('the consent page and the draft scope', () => {
     expect(html).not.toMatch(/<input[^>]*type="checkbox"[^>]*checked/);
     // Off: the read-only wording and the plain "allow" line stay.
     expect(html).toContain(en.oauthConsent.limits);
-    expect(html).not.toContain(en.oauthConsent.limitsDraft);
+    expect(html).not.toContain(en.oauthConsent.limitsWrite);
     expect(render(details(['ludy.read', 'ludy.social.draft'], 'admin'), 'vi')).toContain(viMessages.oauthConsent.draftOption);
   });
 
@@ -57,8 +57,47 @@ describe('the consent page and the draft scope', () => {
     const html = render(details(['ludy.read', 'ludy.social.draft'], 'member'));
     expect(html).not.toContain('data-testid="oauth-consent-draft"');
     expect(html).toContain('data-testid="oauth-consent-draft-company-only"');
-    expect(html).toContain(en.oauthConsent.draftOwnerOnly);
-    expect(html).not.toContain(en.oauthConsent.draftCompanyOnly);
+    expect(html).toContain(en.oauthConsent.writeOwnerOnly);
+    expect(html).not.toContain(en.oauthConsent.writeCompanyOnly);
     // An owner who picks the member kind is told to choose the company instead (the radio group is there for them).
+  });
+});
+
+describe('the consent page and the per-line write scopes (ADR-0051 decision 11, #3858)', () => {
+  it('offers each write scope the client asked for, each on its own and unticked, in both languages', () => {
+    const html = render(details(['ludy.read', 'ludy.engage.write', 'ludy.ads.draft'], 'owner'));
+    expect(html).toContain('data-testid="oauth-consent-engage"');
+    expect(html).toContain('data-testid="oauth-consent-ads"');
+    expect(html).not.toContain('data-testid="oauth-consent-draft"');
+    expect(html).toContain(en.oauthConsent.engageOption);
+    expect(html).toContain(en.oauthConsent.scope.engage);
+    expect(html).toContain(en.oauthConsent.scope.ads);
+    expect(html).not.toMatch(/<input[^>]*type="checkbox"[^>]*checked/);
+    expect(html).toContain(en.oauthConsent.limits);
+    expect(html).not.toContain(en.oauthConsent.limitsWrite);
+    const vietnamese = render(details(['ludy.read', 'ludy.engage.write', 'ludy.ads.draft'], 'admin'), 'vi');
+    expect(vietnamese).toContain(viMessages.oauthConsent.engageOption);
+    expect(vietnamese).toContain(viMessages.oauthConsent.adsOption);
+  });
+
+  it('offers a scope the client did not ask for to nobody, and never to a member, who connects only for themself', () => {
+    expect(render(details(['ludy.read', 'ludy.engage.write'], 'owner'))).not.toContain('data-testid="oauth-consent-ads"');
+    expect(render(details(['ludy.read'], 'owner'))).not.toContain('data-testid="oauth-consent-engage"');
+    const member = render(details(['ludy.read', 'ludy.engage.write', 'ludy.ads.draft'], 'member'));
+    expect(member).not.toContain('data-testid="oauth-consent-engage"');
+    expect(member).not.toContain('data-testid="oauth-consent-ads"');
+    expect(member).toContain(en.oauthConsent.writeOwnerOnly);
+  });
+
+  it('says in plain words that what goes out waits for a person, and keeps the two languages in step', () => {
+    for (const messages of [en.oauthConsent, viMessages.oauthConsent]) {
+      expect(Object.keys(messages.scope).sort()).toEqual(Object.keys(en.oauthConsent.scope).sort());
+    }
+    expect(en.oauthConsent.scope.engage).toMatch(/proposal/);
+    // Asking to send a Social post to review and to schedule it (E4, #3863) is part of what this scope covers, and the text says so in both languages.
+    expect(en.oauthConsent.scope.engage).toMatch(/Social post to review and scheduling it for publication/);
+    expect(viMessages.oauthConsent.scope.engage).toMatch(/gửi bài Social đi duyệt và lên lịch đăng bài/);
+    expect(en.oauthConsent.scope.ads).toMatch(/proposal/);
+    expect(viMessages.oauthConsent.scope.engage).toMatch(/đề xuất/);
   });
 });

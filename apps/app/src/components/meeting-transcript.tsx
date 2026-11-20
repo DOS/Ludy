@@ -7,7 +7,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { TranscriptSegment } from '@crove/kernel-contract';
+import { TRANSCRIPT_SEGMENTS_MAX, type TranscriptSegment, type TranslationTarget } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crove/ui/components/card';
@@ -16,6 +16,8 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { Empty, ErrorText } from './ui.tsx';
 import { TranscriptTranslationPanel, TranslatedLine, useTranscriptParts } from './meeting-transcript-translation.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { platformTranscript } from '../lib/meeting-platform.ts';
+import { focusedSegment, type TranscriptFocus } from '../lib/transcript-focus.ts';
 
 // Reading a transcript is a sensitive read that leaves an audit row: no refetch on focus or remount.
 const READ_ONCE = { staleTime: 5 * 60_000, refetchOnWindowFocus: false } as const;
@@ -209,12 +211,16 @@ function VyTranscribe({ meetingId, hasDraft }: { meetingId: string; hasDraft: bo
   );
 }
 
-// `focusSecond`: a chapter was clicked (#3844): the first line that starts at that whole second is marked and scrolled to; `token` changes on each click.
-export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond }: { meetingId: string; focusSegmentId?: string; focusSecond?: { second: number; token: number } | undefined }) {
+// `focusSecond`: a chapter or a cited line was clicked (#3844): the line that starts at that whole second (the named speaker's, when the click names one) is marked and scrolled to; `token` changes on each click.
+// `platformCut`: the meeting's own flag that the platform's transcript was cut on import (#3922); without it the panel can only guess from the line count.
+export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond, platformCut = false }: { meetingId: string; focusSegmentId?: string; focusSecond?: TranscriptFocus | undefined; platformCut?: boolean }) {
   const t = useTranslations('meetings.transcript');
+  const tp = useTranslations('meetings.platform');
   const query = useQuery({ ...orpc.meetings.transcript.get.queryOptions({ input: { meetingId } }), ...READ_ONCE });
   // The member's own translated parts beside the lines (E2, #3185); none until they asked.
-  const translated = useTranscriptParts(meetingId);
+  // The language the member picked to translate into (E3, #3186), shared by the panel and the lines under it; none until they pick.
+  const [target, setTarget] = useState<TranslationTarget | undefined>(undefined);
+  const translated = useTranscriptParts(meetingId, target);
   if (query.isPending) return null;
   if (query.error) return <ErrorText>{errorMessage(query.error)}</ErrorText>;
   const transcript = query.data;
@@ -228,15 +234,27 @@ export function MeetingTranscript({ meetingId, focusSegmentId, focusSecond }: { 
     ) : null;
   }
   const draft = transcript.stage === 'draft';
-  const focusedId = focusSecond ? transcript.segments.find((s) => Math.floor(s.startSeconds) === focusSecond.second)?.id : focusSegmentId;
+  // Lines a meeting platform wrote (C2, #3174): said in words, with the platform's name, that they are not Ludy's (#3922: and that they may be cut at the limit of a draft).
+  const platform = platformTranscript(transcript.segments);
+  const focusedId = focusSecond ? focusedSegment(transcript.segments, focusSecond)?.id : focusSegmentId;
   return (
     <div className="space-y-3">
       {transcript.isRecorder && <VyTranscribe meetingId={meetingId} hasDraft={draft} />}
-      <TranscriptTranslationPanel meetingId={meetingId} />
+      <TranscriptTranslationPanel meetingId={meetingId} target={target} onTarget={setTarget} />
       <Card>
       <CardHeader>
         <CardTitle role="heading" aria-level={2} className="text-base font-medium">{draft ? t('draftTitle') : t('title')}</CardTitle>
         <CardDescription className="text-xs text-muted-foreground">{draft ? t('draftNote') : t('publishedNote')}</CardDescription>
+        {platform && (
+          <p className="text-xs text-muted-foreground" data-testid="transcript-platform">
+            {t('platformSource', { platform: tp(`provider.${platform.platform}`) })}
+          </p>
+        )}
+        {platform && (platformCut || platform.cut) && (
+          <p className="text-xs text-muted-foreground" data-testid="transcript-cut">
+            {platformCut ? t('platformCutKnown', { platform: tp(`provider.${platform.platform}`) }) : t('platformCut', { platform: tp(`provider.${platform.platform}`), max: TRANSCRIPT_SEGMENTS_MAX })}
+          </p>
+        )}
       </CardHeader>
       <CardContent>
         <ul className="divide-y">

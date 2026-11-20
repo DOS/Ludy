@@ -1367,4 +1367,336 @@ describe('sign AI module red-team invariants', () => {
     }
     expect(performance.now() - startMs).toBeLessThan(2000);
   });
+
+  it('strips Unicode format-control and BiDi override sequences across stored fields, clauses, quotes, source, and reads while preserving NFC and NFD Vietnamese diacritics (#3434)', async () => {
+    const cfRe = /\p{Cf}/u;
+    const viFullDiacritics =
+      'Điều khoản bồi thường: Đặng Thị Ánh Tuyết đại diện Bên thuê dịch vụ ký kết điện tử chịu phạt 8% trên 15.000.000 ₫ (ă â đ ê ô ơ ư ắ ằ ẳ ẵ ặ ấ ầ ẩ ẫ ậ ế ề ể ễ ệ ố ồ ổ ỗ ộ ớ ờ ở ỡ ợ ứ ừ ử ữ ự ý ỳ ỷ ỹ ỵ) trong 10 ngày làm việc.';
+    const viNfc = viFullDiacritics.normalize('NFC');
+    const viNfd = viFullDiacritics.normalize('NFD');
+    expect(viNfd.length).toBeGreaterThan(viNfc.length);
+
+    // 1. Both NFC precomposed and NFD combining-mark (\p{M}) Vietnamese text survive intact while \p{Cf} is stripped.
+    for (const [mode, cleanSentence] of [
+      ['NFC', viNfc],
+      ['NFD', viNfd],
+    ] as const) {
+      const bidiPdfPage = `\uFEFF1. \u202E${cleanSentence.replace('15.000.000 ₫', '\u206615.000.000\u200B ₫\u2069')}\u202C\u{E0041}`;
+      const roleLabelClean = 'Đại diện Bên thuê (Người ký)'.normalize(mode);
+      const fieldLabelClean = 'Chữ ký đại diện pháp lý Bên thuê'.normalize(mode);
+      const titleClean = 'Điều khoản phạt chậm thanh toán (8%)'.normalize(mode);
+      const explanationClean = 'Bên thuê chịu mức phạt 8% trên 15.000.000 ₫ trong 10 ngày làm việc.'.normalize(mode);
+      const summaryClean = `Tóm tắt hợp đồng:\n- ${explanationClean}`;
+
+      const sanitized = sanitizeSignAiProposals({
+        pageCount: 1,
+        signers: [
+          {
+            id: SIGNER_1_ID,
+            role_label: `\uFEFF\u202E${roleLabelClean}\u202C\u200B`,
+            signer_role: 'signer',
+            routing_order: 1,
+          },
+        ],
+        proposedFields: [
+          {
+            signerRoleKey: `\u2066${roleLabelClean}\u2069`,
+            fieldType: '\uFEFFsignature\u200B',
+            pageNumber: 1,
+            xNorm: 0.15,
+            yNorm: 0.75,
+            wNorm: 0.3,
+            hNorm: 0.08,
+            label: `\uFEFF\u202A${fieldLabelClean.slice(0, 6)}\u200B\u200C\u200D${fieldLabelClean.slice(6)}\u202C\u2066\u2069\u{E0001}\u{E007F}`,
+            confidence: 0.94,
+            proposedByAi: false,
+          },
+          // Label containing ONLY format-control characters must coerce to null rather than persisting invisible bytes.
+          {
+            signerId: SIGNER_1_ID,
+            signerRoleKey: 'signer_1',
+            fieldType: 'date',
+            pageNumber: 1,
+            xNorm: 0.55,
+            yNorm: 0.75,
+            wNorm: 0.2,
+            hNorm: 0.06,
+            label: '\uFEFF\u200B\u200E\u200F\u202A\u202E\u202C\u2066\u2067\u2068\u2069',
+            confidence: 0.88,
+          },
+        ],
+        riskClauses: [
+          // Valid grounded quote with BiDi overrides, isolates, zero-width marks, BOM, soft hyphen, and tag chars injected.
+          {
+            title: `\u202E\uFEFF${titleClean.slice(0, 10)}\u200B\u00AD${titleClean.slice(10)}\u202C\u2066\u2069`,
+            severity: '\uFEFFhigh\u200B',
+            pageNumber: null,
+            quote: `\uFEFF\u2067${cleanSentence.slice(0, 22)}\u202E${cleanSentence.slice(22)}\u202C\u2069\u200B`,
+            explanation: `\u2066${explanationClean.slice(0, 15)}\u200F${explanationClean.slice(15)}\u2069\uFEFF`,
+          },
+          // Trojan Source reversed digits (\u202E000.000.51\u202C visually looks like 15.000.000): must fail grounding and drop.
+          {
+            title: 'Trojan Source amount spoof',
+            severity: 'high',
+            pageNumber: 1,
+            quote: 'chịu phạt 8% trên \u202E000.000.51\u202C ₫',
+            explanation: explanationClean,
+          },
+          // Invisible-only title or explanation must drop after stripping \p{Cf}.
+          {
+            title: '\u202E\u200B\uFEFF\u2066\u2069',
+            severity: 'low',
+            pageNumber: 1,
+            quote: cleanSentence,
+            explanation: explanationClean,
+          },
+          {
+            title: titleClean,
+            severity: 'low',
+            pageNumber: 1,
+            quote: cleanSentence,
+            explanation: '\u202E\u200B\uFEFF\u2066\u2069',
+          },
+        ],
+        summaryText: `\uFEFF\u202E${summaryClean}\u202C\u2066\u2069`,
+        extractedPages: [{ page: 1, text: bidiPdfPage }],
+      });
+
+      expect(sanitized.droppedFields, mode).toBe(0);
+      expect(sanitized.proposedFields, mode).toHaveLength(2);
+      expect(sanitized.proposedFields[0]?.label, mode).toBe(fieldLabelClean);
+      expect(sanitized.proposedFields[1]?.label, mode).toBeNull();
+      expect(sanitized.droppedClauses, mode).toBe(3);
+      expect(sanitized.riskClauses, mode).toHaveLength(1);
+      expect(sanitized.riskClauses[0], mode).toEqual({
+        title: titleClean,
+        severity: 'high',
+        pageNumber: 1,
+        quote: cleanSentence,
+        explanation: explanationClean,
+      });
+      expect(sanitized.summaryDropped, mode).toBe(false);
+      expect(sanitized.summaryText, mode).toBe(summaryClean);
+      expect(cfRe.test(JSON.stringify(sanitized)), mode).toBe(false);
+    }
+
+    // 2. End-to-end command persistence (proposed_fields_json, risk_clauses_json, summary_text, error_message, prompt_version),
+    // format-control-only extractedPages rejection, aiAnalysisSource roleLabel/title, and legacy aiAnalysisGet read defense.
+    const captured = { inserted: null as Record<string, unknown> | null };
+    const makeHandlerTrx = () => ({
+      selectFrom: (table: string) => {
+        const filters: Record<string, unknown> = {};
+        const chain = {
+          select: () => chain,
+          selectAll: () => chain,
+          where: (col: string, _op?: string, val?: unknown) => {
+            if (typeof col === 'string') filters[col] = val;
+            return chain;
+          },
+          forUpdate: () => chain,
+          orderBy: () => chain,
+          limit: () => chain,
+          execute: async () =>
+            table === 'crove_sign.signer'
+              ? [
+                  {
+                    id: SIGNER_1_ID,
+                    role_label: '\u202EGiám đốc điều hành\u202C\u200B',
+                    signer_role: 'signer',
+                    routing_order: 1,
+                  },
+                ]
+              : [],
+          executeTakeFirst: async () => {
+            if (table === 'crove_sign.envelope') {
+              return {
+                id: ENVELOPE_ID,
+                org_id: ORG_ID,
+                version: 1,
+                status: 'draft',
+                source_kind: 'upload',
+                created_by: USER_ID,
+                inspect_status: 'passed',
+                source_sha256: DOC_SHA,
+                title: '\uFEFFHợp đồng \u202Edịch vụ phần mềm\u202C',
+                page_count: 1,
+                page_dimensions_json: [],
+              };
+            }
+            if (table === 'crove_sign.ai_analysis' && filters.status === 'completed') {
+              return {
+                id: '00000000-0000-7000-8000-000000000155',
+                org_id: ORG_ID,
+                envelope_id: ENVELOPE_ID,
+                source_sha256: DOC_SHA,
+                status: 'completed',
+                proposed_fields_json: JSON.stringify([
+                  {
+                    signerId: SIGNER_1_ID,
+                    signerRoleKey: '\u200Bsigner_1\uFEFF',
+                    fieldType: 'signature',
+                    pageNumber: 1,
+                    xNorm: 0.2,
+                    yNorm: 0.7,
+                    wNorm: 0.25,
+                    hNorm: 0.08,
+                    label: '\u202EChữ ký Giám đốc\u202C',
+                    confidence: 0.9,
+                    proposedByAi: true,
+                  },
+                ]),
+                risk_clauses_json: JSON.stringify([
+                  {
+                    title: '\u2066Phạt vi phạm\u2069',
+                    severity: '\uFEFFhigh',
+                    pageNumber: 1,
+                    quoteExcerpt: '\u202EPhạt 8% giá trị hợp đồng.\u202C',
+                    note: '\u200BCần kiểm tra mức phạt 8%.\uFEFF',
+                  },
+                ]),
+                summary_text: '\uFEFFTóm tắt \u202Eđiều khoản chính\u202C.',
+                error_message: null,
+                prompt_version: 'v1\u200B',
+                completed_at: new Date('2026-11-18T00:00:00.000Z'),
+                created_at: new Date('2026-11-18T00:00:00.000Z'),
+              };
+            }
+            return undefined;
+          },
+          values: (vals: Record<string, unknown>) => {
+            captured.inserted = vals;
+            return chain;
+          },
+          returningAll: () => chain,
+          executeTakeFirstOrThrow: async () => ({
+            id: '00000000-0000-7000-8000-000000000199',
+            org_id: ORG_ID,
+            ...captured.inserted,
+            created_at: new Date('2026-11-18T00:00:00.000Z'),
+          }),
+        };
+        return chain;
+      },
+      insertInto: () => {
+        const chain = {
+          values: (vals: Record<string, unknown>) => {
+            captured.inserted = vals;
+            return chain;
+          },
+          returningAll: () => chain,
+          executeTakeFirstOrThrow: async () => ({
+            id: '00000000-0000-7000-8000-000000000199',
+            org_id: ORG_ID,
+            ...captured.inserted,
+            created_at: new Date('2026-11-18T00:00:00.000Z'),
+          }),
+        };
+        return chain;
+      },
+      getExecutor: () => ({
+        compileQuery: (q: unknown) => q,
+        transformQuery: (q: unknown) => q,
+        executeQuery: async () => ({ rows: [{ on: false }] }),
+      }),
+    });
+
+    const ctx = {
+      orgId: ORG_ID,
+      actor: { type: 'user' as const, userId: USER_ID },
+      role: 'member' as const,
+      now: new Date('2026-11-18T00:00:00.000Z'),
+      trx: makeHandlerTrx() as never,
+      audit: () => {},
+    };
+
+    // Format-control-only extractedPages must be rejected as empty source text on completed proposals.
+    await expect(
+      envelopeProposeFields.handler(ctx as never, {
+        envelopeId: ENVELOPE_ID,
+        sourceSha256: DOC_SHA,
+        status: 'completed',
+        proposedFields: [
+          {
+            signerId: SIGNER_1_ID,
+            signerRoleKey: 'signer_1',
+            fieldType: 'signature',
+            pageNumber: 1,
+            xNorm: 0.1,
+            yNorm: 0.1,
+            wNorm: 0.2,
+            hNorm: 0.1,
+          },
+        ],
+        riskClauses: [],
+        summaryText: null,
+        errorMessage: null,
+        promptVersion: 'v1',
+        extractedPages: [{ page: 1, text: '\uFEFF\u200B\u202E\u202C\u2066\u2069' }],
+      }),
+    ).rejects.toMatchObject({ code: 'SIGN_AI_SOURCE_TEXT_REQUIRED' } satisfies Partial<DomainError>);
+
+    const persisted = await envelopeProposeFields.handler(ctx as never, {
+      envelopeId: ENVELOPE_ID,
+      sourceSha256: DOC_SHA,
+      status: 'completed',
+      proposedFields: [
+        {
+          signerId: SIGNER_1_ID,
+          signerRoleKey: 'signer_1',
+          fieldType: 'signature',
+          pageNumber: 1,
+          xNorm: 0.2,
+          yNorm: 0.8,
+          wNorm: 0.25,
+          hNorm: 0.08,
+          label: '\u202EChữ ký \u2066Giám đốc\u2069\u202C',
+          confidence: 0.95,
+        },
+      ],
+      riskClauses: [
+        {
+          title: '\uFEFFĐiều khoản \u202Ephạt 8%\u202C',
+          severity: 'high',
+          pageNumber: 1,
+          quote: '\u202EBên thuê chịu phạt\u200B 8% trên 15.000.000 ₫.\u202C',
+          explanation: '\u2066Phạt 8% trên 15.000.000 ₫.\u2069',
+        },
+      ],
+      summaryText: '\uFEFFPhạt \u202E8% trên 15.000.000 ₫\u202C.',
+      errorMessage: null,
+      promptVersion: 'v1\u202E\u200B',
+      extractedPages: [{ page: 1, text: 'Bên thuê chịu phạt 8% trên 15.000.000 ₫.' }],
+    });
+
+    expect(captured.inserted).not.toBeNull();
+    expect(cfRe.test(JSON.stringify(captured.inserted))).toBe(false);
+    expect(cfRe.test(JSON.stringify(persisted))).toBe(false);
+    expect(captured.inserted?.prompt_version).toBe('v1');
+    expect(persisted.proposedFields[0]?.label).toBe('Chữ ký Giám đốc');
+    expect(persisted.riskClauses[0]).toEqual({
+      title: 'Điều khoản phạt 8%',
+      severity: 'high',
+      pageNumber: 1,
+      quote: 'Bên thuê chịu phạt 8% trên 15.000.000 ₫.',
+      explanation: 'Phạt 8% trên 15.000.000 ₫.',
+    });
+
+    const src = await aiAnalysisSource.handler(ctx as never, { envelopeId: ENVELOPE_ID });
+    expect(cfRe.test(JSON.stringify(src))).toBe(false);
+    expect(src.title).toBe('Hợp đồng dịch vụ phần mềm');
+    expect(src.signers[0]?.roleLabel).toBe('Giám đốc điều hành');
+
+    const loaded = await aiAnalysisGet.handler(ctx as never, { envelopeId: ENVELOPE_ID });
+    expect(cfRe.test(JSON.stringify(loaded))).toBe(false);
+    expect(loaded?.proposedFields[0]?.label).toBe('Chữ ký Giám đốc');
+    expect(loaded?.riskClauses[0]).toEqual({
+      title: 'Phạt vi phạm',
+      severity: 'high',
+      pageNumber: 1,
+      quote: 'Phạt 8% giá trị hợp đồng.',
+      explanation: 'Cần kiểm tra mức phạt 8%.',
+    });
+    expect(loaded?.summaryText).toBe('Tóm tắt điều khoản chính.');
+    expect(loaded?.promptVersion).toBe('v1');
+  });
 });

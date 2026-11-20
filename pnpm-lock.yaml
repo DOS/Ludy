@@ -554,6 +554,9 @@ importers:
       '@crove/media-contract':
         specifier: workspace:*
         version: link:../../packages/media-contract
+      '@crove/misa-amis':
+        specifier: workspace:*
+        version: link:../../packages/misa-amis
       '@crove/mod-ads':
         specifier: workspace:*
         version: link:../../modules/ads
@@ -772,6 +775,9 @@ importers:
       '@crove/l10n-vn':
         specifier: workspace:*
         version: link:../../packages/l10n-vn
+      '@crove/misa-amis':
+        specifier: workspace:*
+        version: link:../../packages/misa-amis
       exceljs:
         specifier: 'catalog:'
         version: 4.4.0(patch_hash=10bc5d35989275045763026014c9c980e3805971fd23069daf066764cbdbbb9b)
@@ -1050,6 +1056,8 @@ importers:
   packages/meeting-recorder: {}
 
   packages/misa-amis: {}
+
+  packages/sign: {}
 
   packages/ui:
     dependencies:
