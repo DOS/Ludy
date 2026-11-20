@@ -133,6 +133,12 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   // an admin asked for (a pause, a lower or raised budget, a shorter or longer schedule) that ended unclear. The job's first step is ads.manage.begin, which declares the external effect and,
   // for a settle, hands out a read and makes no call and no ledger row; the queue's egress is the ad platform's and nothing else.
   [`${QUEUES.adsManage} handler`]: { command: 'ads.manage.begin' },
+  // The sync of a bank feed connection (ADR-0039, #2045): the daily sweep and a retry queue the connections of active orgs, each connected by an owner or admin through
+  // kernel.channel.connect, which declares an external effect.
+  'finance-bank-feed-sync handler': { command: 'kernel.channel.connect' },
+  // The signed-notice loop of the relay (the provider's notice for an account a connection lists, #2045) queues a sync of each connection that lists the account; such a connection
+  // exists only through kernel.channel.connect, which declares an external effect. (The relay's own events are checked by the emitter rule: finance.bank_feed.sync_requested.)
+  relay: { command: 'kernel.channel.connect' },
 };
 
 // Reviewed send sites that may be listed before the site exists, so the two steps of an invariant change can land apart (the PENDING_DEPS pattern): each names the issue that adds
@@ -141,6 +147,8 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
 const OTHER_SENDS_PENDING: Readonly<Record<string, string>> = {
   'kernel-mcp-wake-sweep handler': '#3024',
   'finance-misa-amis-push handler': '#3902',
+  'finance-bank-feed-sync handler': '#2045',
+  relay: '#2045',
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.
