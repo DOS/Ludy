@@ -130,14 +130,16 @@ export function matchUnits(wanted: Iterable<string>, catalogue: readonly Catalog
   return [...keys].sort().map((key) => {
     const found = byName.get(key) ?? [];
     const [only] = found;
-    if (found.length === 1 && only) return { kind: 'unit' as const, ref: key, state: 'matched' as const, code: only.name, entryId: only.id };
-    return { kind: 'unit' as const, ref: key, state: found.length === 0 ? ('unknown' as const) : ('ambiguous' as const), code: null, entryId: null };
+    // A unit whose id is not a usable id cannot be written on a line: it is as good as not there.
+    if (found.length === 1 && only && only.id !== null) return { kind: 'unit' as const, ref: key, state: 'matched' as const, code: only.name, entryId: only.id };
+    return { kind: 'unit' as const, ref: key, state: found.length > 1 ? ('ambiguous' as const) : ('unknown' as const), code: null, entryId: null };
   });
 }
 
 /** Each wanted stock code against the active catalogue stocks with exactly that code. */
 export function matchStocks(wanted: Iterable<string>, catalogue: readonly CatalogueItem[]): MisaAmisMatchResult[] {
-  return matchByCode('stock', wanted, catalogue);
+  // A stock whose id is not a usable id cannot be written on a line: it is as good as not there.
+  return matchByCode('stock', wanted, catalogue.map((e) => (e.id === null ? { ...e, active: false } : e)));
 }
 
 // ---------------------------------------------------------------------------------------------------------------

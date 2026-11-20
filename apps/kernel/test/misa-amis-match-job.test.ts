@@ -375,6 +375,15 @@ describe('the MISA ASP match check (#4152)', () => {
     expect(quiet.calls).toEqual([]);
   });
 
+  it('fails as catalogue_too_large, recording nothing found, when a batch has more results than a record holds', async () => {
+    const lines = Array.from({ length: 2100 }, (_, i) => ({ ...purchase('0101234564').lines[0]!, lineNo: i + 1, unit: `đv${i}` }));
+    const h = harness({ product: 'asp', vouchers: [{ ...purchase('0101234564'), lines }] });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    expect(await runAsp(h, fakeAmis({ prefix: '/asp/v1' }))).toMatchObject({ state: 'failed', failure: 'catalogue_too_large' });
+    expect(recorded(h)).toMatchObject([{ state: 'failed', failure: 'catalogue_too_large', results: [] }]);
+    log.mockRestore();
+  });
+
   it('does not touch the AMIS client for an ASP connection, and the other way round', async () => {
     const amisFake = fakeAmis();
     const aspFake = fakeAmis({ prefix: '/asp/v1' });

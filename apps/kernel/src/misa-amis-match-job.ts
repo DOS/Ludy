@@ -5,7 +5,7 @@
 // entry matched (and its code and id), none did, or several did. The catalogue pages live in this function's variables and nowhere else: no name, address or tax code of a catalogue entry is recorded, put in a
 // job's output, an audit row or an error, or logged. The log carries the connection's first eight characters, the state and the adapter's error kind.
 import { AmisError, type AmisClient, type AmisConnection } from '@crove/misa-amis';
-import { MISA_AMIS_PREVIEW_LIMIT, type MisaAmisMatchResult } from '@crove/kernel-contract';
+import { MISA_AMIS_MATCH_RESULTS_MAX, MISA_AMIS_PREVIEW_LIMIT, type MisaAmisMatchResult } from '@crove/kernel-contract';
 import { amisContextOf, loadAmisEntries, misaChannelProvider, type MisaAmisMatchTarget } from '@crove/mod-finance';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { matchCatalogue, TooLarge } from './misa-amis-catalogue.ts';
@@ -49,7 +49,7 @@ export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMat
   if (!client) return { state: 'skipped', reason: 'product_off' };
   const fail = async (failure: Failure, kind: string) => {
     console.warn(`[misa-amis] match ${job.connectionId.slice(0, 8)}: failed (${failure}, ${kind})`);
-    const written = await deps.runtime.execute<{ recorded?: boolean }>('finance.misa_amis_match.record_check', { connectionId: job.connectionId, requestedAt: target.requestedAt, state: 'failed', failure, results: [] }, options);
+  const written = await deps.runtime.execute<{ recorded?: boolean }>('finance.misa_amis_match.record_check', { connectionId: job.connectionId, requestedAt: target.requestedAt, state: 'failed', failure, results: [] }, options);
     return { state: 'failed', failure, ...(written?.recorded === false ? { superseded: true as const } : {}) } satisfies MisaAmisMatchOutcome;
   };
 
@@ -89,6 +89,8 @@ export async function runMisaAmisMatch(deps: MisaAmisMatchDeps, job: MisaAmisMat
     const failure: Failure = kind === 'credentials' && code !== 'InvalidAPPID' ? 'credentials' : kind === 'invalid_response' ? 'invalid_response' : 'unreachable';
     return fail(failure, `${kind}${code ? `, ${code}` : ''}`);
   }
+    // A record holds at most this many results; a batch with more (many spellings of units) is told as a fixed reason, never left to a record the command refuses and the job retries.
+  if (results.length > MISA_AMIS_MATCH_RESULTS_MAX) return fail('catalogue_too_large', 'too_many_results');
   const written = await deps.runtime.execute<{ recorded?: boolean }>('finance.misa_amis_match.record_check', { connectionId: job.connectionId, requestedAt: target.requestedAt, state: 'done', failure: null, results }, options);
   console.log(`[misa-amis] match ${job.connectionId.slice(0, 8)}: done (${results.length})`);
   return { state: 'done', results: results.length, ...(written?.recorded === false ? { superseded: true as const } : {}) };

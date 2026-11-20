@@ -228,6 +228,11 @@ describe('units and stocks (MISA ASP, #4125)', () => {
     ]);
   });
 
+  it('never matches a unit or a stock that has no usable id', () => {
+    expect(matchUnits(['cái'], catalogueUnits([unit('Cái', null)]))).toEqual([{ kind: 'unit', ref: 'cái', state: 'unknown', code: null, entryId: null }]);
+    expect(matchStocks(['KHO1'], catalogueStocks([{ stock_code: 'KHO1', stock_id: 'not-a-guid' }]))).toEqual([{ kind: 'stock', ref: 'KHO1', state: 'unknown', code: null, entryId: null }]);
+  });
+
   it('matches a stock by its exact code among the active ones, with its id', () => {
     const catalogue = catalogueStocks([
       { stock_code: 'KHO1', stock_id: ID1, stock_name: 'Kho chính' },

@@ -5,9 +5,9 @@
 --
 -- kind 'unit'   a unit name of Ludy, keyed by the name folded to NFC, trimmed, lower case, single spaces (up to 64 characters).
 --               matched: the one active unit of that name (catalogue_code = the catalogue's unit name, catalogue_id = its id).
--- kind 'stock'  a stock code of Ludy (the warehouse code of a goods line, or the connection's default), keyed by the code.
+-- kind 'stock'  a stock code of Ludy (the warehouse code of a goods line; a later change adds the connection's default for sales lines), keyed by the code.
 --               matched: the one active stock of that code (catalogue_code = the stock code, catalogue_id = its id).
--- Both use the states of an item: matched, unknown (none) or ambiguous (several); a name is never matched loosely.
+-- A unit or a stock without a usable id is never matched. Both use the states of an item: matched, unknown (none) or ambiguous (several); a name is never matched loosely.
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_finance.misa_amis_match DROP CONSTRAINT IF EXISTS misa_amis_match_kind_ck;
