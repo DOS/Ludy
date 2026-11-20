@@ -4,7 +4,7 @@
 // only: the server, the database's policies and the menu all say so. Every read of this data is a sensitive query that leaves an audit row first, so the screen asks once and
 // never refetches by itself (no refetch on focus, no polling).
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   HR_CONTRACT_FORMS,
@@ -22,6 +22,8 @@ import {
   type HrContractForm,
   type HrContractType,
   type HrDepartmentView,
+  type HrEmployee,
+  type HrEmployeeEdit,
   type HrEmployeeSummary,
   type HrEmploymentTerms,
   type HrEmploymentView,
@@ -46,7 +48,7 @@ import { LeaveBalancePanel } from '../components/hr-leave-panel.tsx';
 import { SeveranceCalculatorPanel } from '../components/hr-severance-panel.tsx';
 import { signEnvelopePollMs, useSignAppEnabled } from '../components/quote-sign-handoff.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, FieldError, PageHeader, TableSkeleton, fieldControl, focusFirstInvalid, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 
@@ -85,7 +87,7 @@ export const blankTerms = (): TermsState => ({
   probationWage: '',
 });
 
-const idNumberOk = (v: string) => v.trim() === '' || /^(\d{10}|\d{12})$/.test(v.trim());
+export const idNumberOk = (v: string) => v.trim() === '' || /^(\d{10}|\d{12})$/.test(v.trim());
 const wageOk = (v: string) => /^\d{1,16}(\.\d{1,2})?$/.test(v);
 
 function hasContractDetails(terms: TermsState): boolean {
@@ -831,6 +833,384 @@ export function DepartmentsSection({
   );
 }
 
+export interface EditEmployeeDraft {
+  name: string;
+  departmentId: string;
+  jobTitle: string;
+  address: string;
+  identity: string;
+  account: string;
+  bank: string;
+  birth: string;
+  tax: string;
+  insurance: string;
+  clear: {
+    department: boolean;
+    jobTitle: boolean;
+    address: boolean;
+    identity: boolean;
+    account: boolean;
+    bank: boolean;
+    birth: boolean;
+    tax: boolean;
+    insurance: boolean;
+  };
+}
+
+export const blankEditDraft = (): EditEmployeeDraft => ({
+  name: '',
+  departmentId: '',
+  jobTitle: '',
+  address: '',
+  identity: '',
+  account: '',
+  bank: '',
+  birth: '',
+  tax: '',
+  insurance: '',
+  clear: {
+    department: false,
+    jobTitle: false,
+    address: false,
+    identity: false,
+    account: false,
+    bank: false,
+    birth: false,
+    tax: false,
+    insurance: false,
+  },
+});
+
+export function hasEditEmployeeChanges(draft: EditEmployeeDraft): boolean {
+  return Boolean(
+    draft.name.trim() ||
+      draft.departmentId ||
+      draft.jobTitle.trim() ||
+      draft.address.trim() ||
+      draft.identity.trim() ||
+      draft.account.trim() ||
+      draft.bank ||
+      draft.birth ||
+      draft.tax.trim() ||
+      draft.insurance.trim() ||
+      draft.clear.department ||
+      draft.clear.jobTitle ||
+      draft.clear.address ||
+      draft.clear.identity ||
+      draft.clear.account ||
+      draft.clear.bank ||
+      draft.clear.birth ||
+      draft.clear.tax ||
+      draft.clear.insurance,
+  );
+}
+
+/** Builds the `hr.payroll.employee.edit` payload from an edit draft (`clear` flags emit explicit `null`, empty fields stay omitted). */
+export function buildEditPayload(employeeId: string, draft: EditEmployeeDraft): HrEmployeeEdit {
+  return {
+    employeeId,
+    ...(draft.name.trim() ? { displayName: draft.name.trim() } : {}),
+    ...(draft.clear.department ? { departmentId: null } : draft.departmentId ? { departmentId: draft.departmentId } : {}),
+    ...(draft.clear.jobTitle ? { jobTitle: null } : draft.jobTitle.trim() ? { jobTitle: draft.jobTitle.trim() } : {}),
+    // A field left empty is not changed; a ticked "clear" sends null, which removes the stored value.
+    ...(draft.clear.address ? { address: null } : draft.address.trim() ? { address: draft.address.trim() } : {}),
+    ...(draft.clear.identity ? { identityNumber: null } : draft.identity.trim() ? { identityNumber: draft.identity.trim() } : {}),
+    ...(draft.clear.account ? { accountNumber: null } : draft.account.trim() ? { accountNumber: draft.account.trim() } : {}),
+    ...(draft.clear.bank ? { bankCode: null } : draft.bank ? { bankCode: draft.bank } : {}),
+    ...(draft.clear.birth ? { birthDate: null } : draft.birth ? { birthDate: draft.birth } : {}),
+    ...(draft.clear.tax ? { taxCode: null } : draft.tax.trim() ? { taxCode: draft.tax.trim() } : {}),
+    ...(draft.clear.insurance ? { insuranceNumber: null } : draft.insurance.trim() ? { insuranceNumber: draft.insurance.trim() } : {}),
+  };
+}
+
+function ClearStoredCheckbox({
+  checked,
+  label,
+  onChange,
+  testId,
+}: {
+  checked: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+  testId?: string;
+}) {
+  return (
+    <label className="flex items-center gap-1.5 text-xs text-subtle-foreground max-md:min-h-11">
+      <input type="checkbox" checked={checked} onChange={(ev) => onChange(ev.target.checked)} data-testid={testId} />
+      {label}
+    </label>
+  );
+}
+
+export function EditForm({
+  employee,
+  departments,
+  draft,
+  onChange,
+  pending,
+  onSubmit,
+  onCancel,
+}: {
+  employee: Pick<
+    HrEmployee,
+    | 'status'
+    | 'legalEntityId'
+    | 'displayName'
+    | 'departmentId'
+    | 'jobTitle'
+    | 'address'
+    | 'hasIdentityNumber'
+    | 'hasAccountNumber'
+    | 'bankCode'
+    | 'birthDate'
+    | 'taxCode'
+    | 'insuranceNumber'
+  >;
+  departments: readonly HrDepartmentView[];
+  draft: EditEmployeeDraft;
+  onChange: (next: EditEmployeeDraft) => void;
+  pending: boolean;
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  const t = useTranslations('hrEmployees');
+  const limited = employee.status !== 'active';
+  const fields = useFieldErrors<'taxCode' | 'insuranceNumber'>((field) => {
+    if (field === 'taxCode') return !draft.clear.tax && !idNumberOk(draft.tax) ? t('taxCodeInvalid') : null;
+    return !draft.clear.insurance && !idNumberOk(draft.insurance) ? t('insuranceNumberInvalid') : null;
+  });
+  const hasChange = hasEditEmployeeChanges(draft);
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!hasChange || pending) return;
+    if (!fields.checkAll(['taxCode', 'insuranceNumber'])) {
+      focusFirstInvalid(event.currentTarget);
+      return;
+    }
+    onSubmit();
+  };
+  return (
+    <form className="grid gap-3 sm:grid-cols-2" noValidate onSubmit={submit} data-testid="hr-employee-edit-form">
+      {!limited && (
+        <>
+          <div className="space-y-1">
+            <Label htmlFor="hr-edit-name">{t('name')}</Label>
+            <Input
+              id="hr-edit-name"
+              value={draft.name}
+              maxLength={200}
+              placeholder={employee.displayName}
+              onChange={(ev) => onChange({ ...draft, name: ev.target.value })}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="hr-edit-department">{t('departments.field')}</Label>
+            <NativeSelect
+              id="hr-edit-department"
+              value={draft.departmentId}
+              disabled={draft.clear.department}
+              onChange={(ev) => onChange({ ...draft, departmentId: ev.target.value })}
+              data-testid="hr-edit-department"
+            >
+              <NativeSelectOption value="">{t('departments.keepCurrent')}</NativeSelectOption>
+              {filterDepartmentsForEntity(departments, employee.legalEntityId).map((d) => (
+                <NativeSelectOption key={d.id} value={d.id}>
+                  {d.code ? `${d.name} (${d.code})` : d.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+            {employee.departmentId !== null && (
+              <ClearStoredCheckbox
+                checked={draft.clear.department}
+                label={t('clearStored')}
+                onChange={(checked) => onChange({ ...draft, clear: { ...draft.clear, department: checked } })}
+              />
+            )}
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="hr-edit-job-title">{t('jobTitle')}</Label>
+            <Input
+              id="hr-edit-job-title"
+              value={draft.jobTitle}
+              maxLength={HR_JOB_TITLE_MAX}
+              placeholder={employee.jobTitle ?? undefined}
+              disabled={draft.clear.jobTitle}
+              onChange={(ev) => onChange({ ...draft, jobTitle: ev.target.value })}
+              data-testid="hr-edit-job-title"
+            />
+            {employee.jobTitle !== null && (
+              <ClearStoredCheckbox
+                checked={draft.clear.jobTitle}
+                label={t('clearStored')}
+                onChange={(checked) => onChange({ ...draft, clear: { ...draft.clear, jobTitle: checked } })}
+              />
+            )}
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="hr-edit-address">{t('address')}</Label>
+            <Input
+              id="hr-edit-address"
+              value={draft.address}
+              maxLength={500}
+              disabled={draft.clear.address}
+              onChange={(ev) => onChange({ ...draft, address: ev.target.value })}
+            />
+            {employee.address !== null && (
+              <ClearStoredCheckbox
+                checked={draft.clear.address}
+                label={t('clearStored')}
+                onChange={(checked) => onChange({ ...draft, clear: { ...draft.clear, address: checked } })}
+              />
+            )}
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="hr-edit-identity">{t('identityNumber')}</Label>
+            <Input
+              id="hr-edit-identity"
+              value={draft.identity}
+              maxLength={30}
+              autoComplete="off"
+              disabled={draft.clear.identity}
+              onChange={(ev) => onChange({ ...draft, identity: ev.target.value })}
+            />
+            {employee.hasIdentityNumber && (
+              <ClearStoredCheckbox
+                checked={draft.clear.identity}
+                label={t('clearStored')}
+                onChange={(checked) => onChange({ ...draft, clear: { ...draft.clear, identity: checked } })}
+              />
+            )}
+          </div>
+        </>
+      )}
+      <div className="space-y-1">
+        <Label htmlFor="hr-edit-account">{t('accountNumber')}</Label>
+        <Input
+          id="hr-edit-account"
+          value={draft.account}
+          maxLength={34}
+          autoComplete="off"
+          disabled={draft.clear.account}
+          onChange={(ev) => onChange({ ...draft, account: ev.target.value })}
+        />
+        {employee.hasAccountNumber && (
+          <ClearStoredCheckbox
+            checked={draft.clear.account}
+            label={t('clearStored')}
+            onChange={(checked) => onChange({ ...draft, clear: { ...draft.clear, account: checked } })}
+          />
+        )}
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="hr-edit-bank">{t('bankName')}</Label>
+        <BankSelect
+          id="hr-edit-bank"
+          value={draft.bank}
+          disabled={draft.clear.bank}
+          onChange={(code) => onChange({ ...draft, bank: code })}
+        />
+        {employee.bankCode !== null && (
+          <ClearStoredCheckbox
+            checked={draft.clear.bank}
+            label={t('clearStored')}
+            onChange={(checked) => onChange({ ...draft, clear: { ...draft.clear, bank: checked } })}
+          />
+        )}
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="hr-edit-birth">{t('birthDate')}</Label>
+        <Input
+          id="hr-edit-birth"
+          type="date"
+          min="1900-01-01"
+          max={vietnamToday()}
+          value={draft.birth}
+          disabled={draft.clear.birth}
+          onChange={(ev) => onChange({ ...draft, birth: ev.target.value })}
+          data-testid="hr-edit-birth"
+        />
+        {employee.birthDate !== null && (
+          <ClearStoredCheckbox
+            checked={draft.clear.birth}
+            label={t('clearStored')}
+            onChange={(checked) => onChange({ ...draft, clear: { ...draft.clear, birth: checked } })}
+            testId="hr-edit-birth-clear"
+          />
+        )}
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="hr-edit-tax">{t('taxCode')}</Label>
+        <Input
+          {...fieldControl('hr-edit-tax', { error: Boolean(fields.of('taxCode')) })}
+          value={draft.tax}
+          inputMode="numeric"
+          maxLength={20}
+          autoComplete="off"
+          disabled={draft.clear.tax}
+          onChange={(ev) => {
+            onChange({ ...draft, tax: ev.target.value });
+            fields.edit('taxCode');
+          }}
+          onBlur={(ev) => {
+            if (!draft.clear.tax) fields.blur('taxCode', ev.target.value);
+          }}
+        />
+        <FieldError id="hr-edit-tax">{fields.of('taxCode')}</FieldError>
+        {employee.taxCode !== null && (
+          <ClearStoredCheckbox
+            checked={draft.clear.tax}
+            label={t('clearStored')}
+            onChange={(checked) => {
+              onChange({ ...draft, clear: { ...draft.clear, tax: checked } });
+              if (checked) fields.edit('taxCode');
+            }}
+            testId="hr-edit-tax-clear"
+          />
+        )}
+      </div>
+      <div className="space-y-1">
+        <Label htmlFor="hr-edit-insurance">{t('insuranceNumber')}</Label>
+        <Input
+          {...fieldControl('hr-edit-insurance', { error: Boolean(fields.of('insuranceNumber')) })}
+          value={draft.insurance}
+          inputMode="numeric"
+          maxLength={20}
+          autoComplete="off"
+          disabled={draft.clear.insurance}
+          onChange={(ev) => {
+            onChange({ ...draft, insurance: ev.target.value });
+            fields.edit('insuranceNumber');
+          }}
+          onBlur={(ev) => {
+            if (!draft.clear.insurance) fields.blur('insuranceNumber', ev.target.value);
+          }}
+        />
+        <FieldError id="hr-edit-insurance">{fields.of('insuranceNumber')}</FieldError>
+        {employee.insuranceNumber !== null && (
+          <ClearStoredCheckbox
+            checked={draft.clear.insurance}
+            label={t('clearStored')}
+            onChange={(checked) => {
+              onChange({ ...draft, clear: { ...draft.clear, insurance: checked } });
+              if (checked) fields.edit('insuranceNumber');
+            }}
+            testId="hr-edit-insurance-clear"
+          />
+        )}
+      </div>
+      <p className="text-xs text-subtle-foreground sm:col-span-2">{t('editHint')}</p>
+      <div className="flex flex-wrap gap-2 sm:col-span-2">
+        <Button type="submit" loading={pending} disabled={!hasChange} data-testid="hr-edit-save">
+          {t('save')}
+        </Button>
+        <Button type="button" variant="ghost" onClick={onCancel} data-testid="hr-edit-cancel">
+          {t('cancel')}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 export function AddForm({
   onClose,
   departments,
@@ -869,6 +1249,10 @@ export function AddForm({
   const [insurance, setInsurance] = useState('');
   const [terms, setTerms] = useState(blankTerms);
   const contractErrors = previewContractCheck(terms).filter((item) => item.severity === 'error');
+  const fields = useFieldErrors<'taxCode' | 'insuranceNumber'>((field) => {
+    if (field === 'taxCode') return idNumberOk(tax) ? null : t('taxCodeInvalid');
+    return idNumberOk(insurance) ? null : t('insuranceNumberInvalid');
+  });
   const save = useMutation({
     mutationFn: () =>
       client.hr.payroll.employees.add({
@@ -891,112 +1275,152 @@ export function AddForm({
     },
   });
   const id = 'hr-add';
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (name.trim() === '' || !wageOk(terms.baseWage) || contractErrors.length > 0 || save.isPending) return;
+    if (!fields.checkAll(['taxCode', 'insuranceNumber'])) {
+      focusFirstInvalid(event.currentTarget);
+      return;
+    }
+    save.mutate();
+  };
   return (
     <Card className="mb-6 block p-4" aria-label={t('newTitle')} data-testid="hr-employee-form">
       <h2 className="text-base font-medium text-foreground">{t('newTitle')}</h2>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1">
-          <Label htmlFor={`${id}-name`}>{t('name')}</Label>
-          <Input id={`${id}-name`} value={name} maxLength={200} onChange={(e) => setName(e.target.value)} />
-        </div>
-        {entityList.length > 1 && (
+      <form noValidate onSubmit={submit}>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
-            <Label htmlFor={`${id}-legal-entity`}>{t('legalEntity')}</Label>
+            <Label htmlFor={`${id}-name`}>{t('name')}</Label>
+            <Input id={`${id}-name`} value={name} maxLength={200} onChange={(e) => setName(e.target.value)} />
+          </div>
+          {entityList.length > 1 && (
+            <div className="space-y-1">
+              <Label htmlFor={`${id}-legal-entity`}>{t('legalEntity')}</Label>
+              <NativeSelect
+                id={`${id}-legal-entity`}
+                value={targetEntityId}
+                onChange={(e) => {
+                  setLegalEntityId(e.target.value);
+                  setDepartmentId('');
+                  setTerms((prev) => applyDepartmentDefaultPayFunction(prev, '', [], payFunctionManual));
+                }}
+                data-testid="hr-add-legal-entity"
+              >
+                {entityList.map((entity) => (
+                  <NativeSelectOption key={entity.id} value={entity.id}>
+                    {entity.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </div>
+          )}
+          <div className="space-y-1">
+            <Label htmlFor={`${id}-department`}>{t('departments.field')}</Label>
             <NativeSelect
-              id={`${id}-legal-entity`}
-              value={targetEntityId}
+              id={`${id}-department`}
+              value={departmentId}
               onChange={(e) => {
-                setLegalEntityId(e.target.value);
-                setDepartmentId('');
-                setTerms((prev) => applyDepartmentDefaultPayFunction(prev, '', [], payFunctionManual));
+                const nextId = e.target.value;
+                setDepartmentId(nextId);
+                setTerms((prev) => applyDepartmentDefaultPayFunction(prev, nextId, entityDepartments, payFunctionManual));
               }}
-              data-testid="hr-add-legal-entity"
+              data-testid="hr-add-department"
             >
-              {entityList.map((entity) => (
-                <NativeSelectOption key={entity.id} value={entity.id}>
-                  {entity.name}
+              <NativeSelectOption value="">{t('departments.unassigned')}</NativeSelectOption>
+              {entityDepartments.map((d) => (
+                <NativeSelectOption key={d.id} value={d.id}>
+                  {d.code ? `${d.name} (${d.code})` : d.name}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
           </div>
-        )}
-        <div className="space-y-1">
-          <Label htmlFor={`${id}-department`}>{t('departments.field')}</Label>
-          <NativeSelect
-            id={`${id}-department`}
-            value={departmentId}
-            onChange={(e) => {
-              const nextId = e.target.value;
-              setDepartmentId(nextId);
-              setTerms((prev) => applyDepartmentDefaultPayFunction(prev, nextId, entityDepartments, payFunctionManual));
+          <div className="space-y-1">
+            <Label htmlFor={`${id}-job-title`}>{t('jobTitle')}</Label>
+            <Input
+              id={`${id}-job-title`}
+              value={jobTitle}
+              maxLength={HR_JOB_TITLE_MAX}
+              onChange={(e) => setJobTitle(e.target.value)}
+              data-testid="hr-add-job-title"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`${id}-address`}>{t('address')}</Label>
+            <Input id={`${id}-address`} value={address} maxLength={500} onChange={(e) => setAddress(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`${id}-identity`}>{t('identityNumber')}</Label>
+            <Input id={`${id}-identity`} value={identity} maxLength={30} autoComplete="off" onChange={(e) => setIdentity(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`${id}-account`}>{t('accountNumber')}</Label>
+            <Input id={`${id}-account`} value={account} maxLength={34} autoComplete="off" onChange={(e) => setAccount(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`${id}-bank`}>{t('bankName')}</Label>
+            <BankSelect id={`${id}-bank`} value={bank} onChange={setBank} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`${id}-birth`}>{t('birthDate')}</Label>
+            <Input id={`${id}-birth`} type="date" min="1900-01-01" max={vietnamToday()} value={birth} onChange={(e) => setBirth(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`${id}-tax`}>{t('taxCode')}</Label>
+            <Input
+              {...fieldControl(`${id}-tax`, { error: Boolean(fields.of('taxCode')) })}
+              value={tax}
+              inputMode="numeric"
+              maxLength={20}
+              autoComplete="off"
+              onChange={(e) => {
+                setTax(e.target.value);
+                fields.edit('taxCode');
+              }}
+              onBlur={(e) => fields.blur('taxCode', e.target.value)}
+            />
+            <FieldError id={`${id}-tax`}>{fields.of('taxCode')}</FieldError>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor={`${id}-insurance`}>{t('insuranceNumber')}</Label>
+            <Input
+              {...fieldControl(`${id}-insurance`, { error: Boolean(fields.of('insuranceNumber')) })}
+              value={insurance}
+              inputMode="numeric"
+              maxLength={20}
+              autoComplete="off"
+              onChange={(e) => {
+                setInsurance(e.target.value);
+                fields.edit('insuranceNumber');
+              }}
+              onBlur={(e) => fields.blur('insuranceNumber', e.target.value)}
+            />
+            <FieldError id={`${id}-insurance`}>{fields.of('insuranceNumber')}</FieldError>
+          </div>
+          <TermsFields
+            id={id}
+            value={terms}
+            onChange={(patch) => {
+              if (patch.payFunction !== undefined) setPayFunctionManual(true);
+              setTerms((s) => ({ ...s, ...patch }));
             }}
-            data-testid="hr-add-department"
-          >
-            <NativeSelectOption value="">{t('departments.unassigned')}</NativeSelectOption>
-            {entityDepartments.map((d) => (
-              <NativeSelectOption key={d.id} value={d.id}>
-                {d.code ? `${d.name} (${d.code})` : d.name}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor={`${id}-job-title`}>{t('jobTitle')}</Label>
-          <Input
-            id={`${id}-job-title`}
-            value={jobTitle}
-            maxLength={HR_JOB_TITLE_MAX}
-            onChange={(e) => setJobTitle(e.target.value)}
-            data-testid="hr-add-job-title"
           />
         </div>
-        <div className="space-y-1">
-          <Label htmlFor={`${id}-address`}>{t('address')}</Label>
-          <Input id={`${id}-address`} value={address} maxLength={500} onChange={(e) => setAddress(e.target.value)} />
+        <p className="mt-2 text-xs text-subtle-foreground">{t('sealedHint')}</p>
+        {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button
+            type="submit"
+            loading={save.isPending}
+            disabled={name.trim() === '' || !wageOk(terms.baseWage) || contractErrors.length > 0}
+            data-testid="hr-employee-save"
+          >
+            {t('save')}
+          </Button>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            {t('cancel')}
+          </Button>
         </div>
-        <div className="space-y-1">
-          <Label htmlFor={`${id}-identity`}>{t('identityNumber')}</Label>
-          <Input id={`${id}-identity`} value={identity} maxLength={30} autoComplete="off" onChange={(e) => setIdentity(e.target.value)} />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor={`${id}-account`}>{t('accountNumber')}</Label>
-          <Input id={`${id}-account`} value={account} maxLength={34} autoComplete="off" onChange={(e) => setAccount(e.target.value)} />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor={`${id}-bank`}>{t('bankName')}</Label>
-          <BankSelect id={`${id}-bank`} value={bank} onChange={setBank} />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor={`${id}-birth`}>{t('birthDate')}</Label>
-          <Input id={`${id}-birth`} type="date" min="1900-01-01" max={vietnamToday()} value={birth} onChange={(e) => setBirth(e.target.value)} />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor={`${id}-tax`}>{t('taxCode')}</Label>
-          <Input id={`${id}-tax`} value={tax} inputMode="numeric" maxLength={12} autoComplete="off" onChange={(e) => setTax(e.target.value)} />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor={`${id}-insurance`}>{t('insuranceNumber')}</Label>
-          <Input id={`${id}-insurance`} value={insurance} inputMode="numeric" maxLength={12} autoComplete="off" onChange={(e) => setInsurance(e.target.value)} />
-        </div>
-        <TermsFields
-          id={id}
-          value={terms}
-          onChange={(patch) => {
-            if (patch.payFunction !== undefined) setPayFunctionManual(true);
-            setTerms((s) => ({ ...s, ...patch }));
-          }}
-        />
-      </div>
-      <p className="mt-2 text-xs text-subtle-foreground">{t('sealedHint')}</p>
-      {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
-      <div className="mt-4 flex flex-wrap gap-2">
-        <Button loading={save.isPending} disabled={name.trim() === '' || !wageOk(terms.baseWage) || !idNumberOk(tax) || !idNumberOk(insurance) || contractErrors.length > 0} onClick={() => save.mutate()} data-testid="hr-employee-save">
-          {t('save')}
-        </Button>
-        <Button variant="ghost" onClick={onClose}>
-          {t('cancel')}
-        </Button>
-      </div>
+      </form>
     </Card>
   );
 }
@@ -1059,19 +1483,7 @@ export function Detail({
   const [terms, setTerms] = useState(blankTerms);
   const [dep, setDep] = useState<{ name: string; relation: HrRelation; registeredOn: string }>({ name: '', relation: 'child', registeredOn: vietnamToday() });
   const [endedOn, setEndedOn] = useState(vietnamToday());
-  const [edit, setEdit] = useState<{
-    name: string;
-    departmentId: string;
-    jobTitle: string;
-    address: string;
-    identity: string;
-    account: string;
-    bank: string;
-    birth: string;
-    tax: string;
-    insurance: string;
-    clear: { department: boolean; jobTitle: boolean; address: boolean; identity: boolean; account: boolean; bank: boolean; tax: boolean; insurance: boolean };
-  } | null>(null);
+  const [edit, setEdit] = useState<EditEmployeeDraft | null>(null);
   const [confirmErase, setConfirmErase] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [severanceOpen, setSeveranceOpen] = useState(false);
@@ -1100,21 +1512,7 @@ export function Detail({
   const endEmployee = useMutation(run(() => client.hr.payroll.employees.end({ employeeId, endedOn })));
   const saveEdit = useMutation(
     run(
-      () =>
-        client.hr.payroll.employees.edit({
-          employeeId,
-          ...(edit && edit.name.trim() ? { displayName: edit.name.trim() } : {}),
-          ...(edit && (edit.clear.department ? { departmentId: null } : edit.departmentId ? { departmentId: edit.departmentId } : {})),
-          ...(edit && (edit.clear.jobTitle ? { jobTitle: null } : edit.jobTitle.trim() ? { jobTitle: edit.jobTitle.trim() } : {})),
-          // A field left empty is not changed; a ticked "clear" sends null, which removes the stored value.
-          ...(edit && (edit.clear.address ? { address: null } : edit.address.trim() ? { address: edit.address.trim() } : {})),
-          ...(edit && (edit.clear.identity ? { identityNumber: null } : edit.identity.trim() ? { identityNumber: edit.identity.trim() } : {})),
-          ...(edit && (edit.clear.account ? { accountNumber: null } : edit.account.trim() ? { accountNumber: edit.account.trim() } : {})),
-          ...(edit && (edit.clear.bank ? { bankCode: null } : edit.bank ? { bankCode: edit.bank } : {})),
-          ...(edit && edit.birth ? { birthDate: edit.birth } : {}),
-          ...(edit && (edit.clear.tax ? { taxCode: null } : edit.tax.trim() ? { taxCode: edit.tax.trim() } : {})),
-          ...(edit && (edit.clear.insurance ? { insuranceNumber: null } : edit.insurance.trim() ? { insuranceNumber: edit.insurance.trim() } : {})),
-        }),
+      (draft: EditEmployeeDraft) => client.hr.payroll.employees.edit(buildEditPayload(employeeId, draft)),
       () => setEdit(null),
     ),
   );
@@ -1125,9 +1523,6 @@ export function Detail({
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
   const e = q.data;
   const active = e.status === 'active' && !e.erased;
-  // A former employee's record is kept as it is, except what a leaver still needs: for the declarations the birth date, the tax code and the insurance number, and for paying what is
-  // still owed the account number and the bank (#2905).
-  const limited = e.status !== 'active';
   const none = <span className="text-subtle-foreground">{t('none')}</span>;
   return (
     <Card className="mb-6 block p-4" data-testid="hr-employee-detail">
@@ -1199,7 +1594,7 @@ export function Detail({
       )}
 
       {active && (
-        <label className="mt-3 flex items-center gap-2 text-sm" data-testid="hr-employee-authorized">
+        <label className="mt-3 flex items-center gap-2 text-sm max-md:min-h-11" data-testid="hr-employee-authorized">
           <input type="checkbox" checked={e.finalizationAuthorizedYears.includes(year)} disabled={authorize.isPending} onChange={(ev) => authorize.mutate(ev.target.checked)} />
           {t('authorizedYear', { year: String(year) })}
         </label>
@@ -1210,186 +1605,27 @@ export function Detail({
         <div className="mt-3">
           {edit === null ? (
             <Button
+              type="button"
               variant="ghost"
               size="sm"
-              onClick={() =>
-                setEdit({
-                  name: '',
-                  departmentId: '',
-                  jobTitle: '',
-                  address: '',
-                  identity: '',
-                  account: '',
-                  bank: '',
-                  birth: '',
-                  tax: '',
-                  insurance: '',
-                  clear: { department: false, jobTitle: false, address: false, identity: false, account: false, bank: false, tax: false, insurance: false },
-                })
-              }
+              onClick={() => setEdit(blankEditDraft())}
+              data-testid="hr-employee-edit"
             >
               {t('edit')}
             </Button>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {!limited && (
-                <>
-              <div className="space-y-1">
-                <Label htmlFor="hr-edit-name">{t('name')}</Label>
-                <Input id="hr-edit-name" value={edit.name} maxLength={200} placeholder={e.displayName} onChange={(ev) => setEdit({ ...edit, name: ev.target.value })} />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="hr-edit-department">{t('departments.field')}</Label>
-                <NativeSelect
-                  id="hr-edit-department"
-                  value={edit.departmentId}
-                  disabled={edit.clear.department}
-                  onChange={(ev) => setEdit({ ...edit, departmentId: ev.target.value })}
-                  data-testid="hr-edit-department"
-                >
-                  <NativeSelectOption value="">{t('departments.keepCurrent')}</NativeSelectOption>
-                  {filterDepartmentsForEntity(activeDepartments, e.legalEntityId).map((d) => (
-                    <NativeSelectOption key={d.id} value={d.id}>
-                      {d.code ? `${d.name} (${d.code})` : d.name}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-                {e.departmentId !== null && (
-                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
-                    <input
-                      type="checkbox"
-                      checked={edit.clear.department}
-                      onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, department: ev.target.checked } })}
-                    />
-                    {t('clearStored')}
-                  </label>
-                )}
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="hr-edit-job-title">{t('jobTitle')}</Label>
-                <Input
-                  id="hr-edit-job-title"
-                  value={edit.jobTitle}
-                  maxLength={HR_JOB_TITLE_MAX}
-                  placeholder={e.jobTitle ?? undefined}
-                  disabled={edit.clear.jobTitle}
-                  onChange={(ev) => setEdit({ ...edit, jobTitle: ev.target.value })}
-                  data-testid="hr-edit-job-title"
-                />
-                {e.jobTitle !== null && (
-                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
-                    <input
-                      type="checkbox"
-                      checked={edit.clear.jobTitle}
-                      onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, jobTitle: ev.target.checked } })}
-                    />
-                    {t('clearStored')}
-                  </label>
-                )}
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="hr-edit-address">{t('address')}</Label>
-                <Input id="hr-edit-address" value={edit.address} maxLength={500} disabled={edit.clear.address} onChange={(ev) => setEdit({ ...edit, address: ev.target.value })} />
-                {e.address !== null && (
-                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
-                    <input type="checkbox" checked={edit.clear.address} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, address: ev.target.checked } })} />
-                    {t('clearStored')}
-                  </label>
-                )}
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="hr-edit-identity">{t('identityNumber')}</Label>
-                <Input id="hr-edit-identity" value={edit.identity} maxLength={30} autoComplete="off" disabled={edit.clear.identity} onChange={(ev) => setEdit({ ...edit, identity: ev.target.value })} />
-                {e.hasIdentityNumber && (
-                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
-                    <input type="checkbox" checked={edit.clear.identity} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, identity: ev.target.checked } })} />
-                    {t('clearStored')}
-                  </label>
-                )}
-              </div>
-                </>
-              )}
-              <div className="space-y-1">
-                <Label htmlFor="hr-edit-account">{t('accountNumber')}</Label>
-                <Input id="hr-edit-account" value={edit.account} maxLength={34} autoComplete="off" disabled={edit.clear.account} onChange={(ev) => setEdit({ ...edit, account: ev.target.value })} />
-                {e.hasAccountNumber && (
-                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
-                    <input type="checkbox" checked={edit.clear.account} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, account: ev.target.checked } })} />
-                    {t('clearStored')}
-                  </label>
-                )}
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="hr-edit-bank">{t('bankName')}</Label>
-                <BankSelect id="hr-edit-bank" value={edit.bank} disabled={edit.clear.bank} onChange={(code) => setEdit({ ...edit, bank: code })} />
-                {e.bankCode !== null && (
-                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
-                    <input type="checkbox" checked={edit.clear.bank} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, bank: ev.target.checked } })} />
-                    {t('clearStored')}
-                  </label>
-                )}
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="hr-edit-birth">{t('birthDate')}</Label>
-                <Input id="hr-edit-birth" type="date" min="1900-01-01" max={vietnamToday()} value={edit.birth} onChange={(ev) => setEdit({ ...edit, birth: ev.target.value })} />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="hr-edit-tax">{t('taxCode')}</Label>
-                <Input id="hr-edit-tax" value={edit.tax} inputMode="numeric" maxLength={12} autoComplete="off" disabled={edit.clear.tax} onChange={(ev) => setEdit({ ...edit, tax: ev.target.value })} />
-                {e.taxCode !== null && (
-                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
-                    <input type="checkbox" checked={edit.clear.tax} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, tax: ev.target.checked } })} />
-                    {t('clearStored')}
-                  </label>
-                )}
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="hr-edit-insurance">{t('insuranceNumber')}</Label>
-                <Input id="hr-edit-insurance" value={edit.insurance} inputMode="numeric" maxLength={12} autoComplete="off" disabled={edit.clear.insurance} onChange={(ev) => setEdit({ ...edit, insurance: ev.target.value })} />
-                {e.insuranceNumber !== null && (
-                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
-                    <input type="checkbox" checked={edit.clear.insurance} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, insurance: ev.target.checked } })} />
-                    {t('clearStored')}
-                  </label>
-                )}
-              </div>
-              <p className="text-xs text-subtle-foreground sm:col-span-2">{t('editHint')}</p>
-              <div className="flex gap-2 sm:col-span-2">
-                <Button
-                  loading={saveEdit.isPending}
-                  disabled={
-                    (!edit.clear.tax && !idNumberOk(edit.tax)) ||
-                    (!edit.clear.insurance && !idNumberOk(edit.insurance)) ||
-                    !(
-                      edit.name.trim() ||
-                      edit.departmentId ||
-                      edit.jobTitle.trim() ||
-                      edit.address.trim() ||
-                      edit.identity.trim() ||
-                      edit.account.trim() ||
-                      edit.bank ||
-                      edit.birth ||
-                      edit.tax.trim() ||
-                      edit.insurance.trim() ||
-                      edit.clear.department ||
-                      edit.clear.jobTitle ||
-                      edit.clear.address ||
-                      edit.clear.identity ||
-                      edit.clear.account ||
-                      edit.clear.bank ||
-                      edit.clear.tax ||
-                      edit.clear.insurance
-                    )
-                  }
-                  onClick={() => saveEdit.mutate()}
-                >
-                  {t('save')}
-                </Button>
-                <Button variant="ghost" onClick={() => setEdit(null)}>
-                  {t('cancel')}
-                </Button>
-              </div>
-            </div>
+            <EditForm
+              employee={e}
+              departments={activeDepartments}
+              draft={edit}
+              onChange={setEdit}
+              pending={saveEdit.isPending}
+              onSubmit={() => saveEdit.mutate(edit)}
+              onCancel={() => {
+                saveEdit.reset();
+                setEdit(null);
+              }}
+            />
           )}
           {saveEdit.error && <ErrorText>{errorMessage(saveEdit.error)}</ErrorText>}
         </div>
@@ -1685,7 +1921,7 @@ export function HrEmployeesPage() {
             ))}
           </NativeSelect>
         </div>
-        <label className="flex items-center gap-1 text-xs text-subtle-foreground">
+        <label className="flex items-center gap-1 text-xs text-subtle-foreground max-md:min-h-11">
           <input type="checkbox" checked={showEnded} onChange={(e) => setShowEnded(e.target.checked)} />
           {t('showEnded')}
         </label>

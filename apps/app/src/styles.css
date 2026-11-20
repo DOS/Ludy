@@ -13,8 +13,45 @@ body,
   size: A4;
   margin: 18mm 15mm;
 }
+/* Wide declaration schedules (D02-LT, 05/KK-TNCN, 05/QTT-TNCN, 03/TNCN, labor register, 01/PLI; #2748): landscape paper, unclipped scroll boxes, wrapped headers, compact cells. */
+@page declaration {
+  size: landscape;
+  margin: 10mm;
+}
 @media print {
   .minutes-sheet {
     page: minutes;
+  }
+  .declaration-sheet {
+    page: declaration;
+  }
+  .declaration-sheet .overflow-hidden {
+    overflow: visible;
+  }
+  .declaration-sheet [data-slot='table-container'] {
+    max-height: none;
+    overflow: visible;
+  }
+  .declaration-sheet [data-slot='table'] {
+    min-width: 0;
+    width: 100%;
+    font-size: 9px;
+    line-height: 1.25;
+  }
+  .declaration-sheet [data-slot='table-header'] {
+    position: static;
+    display: table-header-group;
+  }
+  .declaration-sheet [data-slot='table-head'] {
+    height: auto;
+  }
+  .declaration-sheet [data-slot='table-head'],
+  .declaration-sheet [data-slot='table-cell'] {
+    padding: 4px 5px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .declaration-sheet [data-slot='table-row'] {
+    break-inside: avoid;
   }
 }
